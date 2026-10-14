@@ -58,7 +58,7 @@ func newRig(t *testing.T) *rig {
 	r := &rig{store: bustest.NewFake(t0, "ada", "bob"), now: t0, stopAfter: 1 << 20, gate: make(chan struct{}, 1), at: map[int]func(){}}
 	r.bus = &bus.Bus{Store: r.store}
 	r.d = &Daemon{
-		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 4, Store: r.store, noPresent: true, StepBeatForTests: true, // the present has its own tests (present_test.go)
+		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Store: r.store, noPresent: true, StepBeatForTests: true, // the present has its own tests (present_test.go)
 		Deliver: r,
 		Seat:    func(context.Context) (string, error) { return "ada", nil }, // the sender these rigs expect delivered plain
 		Now: func() time.Time {
@@ -197,7 +197,7 @@ func TestAMessageIsPushedIntoTheSessionAndAckedWhenTheTurnEndsAtZero(t *testing.
 	assert.Equal(t, Connected, s.Connection)
 	assert.Equal(t, Quiet, s.Challenge)
 	assert.Equal(t, "bob", s.Friend)
-	assert.Equal(t, 4, s.Width)
+	assert.Equal(t, 0, s.Width, "no beat answered a width: the daemon has none of its own")
 	require.NotEmpty(t, r.records)
 	assert.Contains(t, r.records[0], `subject="hello"`)
 	assert.Contains(t, r.records[0], "acked=true")

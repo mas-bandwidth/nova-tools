@@ -56,7 +56,7 @@ func TestReportsRunSideBySideInOnePass(t *testing.T) {
 	const n = 8
 	s := &barrierSprint{scriptSprint: newScript(), n: n, release: make(chan struct{})}
 	rn, out := newRunner(), &bytes.Buffer{}
-	m := New(Config{As: "m", Width: 2 * n}, s, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
+	m := New(Config{As: "m"}, rowWidth(s, 2*n), rn, &fakePusher{def: Push{Sha: fullSha}}, out)
 
 	cards := make([]queueCard, n)
 	for i := 0; i < n; i++ {
@@ -126,7 +126,7 @@ func TestTakeRunsBeforeTheReportsReturn(t *testing.T) {
 	t.Parallel()
 	s := &orderSprint{scriptSprint: newScript(), release: make(chan struct{})}
 	rn, out := newRunner(), &bytes.Buffer{}
-	m := New(Config{As: "m", Width: 8}, s, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
+	m := New(Config{As: "m"}, rowWidth(s, 8), rn, &fakePusher{def: Push{Sha: fullSha}}, out)
 
 	var cards []queueCard
 	for i := 0; i < 4; i++ {
@@ -175,7 +175,7 @@ func TestTakeRunsBeforeTheReportsReturn(t *testing.T) {
 // reports or recovers it again.
 func TestARefusedReadVerdictIsForgottenNotSpent(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1})
+	g := newWidthRig(1, Config{As: "m"})
 	a := Packet{Card: "p1.r1.m", Kind: "read", As: "m", Primary: "p1", Attempt: 1, Gen: 1, Epoch: 7, Head: fullSha}
 	g.s.set("queue", 0, queueJSON(t, 7, ready(a.Card)))
 	g.s.set("take", 0, takeJSON(t, a))
@@ -203,7 +203,7 @@ func TestARefusedReadVerdictIsForgottenNotSpent(t *testing.T) {
 // --return.
 func TestAReadReturnRefusalIsQuietAndSpent(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	a := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &a)))
 	_, err := g.tick(t)
@@ -229,7 +229,7 @@ func TestAReadReturnRefusalIsQuietAndSpent(t *testing.T) {
 // reportOne passed, never the bare `read <id>`.
 func TestAReadReturnNoAnswerNamesTheReturnVerb(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	a := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &a)))
 	_, err := g.tick(t)
@@ -314,7 +314,7 @@ func TestAMovedClaimWhileReportingIsReapedNotApplied(t *testing.T) {
 	t.Parallel()
 	gs := &gateSprint{scriptSprint: newScript(), began: make(chan string, 4), release: make(chan struct{})}
 	rn, out := newRunner(), &bytes.Buffer{}
-	m := New(Config{As: "m", Width: 1, Background: true}, gs, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
+	m := New(Config{As: "m", Background: true}, rowWidth(gs, 1), rn, &fakePusher{def: Push{Sha: fullSha}}, out)
 
 	old := pk("c1") // gen 1, epoch 7
 	gs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
@@ -368,7 +368,7 @@ func TestAnUnansweredReportWhoseClaimMovedKeepsTheRunAsFailed(t *testing.T) {
 	t.Parallel()
 	gs := &gateSprint{scriptSprint: newScript(), began: make(chan string, 4), release: make(chan struct{})}
 	rn, out := newRunner(), &bytes.Buffer{}
-	m := New(Config{As: "m", Width: 1, Background: true}, gs, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
+	m := New(Config{As: "m", Background: true}, rowWidth(gs, 1), rn, &fakePusher{def: Push{Sha: fullSha}}, out)
 
 	old := pk("c1") // gen 1, epoch 7
 	gs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
@@ -421,7 +421,7 @@ func TestAnAcceptedReportIsAppliedThoughTheQueueThenMoved(t *testing.T) {
 	t.Parallel()
 	gs := &gateSprint{scriptSprint: newScript(), began: make(chan string, 4), release: make(chan struct{})}
 	rn, out := newRunner(), &bytes.Buffer{}
-	m := New(Config{As: "m", Width: 1, Background: true}, gs, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
+	m := New(Config{As: "m", Background: true}, rowWidth(gs, 1), rn, &fakePusher{def: Push{Sha: fullSha}}, out)
 
 	old := pk("c1") // gen 1, epoch 7
 	gs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
@@ -469,7 +469,7 @@ func TestABackgroundReportNoAnswerIsTheCollectingPassesError(t *testing.T) {
 	t.Parallel()
 	gs := &gateSprint{scriptSprint: newScript(), began: make(chan string, 4), release: make(chan struct{})}
 	rn, out := newRunner(), &bytes.Buffer{}
-	m := New(Config{As: "m", Width: 1, Background: true}, gs, rn, &fakePusher{def: Push{Sha: fullSha}}, out)
+	m := New(Config{As: "m", Background: true}, rowWidth(gs, 1), rn, &fakePusher{def: Push{Sha: fullSha}}, out)
 
 	p := pk("c1")
 	gs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
@@ -520,7 +520,7 @@ func (g *answerGate) RunAnswer(args ...string) (int, []byte, sprintwire.Answer) 
 func reportWithMovedClaim(t *testing.T, gs *gateSprint, sp Sprint, code int, out string) (string, []string, error) {
 	t.Helper()
 	rn, buf := newRunner(), &bytes.Buffer{}
-	m := New(Config{As: "m", Width: 1, Background: true}, sp, rn, &fakePusher{def: Push{Sha: fullSha}}, buf)
+	m := New(Config{As: "m", Background: true}, rowWidth(sp, 1), rn, &fakePusher{def: Push{Sha: fullSha}}, buf)
 	old := pk("c1") // gen 1, epoch 7
 	gs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
 	_, err := m.Tick(time.Unix(0, 0))

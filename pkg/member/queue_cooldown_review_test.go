@@ -11,7 +11,7 @@ import (
 func TestQueueReviewReturnedReadGetsItsPacketWhenCooldownEnds(t *testing.T) {
 	t.Parallel()
 	s := &packetServer{epoch: 7, cards: []queueCard{readCard(0)}}
-	g := packetRig(Config{As: "r", Width: 1, Reader: true}, s)
+	g := packetRig(1, Config{As: "r", Reader: true}, s)
 	now := time.Unix(0, 0)
 	_, err := g.m.Tick(now)
 	require.NoError(t, err)

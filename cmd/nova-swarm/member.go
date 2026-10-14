@@ -54,7 +54,6 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	fs.SetOutput(io.Discard)
 	f := &flags{verb: "member", fs: fs}
 	as := fs.String("as", "", "required: this machine's `name`, its row in the fleet table (with --reader, its row in the readers table, reader-<machine>)")
-	width := fs.Int("width", 0, "an override of the most cards it runs at once, a twin's; a worker runs its fleet row's width, read every tick: a member its own row's, a reader its machine's (reader-<m> runs at m's width)")
 	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards, at its machine's width; a flash card's first read is a decide read, asked with JEV_API_KEY from this environment (docs/SPEC-SPRINT.md section 6)")
 	harness := fs.String("harness", "", "required: the harness binary `path` each card's child runs under (native --harness)")
 	model := fs.String("model", "", "the `provider/model` a card with no route runs on; a reader given it runs every read on it")
@@ -80,16 +79,19 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	gocacheGiB := fs.Int("gocache-limit", int(gocache.Limit/gib), "the `GiB` the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
+	// a worker runs the width its queue answers on every pass, which the server reads from
+	// nova-config: a member its own machine row's, a reader its machine's (reader-<m>,
+	// sprint.ReaderMachine). It has no width of its own and no --width flag: a loop row or
+	// plist that still passes one is refused before the parse, naming the remedy
+	// (docs/SPEC-SWARM.md, the width; tla/FriendLane.tla RowWidth)
+	if why := widthRefusal(args); why != "" {
+		refuse(stderr, " member", why)
+		return 2
+	}
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.want(*as, "as", "the member's name in the fleet table (a reader's in the readers table with --reader)")
-	// a worker runs the width its fleet row names (fleet up --width, fleet sync), read with
-	// its queue every tick: a member its own row's, a reader its machine's (reader-<m>,
-	// sprint.ReaderMachine); --width is a twin's override
-	if *width < 0 {
-		f.add("--width is an override of the fleet row's width and is at least 1; leave it out to run the row's")
-	}
 	f.want(*server, "server", "the sprint server's host:port, the run loop started with nova-sprint run --listen on the coordinator's machine: the member sends every sprint verb there and opens no store")
 	f.want(*harness, "harness", "the harness binary path a card runs under (nova-swarm native --harness)")
 	// the card decides its model: the deal (a read: the ask) writes the route it drew
@@ -246,7 +248,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	cfg := memberConfig(*as, *width, *reader, meter, room, *root, *noWall)
+	cfg := memberConfig(*as, *reader, meter, room, *root, *noWall)
 	cfg.Sleep = time.Sleep // harness starts StartGap apart
 	// a beat the server refuses marks this member's own status file, read by doctor
 	// (member.Config.Status); the --load-unmeasured probe is asked once at start
@@ -262,11 +264,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *reader {
 		kind = "reader"
 	}
-	widthWord := "row" // the fleet row's, read every tick
-	if *width > 0 {
-		widthWord = "override:" + strconv.Itoa(*width)
-	}
-	modelWord := "card" // each card's route, from its packet
+	widthWord := "config" // nova-config's, answered with the queue every pass
+	modelWord := "card"   // each card's route, from its packet
 	if *model != "" {
 		modelWord = "card,override:" + *model
 	}
@@ -306,8 +305,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 // the member's wall, so a script card whose head is its program's output needs no model
 // read (docs/SPEC-SPRINT.md, the script read); a worker's is nil. cmdMember sets Sleep,
 // so its pass loop's clock stays where the push table names it.
-func memberConfig(as string, width int, reader bool, meter *hostload.Sampler, room func() (bool, string), root string, noWall bool) member.Config {
-	cfg := member.Config{As: as, Width: width, Reader: reader, Meter: meter, Room: room, Background: true, Attempt: workAttempt(reader, os.Getenv)}
+func memberConfig(as string, reader bool, meter *hostload.Sampler, room func() (bool, string), root string, noWall bool) member.Config {
+	cfg := member.Config{As: as, Reader: reader, Meter: meter, Room: room, Background: true, Attempt: workAttempt(reader, os.Getenv)}
 	if reader {
 		cfg.ScriptVerify = scriptVerify(root, "", noWall)
 	}
@@ -1777,4 +1776,58 @@ func restoreLaunchBilling(slot, declared string) (string, error) {
 		return "", fmt.Errorf("launch receipt billing disagrees with immutable packet; preserve files and start a fresh paired-binary attempt")
 	}
 	return billing, nil
+}
+
+// widthRefusal is why an argv that names --width is refused, "" when it names none. A
+// worker has no width of its own (the width is nova-config's alone, answered with the queue
+// every pass), so a loop row or plist that still passes one fails loudly with its remedy,
+// never run and never read as a width (docs/SPEC-SWARM.md, the width).
+func widthRefusal(args []string) string {
+	as, reader, width, given := "", false, "<n>", false
+	for i := 0; i < len(args); i++ {
+		name, value, hasValue := strings.Cut(strings.TrimLeft(args[i], "-"), "=")
+		if !strings.HasPrefix(args[i], "-") || args[i] == "--" {
+			continue
+		}
+		next := func() string {
+			if hasValue {
+				return value
+			}
+			if i+1 < len(args) {
+				i++
+				return args[i]
+			}
+			return ""
+		}
+		switch name {
+		case "width":
+			given = true
+			if v := next(); v != "" {
+				width = v
+			}
+		case "as":
+			as = next()
+		case "reader":
+			reader = !hasValue || value == "true"
+		}
+	}
+	if !given {
+		return ""
+	}
+	return "--width is refused: the width is nova-config's alone, answered with the queue every pass, and a worker has none of its own; remove --width from the loop row or plist and set the machine row: nova-config machine set " +
+		oneline.Field(machineOfWorker(as, reader)) + " --width " + oneline.Field(width)
+}
+
+// machineOfWorker is the machine row whose width a worker runs: a member's own, a reader
+// named reader-<m> machine m's (sprint.ReaderMachine).
+func machineOfWorker(as string, reader bool) string {
+	if reader {
+		if m, ok := strings.CutPrefix(as, "reader-"); ok && m != "" {
+			return m
+		}
+	}
+	if as == "" {
+		return "<m>"
+	}
+	return as
 }

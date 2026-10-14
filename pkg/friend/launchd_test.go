@@ -15,7 +15,7 @@ import (
 )
 
 func agent() Agent {
-	return Agent{Friend: "bob", Harness: "opencode", Dir: "/w/bob", Width: 4, Binary: "/opt/nova/bin/nova-friend",
+	return Agent{Friend: "bob", Harness: "opencode", Dir: "/w/bob", Binary: "/opt/nova/bin/nova-friend",
 		Redis: "store:6379", Server: "127.0.0.1:6390", Home: "/home/bob", Path: "/usr/bin:/bin", LaunchdLog: "/home/bob/Library/Logs/nova-friend-bob.log"}
 }
 
@@ -27,7 +27,7 @@ func TestThePlistRunsTheDaemonAtLoadAndKeepsItAlive(t *testing.T) {
 		"<string>com.nova.friend-bob</string>", "<string>/opt/nova/bin/nova-friend</string>", "<string>run</string>",
 		"<string>--as</string>\n    <string>bob</string>", "<string>--harness</string>\n    <string>opencode</string>",
 		"<string>--dir</string>\n    <string>/w/bob</string>", "<string>--redis</string>\n    <string>store:6379</string>",
-		"<string>--server</string>\n    <string>127.0.0.1:6390</string>", "<string>--width</string>\n    <string>4</string>",
+		"<string>--server</string>\n    <string>127.0.0.1:6390</string>",
 		"<key>RunAtLoad</key><true/>", "<key>KeepAlive</key><true/>",
 		"<key>StandardOutPath</key><string>/home/bob/Library/Logs/nova-friend-bob.log</string>",
 		"<key>HOME</key><string>/home/bob</string>",
@@ -35,6 +35,7 @@ func TestThePlistRunsTheDaemonAtLoadAndKeepsItAlive(t *testing.T) {
 		assert.Contains(t, p, want)
 	}
 	assert.NotContains(t, p, "--session", "no session named: the newest is found at each delivery")
+	assert.NotContains(t, p, "--width", "no width of its own: the beat answers nova-config's")
 	a.Session = "ses_1"
 	assert.Contains(t, a.Plist(), "<string>--session</string>\n    <string>ses_1</string>")
 	a.Dir = "/w/a&b"
@@ -356,7 +357,7 @@ func TestThePlistWrapsTheDaemonInNovaSecretsExecForItsSecrets(t *testing.T) {
 	a.Secrets, a.Seat, a.SecretsTool, a.Sops = []string{"DEEPSEEK_API_KEY", "GH_TOKEN"}, "studio", "/opt/nova/bin/nova-secrets", "/opt/homebrew/bin/sops"
 	want := []string{"/opt/nova/bin/nova-secrets", "exec", "--store", "/home/bob/nova-bench/secrets", "--as", "studio", "--key", "/home/bob/.config/nova-secrets/studio.key",
 		"--sops", "/opt/homebrew/bin/sops", "--only", "DEEPSEEK_API_KEY,GH_TOKEN", "--require", "DEEPSEEK_API_KEY", "--require", "GH_TOKEN", "--",
-		"/opt/nova/bin/nova-friend", "run", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--redis", "store:6379", "--server", "127.0.0.1:6390", "--width", "4"}
+		"/opt/nova/bin/nova-friend", "run", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--redis", "store:6379", "--server", "127.0.0.1:6390"}
 	assert.Equal(t, want, a.Args())
 	p := a.Plist()
 	for i, arg := range want {
@@ -411,7 +412,7 @@ func TestNotificationBinaryPlanIsContentAddressedAndNativeBinaryIsSeparate(t *te
 // working root (DefaultDenySelf).
 func TestTheAgentCarriesDenySelfOnlyWhenSetAndTheDefaultIsTheSeatsWorkingRoot(t *testing.T) {
 	t.Parallel()
-	a := Agent{Friend: "bob", Harness: "claude", Dir: "/w", Binary: "/b/nova-friend", Redis: "r:1", Server: "s:2", Width: 4}
+	a := Agent{Friend: "bob", Harness: "claude", Dir: "/w", Binary: "/b/nova-friend", Redis: "r:1", Server: "s:2"}
 	assert.NotContains(t, a.Args(), "--deny-self")
 	a.DenySelf = "/seat/self,/vol/self"
 	args := a.Args()
@@ -432,7 +433,7 @@ func TestTheAgentCarriesDenySelfOnlyWhenSetAndTheDefaultIsTheSeatsWorkingRoot(t 
 // carries --deny-self, and the seat play's reinstall keeps it.
 func TestTheAgentCarriesWallReadsOnlyWhenSet(t *testing.T) {
 	t.Parallel()
-	a := Agent{Friend: "bob", Harness: "opencode", Dir: "/w", Binary: "/b/nova-friend", Redis: "r:1", Server: "s:2", Width: 4}
+	a := Agent{Friend: "bob", Harness: "opencode", Dir: "/w", Binary: "/b/nova-friend", Redis: "r:1", Server: "s:2"}
 	assert.NotContains(t, a.Args(), "--wall-reads")
 	a.WallReads = "/home/u/nova-bench/harness-v1.18.20"
 	args := a.Args()

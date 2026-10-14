@@ -18,9 +18,8 @@ import (
 // never started by the model (SPEC-FRIEND.md, the daemon).
 type Agent struct {
 	Friend, Harness, Dir, Session string
-	Adapter, DeliveryDir          string // explicit Codex folder route; session remains the real harness session
-	StateDir                      string // the daemon's state files, when not the default under Home
-	Width                         int
+	Adapter, DeliveryDir          string   // explicit Codex folder route; session remains the real harness session
+	StateDir                      string   // the daemon's state files, when not the default under Home
 	Binary                        string   // this tool, by absolute path
 	Copy                          CopyFile // places a removable-volume binary under Home; nil refuses it
 	Redis, Server                 string   // the bus store and the sprint server
@@ -93,7 +92,7 @@ func (a Agent) Args() []string {
 		}
 		args = append(args, "--")
 	}
-	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server, "--width", fmt.Sprint(a.Width))
+	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server)
 	if a.NotificationsOnly {
 		args = append(args, "--notifications-only")
 		if a.NotifyKinds != "" {
@@ -489,7 +488,7 @@ func daemonPart(args []string) []string {
 // secrets wrap by its names and seat, then the daemon's own flags, --redis
 // and --server left to the install line that gave them.
 func (a Agent) Said() string {
-	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d", a.Friend, a.Harness, a.Dir, a.Width)
+	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s", a.Friend, a.Harness, a.Dir)
 	if a.Adapter == "folder" {
 		said += " --session " + a.Session + " --adapter folder --delivery-dir " + a.DeliveryDir
 	}

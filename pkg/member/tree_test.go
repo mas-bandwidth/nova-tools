@@ -39,7 +39,7 @@ var (
 func treeRig(t *testing.T, pu Pusher, r Result) *rig {
 	t.Helper()
 	s, rn, out := newScript(), newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "m", Width: 2}, s, rn, pu, out), s: s, r: rn, out: out}
+	g := &rig{m: New(Config{As: "m"}, rowWidth(s, 2), rn, pu, out), s: s, r: rn, out: out}
 	p := pk("c1")
 	p.Brief = treeBrief
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))

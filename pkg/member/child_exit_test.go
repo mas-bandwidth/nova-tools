@@ -13,7 +13,7 @@ import (
 // before the finish carries --exit and --harness: the child's 134 was a bare no-result.
 func TestAChildThatExits134IsReportedWithItsExitAndHarness(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	p := pk("c1")
 	p.Gen = 2
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
@@ -31,7 +31,7 @@ func TestAChildThatExits134IsReportedWithItsExitAndHarness(t *testing.T) {
 // that needs no environment death named is unchanged.
 func TestAChildThatExitsZeroCarriesNoExitFlag(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
 	p := pk("c1")
@@ -55,7 +55,7 @@ func TestAChildThatExitsZeroCarriesNoExitFlag(t *testing.T) {
 // same finish again without them: the member refuses no flag its server lacks.
 func TestAMemberAheadOfItsServerSendsNoExitFlag(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	g.s.set("finish", 2, "nova-sprint finish: unknown flag --exit; run: nova-sprint help finish")
 	p := pk("c1")
 	p.Gen = 2

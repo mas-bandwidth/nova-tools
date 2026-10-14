@@ -14,7 +14,7 @@ import (
 // is the pass's own, given to each Tick.
 func TestTheMemberStampsProgressWhileTheChildPrints(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1})
+	g := newWidthRig(1, Config{As: "m"})
 	p := pk("c1")
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
 	g.s.set("take", 0, takeJSON(t, p))

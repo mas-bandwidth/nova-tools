@@ -316,6 +316,18 @@ func (s *laneSet) running() bool {
 	return false
 }
 
+// live is how many lanes run a card's turn now: the count a lane start is held under
+// (laneStep, tla/FriendLane.tla LanesStartNeverPastWidth).
+func (s *laneSet) live() int {
+	n := 0
+	for _, ln := range s.lanes {
+		if ln.t != nil {
+			n++
+		}
+	}
+	return n
+}
+
 // said is the lanes as the status says them: n:session:card/attempts, the
 // lanes beyond the width the row now gives marked retired, those beyond the
 // live cap a rate limit lowered marked capped, those beyond the width the
@@ -421,8 +433,10 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 // still shows it working. A world with no server keeps the local hand-back,
 // which another lane there picks up. While the lanes back off from a rate
 // limit, or are held out of funds, no lane starts a turn or an open
-// (ratelimit.go).
-// tla/Friend.tla LaneStart
+// (ratelimit.go). The width is the beat answer's on this step (row): raised, new
+// lanes open; lowered, running lanes finish their cards and none takes or starts
+// one until the running count is under it (docs/SPEC-SWARM.md, the width).
+// tla/Friend.tla LaneStart; tla/FriendLane.tla LanesStartNeverPastWidth, NoLaneKilledOnLower
 func (l *loop) laneStep(now time.Time, width int) {
 	s := l.lanes
 	d := l.d
@@ -556,6 +570,12 @@ func (l *loop) laneStep(now time.Time, width int) {
 				id, err := lh.OpenSession(LaneContext(l.ctx), seed)
 				queue(l.ctx, s.results, laneResult{ln: ln, open: true, session: id, err: err})
 			})
+			continue
+		}
+		if s.live() >= limit {
+			// a width lowered under running lanes kills none: they finish their cards, and
+			// no lane takes or starts one until the running count is under the width
+			// (tla/FriendLane.tla LanesStartNeverPastWidth, NoLaneKilledOnLower)
 			continue
 		}
 		if ln.card == nil {

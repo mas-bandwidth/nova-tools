@@ -42,7 +42,7 @@ func TestARunWithNoResultStillRecordsItsCost(t *testing.T) {
 	assert.Equal(t, "openrouter/m", u.Model)
 	assert.Empty(t, u.Actual, "the second attempt reported no cost: a part is not the whole, the sprint prices the tokens")
 
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	p := pk("c1")
 	p.Gen = 2
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
@@ -104,7 +104,7 @@ func TestAReadStillRecordsItsCost(t *testing.T) {
 	// Test read --ok
 	t.Run("read ok records usage", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "r", Width: 2, Reader: true})
+		g := newWidthRig(2, Config{As: "r", Reader: true})
 		r1 := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &r1)))
 		_, err := g.tick(t)
@@ -131,7 +131,7 @@ func TestAReadStillRecordsItsCost(t *testing.T) {
 	// Test read --return
 	t.Run("read return records usage", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "r", Width: 2, Reader: true})
+		g := newWidthRig(2, Config{As: "r", Reader: true})
 		r2 := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 		g.s.set("queue", 0, queueJSON(t, 7, reading("r2", &r2)))
 		_, err := g.tick(t)

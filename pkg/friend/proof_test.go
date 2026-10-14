@@ -144,7 +144,7 @@ func newProofRig(t *testing.T, headless bool) *proofRig {
 	}
 	beat := r.sc.BeatOr(up, down)
 	r.d = &Daemon{
-		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 1, Store: r.sc.DaemonStore(), Deliver: r.sc.Deliver, StepBeatForTests: true,
+		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Store: r.sc.DaemonStore(), Deliver: r.sc.Deliver, StepBeatForTests: true,
 		Now: r.step, Record: r.record, Proof: r.sc.Proof,
 		Sent:  func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.sent },
 		Pause: func(context.Context, time.Duration) { synctest.Wait() },

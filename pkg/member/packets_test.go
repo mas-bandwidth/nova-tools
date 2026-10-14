@@ -181,9 +181,10 @@ func workCard(i int, col string) queueCard {
 	return queueCard{ID: id, Table: "fleet", Row: "m", Col: col, Gen: 1, Attempt: 1, Packet: &p}
 }
 
-func packetRig(cfg Config, s *packetServer) *rig {
+func packetRig(width int, cfg Config, s *packetServer) *rig {
 	g := newRig(cfg)
-	g.m.sprint = s
+	g.m.sprint = rowWidth(s, width)
+	g.m.width = width // as a poll before this one answered
 	return g
 }
 
@@ -197,7 +198,7 @@ func TestAReaderAsksForThePacketsOfItsFreeLanesOnly(t *testing.T) {
 	for i := range 150 {
 		s.cards = append(s.cards, readCard(i))
 	}
-	g := packetRig(Config{As: "r", Width: 8, Reader: true}, s)
+	g := packetRig(8, Config{As: "r", Reader: true}, s)
 
 	_, err := g.tick(t)
 	require.NoError(t, err)
@@ -241,7 +242,7 @@ func TestAReadReturnedAMomentAgoTakesNoLaneOfTheAsk(t *testing.T) {
 	for i := range 6 {
 		s.cards = append(s.cards, readCard(i))
 	}
-	g := packetRig(Config{As: "r", Width: 2, Reader: true}, s)
+	g := packetRig(2, Config{As: "r", Reader: true}, s)
 	_, err := g.tick(t)
 	require.NoError(t, err)
 	require.Equal(t, []string{"p000.r1.r", "p001.r1.r"}, g.r.started())
@@ -279,7 +280,7 @@ func TestAReturnedReadIsAskedForAgainOnceItMayBeBegun(t *testing.T) {
 	t.Parallel()
 	s := &packetServer{epoch: 7}
 	s.cards = append(s.cards, readCard(0))
-	g := packetRig(Config{As: "r", Width: 1, Reader: true}, s)
+	g := packetRig(1, Config{As: "r", Reader: true}, s)
 	_, err := g.tickAt(t, 0)
 	require.NoError(t, err)
 	require.Equal(t, []string{"p000.r1.r"}, g.r.started())
@@ -314,7 +315,7 @@ func TestARestartedMemberAsksForItsWorkingCardsAndRecoversThem(t *testing.T) {
 	for i := 3; i < 8; i++ {
 		s.cards = append(s.cards, workCard(i, "ready"))
 	}
-	g := packetRig(Config{As: "m", Width: 4}, s)
+	g := packetRig(4, Config{As: "m"}, s)
 
 	_, err := g.tick(t)
 	require.NoError(t, err)
@@ -350,7 +351,7 @@ func TestAMovedClaimIsNoticedOnACardListedWithoutItsPacket(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			s := &packetServer{epoch: 7, cards: []queueCard{workCard(0, "working")}}
-			g := packetRig(Config{As: "m", Width: 2}, s)
+			g := packetRig(2, Config{As: "m"}, s)
 			_, err := g.tick(t)
 			require.NoError(t, err)
 			require.Equal(t, []string{"p000.w1"}, g.r.started())
@@ -390,7 +391,7 @@ func TestAMemberAheadOfItsServerAsksTheOldWay(t *testing.T) {
 	for i := range 20 {
 		s.cards = append(s.cards, readCard(i))
 	}
-	g := packetRig(Config{As: "r", Width: 8, Reader: true}, s)
+	g := packetRig(8, Config{As: "r", Reader: true}, s)
 	_, err := g.tick(t)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"queue --as r --json --packets 8", "queue --as r --json"}, s.queues())
@@ -410,7 +411,7 @@ func TestAReadersBeatAsksForNoPacket(t *testing.T) {
 	for i := range 20 {
 		s.cards = append(s.cards, readCard(i))
 	}
-	g := packetRig(Config{As: "r", Width: 2, Reader: true}, s)
+	g := packetRig(2, Config{As: "r", Reader: true}, s)
 	_, err := g.tick(t)
 	require.NoError(t, err)
 	s.forget()
@@ -425,7 +426,7 @@ func TestAReadersBeatCarriesItsNoRoom(t *testing.T) {
 	t.Parallel()
 	s := &packetServer{epoch: 7}
 	room, why := false, "free disk 0.0 GiB under the floor of 10 GiB"
-	g := packetRig(Config{As: "r", Width: 2, Reader: true, Room: func() (bool, string) { return room, why }}, s)
+	g := packetRig(2, Config{As: "r", Reader: true, Room: func() (bool, string) { return room, why }}, s)
 	s.forget()
 	require.NoError(t, g.m.Beat())
 	assert.Equal(t, []string{"queue --as r --json --packets 0"}, s.queues(), "no word before the first tick")
@@ -452,7 +453,7 @@ func TestAReadersBeatCarriesItsNoRoom(t *testing.T) {
 func TestADrainingReadersQueueSaysItDrains(t *testing.T) {
 	t.Parallel()
 	s := &packetServer{epoch: 7}
-	g := packetRig(Config{As: "r", Width: 2, Reader: true}, s)
+	g := packetRig(2, Config{As: "r", Reader: true}, s)
 	_, err := g.tick(t)
 	require.NoError(t, err)
 	assert.NotContains(t, s.queues()[0], "--draining", "a reader that reads says nothing of a drain")
