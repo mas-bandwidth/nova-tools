@@ -80,9 +80,8 @@ func TestTheSourceCarriesNoForbiddenShape(t *testing.T) {
 					continue
 				}
 				for i, l := range lines {
-					if tc.re.MatchString(l) && (tc.allowed == nil || !tc.allowed(l)) {
-						t.Errorf("%s:%d carries %s: %s", f, i+1, tc.why, strings.TrimSpace(l))
-					}
+					assert.False(t, tc.re.MatchString(l) && (tc.allowed == nil || !tc.allowed(l)),
+						"%s:%d carries %s: %s", f, i+1, tc.why, strings.TrimSpace(l))
 				}
 			}
 		})

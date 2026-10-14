@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -164,12 +163,8 @@ func TestTheCardEnvironmentFromSdkEnvShBeatsACallersPath(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
 	shadow := filepath.Join(filepath.Dir(b.bin), "shadow")
-	if err := os.MkdirAll(shadow, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(shadow, "go"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(shadow, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(shadow, "go"), []byte("#!/bin/sh\n"), 0o755))
 	b.h.reply("go", []string{"version"}, out("go version go1.20.0 linux/amd64\n"))
 	// Only the real go answers go1.26.5: the shadow's answer is the poisoned one.
 	b.h.first(func(s runSpec) bool {
@@ -179,14 +174,12 @@ func TestTheCardEnvironmentFromSdkEnvShBeatsACallersPath(t *testing.T) {
 	b.write("sdk/env.sh", "export PATH=...\n", false)
 	// Without the env file the shadow go is found first and the verdict is poisoned.
 	code, output := b.standard()
-	if code != 1 || !strings.Contains(output, "go1.20.0") {
-		t.Fatalf("control: the caller's shadow go did not decide the verdict without the env file (exit %d):\n%s", code, output)
-	}
+	require.True(t, code == 1 && strings.Contains(output, "go1.20.0"),
+		"control: the caller's shadow go did not decide the verdict without the env file (exit %d):\n%s", code, output)
 	b.h.sourced = map[string]string{"PATH": b.bin}
 	code, output = b.standard()
-	if code != 0 || strings.Contains(output, "go1.20.0") {
-		t.Errorf("the env file's PATH did not decide the verdict (exit %d):\n%s", code, output)
-	}
+	assert.True(t, code == 0 && !strings.Contains(output, "go1.20.0"),
+		"the env file's PATH did not decide the verdict (exit %d):\n%s", code, output)
 }
 
 func TestSourcedVariablesReachLaterChecks(t *testing.T) {
@@ -195,9 +188,8 @@ func TestSourcedVariablesReachLaterChecks(t *testing.T) {
 	b.unsetEnv("NOVA_SLOT_SHARE")
 	b.write("sdk/env.sh", "export NOVA_SLOT_SHARE=12\n", false)
 	b.h.sourced = map[string]string{"NOVA_SLOT_SHARE": "12", "PATH": b.bin}
-	if code, output := b.standard(); code != 0 {
-		t.Errorf("a slot share set by the sdk env file was not read (exit %d):\n%s", code, output)
-	}
+	code, output := b.standard()
+	assert.Equal(t, 0, code, "a slot share set by the sdk env file was not read (exit %d):\n%s", code, output)
 }
 
 func TestSbclRows(t *testing.T) {
@@ -207,9 +199,7 @@ func TestSbclRows(t *testing.T) {
 		b := conformingBench(t)
 		require.NoError(t, os.Remove(filepath.Join(b.bin, "sbcl")))
 		output := b.drift(t, "sbcl not on PATH")
-		if n := len(drifts(output)); n != 1 {
-			t.Errorf("an absent sbcl drew %d lines, want 1 (the pin rows wait for a present one):\n%s", n, output)
-		}
+		assert.Len(t, drifts(output), 1, "an absent sbcl drew lines (the pin rows wait for a present one):\n%s", output)
 	})
 	t.Run("the pin is a whole version", func(t *testing.T) {
 		t.Parallel()
@@ -218,67 +208,54 @@ func TestSbclRows(t *testing.T) {
 		b.drift(t, "sbcl version [SBCL 2.6.0.debian] want 2.5.8 (NOVA_SBCL)")
 		// 2.5.80 is not 2.5.8.
 		b.h.reply("sbcl", []string{"--version"}, out("SBCL 2.5.80\n"))
-		if code, output := b.standard(); code != 1 {
-			t.Errorf("2.5.80 passed the 2.5.8 pin:\n%s", output)
-		}
+		code, output := b.standard()
+		assert.Equal(t, 1, code, "2.5.80 passed the 2.5.8 pin:\n%s", output)
 	})
 	t.Run("NOVA_SBCL overrides the pin", func(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		b.h.reply("sbcl", []string{"--version"}, out("SBCL 2.6.0.debian\n"))
 		b.setEnv("NOVA_SBCL=2.6.0.debian")
-		if code, output := b.standard(); code != 0 {
-			t.Errorf("exit %d:\n%s", code, output)
-		}
+		code, output := b.standard()
+		assert.Equal(t, 0, code, "exit %d:\n%s", code, output)
 	})
 	t.Run("an sbcl outside sdk", func(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		elsewhere := filepath.Join(filepath.Dir(b.bin), "elsewhere")
-		if err := os.MkdirAll(elsewhere, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(elsewhere, 0o755))
 		real := filepath.Join(elsewhere, "sbcl")
-		if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755))
 		require.NoError(t, os.Remove(filepath.Join(b.bin, "sbcl")))
-		if err := os.Symlink(real, filepath.Join(b.bin, "sbcl")); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Symlink(real, filepath.Join(b.bin, "sbcl")))
 		code, output := b.standard()
-		if code != 1 || len(driftWith(output, "sbcl at ")) != 1 || !strings.Contains(output, "not under "+b.home+"/sdk (want "+b.home+"/sdk/sbcl-2.5.8/)") {
-			t.Errorf("exit %d:\n%s", code, output)
-		}
+		assert.True(t, code == 1 && len(driftWith(output, "sbcl at ")) == 1 &&
+			strings.Contains(output, "not under "+b.home+"/sdk (want "+b.home+"/sdk/sbcl-2.5.8/)"),
+			"exit %d:\n%s", code, output)
 	})
 }
 
 func TestProRungRows(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
-	if err := os.Remove(filepath.Join(b.home, "nova-bench", "rungs", "pro")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Remove(filepath.Join(b.home, "nova-bench", "rungs", "pro")))
 	b.drift(t, "pro rung missing (no executable NOVA_PRO_RUNG, no "+b.home+"/nova-bench/rungs/pro, no "+b.home+"/nova-bench/pro)")
 
 	// NOVA_PRO_RUNG naming an executable satisfies it.
 	b.setEnv("NOVA_PRO_RUNG=" + filepath.Join(b.home, "nova-bench", "harness-v1", "opencode"))
-	if code, output := b.standard(); code != 0 {
-		t.Errorf("an executable NOVA_PRO_RUNG still drifted:\n%s", output)
-	}
+	code, output := b.standard()
+	assert.Equal(t, 0, code, "an executable NOVA_PRO_RUNG still drifted:\n%s", output)
 	// So does the other directory.
 	b.unsetEnv("NOVA_PRO_RUNG")
 	b.mkdir("nova-bench", "pro")
-	if code, output := b.standard(); code != 0 {
-		t.Errorf("nova-bench/pro still drifted:\n%s", output)
-	}
+	code, output = b.standard()
+	assert.Equal(t, 0, code, "nova-bench/pro still drifted:\n%s", output)
 	// A rung file with no execute bit is not one.
 	b2 := conformingBench(t)
 	require.NoError(t, os.Remove(filepath.Join(b2.home, "nova-bench", "rungs", "pro")))
 	b2.setEnv("NOVA_PRO_RUNG=" + b2.write("rung", "x", false))
-	if code, _ := b2.standard(); code != 1 {
-		t.Errorf("a non-executable NOVA_PRO_RUNG satisfied the row")
-	}
+	code, _ = b2.standard()
+	assert.Equal(t, 1, code, "a non-executable NOVA_PRO_RUNG satisfied the row")
 }
 
 func TestSqliteRows(t *testing.T) {
@@ -296,9 +273,9 @@ func TestSqliteRows(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(b2.bin, "sqlite3")))
 	require.NoError(t, os.Symlink(real, filepath.Join(b2.bin, "sqlite3")))
 	code, output := b2.standard()
-	if code != 1 || len(driftWith(output, "sqlite3 at ")) != 1 || !strings.Contains(output, "not under "+b2.home+"/sdk (want "+b2.home+"/sdk/sqlite3-<ver>/bin/sqlite3)") {
-		t.Errorf("exit %d:\n%s", code, output)
-	}
+	assert.True(t, code == 1 && len(driftWith(output, "sqlite3 at ")) == 1 &&
+		strings.Contains(output, "not under "+b2.home+"/sdk (want "+b2.home+"/sdk/sqlite3-<ver>/bin/sqlite3)"),
+		"exit %d:\n%s", code, output)
 }
 
 func TestSlotShareRows(t *testing.T) {
@@ -312,9 +289,8 @@ func TestSlotShareRows(t *testing.T) {
 	}
 	for _, good := range []string{"1", "64", "512"} {
 		b.setEnv("NOVA_SLOT_SHARE=" + good)
-		if code, output := b.standard(); code != 0 {
-			t.Errorf("NOVA_SLOT_SHARE=%s drifted:\n%s", good, output)
-		}
+		code, output := b.standard()
+		assert.Equal(t, 0, code, "NOVA_SLOT_SHARE=%s drifted:\n%s", good, output)
 	}
 }
 
@@ -323,9 +299,8 @@ func TestHarnessRows(t *testing.T) {
 	b := conformingBench(t)
 	require.NoError(t, os.Remove(filepath.Join(b.home, "nova-bench", "harness-v1", "opencode")))
 	b.drift(t, "harness missing at "+b.home+"/nova-bench/harness-<ver>/opencode")
-	if len(sandboxRuns(b.h)) != 1 { // only the network probe; no canary without a harness
-		t.Errorf("the canary ran without a harness: %v", b.h.ran)
-	}
+	// Only the network probe runs; no canary without a harness.
+	assert.Len(t, sandboxRuns(b.h), 1, "the canary ran without a harness: %v", b.h.ran)
 
 	b2 := conformingBench(t)
 	b2.setEnv("NOVA_HARNESS=" + filepath.Join(b2.home, "no-such-harness"))
@@ -335,9 +310,8 @@ func TestHarnessRows(t *testing.T) {
 	b3 := conformingBench(t)
 	require.NoError(t, os.Remove(filepath.Join(b3.home, "nova-bench", "harness-v1", "opencode")))
 	b3.setEnv("NOVA_HARNESS=" + b3.write("nova-bench/mine/opencode", "x", true))
-	if code, output := b3.standard(); code != 0 {
-		t.Errorf("exit %d:\n%s", code, output)
-	}
+	code, output := b3.standard()
+	assert.Equal(t, 0, code, "exit %d:\n%s", code, output)
 }
 
 // A harness the wall refuses means every card would die at startup.
@@ -356,16 +330,10 @@ func TestHarnessCanaryDetectsSandboxWallDenial(t *testing.T) {
 			canary = c
 		}
 	}
-	if canary.name == "" {
-		t.Fatalf("no canary ran: %v", b.h.ran)
-	}
+	require.NotEmpty(t, canary.name, "no canary ran: %v", b.h.ran)
 	wantArgs := []string{"--read", filepath.Join(b.home, "nova-bench"), "--write", b.h.made[0], "--cwd", b.h.made[0], "--", opencode, "--help"}
-	if !reflect.DeepEqual(canary.args, wantArgs) {
-		t.Errorf("canary args %v, want %v", canary.args, wantArgs)
-	}
-	if lookupEnv(canary.env, "HOME") != filepath.Join(b.h.made[0], "home") {
-		t.Errorf("canary HOME = %q", lookupEnv(canary.env, "HOME"))
-	}
+	assert.Equal(t, wantArgs, canary.args)
+	assert.Equal(t, filepath.Join(b.h.made[0], "home"), lookupEnv(canary.env, "HOME"))
 }
 
 // sandboxRuns are the times the witness ran something INSIDE the wall: a
@@ -404,15 +372,10 @@ func TestHarnessCanaryAndNetworkProbeAreLinuxOnly(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
 	b.h.osName = "darwin"
-	if code, output := b.standard(); code != 0 {
-		t.Fatalf("exit %d:\n%s", code, output)
-	}
-	if n := len(sandboxRuns(b.h)); n != 0 {
-		t.Errorf("the wall probes ran on darwin: %v", b.h.ran)
-	}
-	if len(b.h.made) != 0 {
-		t.Errorf("scratch directories made on darwin: %v", b.h.made)
-	}
+	code, output := b.standard()
+	require.Equal(t, 0, code, "exit %d:\n%s", code, output)
+	assert.Empty(t, sandboxRuns(b.h), "the wall probes ran on darwin: %v", b.h.ran)
+	assert.Empty(t, b.h.made, "scratch directories made on darwin: %v", b.h.made)
 }
 
 func TestSandboxNetworkRows(t *testing.T) {
@@ -436,9 +399,7 @@ func TestSandboxNetworkRows(t *testing.T) {
 			probe(b, tc.res)
 			code, output := b.standard()
 			if tc.drift == "" {
-				if code != 0 {
-					t.Errorf("exit %d:\n%s", code, output)
-				}
+				assert.Equal(t, 0, code, "exit %d:\n%s", code, output)
 				return
 			}
 			wantOnlyDrift(t, code, output, tc.drift)
@@ -449,9 +410,7 @@ func TestSandboxNetworkRows(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		b.standard()
-		if n := len(b.h.calls("curl")); n != 0 {
-			t.Errorf("curl was run on the host %d times", n)
-		}
+		assert.Empty(t, b.h.calls("curl"), "curl was run on the host: %v", b.h.calls("curl"))
 		var args []string
 		for _, c := range sandboxRuns(b.h) {
 			if isProbe(c) {
@@ -460,9 +419,7 @@ func TestSandboxNetworkRows(t *testing.T) {
 		}
 		tail := args[len(args)-7:]
 		want := []string{filepath.Join(b.bin, "curl"), "-s", "-o", "/dev/null", "-w", "%{http_code}", "https://probe.invalid/api.json"}
-		if !reflect.DeepEqual(tail, want) {
-			t.Errorf("probe command %v, want %v", tail, want)
-		}
+		assert.Equal(t, want, tail, "probe command")
 	})
 
 	t.Run("the default URL", func(t *testing.T) {
@@ -476,9 +433,7 @@ func TestSandboxNetworkRows(t *testing.T) {
 				last = c.args
 			}
 		}
-		if got := last[len(last)-1]; got != "https://models.opencode.ai/api.json" {
-			t.Errorf("default URL %q", got)
-		}
+		assert.Equal(t, "https://models.opencode.ai/api.json", last[len(last)-1], "default URL")
 	})
 
 	t.Run("no sandbox binary", func(t *testing.T) {
@@ -486,12 +441,9 @@ func TestSandboxNetworkRows(t *testing.T) {
 		b := conformingBench(t)
 		require.NoError(t, os.Remove(filepath.Join(b.home, ".local", "bin", "nova-sandbox")))
 		code, output := b.standard()
-		if code != 1 || len(driftWith(output, "sandbox-network: "+filepath.Join(b.home, ".local/bin/nova-sandbox")+" not executable")) != 1 {
-			t.Errorf("exit %d:\n%s", code, output)
-		}
-		if len(b.h.made) != len(b.h.removed) {
-			t.Errorf("a scratch directory was left: made %v removed %v", b.h.made, b.h.removed)
-		}
+		assert.True(t, code == 1 && len(driftWith(output, "sandbox-network: "+filepath.Join(b.home, ".local/bin/nova-sandbox")+" not executable")) == 1,
+			"exit %d:\n%s", code, output)
+		assert.Len(t, b.h.removed, len(b.h.made), "a scratch directory was left: made %v removed %v", b.h.made, b.h.removed)
 	})
 
 	t.Run("no probe directory can be made", func(t *testing.T) {
@@ -499,9 +451,7 @@ func TestSandboxNetworkRows(t *testing.T) {
 		b := conformingBench(t)
 		require.NoError(t, os.RemoveAll(filepath.Join(b.home, "nova-bench")))
 		_, output := b.standard()
-		if len(driftWith(output, "sandbox-network: cannot make probe dir under "+b.home+"/nova-bench")) != 1 {
-			t.Errorf("\n%s", output)
-		}
+		assert.Len(t, driftWith(output, "sandbox-network: cannot make probe dir under "+b.home+"/nova-bench"), 1, "\n%s", output)
 	})
 }
 
@@ -530,9 +480,8 @@ func TestNovaBinRows(t *testing.T) {
 		b := conformingBench(t)
 		b.h.reply("nova-check", []string{"version"}, runResult{stderr: "unknown verb\n", code: 2})
 		b.h.reply("nova-check", []string{"--version"}, out(benchWant+"\n"))
-		if code, output := b.standard(); code != 0 {
-			t.Errorf("exit %d:\n%s", code, output)
-		}
+		code, output := b.standard()
+		assert.Equal(t, 0, code, "exit %d:\n%s", code, output)
 		b.h.reply("nova-check", []string{"--version"}, out("nova-check 1.0\n"))
 		b.drift(t, "nova-check version [nova-check 1.0] want "+benchWant)
 	})
@@ -558,9 +507,7 @@ func TestPlaintextKeyRows(t *testing.T) {
 		bad := b.write(".config/opencode/opencode.json", `{"apiKey": "sk-abc"}`, false)
 		b.write(".config/opencode/other.json", `{"apiKey": "{env:KEY}"}`, false)
 		output := b.drift(t, "plaintext apiKey in "+bad)
-		if n := len(drifts(output)); n != 1 {
-			t.Errorf("%d findings, want only the literal key:\n%s", n, output)
-		}
+		assert.Len(t, drifts(output), 1, "want only the literal key:\n%s", output)
 	})
 }
 
@@ -570,9 +517,7 @@ func TestDiskHeadroomDriftsAndNamesTheThreeLargest(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		code, output := b.standard()
-		if code != 0 || len(driftWith(output, "disk")) != 0 {
-			t.Errorf("a bench with 400G free drifted:\n%s", output)
-		}
+		assert.True(t, code == 0 && len(driftWith(output, "disk")) == 0, "a bench with 400G free drifted:\n%s", output)
 	})
 	t.Run("under the floor", func(t *testing.T) {
 		t.Parallel()
@@ -589,18 +534,12 @@ func TestDiskHeadroomDriftsAndNamesTheThreeLargest(t *testing.T) {
 				"2097152\t"+filepath.Join(b.home, "huge")+"\n"))
 		code, output := b.standard()
 		lines := driftWith(output, "disk")
-		if code != 1 || len(lines) != 1 {
-			t.Fatalf("exit %d, %d disk lines:\n%s", code, len(lines), output)
-		}
+		require.True(t, code == 1 && len(lines) == 1, "exit %d, %d disk lines:\n%s", code, len(lines), output)
 		want := "DRIFT disk free=3G want>=25G (both launchers refuse below it); largest under " + b.home + ": " +
 			filepath.Join(b.home, "huge") + " 2G; " + filepath.Join(b.home, "big") + " 600M; " + filepath.Join(b.home, "medium") + " 300K"
 		// The walk sorts by size: huge 2G, big 600M, medium 300K, and never small.
-		if lines[0] != want {
-			t.Errorf("disk line\n got %s\nwant %s", lines[0], want)
-		}
-		if strings.Contains(lines[0], "small") {
-			t.Errorf("more than the three largest:\n%s", lines[0])
-		}
+		assert.Equal(t, want, lines[0], "disk line")
+		assert.NotContains(t, lines[0], "small", "more than the three largest:\n%s", lines[0])
 	})
 	t.Run("nothing readable", func(t *testing.T) {
 		t.Parallel()
@@ -608,23 +547,18 @@ func TestDiskHeadroomDriftsAndNamesTheThreeLargest(t *testing.T) {
 		b.h.reply("df", []string{"-Pk"}, out(dfTable(3)))
 		_, output := b.standard()
 		want := "DRIFT disk free=3G want>=25G (both launchers refuse below it); largest under " + b.home + ": nothing readable under " + b.home
-		if got := driftWith(output, "disk"); len(got) != 1 || got[0] != want {
-			t.Errorf("got %v\nwant %s", got, want)
-		}
+		assert.Equal(t, []string{want}, driftWith(output, "disk"))
 	})
 	t.Run("df is asked in the one POSIX spelling", func(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		b.standard()
 		dfs := b.h.calls("df")
-		if len(dfs) != 1 || !reflect.DeepEqual(dfs[0].args, []string{"-Pk", b.home}) {
-			t.Errorf("df was run as %v, want one `-Pk $HOME`", dfs)
-		}
+		require.Len(t, dfs, 1, "df was run as %v, want one `-Pk $HOME`", dfs)
+		require.Equal(t, []string{"-Pk", b.home}, dfs[0].args, "df was run as %v, want one `-Pk $HOME`", dfs)
 		for _, d := range dfs {
 			for _, a := range d.args {
-				if strings.Contains(a, "BG") {
-					t.Errorf("a GNU-only df spelling: %v", d.args)
-				}
+				assert.NotContains(t, a, "BG", "a GNU-only df spelling: %v", d.args)
 			}
 		}
 	})
@@ -632,9 +566,7 @@ func TestDiskHeadroomDriftsAndNamesTheThreeLargest(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		b.standard()
-		if n := len(b.h.calls("du")); n != 0 {
-			t.Errorf("du ran %d times on a bench with room", n)
-		}
+		assert.Empty(t, b.h.calls("du"), "du ran on a bench with room: %v", b.h.calls("du"))
 	})
 	t.Run("unreadable free space", func(t *testing.T) {
 		t.Parallel()
@@ -659,14 +591,11 @@ func TestDiskHeadroomDriftsAndNamesTheThreeLargest(t *testing.T) {
 		b.h.reply("df", []string{"-Pk"}, out(dfTable(30)))
 		b.setEnv("NOVA_MIN_FREE_G=40")
 		code, output := b.standard()
-		if code != 1 || len(driftWith(output, "disk free=30G want>=40G")) != 1 {
-			t.Errorf("exit %d:\n%s", code, output)
-		}
+		assert.True(t, code == 1 && len(driftWith(output, "disk free=30G want>=40G")) == 1, "exit %d:\n%s", code, output)
 		b.setEnv("NOVA_MIN_FREE_G=0")
 		b.h.reply("df", []string{"-Pk"}, out(dfTable(0)))
-		if code, output = b.standard(); code != 0 {
-			t.Errorf("a floor of 0 still drifted:\n%s", output)
-		}
+		code, output = b.standard()
+		assert.Equal(t, 0, code, "a floor of 0 still drifted:\n%s", output)
 	})
 	t.Run("a floor that is not a number is refused", func(t *testing.T) {
 		t.Parallel()
@@ -678,13 +607,11 @@ func TestDiskHeadroomDriftsAndNamesTheThreeLargest(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		b.h.reply("df", []string{"-Pk"}, out(dfTable(25)))
-		if code, output := b.standard(); code != 0 {
-			t.Errorf("25G free against a 25G floor drifted:\n%s", output)
-		}
+		code, output := b.standard()
+		assert.Equal(t, 0, code, "25G free against a 25G floor drifted:\n%s", output)
 		b.h.reply("df", []string{"-Pk"}, out("Filesystem\n/dev/x 1 1 "+"26214399"+" 1% /\n"))
-		if code, _ := b.standard(); code != 1 {
-			t.Errorf("one KiB under 25G passed")
-		}
+		code, _ = b.standard()
+		assert.Equal(t, 1, code, "one KiB under 25G passed")
 	})
 }
 
@@ -699,10 +626,6 @@ func TestTheSdkEnvFilesErrorsAreShown(t *testing.T) {
 	b.h.sourceSaid = "sdk/env.sh: line 2: nosuch: command not found\n"
 	var stdout, stderr bytes.Buffer
 	code := run(nil, env{stdout: &stdout, stderr: &stderr, h: b.h, exeDir: t.TempDir(), cwd: t.TempDir(), systemDir: t.TempDir()})
-	if code != 0 {
-		t.Errorf("exit %d, want 0 (the env file set PATH):\n%s", code, stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "nosuch: command not found") {
-		t.Errorf("the env file's error was not shown on stderr: %q", stderr.String())
-	}
+	assert.Equal(t, 0, code, "want 0 (the env file set PATH):\n%s", stdout.String())
+	assert.Contains(t, stderr.String(), "nosuch: command not found", "the env file's error was not shown on stderr: %q", stderr.String())
 }

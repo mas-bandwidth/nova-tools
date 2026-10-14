@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The tests drive the witness against a fake bench: a real directory tree under
@@ -158,9 +161,7 @@ func dfTable(gb int) string {
 func (b *bench) mkdir(rel ...string) string {
 	b.t.Helper()
 	p := filepath.Join(append([]string{b.home}, rel...)...)
-	if err := os.MkdirAll(p, 0o755); err != nil {
-		b.t.Fatal(err)
-	}
+	require.NoError(b.t, os.MkdirAll(p, 0o755))
 	return p
 }
 
@@ -168,16 +169,12 @@ func (b *bench) mkdir(rel ...string) string {
 func (b *bench) write(rel string, body string, exec bool) string {
 	b.t.Helper()
 	p := filepath.Join(b.home, rel)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		b.t.Fatal(err)
-	}
+	require.NoError(b.t, os.MkdirAll(filepath.Dir(p), 0o755))
 	mode := os.FileMode(0o644)
 	if exec {
 		mode = 0o755
 	}
-	if err := os.WriteFile(p, []byte(body), mode); err != nil {
-		b.t.Fatal(err)
-	}
+	require.NoError(b.t, os.WriteFile(p, []byte(body), mode))
 	return p
 }
 
@@ -186,9 +183,7 @@ func (b *bench) write(rel string, body string, exec bool) string {
 func (b *bench) stub(name string) string {
 	b.t.Helper()
 	p := filepath.Join(b.bin, name)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		b.t.Fatal(err)
-	}
+	require.NoError(b.t, os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755))
 	return p
 }
 
@@ -198,9 +193,7 @@ func (b *bench) sdkTool(name, ver string) string {
 	b.t.Helper()
 	real := b.write(filepath.Join("sdk", name+"-"+ver, "bin", name), "#!/bin/sh\n", true)
 	_ = os.Remove(filepath.Join(b.bin, name))
-	if err := os.Symlink(real, filepath.Join(b.bin, name)); err != nil {
-		b.t.Fatal(err)
-	}
+	require.NoError(b.t, os.Symlink(real, filepath.Join(b.bin, name)))
 	return real
 }
 
@@ -228,9 +221,7 @@ func emptyBench(t *testing.T) *bench {
 	root := t.TempDir()
 	b := &bench{t: t, home: filepath.Join(root, "home"), bin: filepath.Join(root, "bin")}
 	for _, d := range []string{b.home, b.bin} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
 	b.h = &fakeHost{
 		osName: "linux",
@@ -316,19 +307,11 @@ func driftWith(output, prefix string) []string {
 // starts with prefix (after "DRIFT ").
 func wantOnlyDrift(t *testing.T, code int, output, prefix string) {
 	t.Helper()
-	if code != 1 {
-		t.Errorf("exit %d, want 1:\n%s", code, output)
-	}
+	assert.Equal(t, 1, code, "exit, want 1:\n%s", output)
 	got := drifts(output)
-	if len(got) == 0 {
-		t.Fatalf("no DRIFT line, want one starting %q:\n%s", prefix, output)
-	}
+	require.NotEmpty(t, got, "no DRIFT line, want one starting %q:\n%s", prefix, output)
 	for _, l := range got {
-		if !strings.HasPrefix(l, "DRIFT "+prefix) {
-			t.Errorf("a DRIFT line that is not %q:\n%s", prefix, l)
-		}
+		assert.True(t, strings.HasPrefix(l, "DRIFT "+prefix), "a DRIFT line that is not %q:\n%s", prefix, l)
 	}
-	if !strings.Contains(output, "STANDARD DRIFT (see lines above)") {
-		t.Errorf("no STANDARD DRIFT verdict:\n%s", output)
-	}
+	assert.Contains(t, output, "STANDARD DRIFT (see lines above)", "no STANDARD DRIFT verdict:\n%s", output)
 }
