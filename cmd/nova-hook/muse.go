@@ -19,9 +19,21 @@ import (
 // Muse CLI's approve spelling (plugin-id:kind:capability-id).
 const museApproveTarget = "nova-hook:hook:pending-challenges"
 
-// museWakeNote is what --harness Muse can say about waking: wake_delay is a
-// per-Monitor setting with no persistent store, so nothing else is applied.
-const museWakeNote = "wake_delay has no persistent store: pass wake_delay_ms=0 on each Monitor call for this friend"
+// museWakeNote is what --harness Muse must say about waking. Muse has
+// no persistent wake_delay store (evidence in the bundle README), so the
+// adapter installs nothing for wake and instead spells out both Monitor
+// calls the friend's session must start with wake_delay_ms=0.
+func museWakeNote(as, role string) string {
+	if as == "" {
+		as = "<name>"
+	}
+	if role == "" {
+		role = "<role>"
+	}
+	return "wake_delay_ms has no persistent store in Muse, so nothing is stored: start both Monitors with wake_delay_ms=0: " +
+		"Monitor(command=\"nova-hook hook --as " + as + " --role " + role + " --harness Muse\", wake_delay_ms=0) and " +
+		"Monitor(command=\"nova-bus recv --as " + as + " --forever --exec '<deliver-into-session>'\", wake_delay_ms=0)"
+}
 
 type museRoute struct {
 	bundle, bin string
@@ -80,7 +92,7 @@ func (w world) museInstall(c *tool.Call, r *museRoute) *tool.Out {
 			return o
 		}
 	}
-	line(c, tool.Done().As("STATE").Fact("state", "muse-installed").Fact("plugin", "nova-hook").Fact("capability", museApproveTarget).Note(museWakeNote))
+	line(c, tool.Done().As("STATE").Fact("state", "muse-installed").Fact("plugin", "nova-hook").Fact("capability", museApproveTarget).Note(museWakeNote(c.Str("as"), c.Str("role"))))
 	return nil
 }
 
