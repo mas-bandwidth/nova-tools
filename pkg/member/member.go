@@ -319,6 +319,12 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// provider's reason, never the shape's; the sprint deals the card again. A refused
 		// push above, and a shaped result below (nothing, not done), are the card's own
 		return FinishFailed, EndProvider + ": " + r.Provider
+	case r.End == EndProvider && r.Provider != "" && strings.Contains(r.Provider, "class=rate-limited") && pu.Sha == "":
+		// the provider rate limited the take and no head was pushed: report as provider
+		// failure whatever the shape, so a 429 never reaches the sprint as failed work; a
+		// shaped result that pushed a head stays the card's own (the sprint returns the card
+		// unspent: a-rate-limited-refusal-never-fails-the-cardc; nova-sprint tla/RateBackoff.tla)
+		return FinishFailed, EndProvider + ": " + r.Provider
 	case !r.Shaped && r.End == "":
 		// the child ended by itself and left no result: no work came back, and the sprint
 		// deals the card again on another route (cardhdr.EndNoResult). A run its budget or
@@ -2655,16 +2661,20 @@ func finishReport(r Result, pu Push, branch string) (fin Finish, why, report str
 // (docs/SPEC-CARD-CONTRACT.md section 4, "recut-widen-r.w1"): PATHS-PROPOSED: <glob>[,<glob>...].
 const ProposedKey = "PATHS-PROPOSED:"
 
-// PathsProposed is the globs of the first PATHS-PROPOSED line in text, read to the end of its
+// PathsProposed is the globs of the last PATHS-PROPOSED line in text, read to the end of its
 // line or a ";", empty ones left out: the paths alone, read before any prose on that line.
 // Each comma-separated item is its first word, trimmed of quotes, emphasis and a closing
 // full stop; an item with words after its first ends the paths ("b.go, c.go because the
-// test needs it" is b.go and c.go). ok is false when text has no such line.
+// test needs it" is b.go and c.go). The last line, not the first: a report cut to a cap
+// may hold a fragment of the line, and the whole line the finish carries is appended after
+// it (CarryProposed; friendcards.go's friendFinish), so the last one is the whole one. ok
+// is false when text has no such line.
 func PathsProposed(text string) (globs []string, ok bool) {
-	_, rest, ok := strings.Cut(text, ProposedKey)
-	if !ok {
+	i := strings.LastIndex(text, ProposedKey)
+	if i < 0 {
 		return nil, false
 	}
+	rest := text[i+len(ProposedKey):]
 	rest, _, _ = strings.Cut(rest, "\n")
 	rest, _, _ = strings.Cut(rest, ";")
 	for _, item := range strings.Split(rest, ",") {
@@ -2683,40 +2693,73 @@ func PathsProposed(text string) (globs []string, ok bool) {
 }
 
 // CarryProposed is a finish's report with the child's PATHS-PROPOSED line, read from its
-// report and else its body, kept at the report's end within the 500-byte cut, so brief
-// --widen reads it off the card (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1"); the
-// report as it is when the child proposed nothing or the report holds the line already.
+// report and else its body, kept at the report's end, so brief --widen reads it off the
+// card (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1"); the report as it is when the
+// child proposed nothing. A report that already carries a (possibly cut) line has it
+// dropped: the whole line is the only one a reader meets, so the cut never cuts a path.
+// The report is cut to the 500-byte bound oneLine keeps, never the line itself: a line
+// that fills the bound is kept whole.
 func CarryProposed(report string, r Result) string {
 	globs, ok := PathsProposed(r.Report)
 	if !ok {
 		globs, ok = PathsProposed(r.Body)
 	}
-	if _, has := PathsProposed(report); !ok || has || len(globs) == 0 {
+	if !ok || len(globs) == 0 {
 		return report
 	}
-	line := cut("; " + ProposedKey + " " + strings.Join(globs, ","))
+	if i := strings.Index(report, ProposedKey); i >= 0 {
+		report = strings.TrimRight(report[:i], " \t;")
+	}
+	line := "; " + ProposedKey + " " + strings.Join(globs, ",")
+	if len(line) >= 500 {
+		return line // the line alone fills the cut: kept whole, never cut mid-path
+	}
 	return report[:min(len(report), 500-len(line))] + line
 }
 
-// Carry is where a card's next attempt starts when brief --widen widens it in place, or a
-// rule's twin's first: the held card, its attempt and the head that attempt pushed, written
-// into the brief header as its CARRY: line (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1").
+// Carry is where a card's next attempt starts when brief --widen widens it in place, a
+// rule's twin's first, or a card that finishes an open pull request is admitted: the held
+// card, its attempt and the head that attempt pushed, or the PR's branch and head, written
+// into the brief header as its CARRY: line (docs/SPEC-SPRINT.md section 2,
+// "recut-widen-r.w1"). Attempt is 0 for a finish-PR card, whose head is the PR's own, no
+// attempt of this card's.
 type Carry struct {
 	Card    string
 	Attempt int
 	Head    string
+	// Branch is the PR branch a finish-PR card's head was pushed to, when its CARRY: line
+	// names one; "" for a widen, whose head is already the card's own work branch.
+	Branch string
 }
 
 // CarryKey begins a brief's CARRY: line.
 const CarryKey = "CARRY:"
 
-// CarryLine is c as its brief header line: CARRY: <card> attempt <n> head=<sha>.
+// CarryLine is c as its brief header line. A widen's reads
+// `CARRY: <card> attempt <n> head=<sha>`; a finish-PR card's, with no attempt, reads
+// `CARRY: head=<sha>` (and ` branch=<pr branch>` when the line names it).
 func CarryLine(c Carry) string {
-	return fmt.Sprintf("%s %s attempt %d head=%s", CarryKey, c.Card, c.Attempt, c.Head)
+	var fields []string
+	if c.Card != "" {
+		fields = append(fields, c.Card)
+	}
+	if c.Attempt > 0 {
+		fields = append(fields, fmt.Sprintf("attempt %d", c.Attempt))
+	}
+	if c.Head != "" {
+		fields = append(fields, "head="+c.Head)
+	}
+	if c.Branch != "" {
+		fields = append(fields, "branch="+c.Branch)
+	}
+	return CarryKey + " " + strings.Join(fields, " ")
 }
 
 // CarryOf is the CARRY: line of a brief's header (line 1 and the lines after it up to the
-// first blank one), ok only with a card, an attempt and a full sha.
+// first blank one). It reads both shapes: a widen's `<card> attempt <n> head=<sha>` (ok
+// only with a card, a positive attempt and a full sha) and a finish-PR card's
+// `head=<sha> [branch=<pr branch>]` (ok with a full sha and no attempt), so `add` and
+// `brief` stage the slot from the head the line names.
 func CarryOf(brief string) (c Carry, ok bool) {
 	for i, l := range strings.Split(brief, "\n") {
 		l = strings.TrimSpace(l)
@@ -2727,12 +2770,28 @@ func CarryOf(brief string) (c Carry, ok bool) {
 		if !found {
 			continue
 		}
-		if n, err := fmt.Sscanf(strings.TrimSpace(rest), "%s attempt %d head=%s", &c.Card, &c.Attempt, &c.Head); err != nil || n != 3 {
-			return Carry{}, false
-		}
-		return c, c.Attempt > 0 && typedrec.IsFullSha(c.Head)
+		return parseCarry(strings.TrimSpace(rest))
 	}
 	return Carry{}, false
+}
+
+// parseCarry reads a CARRY: line's fields, the widen shape first.
+func parseCarry(rest string) (c Carry, ok bool) {
+	if n, err := fmt.Sscanf(rest, "%s attempt %d head=%s", &c.Card, &c.Attempt, &c.Head); err == nil && n == 3 {
+		return c, c.Attempt > 0 && typedrec.IsFullSha(c.Head)
+	}
+	var gotHead bool
+	for _, field := range strings.Fields(rest) {
+		switch {
+		case strings.HasPrefix(field, "head="):
+			c.Head, gotHead = strings.TrimPrefix(field, "head="), true
+		case strings.HasPrefix(field, "branch="):
+			c.Branch = strings.TrimPrefix(field, "branch=")
+		case strings.HasPrefix(field, "attempt="):
+			c.Attempt, _ = strconv.Atoi(strings.TrimPrefix(field, "attempt="))
+		}
+	}
+	return c, gotHead && typedrec.IsFullSha(c.Head)
 }
 
 // Carried is a work packet as the member stages it: one with no pushed head of its own
