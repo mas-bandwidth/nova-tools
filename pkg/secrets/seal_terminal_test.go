@@ -6,53 +6,28 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
-type terminalFakeClock struct {
-	mu         sync.Mutex
-	current    time.Time
-	sleepCalls int
-	slept      time.Duration
-}
-
-func newTerminalFakeClock(start time.Time) *terminalFakeClock {
-	return &terminalFakeClock{current: start}
-}
-
-func (fc *terminalFakeClock) Now() time.Time {
-	fc.mu.Lock()
-	defer fc.mu.Unlock()
-	return fc.current
-}
-
-func (fc *terminalFakeClock) Sleep(d time.Duration) {
-	fc.mu.Lock()
-	defer fc.mu.Unlock()
-	fc.sleepCalls++
-	fc.slept += d
-	fc.current = fc.current.Add(d)
-}
-
-func (fc *terminalFakeClock) stats() (int, time.Duration) {
-	fc.mu.Lock()
-	defer fc.mu.Unlock()
-	return fc.sleepCalls, fc.slept
-}
-
-func newTerminalTestOptions(t *testing.T, secretValue string, clock *terminalFakeClock, ghViewHandler func() ([]byte, error)) SealOptions {
+// newTerminalTestOptions wires a clockwork fake clock into the options: Now is
+// the fake's, and Sleep is synchronous (clockwork's own Sleep blocks until an
+// Advance, but RunSeal sleeps synchronously), advancing the fake and recording
+// the sleeps so the assertions below can hold the poll count to a number.
+func newTerminalTestOptions(t *testing.T, secretValue string, clock *clockwork.FakeClock, ghViewHandler func() ([]byte, error)) (SealOptions, func() (int, time.Duration)) {
 	t.Helper()
 	f := newSealFixture(t, "TARGET: old\n")
 	opts := f.options(t, "TARGET", secretValue+"\n", false)
+	var sleepCalls int
+	var slept time.Duration
 	opts.Now = clock.Now
-	opts.Sleep = clock.Sleep
+	opts.Sleep = func(d time.Duration) { sleepCalls++; slept += d; clock.Advance(d) }
 	opts.Exec = func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
 		cmdName := filepath.Base(name)
 		if cmdName == "sops" || name == opts.SopsPath {
@@ -83,7 +58,7 @@ func newTerminalTestOptions(t *testing.T, secretValue string, clock *terminalFak
 		}
 		return realExecCommand(stdin, env, dir, name, args...)
 	}
-	return opts
+	return opts, func() (int, time.Duration) { return sleepCalls, slept }
 }
 
 // TestSealStopsOnTerminalReviewState asserts that terminal review states stop
@@ -136,14 +111,14 @@ func TestSealStopsOnTerminalReviewState(t *testing.T) {
 	for _, tc := range terminalCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			clock := newTerminalFakeClock(startTime)
-			opts := newTerminalTestOptions(t, secretValue, clock, tc.handler)
+			clock := clockwork.NewFakeClockAt(startTime)
+			opts, stats := newTerminalTestOptions(t, secretValue, clock, tc.handler)
 
 			line, err := RunSeal(opts)
 			require.Error(t, err, "terminal state %s must return an error", tc.name)
 			assert.Empty(t, line, "terminal state must not return an OK line")
 
-			sleepCalls, slept := clock.stats()
+			sleepCalls, slept := stats()
 			assert.Equal(t, 0, sleepCalls, "terminal state %s must stop immediately without sleeping", tc.name)
 			assert.Equal(t, time.Duration(0), slept, "terminal state %s must stop immediately without advancing clock", tc.name)
 
@@ -156,8 +131,8 @@ func TestSealStopsOnTerminalReviewState(t *testing.T) {
 
 	t.Run("PENDING review polls to deadline", func(t *testing.T) {
 		t.Parallel()
-		clock := newTerminalFakeClock(startTime)
-		opts := newTerminalTestOptions(t, secretValue, clock, func() ([]byte, error) {
+		clock := clockwork.NewFakeClockAt(startTime)
+		opts, stats := newTerminalTestOptions(t, secretValue, clock, func() ([]byte, error) {
 			return []byte(`{"state":"OPEN","reviewDecision":"REVIEW_REQUIRED","statusCheckRollup":[]}`), nil
 		})
 
@@ -166,15 +141,15 @@ func TestSealStopsOnTerminalReviewState(t *testing.T) {
 		assert.Contains(t, line, "open (gate not yet approved)", "pending review must report open line: %q", line)
 		assert.False(t, strings.Contains(line, secretValue), "OK line must not leak secret value")
 
-		sleepCalls, slept := clock.stats()
+		sleepCalls, slept := stats()
 		assert.Greater(t, sleepCalls, 0, "pending review must poll")
 		assert.GreaterOrEqual(t, slept, 2*time.Minute, "pending review must poll to the bounded deadline")
 	})
 
 	t.Run("APPROVED merges without waiting", func(t *testing.T) {
 		t.Parallel()
-		clock := newTerminalFakeClock(startTime)
-		opts := newTerminalTestOptions(t, secretValue, clock, func() ([]byte, error) {
+		clock := clockwork.NewFakeClockAt(startTime)
+		opts, stats := newTerminalTestOptions(t, secretValue, clock, func() ([]byte, error) {
 			return []byte(`{"state":"OPEN","reviewDecision":"APPROVED","statusCheckRollup":[]}`), nil
 		})
 
@@ -183,7 +158,7 @@ func TestSealStopsOnTerminalReviewState(t *testing.T) {
 		assert.Contains(t, line, "merged", "approved review must report merged: %q", line)
 		assert.False(t, strings.Contains(line, secretValue), "merged line must not leak secret value")
 
-		sleepCalls, slept := clock.stats()
+		sleepCalls, slept := stats()
 		assert.Equal(t, 0, sleepCalls, "approved review must merge immediately without polling")
 		assert.Equal(t, time.Duration(0), slept, "approved review must not wait")
 	})

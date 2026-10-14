@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,12 +27,12 @@ type fakeBench struct {
 	stageCode     int
 	stageErr      string
 	copyErr       error
-	clock         *fakeClock
+	clock         *clockwork.FakeClock
 }
 
 func (f *fakeBench) Shell(_ context.Context, _, line string, stdout, stderr io.Writer) (int, error) {
 	f.lines = append(f.lines, line)
-	f.clock.tick(time.Second)
+	f.clock.Advance(time.Second)
 	switch {
 	case strings.HasPrefix(line, "mkdir -p "):
 		_, _ = io.WriteString(stdout, testRun+"\n") // ignored: a bytes.Buffer's write
@@ -45,21 +46,17 @@ func (f *fakeBench) Shell(_ context.Context, _, line string, stdout, stderr io.W
 
 func (f *fakeBench) Copy(_ context.Context, host, src, dst string, _ bool, stderr io.Writer) error {
 	f.copies = append(f.copies, host+" "+src+" -> "+dst)
-	f.clock.tick(2 * time.Second)
+	f.clock.Advance(2 * time.Second)
 	if f.copyErr != nil {
 		_, _ = io.WriteString(stderr, "tar: Unexpected EOF in archive\ntar: Error is not recoverable: exiting now\n") // ignored: a bytes.Buffer's write
 	}
 	return f.copyErr
 }
 
-// fakeClock is a run's clock that moves only when told.
-type fakeClock struct{ t time.Time }
+func newClock() *clockwork.FakeClock { return clockwork.NewFakeClockAt(time.Unix(1_800_000_000, 0)) }
 
-func (c *fakeClock) now() time.Time       { return c.t }
-func (c *fakeClock) tick(d time.Duration) { c.t = c.t.Add(d) }
-func newClock() *fakeClock                { return &fakeClock{t: time.Unix(1_800_000_000, 0)} }
 func (f *fakeBench) opts(st *MirrorStage) Options {
-	return Options{Hosts: []string{"vision"}, Stage: st, Argv: []string{"go", "build", "./..."}, Now: f.clock.now}
+	return Options{Hosts: []string{"vision"}, Stage: st, Argv: []string{"go", "build", "./..."}, Now: f.clock.Now}
 }
 
 func testStage() *MirrorStage {
