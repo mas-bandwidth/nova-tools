@@ -980,6 +980,16 @@ Every `key=value` field is escaped by the shared `pkg/oneline` helper so a field
 token; the free-text tail after `: ` is never scanned for fields. Nothing a file holds and no
 caller argument can author a second line.
 
+**Every verb takes `--json`**, `help` and `version` aside (STANDARD §2, one output structure,
+two renderings). One JSON object goes on stdout and nothing else: the `result` (verb, status,
+exit, and on a refusal its reason and remedy), the first line's fields as `facts`, later lines
+as `notes`. A refusal asked for as `--json` is that object too, the flag refusals included, so
+`nova-secrets check --json` with no other flag is `check`'s own refusal and not the parser's
+unknown-flag line. The object carries no value, no fragment of a value and no length, because
+`--json` renders exactly the value the lines render and the lines never carry one; `exec --json`
+describes the launch only (the names passed and the child's exit), never the child's own output.
+`names --json` is the same object built from `NamesReport` in `names.go`.
+
 ```
 SECRETS REFUSED: <reason>; run: nova-secrets help
 SECRETS <VERB> REFUSED: <reason>; run: <remedy>

@@ -3195,6 +3195,11 @@ Stores encrypted credentials for named seats and delivers selected values to a
 child command. Use `nova-secrets help` for store setup, checks and `exec`; the
 contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
 
+Every verb takes `--json`: its one value as one JSON object on stdout, a refusal
+included (the reason and exit), and never a value, because the lines never carry
+one. `exec --json` describes the launch only (the names passed and the child's
+exit), never the child's own output.
+
 ### Gate a seat pull request
 
 A throwaway store to try it on: the base commit carries `recovery.pub` and one seat

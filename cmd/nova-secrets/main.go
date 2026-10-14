@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 const usage = `nova-secrets: encrypted secrets in a git repository, handed to one command at a time
@@ -61,7 +62,7 @@ flags:
   --only <names|all>   comma-separated list of keys to deliver, or 'all' (exec only)
   --require <name>     assert key must be present in the file (repeatable)
   --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
-  --json               names only: the result as one JSON object on stdout, a refusal included
+  --json               every verb: the result as one JSON object on stdout, a refusal included
   --machine <name>     fleet machine to place a secret on (its target comes from --machines)
   --secret <name>      the key in <store>/<as>.yaml to copy to the machine
   --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
@@ -106,6 +107,9 @@ setup: needs age-keygen and sops on PATH; run these from an empty directory firs
   nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
     --age-keygen "$(command -v age-keygen)" \
     --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
+  nova-secrets keygen --as bo --key ~/.config/nova-secrets/bo.key \
+    --age-keygen "$(command -v age-keygen)"
+  BO_PUB="$(sed -n 's/^# public key: //p' ~/.config/nova-secrets/bo.key)"
   git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
   git init -q --bare ./secrets.git
   git -C ./secrets remote add origin ../secrets.git
@@ -321,27 +325,165 @@ func dispatch(args []string, s streams) int {
 		fmt.Fprintf(s.stdout, "%s", usage)
 		return 0
 	case "exec":
-		return runExecCLI(args[1:], s)
+		return jsonVerb("exec", s, args[1:], true, runExecCLI)
 	case "names":
 		return runNamesCLI(args[1:], s)
 	case "check":
-		return runCheckCLI(args[1:], s)
+		return jsonVerb("check", s, args[1:], false, runCheckCLI)
 	case "gate":
-		return runGateCLI(args[1:], s)
+		return jsonVerb("gate", s, args[1:], false, runGateCLI)
 	case "keygen":
-		return runKeygenCLI(args[1:], s)
+		return jsonVerb("keygen", s, args[1:], false, runKeygenCLI)
 	case "place":
-		return runPlaceCLI(args[1:], s)
+		return jsonVerb("place", s, args[1:], false, runPlaceCLI)
 	case "placed":
-		return runPlacedCLI(args[1:], s)
+		return jsonVerb("placed", s, args[1:], false, runPlacedCLI)
 	case "seal":
-		return runSealCLI(args[1:], s)
+		return jsonVerb("seal", s, args[1:], false, runSealCLI)
 	case "seat":
-		return runSeatCLI(args[1:], s)
+		return jsonSeat(s, args[1:])
 	default:
 		fmt.Fprintf(s.stderr, "SECRETS REFUSED: unknown verb %s; the verbs are %s; run: nova-secrets help\n", oneline.Quote(verb), verbs)
 		return 2
 	}
+}
+
+// stripJSON removes --json (or -json) from a verb's words and reports whether it
+// stood there. With beforeDash set (exec), the words after '--' are the command
+// and are left alone, so a command's own --json is never eaten. The verbs parse
+// their own flags, so the flag is removed here and the verb runs as without it;
+// the wrapper renders the one value as JSON from what the verb wrote.
+func stripJSON(args []string, beforeDash bool) ([]string, bool) {
+	out := make([]string, 0, len(args))
+	asked := false
+	for i := 0; i < len(args); i++ {
+		if beforeDash && args[i] == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+		if !asked && (args[i] == "--json" || args[i] == "-json") {
+			asked = true
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out, asked
+}
+
+// jsonVerb runs one verb and, when its words asked for --json, renders the verb's
+// one value as one JSON object on stdout (docs/SPEC-SECRETS.md "Output grammar",
+// one line per event and --json the same value's other rendering). The verb's
+// lines are captured and read back into the value, so a refusal asked for as
+// --json is JSON, the flag refusals included, and a secret value never appears
+// in JSON more than in the lines. names keeps its own JSON, built from the same
+// value in names.go, so it is not routed here.
+func jsonVerb(verb string, s streams, args []string, beforeDash bool, fn func([]string, streams) int) int {
+	trimmed, asked := stripJSON(args, beforeDash)
+	if !asked {
+		return fn(args, s)
+	}
+	var stdout, stderr strings.Builder
+	code := fn(trimmed, streams{stdin: s.stdin, stdout: &stdout, stderr: &stderr})
+	o := verbOut(verb, code, stdout.String(), stderr.String())
+	o.Verb = verb
+	o.Render(s.stdout, true)
+	return code
+}
+
+// jsonSeat is jsonVerb for the seat group: the subverb leads the words, so the
+// verb name is "seat add" or "seat inject" and --json is removed from the whole
+// group's words before runSeatCLI sees them.
+func jsonSeat(s streams, args []string) int {
+	trimmed, asked := stripJSON(args, false)
+	verb := "seat"
+	if len(trimmed) > 0 && (trimmed[0] == "add" || trimmed[0] == "inject") {
+		verb = "seat " + trimmed[0]
+	}
+	if !asked {
+		return runSeatCLI(args, s)
+	}
+	var stdout, stderr strings.Builder
+	code := runSeatCLI(trimmed, streams{stdin: s.stdin, stdout: &stdout, stderr: &stderr})
+	o := verbOut(verb, code, stdout.String(), stderr.String())
+	o.Verb = verb
+	o.Render(s.stdout, true)
+	return code
+}
+
+// verbOut is the one value the lines a verb wrote stand for (docs/SPEC-SECRETS.md
+// "Output grammar"): the status and exit from the run, a refusal's reason and
+// remedy from its line, the first line's key=value fields, every other line a
+// NOTE. It is the same tool.Out the standard's --json renders, so no second JSON
+// shape exists.
+func verbOut(verb string, code int, stdout, stderr string) *tool.Out {
+	o := &tool.Out{Status: tool.OK, Exit: code}
+	switch code {
+	case 0:
+	case 1:
+		o.Status = tool.Failed
+	default:
+		o.Status = tool.Refused
+	}
+	lines := splitLines(stdout)
+	lines = append(lines, splitLines(stderr)...)
+	for _, l := range lines {
+		why, remedy, ok := refusalLine(l)
+		if !ok {
+			continue
+		}
+		o.Status = tool.Refused
+		o.Why = append(o.Why, why)
+		if o.Remedy == "" {
+			o.Remedy = remedy
+		}
+	}
+	if len(lines) > 0 {
+		for _, f := range factFields(lines[0]) {
+			o.Fact(f.K, f.V)
+		}
+		for _, l := range lines[1:] {
+			o.Note(l)
+		}
+	}
+	return o
+}
+
+// refusalLine splits a `SECRETS <VERB> REFUSED: <why>; run: <remedy>` line into
+// its reason and remedy, whether one ran.
+func refusalLine(line string) (why, remedy string, ok bool) {
+	i := strings.Index(line, "REFUSED: ")
+	if i < 0 {
+		return "", "", false
+	}
+	why = line[i+len("REFUSED: "):]
+	if j := strings.Index(why, "; run: "); j >= 0 {
+		remedy, why = why[j+len("; run: "):], why[:j]
+	}
+	return why, remedy, true
+}
+
+// splitLines is the non-empty lines of a stream, trimmed at the newline.
+func splitLines(stream string) []string {
+	var out []string
+	for _, l := range strings.Split(stream, "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// factFields is every key=value token of a line as the value's facts.
+func factFields(line string) tool.Fields {
+	var fields tool.Fields
+	for _, tok := range strings.Fields(line) {
+		k, v, ok := strings.Cut(tok, "=")
+		if !ok || k == "" {
+			continue
+		}
+		fields = append(fields, tool.Field{K: k, V: v})
+	}
+	return fields
 }
 
 // cmdVersion answers from the running binary alone. It deliberately opens no store, key,
