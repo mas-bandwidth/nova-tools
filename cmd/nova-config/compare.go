@@ -57,20 +57,16 @@ func compareTool(d deps) *tool.Tool {
 }
 
 func snapshotFlags(f *tool.Flags) {
-	f.Prints()
 	seatStoreFlags(f.FlagSet)
 	f.String("out", "", "the `dir` to write {kind}.json and when.json into")
-	f.Bool("json", false, "print the result as one JSON object instead of lines")
 }
 
 func compareFlags(f *tool.Flags) {
-	f.Prints()
 	seatStoreFlags(f.FlagSet)
 	f.String("before", "", "the `dir` of the before snapshot")
 	f.String("after", "", "the `dir` of the after snapshot")
 	f.Int("max", bounded.Default, "maximum comparison rows to print; 0 prints all")
 	f.Var(&actorList{}, "ignore-actor", "an actor whose history entries are the tool writing the store, not an operator act (repeatable); default: "+config.MigrationActor)
-	f.Bool("json", false, "print the result as one JSON object instead of lines")
 }
 
 func snapshotBody(call *tool.Call, d deps) int {

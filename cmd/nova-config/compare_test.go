@@ -15,6 +15,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestSnapshotCompareJSONUsageRefusals keeps parser and positional failures in
+// the same structured envelope as the verbs' own validation refusals.
+func TestSnapshotCompareJSONUsageRefusals(t *testing.T) {
+	t.Parallel()
+	for _, verb := range []string{"snapshot", "compare"} {
+		for _, suffix := range [][]string{{"--unknown"}, {"extra"}} {
+			args := append([]string{verb, "--json"}, suffix...)
+			code, out, errs := newHarness().run(t, args...)
+			require.Equal(t, 2, code, "%v: %s", args, errs)
+			assert.Empty(t, errs)
+			var result struct {
+				Result struct {
+					Status string   `json:"status"`
+					Exit   int      `json:"exit"`
+					Why    []string `json:"why"`
+					Remedy string   `json:"remedy"`
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(out), &result), "%v: %s", args, out)
+			assert.Equal(t, "refused", result.Result.Status)
+			assert.Equal(t, 2, result.Result.Exit)
+			assert.NotEmpty(t, result.Result.Why)
+			assert.Contains(t, result.Result.Remedy, "nova-config")
+		}
+	}
+}
+
 // TestSnapshotVerbFeedsCompare exercises the read-only file contract from the
 // verb through compare with an injected capture clock and in-memory history.
 func TestSnapshotVerbFeedsCompare(t *testing.T) {
