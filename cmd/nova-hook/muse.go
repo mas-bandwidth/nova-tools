@@ -43,12 +43,12 @@ type museRoute struct {
 // written, mirroring codexConfig: an unknown harness, a missing bundle or a
 // Codex route at the same time is refused up front.
 func (w world) museConfig(c *tool.Call) (*museRoute, error) {
-	harness := c.Str("harness")
-	if harness == "" {
+	harness := strings.TrimSpace(c.Str("harness"))
+	if harness == "" || strings.EqualFold(harness, "antigravity") || strings.EqualFold(harness, "codex") {
 		return nil, nil
 	}
 	if !strings.EqualFold(harness, "Muse") {
-		return nil, errors.New("--harness wants muse (the Codex desktop route uses the --codex-* flags)")
+		return nil, errors.New("--harness wants muse or antigravity (the Codex desktop route uses the --codex-* flags)")
 	}
 	bundle := c.Str("muse-bundle")
 	if bundle == "" {

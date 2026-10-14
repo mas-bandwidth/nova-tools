@@ -198,6 +198,12 @@ func hookServiceArgs(c *tool.Call, as string, role hook.Role, addr string) []str
 		"dsh-hooks-file",
 		"dsh-session",
 		"dsh-since",
+		"antigravity-dir",
+		"antigravity-session",
+		"session",
+		"antigravity-server",
+		"antigravity-events-dir",
+		"antigravity-since",
 	} {
 		if v := strings.TrimSpace(c.Str(flag)); v != "" {
 			args = append(args, "--"+flag, v)
