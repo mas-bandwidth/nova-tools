@@ -40,7 +40,10 @@ type pending struct {
 		AdditionalContext string `json:"additionalContext"`
 	} `json:"hookSpecificOutput"`
 	Continue bool `json:"continue"`
-	Count    int  `json:"count"`
+	// ChallengeEventID names an unanswered challenge, when one is pending: it
+	// is always the visible notice, never folded behind an ordinary summary.
+	ChallengeEventID string `json:"challengeEventID,omitempty"`
+	Count            int    `json:"count"`
 }
 
 // PendingPath is the only file the hook notice may name.
@@ -51,10 +54,11 @@ func PendingPath(directory string) (string, error) {
 	return filepath.Join(directory, PendingFile), nil
 }
 
-// Deliver records one closed notice into the pending file, coalesced: at most
-// one pending notice exists, and messages arriving while one is pending fold
-// into "N messages available; read the bus". It returns the notice text the
-// hook will surface.
+// Deliver records one closed notice into the pending file. A challenge always
+// becomes the visible notice at once, overriding any ordinary summary, because
+// it must be answered within the heartbeat window; ordinary messages coalesce,
+// at most one summary, and fold into "N messages available; read the bus". It
+// returns the notice text the hook will surface.
 func Deliver(r Route, eventID, notice string) (string, error) {
 	if err := validateInputs(r, eventID); err != nil {
 		return "", fmt.Errorf("%w: %v", ErrPreSend, err)
@@ -66,22 +70,46 @@ func Deliver(r Route, eventID, notice string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrPreSend, err)
 	}
-	count := 1
+	var existing pending
 	if raw, err := os.ReadFile(path); err == nil {
-		var p pending
-		if json.Unmarshal(raw, &p) == nil && p.Count > 0 {
-			count = p.Count + 1
-		}
+		_ = json.Unmarshal(raw, &existing) // ignored: a malformed pending notice is overwritten by the next write
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("%w: read pending notice: %v", ErrPreSend, err)
 	}
-	text := notice + " External event ID: " + eventID + "."
-	if count > 1 {
-		text += " " + strconv.Itoa(count) + " messages available; read the bus."
-	}
-	out := pending{Continue: true, Count: count}
+
+	out := pending{Continue: true}
 	out.HookSpecificOutput.HookEventName = "PostToolUse"
-	out.HookSpecificOutput.AdditionalContext = text
+	switch notice {
+	case ChallengeNotice:
+		out.ChallengeEventID = eventID
+		out.Count = existing.Count
+		text := ChallengeNotice + " External event ID: " + eventID + "."
+		if existing.Count > 0 {
+			text += " " + strconv.Itoa(existing.Count) + " ordinary messages available; read the bus."
+		}
+		out.HookSpecificOutput.AdditionalContext = text
+	case BusNotice:
+		count := 1
+		if existing.Count > 0 {
+			count = existing.Count + 1
+		}
+		if existing.ChallengeEventID != "" {
+			// Keep the unanswered challenge visible; fold the ordinary message
+			// into the count beside it, never behind it.
+			out.ChallengeEventID = existing.ChallengeEventID
+			out.Count = count
+			text := ChallengeNotice + " External event ID: " + existing.ChallengeEventID + "."
+			text += " " + strconv.Itoa(count) + " ordinary messages available; read the bus."
+			out.HookSpecificOutput.AdditionalContext = text
+		} else {
+			out.Count = count
+			text := BusNotice + " External event ID: " + eventID + "."
+			if count > 1 {
+				text += " " + strconv.Itoa(count) + " messages available; read the bus."
+			}
+			out.HookSpecificOutput.AdditionalContext = text
+		}
+	}
 	data, err := json.Marshal(out)
 	if err != nil {
 		return "", fmt.Errorf("%w: encode pending notice: %v", ErrPreSend, err)
@@ -89,7 +117,7 @@ func Deliver(r Route, eventID, notice string) (string, error) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		return "", fmt.Errorf("%w: write pending notice: %v", ErrPreSend, err)
 	}
-	return text, nil
+	return out.HookSpecificOutput.AdditionalContext, nil
 }
 
 func validateInputs(r Route, eventID string) error {

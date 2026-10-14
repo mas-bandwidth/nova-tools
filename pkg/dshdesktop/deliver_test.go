@@ -64,6 +64,40 @@ func TestDeliverRefusesExternalNoticeAndBadInputs(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPreSend)
 }
 
+func TestChallengeIsAlwaysVisibleOverAnOrdinarySummary(t *testing.T) {
+	t.Parallel()
+	r := route(t)
+	_, err := Deliver(r, "ordinary-1", BusNotice)
+	require.NoError(t, err)
+	// A challenge overrides the ordinary summary and is the visible notice.
+	text, err := Deliver(r, "challenge-1", ChallengeNotice)
+	require.NoError(t, err)
+	assert.Contains(t, text, ChallengeNotice)
+	assert.Contains(t, text, "challenge-1")
+	p := readPending(t, r)
+	assert.Equal(t, "challenge-1", p.ChallengeEventID)
+
+	// A later ordinary message folds beside the challenge, never behind it.
+	text, err = Deliver(r, "ordinary-2", BusNotice)
+	require.NoError(t, err)
+	assert.Contains(t, text, ChallengeNotice, "the challenge stays visible")
+	assert.Contains(t, text, "challenge-1")
+	assert.Contains(t, text, "ordinary messages available; read the bus")
+	assert.Equal(t, "challenge-1", readPending(t, r).ChallengeEventID)
+}
+
+func TestNewerChallengeOverridesTheOlderOne(t *testing.T) {
+	t.Parallel()
+	r := route(t)
+	_, err := Deliver(r, "challenge-1", ChallengeNotice)
+	require.NoError(t, err)
+	text, err := Deliver(r, "challenge-2", ChallengeNotice)
+	require.NoError(t, err)
+	assert.Contains(t, text, "challenge-2")
+	assert.NotContains(t, text, "challenge-1")
+	assert.Equal(t, "challenge-2", readPending(t, r).ChallengeEventID)
+}
+
 func TestInstallWritesHookConfig(t *testing.T) {
 	t.Parallel()
 	r := route(t)
