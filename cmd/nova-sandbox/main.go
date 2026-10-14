@@ -64,6 +64,8 @@ usage:
                [--container <disk>] -- <command> <args...>          (darwin)
   nova-sandbox run --help
   nova-sandbox reap [--dry-run]                                   (darwin)
+  nova-sandbox stuck [--pid <n> | --match <substring>] [--min-age <d>]
+               [--max-cpu <d>] [--window <d>] [--json]              (darwin)
   nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
   nova-sandbox worktree --repo <dir> --scratch <dir> --prune
   nova-sandbox egress plan  --run <id> --policy <file> --model-host <host>
@@ -136,6 +138,18 @@ with the one command that removes it and exits 3.
                   the container the boot volume is in.
   --dry-run       reap only: print what a reap would take and touch NOTHING.
 
+stuck diagnoses a walled launch that sits at exec with almost no CPU: it finds
+the process, reads /usr/bin/sample's stack and the window's sandbox denials, and
+names each denied mach-lookup with the process that asked. It reads OUTSIDE the
+wall and writes, kills and starts nothing. On other platforms it refuses to
+guess: sample and the unified log are darwin's.
+
+  --pid <n>       stuck: the process to read, instead of scanning the walled children.
+  --match <s>     stuck: every process whose command contains the substring.
+  --min-age <d>   stuck: a candidate is at least this old (default 30s).
+  --max-cpu <d>   stuck: a candidate has at most this much CPU (default 1s).
+  --window <d>    stuck: how far back to read denials (default 5m).
+
 reap clears what a SIGKILL left: a run killed outright has no path out to delete
 its volume on, so the volume stays mounted and the command's own children are
 reparented to PID 1 still holding it open. reap lists every nova-* volume, kills
@@ -190,8 +204,9 @@ const usageExits = exitsLabel + `
     124 its --timeout ended it. A command that itself exits 125-127 (or 71,
     sandbox-exec's own exec failure) is told from the tool by that line.
   probe, policy, check, version, worktree, egress: 0 done, 1 the verb ran and
-    said NO (probe, egress), 2 could not run (a usage error). reap: 0 clean, 3
-    something remained. <verb> -h gives one verb's codes and flags.
+    said NO (probe, egress), 2 could not run (a usage error). stuck: 0 done
+    (any verdict), 2 could not run. reap: 0 clean, 3 something remained.
+    <verb> -h gives one verb's codes and flags.
 `
 
 // usageExamples closes the banner: the first run, then two worked job lines.
@@ -265,6 +280,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return prodRunSeams().runVerb(args[1:], stdin, stdout, stderr, env)
 	case "reap":
 		return reapVerb(args[1:], stdout, stderr)
+	case "stuck":
+		return stuckVerb(args[1:], stdout, stderr)
 	case "worktree":
 		helpIfAsked(args[1:], "worktree")
 		return prodWorktreeSeams().worktreeVerb(args[1:], stdout, stderr, env)
@@ -286,7 +303,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return probeStepVerb(args[1:], stderr, env)
 	}
 	if !strings.HasPrefix(args[0], "-") {
-		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=unknown_verb: unknown verb %q; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n", args[0])
+		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=unknown_verb: unknown verb %q; available: check, egress, policy, probe, reap, run, stuck, version, worktree; run: nova-sandbox help\n", args[0])
 		return sandbox.ExitCannotRun
 	}
 	return execVerb(args, stdin, stdout, stderr, env)
@@ -295,7 +312,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 // helpVerbs are the verbs `help <verb>` answers for; egressVerbs the four egress
 // sub-verbs, the only words after `egress` a help line may name.
 var (
-	helpVerbs   = map[string]bool{"version": true, "check": true, "run": true, "reap": true, "worktree": true, "egress": true, "policy": true, "probe": true}
+	helpVerbs   = map[string]bool{"version": true, "check": true, "run": true, "reap": true, "stuck": true, "worktree": true, "egress": true, "policy": true, "probe": true}
 	egressVerbs = map[string]bool{"plan": true, "apply": true, "check": true, "drop": true}
 )
 

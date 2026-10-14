@@ -46,6 +46,14 @@ var verbDocs = map[string]verbDoc{
 		{"secret", "a file `path` the probe proves it cannot read, outside every --read and --write; its contents are never read"},
 		gpuFlag, jsonFlag},
 		exits: "0 every step got what it expected; 1 a step did not (the wall is broken: run no job under it); 2 could not run (a usage error, or a machine that cannot answer)"},
+	"stuck": {flags: [][2]string{
+		{"pid", "the process `n` to read, instead of scanning the walled children"},
+		{"match", "every process whose command contains `substring`"},
+		{"min-age", "a candidate is at least this `d` old (default 30s)"},
+		{"max-cpu", "a candidate has at most this much CPU `d` (default 1s)"},
+		{"window", "how far back to read sandbox denials `d` (default 5m)"},
+		jsonFlag},
+		exits: "0 done (any verdict); 2 could not run (a usage error)"},
 	"worktree": {flags: [][2]string{
 		{"repo", "the repository `dir` the worktree is made from, an absolute path"},
 		{"scratch", "an existing `dir` the worktrees and their records live in; never created"},
@@ -77,6 +85,7 @@ var verbExample = map[string]string{
 	"version":      "nova-sandbox version",
 	"policy":       "nova-sandbox policy --write /pool/jobs/j1 --read /usr/local/go --net-deny",
 	"probe":        "nova-sandbox probe --write /pool/jobs/j1 --net-deny --json",
+	"stuck":        "nova-sandbox stuck --match opencode --min-age 30s --max-cpu 1s",
 	"worktree":     "nova-sandbox worktree --repo /srv/nova-tools --scratch /srv/scratch --pr 5327",
 	"egress":       "nova-sandbox egress plan --run r1 --policy infra/image/egress.txt --model-host api.example.com --uid 1001 --out /tmp/r1.nft",
 	"egress plan":  "nova-sandbox egress plan --run r1 --policy infra/image/egress.txt --model-host api.example.com --uid 1001 --out /tmp/r1.nft",

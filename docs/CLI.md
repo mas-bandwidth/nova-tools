@@ -2812,6 +2812,36 @@ on this OS the line is usually silent and a `SANDBOX NOTE` naming the size of th
 allowed set is printed instead. [SPEC-SANDBOX.md](SPEC-SANDBOX.md) has the whole
 measurement.
 
+### Diagnosing a launch that sits at exec
+
+A walled launch can sit at `exec` with almost no CPU — the wall denies a mach
+lookup at startup and the call blocks instead of failing — and nothing on the
+machine says which service was refused. `nova-sandbox stuck` is the verb a
+person or the seat runs **outside** the wall, on the host: it finds the process,
+reads `/usr/bin/sample`'s stack and the window's sandbox denials, and names each
+denied mach lookup. It writes nothing, kills nothing and starts nothing.
+
+```
+$ nova-sandbox stuck --match opencode --min-age 30s --max-cpu 1s
+DENIED mach-lookup name=com.apple.logd process=opencode.bin count=6 not-allowed-by-profile
+DENIED mach-lookup name=com.apple.system.notification_center process=opencode.bin count=2 not-allowed-by-profile
+STUCK HOST productVersion=26.0
+PS pid=5210 ppid=5207 etime=1-22:27:51 cputime=0:00.01 state=SN command="/Users/me/nova-bench/harness/opencode.bin --version"
+STACK pid=5210     +         2520 mach_msg2_trap  (in libsystem_kernel.dylib) + 10
+STUCK LAUNCH pid=5210 state=SN cpu=0:00.01 age=1-22:27:51 top=mach_msg2_trap denied=mach-lookup:com.apple.logd x6
+```
+
+With no `--pid` and no `--match`, every process whose parent chain holds a
+`nova-sandbox` wrapper is a candidate; `--min-age` and `--max-cpu` are what
+separate the stuck launch from a working one. A name the profile's mach-lookup
+list does not allow is marked `not-allowed-by-profile`; the profile text is the
+one the binary embeds, read at run time. The verdict ends the output:
+`denied=none` means no denial was in the window, so the stack is where to look
+next, and `STUCK NONE` means no process matched. On Linux and other platforms
+the verb prints `STUCK UNSUPPORTED platform=<goos>: sample and the unified log
+are darwin's` and exits 0 — it never guesses. Exit 0 is any verdict; exit 2 is a
+usage error.
+
 ### worktree
 
 Materialises one pull request's exact head in an isolated scratch tree of its own. It is not a wrapper and builds no wall: it uses SPEC.md's 0/1/2 grammar (0 the verb ran, 2 could not run), reads the repository through git on `PATH`, and reads the pull request through the forge client (`gh`).
