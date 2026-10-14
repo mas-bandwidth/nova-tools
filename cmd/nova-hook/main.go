@@ -58,6 +58,7 @@ type world struct {
 	deliver       func(*bus.Bus, bus.Message) (bus.Message, error) // the heartbeat server's one send: Bus.Send under a call's deadline
 	holder        string                                           // who holds the pushes this process holds, as the lease shows it
 	tick          time.Duration                                    // one blocking read of the loop
+	grok          *grokRoute                                       // the grok harness, when --harness grok installed one; nil on every other route
 }
 
 func realWorld() world {
@@ -166,7 +167,7 @@ example: nova-hook status --as ada`,
 			},
 			{
 				Name:    "hook",
-				Usage:   "hook --as <me> --role <role> [--once] [--redis <addr>] [--dry-run]",
+				Usage:   "hook --as <me> --role <role> [--once] [--harness grok] [--redis <addr>] [--dry-run]",
 				Example: "hook --as m1 --role member --once",
 				Effect:  tool.Delivery + ": writes the hook record and the lease of every push it holds, and streams the bus push until a signal",
 				DryRun:  true,
@@ -193,6 +194,11 @@ Muse clients use --harness Muse: before arming it installs the nova-hook plugin 
 NOVA_HOOK_MUSE_BUNDLE, or muse-bundle beside the binary) with muse plugins install and approves its one hook
 capability (pending-challenges, PostToolUse) with muse plugins approve. The hook only reads nova-bus peek and
 prints pending lines; the model proves. --dry-run installs nothing.
+Grok clients use --harness grok (docs/SPEC-GROK-HOOK.md): before arming it installs hooks into --grok-home
+(or GROK_HOME, else the grok directory under the user home) that record busy and idle, and creates one wake
+file. One monitor watches that file or this process, not both. At most one notice is pending; a burst folds
+into "N more messages; read the bus". The message body stays on the bus. The model reads the bus. --dry-run
+writes nothing. --once installs and arms, and does not stream.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
 remedy: what a daemon's start does, and what a role whose holders are daemons runs to hook in again after an unhook.
 --dry-run reads the record and prints the plan the real run would take (the role, the epoch, the pushes held and
@@ -201,7 +207,8 @@ example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Required("role", "the role you hook in as, one of "+roleNames())
-					f.String("harness", "", "install a harness adapter before arming: muse (the Muse plugin bundle); the Codex desktop route uses the --codex-* flags")
+					f.String("harness", "", "install a harness adapter before arming: grok, or muse (the Muse plugin bundle); the Codex desktop route uses the --codex-* flags")
+					f.String("grok-home", w.getenv("GROK_HOME"), "absolute grok config directory the adapter installs into; empty uses GROK_HOME, else the grok directory under the user home")
 					f.String("muse-bundle", w.getenv("NOVA_HOOK_MUSE_BUNDLE"), "the Muse plugin bundle to install (default: muse-bundle beside the nova-hook binary)")
 					f.String("muse-bin", w.getenv("NOVA_HOOK_MUSE_BIN"), "the Muse CLI to run (default: muse on PATH)")
 					f.String("codex-socket", w.getenv("NOVA_HOOK_CODEX_SOCKET"), "native Codex desktop socket; requires thread and private event directory")
@@ -411,12 +418,25 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if nativeErr != nil {
 		return tool.Refuse(nativeErr.Error())
 	}
-	muse, museErr := w.museConfig(c)
-	if museErr != nil {
-		return tool.Refuse(museErr.Error())
+	// grok is its own row. museConfig refuses every harness name but muse, so a
+	// grok harness never reaches that refusal.
+	var muse *museRoute
+	if !strings.EqualFold(c.Str("harness"), hookHarnessGrok) {
+		var museErr error
+		muse, museErr = w.museConfig(c)
+		if museErr != nil {
+			return tool.Refuse(museErr.Error())
+		}
+	}
+	grokR, grokErr := w.grokConfig(c)
+	if grokErr != nil {
+		return tool.Refuse(grokErr.Error())
 	}
 	if muse != nil && native != nil {
 		return tool.Refuse("one harness at a time: --harness Muse or the Codex desktop route, not both")
+	}
+	if grokR != nil && (native != nil || muse != nil) {
+		return tool.Refuse("one harness at a time: --harness grok, --harness muse, or the Codex desktop route")
 	}
 	if muse != nil && !c.DryRun() {
 		if out := w.museInstall(c, muse); out != nil {
@@ -432,14 +452,31 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
+	if grokR != nil && !slices.Contains(holds(role), hook.Bus) {
+		o := tool.Refuse("grok delivery wants a role that holds the bus push")
+		o.Remedy = grokRemedy(grokR)
+		return o
+	}
 	if c.DryRun() {
 		ctx, cancel := call()
 		defer cancel()
-		return w.hookPlan(ctx, s, role)
+		o := w.hookPlan(ctx, s, role)
+		if grokR != nil && o.Status == tool.OK {
+			o.Note("would install the grok harness into " + grokR.home + " and write nothing")
+		}
+		return o
 	}
 	held := holds(role)
 	if native != nil && !slices.Contains(held, hook.Bus) {
 		return tool.Refuse("Codex delivery wants a role with the bus push")
+	}
+	if grokR != nil {
+		grokR.as = s.as
+		grokR.role = role
+		if out := w.installGrok(c, grokR); out != nil {
+			return out
+		}
+		w.grok = grokR
 	}
 	var recovery codexRecovery
 	if native != nil {
@@ -659,12 +696,21 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			for _, e := range got {
 				cursor = e.Entry
 				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") { // a server may challenge its own name
+					if w.grok != nil {
+						w.grok.note.add(1)
+						continue
+					}
 					line(c, tool.Done().As("PUSH").Fact("push", "bus").Fact("id", m.ID).Fact("from", m.From).Fact("subject", tool.Text(m.Subject)))
 					if native != nil {
 						if out := w.codexPush(c, s, native, role, epoch, m.ID, "", &m); out != nil {
 							return out
 						}
 					}
+				}
+			}
+			if err == nil && w.grok != nil {
+				if out := w.grokFlush(c); out != nil {
+					return out
 				}
 			}
 			if native != nil {
