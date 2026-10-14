@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"slices"
 )
 
 // State is what Check found on a store.
@@ -463,7 +464,7 @@ func (b *built) collision(ctx context.Context, client redis.UniversalClient, fun
 	if !found[strings.ToLower(function)] {
 		e.Held = append(e.Held, Held{Function: function})
 	}
-	sort.Slice(e.Held, func(i, j int) bool { return e.Held[i].Function < e.Held[j].Function })
+	slices.SortFunc(e.Held, func(a, b Held) int { return cmp.Compare(a.Function, b.Function) })
 	return e
 }
 

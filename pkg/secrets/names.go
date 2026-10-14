@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"slices"
 )
 
 // NameRow is one key name in a seat's file and whether the store keeps it in the clear.
@@ -60,9 +61,7 @@ func RunNames(storeDir, asName string, maxShown int) (NamesReport, error) {
 	}
 
 	// Sort keys alphabetically by name
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i].Name < keys[j].Name
-	})
+	slices.SortFunc(keys, func(a, b StoreFileKey) int { return cmp.Compare(a.Name, b.Name) })
 
 	r := NamesReport{As: asName, StoreDir: storeDir, Total: len(keys)}
 	for i, k := range keys {

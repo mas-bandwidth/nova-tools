@@ -17,7 +17,7 @@ import (
 	"log/slog"
 	"reflect"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -84,7 +84,7 @@ func Leaks(secret, public string, texts map[string]string) []string {
 			}
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -299,7 +299,7 @@ func TableFindings(found map[string]bool, table map[string]any, exempt map[strin
 			out = append(out, key+": is both driven and exempt; keep one")
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -313,7 +313,7 @@ func LeakFindings(table map[string]any, shapes []Shape) map[string][]string {
 				leaks[key] = append(leaks[key], s.Name+": "+l)
 			}
 		}
-		sort.Strings(leaks[key])
+		slices.Sort(leaks[key])
 	}
 	return leaks
 }
@@ -331,6 +331,6 @@ func Verdict(leaks map[string][]string, allowed map[string]string) []string {
 			out = append(out, key+": listed in secretLeakAllowlist and no longer leaks; delete the row")
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

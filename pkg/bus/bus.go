@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 )
@@ -720,7 +719,7 @@ func (b *Bus) Names(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return slices.Compact(names), nil
 }
 

@@ -8,7 +8,6 @@ import (
 	"os"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
@@ -534,6 +533,6 @@ func sortedHeaderKeys(m map[string]headerField) []string {
 			out = append(out, k)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

@@ -2,7 +2,7 @@ package swarm
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -530,7 +530,7 @@ func Template(name string) (string, error) {
 func TemplateNames() []string {
 	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity", "card",
 		"read", "fix", "text", "replay", "drift", "tone", "models.tsv"}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

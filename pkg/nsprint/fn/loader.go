@@ -8,12 +8,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/fs"
-	"sort"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/redisfn"
+	"slices"
 )
 
 const Library = "nova_sprint"
@@ -63,7 +63,7 @@ func Source() (string, error) {
 	if len(names) == 0 {
 		return "", fmt.Errorf("nova_sprint has no function files")
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	var b strings.Builder
 	b.WriteString("#!lua name=" + Library + "\n")
 	b.WriteString(Prelude)

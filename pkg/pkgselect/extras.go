@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -57,7 +57,7 @@ func RaceDeps(run Runner, root string) ([]string, error) {
 		seen[l] = true
 		deps = append(deps, l)
 	}
-	sort.Strings(deps)
+	slices.Sort(deps)
 	return deps, nil
 }
 
@@ -135,7 +135,7 @@ func PerfRuns(run Runner, root string) (runs []PerfRun, notes []string, err erro
 				extra = append(extra, n)
 			}
 		}
-		sort.Strings(extra)
+		slices.Sort(extra)
 		if len(extra) == 0 {
 			notes = append(notes, pkg+" carries a perf constraint and no test behind it")
 			continue

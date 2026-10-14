@@ -39,10 +39,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/log"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -169,7 +169,7 @@ func StandardWorkloads() ([]Workload, error) {
 }
 
 func sortWorkloads(out []Workload) {
-	sort.Slice(out, func(i, j int) bool { return out[i].Class < out[j].Class })
+	slices.SortFunc(out, func(a, b Workload) int { return cmp.Compare(a.Class, b.Class) })
 }
 
 // ParseWorkload reads one card: front matter of `key: value` lines, a blank line, then the
@@ -870,7 +870,7 @@ func registryTruth(in CertifyInput, reg *Registry, m Machine) (string, string) {
 			m.Name, online, prefix, reg.Path(), m.RoleList(), RoleRunner)
 	}
 	if len(stale) > 0 {
-		sort.Strings(stale)
+		slices.Sort(stale)
 		return VerdictFail, fmt.Sprintf("the forge carries %d registration(s) with nothing behind them: %s",
 			len(stale), strings.Join(stale, ", "))
 	}
@@ -909,7 +909,7 @@ func runnersOnline(in CertifyInput, m Machine) (string, string) {
 		return VerdictFail, fmt.Sprintf("the forge names no runner %s* on %s", prefix, in.Repo)
 	}
 	if len(offline) > 0 {
-		sort.Strings(offline)
+		slices.Sort(offline)
 		return VerdictFail, fmt.Sprintf("offline: %s (of %d)", strings.Join(offline, ", "), seen)
 	}
 	return VerdictOK, fmt.Sprintf("%d runner(s) %s* online", seen, prefix)

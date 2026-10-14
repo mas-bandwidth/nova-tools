@@ -6,10 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"slices"
 )
 
 // exeSuffix is the extension a built binary carries on Windows. It IS the
@@ -118,7 +119,7 @@ func VerbsFromTools(ctx context.Context, dir string, run HelpRunner, progress Pr
 		bins = append(bins, binary{file: name, tool: tool})
 	}
 	// two runs read the same
-	sort.Slice(bins, func(i, j int) bool { return bins[i].file < bins[j].file })
+	slices.SortFunc(bins, func(a, b binary) int { return cmp.Compare(a.file, b.file) })
 
 	var (
 		verbs    []Verb

@@ -33,7 +33,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
@@ -366,7 +365,7 @@ func parsePackages(out, root string, pkgs []string) (map[string][]string, error)
 				dirs = append(dirs, rel)
 			}
 		}
-		sort.Strings(dirs)
+		slices.Sort(dirs)
 		answer[pkg] = slices.Compact(dirs)
 	}
 	return answer, nil

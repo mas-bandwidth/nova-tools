@@ -27,12 +27,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"slices"
 )
 
 // Identity is one line at a keyboard: the name and email a commit in this range must
@@ -145,11 +146,8 @@ func Check(ctx context.Context, o Options) ([]Finding, error) {
 	}
 	findings = append(findings, added...)
 
-	sort.SliceStable(findings, func(i, j int) bool {
-		if findings[i].Token != findings[j].Token {
-			return findings[i].Token < findings[j].Token
-		}
-		return findings[i].At < findings[j].At
+	slices.SortStableFunc(findings, func(a, b Finding) int {
+		return cmp.Or(cmp.Compare(a.Token, b.Token), cmp.Compare(a.At, b.At))
 	})
 	return findings, nil
 }

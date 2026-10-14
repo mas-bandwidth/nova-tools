@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -84,7 +84,7 @@ func Plan(k *Kind, rows []Row, views map[string]View) []Op {
 			gone = append(gone, name)
 		}
 	}
-	sort.Strings(gone)
+	slices.Sort(gone)
 	for _, name := range gone {
 		ops = append(ops, Op{Op: OpRemove, Name: name, Prev: views[name]})
 	}

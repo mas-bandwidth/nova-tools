@@ -100,7 +100,9 @@ import (
 	"strings"
 	"time"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"slices"
 )
 
 // MaxSourceBytes is the largest source a library may have, 4 MiB: a library
@@ -239,7 +241,7 @@ func (l Library) Registered() ([]Function, error) {
 	for _, r := range b.regs {
 		out = append(out, Function{Name: r.name, File: r.file, NoWrites: r.noWrites})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b Function) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
 }
 
@@ -310,7 +312,7 @@ func (l Library) build() (*built, error) {
 	if len(files) == 0 {
 		return nil, l.refuse("it has no files: the glob %s matches nothing", oneline.Quote(l.Glob))
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 
 	b := &built{name: l.Name, remedy: l.Remedy, names: map[string]string{}}
 	first := map[string]registration{} // by lower-case name: Redis compares function names without case

@@ -12,6 +12,7 @@ import (
 	"slices"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
+	"maps"
 )
 
 // The record (SPEC-NOVA-DECIDE section 4) is one JSON-lines file the caller
@@ -150,17 +151,9 @@ func parse(r io.Reader, path string) ([]Decision, error) {
 // or not a number. The record is the calibration's input, so a hand-edited
 // line does not load (SPEC-NOVA-DECIDE section 4).
 func recordedProbabilities(path string, line int, answers map[string]Answer) error {
-	names := make([]string, 0, len(answers))
-	for name := range answers {
-		names = append(names, name)
-	}
-	slices.Sort(names)
+	names := slices.Sorted(maps.Keys(answers))
 	for _, name := range names {
-		opts := make([]string, 0, len(answers[name].P))
-		for opt := range answers[name].P {
-			opts = append(opts, opt)
-		}
-		slices.Sort(opts)
+		opts := slices.Sorted(maps.Keys(answers[name].P))
 		for _, opt := range opts {
 			v := answers[name].P[opt]
 			if math.IsNaN(v) {

@@ -16,7 +16,6 @@ import (
 	"io"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -318,7 +317,7 @@ func Print(out io.Writer, prog, banner string, fs *flag.FlagSet, exit ...string)
 	}
 	var names []string
 	fs.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
-	sort.Strings(names)
+	slices.Sort(names)
 	if len(names) > 0 {
 		b.WriteString("flags:\n")
 	}
@@ -381,7 +380,7 @@ func FlagSynopsis(fs *flag.FlagSet) string {
 	}
 	var names []string
 	fs.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
-	sort.Strings(names)
+	slices.Sort(names)
 	parts := make([]string, 0, len(names))
 	for _, n := range names {
 		kind, _ := flag.UnquoteUsage(fs.Lookup(n))

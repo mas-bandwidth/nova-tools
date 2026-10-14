@@ -5,11 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"slices"
 )
 
 // RunExec validates all preflight invariants, decrypts <store>/<as>.yaml,
@@ -71,7 +71,7 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 			selectedSecrets[p] = sec
 		}
 		if len(missingOnly) > 0 {
-			sort.Strings(missingOnly)
+			slices.Sort(missingOnly)
 			return 125, fmt.Errorf("--only names key(s) not in %s: %s; the names the seat holds: run: nova-secrets names --store %s --as %s", targetFile, strings.Join(missingOnly, ", "), storeDir, asName)
 		}
 		onlyWord = strconv.Itoa(len(selectedSecrets))
@@ -94,12 +94,12 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		}
 	}
 	if len(missingRequired) > 0 {
-		sort.Strings(missingRequired)
+		slices.Sort(missingRequired)
 		return 125, fmt.Errorf("required key(s) missing from %s: %s; run: sops %s",
 			targetFile, strings.Join(missingRequired, ", "), targetFile)
 	}
 	if len(excludedRequired) > 0 {
-		sort.Strings(excludedRequired)
+		slices.Sort(excludedRequired)
 		return 125, fmt.Errorf("--require %s is excluded by --only %q", strings.Join(excludedRequired, ", "), onlyArg)
 	}
 

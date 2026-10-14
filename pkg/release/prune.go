@@ -4,9 +4,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"slices"
 )
 
 // KeepBesides is how many release versions a root keeps BESIDES the ones it
@@ -56,11 +57,8 @@ func prune(root string, keep func(name string) bool, remove func(root, path stri
 		}
 		old = append(old, candidate{e.Name(), info.ModTime().UnixNano()})
 	}
-	sort.Slice(old, func(i, j int) bool {
-		if old[i].mod != old[j].mod {
-			return old[i].mod > old[j].mod
-		}
-		return old[i].name > old[j].name
+	slices.SortFunc(old, func(a, b candidate) int {
+		return cmp.Or(cmp.Compare(b.mod, a.mod), cmp.Compare(b.name, a.name))
 	})
 	for i, c := range old {
 		if i < KeepBesides {

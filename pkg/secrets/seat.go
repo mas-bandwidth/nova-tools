@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -217,7 +216,7 @@ func seatAddValidate(opts *SeatAddOptions) ([]string, error) {
 	if len(names) == 0 {
 		return nil, fmt.Errorf("--only <NAME,…> named no keys")
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names, nil
 }
 

@@ -34,7 +34,6 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -492,11 +491,20 @@ func sortAddrs(in []netip.Addr) []netip.Addr {
 			out = append(out, a)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Is4() != out[j].Is4() {
-			return out[i].Is4()
+	slices.SortFunc(out, func(a, b netip.Addr) int {
+		if a.Is4() != b.Is4() {
+			if a.Is4() {
+				return -1
+			}
+			return 1
 		}
-		return out[i].Less(out[j])
+		if a.Less(b) {
+			return -1
+		}
+		if b.Less(a) {
+			return 1
+		}
+		return 0
 	})
 	return out
 }

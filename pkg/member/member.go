@@ -27,7 +27,6 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1200,7 +1199,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		ids = append(ids, c.ID)
 		byID[c.ID] = c
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	// the queue answer is kept, so a report that posts in a later pass re-checks its
 	// launch's claim against the last queue this member saw and is reaped when it moved
 	m.queueCards = byID
@@ -2446,7 +2445,7 @@ func (m *Member) haveWords() string {
 			have = append(have, id)
 		}
 	}
-	sort.Strings(have)
+	slices.Sort(have)
 	words := strings.Join(have, ",")
 	m.have.Store(&words)
 	return words

@@ -9,10 +9,10 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"slices"
 )
 
 // machineName is what may be handed to ssh as a destination. It is deliberately
@@ -220,7 +220,7 @@ func VersionsUnder(root, goos, goarch string) []string {
 			found = append(found, e.Name())
 		}
 	}
-	sort.Strings(found)
+	slices.Sort(found)
 	return found
 }
 

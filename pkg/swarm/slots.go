@@ -29,14 +29,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"cmp"
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"slices"
 )
 
 // SlotLease is one bench slot lease: the directory name is the id.
@@ -222,7 +223,7 @@ func ListSlotLeases(store string, now time.Time) ([]SlotLease, error) {
 		}
 		out = append(out, l)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortFunc(out, func(a, b SlotLease) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
 }
 
@@ -306,7 +307,7 @@ func slotHolders(counts map[string]int) string {
 			names = append(names, name)
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	parts := make([]string, 0, len(names))
 	for _, name := range names {
 		parts = append(parts, fmt.Sprintf("%s:%d", name, counts[name]))

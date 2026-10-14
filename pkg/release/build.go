@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/dogfood"
+	"slices"
 )
 
 // SumsFile is the name of the checksum file in every artifact directory, in the
@@ -433,7 +433,7 @@ func writeSums(dir string) (string, error) {
 		}
 		lines = append(lines, sum+"  "+e.Name())
 	}
-	sort.Strings(lines)
+	slices.Sort(lines)
 	path := filepath.Join(dir, SumsFile)
 	return path, writeNoFollow("write sums", path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -395,7 +394,15 @@ func (f *Fake) Pending(_ context.Context, stream, group string, count int) ([]st
 		return nil, err
 	}
 	ids := slices.Collect(maps.Keys(g.pending))
-	sort.Slice(ids, func(i, j int) bool { return after(ids[j], ids[i]) })
+	slices.SortFunc(ids, func(a, b string) int {
+		if after(b, a) {
+			return -1
+		}
+		if after(a, b) {
+			return 1
+		}
+		return 0
+	})
 	if len(ids) > count {
 		ids = ids[:count]
 	}

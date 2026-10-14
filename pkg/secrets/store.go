@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -515,16 +515,16 @@ func ParseDecryptedSecrets(data []byte) (map[string]Secret, []string, error) {
 	}
 
 	if len(badKeys) > 0 {
-		sort.Strings(badKeys)
+		slices.Sort(badKeys)
 		return nil, nil, fmt.Errorf("illegal environment variable name(s): %s", strings.Join(badKeys, ", "))
 	}
 
 	if len(multilineKeys) > 0 {
-		sort.Strings(multilineKeys)
+		slices.Sort(multilineKeys)
 		return nil, nil, fmt.Errorf("key=%s: value is multi-line; a file-shaped secret is not an environment variable; generate it where it is used: this store holds no file-shaped secrets", multilineKeys[0])
 	}
 
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return secrets, keys, nil
 }
 

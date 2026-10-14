@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -651,7 +650,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 				return nil, fmt.Errorf("--fixture %s: loop %s argv: %w", path, n, err)
 			}
 			keys := append([]string{}, l.Keys...)
-			sort.Strings(keys)
+			slices.Sort(keys)
 			enabled := l.Enabled == nil || *l.Enabled
 			snap.Loops[n] = View{
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
