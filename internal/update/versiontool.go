@@ -51,6 +51,9 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 				Name:   "moved",
 				Usage:  "moved --from <sha> --to <sha> --repo <dir> --out <path> [--timeout <d>] [--budget <d>] [--dry-run]",
 				Effect: tool.LocalWrite + "; with --dry-run, the note is printed and nothing is written but the builds' scratch",
+				// pkg/tool adds --dry-run from DryRun and its contract check reads
+				// it (STANDARD §2: a verb that writes has a dry run).
+				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("from", "the revision to compare from")
 					f.Required("to", "the revision to compare to")
@@ -58,7 +61,6 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 					f.Required("out", "the path of the note to write")
 					f.Duration("timeout", movedChildTimeout, "one child's deadline")
 					f.Duration("budget", movedBudget, "whole run deadline")
-					f.Bool("dry-run", false, "build and read both revisions and print the note; write no --out")
 					f.Check(positiveBounds)
 				},
 				Run: func(c *tool.Call) *tool.Out { return movedVerb(c, env) },
@@ -68,6 +70,9 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 				Usage:   "snapshot " + manifest + "\nsnapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>] [--max <n>] [--dry-run]",
 				Example: "snapshot --file versions.tsv",
 				Effect:  tool.LocalWrite + "; with --file or --dry-run, inspection: writes nothing",
+				// pkg/tool adds --dry-run from DryRun and its contract check reads
+				// it (STANDARD §2: a verb that writes has a dry run).
+				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.String("file", "", "manifest of adopted tools: count how many answer")
 					f.String("bin", "", "directory holding the binaries")
@@ -79,7 +84,6 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 					// given, so the help names both rather than one.
 					f.Duration("timeout", snapshotChildTimeout, "one binary's read deadline: 30s with --bin, 5s with --file unless --timeout is given")
 					f.Duration("budget", snapshotBudget, "whole run deadline")
-					f.Bool("dry-run", false, "read every binary and list the rows; write no --out")
 					// Neither path is guessed: both are the caller's to name
 					// (SPEC-UPDATE rule 1), unless --file asks the manifest shape.
 					// The refusal names both shapes, so either is the next call.
