@@ -23,8 +23,8 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (27)
-- [Setup, release and operations](#setup-release-and-operations) (98)
+- [Friends](#friends) (24)
+- [Setup, release and operations](#setup-release-and-operations) (96)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -162,14 +162,6 @@ Target: after v1.4
 
 From: cards moved out of the sprint (work record, 2026-10-04)
 
-### Presence reflects the session, not the app or the sprint server
-
-A friend reads up only when the session can take a turn, and presence does not depend on the sprint server answering. Loops that beat on behalf of an open app are removed.
-
-Target: v1.3
-
-From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
-
 ### A broken session or a limit means down
 
 A provider refusal, a usage limit or an empty balance is noticed once, said once, and not fed more turns. The friend reads down until it recovers.
@@ -194,14 +186,6 @@ Target: after v1.4
 
 From: cards moved out of the sprint (work record, 2026-10-04); card moved out of the sprint (work record, 2026-10-04)
 
-### A broken friend session renews itself
-
-The friend daemon renews a session it marked broken, in the same harness, and exposes the renewal as a verb. No person has to renew it by hand.
-
-Target: v1.3
-
-From: card moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
-
 ### Friends and machines noticed back up and made current
 
 A hold or down state carries its cause and end time, and the tick notices when it ends. Returning friends and fleet machines adopt the latest tools before taking work.
@@ -225,14 +209,6 @@ Every one-shot friend lane counts tokens and stops at a per-card cap. Briefs cit
 Target: after v1.4
 
 From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
-
-### Show and alarm friend daemon state, and ping every friend each second
-
-A test pins the installed service definition, and a view shows which binary each friend daemon runs and alarms when one died or was not reinstalled. A nova-friend verb replaces the hand ping loop and marks a friend down after ten seconds without a pong.
-
-Target: v1.3
-
-From: card moved out of the sprint (work record, 2026-10-04)
 
 ### Run every friend lane inside a wall profile taken from its friend row
 
@@ -912,14 +888,6 @@ Target: v1.2.14
 
 From: issue #5161
 
-### nova-bus inbox fetches before it reads
-
-A stale clone reads as silence. The inbox must fetch first or say how old its view is.
-
-Target: v1.3
-
-From: issue #5270
-
 ### Link checks skip quotes and code and handle root-relative URLs
 
 nova-check links and nova-memory verify read link syntax inside quoted text, code spans and fences, and treat a root-relative URL as a missing file. Fix all six cases.
@@ -1123,14 +1091,6 @@ From: card from the sprint store (2026-10-10); card moved out of the sprint (wor
 ### Fix the text scanners: large input speed and host names with digits
 
 The self-talk scanner must scan a megabyte of installation text within its time bound. The generality tokenizer must catch a host name that ends in digits.
-
-Target: v1.3
-
-From: card from the sprint store (2026-10-10)
-
-### The bus trims acknowledged keepalive messages
-
-Keepalive messages that every reader has acknowledged are trimmed from the bus log, so the log stops growing without bound.
 
 Target: v1.3
 

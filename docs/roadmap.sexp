@@ -321,13 +321,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
-  (item "friend-presence-from-the-session" :group "friends"
-   :title "Presence reflects the session, not the app or the sprint server"
-   :text "A friend reads up only when the session can take a turn, and presence does not depend on the
-    sprint server answering. Loops that beat on behalf of an open app are removed."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "friend-broken-session-and-limits-mean-down" :group "friends"
    :title "A broken session or a limit means down"
    :text "A provider refusal, a usage limit or an empty balance is noticed once, said once, and not fed
@@ -545,13 +538,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "card moved out of the sprint (work record, 2026-10-04); issue #4306")
-  (item "friend-session-auto-recovery" :group "friends"
-   :title "A broken friend session renews itself"
-   :text "The friend daemon renews a session it marked broken, in the same harness, and exposes the
-    renewal as a verb. No person has to renew it by hand."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "card moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "friend-back-up-detection-and-adopt" :group "friends"
    :title "Friends and machines noticed back up and made current"
    :text "A hold or down state carries its cause and end time, and the tick notices when it ends.
@@ -644,14 +630,6 @@
     everyone. Pro routes then serve friends and flash routes serve the fleet."
    :date "2026-10-10"
    :release "after v1.4"
-   :origin "card moved out of the sprint (work record, 2026-10-04)")
-  (item "friend-daemon-liveness" :group "friends"
-   :title "Show and alarm friend daemon state, and ping every friend each second"
-   :text "A test pins the installed service definition, and a view shows which binary each friend daemon
-    runs and alarms when one died or was not reinstalled. A nova-friend verb replaces the hand ping
-    loop and marks a friend down after ten seconds without a pong."
-   :date "2026-10-10"
-   :release "v1.3"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "friend-lane-wall-profile" :group "friends"
    :title "Run every friend lane inside a wall profile taken from its friend row"
@@ -1396,12 +1374,6 @@
    :date "2026-10-10"
    :release "v1.2.12"
    :origin "issue #5185")
-  (item "bus-inbox-fetch-before-read" :group "ops"
-   :title "nova-bus inbox fetches before it reads"
-   :text "A stale clone reads as silence. The inbox must fetch first or say how old its view is."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #5270")
   (item "contributing-stdlib-rule-mismatch" :group "docs"
    :title "The standard-library rule matches go.mod and is enforced"
    :text "The contributing guide says standard library only, while go.mod has direct third-party requires.
@@ -1737,13 +1709,6 @@
    :date "2026-10-10"
    :release "v1.4"
    :origin "card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04)")
-  (item "bus-trims-acknowledged-keepalives" :group "ops"
-   :title "The bus trims acknowledged keepalive messages"
-   :text "Keepalive messages that every reader has acknowledged are trimmed from the bus log, so the log
-    stops growing without bound."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "card from the sprint store (2026-10-10)")
   (item "core-module-tla-models" :group "docs"
    :title "TLA+ models for the core state packages"
    :text "Each package that owns state (bus, cairn, card tree, config, decision record, secrets, update,
