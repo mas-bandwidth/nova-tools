@@ -12,11 +12,13 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -314,10 +316,35 @@ func (OSEnv) Getenv(k string) string                  { return os.Getenv(k) }
 func (OSEnv) Now() time.Time                          { return time.Now() }
 func (OSEnv) ReadFile(p string) ([]byte, error)       { return os.ReadFile(p) }
 func (OSEnv) ReadDir(p string) ([]fs.DirEntry, error) { return os.ReadDir(p) }
+
+// Exec runs a child and returns its stdout; a non-zero exit carries the child's
+// stderr so a check can quote its reason (docs/SPEC-DOCTOR.md, "plists").
 func (OSEnv) Exec(ctx context.Context, name string, args ...string) (string, error) {
 	out, err := subproc.Context(ctx, name, args...).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			err = &execError{err: err, stderr: firstLine(string(ee.Stderr))}
+		}
+	}
 	return string(out), err
 }
+
+// execError is a failed child's error carrying the first line of its stderr, so a
+// check quotes the child's own reason instead of "exit status 1" when stdout is
+// empty (docs/SPEC-DOCTOR.md, "plists").
+type execError struct {
+	err    error
+	stderr string
+}
+
+func (e *execError) Error() string {
+	if e.stderr != "" {
+		return e.stderr
+	}
+	return e.err.Error()
+}
+func (e *execError) Unwrap() error { return e.err }
 func (OSEnv) Dial(ctx context.Context, network, addr string) error {
 	c, err := (&net.Dialer{}).DialContext(ctx, network, addr)
 	if err != nil {
