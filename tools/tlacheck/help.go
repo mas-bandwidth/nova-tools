@@ -84,7 +84,8 @@ usage: tlacheck groups [--root <checkout>] [--stale]
   --root   the checkout whose tla/CASES.tsv is read (default .)
   --stale  the groups to run again instead: those that hold a declared case whose record in
            tla/RUNS.tsv is missing, or is not the fingerprint its case has now (tlacheck
-           inputs prints what a case's fingerprint covers)
+           inputs prints what a case's fingerprint covers); a checkout with no tla/RUNS.tsv
+           has measured nothing, so every required group is stale
 
 Payload: exactly one line of JSON on stdout, the sorted groups that hold a required case (the
 matrix a CI run derives), or with --stale the groups that need a run. Nothing else is printed
@@ -230,9 +231,10 @@ first run: git show f77458853af46fdbbafd6881a4b46006431f266f:pkg/nsprint/fn/lua/
 const helpInputs = `tlacheck inputs: print what a TLC run of one case reads, with the hash of each.
 
 usage: tlacheck inputs --case <config> [--root <checkout>]
+       tlacheck inputs [--root <checkout>] <config>
 
   --case  the case, as its config column of tla/CASES.tsv names it (MCFoo.cfg; MCFoo also
-          works) (required)
+          works) (required, or given as the one argument instead)
   --root  the checkout whose tla/ holds CASES.tsv and the models (default .)
 
 The inputs are the case's configuration; the module CASES.tsv gives it and every module that

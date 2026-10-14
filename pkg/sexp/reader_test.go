@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/roadmap/sexp"
+	"github.com/mas-bandwidth/nova-tools/pkg/sexp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -113,6 +113,22 @@ func TestWorklangReader(t *testing.T) {
 		assert.Equal(t, 0, f.Offset, "spans wrong: list %d..%d, keyword at %d", f.Offset, f.End, f.List[1].Offset)
 		assert.Equal(t, len(data), f.End, "spans wrong: list %d..%d, keyword at %d", f.Offset, f.End, f.List[1].Offset)
 		assert.Equal(t, 3, f.List[1].Offset, "spans wrong: list %d..%d, keyword at %d", f.Offset, f.End, f.List[1].Offset)
+		// worklang-reader-form-end-is-kept: every form, including a symbol,
+		// carries its end byte (the done position); the reader keeps the done
+		// field of every unit, so a done unit is counted.
+		spans := []struct{ off, end int }{
+			{0, len(data)}, // outer list
+			{1, 2},         // symbol a
+			{3, 5},         // keyword :k
+			{6, 12},        // string "s\"q"
+			{13, 16},       // integer -12
+			{17, 19},       // empty list ()
+		}
+		forms := append([]sexp.Form{f}, f.List...)
+		for i, sp := range spans {
+			assert.Equal(t, sp.off, forms[i].Offset, "element %d offset = %d, want %d", i, forms[i].Offset, sp.off)
+			assert.Equal(t, sp.end, forms[i].End, "element %d end = %d, want %d", i, forms[i].End, sp.end)
+		}
 	})
 
 	// worklang-reader-refuses-a-malformed-file: unbalanced, trailing and

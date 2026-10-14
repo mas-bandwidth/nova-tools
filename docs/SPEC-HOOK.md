@@ -156,6 +156,62 @@ leave the push unprovable); the local verbs that open no bus store (`install`, `
 `status`, `resume`, `refuse-go`, `acceptance`, the Claude `hook` adapter); `wait-pong`, which names no
 identity.
 
+## The heartbeat
+
+A proof says a push reached a session once; the heartbeat says the model is still there, every minute
+(tla/HookBeat.tla). `nova-hook serve --as <name>`, hooked in as coordinator or comms, makes one pass every
+`--every` (BeatEvery, one minute), all in one script by the store's TIME:
+
+- **One pass an interval.** The server's row `hook:serve` (at, every, by, told) is the once-key: a pass less
+  than nine tenths of an interval after the last is not taken, so two servers make one pass between them.
+- **A challenge to each name a session answers for.** Each hooked coordinator, friend or comms name gets a fresh
+  challenge in `hook:chal:<name>` (its nonce's sum, the pushes it names, `until` = now + every), and the nonce
+  goes to the name as a bus message, subject `HOOK CHALLENGE nonce=<n>`: the push it already has (a session's
+  hook prints it as a HOOK PUSH line; a friend daemon delivers it through its harness adapter, the path its
+  session check uses). A coordinator's and a comms name's challenge names the bus push; a friend's names the
+  bus and work pushes, which reach her session by the same adapter, so her answer proves both. A member or
+  reader loop has no session and is never challenged; the sprint push is the seat hook's own.
+- **Only the model answers.** `nova-hook prove --as <name> --nonce <n>`, from inside its own turn, within the
+  interval; no daemon, loop or script may call it. A nonce that is not the current one, or one past `until`, is
+  refused with the reason, and an answer clears the record's `misses`.
+- **Two misses unhook.** A challenge still standing at the next pass is a miss; at MissLimit (two) in a row the
+  pass unhooks the name as `nova-hook unhook` does (the epoch moves on, every lease, proof and challenge is
+  cleared), with `reason` "missed 2 challenges", and logs one entry on the capped stream `hook:events`. Hooking
+  in again clears `misses`, `reason` and `beat_at`.
+- **Each real change is told once, coalesced.** The pass compares the unhooked set and the coordinator (the
+  first hooked name of that role) with what each audience was last told (the row's `told:<audience>` and
+  `coord:<audience>`, the coordinator and the rest); an audience is marked told only after its message went out,
+  so a send that fails is told by the next pass, and never twice. Only a pass that finds a change tells it,
+  in at most two messages: the coordinator gets one judgment (bus kind `judgment`) naming every `FRIEND DOWN
+  <name>: <reason>` and `FRIEND BACK <name>`, and every other live name that did not itself change gets one
+  message with the same lines and `COORDINATOR IS <name>`, a judgment instead when the coordinator itself went
+  down (`COORDINATOR DOWN <name>: who takes over?`). A judgment is open in `hook:judgments` until one of its
+  recipients replies with `nova-bus send --re <id>` (the bus's answers record), and is pushed again as `OVERDUE`
+  once past `--judge-within` (two minutes), never twice. Each judgment and each answer is logged on `hook:events`.
+- **The asks' clock.** A taken pass also runs the bus's ask expiry (`bus.ExpireAsks`), whose once-key delivers
+  each timeout once.
+- **The client's own timer.** A session's `nova-hook hook` loop reads the server row at each renewal; once a
+  server has passed, no move of its `at` for two of its intervals by the client's own clock is one line into the
+  session, `HOOK STATE state=not-connected since=<local time>` with the judgment NOT CONNECTED TO THE SERVER and its
+  answers (re-hook, check the network, tell the coordinator when reachable); the next move is one
+  `state=connected` line, and the episode is reported to `hook:events` once (event `not-connected`).
+- **Up needs evidence.** A record's last written state is not trusted on its own. A name reads down, in the
+  gate in every tool and in `friends` and `status` (one rule: `Served.Down`, which `Store.Read` sets as
+  `Status.Down`), when no server row exists ("hook server never ran"), when the row is more than two intervals old
+  by the store's TIME at the read ("hook server stale"), or, for a name a session answers for, when its last
+  answer is more than two intervals old ("no answer to a heartbeat challenge within the window"). Only
+  `nova-hook serve`'s own check sets this aside, so a server can always start.
+- **One write per telling.** Each told message carries its audience's once-key (`hook:told:<audience>:<gen>`)
+  and the told marks (`told:`, `coord:` and the next `gen:` on `hook:serve`), written with the message in one
+  atomic step (the bus's once-key send): a crash or a failed send leaves it untold for the next pass, and a send
+  that went is never repeated. The OVERDUE re-push and its mark are one write the same way (`hook:overdue:<id>`).
+- **Everyone can ask.** `nova-hook friends [--json]` lists every name's state from the hook record alone: up
+  (hooked and proven) or down, since, reason, the last challenge and answer, misses; and the coordinator and the
+  server's age.
+- **The client's timeout.** `nova-hook status --as <name>`, once a server has passed, fails with `NO CHALLENGE
+  FOR <age>` (exit 1) when a challenged name's last challenge (or its arming) is more than two of the server's
+  intervals old: the server is gone, and nothing checks the link.
+
 ## The verbs
 
 - `nova-hook hook --as <name> --role <role> [--once] [--dry-run]`: arms (or joins) the record, holds the `bus` push

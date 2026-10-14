@@ -16,10 +16,11 @@ func OwedOf(name string) string { return OwedPrefix + name }
 
 // Mark is one write to a hash inside a send's transaction: HSET Key Field
 // Value, or HDEL Key Field when Clear, or, when Forward, the receipt of Field
-// moved to the state Value by the receipt rule (redis.go, forwardLua).
+// moved to the state Value by the receipt rule (redis.go, forwardLua), or
+// HSETNX Key Field Value when Once: the first write stands (ask.go).
 type Mark struct {
-	Key, Field, Value string
-	Clear, Forward    bool
+	Key, Field, Value    string
+	Clear, Forward, Once bool
 }
 
 // owe is the marks a send makes: the message owed a receipt by every friend

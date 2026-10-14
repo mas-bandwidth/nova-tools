@@ -46,11 +46,13 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `redisconn/` | the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown | `go test ./pkg/redisconn` | `go test ./pkg/redisconn` |
 | `redisfn/` | build, load and check a Redis function library from embedded Lua source | `go test ./pkg/redisfn` | `go test ./pkg/redisfn` |
 | `release/` | release packaging and manifest gates | `go test ./pkg/release` | `go test ./pkg/release` |
+| `roadmap/` | docs/roadmap.sexp and docs/fixes.sexp read through pkg/sexp into typed records, and the ROADMAP.md and FIXES.md they render; nova-sprint imports it | `go test ./pkg/roadmap` | `make roadmap` |
 | `safepath/` | path sanitization and sandboxing | `go test ./pkg/safepath` | `go test ./pkg/safepath` |
 | `sandbox/` | OS isolation primitives (seatbelt/landlock) | `go test ./pkg/sandbox` | `go test ./pkg/sandbox` |
 | `seatcred/` | a seat's Redis login read through the secrets library (--seat, NOVA_SEAT) | `go test ./pkg/seatcred/...` | `go test ./pkg/seatcred/...` |
 | `secretcheck/` | the harness of the rule that no secret reaches an error: secret-shaped inputs, a driver, and the table and allowlist comparisons | `go test ./pkg/secretcheck` | `go test ./pkg/secretcheck` |
 | `secrets/` | zero-leak memory and file vault | `go test ./pkg/secrets` | `go test ./pkg/secrets` |
+| `sexp/` | the bounded reader of a restricted-Lisp data file (lists, keywords, strings, integers, symbols; nothing evaluated): the roadmap's and nova-sprint's work file | `go test ./pkg/sexp` | `go test ./pkg/sexp` |
 | `sprintwire/` | how a worker talks to the sprint's server (nova-sprint run --listen): the request and reply of a batch of verbs, the client, and the member's sprint over it | `go test ./pkg/sprintwire` | `go test ./pkg/sprintwire` |
 | `subproc/` | the one door a child process goes through: a named deadline per kind, WaitDelay, and a cancellable context for long-lived children | `go test ./pkg/subproc` | `go test ./pkg/subproc` |
 | `swarm/` | the native card runner: staging, the wall, budgets, slot leases and card lint | `go test ./pkg/swarm` | `go test ./pkg/swarm` |

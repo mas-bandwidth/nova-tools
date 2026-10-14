@@ -1,7 +1,7 @@
 ; The nova-tools roadmap: the data ROADMAP.md is generated from.
-; Read by internal/roadmap through internal/roadmap/sexp (data, never evaluated).
+; Read by pkg/roadmap through pkg/sexp (data, never evaluated).
 ; Edit this file, then run `make roadmap`; never edit ROADMAP.md by hand.
-; The shape is in internal/roadmap's package comment.
+; The shape is in pkg/roadmap's package comment.
 (roadmap "v1"
  :title "nova-tools roadmap"
  :text "This is the work after the point releases. The release plan (the owner, 2026-10-11) replaces the
