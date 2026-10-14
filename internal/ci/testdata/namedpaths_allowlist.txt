@@ -37,6 +37,7 @@ pkg/bus/instrument.go a file of the git bus, removed 2026-10-04; the ratings and
 pkg/bus/note.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 pkg/bus/prepared.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 docs/SPEC-BUS-DELIVERY.md a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+pkg/bus/pushproof.go deleted with the bus2:push record in v1.3 (E2c); the 1.2.0 ratings docs cite it as history
 pkg/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2b); the 1.1.0 ratings doc cites it as history
 
 # The sprint's docs and its sprint and work ratings moved to nova-sprint at v1.2.3 (split layer L5).

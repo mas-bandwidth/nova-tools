@@ -42,9 +42,6 @@ func TestTheWritingVerbsDryRunWritesNothing(t *testing.T) {
 	state := t.TempDir()
 	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--to", "ada", "--state-dir", state, "--dry-run").Exit(0).Out("PONG OK nonce=abc123 to=ada", "dry_run=true")
 	assert.Equal(t, 0, r.store.Len(bus.LogKey), "a dry ping or pong sends nothing")
-	_, found, err := friend.ReadPong(state)
-	require.NoError(t, err)
-	assert.False(t, found, "a dry pong writes no pong file")
 	opened = 0
 
 	dir := t.TempDir()

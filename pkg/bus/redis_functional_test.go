@@ -138,44 +138,6 @@ func TestRedisStoreRefusesWhatTheFakeRefuses(t *testing.T) {
 	assert.Equal(t, map[string]bool{"X": false}, acked)
 }
 
-// The push proof against the real commands: a proof is one HSET in a
-// transaction with no stream, read back by HGETALL; Unheard names the
-// unproven, and a send and a recv go through whoever is unheard.
-func TestRedisStoreKeepsThePushProof(t *testing.T) {
-	t.Parallel()
-	b, c, ctx := live(t)
-	m := Message{From: "ada", To: []string{"bob"}, Subject: "s", Body: "x"}
-
-	lines, err := b.Unheard(ctx, "ada", "bob")
-	require.NoError(t, err)
-	require.Len(t, lines, 2)
-	assert.Contains(t, lines[0], "push=none for ada: no proven push since never")
-	first, err := b.Send(ctx, m)
-	require.NoError(t, err, "unheard is advice, not a gate")
-	e, ok, err := b.Recv(ctx, "bob", 0)
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Equal(t, first.ID, e.Message().ID)
-	n, err := c.Exists(ctx, LogKey, StreamOf("bob")).Result()
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), n)
-
-	for _, name := range []string{"ada", "bob"} {
-		p, err := b.ProvePush(ctx, PushProof{Name: name, Harness: "claude", Nonce: "n-" + name, Up: true})
-		require.NoError(t, err)
-		assert.WithinDuration(t, time.Now(), p.At, time.Minute, "at is the server's time")
-	}
-	got, now, err := b.PushProofs(ctx, "ada", "bob", "m1")
-	require.NoError(t, err)
-	assert.Equal(t, []string{PushProven, PushProven, PushNone}, []string{got[0].State(now), got[1].State(now), got[2].State(now)})
-	assert.Equal(t, "n-bob", got[1].Nonce)
-
-	lines, err = b.Unheard(ctx, "ada", "bob", "m1")
-	require.NoError(t, err)
-	require.Len(t, lines, 1)
-	assert.Contains(t, lines[0], "push=none for m1")
-}
-
 // Enroll on the real commands: a friend row the roster misses is added to the
 // set `friends`, a name already there (a friend or a machine) is not, and a
 // send to the name added then goes through (names.go).
@@ -292,7 +254,7 @@ func TestRedisFriendACLSetsOnlyItsOwnTokenRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, first.ID, again.ID)
 
-	for _, k := range []string{friendsKey, machinesKey, LogKey, StreamOf("bob"), OwedOf("bob"), PushKey, SentOf("bob", "t")} {
+	for _, k := range []string{friendsKey, machinesKey, LogKey, StreamOf("bob"), OwedOf("bob"), SentOf("bob", "t")} {
 		assert.ErrorContains(t, ada.Set(ctx, k, "x", 0).Err(), "NOPERM", "SET %s", k)
 		assert.ErrorContains(t, ada.Get(ctx, k).Err(), "NOPERM", "GET %s", k)
 	}

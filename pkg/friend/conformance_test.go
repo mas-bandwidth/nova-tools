@@ -30,6 +30,8 @@ type fakeSession struct {
 	store       bus.Store
 	state       string
 	acted       map[string]bool
+	pong        Pong
+	hasPong     bool
 	lost, deaf  bool
 	poll        func() // what the session reads each poll interval (a wake file), nil reads nothing
 	deliverText string // the last text an adapter handed in
@@ -58,7 +60,7 @@ func (s *fakeSession) act(text string) {
 		return
 	}
 	s.acted[nonce] = true
-	require.NoError(s.t, WritePong(s.state, Pong{Nonce: nonce, To: to}))
+	s.pong, s.hasPong = Pong{Nonce: nonce, To: to}, true
 	if s.lost {
 		return
 	}
@@ -234,7 +236,7 @@ func newConformanceRig(t *testing.T, harness string) *conformanceRig {
 		Text: func(nonce string) string {
 			return SessionCheckText(nonce, "nova-friend pong --as bob --nonce "+nonce+" --state-dir "+state+" --redis store.test:6379", "ada")
 		},
-		Pong: func() (Pong, bool, error) { return ReadPong(state) },
+		Pong: func() (Pong, bool, error) { return r.session.pong, r.session.hasPong, nil },
 	}
 	return r
 }
