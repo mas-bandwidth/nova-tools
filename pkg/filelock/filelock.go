@@ -433,6 +433,62 @@ func ranOut(path string, timeout time.Duration, last error) error {
 	return fmt.Errorf("filelock %q: timeout after %v: %w: %w", cleanPath, timeout, ErrTimeout, wrapPathError(last))
 }
 
+// acquireFn opens path and takes its exclusive kernel lock, returning the open,
+// locked file (tla/FileLock.tla, Open then TakeEx). It is platform-specific:
+// unix re-verifies the inode under the lock and retries a collision; windows
+// verifies before taking the lock and takes it once.
+type acquireFn func(path string, opts options) (*os.File, error)
+
+// tryLockAcquired finishes a take once the platform acquire has returned the
+// open, locked file: truncate, seek, write the holder note and fsync, then hold
+// (tla/FileLock.tla, Stamp; HolderIsNamed). The truncate/seek/write/sync tail is
+// the code duplicated between filelock_unix.go and filelock_windows.go before
+// this dedup; each platform's tryLockWithOptions hands it its own acquire.
+func tryLockAcquired(path string, label string, opts options, acquire acquireFn) (*FileLock, error) {
+	f, err := acquire(path, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	cleanPath := oneline.Escape(oneline.Cap(path, 1024))
+	syncFn := opts.getSync()
+
+	// Truncate file, write own note, fsync.
+	if err := f.Truncate(0); err != nil {
+		unlockFile(f)
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
+		_ = f.Close()
+		return nil, fmt.Errorf("filelock %q truncate: %w", cleanPath, wrapPathError(err))
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		unlockFile(f)
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
+		_ = f.Close()
+		return nil, fmt.Errorf("filelock %q seek: %w", cleanPath, wrapPathError(err))
+	}
+
+	stamp := Stamp{
+		PID:     opts.getPID(),
+		Host:    opts.getHost(),
+		Started: opts.getClock().Now().UTC(),
+		Label:   oneline.Cap(label, 1024),
+	}
+	if _, err := f.WriteString(stamp.Format() + "\n"); err != nil {
+		unlockFile(f)
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
+		_ = f.Close()
+		return nil, fmt.Errorf("filelock %q write stamp: %w", cleanPath, wrapPathError(err))
+	}
+	if err := syncFn(f); err != nil {
+		unlockFile(f)
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
+		_ = f.Close()
+		return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
+	}
+
+	return &FileLock{file: f}, nil
+}
+
 // TryLock attempts to acquire the exclusive file lock on path without waiting.
 //
 // The lockfile path must be dedicated to filelock: taking an exclusive lock on an existing

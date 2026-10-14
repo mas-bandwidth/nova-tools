@@ -110,11 +110,14 @@ func (o options) getVerifyInode() func(*os.File, string) (bool, error) {
 	return verifyInode
 }
 
-func tryLockWithOptions(path string, label string, opts options) (*FileLock, error) {
+// acquireLock is unix's platform acquire: open the path, take the exclusive
+// kernel lock, and re-verify the inode under it, retrying a collision
+// (tla/FileLock.tla, Open then TakeEx; the inode re-verification is the
+// module's defence of OneFileForEver, tested, not modelled).
+func acquireLock(path string, opts options) (*os.File, error) {
 	cleanPath := oneline.Escape(oneline.Cap(path, 1024))
 	const maxInodeRetries = 5
 	verifyFn := opts.getVerifyInode()
-	syncFn := opts.getSync()
 
 	for inodeAttempt := 0; inodeAttempt < maxInodeRetries; inodeAttempt++ {
 		f, err := openFileSafe(path, os.O_RDWR|os.O_CREATE, 0666)
@@ -129,7 +132,6 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 			return nil, err
 		}
 
-		// Acquired exclusive lock!
 		// Inode race defense: verify fstat(fd) == lstat(path)
 		match, err := verifyFn(f, path)
 		if err != nil {
@@ -146,43 +148,14 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 			continue
 		}
 
-		// Truncate file, write own note, fsync.
-		if err := f.Truncate(0); err != nil {
-			unlockFile(f)
-			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
-			_ = f.Close()
-			return nil, fmt.Errorf("filelock %q truncate: %w", cleanPath, wrapPathError(err))
-		}
-		if _, err := f.Seek(0, 0); err != nil {
-			unlockFile(f)
-			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
-			_ = f.Close()
-			return nil, fmt.Errorf("filelock %q seek: %w", cleanPath, wrapPathError(err))
-		}
-
-		stamp := Stamp{
-			PID:     opts.getPID(),
-			Host:    opts.getHost(),
-			Started: opts.getClock().Now().UTC(),
-			Label:   oneline.Cap(label, 1024),
-		}
-		if _, err := f.WriteString(stamp.Format() + "\n"); err != nil {
-			unlockFile(f)
-			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
-			_ = f.Close()
-			return nil, fmt.Errorf("filelock %q write stamp: %w", cleanPath, wrapPathError(err))
-		}
-		if err := syncFn(f); err != nil {
-			unlockFile(f)
-			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
-			_ = f.Close()
-			return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
-		}
-
-		return &FileLock{file: f}, nil
+		return f, nil
 	}
 
 	return nil, fmt.Errorf("filelock %q: failed after %d inode collision retries", cleanPath, maxInodeRetries)
+}
+
+func tryLockWithOptions(path string, label string, opts options) (*FileLock, error) {
+	return tryLockAcquired(path, label, opts, acquireLock)
 }
 
 func lockWithOptions(path string, label string, timeout time.Duration, opts options) (*FileLock, error) {

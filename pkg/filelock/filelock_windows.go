@@ -124,10 +124,10 @@ func unlockFile(f *os.File) {
 	}
 }
 
-func tryLockWithOptions(path string, label string, opts options) (*FileLock, error) {
-	cleanPath := oneline.Escape(oneline.Cap(path, 1024))
-	syncFn := opts.getSync()
-
+// acquireLock is windows' platform acquire: open the path and take the
+// exclusive kernel lock once (tla/FileLock.tla, Open then TakeEx). The path is
+// verified against a swap before and after the open inside openFileSafe.
+func acquireLock(path string, opts options) (*os.File, error) {
 	f, err := openFileSafe(path, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
@@ -140,39 +140,11 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 		return nil, err
 	}
 
-	if err := f.Truncate(0); err != nil {
-		unlockFile(f)
-		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
-		_ = f.Close()
-		return nil, fmt.Errorf("filelock %q truncate: %w", cleanPath, wrapPathError(err))
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		unlockFile(f)
-		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
-		_ = f.Close()
-		return nil, fmt.Errorf("filelock %q seek: %w", cleanPath, wrapPathError(err))
-	}
+	return f, nil
+}
 
-	stamp := Stamp{
-		PID:     opts.getPID(),
-		Host:    opts.getHost(),
-		Started: opts.getClock().Now().UTC(),
-		Label:   oneline.Cap(label, 1024),
-	}
-	if _, err := f.WriteString(stamp.Format() + "\n"); err != nil {
-		unlockFile(f)
-		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
-		_ = f.Close()
-		return nil, fmt.Errorf("filelock %q write stamp: %w", cleanPath, wrapPathError(err))
-	}
-	if err := syncFn(f); err != nil {
-		unlockFile(f)
-		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
-		_ = f.Close()
-		return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
-	}
-
-	return &FileLock{file: f}, nil
+func tryLockWithOptions(path string, label string, opts options) (*FileLock, error) {
+	return tryLockAcquired(path, label, opts, acquireLock)
 }
 
 func lockWithOptions(path string, label string, timeout time.Duration, opts options) (*FileLock, error) {
