@@ -2,11 +2,7 @@
 
 [Back to Nova Tools](../README.md)
 
-Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. `-h` or `--help` after any verb prints that verb's help (its usage lines and every flag it takes) on stdout at exit 0 and runs nothing, so `<tool> <verb> -h` is always a safe first question; `<tool> help` is the whole banner. nova-fuse alone refuses `-h` after a verb, because its exit 0 means CLEAR. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
-
-### tdocs-cli-generated-rb-b.w8
-
-The reference blocks between the `clidoc` markers are generated, not hand-kept: `make clidoc` runs each marked tool's `help` and each verb's `-h` from the built binaries and rewrites only the block between that tool's markers, so a flag a verb takes is a flag the reference names. The prose and the worked examples outside the markers stay hand-written. The test in internal/docs builds the tools and fails, naming `make clidoc`, when a block drifts from what the binaries print.
+This file is generated whole: `make clidoc` runs each tool's `help` and every verb's `-h` from the built binaries and rewrites the file. The only hand-written lines are the `### First run` sections below; every other line is the binaries' own help. `-h` or `--help` after any verb prints that verb's help on stdout at exit 0 and runs nothing, so `<tool> <verb> -h` is always a safe first question. nova-fuse alone refuses `-h` after a verb, because its exit 0 means CLEAR. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line.
 
 ## nova-check
 
@@ -346,8 +342,6 @@ exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation)
 effect: inspection: reads, writes nothing
 ```
 <!-- clidoc:end nova-check -->
-
-Most verbs only read. Three write, each only when asked and each with `--dry-run`, which makes every check and writes nothing: `dogfood record` appends a receipt, `spelling --write` edits files in place, `convergence --state` stores its two-tick streak. `convergence` also reads the forge through `gh`, over the network. A refusal is one line, `<VERB> REFUSED: <why>; run: <door>`, where the door is `nova-check help`, or `nova-check <verb> -h` after a flag the verb does not take; `<verb> -h` ends in the verb's `effect:` line.
 
 ### First run
 
@@ -1326,13 +1320,235 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 ## nova-bus
 
-Messages between AIs over Redis streams: sent once, delivered until acked. One
-stream per recipient under a consumer group, one log of everything; a message is
-on every recipient's stream and the log or on none, and is pending from `recv`
-until `ack`, so a reader that died before acking is handed it again. The spec is
-[SPEC-BUS.md](SPEC-BUS.md); the rules are `pkg/bus`; the delivery
-machine is `tla/Bus2.tla`. It was nova-bus2 until 2026-10-04, when it took the
-name of the git bus it replaced.
+<!-- clidoc:begin nova-bus -->
+`nova-bus help`:
+
+```
+nova-bus: messages between AIs over Redis streams: sent once, delivered until acked
+
+how it works: the loop: send --as <me> --to <friend> --subject <s> --body <text> sends;
+recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
+ack --as <me> --id <id> acks; every verb needs <me> hooked in (nova-hook hook), else FAILED.
+one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
+first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); loopback/tailnet only.
+
+usage:
+  nova-bus wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--wake-after <cursor>] [--redis <addr>]
+  nova-bus send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus peek [--as <me>] [--kind <k>[,<k>]] [--timeout <duration>] [--redis <addr>]
+  nova-bus recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus ack [--as <me>] --id <id,...> [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus receipts [--as <me>] [--id <id,...>] [--max <n>] [--timeout <duration>] [--redis <addr>]
+  nova-bus overdue [--as <me>] [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]
+  nova-bus log [--as <me>] [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]
+  nova-bus names [--as <me>] [--timeout <duration>] [--redis <addr>]
+  nova-bus version
+  nova-bus help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done, 1 the verb ran and said no (not hooked in: FAILED reason=unhooked, the hook command its remedy; recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+
+example:
+  nova-bus wait --as bob --timeout 1s
+  nova-bus send --as ada --to bob --subject hello --body "are you there?"
+  nova-bus peek --as bob
+  nova-bus recv --as bob --exec true
+  nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+  nova-bus log --as bob --max 5
+  nova-bus names --as bob
+```
+
+`nova-bus wait -h`:
+
+```
+usage: nova-bus wait [flags]
+from `nova-bus help`:
+  nova-bus wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--wake-after <cursor>] [--redis <addr>]
+  nova-bus wait --as bob --timeout 1s
+example: nova-bus wait --as bob --timeout 1s
+flags:
+  --after <string>  the stream entry id <ms>-<seq> to wait past; default: the stream's last id read once at start, as WAIT ARMED prints it
+  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
+  --json  print the result as one JSON object instead of lines
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --skip-subject <string>  subjects starting with one of these prefixes, comma-separated, are skipped; matched without case
+  --timeout <duration>  how long to wait before WAIT NONE, a Go duration (1s, 2m); 0 is for ever
+  --wake-after <string>  0 replays the file from byte zero; otherwise the complete wake-after cursor returned by wait; requires --wake-file; preserves unread bytes across rearm and restart
+  --wake-file <string>  a file whose lines, appended after the start, also end the wait (one line per message)
+exit codes: 0 the wait ended: WAIT OK, entries that counted, or WAIT WAKE, a line on the wake file; 1 WAIT NONE, the timeout ran out, or not hooked in (FAILED reason=unhooked); 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus send -h`:
+
+```
+usage: nova-bus send [flags]
+from `nova-bus help`:
+  nova-bus send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus send --as ada --to bob --subject hello --body "are you there?"
+flags:
+  --as <string>  your name, the sender: the login user when there is one (then it may be left out)
+  --body <string>  the message's text (or --stdin; at most 1 MiB)
+  --cc <string>  more recipients, comma-separated names; each gets the message as well
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --kind <string>  the kind of message, one of report, ack, status, request, blocker: what a reader filters on
+  --re <string>  the id of the message this one answers
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --require-push  refuse a name with no proven push (deaf: ...) instead of noting it; also NOVA_BUS_REQUIRE_PUSH=1
+  --stdin  read the message's text from stdin
+  --subject <string>  one line saying what the message is (required)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+  --to <string>  the recipients, comma-separated names (required)
+  --token <string>  your word for this one send, the same on every retry of it (letters, digits, . _ : -; at most 128 bytes)
+  --token-cleanup <duration>  when the store drops the token (never before its life ends)
+  --token-life <duration>  how long a retry under --token answers the first send
+exit codes: 0 done, 1 the verb ran and said no (not hooked in: FAILED reason=unhooked, the hook command its remedy; recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: delivery: sends beyond this machine: one entry on every recipient's stream and the log, in one transaction
+```
+
+`nova-bus peek -h`:
+
+```
+usage: nova-bus peek [flags]
+from `nova-bus help`:
+  nova-bus peek [--as <me>] [--kind <k>[,<k>]] [--timeout <duration>] [--redis <addr>]
+  nova-bus peek --as bob
+flags:
+  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
+  --json  print the result as one JSON object instead of lines
+  --kind <string>  only these kinds, comma-separated, of report, ack, status, request, blocker (default: every kind)
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (not hooked in: FAILED reason=unhooked, the hook command its remedy; recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus recv -h`:
+
+```
+usage: nova-bus recv [flags]
+from `nova-bus help`:
+  nova-bus recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus recv --as bob --exec true
+flags:
+  --ack  ack each message after printing it (a plain recv leaves it pending)
+  --all  take every message waiting, in order, each its own result
+  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
+  --dry-run  print what the verb would write and write nothing
+  --exec <string>  a shell command run with each message on its stdin; exit 0 acks the message
+  --forever  loop over every message, delivering each with --exec, until a signal
+  --json  print the result as one JSON object instead of lines
+  --kind <string>  only these kinds, comma-separated, of report, ack, status, request, blocker (default: every kind); others are left for the next reader
+  --max <int>  how many messages to take, in order, each its own result; 1 is one message
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --require-push  refuse a name with no proven push (deaf: ...) instead of noting it; also NOVA_BUS_REQUIRE_PUSH=1
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (not hooked in: FAILED reason=unhooked, the hook command its remedy; recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: delivery: sends beyond this machine: moves one message to pending; with --exec it runs the command and acks on exit 0
+```
+
+`nova-bus ack -h`:
+
+```
+usage: nova-bus ack [flags]
+from `nova-bus help`:
+  nova-bus ack [--as <me>] --id <id,...> [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+flags:
+  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
+  --dry-run  print what the verb would write and write nothing
+  --id <string>  the message ids, comma-separated, as recv printed them (required)
+  --json  print the result as one JSON object instead of lines
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (not hooked in: FAILED reason=unhooked, the hook command its remedy; recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: delivery: sends beyond this machine: acks the messages on your stream
+```
+
+`nova-bus receipts -h`:
+
+```
+usage: nova-bus receipts [flags]
+from `nova-bus help`:
+  nova-bus receipts [--as <me>] [--id <id,...>] [--max <n>] [--timeout <duration>] [--redis <addr>]
+example: nova-bus receipts --as bob
+flags:
+  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
+  --id <string>  the message ids, comma-separated, as recv printed them (default: every receipt you hold)
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (not hooked in: FAILED reason=unhooked, the hook command its remedy; recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus overdue -h`:
+
+```
+usage: nova-bus overdue [flags]
+from `nova-bus help`:
+  nova-bus overdue [--as <me>] [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]
+example: nova-bus overdue --older 10m
+flags:
+  --as <string>  your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --older <duration>  how long a message may wait short of delivered before it is overdue, a Go duration (10m, 1h)
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 OVERDUE OK, nothing short of delivered past --older; 1 BUS OVERDUE, one or more, or not hooked in (FAILED reason=unhooked); 2 could not run (a flag, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus log -h`:
+
+```
+usage: nova-bus log [flags]
+from `nova-bus help`:
+  nova-bus log [--as <me>] [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]
+  nova-bus log --as bob --max 5
+flags:
+  --as <string>  your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)
+  --bodies  print each message's body as well
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (not hooked in: FAILED reason=unhooked, the hook command its remedy; recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus names -h`:
+
+```
+usage: nova-bus names [flags]
+from `nova-bus help`:
+  nova-bus names [--as <me>] [--timeout <duration>] [--redis <addr>]
+  nova-bus names --as bob
+flags:
+  --as <string>  your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)
+  --json  print the result as one JSON object instead of lines
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (not hooked in: FAILED reason=unhooked, the hook command its remedy; recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus version -h`:
+
+```
+usage: nova-bus version [flags]
+from `nova-bus help`:
+  nova-bus version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 1 the verb ran and said no (not hooked in: FAILED reason=unhooked, the hook command its remedy; recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-bus -->
 
 ### First run
 
@@ -1437,17 +1653,119 @@ done; 1 the verb ran and said no; 2 could not run.
 
 ## nova-hook
 
-Hooks an identity in: the pushes its role needs (`coordinator`: bus and sprint;
-`friend`: bus and work; `comms`: bus; `member` and `reader`: work), each live while
-its holder renews a lease in the bus Redis and proven while a proof stands
-([SPEC-HOOK](SPEC-HOOK.md)). A command that uses the hook gates its acting
-identity on the required live, proven role push. For `nova-bus`, the acting name must have its own proven
-`bus` push even when sending. Separately, `send` notes unproven `from`/`to`/`cc`
-mailbox pushes and `recv` notes an unproven mailbox push, then continues by
-default. `--require-push` or `NOVA_BUS_REQUIRE_PUSH=1` makes those mailbox checks
-refuse instead. The friend daemon's lanes and beat, and the coordinator's
-`nova-friend` verbs, also refuse an acting identity without their required push
-and role, naming the command below.
+<!-- clidoc:begin nova-hook -->
+`nova-hook help`:
+
+```
+nova-hook: hooks an acting identity to its role's live, proven pushes; some bus mailbox checks are advisory
+
+how it works: roles: coordinator bus+sprint; friend bus+work; comms bus; member/reader work.
+strict gates require the acting name's role push to be live and proven.
+nova-bus send/recv note unproven mailboxes unless --require-push or NOVA_BUS_REQUIRE_PUSH=1.
+a hook proof is a protocol response only, not foreground presence or native idle-wake evidence.
+the record is in bus Redis; address: --redis, NOVA_BUS_REDIS, else fleet:bus.
+
+usage:
+  nova-hook status [--as <name>] [--max <n>] [--redis <addr>]
+  nova-hook hook --as <me> --role <role> [--once] [--redis <addr>] [--dry-run]
+  nova-hook prove --as <me> --nonce <n> [--redis <addr>] [--dry-run]
+  nova-hook unhook --as <me> [--redis <addr>] [--dry-run]
+  nova-hook version
+  nova-hook help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).
+
+example:
+  nova-hook status --as m1
+  nova-hook hook --as m1 --role member --once
+  nova-hook unhook --as m1
+```
+
+`nova-hook status -h`:
+
+```
+usage: nova-hook status [flags]
+from `nova-hook help`:
+  nova-hook status [--as <name>] [--max <n>] [--redis <addr>]
+  nova-hook status --as m1
+example: nova-hook status --as ada
+flags:
+  --as <string>  the name whose record to read (default: every name that ever hooked in)
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --redis <string>  the bus Redis address, host:port, where the hook record lives (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS's fleet:bus)
+exit codes: 0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-hook hook -h`:
+
+```
+usage: nova-hook hook [flags]
+from `nova-hook help`:
+  nova-hook hook --as <me> --role <role> [--once] [--redis <addr>] [--dry-run]
+  nova-hook hook --as m1 --role member --once
+nova-hook prove --as <me> --nonce <n>, within 5m0s, and the pushes it holds are proven. HOOK STATE state= line
+example: nova-hook hook --as ada --role coordinator
+flags:
+  --as <string>  your name: the login user when there is one (then it may be left out)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --once  arm, renew once, print the state and exit (0 proven, 1 not); no loop
+  --redis <string>  the bus Redis address, host:port, where the hook record lives (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS's fleet:bus)
+  --role <string>  the role you hook in as, one of coordinator (bus,sprint), friend (bus,work), comms (bus), member (work), reader (work) (required)
+exit codes: 0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).
+effect: delivery: sends beyond this machine: writes the hook record and the lease of every push it holds, and streams the bus push until a signal
+```
+
+`nova-hook prove -h`:
+
+```
+usage: nova-hook prove [flags]
+from `nova-hook help`:
+  nova-hook prove --as <me> --nonce <n> [--redis <addr>] [--dry-run]
+example: nova-hook prove --as ada --nonce 9f2c4e1a0b3d5c7e
+flags:
+  --as <string>  your name: the login user when there is one (then it may be left out)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --nonce <string>  the nonce the newest HOOK CHALLENGE line printed (required)
+  --redis <string>  the bus Redis address, host:port, where the hook record lives (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS's fleet:bus)
+exit codes: 0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).
+effect: delivery: sends beyond this machine: writes the proof of each push the challenge named
+```
+
+`nova-hook unhook -h`:
+
+```
+usage: nova-hook unhook [flags]
+from `nova-hook help`:
+  nova-hook unhook --as <me> [--redis <addr>] [--dry-run]
+  nova-hook unhook --as m1
+example: nova-hook unhook --as ada
+flags:
+  --as <string>  your name: the login user when there is one (then it may be left out)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --redis <string>  the bus Redis address, host:port, where the hook record lives (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS's fleet:bus)
+exit codes: 0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).
+effect: delivery: sends beyond this machine: unhooks the record: the epoch moves on, every lease, proof and challenge is cleared
+```
+
+`nova-hook version -h`:
+
+```
+usage: nova-hook version [flags]
+from `nova-hook help`:
+  nova-hook version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-hook -->
 
 ### First run
 
@@ -1477,23 +1795,6 @@ and prints what it would write -- the plan, or the pushes it would prove -- and
 writes nothing.
 
 ## nova-friend
-
-For a Codex chat whose coordinator owns card dispatch, `run --notifications-only`
-uses one filtered notification receiver and makes no sprint beat, proof, job or
-pruning changes. `--notify-kinds request,blocker,report` is the default: requests
-and blockers are immediately eligible, reports keep their payload, and plain
-transport acknowledgments and routine status are audited without model wakes.
-Card-delivery status bursts across many cards produce one global ready-queue wake
-inside `--notify-window` (30 seconds). The app queue accepts that input; acceptance
-is not evidence that the model processed it. The mode keeps its journal under
-`<state-dir>/notifications/` and uses a separate notification agent label on install.
-A coordinated handoff stops competing receivers before this mode owns the stream;
-installation and live handoff are separate from building or testing the change.
-Notification install uses a content-addressed executable separate from the native binary
-and makes no harness-setting or proof changes. Stop only its label with
-`launchctl bootout gui/<uid>/com.nova.friend-notifications-<name>` and preserve its journal;
-ordinary `uninstall --as <name>` targets the native daemon. See
-[Notifications](SPEC-FRIEND.md#notifications) for replay and failure behavior.
 
 <!-- clidoc:begin nova-friend -->
 `nova-friend help`:
@@ -1775,6 +2076,40 @@ exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; stat
 effect: delivery: sends beyond this machine: one PING on the friend's stream, as the coordinator
 ```
 
+`nova-friend ping-install -h`:
+
+```
+usage: nova-friend ping-install [flags]
+from `nova-friend help`:
+  nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
+flags:
+  --as <string>  your name, the coordinator (required)
+  --dry-run  print what the verb would write and write nothing
+  --every <duration>  how often a pass runs
+  --json  print the result as one JSON object instead of lines
+  --launchd-log <string>  launchd's own log (default: ~/Library/Logs/nova-friend-wake-ping-<as>.log)
+  --never-wake <string>  friends never wake-pinged, comma-separated
+  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
+  --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
+  --within <duration>  how long each pass waits for the sessions' pongs
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+effect: delivery: sends beyond this machine: a launchd agent that runs ping --wake --to-friends --every, started at login and restarted when it dies
+```
+
+`nova-friend ping-uninstall -h`:
+
+```
+usage: nova-friend ping-uninstall [flags]
+from `nova-friend help`:
+  nova-friend ping-uninstall --as <coordinator> [--dry-run]
+flags:
+  --as <string>  your name, the coordinator (required)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+effect: delivery: sends beyond this machine: boots the wake ping agent out and removes its plist
+```
+
 `nova-friend pong -h`:
 
 ```
@@ -1796,6 +2131,23 @@ flags:
   --working <int>  tasks working, from your own task list
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: the session's answer to a PING, one note on the bus to the coordinator, and the pong file
+```
+
+`nova-friend wait-pong -h`:
+
+```
+usage: nova-friend wait-pong [flags]
+from `nova-friend help`:
+  nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
+  nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
+flags:
+  --from <string>  the friend whose pong to wait for (required)
+  --json  print the result as one JSON object instead of lines
+  --nonce <string>  the nonce the ping carried (required)
+  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
+  --timeout <duration>  how long to wait
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+effect: inspection: reads, writes nothing
 ```
 
 `nova-friend watch -h`:
@@ -1867,6 +2219,19 @@ flags:
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
 exit codes: 0 done (a fault read, or a clear), 2 the fault file cannot be removed.
 effect: local write: writes files on this machine: clears the one-shot lanes' provider-refusal fault lane-fault from the state directory
+```
+
+`nova-friend refuse-go -h`:
+
+```
+usage: nova-friend refuse-go [flags]
+from `nova-friend help`:
+  nova-friend refuse-go --name go|gofmt
+flags:
+  --json  print the result as one JSON object instead of lines
+  --name <string>  the command that was run: go or gofmt (required)
+exit codes: 2 always: refused.
+effect: inspection: reads, writes nothing
 ```
 
 `nova-friend resume -h`:
@@ -1953,25 +2318,6 @@ exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; stat
 effect: inspection: reads, writes nothing
 ```
 <!-- clidoc:end nova-friend -->
-
-What a friend runs to be part of the team: the wake loop, the beat and the
-proof of life, as one daemon. One launchd agent per friend parks on the
-friend's nova-bus stream and, whenever the session is free, pushes every
-waiting message into the running session as one turn through the harness's
-deliver command (one envelope, oldest first, each message under a line
-`[i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>`, capped at the
-harness's text limit with the rest named under `and <n> more: nova-bus recv --as <me> --all`; exit 0 acks every message it carried, a failure none; of the
-daemon's own coordinator notices not yet in a turn, only the newest goes in,
-each older one dropped with `superseded=<newer id>` on the daemon's record), beats to the sprint server while the loop runs, answers the
-coordinator's `PING` at once (`daemon-pong`) and never makes a turn of it; the
-session's own `pong --nonce`, its line at the head of the next turn, or any
-other bus line the session sends after the ping, makes the friend up. No ping for a window and the session is told the
-coordinator is silent, once, inside a turn that carries messages. A turn runs as
-long as it prints (`--silent-stop`, twenty minutes of silence, stops it); the
-same provider refusal three turns in a row (`--broken-after`) marks the session
-broken, delivers nothing more, and tells the coordinator. The
-spec is [SPEC-FRIEND.md](SPEC-FRIEND.md); the rules are `pkg/friend`; the
-machine is `tla/Friend.tla`.
 
 ### First run
 
@@ -2267,37 +2613,10 @@ daemon `--server <host:port>` (else `NOVA_SPRINT_SERVER`, else
 `127.0.0.1:6390`). Exit codes: 0 done; 1 the verb ran and said no; 2 could
 not run.
 
-## Build
-
-Go 1.26 or newer. The standard library, plus the Redis client (`github.com/redis/go-redis/v9`),
-the pure-Go SQLite driver the event fold writes with (`modernc.org/sqlite`, no cgo), and
-`github.com/alicebob/miniredis/v2`, which only the tests link.
-
-```
-make build
-nova-ci local
-```
-
-`nova-ci local` runs the unit tier CI runs for your change: the packages
-`go run ./tools/ci select-packages` picks against `origin/dev`, through `make test` at
-`-p 2` under `nice`, with the unit budgets ([TESTING.md](../TESTING.md)). Never run the whole
-tree on a shared bench; CI runs it on every push to dev. CI also runs the race detector.
-
-## What this deliberately is not
-
-`nova-check` is the record layer and nothing above it. It proves the files were present, whole, sized, linked, prose and in floor-set agreement when the check runs. It does not prove a model read them or acts from them, and it cannot detect a hostile input or a compromised reader; those defenses stay doctrine. What it closes is narrower and real: a posture resting on records nothing checked.
-
-`nova-self-talk` reads sentence shapes, not a mind. It keeps no ratio and cannot see register, irony or an unmarked quotation, and it says so on every run, because a green from a partial check reads exactly like a green from a complete one.
-
-`nova-memory` is a lens on the record, not a memory. It bounds what you must read before deciding; it decides nothing and writes nothing, and its value on any corpus is exactly as measured as the gold set you write for it.
-
-**A commit-time gate for `nocode` is the obvious next form and is deliberately not here yet.** A gate handed changed paths classifies the working tree, while git commits the index, and `git add script.sh && rm script.sh` commits the script with nothing to check on disk. A gate that can be walked past silently is worse than none, because the claim of enforcement is what stops anyone checking. It ships when it reads the index.
-
-## License
-
-MIT, see [LICENSE](../LICENSE).
-
 ## nova-swarm
+
+<!-- clidoc:begin nova-swarm -->
+`nova-swarm help`:
 
 ```
 nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
@@ -2315,49 +2634,43 @@ usage:
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
-                       (a bare --card holds the card to nova-swarm's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file)
-                       (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
-                       (--child-rules holds the card to the rules the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; the sentences are the built-in general rules, or the lines of --child-rules-file, one required sentence per line; template --name card prints a card that passes the general ones)
-                       (--member-injects lints the card as the member stages it, rules by reference: the rules are appended at stage time from the held file of the card's REPO: (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another), or --child-rules-file; a card need not carry them, and a line that contradicts them is still a finding)
-                       (--decide asks the brief decision nova-sprint add asks (nova-decide's brief: p(converges), the minutes, the questions the card leaves open) through Jev with JEV_API_KEY, or from --decide-answers, and prints one LINT DECIDE line after the lint's own; it never changes the verdict, and a failing backend prints the verdict, then why, exit 2)
-                       (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
-                       (nova-sprint add holds a brief to the --child-rules tokens only, and to its model lines: rule-<name> for each rule of its set (the six general rules, or the file add --rules or init --rules names), the step-<what> scans (step-go-clean and step-go-test-timeout only when the file carries those rules), and rule-libraries-considered when the file carries [libraries-considered]; every other token --rules lists is this lint's alone)
-  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <wall> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
-                       (runs the card's own programs: a card whose every work step is a script step, walked in the checkout with no model, each program, POST command and git in its own wall (network denied, no credential, the checkout and a private temp the only writes); one STEP OK|FAILED line per step, stopping at the first failed; refused with no wall unless --no-wall, which runs them unconfined; --remainder prints the card a failed step leaves)
+                       (a bare --card holds the card to nova-swarm's own card contract, the shape native
+                        runs; --rules lists every check; --fleet lints a launcher script against the
+                        coordinator's /bin/bash 3.2. --base-check adds the four checks of a coding card;
+                        --decide asks the brief decision nova-sprint add asks; an adopter's own rules go
+                        in --child-rules-file. --member-injects lints the card as the member stages it.
+                        nova-swarm lint -h has the rest.)
+  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <binary> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
+                       (runs the card's own programs: a card whose every work step is a script step,
+                        walked in the checkout with no model, each program, POST command and git in its
+                        own wall (network denied, no credential, the checkout and a private temp the only
+                        writes). --sandbox <binary> names the wall binary each program, POST command and
+                        git runs in, default nova-sandbox on PATH; --no-wall runs them unconfined. One STEP
+                        OK|FAILED line per step; --remainder prints the card a failed step leaves.)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    [--output-token-max <tokens>] --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
-                       (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
-                        Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
-                        A reader uses its machine's width; --width overrides it. This machine opens no store.
-                        Each card runs as one native child with its frame and an allowlist environment.
-                        Its packet supplies the model, budget and deadline; the flags fill missing route values.
-                        --reader runs reads from the readers table; its flags override the read's route.
-                        A flash card's first read is a decide read, asked by native with JEV_API_KEY
-                        from the reader's environment; children do not receive that key (docs/SPEC-SPRINT.md section 6).
-                        A work member with JEV_API_KEY asks the attempt decision in its own process
-                        when a take ends and carries it in its finish (docs/SPEC-SPRINT.md section 2).
-                        Native classifies a work card's red gate with the gate decision and the same key
-                        before reporting the take; failing tests run once at the base, within a bound.
-                        Decisions are recorded and routed on the sprint row's gate bars, empty by default.
-                        Flaky failures rerun once; pre-existing failures are not charged to the card
-                        (docs/SPEC-SPRINT.md section 5, the gate verdict).
-                        The member pushes the child's commit and opens its requested PR outside the wall, never force-pushing.
-                        Each finish is judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md).
-                        --pass names secrets to hand to children. A name already in the environment is handed as it is;
-                        a name absent from it is read in the member's process from the seat (NOVA_SEAT, or the file
-                        NOVA_SWARM_KEYS names) and the member's environment does not carry the value. The child receives
-                        the decision key, when it is named, and the one key its route needs, never the whole set.
-                        A named secret that cannot be read refuses at start. A harness that needs a key must receive it.
-                        --identity names the pool's commit identity; otherwise the pool's identity.tsv supplies it.
-                        Completed launches leave no checkout; each pool keeps its newest five failed launches.
-                        No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
-                        A staging refusal reports why so the sprint can deal the card to another member.)
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+                        (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
+                         Each tick beats, reads the queue, reports ended children and takes cards to the
+                         fleet row's width; --width overrides it, and --pass names environment secrets to
+                         hand to children. A reader runs the reads of the readers table; this machine opens
+                         no store. --no-wall runs each child with no wall. nova-swarm member -h has the rest.)
   nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--stop-floor <GiB>] [--dry-run]
-                       (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 20 (a quarter of it while the tightest volume has under twice --disk-floor free, said on a PRESSURE line), by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end (DISK-GUARD STOP and exit 3 instead when free disk is under --stop-floor, default 0: never); --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
-  nova-swarm mirror    --repos <a,b> --base <url> [--dir <dir>] [--benches <a,b>] [--check] [--every <duration>]
-                       (keep every bench's bare mirrors fresh, the mirror set a converged property of the fleet: the repositories are the union of the running sprint's stream repos --repos and the fixed set every bench carries (swarm.MirrorSetRepos), the benches are the fleet rows --benches; each repository cloned from <base>/<name>.git into <dir>/<bench>/<name>.git (or <dir>/<name>.git with no --benches, this bench's own mirror) when absent, then every head and pull-request head fetched, one MIRROR OK or MIRROR FAILED line each, exit 1 when one failed; --check is the converge-check, one pass naming each missing mirror MIRROR MISSING <bench> <repo>, exit 1 when any is missing, writing nothing; --every runs until stopped, 0 once; never git prune)
+                       (one pass over this machine, run every few minutes by the disk-guard loop row
+                        fleet/loops.yml adds to every machine: it trims every Go build cache over
+                        --cache-max-gb, empties a module cache over --modcache-max-gb, rotates loop logs
+                        over --log-max-mb and sweeps a stopped loop's pool and old land clones. It never
+                        removes anything with uncommitted work or a live process, and prints one REMOVED,
+                        TRIMMED, CLEANED, ROTATED or KEPT line per action. disk-guard -h has the rest.)
+  nova-swarm mirror    --repos <a,b> --base <url> [--dir <dir>] [--every <duration>]
+                       (keep the bench's bare mirrors fresh: each repository cloned into <dir>/<name>.git when absent, then every head and pull-request head fetched, one MIRROR OK or MIRROR FAILED line each; --every runs until stopped. mirror -h has the rest.)
+  nova-swarm install   <disk-guard|mirror-refresh> [--dir <dir>] [--log <file>] [--every <duration>] [--dry-run]
+                       (writes the unit that runs this binary, kept alive, and loads it. disk-guard's own
+                        flags ride on the unit; mirror-refresh is refused here, and its loop runs
+                        nova-swarm mirror as a nova-config loop row.)
+  nova-swarm uninstall <disk-guard|mirror-refresh> [--dir <dir>] [--dry-run]
+                       (unloads that unit and removes its file; a dry run removes nothing.)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -2365,13 +2678,15 @@ usage:
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
   nova-swarm slots list --store <dir>
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
-a missing flag, an unreadable worker description, a key file that is
-absent or empty, a bad invocation; 3 member: its binary was replaced on disk
-(MEMBER STOP: its supervisor starts the new one; with children running it first
-takes no new card and stops when the last is reported).
+exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that
+failed, a lint that found a defect; 2 could not run: a missing flag, an unreadable worker
+description, a key file that is absent or empty, a bad invocation; by verb:
+  member: 3 its binary was replaced on disk (MEMBER STOP: its supervisor starts the new
+    one; with children running it first takes no new card and stops when the last is
+    reported)
 
 Inputs: native requires a card, harness, model, slot, root, deadline and token budget.
 Use --tokens <n> for a positive budget, or --tokens unmetered to state that the
@@ -2388,9 +2703,9 @@ carries the variable's name, never its value. The legacy --auth option copies
 the provider's auth entry into the data home, mode 0600, and removes it when
 the run ends. A worker naming secret refuses --auth and writes no auth file.
 
-Sandbox: native uses nova-sandbox unless --no-wall is explicit
-(docs/SPEC-SANDBOX.md). A card cannot request this opt-out; the NATIVE line
-names it as sandbox=none-by-flag. The job directory, data home, temporary directory and
+Sandbox: native and member use nova-sandbox unless --no-wall is explicit
+(docs/SPEC-SANDBOX.md); no card can opt out. The NATIVE line reports the opt-out
+as sandbox=none-by-flag. The job directory, data home, temporary directory and
 default shared cache are writable. The slot, harness and toolchain directories,
 worker read_roots and any borrowed Git objects are readable.
 The worker's key file is kept outside its readable roots. If a command runs
@@ -2408,6 +2723,429 @@ example:
   nova-swarm template --name worker
   nova-swarm lint --rules
 ```
+
+`nova-swarm version -h`:
+
+```
+usage: nova-swarm version [flags]
+from `nova-swarm help`:
+  nova-swarm version    print this build identity (--version also accepted)
+example: nova-swarm version
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+effect: inspection: reads, writes nothing
+```
+
+`nova-swarm doctor -h`:
+
+```
+usage: nova-swarm doctor [flags]
+from `nova-swarm help`:
+  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
+example: nova-swarm doctor
+flags:
+  --local <file>  the nova-swarm binary file to read as the local build (default: ~/.local/bin/nova-swarm)
+  --path <file>  the nova-swarm binary file to read as the one first on PATH (default: PATH's)
+exit codes: 0 the binaries agree, or there is one to read; 2 they drift, one shadows
+  the other, or one cannot be read (the DOCTOR line says which)
+effect: inspection: reads, writes nothing
+```
+
+`nova-swarm verify -h`:
+
+```
+usage: nova-swarm verify [flags]
+from `nova-swarm help`:
+  nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
+effect: inspection: reads the job's RESULT.md and checks its line 1, writes nothing
+example: nova-swarm verify --result RESULT.md --contract 'RESULT: done' --label card1
+flags:
+  --card <file>  the card file, read only when given, for the checks that need the card
+  --contract <line>  required: the card's contract line, which line 1 of RESULT.md must equal exactly
+  --label <label>  required: the job's label, carried on the result line and in the receipt
+  --max <int>  the most evidence lines past the disposition, at least 1
+  --result <file>  required: the job's RESULT.md file, whose line 1 is checked
+  --run-record <file>  the job's exit.json file: the harness's exit code joins the verdict
+  --usage <file>  the job's usage.tsv file: tokens, dollars and wall time join the receipt
+exit codes: 0 the result holds its contract; 1 it does not (the line says why); 2 could
+  not run: a missing flag, a file that cannot be read, a receipt that cannot be written
+```
+
+`nova-swarm lint -h`:
+
+```
+usage: nova-swarm lint [flags]
+from `nova-swarm help`:
+  nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  (a bare --card holds the card to nova-swarm's own card contract, the shape native
+  runs; --rules lists every check; --fleet lints a launcher script against the
+  coordinator's /bin/bash 3.2. --base-check adds the four checks of a coding card;
+  --decide asks the brief decision nova-sprint add asks; an adopter's own rules go
+  in --child-rules-file. --member-injects lints the card as the member stages it.
+  nova-swarm lint -h has the rest.)
+  nova-swarm lint --rules
+example: nova-swarm lint --card card.md --child-rules
+flags:
+  --base-check  also run the four base checks of a coding card: PATHS exist at the base sha in --repo, no STEP pushes or calls gh, the LEG is in --legs, the deadline meets --p95
+  --card <lint <file>>  the card file to lint before any spend (the bare lint <file> is the same)
+  --child-rules  also hold the card to the child rules: the built-in general rules, or the sentences of --child-rules-file
+  --child-rules-file <file>  the rules file to hold the card to instead of the built-in general rules (it implies --child-rules): one required sentence per line, [name] sentence to name the token
+  --decide  also ask the brief decision nova-sprint add asks (p(converges), the minutes, the questions the card leaves open) and print it on one LINT DECIDE line; Jev with JEV_API_KEY from the environment, or --decide-answers; the lint's verdict is unchanged, and a failing backend prints it, then why, exit 2
+  --decide-answers <file>  with --decide: the fixed backend's answers file (nova-decide's shape), in place of Jev: no network, no key
+  --decide-record <file>  with --decide: the record file the decision is appended to (nova-decide's; created if absent); none records nothing
+  --fleet <string>  a launcher script to lint instead of a card
+  --legs <string>  with --base-check: the fleet leg table, one leg per line or a TSV whose first column is the leg
+  --lineup <string>  with --typed: the sprint lineup, one card id per line or a TSV with an id column, so an unknown depends-on id is named
+  --max <int>  at most this many item lines, 0 for all
+  --member-injects  the member injects the child rules at stage time (rules by reference): the card need not carry them, and a line that contradicts them is still a finding; the rules are --child-rules-file's, else the held file of the card's repository (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another); it implies --child-rules
+  --p95 <file>  with --base-check: a file of <kind> <seconds> rows, the p95 wall of each kind's finished cards (* answers for any kind)
+  --repo <string>  with --base-check: the git checkout the card's PATHS are resolved in at the base sha (default the working directory)
+  --rules  print every rule token with what it wants, and lint nothing; nova-sprint add holds a brief to the rule-<name> and step-<what> tokens of its rule set (and rule-libraries-considered when the set carries it) and to no other
+  --trust <string>  a file of TRUST kind=<kind> state=<trial|trusted|paused> lines, for the paused check
+  --typed  require the typed header (KIND, PATHS, TEST, PAUSED and DEPENDS-ON lines) even on a card that has none
+exit codes: 0 the card is clean (a NOTE line is advice and changes nothing); 1 a drift,
+  each on its LINT DRIFT line; 2 could not run: a missing flag, a file that cannot be read, a
+  bad invocation
+effect: inspection: reads, writes nothing
+```
+
+`nova-swarm step -h`:
+
+```
+usage: nova-swarm step [flags]
+from `nova-swarm help`:
+  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <binary> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
+  (runs the card's own programs: a card whose every work step is a script step,
+  walked in the checkout with no model, each program, POST command and git in its
+  own wall (network denied, no credential, the checkout and a private temp the only
+  writes). --sandbox <binary> names the wall binary each program, POST command and
+  git runs in, default nova-sandbox on PATH; --no-wall runs them unconfined. One STEP
+  OK|FAILED line per step; --remainder prints the card a failed step leaves.)
+  nova-swarm step --card card.md --dir repo
+effect: local write: commits in the checkout --dir names, and runs the card's programs in their own wall; --dry-run writes nothing
+flags:
+  --card <file>  required: the tree card's file
+  --dir <checkout>  the checkout the steps run in (cwd of every program and POST command); required unless --remainder
+  --dry-run  print each step the walk would run (its language, paths and POST lines) and the wall its commands would run in, and run and write nothing
+  --from <step>  with --remainder: the failed step the remainder starts at
+  --land <sha>  with --remainder: the full sha steps 1..n-1 landed at (the finish's pushed=)
+  --no-wall  run the card's programs with no wall, with this process's own powers: network, environment and every file it can write
+  --remainder <id>  print the remainder card of this card id from --from, staged at --land, and run nothing
+  --result <file>  the RESULT.md file to write in the result shape, the step lines in its body
+  --sandbox <binary>  the wall binary each program, POST command and git runs in (default: nova-sandbox on PATH)
+  --work <directory>  the directory the programs are built in and the steps' private temp made under (default: a new one under TMPDIR)
+exit codes: 0 every step run is ok, each on its STEP OK line (--remainder: the card printed);
+  1 a step failed, on its STEP FAILED line, and the steps after it were not run; 2 could not
+  run: a missing flag, a card that cannot be read, whose tree has a finding or that is not
+  script steps only, no wall and no --no-wall
+```
+
+`nova-swarm template -h`:
+
+```
+usage: nova-swarm template [flags]
+from `nova-swarm help`:
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
+  nova-swarm template --name read-pr
+  nova-swarm template --name worker
+example: nova-swarm template --name card
+flags:
+  --name <name>  required: the template's name: capacity, card, drift, fix, fix-card, models.tsv, probe-row, read, read-pr, replay, result, setup, text, tone, worker (card is a whole card that passes lint --child-rules)
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+effect: inspection: prints a template, writes nothing
+```
+
+`nova-swarm profile -h`:
+
+```
+usage: nova-swarm profile [flags]
+from `nova-swarm help`:
+  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
+example: nova-swarm profile --jobs 'jobs/*'
+flags:
+  --jobs <glob>  required: a glob of job directories (or timeline.tsv files), each holding a native run's per-turn timeline
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+effect: inspection: reads the timeline.tsv of each job the glob names, writes nothing
+```
+
+`nova-swarm native -h`:
+
+```
+usage: nova-swarm native [flags]
+from `nova-swarm help`:
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
+  nova-swarm native --harness ./harness --model provider/model --card card.md --slot slots/1 --root jobs --deadline 30m --tokens unmetered
+flags:
+  --auth <file>  the harness's auth file, one entry of it copied into the child's data home (not with a --worker naming a secret)
+  --bench <name>  this bench's name, in a staging timeout's report (default: this machine's host name up to its first dot)
+  --billing <string>  declared route billing; activates receipt contract 2
+  --budget-as <worker>  the worker the budget is taken as (the member or reader), with --budget-server
+  --budget-holder <prefix>  the prefix of each request's holder (the launch), with --budget-server
+  --budget-server <host:port>  the sprint server's host:port a limited route's every model request takes its global budget from (budget take); empty: unlimited
+  --budget-slots  the route's provider has a concurrency budget: each request's slot is renewed and released through --budget-server
+  --card <file>  required: the card file, handed to the child byte for byte as its task
+  --config <file>  the harness's provider config file (opencode.json), copied beside the auth (not with a --worker naming a secret)
+  --deadline <duration>  required: the wall-clock bound that ends the child, a duration such as 30m
+  --frame <file>  the frame file a member wrote: the repository, commit and branch to stage, from which JOB.md and the shims are written
+  --harness <path>  required: the harness binary path the child runs under, checked for existence and execution
+  --identity <owner,name,email>  the pool identity the child commits under, owner,name,email (default: <root>/identity.tsv)
+  --idle <duration>  end the card when neither its output nor its process tree has moved for this duration; 0 turns the watch off (default 5m)
+  --label <label>  the run's label, on its NATIVE line and its result (default: the card file's name without its extension)
+  --model <provider/model>  required without --worker: the provider/model to run, one slash, both sides nonempty
+  --no-shared-caches  keep the Go caches under the child's HOME instead of the bench's shared <root>/cache
+  --no-wall  run the child with no nova-sandbox wall: the caller owns every read and write it makes
+  --output-token-max <tokens>  the positive per-turn output tokens limit, reasoning included; the harness sets it itself on every opencode child (default 128000)
+  --owner <string>  accepted and read by nothing, with --slots-store
+  --recipient <value>  a bus lane the card may address (again for more); a bus send is denied inside the wall whatever is named
+  --repo <owner/name>  a repository the card may clone, owner/name (again for more): the wall opens the network to it alone
+  --results-root <dir>  the dir RESULT.md, usage.tsv and the report are published under (default <root>/results)
+  --root <dir>  required: the configured root dir the slot sits under; results go under <root>/results
+  --sandbox <path>  the nova-sandbox binary path that builds the wall (default: nova-sandbox on PATH); not with --no-wall
+  --slot <dir>  required: the slot dir this run executes in, under --root; HOME is a data directory beneath it
+  --slots-store <string>  accepted and read by nothing: native takes no slot lease (the dealer holds a bench's capacity)
+  --stage-timeout <duration>  the bound on staging the card's checkout from the bench mirror, a duration (default 120s)
+  --sweep-now  delete the job directory once its results are published (never before)
+  --tokens <n|unmetered>  required: the token budget, a number of tokens, or the word unmetered when the provider has no live accounting and the deadline is the only stop (n|unmetered)
+  --usage-interval <duration>  how often the token budget's source is read, a duration or whole seconds, at least 1s and under --deadline (default 5s)
+  --usd <string>  the dollar budget per card, a decimal such as 0.50: the harness's reported cost at which the card is stopped (stopped=usd), beside --tokens; empty for none
+  --worker <file>  the worker description file (JSON) that names the model, the key and the read roots; nova-swarm worker check checks it
+exit codes: 0 the child exited 0 (the NATIVE line's OK, or INCOMPLETE and its why=, is
+  the verdict); 1 the child was killed (its deadline, a TERM) or exited 255; any other code is
+  the child's own; 2 could not run: a missing flag, a wall, a card or a worker description that
+  is not there
+effect: delivery: runs the card's harness, which calls the model's provider, and writes the job directory under --root
+```
+
+`nova-swarm member -h`:
+
+```
+usage: nova-swarm member [flags]
+from `nova-swarm help`:
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+  (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
+  Each tick beats, reads the queue, reports ended children and takes cards to the
+  fleet row's width; --width overrides it, and --pass names environment secrets to
+  hand to children. A reader runs the reads of the readers table; this machine opens
+  no store. --no-wall runs each child with no wall. nova-swarm member -h has the rest.)
+  nova-swarm member --as m1 --server sprint.example:6390 --harness ./harness --root jobs --once
+flags:
+  --as <name>  required: this machine's name, its row in the fleet table (with --reader, its row in the readers table, reader-<machine>)
+  --auth <file>  the harness's auth file, handed to each child's native --auth
+  --config <file>  the harness's provider config file, handed to each child's native --config
+  --deadline <duration>  the wall-clock bound a card with no route runs to, a duration or whole seconds; a reader given it runs every read to it
+  --disk-floor <GiB>  the free GiB the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)
+  --every <duration>  the time between passes and beats, a duration or whole seconds, above 0 and at most 5s (default 3s)
+  --gh <path>  the gh path the member opens a work card's pull request with, outside the wall (default gh)
+  --gocache-limit <GiB>  the GiB the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)
+  --harness <path>  required: the harness binary path each card's child runs under (native --harness)
+  --identity <owner,name,email>  the pool identity every child commits under, owner,name,email (default: the pool's identity.tsv)
+  --max-load <load>  the maximum one-minute host load at which a local child starts (default 0: no load gate)
+  --model <provider/model>  the provider/model a card with no route runs on; a reader given it runs every read on it
+  --no-wall  run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes
+  --once  run one pass, wait for its starts and pushes, and stop
+  --pass <NAME,...>  the NAME,... of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it
+  --reader  run as a reader: take and run reads of finished work instead of work cards, at its machine's width; a flash card's first read is a decide read, asked with JEV_API_KEY from this environment (docs/SPEC-SPRINT.md section 6)
+  --results-root <dir>  the dir each launch's results are written under (default <root>/results)
+  --root <dir>  required: the dir the launches and results sit under
+  --server <address:port>  required: the sprint server's address:port, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store
+  --slots <dir>  the dir of the launch directories, one per card launch (default <root>/slots)
+  --stage-wall <duration>  the bound on staging each card's checkout, a duration or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)
+  --ticks <int>  run this many passes and stop (not with --once; default: run until stopped)
+  --tokens <n|unmetered>  the token budget a card with no route runs on, a number of tokens or the word unmetered (n|unmetered); a reader given it runs every read on it
+  --warn-load <load>  the one-minute host load at which a local child start warns, at or below --max-load (default 0: no warning)
+  --width <int>  an override of the most cards it runs at once, a twin's; a worker runs its fleet row's width, read every tick: a member its own row's, a reader its machine's (reader-<m> runs at m's width)
+  --worker <file>  the worker description file (JSON), handed to each child's native --worker; the secret it names is handed through too
+exit codes: 0 it stopped as asked (--once, --ticks); 2 could not run: a missing flag, a
+  directory that cannot be made; 3 its binary was replaced on disk (MEMBER STOP: its supervisor
+  starts the new one; with children running it first takes no new card and stops when the last
+  is reported)
+effect: delivery: joins a sprint's fleet through --server, runs its cards as native children, pushes their commits and opens their pull requests
+```
+
+`nova-swarm disk-guard -h`:
+
+```
+usage: nova-swarm disk-guard [flags]
+from `nova-swarm help`:
+  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--stop-floor <GiB>] [--dry-run]
+  (one pass over this machine, run every few minutes by the disk-guard loop row
+  fleet/loops.yml adds to every machine: it trims every Go build cache over
+  --cache-max-gb, empties a module cache over --modcache-max-gb, rotates loop logs
+  over --log-max-mb and sweeps a stopped loop's pool and old land clones. It never
+  removes anything with uncommitted work or a live process, and prints one REMOVED,
+  TRIMMED, CLEANED, ROTATED or KEPT line per action. disk-guard -h has the rest.)
+  nova-swarm disk-guard --root ~/nova-bench/run/member --scan ~/nova-bench/run --cache-max-gb 20
+effect: local write: removes and rotates files on this machine; --dry-run writes nothing
+flags:
+  --cache <dir>  another Go build cache, a dir or a glob such as ~/runner-*/_cache/go-build (again for more); the login's own is always held
+  --cache-max-gb <GiB>  the GiB each Go build cache is held under (default 20)
+  --clone-age <duration>  how long a land clone must be unused before it is removed, a duration (default 24h)
+  --disk-floor <GiB>  the free GiB under which the run warns, the members' own floor (default 10; 0 warns never)
+  --dry-run  judge every rule and print each line with WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE, removing and rotating nothing
+  --land <dir>  the dir nova-sprint land keeps its clones in (default <the user's cache directory>/nova-sprint/land)
+  --log-keep <n>  how many rotated copies of a log stay, n (default 3)
+  --log-max-mb <MiB>  the MiB over which a loop log is rotated (default 50)
+  --logs <dir>  the dir of the loop logs to rotate (default ~/nova-bench/loops)
+  --mirrors <dir>  the dir of the bench's mirrors, whose temporary packs older than an hour are removed (default ~/nova-bench/mirror)
+  --modcache-max-gb <GiB>  the GiB over which a module cache is emptied, while no go command runs (default 50)
+  --pool-idle <duration>  how long a pool's slots must be still, with no process naming it, before it is swept, a duration of at least 10m (default 30m)
+  --root <dir>  a member's or reader's root dir (again for more): its pool is <root>/slots, its caches <root>/cache/go-build and go-mod
+  --scan <dir>  a dir each of whose subdirectories holding slots/ is a root (again for more)
+  --stop-floor <GiB>  the free GiB under which the run ends DISK-GUARD STOP with exit 3, for the loop row to stop the loops (default 0: never)
+exit codes: 0 DISK-GUARD OK, everything it looked at done (a KEPT line is a refusal
+  it means); 1 DISK-GUARD INCOMPLETE, something could not be read or removed (each on its NOTE
+  line); 3 DISK-GUARD STOP, free disk under --stop-floor (stop the loops); 2 could not
+  run: a bad flag
+```
+
+`nova-swarm mirror -h`:
+
+```
+usage: nova-swarm mirror [flags]
+from `nova-swarm help`:
+  nova-swarm mirror    --repos <a,b> --base <url> [--dir <dir>] [--every <duration>]
+  (keep the bench's bare mirrors fresh: each repository cloned into <dir>/<name>.git when absent, then every head and pull-request head fetched, one MIRROR OK or MIRROR FAILED line each; --every runs until stopped. mirror -h has the rest.)
+  nova-swarm mirror as a nova-config loop row.)
+  nova-swarm mirror --repos nova-tools,nova --base https://github.com/<org> --dir ~/nova-bench/mirror --every 60s
+effect: local write: creates and fetches into bare repositories under --dir; reads each repository over the network
+flags:
+  --base <url>  the url each repository is fetched from, <url>/<name>.git, such as https://github.com/<org> or git@<alias>:<org>
+  --benches <list>  the fleet rows (bench names) every mirror is converged to, a comma-separated list; empty is this bench's own flat mirror dir
+  --check  the converge-check: print one MIRROR MISSING <bench> <repo> per mirror the fleet lacks, write nothing, exit 1 when any is missing
+  --dir <dir>  the dir the bare mirrors live in: <dir>/<bench>/<repo>.git, or <dir>/<repo>.git for this bench's own mirror (default ~/nova-bench/mirror)
+  --every <duration>  refresh again after this duration, until stopped; 0 refreshes once (default 0)
+  --repos <list>  the running sprint's stream repository names to mirror, a comma-separated list; the fixed set every bench carries is added to them
+exit codes: 0 every repository refreshed (MIRROR OK each); 1 a repository failed (MIRROR FAILED
+  names it and the cause; the others are still refreshed); 2 could not run: a missing flag or a bad name
+```
+
+`nova-swarm install -h`:
+
+```
+usage: nova-swarm install [flags]
+from `nova-swarm help`:
+  nova-swarm install   <disk-guard|mirror-refresh> [--dir <dir>] [--log <file>] [--every <duration>] [--dry-run]
+  (writes the unit that runs this binary, kept alive, and loads it. disk-guard's own
+  flags ride on the unit; mirror-refresh is refused here, and its loop runs
+  nova-swarm mirror as a nova-config loop row.)
+  nova-swarm install disk-guard --dry-run --every 15m --dir ./no-unit-here
+flags:
+  --dir <string>  the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)
+  --dry-run  print the unit and write and load nothing
+  --every <duration>  the least time between two starts
+  --log <string>  the file the unit's lines go to on macOS; on Linux they are in the journal
+exit codes: 0 done (the unit written or kept, and loaded); 1 the unit did not write or load; 2 usage, or mirror-refresh (no mirror verb yet)
+effect: local write: writes the kind's unit (the verb itself, never a wrapper) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run writes nothing
+```
+
+`nova-swarm uninstall -h`:
+
+```
+usage: nova-swarm uninstall [flags]
+from `nova-swarm help`:
+  nova-swarm uninstall <disk-guard|mirror-refresh> [--dir <dir>] [--dry-run]
+  (unloads that unit and removes its file; a dry run removes nothing.)
+  nova-swarm uninstall disk-guard --dry-run --dir ./no-unit-here
+flags:
+  --dir <string>  the directory the unit was written into (default: as install's)
+  --dry-run  say which unit would be unloaded and removed, and unload and remove nothing
+exit codes: 0 done (removed, or no unit there); 1 the unit did not unload or remove; 2 usage
+effect: local write: unloads the kind's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing
+```
+
+`nova-swarm slots init -h`:
+
+```
+usage: nova-swarm slots init [flags]
+from `nova-swarm help`:
+  nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+example: nova-swarm slots init --store /srv/slots --owner ada --capacity 8 --share 4
+flags:
+  --capacity <int>  required: how many leases the bench grants at once, at least 1
+  --owner <owner>  required: the one owner the store starts with
+  --share <int>  required: how many of those the owner may hold at once, at least 1 and at most --capacity
+  --store <dir>  required: the store dir to create, to hold shares.tsv and slots/
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+```
+
+`nova-swarm slots take -h`:
+
+```
+usage: nova-swarm slots take [flags]
+from `nova-swarm help`:
+  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+example: nova-swarm slots take --store /srv/slots --owner ada --n 1 --for 30m --label card1
+flags:
+  --for <duration>  required: how long the leases last, a positive duration such as 30m
+  --kind <kind>  the card's kind, charged at its admission weight
+  --label <label>  a label the leases carry, which slots release --label frees
+  --n <int>  required: how many leases to grant, at least 1
+  --owner <string>  required: whose share the leases count against
+  --store <dir>  required: the store dir holding shares.tsv and slots/
+exit codes: 0 the leases are granted; 2 refused: the owner's share or the bench is
+  full (SLOTS REFUSED names the holders), a missing flag, or a store that cannot be read
+```
+
+`nova-swarm slots release -h`:
+
+```
+usage: nova-swarm slots release [flags]
+from `nova-swarm help`:
+  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+  (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
+  --force frees it anyway and can oversubscribe the bench: an operator's act,
+  never a card's and never a manager's default)
+example: nova-swarm slots release --store /srv/slots --owner ada --label card1
+flags:
+  --all  free every lease of the owner (or --label)
+  --force  free a lease whose holder is still running too: an operator's act, which can oversubscribe the bench
+  --label <label>  free the owner's leases carrying this label (or --all)
+  --owner <string>  required: whose leases are freed
+  --store <dir>  required: the store dir holding shares.tsv and slots/
+exit codes: 0 the leases named are freed; 2 a lease's holder still runs (SLOTS
+  KEPT; --force frees it), a missing flag or a store that cannot be read
+```
+
+`nova-swarm slots list -h`:
+
+```
+usage: nova-swarm slots list [flags]
+from `nova-swarm help`:
+  nova-swarm slots list --store <dir>
+example: nova-swarm slots list --store /srv/slots
+flags:
+  --store <dir>  required: the store dir holding shares.tsv and slots/
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+effect: inspection: reads, writes nothing
+```
+
+`nova-swarm slots run -h`:
+
+```
+usage: nova-swarm slots run [flags]
+from `nova-swarm help`:
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
+flags:
+  --for <duration>  how long the leases last, a positive duration such as 30m (default 1h)
+  --kind <kind>  the card's kind, charged at its admission weight
+  --label <label>  a label the leases carry (default: command name)
+  --n <int>  how many leases to grant, at least 1 (default 1)
+  --owner <string>  required: whose share the leases count against
+  --store <dir>  required: the store dir holding shares.tsv and slots/
+  --wait <duration>  how long to wait when capacity is occupied, a bounded duration such as 30s
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+```
+
+`nova-swarm worker -h`:
+
+```
+usage: nova-swarm worker [flags]
+from `nova-swarm help`:
+  nova-swarm worker    check <description.json> [--env] [--max <n>]
+exit codes: 0 WORKER OK; 1 the description was read and drifts, each on its WORKER
+  DRIFT line; 2 it cannot be read, or a bad invocation
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-swarm -->
 
 ### First run
 
@@ -2540,42 +3278,376 @@ shadow with, and the check passes on the PATH binary alone. No flag skips the ch
 
 ## nova-sprint
 
+### First run
+
 nova-sprint left nova-tools in v1.2.3 (the split): it lives in [mas-bandwidth/nova-sprint](https://github.com/mas-bandwidth/nova-sprint), whose own command reference documents it.
 
 ## nova-sandbox
 
-Runs one command under OS-enforced containment using `sandbox-exec` on macOS
-or Landlock on supported Linux kernels. Windows has no implemented backend and
-refuses to wrap a command. Run `nova-sandbox check` to inspect backend availability
-on your machine before use.
-The contract is [docs/SPEC-SANDBOX.md](SPEC-SANDBOX.md).
+<!-- clidoc:begin nova-sandbox -->
+`nova-sandbox help`:
 
-Three lists and no defaults. `--read <dir>` is readable and **not** writable, so
-N workers share one copy of an input named once; `--read-noexec <dir>` is the
-same grant **without execute**; `--write <dir>` is readable and writable and is
-**required**, because a command with no writable directory is a misconfiguration
-and not a tighter sandbox. Everything else on disk is denied, the credential file
-included — which is the whole point: the key stays with the person who owns it,
-and the wall is what says so.
+```
+nova-sandbox: run one command inside an OS-enforced wall around the directories you name
 
-**`--read` carries execute; `--read-noexec` is how you say it must not.**
-Landlock's read subset is `EXECUTE|READ_FILE|READ_DIR` and the darwin profile
-grants `process-exec*` globally, so under `--read` a program anywhere in the tree
-RUNS. For a cache or a data tree this user can write to — a module cache, a
-`node_modules`, a downloads directory — that is a way in, and `--read-noexec`
-grants the reading and takes the execute back (on darwin as a last-wins
-`deny process-exec*` after the global grant, on linux by dropping `fsExecute`
-from the rule). A path named in both lists is a **refusal**, not a merge: one
-asks for execute and the other takes it away. The `SANDBOX OK` and `POLICY OK`
-lines count the two separately, `read=<n> read-noexec=<n>`.
+how it works: the wall is built for one run from your flags and kept nowhere:
+--read directories are readable, --write directories writable, and the kernel
+denies the rest (sandbox-exec on macOS, Landlock on Linux; check says which).
+Paths must exist and be absolute, and HOME must sit inside a --write. The
+command's own exit status comes back; 125 means the wall refused to start it.
+first run: the lines under example:, in order: check the backend, make a scratch
+directory, prove the wall with probe, then run a command that writes inside it.
 
-**Every path is yours and none is guessed.** A `--read`, a `--read-noexec`, a
-`--write`, a `--cwd` or a `--tmp` that does not exist is a refusal and is never
-created, and `HOME`
-must resolve **inside a `--write`** — the caller sets it — because almost every
-tool derives a path from it and an inherited `HOME` is denied by the wall. That
-is one flag on every line below, and leaving it off is the first thing a first
-run gets wrong.
+usage:
+  nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny]
+               [--net-listen] [--net-allow <host:port>] [--cwd <dir>]
+               [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+  nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
+  nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
+               [-- <command> <args...>]
+  nova-sandbox check
+  nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]...
+               [--container <disk>] -- <command> <args...>          (darwin)
+  nova-sandbox run --help
+  nova-sandbox reap [--dry-run]                                   (darwin)
+  nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
+  nova-sandbox worktree --repo <dir> --scratch <dir> --prune
+  nova-sandbox egress plan  --run <id> --policy <file> --model-host <host>
+               --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>]
+               --out <file>
+  nova-sandbox egress apply --plan <file> --run <id>                    (linux)
+  nova-sandbox egress check --plan <file>
+  nova-sandbox egress drop  --run <id>                                  (linux)
+  nova-sandbox version
+  nova-sandbox help
+
+  --read <dir>    readable, recursively, and NOT writable. Repeatable, no default.
+                  Shared inputs go here, named once, so N workers read one copy.
+                  It CARRIES EXECUTE: a program under a --read runs.
+  --read-noexec <dir>
+                  readable, recursively, and NOT EXECUTABLE and not writable.
+                  Repeatable, no default. This is the flag for a cache or a data
+                  tree -- a module cache, a node_modules, a downloads directory --
+                  that this user can write to: under --read the job could RUN
+                  whatever lands there, and under this flag it can only read it.
+                  A path in both lists is a refusal, not a merge.
+  --write <dir>   readable AND writable, recursively. Repeatable, no default, and
+                  REQUIRED: a command with no writable directory is a
+                  misconfiguration, not a tighter sandbox. The FIRST --write is
+                  where the working directory and the temp directory default to.
+  --cwd <dir>     the command's working directory; must be inside a --write.
+                  Default: the first --write. A cwd outside the wall denies
+                  getcwd(3) and every git command dies before it reads anything.
+  --tmp <dir>     TMPDIR/TMP/TEMP and zsh TMPPREFIX for the child; must be inside a --write.
+                  Default: <first --write>/.nova-sandbox-tmp, the one directory
+                  this tool creates.
+  --net-deny      an ENFORCED network denial, or a refusal. Without it the tool
+                  makes no promise about the network and the line says
+                  net=nopromise.
+  --net-listen    grant INBOUND ip as well; without it a job that does not
+                  listen cannot be listened to. Never with --net-deny.
+  --net-allow <host:port>  open the loopback host:port named, back up, by name;
+                  the keyless local provider (ollama) that (remote ip) does not
+                  reach. Repeatable.
+  --gpu <n|m>     the explicit local GPU capability: none (default) or metal.
+                  Opt-in only; metal records intent and never widens
+                  mach-lookup or grants blanket device access (#230).
+  --name <c>      the windows container name. Accepted and ignored on darwin, so
+                  one caller builds one argv for three platforms.
+  --acl <t|c>     who adds the windows ACEs. Accepted and ignored on darwin,
+                  with one NOTE line, for the same reason as --name.
+  --secret <path> probe only: the file a probe proves it cannot read. A path is
+                  not a secret; the file's contents are never read. A probe may run
+                  WITHOUT one -- a caller whose key is delivered by nova-secrets
+                  exec into the environment has no key file, and the probe then
+                  proves the wall's other checks (issue #881).
+
+run gives one command a DISPOSABLE place to work and then takes it away: on darwin
+an APFS volume of its own in the boot container, quota'd by --size and mounted at
+/Volumes/nova-<n>. That volume is the only --write, the command runs in a process
+group of its own, and on exit -- normal, error, signal or --timeout -- the group is
+killed and the volume is unmounted and DELETED. Nothing of the run survives on the
+boot volume, so there is no cleanup step. A delete that fails prints SANDBOX LEAK
+with the one command that removes it and exits 3.
+
+  --name <n>      run only: the volume is nova-<n>. Letters, digits, - _ and .
+  --size <s>      run only: the volume's quota, e.g. 8g or 64m. REQUIRED: a
+                  disposable place with no ceiling can fill the boot disk.
+  --timeout <d>   run only: a Go duration after which the whole process group is
+                  killed and the volume deleted anyway. Exit 124.
+  --go            run only: add the Go toolchain's own roots as --read, GOROOT
+                  and GOMODCACHE as go env reports them. A card that builds Go
+                  wants this; nova-sandbox run --help says why.
+  --container <d> run only: the APFS container to make the volume in. Default:
+                  the container the boot volume is in.
+  --dry-run       reap only: print what a reap would take and touch NOTHING.
+
+reap clears what a SIGKILL left: a run killed outright has no path out to delete
+its volume on, so the volume stays mounted and the command's own children are
+reparented to PID 1 still holding it open. reap lists every nova-* volume, kills
+what holds each one (SIGTERM, then SIGKILL) and deletes it -- except a volume a
+LIVE run owns, which it reports and leaves alone. Exit 0 clean, 3 when anything
+remained, so nova-sandbox reap --dry-run is a gate a card can end on.
+
+egress is the card's OUTBOUND wall, and it lives on the BENCH rather than in the
+card, because the worker is the adversary: plan resolves the names in the reviewed
+allowlist (infra/image/egress.txt) ONCE, pins the addresses and writes an nftables
+ruleset that denies everything the card did not name — TCP 443 to the pinned
+addresses, UDP 53 to the resolver, and the metadata address, loopback and the other
+benches denied outright. apply hands that ruleset to nft, check reads one back and
+asserts its invariants, and drop takes the run's table away.
+
+  --run <id>      egress: the run this wall belongs to; the table is nova_egress_<id>
+  --policy <f>    egress plan: the allowlist in git. A name reaches a card only by a
+                  PR to that file, never by a flag on one run.
+  --model-host <h> egress plan: the ONE model host of this run, and it must already
+                  be a line in the policy file.
+  --resolver <ip> egress plan: the only destination UDP 53 is allowed to.
+  --bench-cidr <c> egress plan: another bench, denied. Repeatable.
+  --uid <n>       egress plan: the container's uid on the host (meta skuid).
+  --veth <if>     egress plan: the container's interface (iifname). A plan needs
+                  --uid or --veth: every rule is scoped to the card's own traffic.
+  --out <file>    egress plan: where the ruleset is written.
+  --plan <file>   egress apply and check: the ruleset to apply or to read back.
+
+Every path is yours and none is guessed: a --read, a --read-noexec, a --write, a
+--cwd or a --tmp that does not exist is a refusal and is NOT created. HOME must
+resolve inside a --write (the caller sets it), because almost every tool derives
+a path from it and an inherited HOME is denied by the wall.
+
+A command that runs OUTSIDE the wall and dies inside it is missing a --read:
+a toolchain in a user directory is exactly a caller-supplied read-only root.
+
+exit codes: each verb's own, by verb:
+  the bare wrap and run: the command's own status, 0-124, passed through, and
+    a SANDBOX DONE ... exit=<n> line on stderr after it ends says the command
+    returned it (SANDBOX OK, before it starts, says only that the wall is up);
+    125 nova-sandbox refused before the command ran, a usage error included
+    (a SANDBOX REFUSED line on stderr says why, and no SANDBOX DONE follows);
+    126 the command could not be executed; 127 it is on no PATH entry; 128+N
+    it was killed by signal N; run only: 3 a volume was left (SANDBOX LEAK),
+    124 its --timeout ended it. A command that itself exits 125-127 (or 71,
+    sandbox-exec's own exec failure) is told from the tool by that line.
+  probe, policy, check, version, worktree, egress: 0 done, 1 the verb ran and
+    said NO (probe, egress), 2 could not run (a usage error). reap: 0 clean, 3
+    something remained. <verb> -h gives one verb's codes and flags.
+
+example:
+  nova-sandbox check
+  mkdir -p /tmp/trial/home
+  HOME=/tmp/trial/home nova-sandbox probe --write /tmp/trial
+  HOME=/tmp/trial/home nova-sandbox --write /tmp/trial -- /bin/sh -c 'echo inside > /tmp/trial/out'
+
+macOS job examples (replace /path/to with your own paths):
+  HOME=/path/to/pool/jobs/j1/home \
+  nova-sandbox --read /opt/homebrew --write /path/to/pool/jobs/j1 \
+               -- /opt/homebrew/bin/git -C /path/to/pool/jobs/j1/repo status
+
+  mkdir -p /path/to/pool/jobs/j1/home
+  HOME=/path/to/pool/jobs/j1/home \
+  nova-sandbox probe --write /path/to/pool/jobs/j1 \
+               --secret /path/to/.config/anthropic/env
+```
+
+`nova-sandbox probe -h`:
+
+```
+usage: nova-sandbox probe [flags]
+from `nova-sandbox help`:
+  nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
+  nova-sandbox probe --write /path/to/pool/jobs/j1 \
+  --secret /path/to/.config/anthropic/env
+example: nova-sandbox probe --write /pool/jobs/j1 --net-deny --json
+flags:
+  --gpu <mode>  the local GPU capability mode: none (the default) or metal
+  --json  print the result as one JSON object on stdout, a refusal included
+  --net-deny  an ENFORCED network denial, or a refusal; without it the line says net=nopromise
+  --net-listen  grant inbound ip as well; never with --net-deny
+  --read <dir>  a dir readable and NOT writable, recursively; it carries execute. Repeatable
+  --read-noexec <dir>  a dir readable, NOT writable and NOT executable: a cache or a data tree. Repeatable
+  --secret <path>  a file path the probe proves it cannot read, outside every --read and --write; its contents are never read
+  --write <dir>  a dir readable and writable, recursively. Repeatable and REQUIRED; HOME must sit inside one
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox policy -h`:
+
+```
+usage: nova-sandbox policy [flags]
+from `nova-sandbox help`:
+  nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
+  [-- <command> <args...>]
+example: nova-sandbox policy --write /pool/jobs/j1 --read /usr/local/go --net-deny
+flags:
+  --cwd <dir>  the command's working dir, inside a --write (default: the first --write)
+  --gpu <mode>  the local GPU capability mode: none (the default) or metal
+  --json  print the result as one JSON object on stdout, a refusal included
+  --name <container>  the windows container name; accepted and ignored on darwin and linux
+  --net-allow <host:port>  open the loopback host:port named. Repeatable
+  --net-deny  an ENFORCED network denial, or a refusal; without it the line says net=nopromise
+  --net-listen  grant inbound ip as well; never with --net-deny
+  --read <dir>  a dir readable and NOT writable, recursively; it carries execute. Repeatable
+  --read-noexec <dir>  a dir readable, NOT writable and NOT executable: a cache or a data tree. Repeatable
+  --tmp <dir>  the child's TMPDIR, a dir inside a --write (default: <first --write>/.nova-sandbox-tmp)
+  --write <dir>  a dir readable and writable, recursively. Repeatable and REQUIRED; HOME must sit inside one
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox check -h`:
+
+```
+usage: nova-sandbox check [flags]
+from `nova-sandbox help`:
+  nova-sandbox check
+example: nova-sandbox check --json
+flags:
+  --json  print the result as one JSON object on stdout, a refusal included
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox run -h`:
+
+```
+nova-sandbox run: one command, in a DISPOSABLE place that is deleted on exit (darwin)
+
+usage:
+  nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]...
+                   [--container <disk>] -- <command> <args...>
+
+  --name <n>      the volume is nova-<n>, mounted at /Volumes/nova-<n>. Letters,
+                  digits, - _ and . REQUIRED.
+  --size <s>      the volume's quota, e.g. 8g or 64m. REQUIRED: a disposable place
+                  with no ceiling can fill the boot disk.
+  --timeout <d>   a Go duration after which the whole process group is killed and
+                  the volume deleted anyway. Exit 124.
+  --go            add the Go toolchain's own roots as --read: GOROOT and GOMODCACHE,
+                  as `go env` reports them. A toolchain outside the roots the
+                  profile already grants is unreadable inside the wall, and a module
+                  cache lives under the caller's home, which the wall denies -- so a
+                  card that builds Go wants this flag, and the alternative is naming
+                  both by hand in every argv.
+  --max-procs <n> the most processes the command's tree may hold, default 256.
+                  Counted every second; past it the whole process group is killed
+                  and the run ends "runaway: <n> processes" with exit 137.
+  --max-mem <s>   the most resident memory the tree may hold, default 8g. Past it
+                  the group is killed and the run ends "runaway: <n> bytes of memory".
+  --read <dir>    readable, recursively, and NOT writable. Repeatable.
+  --out <dir>     the ONE writable path off the volume. After the command exits
+                  and BEFORE the volume is deleted, the named artifacts are
+                  copied to <dir>/<name>/. Without it nothing survives the run,
+                  which is the whole point of the verb and the wrong answer for
+                  a card that made a commit.
+  --artifact <p>  what leaves, relative to the card's working directory.
+                  Repeatable. Default: RESULT.md, usage.tsv and repo.bundle,
+                  each taken IF PRESENT. An artifact you NAME and did not write
+                  is a refusal. A directory is taken whole.
+  --out-max-bytes <n>
+                  the ceiling on the whole set, default 64m. Measured before a
+                  byte is written; over it is a refusal, not a truncation.
+  --container <d> the APFS container to make the volume in. Default: the container
+                  the boot volume is in.
+
+  nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \
+                   -- /bin/sh -c 'cd repo && go build ./... && git bundle create ../repo.bundle HEAD'
+```
+
+`nova-sandbox reap -h`:
+
+```
+nova-sandbox reap: clear the disposable volumes a killed run left behind (darwin)
+
+usage:
+  nova-sandbox reap [--dry-run]
+
+  --dry-run   print what a reap would take and touch NOTHING: no signal is sent,
+              no volume is deleted.
+```
+
+`nova-sandbox worktree -h`:
+
+```
+usage: nova-sandbox worktree [flags]
+from `nova-sandbox help`:
+  nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
+  nova-sandbox worktree --repo <dir> --scratch <dir> --prune
+example: nova-sandbox worktree --repo /srv/nova-tools --scratch /srv/scratch --pr 5327
+flags:
+  --base <branch>  the branch it is compared against (default: the pull request's base)
+  --pr <id>  the pull request id whose head the worktree is placed at
+  --prune  remove the worktrees under --scratch whose pull request merged or closed, or that sat unused and stale; never with --pr
+  --repo <dir>  the repository dir the worktree is made from, an absolute path
+  --scratch <dir>  an existing dir the worktrees and their records live in; never created
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox egress plan -h`:
+
+```
+usage: nova-sandbox egress plan [flags]
+from `nova-sandbox help`:
+  nova-sandbox egress plan  --run <id> --policy <file> --model-host <host>
+  --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>]
+  --out <file>
+example: nova-sandbox egress plan --run r1 --policy infra/image/egress.txt --model-host api.example.com --uid 1001 --out /tmp/r1.nft
+flags:
+  --bench-cidr <cidr>  another bench's cidr, denied. Repeatable
+  --model-host <host>  the ONE model host of this run, already a line in the policy
+  --out <file>  the file the ruleset is written to
+  --policy <file>  the reviewed allowlist file in git
+  --resolver <ip>  the only ip UDP 53 is allowed to
+  --run <id>  the run id this wall belongs to; the table is nova_egress_<id>
+  --uid <uid>  the container's uid on the host; a plan needs --uid or --veth
+  --veth <interface>  the container's interface; a plan needs --uid or --veth
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox egress apply -h`:
+
+```
+usage: nova-sandbox egress apply [flags]
+from `nova-sandbox help`:
+  nova-sandbox egress apply --plan <file> --run <id>                    (linux)
+example: nova-sandbox egress apply --plan /tmp/r1.nft --run r1
+flags:
+  --plan <file>  the ruleset file egress plan wrote
+  --run <id>  the run id the plan belongs to
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox egress check -h`:
+
+```
+usage: nova-sandbox egress check [flags]
+from `nova-sandbox help`:
+  nova-sandbox egress check --plan <file>
+example: nova-sandbox egress check --plan /tmp/r1.nft
+flags:
+  --plan <file>  the ruleset file to read back and check
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox egress drop -h`:
+
+```
+usage: nova-sandbox egress drop [flags]
+from `nova-sandbox help`:
+  nova-sandbox egress drop  --run <id>                                  (linux)
+example: nova-sandbox egress drop --run r1
+flags:
+  --run <id>  the run id whose table is taken away
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox version -h`:
+
+```
+usage: nova-sandbox version [flags]
+from `nova-sandbox help`:
+  nova-sandbox version
+example: nova-sandbox version
+exit codes: each verb's own, by verb:
+```
+<!-- clidoc:end nova-sandbox -->
 
 ### First run
 
@@ -2857,15 +3929,372 @@ WORKTREE OK removed=0 kept=1
 
 ## nova-tokens
 
-Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
+<!-- clidoc:begin nova-tokens -->
+`nova-tokens help`:
 
-The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all nine verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum --out <dir> --month <YYYY-MM>` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
+```
+nova-tokens: token spend per day, model and repository, read from AI session logs
 
-```sh
-nova-tokens check --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
+how it works: fold reads the logs you name (Claude Code transcripts, OpenCode
+databases, swarm pools, bus notes) and writes one day file per day into --out,
+one row per (day, model, repo). The repo comes from the --repos file: lines of
+<name><TAB><regexp>, and the first match on a session's path wins. check, sum
+and report read the day files back; a count a source never gave prints as -.
+first run: create a tiny transcript and rules file with the lines under setup:
+above example:, then run the lines under example: in order.
+
+usage:
+  nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
+                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                      [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
+  nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
+                      mode: local note body, printed as the tokens note artifact
+                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
+                      [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
+  nova-tokens report (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+                      mode: Redis month summary
+                      [--user <name>] [--password-env <NAME>]
+  the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary
+  nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
+                      [--user <name>] [--password-env <NAME>] [--dry-run]
+  nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--allow-empty] [--max <n>]
+  nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
+  nova-tokens profiles --swarm-root <dir>
+                      one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
+  nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
+                      [--role <name>] [--weights <in,cw,cr,out>]
+  nova-tokens version
+
+Every verb but version takes --json: the same result as one JSON object on stdout, a
+refusal included. A verb that writes takes --dry-run: it is the real run's own plan --
+it reads what the real run reads and refuses what the real run refuses -- prints what it
+would write with dry_run=true on its last line, and writes nothing (ledger --dry-run dials
+no store). The one difference: a dry fold or session takes no fold.lock, so it neither waits for nor
+refuses on a fold holding one. --opencode under --dry-run (and under sources) still reads a
+copy of the database, made in a new directory of the run's own under --scratch
+(.nova-tokens-dry-run-*) and removed before it exits: --scratch is left as it was. `<verb> -h` lists a verb's flags and states its effect.
+
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
+reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
+a check finding (an --out holding no day file is one), a report with nothing to show; 2 could
+not run: a missing flag, a bad flag value, a duplicate label, two sources of one
+provider sharing message ids, sqlite3 absent when
+--opencode is given, a second fold holding the lock.
+
+EXIT 1 STILL WRITES. A fold with one unreadable file writes every day it could compute
+and exits 1: the exit code is about the claim -- a declared source is a claim that the
+report covers it -- and written=true on the TOKENS DAY line is about the files.
+
+Every path is a flag. There is no default output directory, no default transcript
+directory, no default database, no default bus and no default rules file. fold, report
+(its local mode), sum, check, sources, profiles and session read no environment variable
+for a path or a setting: $HOME, $TMPDIR and $XDG_DATA_HOME are ignored, and a test sets
+them and proves it. Three things do read the environment: --opencode runs sqlite3 found
+on $PATH; and the two Redis verbs, ledger and report --redis, take the store's ACL user
+from --user, else NOVA_SPRINT_REDIS_USER, and its password from the variable
+--password-env names, else (with a user) the one NOVA_SPRINT_REDIS_PASSWORD_ENV names,
+else NOVA_REDIS_BENCH_PASSWORD. The password is never a flag. --timeout is the one flag
+with a default, 120 seconds, because it is how long this tool waits before saying so
+rather than a fact about your data.
+
+A source is declared by flag and every row names its sources, so every number in a day
+file is traceable to the flags of the run that wrote it. A label is [a-z0-9-]+, at most
+32 characters, and unique across the run. --scratch is required with --opencode and
+refused without it, because a scratch directory with nothing to put in it is a flag that
+does nothing. A fold or a report copies the database, with its -wal and -shm, into
+--scratch/opencode-<label>/, replacing the copy there, and leaves it; the live file is
+never opened, because sqlite3 keeps a WAL index beside the file it reads.
+
+The five types -- input, output, cache_write, cache_read, reasoning -- are kept apart, and
+a type the source did not report is written a dash, NEVER 0. A provider that does not expose
+reasoning is not evidence that none occurred, and a zero meaning "not measured" would sum
+into a month claiming to be complete. sum counts the dashes beside the totals. The same
+holds for cost: usd= on a TOKENS AVG line is - when no source reported a cost for it.
+
+A day that would go backwards is refused: TOKENS SHRANK names the type, what the file
+said and what the sources say now, the file is left as it was, and --allow-shrink is the
+person's act. A source that became unreadable must never quietly lower a day's spend.
+
+Two declared sources of one provider that feed the same message ids are refused
+before any day file is written. The refusal names both labels and the duplicate
+count, and the remedy is to drop one of the two flags. An id is comparable only
+within one provider, and a shared id is not dropped from the other source, so
+check and sum never see a doubled day.
+
+A fold merges into the day file by SOURCE: it recomputes the rows its own declared sources
+wrote and keeps every other row exactly as it is, so a run that declares one source does
+not erase what the others reported. A row it can neither keep nor recompute -- one already
+summed over a declared and an undeclared source -- is TOKENS PARTIAL, nothing of that day
+is written, and --allow-shrink does not write it either.
+
+Two notes for one day in one lane are one report only when the later names the earlier in
+its subject: supersedes=<id>[,<id>...], sorted, no duplicates. Nothing else orders them --
+not the Date, not the filename, not the directory listing, not the git history. Two tips
+are TOKENS CONFLICT, nothing folds for that lane-day, and the remedy names every tip; one
+note whose predecessor set names them all clears it.
+
+--note <path> is written whole through atomicfile: the file and its directory must not be
+symlinks.
+
+fold and session hold --out/fold.lock while they write, so two folds of one --out never
+write the same day at once; the second waits, then refuses naming the holder. The lock
+file holds the folding process's id and stays in --out between runs (it is never data);
+check counts it as neither a day file nor a stray.
+
+This tool removes nothing it was given. There is no month file, sum writes nothing, check
+names a stray and leaves it, and no verb deletes, truncates or trims a file it did not make:
+the one removal is the private database copy a dry run or sources made under --scratch.
+
+check counts what it does not name. A calendar day between the first and the last with no
+file is gap=<n>, and it is MISSING only when something says there was spend on it:
+--strict names every gap, --no-spend <file> (one YYYY-MM-DD per line, the days that had
+none) names the gaps your list does not account for. A *.md, a *.log or a pre-* archive
+directory beside the day files is notes=<n> rather than a stray; --strict names those too.
+A gate that cannot go green is a gate people stop reading, and both counts stay on the
+CHECK line, so nothing was hidden to make it green. A gate that cannot go red is no gate
+either: an --out with no day file in it is CHECK FAILED, never a green over nothing.
+
+sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
+first, capped by --max, with the mentions each stem got (one per message that touched a path
+in it). That listing is what other=<pct>% on a day line is made of, and it is the evidence
+for improving the --repos file.
+
+setup:
+  mkdir -p ./transcripts ./out
+  printf '%s' '{"type":"assistant","timestamp":"2026-09-11T09:12:' > ./transcripts/window.jsonl
+  printf '%s' '00Z","message":{"id":"example-1","model":"claude-' >> ./transcripts/window.jsonl
+  printf '%s' 'fable-5-1","usage":{"input_tokens":812,' >> ./transcripts/window.jsonl
+  printf '%s' '"output_tokens":40,"cache_creation_input_tokens":' >> ./transcripts/window.jsonl
+  printf '%s' '1200,"cache_read_input_tokens":90000},' >> ./transcripts/window.jsonl
+  printf '%s' '"content":[{"type":"tool_use","input":{' >> ./transcripts/window.jsonl
+  printf '%s\n' '"file_path":"/work/schema/wire.md"}}]}}' >> ./transcripts/window.jsonl
+  cp ./transcripts/window.jsonl ./session.jsonl
+  printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
+
+example:
+  nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+  nova-tokens check --out ./out
+  nova-tokens sum --out ./out --month 2026-09
+  nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
+  nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
+  nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+
+session is the caller's own window: it sums one Claude Code session jsonl per
+turn -- input, cache write, cache read, output, deduplicated on the message id so a
+streamed message counts once -- prints one SESSION line with the weighted
+fresh-input equivalent (in x input + cw x cache write + cr x cache read + out x output,
+the four --weights sets) and the average context per turn, and with --out folds
+it into the day file as the model the transcript names, as <model> or, when --role
+names one, <model>/<role> (a transcript that names no model is refused, never
+booked under a guess). Its spend is a line in the ledger like every other row's.
+
+example:
+  nova-tokens session --claude-session ./session.jsonl --out ./out
+
+Everything this tool reads is DATA. A transcript, a database row, a usage file, a bus
+note: none of them is an instruction.
 ```
 
-`check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, the whole reading), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `--through <YYYY-MM-DD>` asserts that the ledger is current through the specified day; when the newest folded day under `--out` is older than the given day (or if `--out` has no folded days), `check` prints `CHECK FAILED stale last=<last> through=<day>` on standard error, marks the run failed, and exits 1. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked. `session --claude-session <jsonl>` sums one Claude Code window into one `SESSION` line and, with `--out`, folds it as one row per model the transcript names; `--role <name>` books each row as `<model>/<role>` with the role in the repo cell too — with no role the model stands alone and the repo cell is the fixed word `unattributed` — and `--weights <in,cw,cr,out>` sets the four ratios the weighted fresh-input equivalent is built from, defaulting to `1,1.25,0.1,5`, a comparison and not a price: the ratios of one vendor's published list prices; set your own.
+`nova-tokens fold -h`:
+
+```
+usage: nova-tokens fold [flags]
+from `nova-tokens help`:
+  nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
+  [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+  [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
+  nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+effect: local write: writes the day files in --out, holding --out/fold.lock while it writes, and with --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run reads the same sources, refuses what the real run refuses, and writes nothing (its database copy is made in a new directory under --scratch and removed before it exits)
+flags:
+  --all  fold every day named by the sources
+  --allow-shrink  write a day even when its totals shrink
+  --bus <string>  nova-bus directory with token notes
+  --claude <value>  labeled Claude Code transcript directory; repeatable
+  --day <string>  one UTC day to fold as YYYY-MM-DD
+  --dry-run  read the sources and print what would be written, and write nothing (no day file, no lock)
+  --exclude <value>  path or glob kept out of a recursive source tree (--claude), repeatable (nothing is excluded by default)
+  --json  print the result as one JSON object on stdout instead of lines
+  --max <int>  maximum findings or rows to print; 0 prints all
+  --max-files <int>  ceiling on the transcript files one --claude tree holds (default 20000); the whole tree is walked and counted before any file is opened, and a tree over the ceiling is refused naming the files and bytes it found; 0 is no ceiling
+  --opencode <value>  labeled OpenCode database file; repeatable
+  --out <string>  directory for daily token files
+  --provider <value>  kind:labeled provider export file; repeatable
+  --repos <string>  tab-separated repo names and path regular expressions
+  --scratch <string>  directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources
+  --swarm <value>  labeled swarm pool directory; repeatable
+  --timeout <int>  seconds to wait for the OpenCode sqlite3 reader
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens report -h`:
+
+```
+usage: nova-tokens report [flags]
+from `nova-tokens help`:
+  nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
+  mode: local note body, printed as the tokens note artifact
+  [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
+  [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
+  nova-tokens report (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+  mode: Redis month summary
+  [--user <name>] [--password-env <NAME>]
+  nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+effect: local write: --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run
+flags:
+  --bus <string>  nova-bus directory with token notes
+  --by <string>  Redis summary grouping: model, repo, day or tuple
+  --claude <value>  labeled Claude Code transcript directory; repeatable
+  --day <string>  one UTC day to report as YYYY-MM-DD
+  --dry-run  print the body and name the --note file, and write no file
+  --exclude <value>  path or glob kept out of a recursive source tree (--claude), repeatable (nothing is excluded by default)
+  --json  print the result as one JSON object on stdout instead of lines
+  --max <int>  maximum summary rows to print; 0 prints all
+  --max-files <int>  ceiling on the transcript files one --claude tree holds (default 20000); the whole tree is walked and counted before any file is opened, and a tree over the ceiling is refused naming the files and bytes it found; 0 is no ceiling
+  --month <string>  month to summarize as YYYY-MM
+  --note <string>  atomically write the note body to this path
+  --opencode <value>  labeled OpenCode database file; repeatable
+  --password-env <string>  environment variable holding the Redis password
+  --provider <value>  kind:labeled provider export file; repeatable
+  --redis <string>  Redis address for the store summary mode
+  --repos <string>  tab-separated repo names and path regular expressions
+  --scratch <string>  directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources
+  --supersedes <value>  note id this report replaces; repeatable
+  --swarm <value>  labeled swarm pool directory; repeatable
+  --timeout <int>  seconds to wait for the OpenCode sqlite3 reader
+  --user <string>  Redis username for the store summary mode
+  --who <string>  name to write in each note body row
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens ledger -h`:
+
+```
+usage: nova-tokens ledger [flags]
+from `nova-tokens help`:
+  nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
+  [--user <name>] [--password-env <NAME>] [--dry-run]
+effect: delivery: writes each day file's rows to the Redis store at --redis (tokens:ledger:<day>); --dry-run reads the day files, prints what it would write, and dials no store
+flags:
+  --day <string>  one UTC day to index as YYYY-MM-DD
+  --dry-run  read the day files and print the rows that would be written, and dial no store
+  --json  print the result as one JSON object on stdout instead of lines
+  --month <string>  month of day files to index as YYYY-MM
+  --out <string>  directory containing daily token files
+  --password-env <string>  environment variable holding the Redis password
+  --redis <string>  Redis address for the ledger store
+  --user <string>  Redis username for the ledger store
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens sum -h`:
+
+```
+usage: nova-tokens sum [flags]
+from `nova-tokens help`:
+  nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+  nova-tokens sum --out ./out --month 2026-09
+effect: inspection: reads, writes nothing
+flags:
+  --json  print the result as one JSON object on stdout instead of lines
+  --max <int>  maximum rows to print; 0 prints all
+  --month <string>  month to sum as YYYY-MM
+  --out <string>  directory holding daily token files
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens check -h`:
+
+```
+usage: nova-tokens check [flags]
+from `nova-tokens help`:
+  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--allow-empty] [--max <n>]
+  nova-tokens check --out ./out
+effect: inspection: reads, writes nothing
+flags:
+  --allow-empty  answer OK on an --out holding no day file; without it files=0 is FAILED, never a green over nothing
+  --json  print the result as one JSON object on stdout instead of lines
+  --max <int>  maximum findings to print; 0 prints all
+  --no-spend <string>  file listing UTC dates with no spend, one per line
+  --out <string>  directory containing daily token files
+  --strict  treat every gap and note as a finding
+  --through <string>  require coverage through this UTC day, YYYY-MM-DD
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens sources -h`:
+
+```
+usage: nova-tokens sources [flags]
+from `nova-tokens help`:
+  nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
+  nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
+  nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
+effect: inspection: reads, writes nothing (--opencode reads a copy made in a new directory under --scratch and removed before it exits)
+flags:
+  --all  inspect every day named by the sources
+  --bus <string>  nova-bus directory with token notes
+  --claude <value>  labeled Claude Code transcript directory; repeatable
+  --day <string>  one UTC day to inspect as YYYY-MM-DD
+  --exclude <value>  path or glob kept out of a recursive source tree (--claude), repeatable (nothing is excluded by default)
+  --json  print the result as one JSON object on stdout instead of lines
+  --max <int>  maximum rows to print; 0 prints all
+  --max-files <int>  ceiling on the transcript files one --claude tree holds (default 20000); the whole tree is walked and counted before any file is opened, and a tree over the ceiling is refused naming the files and bytes it found; 0 is no ceiling
+  --opencode <value>  labeled OpenCode database file; repeatable
+  --provider <value>  kind:labeled provider export file; repeatable
+  --repos <string>  tab-separated repo names and path regular expressions
+  --scratch <string>  directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources
+  --swarm <value>  labeled swarm pool directory; repeatable
+  --timeout <int>  seconds to wait for the OpenCode sqlite3 reader
+  --unattributed  list seen paths that matched no repo rule, with the mentions each got (one per message that touched it)
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens profiles -h`:
+
+```
+usage: nova-tokens profiles [flags]
+from `nova-tokens help`:
+  nova-tokens profiles --swarm-root <dir>
+  one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
+effect: inspection: reads, writes nothing
+flags:
+  --json  print the result as one JSON object on stdout instead of lines
+  --swarm-root <string>  root containing the swarm pool profiles
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens session -h`:
+
+```
+usage: nova-tokens session [flags]
+from `nova-tokens help`:
+  nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
+  [--role <name>] [--weights <in,cw,cr,out>]
+  nova-tokens session --claude-session ./session.jsonl --out ./out
+effect: local write: with --out it writes the session's days into the day files there, holding --out/fold.lock; without --out, or with --dry-run, it writes nothing
+flags:
+  --claude-session <string>  one Claude Code session transcript jsonl
+  --day <string>  one UTC day to write as YYYY-MM-DD; defaults to every stamped day
+  --dry-run  with --out, print the days that would be written, and write nothing (no directory, no day file, no lock)
+  --json  print the result as one JSON object on stdout instead of lines
+  --out <string>  directory for the resulting daily token file
+  --role <string>  the role the rows are booked under: given, the row is <model>/<role>; the default books the bare model
+  --weights <string>  the WEIGHTED ratios as in,cw,cr,out -- a comparison, not a price: the defaults are the ratios of one vendor's published list prices; set your own
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens version -h`:
+
+```
+usage: nova-tokens version [flags]
+from `nova-tokens help`:
+  nova-tokens version
+effect: inspection: reads, writes nothing
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+<!-- clidoc:end nova-tokens -->
 
 ### First run
 
@@ -2905,8 +4334,6 @@ variable `--password-env` names, else for a user `NOVA_SPRINT_REDIS_PASSWORD_ENV
 no user, no variable is read unless `--password-env` names it.
 
 ## nova-update
-
-`nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
 ### First run
 
@@ -3097,8 +4524,6 @@ the wrapper and the `nova-secrets exec` line).
 
 ## nova-version
 
-`nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional delivery through `nova-bus send`. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
-
 ### First run
 
 ```sh
@@ -3186,8 +4611,330 @@ nova-bus on the Redis bus; nova-bus reads the store from `NOVA_BUS_REDIS`.
 A busy snapshot wants the current writer to finish or a larger `--budget`; never
 remove a lock file to break a live lock.
 
-
 ## nova-secrets
+
+<!-- clidoc:begin nova-secrets -->
+`nova-secrets help`:
+
+```
+nova-secrets: encrypted secrets in a git repository, handed to one command at a time
+
+how it works: the store is a git working copy holding a .sops.yaml (one rule per
+seat naming its recipients), a recovery.pub (the recovery key every file is also
+sealed to) and one sops-encrypted <seat>.yaml per seat; a seat is a named identity
+whose age key file (mode 0600) opens its file. exec decrypts only the --only names
+into one command's environment; names reads names without decrypting; no value is printed.
+first run: setup: makes a store from an empty directory (it needs age-keygen
+and sops on PATH); first value: seals one with --stdin, the path a harness takes.
+
+usage:
+  nova-secrets version  print this build identity (--version also accepted)
+  nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path>
+                      --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+  nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
+  nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+  nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+  nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
+                      --machine <name> --secret <name> [--path <remote path>]
+                      [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+  nova-secrets placed --machine <name> [--receipts <dir>]
+  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path>
+                      --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seat add --store <dir> --as <seat> --pub <age1…>
+                      --from <source seat> --only <NAME,...> --key <path> --sops <path>
+  nova-secrets seat inject --store <dir> --as <seat> --from <source seat>
+                      --only <NAME,...> --key <path> --sops <path> [--no-pr]
+                      [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets help
+
+flags:
+  --store <dir>        git working copy of the secrets store; check and exec also need it on a
+                       named branch with an upstream tracking ref (see: nova-secrets check --help)
+  --as <name>          seat name selecting <store>/<name>.yaml
+  --key <path>         path to age private key identity file (mode 0600)
+  --sops <path>        path to sops executable
+  --age-keygen <path>  path to age-keygen executable
+  --only <names|all>   comma-separated list of keys to deliver, or 'all' (exec only)
+  --require <name>     assert key must be present in the file (repeatable)
+  --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
+  --json               names only: the result as one JSON object on stdout, a refusal included
+  --machine <name>     fleet machine to place a secret on (its target comes from --machines)
+  --secret <name>      the key in <store>/<as>.yaml to copy to the machine
+  --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
+  --machines <file>    place: fleet registry file: name, ssh target, home, tab separated
+                       gate: the fleet machines registry whose seat column vouches for a
+                       new recipient; without it that rule does not run and the APPROVE
+                       line says machines=-
+  --receipts <dir>     where placed receipts live; default ~/.config/nova-secrets/placed
+  --ssh <path>         ssh executable to use (default ssh)
+  --name NAME          key to seal (seal only)
+  --pub <age1…>        the new seat's age public key, from its own keygen receipt (seat add only)
+  --from <seat>        a seat this machine can open, whose values are re-sealed (seat add,
+                       seat inject)
+  --stdin              read the value from stdin instead of the terminal, the path a harness
+                       takes (seal only)
+  --no-pr              stop after the commit; make no gh call; return the store to its
+                       starting branch (seal, seat inject)
+  --dry-run            prints the plan and writes nothing (place, seal, seat inject): the file, the
+                       recipients, the machine and remote path, the branch and the pull request the
+                       real run would take, as PLAN lines ending in DRY-RUN OK, exit 0; no ssh, no
+                       git write or push, no gh call, no sops encrypt, no value shown. It does
+                       decrypt the seat file the real run reads first (place: --as's, to find
+                       --secret; seal: the existing <as>.yaml, to say add or replace; seat inject:
+                       --from's, to find the names), so --key must open it; seal reads no new value.
+                       seal and seat inject read the store at HEAD, so their store must be
+                       committed; a store with no commit yet is refused with the commit
+                       that starts it
+  --gh <path>          path to the gh executable (seal, seat inject; default: gh)
+  --git <path>         path to the git executable (seal, seat inject; default: git)
+
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+gate verdict, one line per failure), 2 could not run or refused (one line naming
+the remedy); exec ends with the command's own status, and 125 when exec itself
+refused and the command never ran.
+
+setup: needs age-keygen and sops on PATH; run these from an empty directory first
+  mkdir -m 700 -p ~/.config/nova-secrets
+  nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
+    --age-keygen "$(command -v age-keygen)"
+  mkdir -p ./secrets && git -C ./secrets init -q -b main
+  sed -n 's/^# public key: //p' ~/.config/nova-secrets/recovery.key > ./secrets/recovery.pub
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
+    --age-keygen "$(command -v age-keygen)" \
+    --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
+  git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
+  git init -q --bare ./secrets.git
+  git -C ./secrets remote add origin ../secrets.git
+  git -C ./secrets push -qu origin main
+
+first value:
+  printf '%s\n' 'a-token-value' | nova-secrets seal --store ./secrets --as ada \
+    --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops \
+    --name GH_TOKEN --stdin --no-pr
+
+example:
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
+  nova-secrets names  --store ./secrets --as ada
+  nova-secrets check  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
+  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
+  nova-secrets place  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+  nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
+  nova-secrets placed --machine bench-a
+  nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
+  nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
+  nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
+  nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
+```
+
+`nova-secrets version -h`:
+
+```
+usage: nova-secrets version [flags]
+from `nova-secrets help`:
+  nova-secrets version  print this build identity (--version also accepted)
+effect: inspection. Prints this build's identity; opens no store, key or program.
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets exec -h`:
+
+```
+usage: nova-secrets exec [flags]
+from `nova-secrets help`:
+  nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path>
+  --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
+effect: delivery. Decrypts <store>/<as>.yaml with --key and becomes <cmd>, with only the --only values in its environment; writes nothing, prints no value.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --only <names>  the key names to put in the command's environment, comma separated (GH_TOKEN,API_KEY), or all (required)
+  --require <NAME>  a key NAME that must be in the seat's file and in --only, or exec refuses; repeatable
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets names -h`:
+
+```
+usage: nova-secrets names [flags]
+from `nova-secrets help`:
+  nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
+  nova-secrets names  --store ./secrets --as ada
+effect: inspection. Reads the key names in <store>/<as>.yaml without decrypting it; writes nothing.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --json  print the result as one JSON object on stdout, a refusal included: result, facts, items, more
+  --max <n>  n names to list before a MORE line; 0 lists all (default 20)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets check -h`:
+
+```
+usage: nova-secrets check [flags]
+from `nova-secrets help`:
+  nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+  nova-secrets check  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
+effect: inspection. Reads the store's files and git state and decrypts this seat's file with --key to prove it opens; writes nothing, prints no value.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --max <n>  n failures of each kind to list before a MORE line; 0 lists all (default 20)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets gate -h`:
+
+```
+usage: nova-secrets gate [flags]
+from `nova-secrets help`:
+  nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+effect: inspection. Diffs --base..--head in the store with git and judges every seat rule change; writes nothing, calls no network.
+flags:
+  --base <ref>  the pull request's base commit, a git ref (required)
+  --head <ref>  the pull request's head commit, a git ref (required)
+  --machines <file>  the fleet machines registry file, whose seat column vouches for a new recipient; without it that rule does not run and APPROVE says machines=-
+  --store <dir>  dir of the store checkout the pull request is against (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets keygen -h`:
+
+```
+usage: nova-secrets keygen [flags]
+from `nova-secrets help`:
+  nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+  nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
+  --age-keygen "$(command -v age-keygen)"
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
+  --age-keygen "$(command -v age-keygen)" \
+  --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
+effect: local write. Makes one age key file at --key (mode 0600) with --age-keygen, never over an existing file, and prints the .sops.yaml rule block for it.
+flags:
+  --age-keygen <path>  path of the age-keygen program, as printed by: command -v age-keygen (required)
+  --as <name>  the seat name the key is for: letters, digits, - and _ (required)
+  --key <path>  path to write the new private key to; its directory exists with mode 0700 and the file does not (required)
+  --store <dir>  dir of the store, whose recovery.pub fills the rule's recovery key; without it the rule carries <recovery key>
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets place -h`:
+
+```
+usage: nova-secrets place [flags]
+from `nova-secrets help`:
+  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
+  --machine <name> --secret <name> [--path <remote path>]
+  [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+  nova-secrets place  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+  nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
+effect: delivery. Copies one value over ssh to --machine (on ssh's stdin, never in an argument) and writes a receipt under --receipts naming the sealed bytes it decrypted (file, blob) and the store's HEAD (head), never a hash of the value; it reads the seat file once and decrypts a private copy; --dry-run still decrypts that file to find --secret, prints no value, writes nothing and runs no ssh.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --dry-run  prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --machine <name>  the fleet machine's name, a row of --machines (required)
+  --machines <file>  the fleet registry file: one machine per line, name, ssh target, home, tab separated (default ~/.config/nova-tools/fleet.tsv)
+  --path <path>  the remote path written (default <home>/.config/nova-secrets/<NAME>.env, home from the machine's row)
+  --receipts <dir>  dir the placed receipts live in (default ~/.config/nova-secrets/placed)
+  --secret <NAME>  the key NAME in <store>/<as>.yaml whose value is copied (required)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --ssh <path>  path of the ssh program (default ssh)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets placed -h`:
+
+```
+usage: nova-secrets placed [flags]
+from `nova-secrets help`:
+  nova-secrets placed --machine <name> [--receipts <dir>]
+  nova-secrets placed --machine bench-a
+effect: inspection. Lists the receipts under --receipts for --machine, never a hash of a value: per secret its remote path, file (the seat file it was sealed in), blob (the git blob id of the sealed bytes place decrypted), head (the store's HEAD commit when place started, which need not hold that blob) and stamp; writes nothing.
+flags:
+  --machine <name>  the fleet machine's name whose receipts are listed (required)
+  --receipts <dir>  dir the placed receipts live in (default ~/.config/nova-secrets/placed)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets seal -h`:
+
+```
+usage: nova-secrets seal [flags]
+from `nova-secrets help`:
+  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path>
+  --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
+effect: store write. Reads one value at a hidden prompt (or --stdin), seals it into <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run reads no new value, decrypts the existing <as>.yaml (when there is one) to say whether NAME is added or replaced, prints no value and writes nothing.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --dry-run  prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed
+  --gh <path>  path of the gh program (default gh)
+  --git <path>  path of the git program (default git)
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --name <NAME>  the key NAME to seal: capitals, digits and _, as GH_TOKEN (required)
+  --no-pr  commit on a seal/ branch and stop: no push, no gh call; the store returns to its starting branch
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --stdin  read the value from standard input instead of a hidden terminal prompt; never put it in an argument
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets seat add -h`:
+
+```
+usage: nova-secrets seat add [flags]
+from `nova-secrets help`:
+  nova-secrets seat add --store <dir> --as <seat> --pub <age1…>
+  --from <source seat> --only <NAME,...> --key <path> --sops <path>
+  nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
+effect: local write. Writes the new seat's rule into .sops.yaml and its <as>.yaml, re-sealed from --from; commits nothing.
+flags:
+  --as <name>  the new seat's name; the store holds no <name>.yaml yet (required)
+  --from <seat>  the seat whose values are re-sealed: one this machine's --key opens (required)
+  --key <path>  path of this machine's age private key, the one that opens --from (required)
+  --only <NAMES>  the key NAMES to carry, comma separated: GH_TOKEN,API_KEY (required)
+  --pub <key>  the new seat's age public key (age1…), from its own keygen receipt (required)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets seat inject -h`:
+
+```
+usage: nova-secrets seat inject [flags]
+from `nova-secrets help`:
+  nova-secrets seat inject --store <dir> --as <seat> --from <source seat>
+  --only <NAME,...> --key <path> --sops <path> [--no-pr]
+  [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
+  nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
+effect: store write. Re-seals the --only values from --from into the existing <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run decrypts the --from seat's file to find the names, prints no value and writes nothing.
+flags:
+  --as <seat>  the existing seat receiving the values; its <seat>.yaml is in the store (required)
+  --dry-run  prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed
+  --from <seat>  the seat whose values are re-sealed: one this machine's --key opens (required)
+  --gh <path>  path of the gh program (default gh)
+  --git <path>  path of the git program (default git)
+  --key <path>  path of this machine's age private key, the one that opens --from (required)
+  --no-pr  commit on a seal/ branch and stop: no push, no gh call; the store returns to its starting branch
+  --only <NAMES>  the key NAMES to carry, comma separated: GH_TOKEN,API_KEY (required)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+<!-- clidoc:end nova-secrets -->
+
+### First run
 
 Stores encrypted credentials for named seats and delivers selected values to a
 child command. Use `nova-secrets help` for store setup, checks and `exec`; the
@@ -3312,6 +5059,144 @@ saying what to do with it, then `SECRETS KEYGEN OK` **last**. A run that ends on
 OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 
 ## nova-ci
+
+<!-- clidoc:begin nova-ci -->
+`nova-ci help`:
+
+```
+nova-ci: test-time budgets over go test -json output, and this repository's own CI steps
+
+how it works: slowtests and functional work in any Go module and keep no state:
+slowtests reads go test -json events on stdin and prints a CI-SLOW line for each
+package or test over its budget and one CI-LOAD line; functional names the
+packages holding functional-tagged tests. local, new-rule and new-verb need a
+nova-tools checkout; github receipt writes one row of a CI run to a Redis store.
+first run: nothing to set up: slowtests --example reads a built-in event stream.
+In your own module, slowtests reads the events of the packages you name, at a
+60-second budget; the commands under example: are what runs.
+
+usage, in any Go module (no state, no store):
+  nova-ci help        print this banner and the verbs below (inspection)
+  nova-ci version     which build this is: <version> <goos>/<goarch> <go version>
+  nova-ci slowtests [--budget <seconds> | --package-budget <s>] [--test-budget <s>]
+                    [--allowlist <file>] [--sleeps <file>] [--enforce]
+                    [--load <n> --cpus <n>] [--example] [--allow-empty] [--json] [--max <n>]
+                      (inspection) read newline-delimited `go test -json`
+                      TestEvents on stdin (or the built-in example stream with
+                      --example) and print one CI-SLOW line per package whose
+                      total elapsed time is over its budget (--budget, whole
+                      seconds, default 60; --package-budget replaces it) and
+                      per top-level test over --test-budget, then one CI-LOAD
+                      line. The allowlist (row shape:
+                      internal/pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>,
+                      where is run<id> or a bench, - in the test column for a
+                      package's own row; bound: budget sits between its
+                      measurement and three times it, the 3x headroom ceiling)
+                      raises one package's or test's budget. One row,
+                      tab-separated:
+                      internal/ci/slowtests	TestA	4.5	3s@run1
+                      The host's load average (the
+                      larger of its 1- and 5-minute figures, over its CPUs;
+                      --load and --cpus give them by hand) is printed and never
+                      read by the verdict. The times are a measurement: a
+                      CI-SLOW line fails the run only with --enforce (the
+                      nightly reference leg). A test skipped with the marker "SLEEPS:"
+                      and not on --sleeps (internal/pkg<TAB>test<TAB>where) is a
+                      CI-SLEEPS line and fails the run on every leg. A package
+                      go test served from its test cache reports a package
+                      elapsed near zero, so a cached run never trips a package
+                      budget; its tests replay the cached times, which
+                      --test-budget still reads (measure with -count=1). A run
+                      with more finding lines than --max prints the first --max
+                      and one CI-SLOW MORE shown=<n> total=<n> line naming the
+                      flag that prints the rest; --max 0 prints every finding.
+                      --json prints the same verdict as one JSON object. Unenforced
+                      overruns add within_budget=false and an enforcement
+                      command; exit 0 remains a measurement.
+  nova-ci functional [--json] <package-dir>...
+                      (inspection) print the packages among these that hold
+                      functional tests (a _test.go built only under the
+                      functional build tag) on one line and a go test -run
+                      pattern naming exactly those tests on the next; when
+                      there are none, one line
+                      CI FUNCTIONAL OK packages=0 reason=<why>. An unknown flag, and a
+                      pattern matching no package, are refused. --json projects the same
+                      packages and pattern as one JSON object.
+
+usage, in a nova-tools checkout (this repository's own CI steps):
+  nova-ci local [--base origin/dev] [--functional] [--dry-run]
+                      (runs tests, writes only a temp dir; needs a nova-tools
+                      checkout) the unit tier CI runs for this diff, on this
+                      machine: the packages CI's selection picks against the
+                      merge base of --base and HEAD, run through the Makefile's
+                      test target (its go test flags and its slowtests budgets)
+                      under nice -n 15 at -p 2, GOMAXPROCS=2 and -count=1; one
+                      PKG line per package with its seconds, one RED line per
+                      failing test with its output. --functional adds the
+                      functional build tag (GOTEST_TAGS=functional); CI runs
+                      those tests in its functional job as a stream merges.
+                      --dry-run prints the packages and the make line, and
+                      runs nothing.
+  nova-ci new-rule [--root <checkout>] [--dry-run] <rule-name>
+                      (local write; needs a nova-tools checkout) scaffold a new
+                      class rule: class test, fixture and make target;
+                      --dry-run lists the files and writes nothing
+  nova-ci new-verb [--root <checkout>] [--dry-run] <tool> <verb>
+                      (local write; needs a nova-tools checkout) scaffold a new
+                      verb of an existing tool: command, test, fixture and make
+                      target; --dry-run lists the files and writes nothing
+  nova-ci bench run --host <h> [--fallback <h>] --dir <tree> [--root <dir>] [--cache <dir>] [--with-git] -- <go command>
+                      (delivery: writes only its own run directory on the bench)
+                      copy the tree, .git left out unless --with-git, to a fresh
+                      run directory on the Linux bench --host (--fallback when it
+                      does not answer), run the command in it under nice -n 19
+                      with GOCACHE, GOFLAGS=-mod=readonly and NOVA_TEST_NO_HOST=1,
+                      stream its output, then remove that directory and nothing
+                      else. One CI BENCH line on stderr ends the run.
+                      example: nova-ci bench run --host <bench> --dir . -- go vet ./cmd/nova-ci/
+  nova-ci github receipt --from-runner --redis <addr> --repo owner/name
+                    --sha <40hex> --run-id <n> --workflow <name>
+                    --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
+                    [--dry-run]
+                      (store write) the ci-ok job's run receipt: one ev:github
+                      row of the workflow_run shape, sender runner; dialled as
+                      the environment's seat (NOVA_SPRINT_REDIS_USER),
+                      with the password in the variable NOVA_SPRINT_REDIS_PASSWORD_ENV names, never on the line.
+                      A refused write is tried once, not retried. One CI
+                      RECEIPT line. --dry-run checks the fields and prints the
+                      line with ev=-, dialling nothing.
+
+exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usage or could not run; by verb:
+  slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
+    measurement), or an empty stream with --allow-empty; 1 a CI-SLEEPS
+    line, a truncated package (started and never ended), a CI-SLOW line
+    under --enforce, or an empty stream without --allow-empty (the check
+    said no); 2 the invocation could not run (bad flag, unreadable stdin)
+  local: 0 green; 1 a red test, a package that did not build, or a
+    CI-SLEEPS line; 2 a step that could not run, or usage
+  functional: 0 the selection printed (packages=0 included); 2 a flag, or
+    a pattern that matches no package
+  new-rule: 0 the files written (or listed, with --dry-run); 2 usage, not a
+    checkout, a bad name, or a file already there
+  new-verb: 0 the files written (or listed, with --dry-run); 2 usage, not a
+    checkout, a bad name, a tool with no func main, or a file already there
+  bench run: the command's own exit status; 2 also usage, or a run
+    that never reached the command (no bench answered, the copy failed),
+    told apart by its REFUSED line and the missing CI BENCH exit=<n>
+  github receipt: 0 written (or checked, with --dry-run); 1 the store
+    refused the write or could not confirm it; 2 usage or a refused field
+  version: 0 printed; 2 an argument given
+
+example:
+  nova-ci help
+  nova-ci slowtests --example --budget 60 --load 4 --cpus 16
+  nova-ci slowtests --example --budget 120 --load 4 --cpus 16
+
+slowtests judges timing, not test success; with set -o pipefail the pipeline's exit carries go test -timeout 600s's.
+```
+<!-- clidoc:end nova-ci -->
+
+### First run
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
 a budget. `functional --json <packages...>` projects its existing package selection
@@ -3457,39 +5342,337 @@ nova-ci github receipt REFUSED: --conclusion wants success, failure or cancelled
 
 ## nova-config
 
+<!-- clidoc:begin nova-config -->
+`nova-config help`:
+
 ```
-nova-config kinds [--json]                                               # every kind: its table, its fields, the fields add requires
-nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--window] [--json]   # create or upgrade schema config (or make the --file); --print lists the migrations and connects to nothing; --dry-run reads the ledger and prints each migration applied, pending or missing and each table of schema config the role does not own, applying none, and exits 1 when migrate would refuse (ready=no); the role that runs migrate must own every table in schema config, else migrate refuses before applying any and prints the ALTER TABLE ... OWNER TO lines; --window (the seat play's stopped window) refuses, applying nothing, while any other nova session holds the database; --dry-run also prints owner=<role>|mixed|none (who owns schema config whole) and sessions=<n> with a MIGRATE SESSION line each
-nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]         # the store, the schema version, rows and revision per kind, and what Redis has applied
-nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>] [--kind <kind>] [--dry-run] [--json]   # write the rows into Redis per kind through the runtime's own functions, compare-and-set on the revision; --dry-run (or --check) prints the plan and writes nothing
-nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>] # print an Ansible dynamic JSON inventory of the applied state (Redis, never Postgres); --list is the default, --host prints one machine
-nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]   # insert a row; a duplicate name is refused with the set to run; --dry-run prints CONFIG DRY-RUN and writes nothing
-nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]   # update the fields named
-nova-config <kind> remove <name> --as <name> [--dry-run] [--json]        # delete the row
-nova-config <kind> list [--max <n>] [--json]                             # typed rows in stable order; --max limits shown rows, --max 0 shows all; count stays total
-nova-config <kind> show <name> [--json]                                  # one line with every field and the stamps
-nova-config <kind> history <name> [--max <n>] [--json]                   # changes in stable order; --max limits shown changes, --max 0 shows all; count stays total
-nova-config <kind> <verb> -h                                             # the verb's flags (required ones marked), its effect and a worked example
-nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
-nova-config machine width <name> [--pg <dsn> | --file <path>] [--json]  # the width of the sprint's member on the machine: the row's width field (machine set <name> --width <n>), what nova-sprint fleet sync sets; above 0 it is a member, 0 is none, unset (--width default) is the default, half the machine's cores as fleet sync resolves them from its beat; no Redis
-nova-config machine self [--check] [--json]                              # this machine's own name (NOVA_MACHINE, else the tailnet's name, else the hostname's first label); --check exits 2 when it is no machine row, 3 when unreadable
-nova-config login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --friend <actor> [--sops <path>]  # record the Postgres login (never the password); a bare verb then connects with it
-nova-config login --check                                                # print the recorded login and whether the secret resolves; the password is never shown
-nova-config logout                                                       # remove the recorded login
-nova-config fleet set --store <m> --coordinator <m> --redis_port <port> --pg_dsn <uri> --bus <host:port> --as <name>  # the one fleet row: no name, no add, remove or list
-nova-config sprint set --coordinator <friend> --as <name>                # the one sprint row: who coordinates; set it to hand over
-nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
-nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--enabled false] --as <name>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive; a nova-swarm member argv spells no --width, its width is its machine row's
-nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; the argv is the words the unit runs; machine show <m> names the machine's loops (loops=<a,b>)
-nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]   # the loop's command under <run-dir>/<name>.lock (default ~/nova-bench/run): a second copy exits 3, a lock whose holder died is taken, the lock lives in the wrapper so a wrapper killed outright ends the command with it (linux's parent-death signal) and a restart never doubles it, the start is counted in <name>.starts and written to --metrics as nova_loop_starts_total for node_exporter, SIGINT and SIGTERM pass to the command, and the exit is the command's, 128+N when a signal ended it; with no command after -- it runs the row's argv (a disabled row, or one with keys, is refused with exit 1); the Go verb in place of the bash nova-loop wrapper
-nova-config route add <name> --tier flash|pro|heavy --provider <p> --model <m> [--harness opencode|claude|codex|grok] --deadline <seconds> [--tokens <n>] [--usd <dollars>] [--enabled false] --as <friend>   # one way to run a model tier: the harness runs <provider>/<model>, (a headless --harness claude, codex or grok takes --provider subscription-<harness>) stopped at its token budget or its dollar budget (the harness's reported cost), whichever comes first; frontier cards escalate to the coordinator and are never dealt from routes
-nova-config route set <name> --price_input <usd> --price_cache_read <usd> --price_cache_write <usd> --price_output <usd> [--reasoning_as_output false] [--long_context <tokens> --price_input_long <usd> --price_output_long <usd>] [--price_request <usd>] [--billing metered|plan] [--gateway_percent <pct>] [--price_source <text>] [--price_as_of YYYY-MM-DD] --as <friend>   # the route's price sheet, optional: USD per million tokens of each class, each a decimal kept exactly; a route with none prices no card
-nova-config route prices --refresh [--provider openrouter|opencode] [--from <path>] [--dry-run] --as <name>   # set each enabled route's prices from its provider's published list (OpenRouter's models endpoint; opencode rows assumed from it, a NOTE says so), price_as_of today and price_source the URL; a price that moved past 2x is a JUDGMENT line, left as it is, exit 1; a row more than 10 percent off the list is named STALE
-nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the tier's route array: the deal takes routes[index mod len] for each card of the tier, the index a uint64 counter on the fleet table; a route named twice takes two turns
-nova-config route set|remove|list|show|history                            # the one grammar, as for every kind
+nova-config: a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis
+
+how it works: each kind (machine, fleet, friend, sprint, loop, route, tier) is a
+table of rows in PostgreSQL's schema config, which migrate makes; every write
+adds a history row naming who made it. apply copies the rows into Redis, the
+view the fleet reads; inventory prints that view for Ansible. --file <path>
+keeps the rows in a local JSON file instead, to try every verb with no database.
+first run: the example: lines need no database and write only ./try.json; the fleet's store is
+  export NOVA_PG_DSN=postgres://user@host:5432/db
+then migrate.
+
+usage:
+  nova-config help [<verb>]
+  nova-config version
+  nova-config kinds [--json]
+  nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]
+  nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]
+  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--actor <name>]
+                    [--kind <kind>] [--dry-run] [--json]
+  nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
+                        [--timeout <duration>] [--example]
+  nova-config <kind> add <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
+  nova-config <kind> set <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
+  nova-config <kind> remove <name> --actor <name> [--dry-run] [--json]
+  nova-config <kind> list [--max <n>] [--json]
+  nova-config <kind> show <name> [--json]
+  nova-config <kind> history <name> [--max <n>] [--json]
+  nova-config machine width <name> [--json]
+  nova-config machine self [--check] [--json]
+  nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]
+                    the loop's command under its one lock: a second copy exits 3
+  nova-config login --store <dir> --as <seat> --key <file> --secret <NAME>
+                    --dsn <dsn> --actor <name> [--sops <path>]
+                    records the DSN and where the password is; never the password
+  nova-config login --check
+                    prints that login and whether the secret resolves
+  nova-config logout
+                    removes the recorded login
+  nova-config fleet set|show|history        one row each, no name:
+                                            fleet and sprint have no add, remove or list
+  nova-config sprint set|show|history
+  nova-config <kind> <verb> -h              the verb's flags (required ones marked),
+                                            its effect and a worked example
+
+The store is --pg <dsn> (or NOVA_PG_DSN; the password is never on the line:
+NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password,
+NOVA_PG_PASSWORD when it is unset, and never the password itself), or --file
+<path>, or --seat <name> (or NOVA_SEAT) which supplies the DSN and password
+variable name from the seat profile (nova-sprint seat install writes it; the
+password, when its variable is unset, is read in this process from the
+nova-secrets seat nova-sprint seat login names), or the login nova-config login records
+(the DSN and friend; the password is read in this process from nova-secrets,
+never recorded and never put in an environment). --pg, NOVA_PG_DSN and
+NOVA_PG_PASSWORD_ENV still win when given. With none named, the applied
+fleet row in Redis supplies pg_dsn; status names its source as pg-from.
+--redis is host:port
+(NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address). --actor is
+the name a write is recorded under (NOVA_FRIEND, the recorded friend, or the
+seat name); its old spelling --as works for one release.
+Lose Redis: run nova-config apply.
+
+Fleet apply and inventory require explicit redis_port and pg_dsn; set both
+with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --actor <name>.
+
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer);
+machine self: 2 not a row, 3 unreadable
+
+kinds (nova-config <kind> add -h describes each field):
+  machine  a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its
+           runners, its explicit inventory roles, the sprint member's width on it, and whether it is
+           a TLC record machine
+           add needs --user --seat --slots; also --runners --roles --width --tla --note
+  fleet    the one row of fleet-wide facts: the store and coordinator machines, Redis port, explicit
+           password-free Postgres URI, the bus store's address and the loops log directory
+           set takes --store --coordinator --redis_port --pg_dsn --bus --loops_dir
+  friend   an AI friend: the friend's width, the jobs the friend works at once and the friend's one
+           capacity number (no slots, no ceiling), which tiers the friend can do, the friend's
+           roles, the delivery mode, the config directory the claude lanes run with, the per-card
+           token cap the one-shot lanes hold a card at, the pronouns the friend goes by (a stated
+           value, or unstated, which reads they/them), and the optional streams and kinds
+           restrictions on the work the friend may be dealt
+           add needs --tiers; also --roles --width --mode --config_dir --token_cap --streams --kinds
+           --pronouns
+  sprint   the one row of sprint-global facts: which friend coordinates and the decide_* bars, each
+           a probability in [0,1]; nova-config sprint set -h says what each bar decides
+           set takes --coordinator --decide_bounce --decide_review --decide_score_bar
+           --decide_attempt_no_result --decide_attempt_nothing_to_do --decide_grade
+           --decide_gate_flaky --decide_gate_preexisting --decide_judgment_bar --decide_brief_bar
+           --answer_rules_off --git_identity --max_attempts
+  loop     a supervised loop on one machine: its command, the seat and secret names it opens, and
+           how it runs (every n seconds or kept alive); a nova-swarm member's width, a reader's too,
+           is its machine row's, never the argv's
+           add needs --machine --argv; also --seat --keys --every --keepalive --enabled
+  provider a model provider's declared funding and billing: every route names one; migration seeds
+           unfunded rows until the owner declares the facts
+           add needs --billing --funded; also --balance_usd --balance_as_of --console_url --note
+  route    a route of a model tier: the provider and model a card of that tier runs on, its token
+           budget and deadline; the tier's array orders its routes
+           add needs --tier --provider --model --deadline; also --harness --tokens --usd --enabled
+           --first --price_input --price_cache_read --price_cache_write --price_output
+           --reasoning_as_output --long_context --price_input_long --price_output_long
+           --price_request --billing --gateway_percent --price_source --price_as_of --note
+  tier     a model tier's route array: the deal takes routes[index mod len] for each card of the
+           tier, a route named twice taking two turns; one row each for flash and pro and heavy,
+           created by migrate
+           set takes --routes
+
+example:
+  nova-config migrate --file try.json
+  nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
+  nova-config machine set m1 --width 6 --actor a1 --file try.json
+  nova-config machine list --file try.json
+  nova-config machine history m1 --file try.json
 ```
 
-`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width, tla; the name is the tailnet host; `tla=true` marks a TLC record machine), `fleet` (one row: the store and coordinator machines, Redis port and explicit password-free Postgres URI), `friend` (tiers, roles, width: the jobs the friend works at once and the friend's one capacity number, 8 by default, with no slots and no machine ceiling, mode: one-shot always, how the daemon hands the friend work; batch is retired, pronouns: a stated value prints as stored, and an empty value is unstated, read as they/them and printed `pronouns=they/them(unstated)`; a set that names other fields leaves the stored pronouns), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash, pro or heavy tier: tier, provider, model, harness, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash, pro and heavy, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
+`nova-config version -h`:
+
+```
+usage: nova-config version [flags]
+from `nova-config help`:
+  nova-config version
+effect: inspection: reads nothing but this binary
+example: nova-config version
+flags:
+  --json  print one JSON object (pkg/tool's result shape) instead of the lines
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config kinds -h`:
+
+```
+usage: nova-config kinds [flags]
+from `nova-config help`:
+  nova-config kinds [--json]
+effect: inspection: reads nothing but this binary
+example: nova-config kinds
+flags:
+  --json  print one JSON object (pkg/tool's result shape) instead of the lines
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config migrate -h`:
+
+```
+usage: nova-config migrate [flags]
+from `nova-config help`:
+  nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]
+  nova-config migrate --file try.json
+effect: store write: makes or upgrades schema config (or makes the --file), each migration above the greatest recorded once; --print and --dry-run write nothing (--dry-run reads the ledger)
+example: nova-config migrate --file try.json
+flags:
+  --dry-run  read the ledger (config.schema_migrations) and print every migration applied, pending (migrate applies it) or missing (below the greatest recorded, which migrate will not apply), and every table of schema config the role does not own, applying none; exit 0 when migrate would apply (ready=yes), 1 when it would refuse (ready=no)
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (pkg/tool's result shape) instead of the lines
+  --max <int>  SQL lines to print under each MIGRATION line before one MORE line stands for the rest; 0 prints each migration whole
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --print  list the migrations this binary carries and connect to nothing
+  --window  the stopped window of the seat play: refuse, applying nothing, while any other nova role's session holds the database (the old server or member still runs); --dry-run reports the sessions and refuses nothing
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config status -h`:
+
+```
+usage: nova-config status [flags]
+from `nova-config help`:
+  nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]
+effect: inspection: reads the store and Redis, writes nothing
+example: nova-config status --file try.json
+flags:
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (pkg/tool's result shape) instead of the lines
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --redis <host:port>  the Redis host:port apply writes (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); without one, status reads the store alone
+  --seat <seat>  the seat profile in seats.tsv supplying the PostgreSQL DSN and password variable name (env NOVA_SEAT); exclusive with --file
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config apply -h`:
+
+```
+usage: nova-config apply [flags]
+from `nova-config help`:
+  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--actor <name>]
+  [--kind <kind>] [--dry-run] [--json]
+effect: external delivery: writes Redis, the copy of the rows the fleet reads, through its own Redis Functions; --dry-run prints the lines and writes nothing
+example: nova-config apply --dry-run --redis 127.0.0.1:6379 --file try.json
+flags:
+  --actor <name>  the name a write is recorded under in the history (env NOVA_FRIEND)
+  --as <name>  the old spelling of --actor, kept for one release; it sets the same name
+  --check  the same as --dry-run
+  --dry-run  print the ADD, SET and REMOVE lines (CHECK ...) and write nothing; it still reads the store and Redis
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (pkg/tool's result shape) instead of the lines
+  --kind <kind>  one kind to apply (machine, fleet, friend, sprint, loop, provider, route, tier); every kind, in order, when unset
+  --move-seat  write the sprint row's coordinator over a live seat that differs (the owner's word); without it apply holds the live seat, writes every other field and prints one APPLY HELD line
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --redis <host:port>  the Redis host:port to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)
+  --seat <seat>  the seat profile in seats.tsv supplying the PostgreSQL DSN and password variable name (env NOVA_SEAT); exclusive with --file
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config inventory -h`:
+
+```
+usage: nova-config inventory [flags]
+from `nova-config help`:
+  nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
+  [--timeout <duration>] [--example]
+effect: inspection: reads Redis (the state apply wrote) or the --fixture file, never PostgreSQL, and writes nothing
+example: nova-config inventory --example > inv.yml
+flags:
+  --example  print a minimal fixture to stdout and open no store; save it and read it back with --fixture
+  --fixture <file>  a YAML or JSON file of machines (each with roles), the fleet row, loops and each machine's os, arch and cores, read in place of the store; print a minimal one with --example; opens no store
+  --host <name>  print the variables of one machine, by name, as a JSON object; exits 1 when no machine row has that name
+  --list  print the whole inventory (hosts, groups and every host's variables under _meta.hostvars, so ansible never calls --host); the default when neither --list nor --host is given; exclusive with --host
+  --redis <host:port>  the Redis host:port of the applied state (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); exclusive with --fixture
+  --timeout <duration>  a Go duration, above 0: how long to wait for the store before refusing; ansible runs the verb unattended, so it never waits forever
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config machine width -h`:
+
+```
+usage: nova-config machine width [flags]
+from `nova-config help`:
+  nova-config machine width <name> [--json]
+effect: inspection: reads the store (PostgreSQL, or the --file) and writes nothing
+example: nova-config machine width m1 --file try.json
+flags:
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (pkg/tool's result shape) instead of the lines
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --seat <seat>  the seat profile in seats.tsv supplying the PostgreSQL DSN and password variable name (env NOVA_SEAT); exclusive with --file
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config machine self -h`:
+
+```
+usage: nova-config machine self [flags]
+from `nova-config help`:
+  nova-config machine self [--check] [--json]
+effect: inspection: prints this machine's name and opens no store; --check reads the machine rows
+flags:
+  --check  read the machine rows and exit 2 when this machine's name is none of them (exit 3 when the rows cannot be read); without it no store is opened
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (pkg/tool's result shape) instead of the lines
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --seat <seat>  the seat profile in seats.tsv supplying the PostgreSQL DSN and password variable name (env NOVA_SEAT); exclusive with --file
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config loop run -h`:
+
+```
+usage: nova-config loop run [flags]
+from `nova-config help`:
+  nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]
+exit codes: the command's own, 128+N when a signal ended it; 1 the row is not runnable (missing, disabled, with secrets); 2 usage, or the command did not start; 3 another copy holds the lock
+example: nova-config loop run sleeper --run-dir ./run -- sleep 1
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --metrics <dir>  node_exporter's textfile dir: nova_loop_<name>.prom is written there at each start; empty writes none
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --run-dir <dir>  the dir of the loop's lock (<name>.lock) and start count (<name>.starts)
+exit codes: the command's own, 128+N when a signal ended it; 1 the row is not runnable (missing, disabled, with secrets); 2 usage, or the command did not start; 3 another copy holds the lock
+effect: local write: takes <run-dir>/<name>.lock (a second copy exits 3), counts the start in <run-dir>/<name>.starts, writes the restart metrics to --metrics when given, then runs the loop's command (its row's argv, or the command after --) and exits with the command's exit code, 128+N when a signal ended it; it opens the store only when no command follows --; --dry-run reads the row and the start count, prints the LOOP RUN line it would print, and takes no lock, writes nothing and runs nothing
+```
+
+`nova-config login -h`:
+
+```
+usage: nova-config login [flags]
+from `nova-config help`:
+  nova-config login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --actor <name> [--sops <path>]
+  nova-config login --check
+flags:
+  --actor <name>  the name a bare write is recorded under when --as and NOVA_FRIEND are unset
+  --as <string>  the seat of that store whose file holds the password
+  --check  record nothing: print the recorded login and whether its secret resolves (exit 1 when it does not); the password is never shown
+  --dry-run  print what the verb would write and write nothing
+  --dsn <dsn>  the PostgreSQL dsn with no password, postgres://user@host:port/db
+  --friend <name>  the old spelling of --actor, kept for one release; it sets the same name
+  --key <string>  the seat's age key file
+  --secret <string>  the NAME of the password in the seat's file; never the password
+  --sops <string>  the sops binary; empty is the sops on PATH, recorded as its path
+  --store <string>  the nova-secrets store's working copy the password is read from
+exit codes: 0 done, 1 refused (the verb ran and the secret did not resolve), 2 could not run (usage, or a store that did not answer)
+effect: local write: writes files on this machine: the login file (0600) under the per-user config directory; --check and --dry-run write nothing
+```
+
+`nova-config logout -h`:
+
+```
+usage: nova-config logout [flags]
+from `nova-config help`:
+  nova-config logout
+flags:
+  --dry-run  print what the verb would write and write nothing
+exit codes: 0 done, 2 could not run
+effect: local write: writes files on this machine: removes the login file; --dry-run writes nothing
+```
+
+`nova-config fleet -h`:
+
+```
+usage: nova-config fleet [flags]
+from `nova-config help`:
+  nova-config fleet set|show|history        one row each, no name:
+  fleet and sprint have no add, remove or list
+effect: inspection: this help of the fleet verbs; each verb's own -h has its flags and an example
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config sprint -h`:
+
+```
+usage: nova-config sprint [flags]
+from `nova-config help`:
+  nova-config sprint set|show|history
+effect: inspection: this help of the sprint verbs; each verb's own -h has its flags and an example
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+<!-- clidoc:end nova-config -->
 
 ### First run
 
@@ -3550,6 +5733,277 @@ Ansible hides a failing inventory script: when the wrapper exits non-zero (`nova
 `nova-config login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --dsn <dsn without password> --friend <actor>` records the store login in `~/.config/nova-config/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the DSN, the friend and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-config <verb>` typed bare reaches that PostgreSQL, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper and no env prefix; `--pg`, `NOVA_PG_DSN` and `NOVA_PG_PASSWORD_ENV` still win. `login --check` prints `LOGIN file=… dsn=… friend=… … resolves=yes|no` (exit 1 on no), the password never shown; `logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. The contract is [SPEC-CONFIG.md](SPEC-CONFIG.md#the-store-login).
 
 ## nova-redis
+
+<!-- clidoc:begin nova-redis -->
+`nova-redis help`:
+
+```
+nova-redis: run a local Redis store, and keep short-lived named values in it
+
+how it works: serve runs redis-server on loopback or tailnet addresses only, with its data in --dir.
+spill writes a value under <owner>:<name> with a required expiry; recall reads it back.
+fn load and fn check install and verify the functions nova-table and nova-sprint call.
+The password is read from the variable NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD.
+first run: --dry-run needs no store; the throwaway recipe below starts a store on a socket.
+
+usage:
+  nova-redis serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <name>[,<name>...]] [--secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>] [--dry-run]
+  nova-redis spill --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text> [--dry-run]
+  nova-redis recall --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
+  nova-redis fn load --redis <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis fn check --redis <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis acl render
+  nova-redis acl check --redis <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis acl apply --redis <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]
+  nova-redis install store --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
+  nova-redis install bus --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
+  nova-redis uninstall store [--units <dir>] [--dry-run]
+  nova-redis uninstall bus [--units <dir>] [--dry-run]
+  nova-redis version
+  nova-redis help [<verb>]
+
+a throwaway store, by hand: (stop it: redis-cli -s "$d/redis.sock" shutdown nosave)
+  d=$(mktemp -d)
+  redis-server --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes
+  for _ in $(seq 50); do redis-cli -s "$d/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done
+then run spill or recall with --redis "$d/redis.sock" (or a store you may write to).
+
+Every verb but serve, fn load, fn check, acl render, acl check, acl apply, install store, install bus, uninstall store, uninstall bus takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+
+example:
+  nova-redis version
+  nova-redis spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+  nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+  nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
+```
+
+`nova-redis serve -h`:
+
+```
+usage: nova-redis serve [flags]
+from `nova-redis help`:
+  nova-redis serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <name>[,<name>...]] [--secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>] [--dry-run]
+flags:
+  --as <string>  the seat of the secrets store the password is sealed for (nova-secrets --as)
+  --bind <string>  comma-separated IP addresses to listen on, loopback (127.0.0.1, ::1) or tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) only
+  --dir <string>  the absolute path of the store directory (AOF, RDB and ACL files), created 0700 when missing
+  --dry-run  print what the verb would write and write nothing
+  --key <string>  the seat's age key file (nova-secrets --key)
+  --port <string>  the TCP port to listen on, 1 to 65535 (6379 is Redis's own)
+  --secret <NAME>  the NAME of the password in the seat; with it, serve reads the password in its own process rather than from NOVA_REDIS_PASSWORD
+  --secrets <string>  the secrets store's working copy the password is in (nova-secrets --store)
+  --sops <string>  the sops binary the seat's file is decrypted with (nova-secrets --sops)
+  --users <string>  comma-separated ACL users the store's ACL file must hold (those nova-redis acl apply set); a store missing one is refused
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis spill -h`:
+
+```
+usage: nova-redis spill [flags]
+from `nova-redis help`:
+  nova-redis spill --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text> [--dry-run]
+  nova-redis spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+  nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --name <string>  the key's name, the part after <owner>: (no whitespace)
+  --owner <string>  the key's owner prefix, the part before the colon: no ':' or whitespace (a tool's or a worker's name)
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable $NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD)
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --ttl <string>  how long the value lives, a Go duration above zero (10m, 1h30m); a key never lives forever
+  --user <string>  the ACL user to log in as (default $NOVA_REDIS_USER; with neither, the store's default user)
+  --value <string>  the text stored under <owner>:<name>; may be empty but must be given
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis recall -h`:
+
+```
+usage: nova-redis recall [flags]
+from `nova-redis help`:
+  nova-redis recall --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
+  nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --json  print the result as one JSON object instead of lines
+  --name <string>  the key's name, as spill was given it: the part after <owner>:
+  --owner <string>  the key's owner prefix, as spill was given it: the part before the colon
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable $NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD)
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --user <string>  the ACL user to log in as (default $NOVA_REDIS_USER; with neither, the store's default user)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: inspection: reads, writes nothing
+```
+
+`nova-redis fn load -h`:
+
+```
+usage: nova-redis fn load [flags]
+from `nova-redis help`:
+  nova-redis fn load --redis <host:port> [--user <name>] [--password-env <NAME>]
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable $NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD)
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --user <string>  the ACL user to log in as (default $NOVA_REDIS_USER; with neither, the store's default user)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis fn check -h`:
+
+```
+usage: nova-redis fn check [flags]
+from `nova-redis help`:
+  nova-redis fn check --redis <host:port> [--user <name>] [--password-env <NAME>]
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable $NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD)
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --user <string>  the ACL user to log in as (default $NOVA_REDIS_USER; with neither, the store's default user)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: inspection: reads, writes nothing
+```
+
+`nova-redis acl render -h`:
+
+```
+usage: nova-redis acl render [flags]
+from `nova-redis help`:
+  nova-redis acl render
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: inspection: reads, writes nothing
+```
+
+`nova-redis acl check -h`:
+
+```
+usage: nova-redis acl check [flags]
+from `nova-redis help`:
+  nova-redis acl check --redis <host:port> [--user <name>] [--password-env <NAME>]
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable $NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD)
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --user <string>  the ACL user to log in as (default $NOVA_REDIS_USER; with neither, the store's default user)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: inspection: reads, writes nothing
+```
+
+`nova-redis acl apply -h`:
+
+```
+usage: nova-redis acl apply [flags]
+from `nova-redis help`:
+  nova-redis acl apply --redis <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --drop-old  with --rotate, remove the password the variable names instead of adding it: the second half of a rotation
+  --dry-run  print what the verb would write and write nothing
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable $NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD)
+  --password-env-for <value>  <user>=<VARIABLE>, repeatable: the variable holding the password a user apply creates gets; a user the store lacks is created only with one
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --rotate <string>  comma-separated ACL users whose password this run rotates: the variable --password-env-for names for the user holds the password to add beside the old one, or with --drop-old the old one to remove (neither value is printed)
+  --user <string>  the ACL user to log in as (default $NOVA_REDIS_USER; with neither, the store's default user)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis install store -h`:
+
+```
+usage: nova-redis install store [flags]
+from `nova-redis help`:
+  nova-redis install store --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
+example: nova-redis install store --dry-run --secrets ~/nova-bench/secrets --as <seat> --key <file> --sops <path> --secret <NAME>
+flags:
+  --as <string>  the seat of the secrets store the password is sealed for (nova-secrets --as)
+  --bind <string>  comma-separated IP addresses the server listens on, loopback or tailnet only (serve --bind)
+  --dir <string>  the absolute path of the store directory (serve --dir; default: ~/nova-bench/redis/store)
+  --dry-run  print what the verb would write and write nothing
+  --key <string>  the seat's age key file (nova-secrets --key)
+  --log <string>  the file the server's lines go to, macOS (default: ~/Library/Logs/nova-redis-store.log); on Linux they are in the journal
+  --port <string>  the TCP port the server listens on (serve --port)
+  --secret <NAME>  the NAME of the password in the seat; with it, serve reads the password in its own process rather than from NOVA_REDIS_PASSWORD
+  --secrets <string>  the secrets store's working copy the password is in (nova-secrets --store)
+  --sops <string>  the sops binary the seat's file is decrypted with (nova-secrets --sops)
+  --units <string>  the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis install bus -h`:
+
+```
+usage: nova-redis install bus [flags]
+from `nova-redis help`:
+  nova-redis install bus --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
+example: nova-redis install bus --dry-run --secrets ~/nova-bench/secrets --as <seat> --key <file> --sops <path> --secret <NAME>
+flags:
+  --as <string>  the seat of the secrets store the password is sealed for (nova-secrets --as)
+  --bind <string>  comma-separated IP addresses the server listens on, loopback or tailnet only (serve --bind)
+  --dir <string>  the absolute path of the store directory (serve --dir; default: ~/nova-bench/redis/bus)
+  --dry-run  print what the verb would write and write nothing
+  --key <string>  the seat's age key file (nova-secrets --key)
+  --log <string>  the file the server's lines go to, macOS (default: ~/Library/Logs/nova-redis-bus.log); on Linux they are in the journal
+  --port <string>  the TCP port the server listens on (serve --port)
+  --secret <NAME>  the NAME of the password in the seat; with it, serve reads the password in its own process rather than from NOVA_REDIS_PASSWORD
+  --secrets <string>  the secrets store's working copy the password is in (nova-secrets --store)
+  --sops <string>  the sops binary the seat's file is decrypted with (nova-secrets --sops)
+  --units <string>  the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis uninstall store -h`:
+
+```
+usage: nova-redis uninstall store [flags]
+from `nova-redis help`:
+  nova-redis uninstall store [--units <dir>] [--dry-run]
+example: nova-redis uninstall store --dry-run
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --units <string>  the directory the unit was written into (default: as install's)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis uninstall bus -h`:
+
+```
+usage: nova-redis uninstall bus [flags]
+from `nova-redis help`:
+  nova-redis uninstall bus [--units <dir>] [--dry-run]
+example: nova-redis uninstall bus --dry-run
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --units <string>  the directory the unit was written into (default: as install's)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis version -h`:
+
+```
+usage: nova-redis version [flags]
+from `nova-redis help`:
+  nova-redis version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-redis -->
+
+### First run
 
 ```
 nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <u>[,<u>...]] [<secret login>] # run redis-server in the foreground, loopback and tailnet only, AOF on, ACL users kept in <store-dir>/users.acl
@@ -3619,6 +6073,170 @@ The user needs `FUNCTION LIST` for `fn check`, and `FUNCTION LIST` and `FUNCTION
 `fn load` replaces, so it belongs to the one place that deploys. Two deployers with different builds replace each other's library for as long as both run (`tla/RedisFn.tla`, `MCRedisFnTwoDeployers`). A tool on its way to an `FCALL` calls `redisfn.LoadMissing`, which never replaces a library (nova-tools #3620): nova-table does so on its first `Function not found` (see [nova-table](#nova-table)). The first run's refusals are in [TESTS.md](TESTS.md#nova-redis).
 
 ## nova-cairn
+
+<!-- clidoc:begin nova-cairn -->
+`nova-cairn help`:
+
+```
+nova-cairn: a session's words, kept durably as plain files you can come back to
+
+how it works: a store is a directory you name (--store), plain files only, synced to disk before OK.
+open starts a session and records its --publish policy; append keeps an entry's exact words.
+Same id, same words: duplicate (duplicate=true, exit 0); same id, other words: conflict (exit 1).
+--publish records your policy only: nothing is sent, and every line says published=false.
+first run: the four examples are one sitting: the open makes ./cairns, the rest read it back.
+
+usage:
+  nova-cairn open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]
+  nova-cairn NOTE: --publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append with no --publish carries the session's, and one that differs is a conflict naming both (exit 1).
+  nova-cairn append --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] [--publish <policy>] [--now <rfc3339-utc>] [--dry-run]
+  nova-cairn index --store <dir> [--session <id>] [--since <entry-id|RFC3339>] [--max <n>]
+  nova-cairn receipt --store <dir> --session <id> --entry <id> [--text]
+  nova-cairn version
+  nova-cairn help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+
+example:
+  nova-cairn open --store ./cairns --session s1 --publish manual
+  nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep"
+  nova-cairn index --store ./cairns
+  nova-cairn receipt --store ./cairns --session s1 --entry e1 --text
+```
+
+`nova-cairn open -h`:
+
+```
+usage: nova-cairn open [flags]
+from `nova-cairn help`:
+  nova-cairn open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]
+  nova-cairn open --store ./cairns --session s1 --publish manual
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --now <string>  RFC 3339 UTC stamp for tests and replays; default the real clock
+  --publish <string>  the publication policy: never, manual, deferred, immediate (required)
+  --session <string>  the stable session identifier (required)
+  --source <string>  where the record points back to; appends with no --source carry it
+  --store <string>  the checkpoint store directory (required)
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+effect: local write: writes files on this machine
+```
+
+`nova-cairn append -h`:
+
+```
+usage: nova-cairn append [flags]
+from `nova-cairn help`:
+  nova-cairn append --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] [--publish <policy>] [--now <rfc3339-utc>] [--dry-run]
+  nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep"
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --entry <string>  the stable entry identifier (required)
+  --file <string>  file holding the exact words; - reads stdin
+  --json  print the result as one JSON object instead of lines
+  --now <string>  RFC 3339 UTC stamp for tests and replays; default the real clock
+  --publish <string>  the publication policy: never, manual, deferred, immediate (default: the one the session was opened with)
+  --session <string>  the stable session identifier (required)
+  --source <string>  where the words came from; recorded, never opened (default: the session's)
+  --store <string>  the checkpoint store directory (required)
+  --text <string>  the exact words, stored byte for byte; exactly one of --text or --file
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+effect: local write: writes files on this machine
+```
+
+`nova-cairn index -h`:
+
+```
+usage: nova-cairn index [flags]
+from `nova-cairn help`:
+  nova-cairn index --store <dir> [--session <id>] [--since <entry-id|RFC3339>] [--max <n>]
+  nova-cairn index --store ./cairns
+flags:
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --session <string>  one session to index; default every record
+  --since <string>  bound returned records strictly after an entry ID or RFC3339 instant; metadata reads remain unbounded
+  --store <string>  the checkpoint store directory (required)
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+effect: inspection: reads, writes nothing
+```
+
+`nova-cairn receipt -h`:
+
+```
+usage: nova-cairn receipt [flags]
+from `nova-cairn help`:
+  nova-cairn receipt --store <dir> --session <id> --entry <id> [--text]
+  nova-cairn receipt --store ./cairns --session s1 --entry e1 --text
+flags:
+  --entry <string>  the stable entry identifier (required)
+  --json  print the result as one JSON object instead of lines
+  --session <string>  the stable session identifier (required)
+  --store <string>  the checkpoint store directory (required)
+  --text  include the entry's stored words as a quoted text fact
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+effect: inspection: reads, writes nothing
+```
+
+`nova-cairn version -h`:
+
+```
+usage: nova-cairn version [flags]
+from `nova-cairn help`:
+  nova-cairn version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-cairn -->
+
+### First run
 
 Keeps a session's words as local checkpoints: the exact words, their source
 pointers and a bounded index. Publication intent is recorded, not carried out:
@@ -3702,12 +6320,6 @@ byte counts and all other existing receipt facts remain unchanged.
 
 ## nova-decide
 
-Typed decisions with probabilities, recorded so each one can be calibrated
-against its outcome. The decide side asks a schema (named, typed questions)
-over one state through a backend; the train side records every decision,
-attaches its outcome when it is known, and reads the bar the record supports.
-See [SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md).
-
 ### First run
 
 From a checkout root; the fixed backend answers from a file, so these need no
@@ -3786,13 +6398,123 @@ wrong:
 - The same `--op` over another card, diff or schema refuses; over the same inputs it
   returns the recorded decision and asks nothing, so a long run resumes.
 
-
 ## nova-local
 
-Run local models: what an engine has, one model served at a chosen context,
-and a worker description nova-swarm accepts. It runs no inference, fetches no
-weights and judges no model.
-See [SPEC-LOCAL.md](SPEC-LOCAL.md).
+<!-- clidoc:begin nova-local -->
+`nova-local help`:
+
+```
+nova-local: run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts
+
+how it works: an engine (ollama) serves models from the shared store, <ai-root>/shared/models.
+status reads each engine and the box; serve makes <name>-<ctx>k, the context baked in, and loads it;
+worker writes the one JSON file nova-swarm reads. --base is loopback or a tailnet address only.
+It never fetches weights, never runs a prompt and never judges a model.
+
+usage:
+  nova-local status [--engine <name>] [--base <url>] [--list] [--max <n>] [--timeout <d>]
+  nova-local serve --engine <name> --model <ref> --num-ctx <n> [--base <url>] [--keep-alive <d>] [--seed <n>] [--expect-digest <sha256:...>] [--max-load <f>] [--min-free <size>] [--require-shared-store] [--dry-run]
+  nova-local serve --stop --engine <name> --model <tag> [--base <url>]
+  nova-local worker --engine <name> --model <tag> --out <file> --name <text> --harness <cmd> --harness-args <a,b,{model},...> --worker-dir <abs dir> --key-file <file> --env-var <NAME> --usage <opencode|none> --deadline <d> [--base <url>] [--board <owner/repo#n>] [--dry-run]
+  nova-local version
+  nova-local help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).
+
+example:
+  nova-local status
+  nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+  nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+```
+
+`nova-local status -h`:
+
+```
+usage: nova-local status [flags]
+from `nova-local help`:
+  nova-local status [--engine <name>] [--base <url>] [--list] [--max <n>] [--timeout <d>]
+  nova-local status
+  nova-local status
+flags:
+  --base <string>  the engine's /v1 URL, loopback or a tailnet address; empty is the engine's default
+  --engine <string>  only this engine: one of ollama; empty reports every one
+  --json  print the result as one JSON object instead of lines
+  --list  list every model as one MODEL line, not only the counts
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --timeout <duration>  how long each engine has to answer
+exit codes: 0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).
+effect: inspection: reads, writes nothing; it asks each engine over HTTP and reads the box
+```
+
+`nova-local serve -h`:
+
+```
+usage: nova-local serve [flags]
+from `nova-local help`:
+  nova-local serve --engine <name> --model <ref> --num-ctx <n> [--base <url>] [--keep-alive <d>] [--seed <n>] [--expect-digest <sha256:...>] [--max-load <f>] [--min-free <size>] [--require-shared-store] [--dry-run]
+  nova-local serve --stop --engine <name> --model <tag> [--base <url>]
+  nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+  nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+flags:
+  --base <string>  the engine's /v1 URL, loopback or a tailnet address; empty is the engine's default
+  --dry-run  print what the verb would write and write nothing
+  --engine <string>  the engine: one of ollama (required)
+  --expect-digest <string>  the digest the model must have (sha256:...); differing is exit 1
+  --json  print the result as one JSON object instead of lines
+  --keep-alive <string>  how long the engine keeps the model loaded after a request
+  --max-load <string>  refuse when the one-minute load average is above this number
+  --min-free <string>  refuse when free memory is below this size (16G, 512M)
+  --model <string>  the model: the reference to serve (gemma4:12b), or with --stop the served tag (required)
+  --num-ctx <int>  the context in tokens, a multiple of 1024 (required to serve; ollama's own default silently truncates)
+  --require-shared-store  refuse when the engine's store is not under the AI root's shared/models
+  --seed <string>  the seed baked into the tag, a whole number; empty bakes none
+  --stop  unload the served tag --model names instead of serving
+exit codes: 0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).
+effect: delivery: sends beyond this machine; it asks the engine to create the derived tag and load it (--stop unloads it); nothing is written on this machine
+```
+
+`nova-local worker -h`:
+
+```
+usage: nova-local worker [flags]
+from `nova-local help`:
+  nova-local worker --engine <name> --model <tag> --out <file> --name <text> --harness <cmd> --harness-args <a,b,{model},...> --worker-dir <abs dir> --key-file <file> --env-var <NAME> --usage <opencode|none> --deadline <d> [--base <url>] [--board <owner/repo#n>] [--dry-run]
+  nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+  nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+flags:
+  --base <string>  the engine's /v1 URL, loopback or a tailnet address; empty is the engine's default
+  --board <string>  the board issue the worker reports to, owner/repo#n; empty for none
+  --deadline <string>  the default deadline per task, a Go duration (20m) (required)
+  --dry-run  print what the verb would write and write nothing
+  --engine <string>  the engine: one of ollama (required)
+  --env-var <string>  the NAME of the variable the provider reads (OLLAMA_API_KEY), never a value (required)
+  --harness <string>  the harness command, found on PATH (opencode) (required)
+  --harness-args <string>  the harness's arguments, comma-separated, {model} and {prompt} placed (required)
+  --json  print the result as one JSON object instead of lines
+  --key-file <string>  a non-empty file nova-swarm reads as the key; stat'ed, never opened (required)
+  --model <string>  the served tag a harness calls (serve's serve_as=) (required)
+  --name <string>  the name nova-swarm calls this worker by (required)
+  --out <string>  the file the description is written to; its directory must exist (required)
+  --usage <string>  opencode (OpenCode's own accounting) or none (required)
+  --worker-dir <string>  the absolute home directory copied into each slot; it must exist (required)
+exit codes: 0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).
+effect: local write: writes files on this machine; it writes the --out file and nothing else, after asking the engine that it serves --model
+```
+
+`nova-local version -h`:
+
+```
+usage: nova-local version [flags]
+from `nova-local help`:
+  nova-local version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-local -->
 
 ### First run
 
@@ -3833,14 +6555,673 @@ wrong:
   wants no key; nova-swarm wants a non-empty file, so `printf 'local\n'` is the
   whole of it.
 
-
 ## nova-table
 
-Work tables over Redis: ordered-set cells, text notes, percentage formulas,
-batch writes and stored live views. Every table mutation checks its observed
-epoch and writes a change receipt. The guide and disposable local setup are in
-[docs/nova-table/README.md](nova-table/README.md); the library is
-`pkg/ntable`.
+<!-- clidoc:begin nova-table -->
+`nova-table help`:
+
+```
+nova-table: tables whose cells are ordered sets, kept in Redis and drawn as text
+
+how it works: a table is rows and columns in one Redis store; each cell is an
+ordered set of members (a card, a job, any id). A column's projection prints
+the set's count, its members, a text or a percentage, and the footer folds each
+column. Every write names the epoch it read and prints a receipt; a view stacks
+tables into one frame that watch redraws in place.
+first run: needs a Redis 7 or later you may write to; an empty one is enough (the first verb loads
+the functions nova-table calls). With no store at all, help and -h answer, and every verb that writes
+runs under --dry-run: it makes every check the real run makes before sending, then prints what it would send:
+example: (the lines need the store the first run describes; this one runs with none)
+  nova-table create demo --columns ready,working,done --dry-run
+a throwaway store, by hand: (stop it: redis-cli -s "$d/redis.sock" shutdown nosave)
+  d=$(mktemp -d)
+  redis-server --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes
+  for _ in $(seq 50); do redis-cli -s "$d/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done
+  unset NOVA_SEAT NOVA_SPRINT_SEAT NOVA_SPRINT_REDIS_USER; export NOVA_SPRINT_REDIS="$d/redis.sock"
+then run the lines under example: in order (or give each verb --redis <host:port or socket path>).
+A verb that finds no store refuses at exit 2 naming the address it tried, what came back, and
+this throwaway command (LIST REFUSED: redis at <addr> ...: unreachable: ...; run: d=$(mktemp -d) ...).
+
+usage:
+  nova-table help [<verb> [<subverb>]]
+  nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>]
+      [--width <col=n,...>]
+  nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>]
+      [--hide <cols>] [--show <cols>] [--hidden | --visible]
+  nova-table drop <table> [--definition]
+  nova-table list
+  nova-table row add <table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
+  nova-table row set <table> <row> <col>=<value>...
+  nova-table row hide <table> <row>...
+  nova-table row show <table> <row>...
+  nova-table row del <table> <row>
+  nova-table row move <table> <row> --first | --last | --before <row> | --after <row>
+  nova-table row order <table> <row>...
+  nova-table row sort <table> [--by name|label|<col>] [--desc] [--keep] | --manual
+  nova-table col add <table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]
+  nova-table col del <table> <col>
+  nova-table col move <table> <col> --first | --last | --before <col> | --after <col>
+  nova-table cell add <table> <row> <col> <member>... [--score <n>]
+  nova-table cell remove <table> <row> <col> <member>...
+  nova-table cell move <table> <row> <from-col> <to-col> <member>...
+  nova-table cell members <table> <row> <col>
+  nova-table member create <table> <id>
+  nova-table member find <table> <id>
+  nova-table member read <table> <id>... | <table> --cell <row:col>
+  nova-table batch (<manifest-file> | - | '<json>')
+  nova-table check <table>
+  nova-table clear <table>
+  nova-table show <table> [--at-epoch <n>]
+  nova-table render <table> | --view <name> [--at-epoch <n>]
+      [--width <col=n,...>] [--label-width <n>]
+  nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>]
+      [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
+  nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+  nova-table view state <name> (<text> | --clear)
+  nova-table view show <name>
+  nova-table view list
+  nova-table view del <name>
+  nova-table shell [--redis <addr> | --seat <name>] [--keep-going] [--epoch <n>] [--receipt=false]
+  nova-table version
+
+Table write verbs take --epoch <observed epoch> (default 0), --actor, --fence,
+--idem (receipt metadata only; does not deduplicate retries: a second cell add of the same member
+is refused, naming the place it already sits, and a second row add rewrites the row and keeps its
+place) and --receipt. create also takes --epoch-key, --epoch-field (default n), and --member-prefix
+(default table::member:).
+A stale epoch is refused, naming the live epoch:
+  CELL-ADD REFUSED: table "stale-help" row "build" column "ready" member "b1": requested epoch is stale, not the active epoch: requested 0, active 1; run: nova-table show 'stale-help'
+read the epoch off show <table> (it prints epoch=<n>) or off the receipt of every write (it prints
+the new one, epoch=<n>). drop keeps the saved column definition and the
+table's identity unless --definition is given, which removes both and the rows
+of every epoch (and repairs a store left with the identity alone); the
+definition snapshots of earlier epochs remain available.
+View configuration has no table epoch or receipt.
+Quote column specs containing parentheses, for example 'done,pct:pct(done)'.
+
+Store verbs take --redis <addr> (host:port or an absolute Unix socket path)
+(else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address) and
+dial as the seat --seat <name> or NOVA_SEAT names, else as
+NOVA_SPRINT_REDIS_USER with the password in the variable
+NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
+
+A column is name[:projection[:fold[:label]]]: the projection is what a body
+cell prints, count (the set's size, the default), members (the members in
+score order), first, last, text (the value written by row set, no set),
+pct(<count-column>) (the share of all count columns in the row),
+pct(<count-column>/<a>+<b>) (the share of the named count columns a, b of the
+row), or sum(<a>+<b>) (the named count columns of the row added). A formula
+names count columns of the same table, hidden or not. The row label is a
+separate cell. The fold is what the footer prints over the column, sum (the
+default for count and sum), max, avg (of count cells), union (of members),
+pooled (the default for pct: the numerators summed over the denominators
+summed), or none. Known-empty percentages print 0.0%; unread inputs print ?.
+Example: 'ok,failed,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%'.
+set --hide/--show hides or shows columns without removing their data. A row's cells are owned by the table unless
+row add binds a column to a set another tool owns (<col>=<key>): a bound
+cell is a view, read freely, and cell add, cell remove, cell move and clear
+refuse it, naming the --owner verb. --exclude names one member the row's
+counts and members leave out. render <table> prints the table and nothing else,
+nothing at all when it is empty. render --view <name> prints one frame with
+the view's timestamp, title and summary line; view state sets a text the
+summary line shows alone, in place of the counts, until --clear. watch redraws it in place every --every
+(1s) with no shell loop, or publishes it to --out by atomic rename.
+
+Order is kept by the table: rows draw in the order they were added and
+columns in the order they were declared, until a verb moves them. row sort
+orders the rows once; with --keep (by name or label) the sort stands, every
+row added later takes its place, and row move and row order are refused
+until row sort --manual. row del of a missing row succeeds with existed=0.
+col del refuses a column that holds members or text, naming all blocking
+members and batch removal commands, or the text to clear first.
+
+shell reads one command per line on a shared connection. It prints write
+receipts by default; --receipt=false disables them. Enter help, quit or exit.
+
+exit codes: 0 done, 1 refused, 2 usage
+
+example:
+  nova-table create demo --columns ready,working,done
+  nova-table row add demo build
+  nova-table cell add demo build ready b1
+  nova-table cell add demo build ready b2
+  nova-table cell move demo build ready working b1
+  nova-table show demo
+  nova-table render demo
+```
+
+`nova-table create -h`:
+
+```
+usage: nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>]
+      [--width <col=n,...>]
+
+  nova-table create notes --columns 'todo,done,note:text,progress:pct(done)'
+
+flags:
+  --columns <string>  the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold, sum to the sum fold
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --epoch-field <string>  field in the epoch hash
+  --epoch-key <string>  hash key naming the epoch domain (empty means epoch 0)
+  --footer <string>  the footer row's label (none by default)
+  --member-prefix <string>  member record prefix (default table::member:)
+  --width <string>  fixed column widths, col=n,...
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table set -h`:
+
+```
+usage: nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>]
+      [--hide <cols>] [--show <cols>] [--hidden | --visible]
+
+  nova-table set demo --hide ready
+
+flags:
+  --columns <string>  the columns, replaced in place (the create grammar); rows kept
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --footer <string>  the footer row's label ('' for none)
+  --hidden  the whole table kept and read, not drawn by watch
+  --hide <string>  columns to hide (kept, read, used by formulas; not drawn), comma-separated
+  --rename <string>  the table's new name
+  --show <string>  hidden columns to draw again, comma-separated
+  --visible  the whole table drawn again by watch
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table drop -h`:
+
+```
+usage: nova-table drop <table> [--definition]
+
+  nova-table drop demo
+
+flags:
+  --definition  also remove the saved column definition, the identity hash and the rows of every epoch; keep the definition snapshots of earlier epochs
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table list -h`:
+
+```
+usage: nova-table list
+
+  nova-table list
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table row add -h`:
+
+```
+usage: nova-table row add <table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
+
+  nova-table row add demo review
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --exclude <string>  one member the row's counts and members leave out
+  --label <string>  the row's label, the row header cell (default the row key)
+  --owner <string>  the verb that writes the row's bound sets, named by the refusal of a write here
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row set -h`:
+
+```
+usage: nova-table row set <table> <row> <col>=<value>...
+
+  nova-table col add demo note:text --after done
+  nova-table row set demo build 'note=Checks passed'
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row hide -h`:
+
+```
+usage: nova-table row hide <table> <row>...
+
+  nova-table row hide demo build
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row show -h`:
+
+```
+usage: nova-table row show <table> <row>...
+
+  nova-table row show demo build
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row del -h`:
+
+```
+usage: nova-table row del <table> <row>
+
+  nova-table row del demo build
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row move -h`:
+
+```
+usage: nova-table row move <table> <row> --first | --last | --before <row> | --after <row>
+
+  nova-table row add demo review
+  nova-table row move demo review --before build
+
+flags:
+  --after <string>  put it just after this row
+  --before <string>  put it just before this row
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --first  put it first
+  --last  put it last
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row order -h`:
+
+```
+usage: nova-table row order <table> <row>...
+
+  nova-table row add demo review
+  nova-table row order demo review build
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row sort -h`:
+
+```
+usage: nova-table row sort <table> [--by name|label|<col>] [--desc] [--keep] | --manual
+
+  nova-table row sort demo --by name --keep
+
+flags:
+  --by <string>  name (the row key), label, a count column or a text column
+  --desc  largest or last first
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --keep  a standing sort (by name or label): rows added later take their place
+  --manual  end a standing sort; the rows stay where they are and are placed by hand again
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table col add -h`:
+
+```
+usage: nova-table col add <table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]
+
+  nova-table col add demo note:text --after done
+
+flags:
+  --after <string>  put it just after this column
+  --before <string>  put it just before this column
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --first  put it first
+  --last  put it last
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table col del -h`:
+
+```
+usage: nova-table col del <table> <col>
+
+  nova-table col add demo note:text
+  nova-table col del demo note
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table col move -h`:
+
+```
+usage: nova-table col move <table> <col> --first | --last | --before <col> | --after <col>
+
+  nova-table col move demo done --first
+
+flags:
+  --after <string>  put it just after this column
+  --before <string>  put it just before this column
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --first  put it first
+  --last  put it last
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table cell add -h`:
+
+```
+usage: nova-table cell add <table> <row> <col> <member>... [--score <n>]
+
+  nova-table cell add demo build ready b3 b4
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --score <string>  the member's score, its place in the set's order (default the unix time in ms)
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table cell remove -h`:
+
+```
+usage: nova-table cell remove <table> <row> <col> <member>...
+
+  nova-table cell remove demo build ready b2
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table cell move -h`:
+
+```
+usage: nova-table cell move <table> <row> <from-col> <to-col> <member>...
+
+  nova-table cell move demo build ready done b2
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table cell members -h`:
+
+```
+usage: nova-table cell members <table> <row> <col>
+
+  nova-table cell members demo build working
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table member create -h`:
+
+```
+usage: nova-table member create <table> <id>
+
+  nova-table member create demo b5
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table member find -h`:
+
+```
+usage: nova-table member find <table> <id>
+
+  nova-table member find demo b1
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table member read -h`:
+
+```
+usage: nova-table member read <table> <id>... | <table> --cell <row:col>
+
+  nova-table member read demo b1 b2
+
+flags:
+  --at-epoch <string>  read a materialised epoch instead of the active one
+  --cell <row:col>  read every member of the cell row:col (repeatable); the ids are then not given
+  --json  print the reading (or the refusal) as one JSON object instead of the lines
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table batch -h`:
+
+```
+usage: nova-table batch (<manifest-file> | - | '<json>')
+
+  nova-table show demo
+  nova-table member read demo b1
+  nova-table batch --dry-run '{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"2","operation_id":"create-b1","members":[{"id":"b1","expect":{"absent":true},"create":{"row":"build","col":"ready","score":0}}]}'
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --json  print the receipt (or the refusal, or the --dry-run plan) as one JSON object instead of the lines
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: applies the manifest in one atomic call and prints a receipt; --dry-run makes every check made before sending and prints the plan instead, dialling nothing; the epoch, the revision and each member's expectation are the store's to check, on the real run
+```
+
+`nova-table check -h`:
+
+```
+usage: nova-table check <table>
+
+  nova-table check demo
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table clear -h`:
+
+```
+usage: nova-table clear <table>
+
+  nova-table clear demo
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table show -h`:
+
+```
+usage: nova-table show <table> [--at-epoch <n>]
+
+  nova-table show demo
+
+flags:
+  --at-epoch <string>  inspect a materialised epoch instead of the active one
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table render -h`:
+
+```
+usage: nova-table render <table> | --view <name> [--at-epoch <n>]
+      [--width <col=n,...>] [--label-width <n>]
+
+  nova-table render demo
+
+flags:
+  --at-epoch <string>  read a saved epoch snapshot (table targets only)
+  --label-width <int>  fixed width of the row-label column for this render (0: as wide as the labels)
+  --view <string>  render a stored view once, including its title and summary
+  --width <string>  fixed column widths for this render, col=n,...
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table watch -h`:
+
+```
+usage: nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>]
+      [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
+
+  nova-table watch demo --once
+
+flags:
+  --check  run table check every tick; show a stall row on invariant violation
+  --every <duration>  the tick, a duration (1s)
+  --label-width <int>  fixed width of the row-label column for this render (0: as wide as the labels)
+  --once  render once and exit, with no clear
+  --out <string>  publish to this file by atomic rename instead of drawing in place (the file and its directory must not be symlinks)
+  --title <string>  a title line above the tables
+  --view <string>  a stored view: its tables and title, read every frame (view set <name> --tables ...)
+  --width <string>  fixed column widths for this render, col=n,...
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store every --every and writes nothing to it; --out writes that one local file, by rename
+```
+
+`nova-table view set -h`:
+
+```
+usage: nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+
+  nova-table view set work --tables demo --title Work --summary done
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --summary <string>  a count column in the first table to count as done (x/y z% -> ETA)
+  --tables <string>  the tables, comma-separated, in order
+  --title <string>  the view's title line
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the view in the store in one call (a view has no epoch and no receipt); --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table view state -h`:
+
+```
+usage: nova-table view state <name> (<text> | --clear)
+
+  nova-table view set work --tables demo
+  nova-table view state work STOPPED
+
+flags:
+  --clear  clear the state: the summary line shows the counts again
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the view in the store in one call (a view has no epoch and no receipt); --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table view show -h`:
+
+```
+usage: nova-table view show <name>
+
+  nova-table view set work --tables demo
+  nova-table view show work
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table view list -h`:
+
+```
+usage: nova-table view list
+
+  nova-table view list
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table view del -h`:
+
+```
+usage: nova-table view del <name>
+
+  nova-table view set work --tables demo
+  nova-table view del work
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the view in the store in one call (a view has no epoch and no receipt); --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table shell -h`:
+
+```
+usage: nova-table shell [--redis <addr> | --seat <name>] [--keep-going] [--epoch <n>] [--receipt=false]
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --keep-going  continue after errors; final exit still reports failure (default true on a terminal)
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: runs each line's verb on one connection, so a line that writes changes the store; entered with --dry-run, every write line is planned instead and nothing is written to the store, and a line saying --dry-run=false is refused (a line that reads still reads the store, and a watch --out line still writes its one local file)
+```
+
+`nova-table version -h`:
+
+```
+usage: nova-table version
+
+  nova-table version
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads nothing, writes nothing
+```
+<!-- clidoc:end nova-table -->
 
 ### First run
 
@@ -4180,8 +7561,12 @@ the last good frame and one `store unreachable since <time>` line until recovery
 
 ## nova-card
 
+### First run
+
 nova-card left nova-tools in v1.2.3 (the split): it lives in [mas-bandwidth/nova-sprint](https://github.com/mas-bandwidth/nova-sprint), whose own command reference documents it.
 
 ## nova-work
+
+### First run
 
 nova-work left nova-tools in v1.2.3 (the split): it lives in [mas-bandwidth/nova-sprint](https://github.com/mas-bandwidth/nova-sprint), whose own command reference documents it.

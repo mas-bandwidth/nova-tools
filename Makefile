@@ -176,7 +176,7 @@ new-verb:
 	$(GO) run ./tools/newverb $(ARGS)
 
 clidoc:
-	$(GO) build -o ./bin/ $(shell sed -n 's/^<!-- clidoc:begin \(nova-[a-z0-9-]*\) -->$$/\1/p' docs/CLI.md | sort -u | sed 's|^|./cmd/|') ./tools/clidoc
+	$(GO) build -o ./bin/ $(wildcard ./cmd/nova-*) ./tools/clidoc
 	./bin/clidoc --bin ./bin
 
 roadmap:
