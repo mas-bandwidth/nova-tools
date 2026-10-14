@@ -22,31 +22,21 @@ func TestStellaSnapshotWriterPreservesOtherSnapshotsTemp(t *testing.T) {
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json")
 	unlockA, err := lockSnapshot(context.Background(), a)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	defer unlockA()
 	unlockB, err := lockSnapshot(context.Background(), b)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	defer unlockB()
 	// B holds its own lock and has a live, open temporary exactly as writeSnapshot creates it.
 	f, err := os.CreateTemp(dir, snapshotTempPrefix+"*")
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	defer func() { _ = f.Close() }() // ignored: test fixture file handle
-	if _, err = f.WriteString("synthetic B bytes"); err != nil {
-		require.NoError(t, err, err)
-	}
-	if err = writeSnapshot(a, emptySnapshot()); err != nil {
-		require.NoError(t, err, err)
-	}
+	_, err = f.WriteString("synthetic B bytes")
+	require.NoError(t, err, err)
+	err = writeSnapshot(a, emptySnapshot())
+	require.NoError(t, err, err)
 	got, err := os.ReadFile(f.Name())
-	if err != nil || string(got) != "synthetic B bytes" {
-		require.Failf(t, "", "A removed/changed B's live temporary: %q %v", got, err)
-	}
+	require.Falsef(t, err != nil || string(got) != "synthetic B bytes", "A removed/changed B's live temporary: %q %v", got, err)
 }
 
 func TestStellaSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
@@ -58,16 +48,13 @@ func TestStellaSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
 			s.Observed[name] = observed{Raw: "1.2.3", Status: "tool", At: "synthetic"}
 		}
 		p := filepath.Join(t.TempDir(), "s.json")
-		if err := writeSnapshot(p, s); err != nil {
-			require.NoError(t, err, err)
-		}
+		err := writeSnapshot(p, s)
+		require.NoError(t, err, err)
 		got, err := readSnapshot(p)
 		if err != nil {
 			assert.NoErrorf(t, err, "writer's own %q map cannot be read: %v", names, err)
 			continue
 		}
-		if len(got.Observed) != len(names) {
-			assert.Lenf(t, got.Observed, len(names), "keys collapsed")
-		}
+		assert.Lenf(t, got.Observed, len(names), "keys collapsed")
 	}
 }
