@@ -51,7 +51,7 @@ func checkSelf(ctx context.Context, env Env) Result {
 	if len(broken) > 0 {
 		return Result{Status: Fail,
 			Evidence: fmt.Sprintf("%s did not answer `version` with a version line", strings.Join(broken, ", ")),
-			Fix:      "nova-update apply --file <manifest> " + broken[0]}
+			Fix:      "nova-update apply --file <manifest> " + strings.Join(broken, ", ")}
 	}
 	if len(byVersion) == 1 {
 		for v := range byVersion {
