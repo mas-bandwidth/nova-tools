@@ -1169,7 +1169,7 @@ $ nova-doctor run --check harness --json
 {"exit":0,"results":[{"check":"harness","dependency":"the friend harnesses","status":"ok","evidence":"no friend rows at /home/you/.nova/friends"}]}
 
 $ nova-doctor run --check nosuch
-! RUN REFUSED: no check named "nosuch"; the checks are dashboard, friend-live, friend-login, friend-row, friend-seat, friend-wall, gosdk, harness, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
+! RUN REFUSED: no check named "nosuch"; the checks are dashboard, friend-login, friend-row, friend-seat, friend-wall, gosdk, harness, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
 ```
 
 ## One-shot lanes at parity (pkg/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
