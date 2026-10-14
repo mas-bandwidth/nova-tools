@@ -42,7 +42,8 @@ func TestParseCardBaseReadsThePushedHeader(t *testing.T) {
 	mirror := filepath.Join(home, "nova-bench", "mirror", "nova-tools.git")
 	require.NoError(t, os.MkdirAll(mirror, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(mirror, "HEAD"), []byte("ref: refs/heads/dev\n"), 0o644))
-	got = FindBenchMirror(home, repo)
+	got, err := FindBenchMirror(home, repo)
+	require.NoError(t, err)
 	require.Equal(t, mirror, got, "FindBenchMirror(%q) = %q, want %q", repo, got, mirror)
 }
 

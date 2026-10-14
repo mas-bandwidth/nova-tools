@@ -73,7 +73,9 @@ func TestJobsCloneFromAWarmMirror(t *testing.T) {
 		assert.True(t, res.Created)
 		assert.Equal(t, strings.TrimSpace(mirrorExec(t, origin, "git", "rev-parse", "dev")), res.Tip)
 		assert.Equal(t, "0", strings.TrimSpace(mirrorExec(t, k.Mirror, "git", "config", "gc.auto")))
-		assert.Equal(t, k.Mirror, FindBenchMirror(benchHome, "mas-bandwidth/nova-tools"))
+		found, err := FindBenchMirror(benchHome, "mas-bandwidth/nova-tools")
+		require.NoError(t, err)
+		assert.Equal(t, k.Mirror, found)
 	})
 	t.Run("the cache is warmed at the tip, low priority, in the member's cache", func(t *testing.T) {
 		require.Len(t, rec.calls, 2, "%q", rec.calls)
