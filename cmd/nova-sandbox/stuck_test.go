@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -133,4 +135,107 @@ func TestStuckNamesTheDeniedMachLookupsOfAWalledLaunch(t *testing.T) {
 		assert.True(t, helpVerbs["stuck"], "stuck is not a verb `help <verb>` answers for")
 		assert.Contains(t, usage, "nova-sandbox stuck", "the banner's usage does not name the stuck verb")
 	})
+}
+
+// stuckExampleWant is the stuck help example's recorded-text run, written down
+// by hand from what the verb prints for it, so the comparator holds the
+// example to the verb's lines.
+var stuckExampleWant = []string{
+	"DENIED mach-lookup name=com.apple.apsd process=parsecd count=1 not-allowed-by-profile",
+	"DENIED mach-lookup name=com.apple.logd process=opencode.bin count=6 not-allowed-by-profile",
+	"DENIED mach-lookup name=com.apple.system.logger process=opencode.bin count=1",
+	"DENIED mach-lookup name=com.apple.system.notification_center process=opencode count=1 not-allowed-by-profile",
+	"DENIED mach-lookup name=com.apple.system.notification_center process=opencode.bin count=2 not-allowed-by-profile",
+	"STUCK HOST productVersion=26.0",
+	`PS pid=5210 ppid=5207 etime=1-22:27:51 cputime=0:00.01 state=SN command="/Users/me/nova-bench/harness-v1.18.20/opencode.bin --version"`,
+	"STACK pid=5210     2520 Thread_111   DispatchQueue_1: com.apple.main-thread  (serial)",
+	"STACK pid=5210     + 2520 start  (in dyld) + 1",
+	"STACK pid=5210     +   2520 main  (in opencode.bin) + 12",
+	"STACK pid=5210     +     2520 runtime.rt0_go  (in opencode.bin) + 1",
+	"STACK pid=5210     +       2520 runtime.mstart0  (in opencode.bin) + 1",
+	"STACK pid=5210     +         2520 mach_msg2_trap  (in libsystem_kernel.dylib) + 10",
+	"STACK pid=5210     100 Thread_222",
+	"STACK pid=5210     + 100 start_wqthread  (in libsystem_pthread.dylib) + 8",
+	"STACK pid=5210     +   100 _pthread_wqthread  (in libsystem_pthread.dylib) + 12",
+	"STUCK LAUNCH pid=5210 state=SN cpu=0:00.01 age=1-22:27:51 top=mach_msg2_trap denied=mach-lookup:com.apple.logd x6",
+}
+
+// TestStuckParsesItsFlagsByHand pins the verb's flag reader: the defaults that
+// select the bench host case, each flag in both spellings, and every refusal.
+// The reader uses no flag.FlagSet, so the package keeps the one its help seam
+// builds (internal/ci/testdata/no-hand-printing/cmd/nova-sandbox.txt).
+func TestStuckParsesItsFlagsByHand(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no flags are the bench host defaults", func(t *testing.T) {
+		t.Parallel()
+		cfg, window, asJSON, positionals, refusal := parseStuckFlags(nil)
+		require.Empty(t, refusal)
+		assert.Empty(t, positionals)
+		assert.False(t, asJSON)
+		assert.Equal(t, stuckOpts{MinAge: 30 * time.Second, MaxCPU: time.Second}, cfg)
+		assert.Equal(t, 5*time.Minute, window)
+	})
+
+	t.Run("every flag parses in both spellings", func(t *testing.T) {
+		t.Parallel()
+		for _, args := range [][]string{
+			{"--pid", "5210", "--match", "opencode", "--min-age", "30s", "--max-cpu", "1s", "--window", "5m", "--json"},
+			{"--pid=5210", "--match=opencode", "--min-age=30s", "--max-cpu=1s", "--window=5m", "--json=true"},
+		} {
+			cfg, window, asJSON, positionals, refusal := parseStuckFlags(args)
+			require.Empty(t, refusal, "args %q did not parse", args)
+			assert.Empty(t, positionals)
+			assert.True(t, asJSON)
+			assert.Equal(t, 5210, cfg.PID)
+			assert.Equal(t, "opencode", cfg.Match)
+			assert.Equal(t, 30*time.Second, cfg.MinAge)
+			assert.Equal(t, time.Second, cfg.MaxCPU)
+			assert.Equal(t, 5*time.Minute, window)
+		}
+	})
+
+	t.Run("a bad flag is a refusal and a word is a positional", func(t *testing.T) {
+		t.Parallel()
+		for _, args := range [][]string{
+			{"--bogus"},
+			{"--pid"},
+			{"--pid", "many"},
+			{"--min-age", "soon"},
+			{"--json=maybe"},
+		} {
+			_, _, _, _, refusal := parseStuckFlags(args)
+			assert.NotEmpty(t, refusal, "args %q parsed without a refusal", args)
+		}
+		_, _, _, positionals, refusal := parseStuckFlags([]string{"--pid", "5210", "extra"})
+		require.Empty(t, refusal)
+		require.Equal(t, []string{"extra"}, positionals)
+	})
+}
+
+// TestStuckHelpExampleIsWhatTheVerbPrints executes the stuck help example
+// through the comparator, on recorded text: the same readers the verb uses are
+// stepped with the ps fixture, /usr/bin/sample's text and the unified log's
+// sandbox lines, and the rendered lines are compared with the run. The doc the
+// example is pasted in is read, so the example stays covered by a comparator
+// test (internal/ci/testdata/compared_examples.txt).
+func TestStuckHelpExampleIsWhatTheVerbPrints(t *testing.T) {
+	t.Parallel()
+
+	const doc = "docs/CLI.md"
+	raw, err := os.ReadFile(filepath.Join("..", "..", doc))
+	require.NoError(t, err, "the doc the stuck example is pasted in does not read")
+	const line = "$ nova-sandbox stuck --match opencode --min-age 30s --max-cpu 1s"
+	require.Contains(t, string(raw), line, "the stuck example is not pasted in %s", doc)
+
+	sample := stuckReadFixture(t, "sample.txt")
+	logText := stuckReadFixture(t, "sandbox-log.txt")
+	res := stuckBuild(stuckOpts{Match: "opencode", MinAge: stuckMinAge, MaxCPU: stuckMaxCPU},
+		"darwin", stuckPSFixture, func(int) string { return sample }, logText, builtinProfile(), "26.0")
+	var b bytes.Buffer
+	renderStuck(&b, res)
+	step := onboarding.Step{Line: line, Want: stuckExampleWant}
+	for _, p := range onboarding.Compare(step, onboarding.Result{Code: 0, Stdout: b.String()}, nil) {
+		t.Error(p)
+	}
 }

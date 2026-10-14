@@ -56,6 +56,7 @@ cmd/nova-self-talk/firstrun_test.go:TestHelpExamplesAreTheFirstRunThroughTheComp
 cmd/nova-sandbox/firstrun_example_test.go:TestHelpFirstRunLinesProveTheWall example: mkdir -p /tmp/trial/home
 cmd/nova-sandbox/firstrun_example_test.go:TestHelpFirstRunLinesProveTheWall example: HOME=/tmp/trial/home nova-sandbox probe --write /tmp/trial
 cmd/nova-sandbox/firstrun_example_test.go:TestHelpFirstRunLinesProveTheWall example: HOME=/tmp/trial/home nova-sandbox --write /tmp/trial -- /bin/sh -c 'echo inside > /tmp/trial/out'
+cmd/nova-sandbox/stuck_test.go:TestStuckHelpExampleIsWhatTheVerbPrints $ nova-sandbox stuck --match opencode --min-age 30s --max-cpu 1s
 cmd/nova-secrets/dryrun_example_functional_test.go:TestTheHelpExampleIsWhatSealDryRunPrints example: nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
 cmd/nova-secrets/dryrun_example_functional_test.go:TestTheHelpExampleIsWhatSeatInjectDryRunPrints example: nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
 cmd/nova-secrets/dryrun_example_functional_test.go:TestTheHelpExampleIsWhatPlaceDryRunPrints example: nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run

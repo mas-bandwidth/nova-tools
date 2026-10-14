@@ -16,7 +16,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"path"
@@ -502,31 +501,115 @@ func renderStuck(w io.Writer, res stuckResult) {
 // name the profile allows is not marked against it.
 func builtinProfile() string { return profiles.DarwinTemplate }
 
+// stuckFlagNames is every flag the verb takes, in the order an unknown flag is
+// answered with. The verb parses its flags by hand, the way the bare form's
+// parseVerb does, so the package keeps the one flag set its help seam builds
+// (docs/STANDARD.md section 3 lives in verbhelp.go until the port).
+var stuckFlagNames = []string{"--pid", "--match", "--min-age", "--max-cpu", "--window", "--json"}
+
+// parseStuckFlags reads the verb's argv without the flag package: one or two
+// dashes, `--name value` or `--name=value`, the first positional (or `--`)
+// ending the flags. A repeated flag keeps its last value. The returned string
+// is the refusal's reason text, empty when the flags parsed.
+func parseStuckFlags(args []string) (cfg stuckOpts, window time.Duration, asJSON bool, positionals []string, refusal string) {
+	cfg = stuckOpts{MinAge: stuckMinAge, MaxCPU: stuckMaxCPU}
+	window = stuckWindow
+	bad := func(format string, a ...any) (stuckOpts, time.Duration, bool, []string, string) {
+		return cfg, window, asJSON, nil, fmt.Sprintf(format, a...)
+	}
+	i := 0
+	for ; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			i++
+			break
+		}
+		if len(a) < 2 || a[0] != '-' {
+			break
+		}
+		name := strings.TrimLeft(a, "-")
+		value, attached := "", false
+		if cut, rest, ok := strings.Cut(name, "="); ok {
+			name, value, attached = cut, rest, true
+		}
+		next := func() (string, bool) {
+			if attached {
+				return value, true
+			}
+			if i+1 >= len(args) {
+				return "", false
+			}
+			i++
+			return args[i], true
+		}
+		switch "--" + name {
+		case "--pid":
+			v, ok := next()
+			if !ok {
+				return bad("--pid wants a value: --pid <n>")
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return bad("invalid value %q for --pid: want an integer process id", oneline.Escape(v))
+			}
+			cfg.PID = n
+		case "--match":
+			v, ok := next()
+			if !ok {
+				return bad("--match wants a value: --match <substring>")
+			}
+			cfg.Match = v
+		case "--min-age", "--max-cpu", "--window":
+			v, ok := next()
+			if !ok {
+				return bad("--%s wants a value: --%s <d>", name, name)
+			}
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return bad("invalid value %q for --%s: want a Go duration like 30s", oneline.Escape(v), name)
+			}
+			switch "--" + name {
+			case "--min-age":
+				cfg.MinAge = d
+			case "--max-cpu":
+				cfg.MaxCPU = d
+			default:
+				window = d
+			}
+		case "--json":
+			if !attached {
+				asJSON = true
+				continue
+			}
+			b, err := strconv.ParseBool(value)
+			if err != nil {
+				return bad("invalid value %q for --json: want true or false", oneline.Escape(value))
+			}
+			asJSON = b
+		default:
+			return bad("unknown flag --%s: the flags are %s; run: nova-sandbox stuck -h",
+				oneline.Escape(name), strings.Join(stuckFlagNames, ", "))
+		}
+	}
+	return cfg, window, asJSON, args[i:], ""
+}
+
 // stuckVerb is the verb: it parses its flags, gathers the host's data outside
 // the wall and prints the one value. It writes nothing, kills nothing and
 // starts nothing but the read-only probes (`ps`, `sample`, `log`, `sw_vers`).
 // Implements docs/SPEC-SANDBOX.md "The stuck verb — what a launch that sits at exec was denied".
 func stuckVerb(args []string, stdout, stderr io.Writer) int {
 	helpIfAsked(args, "stuck")
-	fs := flag.NewFlagSet("stuck", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var (
-		pid    = fs.Int("pid", 0, "find the stuck process by `n` (default: scan the walled children)")
-		match  = fs.String("match", "", "find every process whose command contains `substring`")
-		minAge = fs.Duration("min-age", stuckMinAge, "select a process at least `d` old")
-		maxCPU = fs.Duration("max-cpu", stuckMaxCPU, "select a process with at most `d` of CPU")
-		window = fs.Duration("window", stuckWindow, "read the sandbox denials of the last `d`")
-		asJSON = fs.Bool("json", false, "print the result as one JSON object on stdout")
-	)
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(stderr, "STUCK REFUSED reason=bad_flag: %s; run: nova-sandbox stuck -h\n", oneline.Escape(err.Error()))
+	cfg, window, asJSON, positionals, refusal := parseStuckFlags(args)
+	if refusal != "" {
+		fmt.Fprintf(stderr, "STUCK REFUSED reason=bad_flag: %s; run: nova-sandbox stuck -h\n", oneline.Escape(refusal))
 		return sandbox.ExitCannotRun
 	}
-	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "STUCK REFUSED reason=unknown_arg: stuck takes flags and no arguments, got %q; run: nova-sandbox stuck -h\n", oneline.Escape(fs.Arg(0)))
+	if len(positionals) > 0 {
+		fmt.Fprintf(stderr, "STUCK REFUSED reason=unknown_arg: stuck takes flags and no arguments, got %q; run: nova-sandbox stuck -h\n", oneline.Escape(positionals[0]))
 		return sandbox.ExitCannotRun
 	}
-	if *pid < 0 || *minAge < 0 || *maxCPU < 0 || *window <= 0 {
+	if cfg.PID < 0 || cfg.MinAge < 0 || cfg.MaxCPU < 0 || window <= 0 {
 		fmt.Fprintln(stderr, "STUCK REFUSED reason=bad_flag: --pid, --min-age and --max-cpu are not negative and --window is positive; run: nova-sandbox stuck -h")
 		return sandbox.ExitCannotRun
 	}
@@ -539,9 +622,8 @@ func stuckVerb(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "STUCK REFUSED reason=probe_failed: ps could not be read: %s; run: nova-sandbox stuck -h\n", oneline.Err(err))
 		return sandbox.ExitCannotRun
 	}
-	cfg := stuckOpts{PID: *pid, Match: *match, MinAge: *minAge, MaxCPU: *maxCPU}
-	res := stuckBuild(cfg, runtime.GOOS, psOut, sampleText, logText(*window), builtinProfile(), swVersText())
-	if *asJSON {
+	res := stuckBuild(cfg, runtime.GOOS, psOut, sampleText, logText(window), builtinProfile(), swVersText())
+	if asJSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)
 		// ignored: a closed stdout has no reader to tell, and the verb has done its work
