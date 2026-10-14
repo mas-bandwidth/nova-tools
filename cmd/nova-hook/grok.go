@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,11 +20,13 @@ const hookHarnessGrok = "grok"
 
 // grokNotice is one pending wake line (tla/GrokHookNotice.tla). waiting counts
 // notes not yet written. outstanding is the line already written. sawBusy is
-// the turn that line met, and the idle reading after it consumes the line.
+// the turn that line met. seenGen is how many busy marks are already applied;
+// the turn file holds the rest (pendingBusy in the module).
 type grokNotice struct {
 	outstanding bool
 	waiting     int
 	sawBusy     bool
+	seenGen     int
 }
 
 func (g *grokNotice) add(n int) {
@@ -32,14 +35,25 @@ func (g *grokNotice) add(n int) {
 	}
 }
 
-// observe reads one busy or idle mark. A busy reading while a line is out
-// marks the turn. An idle reading after that mark consumes the line. An idle
-// wake that never starts a turn stays outstanding.
-func (g *grokNotice) observe(idle bool) {
+// observe applies one sample. gen is the busy marks recorded so far. A gen
+// ahead of seenGen is a busy mark that arrived since the last read, and it
+// still counts when the state word is already idle again: the idle write
+// replaces the word and leaves the turn file. An idle wake that never records
+// a busy mark stays outstanding.
+func (g *grokNotice) observe(idle bool, gen int) {
+	advanced := gen > g.seenGen
+	if advanced {
+		g.seenGen = gen
+	}
 	if !g.outstanding {
 		return
 	}
-	if !idle {
+	if advanced && idle {
+		g.outstanding = false
+		g.sawBusy = false
+		return
+	}
+	if !idle || advanced {
 		g.sawBusy = true
 		return
 	}
@@ -112,8 +126,9 @@ func (w world) grokConfig(c *tool.Call) (*grokRoute, error) {
 }
 
 // grokHome is --grok-home, else GROK_HOME, else the grok directory under the
-// user home. The path is absolute and clean, and it carries no shell
-// metacharacters, because the installed command line quotes nothing further.
+// user home. The path is absolute and clean. A line break is refused because
+// the installed command is one line; other characters stay, and grokCommand
+// quotes each argument.
 func grokHome(flag string, getenv func(string) string) (string, error) {
 	home := flag
 	if home == "" && getenv != nil {
@@ -129,15 +144,25 @@ func grokHome(flag string, getenv func(string) string) (string, error) {
 	if !filepath.IsAbs(home) || filepath.Clean(home) != home {
 		return "", errors.New("grok home wants a clean absolute path")
 	}
-	if strings.ContainsAny(home, " \t\r\n\"'`$") {
-		return "", errors.New("grok home wants a path without shell metacharacters")
+	if strings.ContainsAny(home, "\r\n") || strings.ContainsRune(home, 0) {
+		return "", errors.New("grok home wants a path without a line break")
 	}
 	return home, nil
 }
 
-// grokHookScript records busy or idle and nothing else. It always exits 0.
+// grokShellQuote quotes one argument for sh. A single quote inside the
+// argument ends the quote, adds a quoted quote, and opens it again.
+func grokShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// grokHookScript records the latest word in state and appends one turn mark
+// on busy. An idle write replaces state and leaves the turn mark. It always
+// exits 0, and it never sends or acks.
 const grokHookScript = "#!/bin/sh\n" +
-	"# Records busy or idle for the hook client. It never sends or acks.\n" +
+	"# Records the latest word in state. On busy it appends one turn mark first,\n" +
+	"# so a later idle write of state leaves the witness in place.\n" +
+	"# It never sends or acks.\n" +
 	"word=$1\n" +
 	"dir=$2\n" +
 	"case $word in\n" +
@@ -145,6 +170,9 @@ const grokHookScript = "#!/bin/sh\n" +
 	"*) exit 0 ;;\n" +
 	"esac\n" +
 	"mkdir -p \"$dir\" || exit 0\n" +
+	"if [ \"$word\" = busy ]; then\n" +
+	"  printf 'x\\n' >> \"$dir/turn\" || exit 0\n" +
+	"fi\n" +
 	"tmp=$dir/.state.$$\n" +
 	"printf '%s\\n' \"$word\" > \"$tmp\" || exit 0\n" +
 	"mv \"$tmp\" \"$dir/state\" || exit 0\n" +
@@ -174,7 +202,8 @@ type grokHookFile struct {
 }
 
 func grokCommand(script, word, stateDir string) grokHookCommand {
-	return grokHookCommand{Type: "command", Command: script + " " + word + " " + stateDir, Timeout: 5}
+	cmd := grokShellQuote(script) + " " + grokShellQuote(word) + " " + grokShellQuote(stateDir)
+	return grokHookCommand{Type: "command", Command: cmd, Timeout: 5}
 }
 
 func grokHookDoc(script, stateDir string) grokHookFile {
@@ -242,14 +271,26 @@ func (w world) installGrok(c *tool.Call, g *grokRoute) *tool.Out {
 	return nil
 }
 
-// readGrokIdle is true when the harness has not recorded busy. A missing file
-// is idle: the session has not started a turn.
-func readGrokIdle(home string) bool {
-	b, err := os.ReadFile(filepath.Join(home, "nova-hook", "state"))
-	if err != nil {
-		return true
+// readGrokSample is the latest state word and the count of busy marks in the
+// turn file. A missing state file is idle. The turn file survives an idle
+// write that replaces the state word (tla/GrokHookNotice.tla, MarkIdle).
+func readGrokSample(home string) (idle bool, gen int, err error) {
+	dir := filepath.Join(home, "nova-hook")
+	b, err := os.ReadFile(filepath.Join(dir, "state"))
+	idle = true
+	if err == nil {
+		idle = strings.TrimSpace(string(b)) != "busy"
+	} else if !os.IsNotExist(err) {
+		return true, 0, err
 	}
-	return strings.TrimSpace(string(b)) != "busy"
+	tb, err := os.ReadFile(filepath.Join(dir, "turn"))
+	if os.IsNotExist(err) {
+		return idle, 0, nil
+	}
+	if err != nil {
+		return true, 0, err
+	}
+	return idle, bytes.Count(tb, []byte("\n")), nil
 }
 
 // deliverGrokWake appends one notice line. It never truncates the file and
@@ -270,13 +311,18 @@ func deliverGrokWake(wake, text string) error {
 	return cerr
 }
 
-// grokFlush observes one busy or idle mark and releases at most one line.
-// A failed write puts the count back and stops the loop. It does not drop
-// the hook record.
+// grokFlush applies the turn witness and the latest word, then releases at
+// most one line. A failed write puts the count back and stops the loop. It
+// does not drop the hook record.
 func (w world) grokFlush(c *tool.Call) *tool.Out {
 	g := w.grok
-	idle := readGrokIdle(g.home)
-	g.note.observe(idle)
+	idle, gen, err := readGrokSample(g.home)
+	if err != nil {
+		o := tool.Fail("grok harness state could not be read: " + err.Error())
+		o.Remedy = grokRemedy(g)
+		return o
+	}
+	g.note.observe(idle, gen)
 	text, kind, n, ok := g.note.release(idle)
 	if !ok {
 		return nil

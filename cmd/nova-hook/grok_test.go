@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,16 +31,16 @@ func TestGrokNoticeFold(t *testing.T) {
 	assert.False(t, ok, "a second release while the line is outstanding writes nothing")
 
 	n.add(7)
-	n.observe(false)
-	n.observe(true)
+	n.observe(false, 1)
+	n.observe(true, 1)
 	line, kind, got, ok = n.release(true)
 	require.True(t, ok)
 	assert.Equal(t, "7 more messages; read the bus", line)
 	assert.Equal(t, "wake", kind)
 	assert.Equal(t, 7, got)
 
-	n.observe(false)
-	n.observe(true)
+	n.observe(false, 2)
+	n.observe(true, 2)
 	n.add(1)
 	line, kind, _, ok = n.release(false)
 	require.True(t, ok)
@@ -52,6 +53,28 @@ func TestGrokNoticeFold(t *testing.T) {
 	line, _, _, ok = n.release(true)
 	require.True(t, ok)
 	assert.Equal(t, "1 more message; read the bus", line)
+
+	// One read sees the witness and an idle word together. The busy sample
+	// itself is already gone from the state word.
+	var both grokNotice
+	both.add(1)
+	_, _, _, ok = both.release(true)
+	require.True(t, ok)
+	both.add(3)
+	both.observe(true, 1)
+	line, kind, _, ok = both.release(true)
+	require.True(t, ok)
+	assert.Equal(t, "3 more messages; read the bus", line)
+	assert.Equal(t, "wake", kind)
+
+	var stuck grokNotice
+	stuck.add(1)
+	_, _, _, ok = stuck.release(true)
+	require.True(t, ok)
+	stuck.add(5)
+	stuck.observe(true, 0)
+	_, _, _, ok = stuck.release(true)
+	assert.False(t, ok, "an idle word with no new busy mark leaves the notice outstanding")
 }
 
 func TestGrokHarnessInstall(t *testing.T) {
@@ -79,10 +102,10 @@ func TestGrokHarnessInstall(t *testing.T) {
 	var doc grokHookFile
 	require.NoError(t, json.Unmarshal(raw, &doc))
 	require.NotEmpty(t, doc.Hooks.UserPromptSubmit)
-	assert.Contains(t, doc.Hooks.UserPromptSubmit[0].Hooks[0].Command, " busy ")
+	assert.Contains(t, doc.Hooks.UserPromptSubmit[0].Hooks[0].Command, "'busy'")
 	require.NotEmpty(t, doc.Hooks.Notification)
 	assert.Equal(t, "idle_prompt", doc.Hooks.Notification[0].Matcher)
-	assert.Contains(t, doc.Hooks.Stop[0].Hooks[0].Command, " idle ")
+	assert.Contains(t, doc.Hooks.Stop[0].Hooks[0].Command, "'idle'")
 
 	wake := filepath.Join(home, "nova-hook.wake")
 	info, err = os.Stat(wake)
@@ -158,14 +181,61 @@ func TestGrokHarnessRefusals(t *testing.T) {
 		assert.Contains(t, res.Stdout+res.Stderr, "absolute path")
 		assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
 	})
-	t.Run("metacharacter", func(t *testing.T) {
+	t.Run("line break", func(t *testing.T) {
 		t.Parallel()
 		r := newRig(t)
-		res := r.cli().Run("hook", "--as", "ada", "--role", "comms", "--harness", "grok", "--grok-home", filepath.Join(t.TempDir(), "bad$HOME"), "--once")
+		res := r.cli().Run("hook", "--as", "ada", "--role", "comms", "--harness", "grok", "--grok-home", filepath.Join(t.TempDir(), "bad\nname"), "--once")
 		assert.Equal(t, 2, res.Code, res.Stdout+res.Stderr)
-		assert.Contains(t, res.Stdout+res.Stderr, "shell metacharacters")
+		assert.Contains(t, res.Stdout+res.Stderr, "line break")
 		assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
 	})
+}
+
+func TestGrokCommandQuotesShellMeta(t *testing.T) {
+	t.Parallel()
+	for _, frag := range []string{";", "&", "|", "\\", "'"} {
+		t.Run(frag, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			marker := filepath.Join(dir, "marker")
+			argsPath := filepath.Join(dir, "args")
+			script := filepath.Join(dir, "hook.sh")
+			require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$1\" \"$2\" > '"+argsPath+"'\n"), 0o755))
+			state := dir + "/s" + frag + "touch " + marker
+			home, err := grokHome(state, nil)
+			require.NoError(t, err)
+			cmd := grokCommand(script, "busy", home).Command
+			require.NoError(t, exec.Command("sh", "-c", cmd).Run(), cmd)
+			_, err = os.Stat(marker)
+			assert.True(t, os.IsNotExist(err), cmd)
+			got, err := os.ReadFile(argsPath)
+			require.NoError(t, err)
+			assert.Equal(t, "busy\n"+home+"\n", string(got))
+		})
+	}
+}
+
+func TestGrokQuotedCommandKeepsTheTurnMark(t *testing.T) {
+	t.Parallel()
+	home := filepath.Join(t.TempDir(), "a;b&c|d\\e")
+	_, err := installGrokHarness(home)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(filepath.Join(home, "hooks", "nova-hook.json"))
+	require.NoError(t, err)
+	var doc grokHookFile
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	require.NoError(t, exec.Command("sh", "-c", doc.Hooks.UserPromptSubmit[0].Hooks[0].Command).Run())
+	require.NoError(t, exec.Command("sh", "-c", doc.Hooks.Stop[0].Hooks[0].Command).Run())
+	state, err := os.ReadFile(filepath.Join(home, "nova-hook", "state"))
+	require.NoError(t, err)
+	assert.Equal(t, "idle\n", string(state))
+	turn, err := os.ReadFile(filepath.Join(home, "nova-hook", "turn"))
+	require.NoError(t, err)
+	assert.Equal(t, "x\n", string(turn))
+	idle, gen, err := readGrokSample(home)
+	require.NoError(t, err)
+	assert.True(t, idle)
+	assert.Equal(t, 1, gen)
 }
 
 // grokWaiter is the fake harness bus: BlockRead returns what the test says,
@@ -231,6 +301,53 @@ func TestGrokHarnessBurstIsOneNotice(t *testing.T) {
 	assert.NotContains(t, out.String(), "payload-secret")
 	assert.Equal(t, 2, strings.Count(out.String(), "kind=wake"))
 	assert.NotContains(t, out.String(), "HOOK PUSH push=bus")
+}
+
+// TestGrokBusyThenIdleBetweenFlushesStillDelivers writes busy and then idle
+// into the state file between two flushes. The idle write replaces the word.
+// The turn mark from the busy write is still there, and the later message is
+// delivered.
+func TestGrokBusyThenIdleBetweenFlushesStillDelivers(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	home := t.TempDir()
+	wake, err := installGrokHarness(home)
+	require.NoError(t, err)
+	script := filepath.Join(home, "hooks", "nova-hook-grok.sh")
+	stateDir := filepath.Join(home, "nova-hook")
+	w := r.world()
+	ctx, cancel := context.WithCancel(context.Background())
+	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+	w.grok = &grokRoute{home: home, wake: wake, as: "ada", role: hook.Comms}
+	step := 0
+	st := grokWaiter{Store: bus.Redis{C: r.h.Client}, read: func() []bus.Entry {
+		step++
+		if step == 1 {
+			return grokMessages(1, "first-secret")
+		}
+		require.NoError(t, exec.Command(script, "busy", stateDir).Run())
+		require.NoError(t, exec.Command(script, "idle", stateDir).Run())
+		word, err := os.ReadFile(filepath.Join(stateDir, "state"))
+		require.NoError(t, err)
+		assert.Equal(t, "idle\n", string(word))
+		mark, err := os.ReadFile(filepath.Join(stateDir, "turn"))
+		require.NoError(t, err)
+		assert.Equal(t, "x\n", string(mark))
+		cancel()
+		return grokMessages(1, "second-secret")
+	}}
+	epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
+	require.NoError(t, err)
+	s := &session{bus: st, hooks: r.h.Store, as: "ada"}
+	var out bytes.Buffer
+	result := w.loop(&tool.Call{Stdout: &out}, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, nil)
+	assert.Equal(t, tool.OK, result.Status, out.String())
+	body, err := os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Equal(t, "1 more message; read the bus\n1 more message; read the bus\n", string(body))
+	assert.NotContains(t, string(body), "first-secret")
+	assert.NotContains(t, string(body), "second-secret")
+	assert.Equal(t, 2, strings.Count(out.String(), "kind=wake"))
 }
 
 func TestGrokHarnessDeliversIntoARunningTurn(t *testing.T) {
