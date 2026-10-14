@@ -240,7 +240,7 @@ func TestRevertOnRedSkipsWhenThereIsNoParentRunOnAnyOfFivePages(t *testing.T) {
 		t.Fatalf("looked at %d pages, want 5", pages)
 	}
 	if r.ran("git revert") {
-		t.Fatal("reverted with no green baseline")
+		require.Fail(t, "reverted with no green baseline")
 	}
 }
 
@@ -277,7 +277,7 @@ func TestRevertOnRedLeavesARefusedPushAsAnOpenPullRequest(t *testing.T) {
 		t.Fatalf("commands %q", r.lines())
 	}
 	if r.ran("git push -f") {
-		t.Fatal("force-pushed a branch whose plain push worked")
+		require.Fail(t, "force-pushed a branch whose plain push worked")
 	}
 }
 
@@ -327,7 +327,7 @@ func TestRevertOnRedPostsNoCommentWhenNoMergedPullRequestIsFound(t *testing.T) {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
 	if r.ran("gh api repos/o/r/issues/") {
-		t.Fatal("commented with no merged pull request")
+		require.Fail(t, "commented with no merged pull request")
 	}
 }
 

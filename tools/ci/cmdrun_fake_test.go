@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // fakeCmdRunner is the one fake cmdRunner: it records every command a verb runs
@@ -97,9 +99,7 @@ func TestAppendGitHubFileAppendsALineOrSaysTheNameIsUnset(t *testing.T) {
 		return ""
 	}
 	for _, l := range []string{"a=1", "b=2"} {
-		if err := appendGitHubFile(get, "GITHUB_OUTPUT", l); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, appendGitHubFile(get, "GITHUB_OUTPUT", l))
 	}
 	if b, _ := os.ReadFile(p); string(b) != "a=1\nb=2\n" {
 		t.Fatalf("GITHUB_OUTPUT holds %q", b)

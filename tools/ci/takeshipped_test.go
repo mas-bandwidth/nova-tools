@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func takeArgs(dist, out, runner string) []string {
@@ -24,9 +26,7 @@ func TestTakeShippedCopiesThePlatformBinaryAndRunsVersion(t *testing.T) {
 			t.Parallel()
 			dist := t.TempDir()
 			for _, n := range []string{"nova-check_v0.0.0-dry-run_linux_amd64", "nova-check_v0.0.0-dry-run_darwin_arm64", "nova-check_v0.0.0-dry-run_windows_amd64.exe"} {
-				if err := os.WriteFile(filepath.Join(dist, n), []byte("bin:"+n), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.WriteFile(filepath.Join(dist, n), []byte("bin:"+n), 0o644))
 			}
 			out := filepath.Join(t.TempDir(), "sub", "nova-check")
 			var o, eb bytes.Buffer
@@ -51,9 +51,7 @@ func TestTakeShippedCopiesThePlatformBinaryAndRunsVersion(t *testing.T) {
 func TestTakeShippedNeverPaperOverAMissingBinary(t *testing.T) {
 	t.Parallel()
 	dist := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dist, "other"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dist, "other"), nil, 0o644))
 	var o, eb bytes.Buffer
 	e := env{stdout: &o, stderr: &eb, getenv: func(string) string { return "" }}
 	r := &fakeCmdRunner{}
@@ -65,7 +63,7 @@ func TestTakeShippedNeverPaperOverAMissingBinary(t *testing.T) {
 		t.Fatalf("stdout %q does not name the missing binary and list the artifact", o.String())
 	}
 	if _, err := os.Stat(out); err == nil {
-		t.Fatal("a binary was put in place with none shipped")
+		require.Fail(t, "a binary was put in place with none shipped")
 	}
 	if len(r.calls) != 0 {
 		t.Fatalf("ran %q", r.lines())
@@ -89,9 +87,7 @@ func TestTakeShippedReportsADistItCannotList(t *testing.T) {
 func TestTakeShippedReportsARunnerThatCannotStartTheBinary(t *testing.T) {
 	t.Parallel()
 	dist := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dist, "nova-check_v0.0.0-dry-run_linux_amd64"), []byte("bin"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dist, "nova-check_v0.0.0-dry-run_linux_amd64"), []byte("bin"), 0o644))
 	var o, eb bytes.Buffer
 	e := env{stdout: &o, stderr: &eb, getenv: func(string) string { return "" }}
 	r := &fakeCmdRunner{answer: func(cmdSpec) (string, int, error) { return "", 0, fmt.Errorf("exec: permission denied") }}

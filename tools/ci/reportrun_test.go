@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func reportEnv(t *testing.T, cardEnv string) (env, *bytes.Buffer, *bytes.Buffer, string) {
@@ -13,12 +15,8 @@ func reportEnv(t *testing.T, cardEnv string) (env, *bytes.Buffer, *bytes.Buffer,
 	home := t.TempDir()
 	if cardEnv != "" {
 		dir := filepath.Join(home, "nova-bench", "launch")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "card.env"), []byte(cardEnv), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "card.env"), []byte(cardEnv), 0o600))
 	}
 	var out, errb bytes.Buffer
 	return env{stdout: &out, stderr: &errb, getenv: func(k string) string {
@@ -154,18 +152,14 @@ func TestReadCardEnvQuotingAndComments(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "card.env")
 	body := "# c\n\nA=1\nexport B=\"two $X\"\nC='three $X'\nD=${X}/four\nnot a line\n"
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
 	got, err := readCardEnv(p, func(k string) string {
 		if k == "X" {
 			return "x"
 		}
 		return ""
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := map[string]string{"A": "1", "B": "two x", "C": "three $X", "D": "x/four"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v", got)

@@ -36,9 +36,7 @@ func newTestInstallHost(t *testing.T) testInstallHost {
 	out, errb := &bytes.Buffer{}, &bytes.Buffer{}
 	gp := filepath.Join(dir, "github_path")
 	home := filepath.Join(dir, "home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	sleeps := new(int)
 	r := &fakeCmdRunner{onPath: map[string]string{}}
 	h := installHost{
@@ -73,7 +71,7 @@ func (h testInstallHost) published(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile(h.githubPath)
 	if err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	return string(b)
 }
@@ -84,18 +82,11 @@ func TestInstallRedisWhenPresentPublishesItsDirectoryAndTakesNoLock(t *testing.T
 	t.Parallel()
 	h := newTestInstallHost(t)
 	h.runner.onPath["redis-server"] = "/opt/r/bin/redis-server"
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, want 0", code)
-	}
-	if got := h.out.String(); got != "redis-server /opt/r/bin/redis-server\n" {
-		t.Fatalf("stdout %q", got)
-	}
-	if got := h.published(t); got != "/opt/r/bin\n" {
-		t.Fatalf("GITHUB_PATH got %q", got)
-	}
-	if len(h.runner.calls) != 0 || h.lockHeld() {
-		t.Fatalf("an installed redis-server ran %v / left a lock", h.runner.lines())
-	}
+	require.Equal(t, 0, installRedisServer(h.installHost))
+	assert.Equal(t, "redis-server /opt/r/bin/redis-server\n", h.out.String())
+	assert.Equal(t, "/opt/r/bin\n", h.published(t))
+	assert.Empty(t, h.runner.calls, "an installed redis-server ran %v", h.runner.lines())
+	assert.False(t, h.lockHeld(), "an installed redis-server left a lock")
 }
 
 func TestInstallRedisWithAptInstallsUnderTheLockAndReleasesIt(t *testing.T) {
@@ -105,25 +96,18 @@ func TestInstallRedisWithAptInstallsUnderTheLockAndReleasesIt(t *testing.T) {
 	h.runner.answer = func(c cmdSpec) (string, int, error) {
 		if c.Name == "apt-get" && len(c.Args) > 0 && c.Args[0] == "install" {
 			if !h.lockHeld() {
-				t.Error("apt-get install ran without the lock held")
+				assert.Fail(t, "apt-get install ran without the lock held")
 			}
 			h.runner.onPath["redis-server"] = "/usr/bin/redis-server"
 		}
 		return "", 0, nil
 	}
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, installRedisServer(h.installHost), h.errb.String())
 	want := []string{"apt-get update -qq", "apt-get install -y -qq redis-server"}
-	if got := h.runner.lines(); strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("commands %q, want %q", got, want)
-	}
-	if h.lockHeld() {
-		t.Fatal("the lock is still held after the install")
-	}
-	if h.published(t) != "/usr/bin\n" || h.out.String() != "redis-server /usr/bin/redis-server\n" {
-		t.Fatalf("published %q, stdout %q", h.published(t), h.out)
-	}
+	assert.Equal(t, strings.Join(want, "|"), strings.Join(h.runner.lines(), "|"))
+	assert.False(t, h.lockHeld(), "the lock is still held after the install")
+	assert.Equal(t, "/usr/bin\n", h.published(t))
+	assert.Equal(t, "redis-server /usr/bin/redis-server\n", h.out.String())
 }
 
 func TestInstallRedisRetriesAptAsRootWhenTheFirstTryFails(t *testing.T) {
@@ -139,17 +123,13 @@ func TestInstallRedisRetriesAptAsRootWhenTheFirstTryFails(t *testing.T) {
 		}
 		return "", 0, nil
 	}
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, installRedisServer(h.installHost), h.errb.String())
 	want := []string{
 		"apt-get update -qq",
 		"sudo -n apt-get update -qq",
 		"sudo -n apt-get install -y -qq redis-server",
 	}
-	if got := h.runner.lines(); strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("commands %q, want %q", got, want)
-	}
+	assert.Equal(t, strings.Join(want, "|"), strings.Join(h.runner.lines(), "|"))
 }
 
 func TestInstallRedisReportsTheFailingAptCommandsCode(t *testing.T) {
@@ -157,12 +137,8 @@ func TestInstallRedisReportsTheFailingAptCommandsCode(t *testing.T) {
 	h := newTestInstallHost(t)
 	h.runner.onPath["apt-get"] = "/usr/bin/apt-get"
 	h.runner.answer = func(c cmdSpec) (string, int, error) { return "", 100, nil }
-	if code := installRedisServer(h.installHost); code != 100 {
-		t.Fatalf("exit %d, want the last command's 100", code)
-	}
-	if h.lockHeld() {
-		t.Fatal("a failed install left the lock held")
-	}
+	require.Equal(t, 100, installRedisServer(h.installHost), "the last command's code")
+	require.False(t, h.lockHeld(), "a failed install left the lock held")
 }
 
 func TestInstallRedisWithHomebrewInstallsAndPublishesItsBin(t *testing.T) {
@@ -181,9 +157,7 @@ func TestInstallRedisWithHomebrewInstallsAndPublishesItsBin(t *testing.T) {
 		}
 		return "", 0, nil
 	}
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, installRedisServer(h.installHost), h.errb.String())
 	if got := strings.Join(h.runner.prepends, ","); got != "/opt/homebrew/bin" {
 		t.Fatalf("PATH prepended with %q", got)
 	}
@@ -200,18 +174,16 @@ func TestInstallRedisBuildsThePinnedSourceWhereThereIsNoPackageManager(t *testin
 			// make -C <tree> -jN redis-server: produce the binary the build would.
 			tree := c.Args[1]
 			if err := os.MkdirAll(filepath.Join(tree, "src"), 0o755); err != nil {
-				t.Error(err)
+				require.NoError(t, err)
 			}
 			if err := os.WriteFile(filepath.Join(tree, "src", "redis-server"), []byte("built"), 0o600); err != nil {
-				t.Error(err)
+				require.NoError(t, err)
 			}
 			h.runner.onPath["redis-server"] = filepath.Join(h.home, ".local", "bin", "redis-server")
 		}
 		return "", 0, nil
 	}
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, installRedisServer(h.installHost), h.errb.String())
 	lines := h.runner.lines()
 	if len(lines) != 3 ||
 		!strings.HasPrefix(lines[0], "curl -fsSL https://download.redis.io/releases/redis-"+redisSourceVersion+".tar.gz -o ") ||
@@ -221,9 +193,7 @@ func TestInstallRedisBuildsThePinnedSourceWhereThereIsNoPackageManager(t *testin
 	}
 	dest := filepath.Join(h.home, ".local", "bin", "redis-server")
 	fi, err := os.Stat(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if b, _ := os.ReadFile(dest); string(b) != "built" || fi.Mode().Perm() != 0o755 {
 		t.Fatalf("installed %q mode %v", b, fi.Mode())
 	}
@@ -258,12 +228,8 @@ func TestInstallRedisStillMissingAfterTheInstallIsRefused(t *testing.T) {
 func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if err := os.Mkdir(h.lock, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(h.lock, fixedNow, fixedNow); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
+	require.NoError(t, os.Chtimes(h.lock, fixedNow, fixedNow))
 	polls := 0
 	h.sleep = func(time.Duration) {
 		polls++
@@ -273,9 +239,7 @@ func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 			h.runner.mu.Unlock()
 		}
 	}
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, installRedisServer(h.installHost), h.errb.String())
 	if polls != 3 {
 		t.Fatalf("polled %d times, want 3", polls)
 	}
@@ -283,19 +247,15 @@ func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 		t.Fatalf("a waiter ran %v", h.runner.lines())
 	}
 	if !h.lockHeld() {
-		t.Fatal("a waiter released a lock it never took")
+		require.Fail(t, "a waiter released a lock it never took")
 	}
 }
 
 func TestInstallLockTimesOutAfterFortyPolls(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if err := os.Mkdir(h.lock, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(h.lock, fixedNow, fixedNow); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
+	require.NoError(t, os.Chtimes(h.lock, fixedNow, fixedNow))
 	if code := installRedisServer(h.installHost); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
@@ -313,13 +273,9 @@ func TestInstallLockTimesOutAfterFortyPolls(t *testing.T) {
 func TestInstallLockOlderThanSixHundredSecondsIsTakenOver(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if err := os.Mkdir(h.lock, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
 	old := fixedNow.Add(-601 * time.Second)
-	if err := os.Chtimes(h.lock, old, old); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(h.lock, old, old))
 	h.runner.onPath["apt-get"] = "/usr/bin/apt-get"
 	h.runner.answer = func(c cmdSpec) (string, int, error) {
 		if c.Name == "apt-get" && c.Args[0] == "install" {
@@ -327,9 +283,7 @@ func TestInstallLockOlderThanSixHundredSecondsIsTakenOver(t *testing.T) {
 		}
 		return "", 0, nil
 	}
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, installRedisServer(h.installHost), h.errb.String())
 	if *h.sleeps != 0 {
 		t.Fatalf("waited %d polls on a stale lock", *h.sleeps)
 	}
@@ -341,13 +295,9 @@ func TestInstallLockOlderThanSixHundredSecondsIsTakenOver(t *testing.T) {
 func TestInstallLockExactlySixHundredSecondsOldIsStillHeld(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if err := os.Mkdir(h.lock, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
 	edge := fixedNow.Add(-600 * time.Second)
-	if err := os.Chtimes(h.lock, edge, edge); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(h.lock, edge, edge))
 	if code := installRedisServer(h.installHost); code != 1 || *h.sleeps != 40 {
 		t.Fatalf("exit %d after %d polls, want a timeout after 40 (a lock 600 s old is not stale: the rule is over 600)", code, *h.sleeps)
 	}
@@ -388,9 +338,7 @@ func TestInstallPostgresWhenOnPathPublishesAndNamesTheVersion(t *testing.T) {
 		}
 		return "", 0, nil
 	}
-	if code := installPostgres(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, installPostgres(h.installHost), h.errb.String())
 	want := "postgres /usr/lib/postgresql/16/bin/postgres postgres (PostgreSQL) 16.4\n"
 	if h.out.String() != want {
 		t.Fatalf("stdout %q, want %q", h.out, want)
@@ -404,9 +352,7 @@ func TestInstallPostgresFindsAVersionedInstallOffPathAndPutsItOnPath(t *testing.
 	t.Parallel()
 	h := newTestInstallHost(t)
 	h.isExec = func(p string) bool { return strings.HasPrefix(p, "/usr/lib/postgresql/15/bin/") }
-	if code := installPostgres(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, installPostgres(h.installHost), h.errb.String())
 	if got := strings.Join(h.runner.prepends, ","); got != "/usr/lib/postgresql/15/bin" {
 		t.Fatalf("PATH prepended with %q", got)
 	}
@@ -506,9 +452,7 @@ func TestInstallPostgresWithHomebrewInstallsSixteen(t *testing.T) {
 		return "", 0, nil
 	}
 	h.isExec = func(p string) bool { return installed && strings.HasPrefix(p, "/opt/homebrew/opt/postgresql@16/bin/") }
-	if code := installPostgres(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, installPostgres(h.installHost), h.errb.String())
 	if got := h.runner.lines(); len(got) < 1 || got[0] != "brew install postgresql@16" {
 		t.Fatalf("commands %q", got)
 	}
@@ -532,12 +476,8 @@ func TestInstallPostgresStillMissingAfterTheInstallIsRefused(t *testing.T) {
 func TestInstallPostgresLockTimeoutNamesPostgres(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if err := os.Mkdir(h.lock, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(h.lock, fixedNow, fixedNow); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
+	require.NoError(t, os.Chtimes(h.lock, fixedNow, fixedNow))
 	if code := installPostgres(h.installHost); code != 1 || !strings.Contains(h.errb.String(), "timed out waiting to install postgres") {
 		t.Fatalf("exit %d stderr %q", code, h.errb)
 	}
@@ -551,9 +491,7 @@ func TestEnsureSbclPutsTheUsersOwnBinOnPathAndPublishesIt(t *testing.T) {
 	want := filepath.Join(h.home, ".local", "bin")
 	h.isExec = func(p string) bool { return p == filepath.Join(want, "sbcl") }
 	h.runner.onPath["sbcl"] = filepath.Join(want, "sbcl")
-	if code := ensureSbcl(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, ensureSbcl(h.installHost), h.errb.String())
 	if h.published(t) != want+"\n" || strings.Join(h.runner.prepends, ",") != want {
 		t.Fatalf("published %q, prepended %v", h.published(t), h.runner.prepends)
 	}
@@ -565,9 +503,7 @@ func TestEnsureSbclPutsTheUsersOwnBinOnPathAndPublishesIt(t *testing.T) {
 func TestEnsureSbclInstallsWithAptOnlyWhenAbsent(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if code := ensureSbcl(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
+	require.Equal(t, 0, ensureSbcl(h.installHost), h.errb.String())
 	want := []string{"apt-get update -qq", "apt-get install -y --no-install-recommends sbcl", "sbcl --version"}
 	if got := h.runner.lines(); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("commands %q, want %q", got, want)
