@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -106,8 +105,7 @@ func TestBatchRawRefusalsWriteNothing(t *testing.T) {
 		ans, err := rawApply(ctx, c, raw)
 		after := storeImage(t, c)
 		refused := err == nil && len(ans) >= 2 && ans[0] == "REFUSED"
-		changed := !reflect.DeepEqual(before, after)
-		assert.False(t, changed, "%s: STORE CHANGED (partial or full write)", name)
+		assert.Equal(t, before, after, "%s: STORE CHANGED (partial or full write)", name)
 		if assert.NoError(t, err, "%s: a raw error reply leaves the script", name) {
 			assert.True(t, refused, "%s: accepted: %v", name, trunc(ans))
 		}
