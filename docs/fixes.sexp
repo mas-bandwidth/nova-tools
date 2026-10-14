@@ -77,7 +77,12 @@
      producer; sandbox process-table reads and valid test probes preserve each command's wait; the
      one-shot lane fixture waits for the completed card turn before cancelling its daemon. Every TLA+
      model checked against the code.")
-)
+   (release "v1.2.24" :status "in-progress"
+    :text "The fleet loops fixes: the Linux unit's state is built before the
+     ansible.builtin.systemd_service module call, so the templar no longer stops at the else of a
+     parenthesised ternary and every Linux host restarts its unit; the play ends with a recap gate on a
+     changed unit that did not restart; and the loops play reads its gathered facts as ansible_facts.")
+ )
  :items
   ((fix "the-verb-scaffold-compiles-only-its-generated-tests" :release "v1.2.16" :status "planned"
     :title "The verb scaffold compiles only its generated tests"
@@ -1414,4 +1419,24 @@
    (fix "one-shot-lane-test-waits-for-the-card-turn" :release "v1.2.16" :status "in-progress"
     :title "The one-shot lane test waits for the card turn"
     :text "The fake harness cancels the one-shot daemon only after its second run reaches the card and the lane completion record is written. The test retains its prompt, session, send-line and state assertions, while the daemon joins its workers before the test reads output."
-    :origin "the coordinator, 2026-10-12, after the one-shot lane fixture cancelled on beat count rather than card completion")))
+    :origin "the coordinator, 2026-10-12, after the one-shot lane fixture cancelled on beat count rather than card completion")
+   (fix "fleet-loops-builds-the-linux-unit-state-outside-the-module-args" :release "v1.2.24" :status "in-progress"
+    :title "fleet/loops.yml restarts Linux units: the state is built outside the module args"
+    :text "Running `ansible-playbook -i ./nova-inventory fleet/loops.yml` wrote each Linux host's unit file
+     and then failed the task `start the enabled, stop the disabled (linux)` on every Linux host at the
+     `state:` argument of ansible.builtin.systemd_service: `Finalization of task args ... failed: Error
+     while resolving value for 'state': Syntax error in template: expected token ')', got 'else'` (the
+     origin `fleet/loops.yml:394`). The unit file was changed on disk, the unit was never restarted, and
+     the host kept running the old argv; the darwin hosts were unaffected. The state was one folded scalar
+     holding a parenthesised ternary chained to a second `if ... else`, which this ansible-core's Jinja
+     stops at. The value is now built before the module call: the task vars loop_unit_changed (the
+     selectattr chain, as a list), loop_unit_wants_restart (changed or named by nova_loop_restart) and
+     loop_unit_state (`{{ 'stopped' if not item.enabled else ('restarted' if loop_unit_wants_restart else
+     'started') }}`), and the module reads `state: \"{{ loop_unit_state }}\"`; the four outcomes are
+     unchanged. The play ends with a recap gate: a unit whose file changed and whose restart did not run
+     fails the host, and the release checklist reads the recap per host. The loops play also reads its
+     gathered facts as ansible_facts (ansible-core 2.24 removes the top-level injection). Tests:
+     TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs (unit, red at the base, green at the fix) and
+     TestLoopsPlayStateExpressionRendersThroughTheTemplar (functional, red at the base with the quoted
+     error, green at the fix where ansible-core is installed)."
+    :origin "the release children's rollout, 2026-10-13 ~21:56 EDT, v1.2.22 fleet plays; the card was first drafted as tmp/v1.3-cards/fleet-loops-yml-systemd-state-template-breaks-on-linux.md")))
