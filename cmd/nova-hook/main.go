@@ -697,7 +697,15 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				cursor = e.Entry
 				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") { // a server may challenge its own name
 					if w.grok != nil {
-						w.grok.note.add(1)
+						// A validated current challenge is its own wake line.
+						// Every other message counts toward the one pending notice.
+						bypass, out := w.grokChallenge(c, s, epoch, m)
+						if out != nil {
+							return out
+						}
+						if !bypass {
+							w.grok.note.add(1)
+						}
 						continue
 					}
 					line(c, tool.Done().As("PUSH").Fact("push", "bus").Fact("id", m.ID).Fact("from", m.From).Fact("subject", tool.Text(m.Subject)))

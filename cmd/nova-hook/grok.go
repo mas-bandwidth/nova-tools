@@ -1,16 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
@@ -20,8 +21,8 @@ const hookHarnessGrok = "grok"
 
 // grokNotice is one pending wake line (tla/GrokHookNotice.tla). waiting counts
 // notes not yet written. outstanding is the line already written. sawBusy is
-// the turn that line met. seenGen is how many busy marks are already applied;
-// the turn file holds the rest (pendingBusy in the module).
+// the turn that line met. seenGen is the newest generation already applied.
+// The state snapshot's generation is pendingBusy in the module.
 type grokNotice struct {
 	outstanding bool
 	waiting     int
@@ -35,11 +36,11 @@ func (g *grokNotice) add(n int) {
 	}
 }
 
-// observe applies one sample. gen is the busy marks recorded so far. A gen
-// ahead of seenGen is a busy mark that arrived since the last read, and it
-// still counts when the state word is already idle again: the idle write
-// replaces the word and leaves the turn file. An idle wake that never records
-// a busy mark stays outstanding.
+// observe applies one snapshot. gen and idle come from the same state file.
+// A generation is a completed turn only when that snapshot is idle. A busy
+// snapshot at a new generation records the turn and leaves the notice
+// outstanding. An idle snapshot whose generation was already applied
+// completes the turn only after sawBusy recorded it.
 func (g *grokNotice) observe(idle bool, gen int) {
 	advanced := gen > g.seenGen
 	if advanced {
@@ -156,12 +157,14 @@ func grokShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// grokHookScript records the latest word in state and appends one turn mark
-// on busy. An idle write replaces state and leaves the turn mark. It always
+// grokHookScript replaces state with one snapshot, "<gen> busy" or "<gen> idle".
+// Busy increments gen. Idle keeps the gen it read. One rename publishes both,
+// so a reader never pairs a new generation with the previous word. It always
 // exits 0, and it never sends or acks.
 const grokHookScript = "#!/bin/sh\n" +
-	"# Records the latest word in state. On busy it appends one turn mark first,\n" +
-	"# so a later idle write of state leaves the witness in place.\n" +
+	"# Replaces state with one snapshot, \"<gen> busy\" or \"<gen> idle\".\n" +
+	"# Busy increments gen. Idle keeps the gen it read. One rename publishes\n" +
+	"# both, so a reader never pairs a new generation with the previous word.\n" +
 	"# It never sends or acks.\n" +
 	"word=$1\n" +
 	"dir=$2\n" +
@@ -170,11 +173,19 @@ const grokHookScript = "#!/bin/sh\n" +
 	"*) exit 0 ;;\n" +
 	"esac\n" +
 	"mkdir -p \"$dir\" || exit 0\n" +
+	"gen=0\n" +
+	"if [ -f \"$dir/state\" ]; then\n" +
+	"  read -r prev _ < \"$dir/state\" || prev=0\n" +
+	"  case \"$prev\" in\n" +
+	"  ''|*[!0-9]*) gen=0 ;;\n" +
+	"  *) gen=$prev ;;\n" +
+	"  esac\n" +
+	"fi\n" +
 	"if [ \"$word\" = busy ]; then\n" +
-	"  printf 'x\\n' >> \"$dir/turn\" || exit 0\n" +
+	"  gen=$((gen + 1))\n" +
 	"fi\n" +
 	"tmp=$dir/.state.$$\n" +
-	"printf '%s\\n' \"$word\" > \"$tmp\" || exit 0\n" +
+	"printf '%s %s\\n' \"$gen\" \"$word\" > \"$tmp\" || exit 0\n" +
 	"mv \"$tmp\" \"$dir/state\" || exit 0\n" +
 	"exit 0\n"
 
@@ -271,26 +282,31 @@ func (w world) installGrok(c *tool.Call, g *grokRoute) *tool.Out {
 	return nil
 }
 
-// readGrokSample is the latest state word and the count of busy marks in the
-// turn file. A missing state file is idle. The turn file survives an idle
-// write that replaces the state word (tla/GrokHookNotice.tla, MarkIdle).
+// readGrokSample reads one state snapshot. The line is "<gen> busy",
+// "<gen> idle", or a legacy single word whose generation is 0. A missing
+// file is idle at generation 0. A generation is a completed turn only when
+// this snapshot is idle at that generation (tla/GrokHookNotice.tla, Observe).
 func readGrokSample(home string) (idle bool, gen int, err error) {
-	dir := filepath.Join(home, "nova-hook")
-	b, err := os.ReadFile(filepath.Join(dir, "state"))
-	idle = true
-	if err == nil {
-		idle = strings.TrimSpace(string(b)) != "busy"
-	} else if !os.IsNotExist(err) {
-		return true, 0, err
-	}
-	tb, err := os.ReadFile(filepath.Join(dir, "turn"))
+	b, err := os.ReadFile(filepath.Join(home, "nova-hook", "state"))
 	if os.IsNotExist(err) {
-		return idle, 0, nil
+		return true, 0, nil
 	}
 	if err != nil {
 		return true, 0, err
 	}
-	return idle, bytes.Count(tb, []byte("\n")), nil
+	fields := strings.Fields(string(b))
+	if len(fields) == 0 {
+		return true, 0, nil
+	}
+	word := fields[0]
+	if len(fields) >= 2 {
+		n, nerr := strconv.Atoi(fields[0])
+		if nerr == nil && n >= 0 {
+			return fields[1] != "busy", n, nil
+		}
+		word = fields[len(fields)-1]
+	}
+	return word != "busy", 0, nil
 }
 
 // deliverGrokWake appends one notice line. It never truncates the file and
@@ -311,9 +327,9 @@ func deliverGrokWake(wake, text string) error {
 	return cerr
 }
 
-// grokFlush applies the turn witness and the latest word, then releases at
-// most one line. A failed write puts the count back and stops the loop. It
-// does not drop the hook record.
+// grokFlush applies one state snapshot, then releases at most one line.
+// A failed write puts the count back and stops the loop. It does not drop
+// the hook record.
 func (w world) grokFlush(c *tool.Call) *tool.Out {
 	g := w.grok
 	idle, gen, err := readGrokSample(g.home)
@@ -335,6 +351,36 @@ func (w world) grokFlush(c *tool.Call) *tool.Out {
 	}
 	line(c, tool.Done().As("PUSH").Fact("push", "grok").Fact("kind", kind).Fact("notice", text).Note("one notice; the model reads the bus"))
 	return nil
+}
+
+// grokChallenge writes one wake line for a validated current challenge and
+// leaves the pending notice untouched. It does not answer the challenge.
+// A stale or lookalike message returns false so the caller counts it.
+// A store error stops the loop.
+func (w world) grokChallenge(c *tool.Call, s *session, epoch int64, m bus.Message) (bool, *tool.Out) {
+	if !canonicalHookChallenge(m, s.as) {
+		return false, nil
+	}
+	ctx, cancel := call()
+	challenge, err := s.hooks.C.HMGet(ctx, hook.ChallengeKey(s.as), "sum", "epoch").Result()
+	cancel()
+	if err != nil {
+		o := tool.Fail("grok challenge could not be read: " + err.Error())
+		o.Remedy = grokRemedy(w.grok)
+		return false, o
+	}
+	nonce := strings.TrimPrefix(m.Subject, "HOOK CHALLENGE nonce=")
+	if len(challenge) < 2 || challenge[0] != hook.Sum(nonce) || challenge[1] != strconv.FormatInt(epoch, 10) {
+		return false, nil
+	}
+	text := "current challenge nonce=" + nonce + "; read the bus"
+	if err := deliverGrokWake(w.grok.wake, text); err != nil {
+		o := tool.Fail("grok wake file could not be written: " + err.Error())
+		o.Remedy = grokRemedy(w.grok)
+		return false, o
+	}
+	line(c, tool.Done().As("PUSH").Fact("push", "grok").Fact("kind", "challenge").Fact("notice", text).Note("current challenge; the model reads the bus"))
+	return true, nil
 }
 
 func grokRemedy(g *grokRoute) string {

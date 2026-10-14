@@ -3,11 +3,11 @@
 \* A burst emits one line. Notes that arrive while it is outstanding fold into
 \* the next line. A turn boundary consumes the outstanding notice, and the next
 \* release emits at most one more line.
-\* pendingBusy is the turn witness: MarkBusy records it, and MarkIdle replaces
-\* the sampled word without clearing it. One Observe that sees the witness and
-\* an idle word consumes the notice, including when both marks landed between
-\* two reads. Broken = "drop-witness" is the reversed case that forgets the
-\* witness and leaves the notice stuck. A failed write puts the count back.
+\* pendingBusy is the generation not yet applied. MarkBusy publishes the next
+\* generation and the busy word in one step. MarkIdle publishes idle at that
+\* same generation. A generation is a completed turn only when Observe samples
+\* it idle. Broken = "drop-witness" is the reversed case that forgets the
+\* generation and leaves the notice stuck. A failed write puts the count back.
 \* Bench configurations are owed; this module has no cfg until that run.
 EXTENDS Naturals
 CONSTANTS Broken
@@ -30,8 +30,8 @@ Add ==
     /\ waiting' = waiting + 1
     /\ UNCHANGED <<outstanding, sawBusy, idle, emitted, folded, pendingBusy>>
 
-\* A busy mark records the witness and the word. An idle mark replaces the
-\* word and leaves the witness.
+\* Busy publishes the next generation and the busy word together. Idle keeps
+\* the generation and publishes the idle word. Neither step is half written.
 MarkBusy ==
     /\ pendingBusy' = pendingBusy + 1
     /\ idle' = FALSE
@@ -103,9 +103,14 @@ Accounted == waiting + (IF outstanding THEN folded ELSE 0) <= arrived
 OnePending ==
     [][ (emitted' = emitted + 1 /\ outstanding) => Broken = "second-line" ]_vars
 
-\* A busy mark that an idle write does not erase still ends the outstanding
-\* notice. drop-witness violates this by clearing pendingBusy and sampling idle.
+\* A generation sampled idle still ends the outstanding notice. drop-witness
+\* violates this by clearing pendingBusy and sampling idle.
 TurnWitness ==
     [][ (outstanding /\ pendingBusy > 0 /\ idle) => ~outstanding' ]_vars
+
+\* The generation and the busy word are one publication. A step that advances
+\* the generation is not idle.
+AtomicBusy ==
+    [][ pendingBusy' > pendingBusy => ~idle' ]_vars
 
 =============================================================================

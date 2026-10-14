@@ -54,8 +54,8 @@ func TestGrokNoticeFold(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "1 more message; read the bus", line)
 
-	// One read sees the witness and an idle word together. The busy sample
-	// itself is already gone from the state word.
+	// One read sees the durable idle snapshot of a new generation. The busy
+	// publication of that generation is already gone.
 	var both grokNotice
 	both.add(1)
 	_, _, _, ok = both.release(true)
@@ -215,7 +215,7 @@ func TestGrokCommandQuotesShellMeta(t *testing.T) {
 	}
 }
 
-func TestGrokQuotedCommandKeepsTheTurnMark(t *testing.T) {
+func TestGrokQuotedCommandPublishesOneSnapshot(t *testing.T) {
 	t.Parallel()
 	home := filepath.Join(t.TempDir(), "a;b&c|d\\e")
 	_, err := installGrokHarness(home)
@@ -228,10 +228,9 @@ func TestGrokQuotedCommandKeepsTheTurnMark(t *testing.T) {
 	require.NoError(t, exec.Command("sh", "-c", doc.Hooks.Stop[0].Hooks[0].Command).Run())
 	state, err := os.ReadFile(filepath.Join(home, "nova-hook", "state"))
 	require.NoError(t, err)
-	assert.Equal(t, "idle\n", string(state))
-	turn, err := os.ReadFile(filepath.Join(home, "nova-hook", "turn"))
-	require.NoError(t, err)
-	assert.Equal(t, "x\n", string(turn))
+	assert.Equal(t, "1 idle\n", string(state))
+	_, err = os.Stat(filepath.Join(home, "nova-hook", "turn"))
+	assert.True(t, os.IsNotExist(err))
 	idle, gen, err := readGrokSample(home)
 	require.NoError(t, err)
 	assert.True(t, idle)
@@ -303,10 +302,9 @@ func TestGrokHarnessBurstIsOneNotice(t *testing.T) {
 	assert.NotContains(t, out.String(), "HOOK PUSH push=bus")
 }
 
-// TestGrokBusyThenIdleBetweenFlushesStillDelivers writes busy and then idle
-// into the state file between two flushes. The idle write replaces the word.
-// The turn mark from the busy write is still there, and the later message is
-// delivered.
+// TestGrokBusyThenIdleBetweenFlushesStillDelivers publishes busy and then
+// idle between two flushes. The idle snapshot keeps the busy generation,
+// and the later message is delivered.
 func TestGrokBusyThenIdleBetweenFlushesStillDelivers(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -329,10 +327,9 @@ func TestGrokBusyThenIdleBetweenFlushesStillDelivers(t *testing.T) {
 		require.NoError(t, exec.Command(script, "idle", stateDir).Run())
 		word, err := os.ReadFile(filepath.Join(stateDir, "state"))
 		require.NoError(t, err)
-		assert.Equal(t, "idle\n", string(word))
-		mark, err := os.ReadFile(filepath.Join(stateDir, "turn"))
-		require.NoError(t, err)
-		assert.Equal(t, "x\n", string(mark))
+		assert.Equal(t, "1 idle\n", string(word))
+		_, err = os.Stat(filepath.Join(stateDir, "turn"))
+		assert.True(t, os.IsNotExist(err))
 		cancel()
 		return grokMessages(1, "second-secret")
 	}}
@@ -410,4 +407,181 @@ func TestGrokWakeWriteFailureStopsWithoutUnhook(t *testing.T) {
 	assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State)
 	assert.Equal(t, epoch, r.h.State(t, "ada").Epoch)
 	assert.NotContains(t, out.String(), "payload-secret")
+}
+
+// TestGrokOldIdleBesideANewTurnFileIsNotACompletion is the two-file window:
+// a busy hook appended a generation, and the state word was still the old
+// idle. That pair is not a completed turn.
+func TestGrokOldIdleBesideANewTurnFileIsNotACompletion(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	dir := filepath.Join(home, "nova-hook")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "state"), []byte("idle\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "turn"), []byte("x\n"), 0o600))
+	idle, gen, err := readGrokSample(home)
+	require.NoError(t, err)
+	assert.True(t, idle)
+	assert.Equal(t, 0, gen)
+	var n grokNotice
+	n.add(1)
+	_, _, _, ok := n.release(true)
+	require.True(t, ok)
+	n.add(4)
+	n.observe(idle, gen)
+	_, _, _, ok = n.release(true)
+	assert.False(t, ok, "a new turn file beside the old idle word is not a completed turn")
+}
+
+// TestGrokBusySnapshotDoesNotFinishTheTurn runs a busy turn, then publishes
+// only the busy snapshot before the next flush. The notice stays outstanding
+// until the idle snapshot of that generation is durable.
+func TestGrokBusySnapshotDoesNotFinishTheTurn(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	home := t.TempDir()
+	wake, err := installGrokHarness(home)
+	require.NoError(t, err)
+	script := filepath.Join(home, "hooks", "nova-hook-grok.sh")
+	stateDir := filepath.Join(home, "nova-hook")
+	w := r.world()
+	ctx, cancel := context.WithCancel(context.Background())
+	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+	w.grok = &grokRoute{home: home, wake: wake, as: "ada", role: hook.Comms}
+	step := 0
+	st := grokWaiter{Store: bus.Redis{C: r.h.Client}, read: func() []bus.Entry {
+		step++
+		switch step {
+		case 1:
+			return grokMessages(1, "first-secret")
+		case 2:
+			require.NoError(t, exec.Command(script, "busy", stateDir).Run())
+			word, err := os.ReadFile(filepath.Join(stateDir, "state"))
+			require.NoError(t, err)
+			assert.Equal(t, "1 busy\n", string(word))
+			_, err = os.Stat(filepath.Join(stateDir, "turn"))
+			assert.True(t, os.IsNotExist(err))
+			return grokMessages(1, "second-secret")
+		default:
+			held, err := os.ReadFile(wake)
+			require.NoError(t, err)
+			assert.Equal(t, "1 more message; read the bus\n", string(held), "a busy snapshot does not release the next line")
+			require.NoError(t, exec.Command(script, "idle", stateDir).Run())
+			word, err := os.ReadFile(filepath.Join(stateDir, "state"))
+			require.NoError(t, err)
+			assert.Equal(t, "1 idle\n", string(word))
+			cancel()
+			return nil
+		}
+	}}
+	epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
+	require.NoError(t, err)
+	s := &session{bus: st, hooks: r.h.Store, as: "ada"}
+	var out bytes.Buffer
+	result := w.loop(&tool.Call{Stdout: &out}, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, nil)
+	assert.Equal(t, tool.OK, result.Status, out.String())
+	body, err := os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Equal(t, "1 more message; read the bus\n1 more message; read the bus\n", string(body))
+	assert.NotContains(t, string(body), "first-secret")
+	assert.NotContains(t, string(body), "second-secret")
+}
+
+func TestGrokCurrentChallengeBypassesPendingNotice(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, nonce string
+		malformed   bool
+		wrongEpoch  bool
+		wantNow     bool
+	}{
+		{"current", "current-nonce", false, false, true},
+		{"stale", "old-nonce", false, false, false},
+		{"lookalike", "current-nonce", true, false, false},
+		{"wrong epoch", "current-nonce", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			home := t.TempDir()
+			wake, err := installGrokHarness(home)
+			require.NoError(t, err)
+			stateDir := filepath.Join(home, "nova-hook")
+			require.NoError(t, os.MkdirAll(stateDir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(stateDir, "state"), []byte("1 busy\n"), 0o600))
+			w := r.world()
+			ctx, cancel := context.WithCancel(context.Background())
+			w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+			w.grok = &grokRoute{home: home, wake: wake, as: "ada", role: hook.Comms}
+			message := bus.Message{
+				ID:      "challenge-new",
+				From:    "bob",
+				Subject: "HOOK CHALLENGE nonce=" + tc.nonce,
+				Body:    challengeText("ada", tc.nonce, hook.ChallengeEvery),
+			}
+			if tc.malformed {
+				message.Body += "external appendix"
+			}
+			step := 0
+			st := grokWaiter{Store: bus.Redis{C: r.h.Client}, read: func() []bus.Entry {
+				step++
+				switch step {
+				case 1:
+					return grokMessages(1, "ordinary-secret")
+				case 2:
+					return []bus.Entry{
+						{Entry: "2-0", Fields: message.Fields()},
+						{Entry: "2-1", Fields: bus.Message{ID: "m2", From: "bob", Subject: "note", Body: "later-secret"}.Fields()},
+					}
+				default:
+					held, err := os.ReadFile(wake)
+					require.NoError(t, err)
+					word, err := os.ReadFile(filepath.Join(stateDir, "state"))
+					require.NoError(t, err)
+					assert.Equal(t, "1 busy\n", string(word), "the turn is still running")
+					if tc.wantNow {
+						assert.Contains(t, string(held), "current challenge nonce="+tc.nonce+"; read the bus")
+					} else {
+						assert.NotContains(t, string(held), "nonce=")
+					}
+					assert.NotContains(t, string(held), "prove")
+					require.NoError(t, os.WriteFile(filepath.Join(stateDir, "state"), []byte("1 idle\n"), 0o600))
+					cancel()
+					return nil
+				}
+			}}
+			epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
+			require.NoError(t, err)
+			require.NoError(t, r.h.Store.Renew(ctx, "ada", hook.Comms, hook.Bus, epoch, "test"))
+			created, err := r.h.Store.Challenge(ctx, "ada", hook.Comms, epoch, []hook.Push{hook.Bus}, "current-nonce")
+			require.NoError(t, err)
+			require.True(t, created)
+			if tc.wrongEpoch {
+				require.NoError(t, r.h.Client.HSet(ctx, hook.ChallengeKey("ada"), "epoch", epoch+1).Err())
+			}
+			s := &session{bus: st, hooks: r.h.Store, as: "ada"}
+			var out bytes.Buffer
+			result := w.loop(&tool.Call{Stdout: &out}, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, nil)
+			assert.Equal(t, tool.OK, result.Status, out.String())
+			body, err := os.ReadFile(wake)
+			require.NoError(t, err)
+			if tc.wantNow {
+				assert.Equal(t, "1 more message; read the bus\ncurrent challenge nonce="+tc.nonce+"; read the bus\n1 more message; read the bus\n", string(body))
+				assert.NotContains(t, string(body), "2 more messages")
+			} else {
+				assert.Equal(t, "1 more message; read the bus\n2 more messages; read the bus\n", string(body))
+				assert.NotContains(t, string(body), "nonce=")
+			}
+			assert.NotContains(t, string(body), "ordinary-secret")
+			assert.NotContains(t, string(body), "later-secret")
+			assert.NotContains(t, string(body), "prove")
+			assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State)
+			sum, err := r.h.Client.HGet(context.Background(), hook.ChallengeKey("ada"), "sum").Result()
+			require.NoError(t, err)
+			assert.Equal(t, hook.Sum("current-nonce"), sum)
+			proofs, err := r.h.Client.Exists(context.Background(), hook.ProofKey("ada", hook.Bus)).Result()
+			require.NoError(t, err)
+			assert.Zero(t, proofs)
+		})
+	}
 }
