@@ -251,7 +251,6 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
-	state := friend.DefaultStateDir(r.home, "bob")
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE daemon=false: no pong abc123 from bob within 3s")
 
 	sent := cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "abc123").Exit(0).Out("PING OK nonce=abc123 id=", " to=bob at=2026-10-04T03:00:", "NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123")
@@ -275,13 +274,8 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	require.NoError(t, err)
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "wake01", "--timeout", "2s").Exit(1).Err("WAIT-PONG NONE daemon=true", "the daemon answered and the session did not: deaf")
 
-	// the session answers, naming the coordinator since no daemon has recorded a seat; the pong file goes under the home directory
+	// the session answers, naming the coordinator since no daemon has recorded a seat
 	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--to", "ada", "--queue", "2", "--working", "1", "--width", "4").Exit(0).Out("PONG OK nonce=abc123 to=ada id=")
-	p, found, err := friend.ReadPong(state)
-	require.NoError(t, err)
-	assert.True(t, found)
-	assert.Equal(t, "abc123", p.Nonce)
-	assert.Equal(t, [3]int{2, 1, 4}, [3]int{p.Queue, p.Working, p.Width})
 	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob at=", "queue=2 working=1 width=4 daemon=false")
 
 	// a pong in the body from another name never counts: the from is the proof
@@ -312,8 +306,7 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	dir := t.TempDir()
 	state := friend.DefaultStateDir(r.home, "bob")
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).Err("STATUS NONE: no daemon has run as bob (no status file in "+state+")", "nova-friend install --as bob --harness <h> --dir "+dir)
-	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", LastDaemonPong: start.Add(-30 * time.Second), Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
-	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", LastPong: start.Add(-2 * time.Minute), LastDaemonPong: start.Add(-30 * time.Second), Beats: 7, Width: 8, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
@@ -987,7 +980,6 @@ func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...st
 	_, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "card c9", Body: "go\n"})
 	require.NoError(t, err)
 	dir := t.TempDir()
-	state := friend.StateDirIn(dir)
 	w := r.world()
 	checksStarted := 0
 	w.checkGo = func(f func()) {
@@ -1041,15 +1033,13 @@ func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...st
 		return nil
 	}
 	type turn struct {
-		at       time.Time
-		kind     string
-		presence friend.PresenceStatus
+		at   time.Time
+		kind string
 	}
 	var turns []turn
 	limited := false
 	w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 		text := args[len(args)-1]
-		p, _, _ := friend.ReadPresence(state) // ignored: a missing file reads as the zero presence, which the test sees
 		mu.Lock()
 		defer mu.Unlock()
 		now := clock
@@ -1059,16 +1049,16 @@ func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...st
 			r.answer(nonce)
 			return "answered\n", 0, nil
 		case strings.HasPrefix(text, "nova-friend: your harness's usage limit has reset"):
-			turns = append(turns, turn{now, "wake", p})
+			turns = append(turns, turn{now, "wake"})
 			fields := strings.Fields(text)
 			return fields[len(fields)-1] + "\n", 0, nil
 		case strings.Contains(text, "card c9"):
 			if !limited {
 				limited = true
-				turns = append(turns, turn{now, "limit", p})
+				turns = append(turns, turn{now, "limit"})
 				return "working\nInsufficient AI Credits. Your credits will refresh in 10 minutes.\n", 1, nil
 			}
-			turns = append(turns, turn{now, "message", p})
+			turns = append(turns, turn{now, "message"})
 			cancel()
 			return "I ran card c9.\n", 0, nil
 		}
@@ -1085,8 +1075,6 @@ func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...st
 	assert.Contains(t, out.String(), "Insufficient AI Credits")
 	assert.Contains(t, out.String(), "the turn hit the harness's limit", "the turn is deferred, the message in hand")
 	assert.False(t, turns[1].at.Before(turns[0].at.Add(10*time.Minute)), "no wake before the reset: %s then %s", turns[0].at, turns[1].at)
-	assert.Equal(t, friend.PresenceDown, turns[1].presence.Presence, "down on the presence file until woken")
-	assert.Contains(t, turns[1].presence.Reason, "harness limit until ")
 	assert.Contains(t, out.String(), "limit: woken: the session answered r4nd0m after the reset")
 	// down from the record of it (a beat while the limited turn still ran was before anyone knew), to the wake
 	_, rest, ok := strings.Cut(out.String(), "RUN ")
@@ -1256,12 +1244,7 @@ func TestTheDaemonsStateDirIsUnderItsDir(t *testing.T) {
 		assert.True(t, found, "the status file is under --dir")
 		assert.NoDirExists(t, friend.DefaultStateDir(r.home, "bob"), "nothing under the home directory")
 		r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=", "harness=opencode") // status finds it there with no --state-dir
-		// the session's pong line names the same directory, so its pong lands where the daemon reads
 		r.cli().Do(t, "pong", "--as", "bob", "--nonce", "n1", "--to", "ada", "--state-dir", friend.StateDirIn(dir)).Exit(0)
-		p, found, err := friend.ReadPong(friend.StateDirIn(dir))
-		require.NoError(t, err)
-		assert.True(t, found)
-		assert.Equal(t, "n1", p.Nonce)
 	})
 
 	t.Run("--state-dir is honoured", func(t *testing.T) {
@@ -1373,11 +1356,13 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 	cli := r.cli()
 	dir := t.TempDir()
 	state := friend.DefaultStateDir(r.home, "bob")
-	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet, Beats: 40, LastBeat: start}))
+	st := friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet, Beats: 40, LastBeat: start}
+	require.NoError(t, friend.WriteStatus(state, st))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
 		Out(`daemon=up`, `status=down why="no session answer ever" evidence="harness unknown; no session answer ever; no limit; 0 undelivered; no result yet"`)
 
-	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-time.Minute)}))
+	st.LastPong = start.Add(-time.Minute)
+	require.NoError(t, friend.WriteStatus(state, st))
 	b := &bus.Bus{Store: r.store}
 	for range 2 {
 		_, err := b.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "work", Body: "x"})
@@ -1387,10 +1372,12 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
 		Out(`status=up why="session answer 1m" evidence="harness unknown; session answer 1m; no limit; 2 undelivered; last result 10m exit=0"`)
 
-	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-12 * time.Minute)}))
+	st.LastPong = start.Add(-12 * time.Minute)
+	require.NoError(t, friend.WriteStatus(state, st))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`status=down why="no session answer 12m"`)
 
-	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start}))
+	st.LastPong = start
+	require.NoError(t, friend.WriteStatus(state, st))
 	limit, err := json.Marshal(friend.Limit{Reason: "weekly", Until: start.Add(34 * time.Hour)})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(state, friend.LimitFile), limit, 0o644))

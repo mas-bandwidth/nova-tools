@@ -22,7 +22,6 @@ import (
 // (SPEC-FRIEND.md, the files).
 const (
 	StatusFile = "status.json"
-	PongFile   = "pong.json"
 	LogFile    = "deliver.log"
 	WatchFile  = "watch.json"
 	QueueFile  = "inbox/QUEUE.json"
@@ -213,7 +212,6 @@ func FindStateDir(home, dir, friend string) string {
 }
 
 func statusPath(stateDir string) string { return filepath.Join(stateDir, StatusFile) }
-func pongPath(stateDir string) string   { return filepath.Join(stateDir, PongFile) }
 
 // LogPath is the daemon's own log in the state directory: one line per
 // delivery (launchd's own log is elsewhere: Plist).
@@ -253,15 +251,6 @@ func WriteStatus(stateDir string, s Status) error { return write(statusPath(stat
 func ReadStatus(stateDir string) (s Status, found bool, err error) {
 	found, err = read(statusPath(stateDir), &s)
 	return s, found, err
-}
-
-// WritePong is the pong verb's record of the answer it sent.
-func WritePong(stateDir string, p Pong) error { return write(pongPath(stateDir), p) }
-
-// ReadPong is the session's last recorded answer.
-func ReadPong(stateDir string) (p Pong, found bool, err error) {
-	found, err = read(pongPath(stateDir), &p)
-	return p, found, err
 }
 
 // Watch is the cursor of the coordinator's watch (docs/SPEC-FRIEND.md, Watch):

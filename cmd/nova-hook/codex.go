@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
@@ -22,6 +24,89 @@ const maxCodexEvent = 64 << 10
 type codexRoute struct {
 	socket, thread, directory string
 	since                     time.Time
+
+	pending           bool
+	pendingID         string
+	pendingTurn       string
+	pendingAnsweredAt string
+	pendingProof      string
+	pendingAnswersLen int64
+	pendingOwedLen    int64
+	pendingGroupLast  string
+	foldedCount       int
+	foldedSenders     []string
+	foldedChallenge   *bus.Message
+}
+
+func (r *codexRoute) fold(m bus.Message) {
+	r.foldedCount++
+	from := m.From
+	if from == "" {
+		from = "unknown"
+	}
+	if !slices.Contains(r.foldedSenders, from) {
+		r.foldedSenders = append(r.foldedSenders, from)
+	}
+	if strings.HasPrefix(m.Subject, "HOOK CHALLENGE nonce=") {
+		cp := m
+		r.foldedChallenge = &cp
+	}
+}
+
+func (r *codexRoute) summary() string {
+	return fmt.Sprintf("%d more messages from %s; read the bus", r.foldedCount, strings.Join(r.foldedSenders, ", "))
+}
+
+func (r *codexRoute) startTurn(s *session, id, turn string) {
+	if r == nil {
+		return
+	}
+	r.pending = true
+	r.pendingID = id
+	r.pendingTurn = turn
+	if s == nil || s.hooks.C == nil {
+		return
+	}
+	ctx, cancel := call()
+	defer cancel()
+	r.pendingAnsweredAt, _ = s.hooks.C.HGet(ctx, hook.RecordKey(s.as), "answered_at").Result()
+	r.pendingProof, _ = s.hooks.C.Get(ctx, hook.ProofKey(s.as, hook.Bus)).Result()
+	r.pendingAnswersLen, _ = s.hooks.C.HLen(ctx, bus.AnswersOf(s.as)).Result()
+	r.pendingOwedLen, _ = s.hooks.C.HLen(ctx, bus.OwedOf(s.as)).Result()
+	if s.bus != nil {
+		r.pendingGroupLast, _, _ = s.bus.Group(ctx, bus.StreamOf(s.as), s.as)
+	}
+}
+
+func (w world) codexTurnBoundary(s *session, r *codexRoute) bool {
+	if r == nil || !r.pending || s == nil || s.hooks.C == nil {
+		return false
+	}
+	if r.pendingID != "" {
+		if answered, err := codexAnswered(s, r.pendingID); err == nil && answered {
+			return true
+		}
+	}
+	ctx, cancel := call()
+	defer cancel()
+	if answeredAt, err := s.hooks.C.HGet(ctx, hook.RecordKey(s.as), "answered_at").Result(); err == nil && answeredAt != "" && answeredAt != r.pendingAnsweredAt {
+		return true
+	}
+	if proof, err := s.hooks.C.Get(ctx, hook.ProofKey(s.as, hook.Bus)).Result(); err == nil && proof != "" && proof != r.pendingProof {
+		return true
+	}
+	if n, err := s.hooks.C.HLen(ctx, bus.AnswersOf(s.as)).Result(); err == nil && n > r.pendingAnswersLen {
+		return true
+	}
+	if n, err := s.hooks.C.HLen(ctx, bus.OwedOf(s.as)).Result(); err == nil && n < r.pendingOwedLen {
+		return true
+	}
+	if s.bus != nil {
+		if last, _, err := s.bus.Group(ctx, bus.StreamOf(s.as), s.as); err == nil && last != r.pendingGroupLast {
+			return true
+		}
+	}
+	return false
 }
 
 // push delivers one bus event through the Codex route; it satisfies nativeRoute.
@@ -82,6 +167,7 @@ type savedCodexEvent struct {
 	PossibleDuplicates bool          `json:"possible_duplicates,omitempty"`
 	EventID            string        `json:"event_id"`
 	BootstrapNonce     string        `json:"bootstrap_nonce,omitempty"`
+	Summary            string        `json:"summary,omitempty"`
 	Message            *bus.Message  `json:"external_message,omitempty"`
 }
 
@@ -100,8 +186,79 @@ func (w world) codexPush(c *tool.Call, s *session, r *codexRoute, role hook.Role
 	if reconcileErr != nil {
 		return codexDeliveryFailure(s, role, epoch, id, reconcileErr)
 	}
+	if m != nil && codexMessageBytes(*m) > maxCodexEvent {
+		return codexDeliveryFailure(s, role, epoch, id, fmt.Errorf("external event wants at most %d bytes", maxCodexEvent))
+	}
+	if r != nil && r.pending && r.foldedCount == 0 && w.codexTurnBoundary(s, r) {
+		r.pending = false
+		r.pendingID = ""
+		r.pendingTurn = ""
+	}
+	if r != nil && r.pending {
+		if m != nil && canonicalHookChallenge(*m, s.as) {
+			ctx, cancel := call()
+			challenge, err := s.hooks.C.HMGet(ctx, hook.ChallengeKey(s.as), "sum", "epoch").Result()
+			cancel()
+			if err != nil {
+				return codexDeliveryFailure(s, role, epoch, id, err)
+			}
+			nonce := strings.TrimPrefix(m.Subject, "HOOK CHALLENGE nonce=")
+			if challenge[0] == hook.Sum(nonce) && challenge[1] == strconv.FormatInt(epoch, 10) {
+				// SPEC-CODEX-DESKTOP-WAKE: a native notice is immutable. A
+				// current heartbeat gets a fresh notice without waiting for the
+				// proof it requests. Keep the ordinary summary's boundary intact.
+				priority := *r
+				return w.codexSend(c, s, &priority, role, epoch, savedCodexEvent{EventID: id, Message: m, HookEpoch: epoch, HookRole: role})
+			}
+		}
+		if m != nil {
+			r.fold(*m)
+		}
+		line(c, tool.Done().As("PUSH").Fact("push", "codex").Fact("id", id).Fact("native", "coalesced").Fact("pending", r.foldedCount).Fact("summary", tool.Text(r.summary())).Note("folded into pending notice; delivered at next turn boundary"))
+		return nil
+	}
 	e := savedCodexEvent{EventID: id, BootstrapNonce: nonce, Message: m, HookEpoch: epoch, HookRole: role}
-	return w.codexSend(c, s, r, role, epoch, e)
+	out := w.codexSend(c, s, r, role, epoch, e)
+	if out == nil && r != nil {
+		r.startTurn(s, id, r.pendingTurn)
+	}
+	return out
+}
+
+func (w world) codexStep(c *tool.Call, s *session, r *codexRoute, role hook.Role, epoch int64) *tool.Out {
+	if r == nil || !r.pending || !w.codexTurnBoundary(s, r) {
+		return nil
+	}
+	r.pending = false
+	r.pendingID = ""
+	r.pendingTurn = ""
+	if r.foldedCount == 0 {
+		return nil
+	}
+	summary := r.summary()
+	id := "summary-" + w.nonce()
+	from := "bus"
+	if len(r.foldedSenders) > 0 {
+		from = strings.Join(r.foldedSenders, ", ")
+	}
+	e := savedCodexEvent{
+		EventID:   id,
+		HookEpoch: epoch,
+		HookRole:  role,
+		Summary:   summary,
+		Message:   &bus.Message{ID: id, From: from, Subject: summary, Body: summary},
+	}
+	if r.foldedChallenge != nil {
+		e.Recovery = []bus.Message{*r.foldedChallenge}
+	}
+	r.foldedCount = 0
+	r.foldedSenders = nil
+	r.foldedChallenge = nil
+	out := w.codexSend(c, s, r, role, epoch, e)
+	if out == nil {
+		r.startTurn(s, id, r.pendingTurn)
+	}
+	return out
 }
 
 func (w world) codexSend(c *tool.Call, s *session, r *codexRoute, role hook.Role, epoch int64, e savedCodexEvent) *tool.Out {
@@ -148,7 +305,14 @@ func (w world) codexSend(c *tool.Call, s *session, r *codexRoute, role hook.Role
 		}
 	}
 	if err == nil {
-		line(c, tool.Done().As("PUSH").Fact("push", "codex").Fact("id", id).Fact("native", "accepted").Fact("turn", turn).Note("native acceptance only; awaiting model proof or bus answer; recovery_messages may repeat prior delivery"))
+		if r != nil {
+			r.pendingTurn = turn
+		}
+		o := tool.Done().As("PUSH").Fact("push", "codex").Fact("id", id).Fact("native", "accepted").Fact("turn", turn)
+		if e.Summary != "" {
+			o.Fact("summary", tool.Text(e.Summary))
+		}
+		line(c, o.Note("native acceptance only; awaiting model proof or bus answer; recovery_messages may repeat prior delivery"))
 		return nil
 	}
 	return codexDeliveryFailure(s, role, epoch, id, err)

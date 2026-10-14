@@ -128,7 +128,6 @@ var DefaultCatalog = []Entry{
 	E("pkg/testredis", "a throwaway redis-server for one test: loopback only, nothing kept, never outlives its test binary; Far puts a store at a distance", "go test ./pkg/testredis", "go test ./pkg/testredis"),
 	E("internal/testverbhelp", "per-tool check that every verb answers -h at exit 0 and touches nothing", "go test ./internal/testverbhelp", "go test ./internal/testverbhelp"),
 	E("internal/tablemodel", "the table model's checks: the suites, the finding witnesses and the receipt replay against EpochMemberTable", "go test ./internal/tablemodel", "go test -tags functional ./internal/tablemodel"),
-	E("internal/textbody", "shared line-oriented message body filtering", "go test ./internal/textbody", "go test ./internal/textbody"),
 	E("pkg/tlc", "TLC runner: the jar, the run, its results read, the case plan and the run records", "go test ./pkg/tlc", "go test ./pkg/tlc"),
 	E("pkg/tool", "the one shape of a command: verbs, banner, help, version, refusals, and the output envelope rendered as lines or JSON", "go test ./pkg/tool", "go test ./pkg/tool"),
 	E("internal/tokens", "token counter and budget tracker", "go test ./internal/tokens", "go test ./internal/tokens"),
