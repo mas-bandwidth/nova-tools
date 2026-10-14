@@ -216,7 +216,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// hands it to the harness (nativedecide.go, nativegate.go, nativeChildEnv)
 	nativePass := append(append([]string{}, pass...), decide.JevSecret)
 	// the server host reserve (hostreserve.go): the policy is decided here, once,
-	// from --server-host or the fleet row's coordinator, and rides every launch
+	// from --server-host alone, and rides every launch. No read of the fleet row's
+	// coordinator exists in this path to decide it with (this machine opens no
+	// store, and its one config read, the queue verb, carries the width and the
+	// machine's state word and no coordinator field), so the loop row's argv names
+	// --server-host on the server's machine, and a member that is not told runs
+	// unreserved: a member never guesses it is the server.
 	cores := runtime.NumCPU()
 	onServerHost := serverHostOf(*serverHost, nil, os.Hostname)
 	reserve := hostReserve(onServerHost, runtime.GOOS, cores)

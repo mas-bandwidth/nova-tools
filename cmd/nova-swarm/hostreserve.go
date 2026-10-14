@@ -73,10 +73,13 @@ func applyBackground(p reservePolicy, pid int, hook func(int) error) error {
 }
 
 // serverHostOf decides whether this member runs on the host that runs the sprint
-// server: the --server-host flag, else the fleet row's coordinator compared with
-// this machine's name through the config read the member already makes. A read
-// that is unavailable, or a machine name that cannot be read, means false: a
-// member never guesses it is the server.
+// server: the --server-host flag, else a coordinator read the caller holds, compared
+// with this machine's name. No such read exists in this path today — the member opens
+// no store, and its one config read, the queue verb, carries the width and the machine's
+// state word and no coordinator field — so production passes nil and --server-host alone
+// decides (the loop row's argv names it on the server's machine). A read that is
+// unavailable, or a machine name that cannot be read, means false: a member never
+// guesses it is the server.
 func serverHostOf(flag bool, coordinator func() (string, bool), hostname func() (string, error)) bool {
 	if flag {
 		return true

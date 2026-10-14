@@ -2320,7 +2320,11 @@ usage:
                         when a take ends and carries it in its finish (docs/SPEC-SPRINT.md section 2).
                         --server-host puts each card on the server host behind the server: on darwin
                         its process group runs at the background QoS and GOMAXPROCS bounds each
-                        process (docs/SPEC-SWARM.md, the server host reserve).
+                        process (docs/SPEC-SWARM.md, the server host reserve). No read of the
+                        fleet row's coordinator exists in the member's path to decide this with
+                        (it opens no store, and its queue verb carries no coordinator field), so
+                        the loop row's argv names the flag on the server's machine, and a member
+                        that is not told runs unreserved: it never guesses it is the server.
                         Native classifies a work card's red gate with the gate decision and the same key
                         before reporting the take; failing tests run once at the base, within a bound.
                         Decisions are recorded and routed on the sprint row's gate bars, empty by default.
