@@ -18,7 +18,30 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
+
+// boSeatKey is the setup line that writes bo's key and the assignment of its
+// public half, the variable seat add reads (docs/SPEC-SECRETS.md "--sops <path>
+// is the sops binary": age-keygen is the same law, an absolute path named once).
+const boSeatKey = "  " + "nova-secrets" + " keygen --as bo --key ~/.config/nova-secrets/bo.key \\\n" +
+	"    --age-keygen \"$AGE_KEYGEN\"\n" +
+	"  BO_PUB=\"$(sed -n 's/^# public key: //p' ~/.config/nova-secrets/bo.key)\"\n"
+
+// exampleBlock is the banner's example: lines. Each --sops and --age-keygen is
+// the variable the setup block sets (docs/SPEC-SECRETS.md "--sops <path> is the
+// sops binary"), and seat add's public key is $BO_PUB from the key file above.
+const exampleBlock = "\nexample:\n  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen \"$AGE_KEYGEN\"\n" +
+	"  nova-secrets names  --store ./secrets --as ada\n" +
+	("  " + "nova-secrets" + " check --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\"\n") +
+	"  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\" --only GH_TOKEN --require GH_TOKEN -- gh api user\n" +
+	("  " + "nova-secrets" + " place --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\" --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv\n") +
+	("  " + "nova-secrets" + " place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops \"$SOPS\" --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run\n") +
+	"  nova-secrets placed --machine bench-a\n" +
+	("  " + "nova-secrets" + " seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops \"$SOPS\" --name API_KEY --dry-run\n") +
+	("  " + "nova-secrets" + " seat add --store ./secrets --as bo --pub \"$BO_PUB\" --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\"\n") +
+	("  " + "nova-secrets" + " seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops \"$SOPS\" --no-pr\n") +
+	("  " + "nova-secrets" + " seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops \"$SOPS\" --dry-run\n")
 
 const usage = `nova-secrets: encrypted secrets in a git repository, handed to one command at a time
 
@@ -27,8 +50,8 @@ seat naming its recipients), a recovery.pub (the recovery key every file is also
 sealed to) and one sops-encrypted <seat>.yaml per seat; a seat is a named identity
 whose age key file (mode 0600) opens its file. exec decrypts only the --only names
 into one command's environment; names reads names without decrypting; no value is printed.
-first run: setup: makes a store from an empty directory (it needs age-keygen
-and sops on PATH); first value: seals one with --stdin, the path a harness takes.
+first run: setup: makes a store from an empty directory (SOPS and AGE_KEYGEN
+are absolute paths); first value: seals one with --stdin, the path a harness takes.
 
 usage:
   nova-secrets version  print this build identity (--version also accepted)
@@ -61,7 +84,7 @@ flags:
   --only <names|all>   comma-separated list of keys to deliver, or 'all' (exec only)
   --require <name>     assert key must be present in the file (repeatable)
   --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
-  --json               names only: the result as one JSON object on stdout, a refusal included
+  --json               every verb: the result as one JSON object on stdout, a refusal included
   --machine <name>     fleet machine to place a secret on (its target comes from --machines)
   --secret <name>      the key in <store>/<as>.yaml to copy to the machine
   --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
@@ -97,38 +120,30 @@ gate verdict, one line per failure), 2 could not run or refused (one line naming
 the remedy); exec ends with the command's own status, and 125 when exec itself
 refused and the command never ran.
 
-setup: needs age-keygen and sops on PATH; run these from an empty directory first
+setup: age-keygen and sops by absolute path, set below; run these from an empty directory first
+  # put the absolute path of the local sops binary here
+  SOPS=/usr/local/bin/sops
+  # put the absolute path of the local age-keygen binary here
+  AGE_KEYGEN=/usr/local/bin/age-keygen
   mkdir -m 700 -p ~/.config/nova-secrets
   nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
-    --age-keygen "$(command -v age-keygen)"
+    --age-keygen "$AGE_KEYGEN"
   mkdir -p ./secrets && git -C ./secrets init -q -b main
   sed -n 's/^# public key: //p' ~/.config/nova-secrets/recovery.key > ./secrets/recovery.pub
   nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
-    --age-keygen "$(command -v age-keygen)" \
+    --age-keygen "$AGE_KEYGEN" \
     --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
-  git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
+` + boSeatKey + `  git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
   git init -q --bare ./secrets.git
   git -C ./secrets remote add origin ../secrets.git
   git -C ./secrets push -qu origin main
 
 first value:
   printf '%s\n' 'a-token-value' | nova-secrets seal --store ./secrets --as ada \
-    --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops \
+    --key ~/.config/nova-secrets/ada.key --sops "$SOPS" \
     --name GH_TOKEN --stdin --no-pr
 
-example:
-  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
-  nova-secrets names  --store ./secrets --as ada
-  nova-secrets check  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
-  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
-  nova-secrets place  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
-  nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
-  nova-secrets placed --machine bench-a
-  nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
-  nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
-  nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
-  nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
-`
+` + exampleBlock
 
 // storeUpstreamHelp is the store prerequisite check and exec enforce (SPEC-SECRETS
 // invariant 8), printed by both verbs' own help so a caller learns it before the
@@ -321,27 +336,187 @@ func dispatch(args []string, s streams) int {
 		fmt.Fprintf(s.stdout, "%s", usage)
 		return 0
 	case "exec":
-		return runExecCLI(args[1:], s)
+		return jsonVerb("exec", s, args[1:], true, runExecCLI)
 	case "names":
 		return runNamesCLI(args[1:], s)
 	case "check":
-		return runCheckCLI(args[1:], s)
+		return jsonVerb("check", s, args[1:], false, runCheckCLI)
 	case "gate":
-		return runGateCLI(args[1:], s)
+		return jsonVerb("gate", s, args[1:], false, runGateCLI)
 	case "keygen":
-		return runKeygenCLI(args[1:], s)
+		return jsonVerb("keygen", s, args[1:], false, runKeygenCLI)
 	case "place":
-		return runPlaceCLI(args[1:], s)
+		return jsonVerb("place", s, args[1:], false, runPlaceCLI)
 	case "placed":
-		return runPlacedCLI(args[1:], s)
+		return jsonVerb("placed", s, args[1:], false, runPlacedCLI)
 	case "seal":
-		return runSealCLI(args[1:], s)
+		return jsonVerb("seal", s, args[1:], false, runSealCLI)
 	case "seat":
-		return runSeatCLI(args[1:], s)
+		return jsonSeat(s, args[1:])
 	default:
 		fmt.Fprintf(s.stderr, "SECRETS REFUSED: unknown verb %s; the verbs are %s; run: nova-secrets help\n", oneline.Quote(verb), verbs)
 		return 2
 	}
+}
+
+// stripJSON removes --json (or -json) from a verb's words and reports whether it
+// stood there. With beforeDash set (exec), the words after '--' are the command
+// and are left alone, so a command's own --json is never eaten. The verbs parse
+// their own flags, so the flag is removed here and the verb runs as without it;
+// the wrapper renders the one value as JSON from what the verb wrote.
+func stripJSON(args []string, beforeDash bool) ([]string, bool) {
+	out := make([]string, 0, len(args))
+	asked := false
+	for i := 0; i < len(args); i++ {
+		if beforeDash && args[i] == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+		if !asked && (args[i] == "--json" || args[i] == "-json") {
+			asked = true
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out, asked
+}
+
+// jsonVerb runs one verb and, when its words asked for --json, renders the verb's
+// one value as one JSON object on stdout (docs/SPEC-SECRETS.md "Output grammar",
+// one line per event and --json the same value's other rendering). The verb's
+// lines are captured and read back into the value, so a refusal asked for as
+// --json is JSON, the flag refusals included, and a secret value never appears
+// in JSON more than in the lines. names keeps its own JSON, built from the same
+// value in names.go, so it is not routed here.
+func jsonVerb(verb string, s streams, args []string, beforeDash bool, fn func([]string, streams) int) int {
+	trimmed, asked := stripJSON(args, beforeDash)
+	if !asked {
+		return fn(args, s)
+	}
+	var stdout, stderr strings.Builder
+	if beforeDash {
+		// docs/SPEC-SECRETS.md "Output grammar": exec --json forks and waits.
+		// The mark is this goroutine's; RunExec reads it and writes the OK line
+		// here. A refusal before that call must not leave the mark set.
+		secrets.ArmExecWait(&stderr)
+		defer secrets.DisarmExecWait()
+	}
+	code := fn(trimmed, streams{stdin: s.stdin, stdout: &stdout, stderr: &stderr})
+	o := verbOut(verb, code, stdout.String(), stderr.String())
+	if verb == "exec" {
+		// docs/SPEC-SECRETS.md "Output grammar": a launched exec's exit is the
+		// child's, not a refusal, and the object carries that exit.
+		execJSONExit(o, code)
+	}
+	o.Verb = verb
+	o.Render(s.stdout, true)
+	return code
+}
+
+// execJSONExit keeps a launched exec at status ok with the child's exit
+// (docs/SPEC-SECRETS.md "Output grammar" and "Exit codes": 0-124 are the
+// command's own status). A refusal has a reason; a launch does not.
+func execJSONExit(o *tool.Out, code int) {
+	if len(o.Why) == 0 {
+		o.Status = tool.OK
+		o.Exit = code
+	}
+}
+
+// jsonSeat is jsonVerb for the seat group: the subverb leads the words, so the
+// verb name is "seat add" or "seat inject" and --json is removed from the whole
+// group's words before runSeatCLI sees them.
+func jsonSeat(s streams, args []string) int {
+	trimmed, asked := stripJSON(args, false)
+	verb := "seat"
+	if len(trimmed) > 0 && (trimmed[0] == "add" || trimmed[0] == "inject") {
+		verb = "seat " + trimmed[0]
+	}
+	if !asked {
+		return runSeatCLI(args, s)
+	}
+	var stdout, stderr strings.Builder
+	code := runSeatCLI(trimmed, streams{stdin: s.stdin, stdout: &stdout, stderr: &stderr})
+	o := verbOut(verb, code, stdout.String(), stderr.String())
+	o.Verb = verb
+	o.Render(s.stdout, true)
+	return code
+}
+
+// verbOut is the one value the lines a verb wrote stand for (docs/SPEC-SECRETS.md
+// "Output grammar"): the status and exit from the run, a refusal's reason and
+// remedy from its line, the first line's key=value fields, every other line a
+// NOTE. It is the same tool.Out the standard's --json renders, so no second JSON
+// shape exists.
+func verbOut(verb string, code int, stdout, stderr string) *tool.Out {
+	o := &tool.Out{Status: tool.OK, Exit: code}
+	switch code {
+	case 0:
+	case 1:
+		o.Status = tool.Failed
+	default:
+		o.Status = tool.Refused
+	}
+	lines := splitLines(stdout)
+	lines = append(lines, splitLines(stderr)...)
+	for _, l := range lines {
+		why, remedy, ok := refusalLine(l)
+		if !ok {
+			continue
+		}
+		o.Status = tool.Refused
+		o.Why = append(o.Why, why)
+		if o.Remedy == "" {
+			o.Remedy = remedy
+		}
+	}
+	if len(lines) > 0 {
+		for _, f := range factFields(lines[0]) {
+			o.Fact(f.K, f.V)
+		}
+		for _, l := range lines[1:] {
+			o.Note(l)
+		}
+	}
+	return o
+}
+
+// refusalLine splits a `SECRETS <VERB> REFUSED: <why>; run: <remedy>` line into
+// its reason and remedy, whether one ran.
+func refusalLine(line string) (why, remedy string, ok bool) {
+	i := strings.Index(line, "REFUSED: ")
+	if i < 0 {
+		return "", "", false
+	}
+	why = line[i+len("REFUSED: "):]
+	if j := strings.Index(why, "; run: "); j >= 0 {
+		remedy, why = why[j+len("; run: "):], why[:j]
+	}
+	return why, remedy, true
+}
+
+// splitLines is the non-empty lines of a stream, trimmed at the newline.
+func splitLines(stream string) []string {
+	var out []string
+	for _, l := range strings.Split(stream, "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// factFields is every key=value token of a line as the value's facts.
+func factFields(line string) tool.Fields {
+	var fields tool.Fields
+	for _, tok := range strings.Fields(line) {
+		k, v, ok := strings.Cut(tok, "=")
+		if !ok || k == "" {
+			continue
+		}
+		fields = append(fields, tool.Field{K: k, V: v})
+	}
+	return fields
 }
 
 // cmdVersion answers from the running binary alone. It deliberately opens no store, key,

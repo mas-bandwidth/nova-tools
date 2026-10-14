@@ -58,7 +58,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 
 	// The three lines the rating paid for: the setup: block and the two tools
 	// it names, seal's --stdin path, and the harness sentence on the flag.
-	assert.Contains(t, help, "setup: needs age-keygen and sops on PATH")
+	assert.Contains(t, help, "setup: age-keygen and sops by absolute path")
 	assert.Contains(t, help, "first value:")
 	assert.Contains(t, help, "printf '%s\\n'")
 	assert.Contains(t, help, "--stdin --no-pr")
@@ -167,6 +167,21 @@ func TestTheHelpSetupBlockRunsAsPrinted(t *testing.T) {
 	require.Equal(t, 0, code, "`nova-secrets help` exits %d: %s", code, helpErr)
 	lines := setupLines(t, help)
 	require.NotEmpty(t, lines, "the banner's setup: block is empty")
+	// The block assigns SOPS and AGE_KEYGEN, then uses them. One shell keeps
+	// those assignments; the printed paths are this machine's example, so the
+	// fakes stand in for them. A variable named like a key does not survive
+	// being handed to a child through the environment.
+	var script strings.Builder
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "SOPS="):
+			line = "SOPS=" + filepath.Join(fakeBin, "sops")
+		case strings.HasPrefix(line, "AGE_KEYGEN="):
+			line = "AGE_KEYGEN=" + ageKeygen
+		}
+		script.WriteString(line)
+		script.WriteByte('\n')
+	}
 	env := []string{
 		"PATH=" + strings.Join([]string{filepath.Dir(bin), filepath.Dir(ageKeygen), fakeBin, "/usr/bin", "/bin"}, string(os.PathListSeparator)),
 		"HOME=" + home,
@@ -174,14 +189,12 @@ func TestTheHelpSetupBlockRunsAsPrinted(t *testing.T) {
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.test",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.test",
 	}
-	for _, line := range lines {
-		var stdout, stderr bytes.Buffer
-		cmd := exec.Command("sh", "-c", line)
-		cmd.Dir, cmd.Env = home, env
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		err := cmd.Run()
-		require.NoErrorf(t, err, "the setup line does not run: %s\nstdout: %s\nstderr: %s", line, stdout.String(), stderr.String())
-	}
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("sh", "-c", script.String())
+	cmd.Dir, cmd.Env = home, env
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	require.NoErrorf(t, err, "the setup block does not run:\n%s\nstdout: %s\nstderr: %s", script.String(), stdout.String(), stderr.String())
 
 	// recovery.pub is the recovery keygen's public line, byte for byte: that is what
 	// the sed line in the block is for. .sops.yaml is the rule the keygen line printed,
@@ -279,7 +292,7 @@ func localizeSitting(h sittingHome, args []string) []string {
 			a = filepath.Join(h.home, "secrets")
 		case strings.HasPrefix(a, "~/"):
 			a = filepath.Join(h.home, strings.TrimPrefix(a, "~/"))
-		case a == "/opt/homebrew/bin/sops":
+		case a == "/opt/homebrew/bin/sops", a == "$SOPS", a == `"$SOPS"`:
 			a = h.sops
 		}
 		out = append(out, a)

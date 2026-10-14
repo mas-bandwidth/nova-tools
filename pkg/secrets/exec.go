@@ -1,23 +1,84 @@
 package secrets
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
+
+// execWaitFor marks the goroutine whose next RunExec must fork and wait, and
+// names the writer for the OK line (docs/SPEC-SECRETS.md "Output grammar":
+// exec --json does not execve, so the caller can report the child's exit, and
+// the object is built from that line). Keyed by goroutine so a parallel test
+// cannot steal another call's mark.
+var execWaitFor sync.Map
+
+// ArmExecWait marks this goroutine's next RunExec as the --json path
+// (docs/SPEC-SECRETS.md "Output grammar"). stderr receives the OK line; nil
+// discards it. DisarmExecWait clears a mark a refusal consumed before RunExec
+// ran, so it cannot leak onto a later call.
+func ArmExecWait(stderr io.Writer) {
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	execWaitFor.Store(goroutineID(), stderr)
+}
+
+func DisarmExecWait() { execWaitFor.Delete(goroutineID()) }
+
+func takeExecWait() (io.Writer, bool) {
+	v, ok := execWaitFor.LoadAndDelete(goroutineID())
+	if !ok {
+		return nil, false
+	}
+	w, _ := v.(io.Writer)
+	if w == nil {
+		w = io.Discard
+	}
+	return w, true
+}
+
+// goroutineID is the id runtime.Stack prints for this goroutine. A parse that
+// fails shares id 0; Arm and take still agree, because both read the same line.
+func goroutineID() uint64 {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	rest := strings.TrimPrefix(string(buf[:n]), "goroutine ")
+	id, _, _ := strings.Cut(rest, " ")
+	nID, err := strconv.ParseUint(id, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return nID
+}
 
 // RunExec validates all preflight invariants, decrypts <store>/<as>.yaml,
 // applies --only and --require filters, prints the OK line to stderr,
 // sets RLIMIT_CORE to 0, and replaces the current process with cmdArgs. The OK
 // line goes out before the exec call, so a failure of that call returns 125 with
-// a FAIL line saying the command never started.
+// a FAIL line saying the command never started. When this goroutine armed the
+// wait (docs/SPEC-SECRETS.md "Output grammar"), it forks and waits instead, and
+// the child's own streams are discarded.
 func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
+	stderr, wait := takeExecWait()
+	if !wait {
+		stderr = os.Stderr
+	}
+	return runExec(stderr, wait, storeDir, asName, keyPath, sopsPath, onlyArg, required, cmdArgs)
+}
+
+func runExec(stderr io.Writer, wait bool, storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
 	// No core file: a crash after the decrypt must not write the values to disk.
 	if err := setRlimitCoreZero(); err != nil {
 		return 125, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
@@ -104,8 +165,10 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 	}
 
 	// The OK line, on stderr, every field escaped: the command's own stdout stays its
-	// own. It cannot move below the exec call: a successful exec never returns.
-	fmt.Fprintf(os.Stderr, "SECRETS EXEC OK as=%s keys=%d only=%s required=%d file=%s head=%s cmd=%s\n",
+	// own. On the execve path it cannot move below the exec call: a successful exec
+	// never returns. On the wait path (docs/SPEC-SECRETS.md "Output grammar") the
+	// caller renders this line as the launch, and the child's exit is the return.
+	fmt.Fprintf(stderr, "SECRETS EXEC OK as=%s keys=%d only=%s required=%d file=%s head=%s cmd=%s\n",
 		oneline.Field(asName), len(selectedSecrets), oneline.Field(onlyWord), len(required),
 		oneline.Field(targetFile), oneline.Field(headSHA), oneline.Field(cmdArgs[0]))
 
@@ -146,7 +209,15 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		})
 	}
 
-	// Become the command.
+	// Become the command, unless the caller must remain to report the exit
+	// (docs/SPEC-SECRETS.md "Output grammar": exec --json forks and waits).
+	if wait {
+		code, err := waitForChild(cmdArgs, env)
+		if err != nil {
+			return 125, fmt.Errorf("exec failed: %w; the command never started", err)
+		}
+		return code, nil
+	}
 	if err := replaceProcess(cmdArgs, env); err != nil {
 		// The OK line above is already out, and it cannot wait for the exec below:
 		// a successful exec never returns. So this return is a FAIL after an OK, and
@@ -156,4 +227,34 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 	}
 
 	return 0, nil
+}
+
+// waitForChild forks cmdArgs and waits (docs/SPEC-SECRETS.md "Output grammar":
+// exec --json does not execve, so the parent can report the child's exit). The
+// child's own output is discarded: the answer is the launch, not what the child
+// printed, and a value must not reach the caller's streams through the child.
+func waitForChild(argv []string, env []string) (int, error) {
+	if len(argv) == 0 {
+		return 0, fmt.Errorf("no command specified")
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	cmd := subproc.Long(ctx, argv[0], argv[1:]...)
+	cmd.Env = env
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	err := cmd.Run()
+	if err == nil {
+		return 0, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code := exitErr.ExitCode()
+		if code < 0 {
+			code = 1
+		}
+		return code, nil
+	}
+	return 0, err
 }
