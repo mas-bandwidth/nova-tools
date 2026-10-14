@@ -2,11 +2,12 @@ package ci
 
 import (
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/verb"
 )
 
 // The refusal-grammar rule: a refusal is one line in one grammar
@@ -62,44 +63,42 @@ func refusalGrammarAnswers(code int, stdout, stderr string) string {
 	return ""
 }
 
+// grammarJudge is the judge as a tool verb.Refusals runs: its arguments are the
+// fixture's stdout and stderr, a breach prints on stderr and exits 2, and a
+// fixture that answers exits 0 in silence.
+func grammarJudge(args []string, _ io.Reader, _, stderr io.Writer) int {
+	if answer := refusalGrammarAnswers(2, args[0], args[1]); answer != "" {
+		fmt.Fprintln(stderr, answer)
+		return 2
+	}
+	return 0
+}
+
 // TestRefusalGrammarJudges is the witness: a fixture that breaks the rule once
 // is refused naming the line, and the fixed fixture passes. The table pins the
 // judge on the shapes the walk meets (skeleton contract 1.1, docs/STANDARD.md
-// section 2).
+// section 2), one verb.Refusal row each, so a row that misses prints the run.
 func TestRefusalGrammarJudges(t *testing.T) {
 	t.Parallel()
 	const good = "SEND REFUSED: --to is required; run: nova-bus help send\n"
-	for _, tc := range []struct {
-		name, stdout, stderr string
-		want                 string
-	}{
-		{"the fixed fixture", "", good, ""},
-		{"a refusal with reason and facts", "", `SEND REFUSED reason=usage topic="a b": --to is required; run: nova-bus help send` + "\n", ""},
-		{"a bare refusal", "", "BUS REFUSED: no verb given; the verbs are send, recv; run: nova-bus help\n", ""},
-		{"a hand printer's lower-case token", "", "nova-sprint REFUSED: no verb; available: add, land; run: nova-sprint help\n", ""},
-		{"a two-word token", "", "nova-swarm install REFUSED: install wants the unit's kind first; run: nova-swarm install -h\n", ""},
-		{"the witness: no colon before the why", "", "SEND REFUSED --to is required; run: nova-bus help send\n", "not `<TOKEN> REFUSED"},
-		{"the witness: no remedy", "", "SEND REFUSED: --to is required\n", "not `<TOKEN> REFUSED"},
-		{"the witness: a whitespace-only why", "", "SEND REFUSED:  ; run: nova-bus help send\n", "not `<TOKEN> REFUSED"},
-		{"the witness: a whitespace-only remedy", "", "SEND REFUSED: --to is required; run:  \n", "not `<TOKEN> REFUSED"},
-		{"the witness: a fact then no remedy", "", "EGRESS REFUSED reason=no_command: --plan wants the ruleset to apply\n", "not `<TOKEN> REFUSED"},
-		{"the witness: REFUSED where the remedy belongs", "", "nova-fuse lift lockdown REFUSED, forever, by design: a blown fuse is not reset;\n", "not `<TOKEN> REFUSED"},
-		{"the witness: REFUSED with no token before it", "", "REFUSED: --to is required; run: nova-bus help send\n", "not `<TOKEN> REFUSED"},
-		{"the witness: REFUSED alone", "", "REFUSED\n", "not `<TOKEN> REFUSED"},
-		{"the witness: stdout on a refusal", "SEND OK to=x\n", good, "wrote to stdout"},
-		{"the witness: whitespace-only stdout on a refusal", " \n", good, "wrote to stdout"},
-		{"a FAILED line quoting a refusal is not one", "", "SELFTEST FAILED step=add why=nova-sprint add REFUSED: x; run: y\n", ""},
-		{"a line with no REFUSED status word", "", "SEND: --to is required; run: nova-bus help send\n", ""},
-		{"a run that did not refuse", "", "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := refusalGrammarAnswers(2, tc.stdout, tc.stderr)
-			if tc.want == "" {
-				assert.Empty(t, got)
-				return
-			}
-			assert.Contains(t, got, tc.want)
-		})
-	}
+	verb.Refusals(t, grammarJudge, []verb.Refusal{
+		{Name: "the fixed fixture", Args: []string{"", good}, Code: 0},
+		{Name: "a refusal with reason and facts", Args: []string{"", `SEND REFUSED reason=usage topic="a b": --to is required; run: nova-bus help send` + "\n"}, Code: 0},
+		{Name: "a bare refusal", Args: []string{"", "BUS REFUSED: no verb given; the verbs are send, recv; run: nova-bus help\n"}, Code: 0},
+		{Name: "a hand printer's lower-case token", Args: []string{"", "nova-sprint REFUSED: no verb; available: add, land; run: nova-sprint help\n"}, Code: 0},
+		{Name: "a two-word token", Args: []string{"", "nova-swarm install REFUSED: install wants the unit's kind first; run: nova-swarm install -h\n"}, Code: 0},
+		{Name: "the witness: no colon before the why", Args: []string{"", "SEND REFUSED --to is required; run: nova-bus help send\n"}, Code: 2, Stderr: "not `<TOKEN> REFUSED"},
+		{Name: "the witness: no remedy", Args: []string{"", "SEND REFUSED: --to is required\n"}, Code: 2, Stderr: "not `<TOKEN> REFUSED"},
+		{Name: "the witness: a whitespace-only why", Args: []string{"", "SEND REFUSED:  ; run: nova-bus help send\n"}, Code: 2, Stderr: "not `<TOKEN> REFUSED"},
+		{Name: "the witness: a whitespace-only remedy", Args: []string{"", "SEND REFUSED: --to is required; run:  \n"}, Code: 2, Stderr: "not `<TOKEN> REFUSED"},
+		{Name: "the witness: a fact then no remedy", Args: []string{"", "EGRESS REFUSED reason=no_command: --plan wants the ruleset to apply\n"}, Code: 2, Stderr: "not `<TOKEN> REFUSED"},
+		{Name: "the witness: REFUSED where the remedy belongs", Args: []string{"", "nova-fuse lift lockdown REFUSED, forever, by design: a blown fuse is not reset;\n"}, Code: 2, Stderr: "not `<TOKEN> REFUSED"},
+		{Name: "the witness: REFUSED with no token before it", Args: []string{"", "REFUSED: --to is required; run: nova-bus help send\n"}, Code: 2, Stderr: "not `<TOKEN> REFUSED"},
+		{Name: "the witness: REFUSED alone", Args: []string{"", "REFUSED\n"}, Code: 2, Stderr: "not `<TOKEN> REFUSED"},
+		{Name: "the witness: stdout on a refusal", Args: []string{"SEND OK to=x\n", good}, Code: 2, Stderr: "wrote to stdout"},
+		{Name: "the witness: whitespace-only stdout on a refusal", Args: []string{" \n", good}, Code: 2, Stderr: "wrote to stdout"},
+		{Name: "a FAILED line quoting a refusal is not one", Args: []string{"", "SELFTEST FAILED step=add why=nova-sprint add REFUSED: x; run: y\n"}, Code: 0},
+		{Name: "a line with no REFUSED status word", Args: []string{"", "SEND: --to is required; run: nova-bus help send\n"}, Code: 0},
+		{Name: "a run that did not refuse", Args: []string{"", ""}, Code: 0},
+	})
 }
