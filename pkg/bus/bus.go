@@ -106,10 +106,13 @@ const (
 	// sender may send.
 	KindAsk     = "ask"
 	KindTimeout = "timeout"
+	// KindJudgment is a decision raised for a reader to answer (--re its
+	// id), such as the hook heartbeat's FRIEND DOWN to the coordinator.
+	KindJudgment = "judgment"
 )
 
 // Kinds is every kind, in the order the help lists them.
-var Kinds = []string{KindReport, KindAck, KindStatus, KindRequest, KindBlocker, KindAsk, KindTimeout}
+var Kinds = []string{KindReport, KindAck, KindStatus, KindRequest, KindBlocker, KindAsk, KindTimeout, KindJudgment}
 
 // CheckKinds says why ks are no kinds, "" when each is one.
 func CheckKinds(ks ...string) string {

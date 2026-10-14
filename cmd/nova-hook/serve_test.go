@@ -1,41 +1,81 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// subjects is every subject on name's bus stream, oldest first.
-func (r *rig) subjects(t *testing.T, name string) []string {
+// msg is one message on a stream: its id, kind and subject.
+type msg struct{ id, kind, subject string }
+
+// stream is every message on name's bus stream, oldest first.
+func (r *rig) stream(t *testing.T, name string) []msg {
 	t.Helper()
 	es, err := r.h.Client.XRange(context.Background(), bus.StreamOf(name), "-", "+").Result()
 	require.NoError(t, err)
-	var out []string
+	var out []msg
 	for _, e := range es {
-		v, _ := e.Values["subject"].(string) // ignored: an entry with no subject is listed empty
-		out = append(out, v)
+		v := func(k string) string { s, _ := e.Values[k].(string); return s } // ignored: a missing field reads empty
+		out = append(out, msg{v("id"), v("kind"), v("subject")})
 	}
 	return out
+}
+
+// count is how many messages on name's stream have a subject starting with prefix.
+func (r *rig) count(t *testing.T, name, prefix string) int {
+	t.Helper()
+	n := 0
+	for _, m := range r.stream(t, name) {
+		if strings.HasPrefix(m.subject, prefix) {
+			n++
+		}
+	}
+	return n
 }
 
 // challenge is the nonce of the newest heartbeat challenge on name's stream.
 func (r *rig) challenge(t *testing.T, name string) string {
 	t.Helper()
-	ss := r.subjects(t, name)
-	for i := len(ss) - 1; i >= 0; i-- {
-		if n, ok := strings.CutPrefix(ss[i], "HOOK CHALLENGE nonce="); ok {
+	ms := r.stream(t, name)
+	for i := len(ms) - 1; i >= 0; i-- {
+		if n, ok := strings.CutPrefix(ms[i].subject, "HOOK CHALLENGE nonce="); ok {
 			return n
 		}
 	}
-	t.Fatalf("no HOOK CHALLENGE on %s's stream: %v", name, ss)
+	t.Fatalf("no HOOK CHALLENGE on %s's stream", name)
 	return ""
+}
+
+// step is one interval: each server in turn runs one pass (the first takes
+// it), each name in answering proves its challenge, the store's clock moves
+// an interval on, and the answering names' holders renew.
+func (r *rig) step(t *testing.T, servers []string, answering ...string) string {
+	t.Helper()
+	cli := r.cli()
+	var out string
+	for _, sv := range servers {
+		res := cli.Run("serve", "--as", sv, "--once")
+		require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+		out += res.Stdout
+	}
+	for _, n := range answering {
+		cli.Do(t, "prove", "--as", n, "--nonce", r.challenge(t, n)).Exit(0)
+	}
+	r.h.Pass(hook.BeatEvery)
+	for _, n := range answering {
+		r.h.Hook(t, n, r.h.State(t, n).Role)
+	}
+	return out
 }
 
 // TestServeRefusesAServerThatIsNotHooked pins that the server cannot run deaf.
@@ -48,44 +88,123 @@ func TestServeRefusesAServerThatIsNotHooked(t *testing.T) {
 	assert.Contains(t, res.Stdout+res.Stderr, "run: nova-hook hook --as ada --role comms")
 }
 
-// TestServeChallengesOnTheBusAndUnhooksTheSilent pins the server's pass
-// end to end (tla/HookBeat.tla): the challenge goes to the name's own bus
-// stream (never on the server's lines), a session that proves with it stays
-// hooked, one that stays silent is unhooked at the third pass, and the
-// server's notify name is told the unhooked set once.
-func TestServeChallengesOnTheBusAndUnhooksTheSilent(t *testing.T) {
+// TestAFriendDownIsOneJudgmentToTheCoordinator pins the coordinator's half
+// (tla/HookBeat.tla, Tell and Judge), with two servers at every step: the
+// challenge goes to the name's own stream and never on the server's lines; a
+// silent friend makes one FRIEND DOWN judgment for the coordinator and one
+// message for the others; it is pushed again as OVERDUE once past its due,
+// never twice; an answer closes it; the friend's return is one FRIEND BACK.
+func TestAFriendDownIsOneJudgmentToTheCoordinator(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	cli := r.cli()
-	r.h.Hook(t, "ada", hook.Comms)
+	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
 	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "carl", hook.Comms)
+	servers := []string{"ada", "carl"}
 	var out string
-	for i := range 3 {
-		res := cli.Run("serve", "--as", "ada", "--once")
-		require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
-		out += res.Stdout
-		cli.Do(t, "prove", "--as", "ada", "--nonce", r.challenge(t, "ada")).Exit(0)
-		r.h.Pass(hook.BeatEvery)
-		r.h.Hook(t, "ada", hook.Comms) // its holder's renewal
-		if i < 2 {
-			assert.NotContains(t, res.Stdout, "nonce", "the server never prints a nonce")
+	for range 3 {
+		out += r.step(t, servers, "ada", "carl")
+	}
+	assert.NotContains(t, out, "nonce", "the server never prints a nonce")
+	assert.Equal(t, 3, strings.Count(out, "event=skip"), "the second server's pass shares the first's interval, every step")
+	require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: missed 2 challenges"))
+	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob: missed 2 challenges"))
+	var judgment msg
+	for _, m := range r.stream(t, "ada") {
+		if strings.HasPrefix(m.subject, "FRIEND DOWN") {
+			judgment = m
 		}
 	}
-	assert.Contains(t, out, "SERVE CHALLENGE name=bob epoch=1 misses=1")
-	assert.Contains(t, out, `SERVE UNHOOKED name=bob reason="missed 2 challenges"`)
-	assert.Equal(t, 1, strings.Count(out, "SERVE TOLD to=ada unhooked=bob"))
-	assert.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
-	assert.Equal(t, hook.StateProven, r.h.State(t, "ada").State)
-	assert.Equal(t, 1, strings.Count(strings.Join(r.subjects(t, "ada"), "\n"), "HOOK UNHOOKED bob"))
+	assert.Equal(t, bus.KindJudgment, judgment.kind)
 
-	cli.Do(t, "serve", "--as", "ada", "--once").Exit(0)
-	res := cli.Run("serve", "--as", "ada", "--once")
-	assert.Contains(t, res.Stdout, "SERVE SKIP", "a second pass inside the interval is not taken")
+	for range 4 { // past --judge-within (2m): OVERDUE once, never again
+		r.step(t, servers, "ada", "carl")
+	}
+	assert.Equal(t, 1, r.count(t, "ada", "OVERDUE FRIEND DOWN bob"))
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob"), "the judgment itself is not sent again")
+
+	r.step(t, servers, "ada", "carl")
+	open, err := r.h.Client.HLen(context.Background(), hook.JudgmentsKey).Result()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), open, "the re-push answers nothing: the judgment stays open")
+	b := &bus.Bus{Store: bus.Redis{C: r.h.Client}}
+	_, err = b.Send(context.Background(), bus.Message{From: "ada", To: []string{"ada"}, Re: judgment.id, Subject: "wait", Body: "wait"})
+	require.NoError(t, err)
+	out = r.step(t, servers, "ada", "carl")
+	assert.Contains(t, out, "event=answered id="+judgment.id)
+	n, err := r.h.Client.HLen(context.Background(), hook.JudgmentsKey).Result()
+	require.NoError(t, err)
+	assert.Zero(t, n, "an answered judgment is closed")
+
+	r.h.Hook(t, "bob", hook.Comms)
+	for range 3 {
+		r.step(t, servers, "ada", "bob", "carl")
+	}
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND BACK bob"))
+	assert.Equal(t, 1, r.count(t, "carl", "FRIEND BACK bob"))
+	assert.Zero(t, r.count(t, "bob", "FRIEND BACK"), "the one who came back is not told of it")
 }
 
-// TestStatusSaysNoChallengeWhenTheServerIsGone pins the client's timeout
-// (tla/HookBeat.tla, ClientTimeout): two intervals with no challenge and
-// status --as fails, naming the age.
+// TestACoordinatorDownIsOneJudgmentToEveryFriend pins who takes over: the
+// coordinator missing two makes one COORDINATOR DOWN judgment for every
+// other live name, with two servers, never repeated.
+func TestACoordinatorDownIsOneJudgmentToEveryFriend(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "carl", hook.Comms)
+	for range 5 {
+		r.step(t, []string{"bob", "carl"}, "bob", "carl")
+	}
+	for _, n := range []string{"bob", "carl"} {
+		assert.Equal(t, 1, r.count(t, n, "COORDINATOR DOWN ada: who takes over?"), n)
+		assert.Equal(t, 1, r.count(t, n, "COORDINATOR IS ada"), n)
+	}
+	for _, m := range r.stream(t, "bob") {
+		if strings.HasPrefix(m.subject, "COORDINATOR DOWN") {
+			assert.Equal(t, bus.KindJudgment, m.kind)
+		}
+	}
+}
+
+// TestFriendsJSONIsTheRecord pins nova-hook friends: every name from the hook
+// record, by the store's time, the coordinator and the server's age.
+func TestFriendsJSONIsTheRecord(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.step(t, []string{"ada"}, "ada")
+	r.step(t, []string{"ada"}, "ada")
+	r.step(t, []string{"ada"}, "ada") // bob missed two: down
+	res := r.cli().Run("friends", "--json")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	var got struct {
+		Facts map[string]any `json:"facts"`
+		Items []struct {
+			Fields map[string]any `json:"fields"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &got))
+	assert.Equal(t, "ada", got.Facts["coordinator"])
+	assert.Equal(t, true, got.Facts["serve_alive"])
+	assert.Equal(t, "1m0s", got.Facts["serve_age"])
+	require.Len(t, got.Items, 2)
+	ada, bob := got.Items[0].Fields, got.Items[1].Fields
+	st := r.h.State(t, "ada")
+	assert.Equal(t, map[string]any{"name": "ada", "role": "coordinator", "state": "up", "since": stamp(st.Armed), "reason": "",
+		"last_challenge_at": stamp(st.BeatAt), "last_answer_at": stamp(st.AnswerAt), "misses": float64(0)}, ada)
+	sb := r.h.State(t, "bob")
+	assert.Equal(t, map[string]any{"name": "bob", "role": "comms", "state": "down", "since": stamp(sb.Unhooked), "reason": "missed 2 challenges",
+		"last_challenge_at": stamp(sb.BeatAt), "last_answer_at": "", "misses": float64(2)}, bob)
+}
+
+// TestStatusSaysNoChallengeWhenTheServerIsGone pins the client's timeout on
+// the store's clock: two intervals with no challenge and status --as fails.
 func TestStatusSaysNoChallengeWhenTheServerIsGone(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -102,12 +221,52 @@ func TestStatusSaysNoChallengeWhenTheServerIsGone(t *testing.T) {
 	res := cli.Run("status", "--as", "ada")
 	assert.Equal(t, 1, res.Code)
 	assert.Contains(t, res.Stdout+res.Stderr, "NO CHALLENGE FOR 2m1s: the heartbeat server last passed 2m1s ago")
-	cli.Do(t, "status").Exit(0).Out("serve_age=2m1s")
+}
+
+// TestAClientThatLosesTheServerSaysItOnceAndReportsItOnce pins the hook
+// client's own timer (tla/HookBeat.tla, ClientTimeout): no move of the
+// server's row for two intervals by this client's clock is one NOT CONNECTED
+// judgment into its session; the next move is one line back, and the episode
+// is reported to the server once.
+func TestAClientThatLosesTheServerSaysItOnceAndReportsItOnce(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Comms)
+	w := r.world()
+	var out bytes.Buffer
+	c := &tool.Call{Stdout: &out}
+	s := &session{hooks: r.h.Store, as: "ada"}
+	var lk link
+	look := func() { w.watchServer(c, s, hook.Comms, &lk) }
+	look() // no server ever passed: nothing to lose
+	r.cli().Do(t, "serve", "--as", "ada", "--once").Exit(0)
+	look()        // the first contact
+	for range 8 { // the server stops; this client's clock runs on
+		r.advance(30 * time.Second)
+		look()
+	}
+	r.h.Pass(5 * time.Minute)
+	r.h.Hook(t, "ada", hook.Comms)
+	r.cli().Do(t, "serve", "--as", "ada", "--once").Exit(0)
+	r.advance(30 * time.Second)
+	look()
+	look()
+	assert.Equal(t, 1, strings.Count(out.String(), "state=not-connected"), out.String())
+	assert.Contains(t, out.String(), "judgment: NOT CONNECTED TO THE SERVER since")
+	assert.Equal(t, 1, strings.Count(out.String(), "state=connected"), out.String())
+	es, err := r.h.Client.XRange(context.Background(), hook.EventsKey, "-", "+").Result()
+	require.NoError(t, err)
+	n := 0
+	for _, e := range es {
+		if e.Values["event"] == "not-connected" {
+			n++
+		}
+	}
+	assert.Equal(t, 1, n, "the episode is reported once")
 }
 
 // TestATickExpiresAnOverdueAskOnce pins the asks' clock: the server's pass
-// expires an ask past its deadline, and a second server's pass, or the next
-// one, never delivers that timeout again.
+// expires an ask past its deadline, once however many passes run.
 func TestATickExpiresAnOverdueAskOnce(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -120,19 +279,11 @@ func TestATickExpiresAnOverdueAskOnce(t *testing.T) {
 	r.h.Hook(t, "ada", hook.Comms)
 	var out string
 	for range 3 {
-		res := cli.Run("serve", "--as", "ada", "--once")
-		require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
-		out += res.Stdout
+		out += cli.Do(t, "serve", "--as", "ada", "--once").Exit(0).Stdout
 	}
 	r.h.Pass(hook.BeatEvery)
 	r.h.Hook(t, "ada", hook.Comms)
 	out += cli.Do(t, "serve", "--as", "ada", "--once").Exit(0).Stdout
-	assert.Equal(t, 1, strings.Count(out, "SERVE EXPIRED"), out)
-	n := 0
-	for _, s := range r.subjects(t, "ada") {
-		if strings.HasPrefix(s, "ASK TIMEOUT") {
-			n++
-		}
-	}
-	assert.Equal(t, 1, n, "one timeout reaches the sender")
+	assert.Equal(t, 1, strings.Count(out, "event=expired"), out)
+	assert.Equal(t, 1, r.count(t, "ada", "ASK TIMEOUT"), "one timeout reaches the sender")
 }

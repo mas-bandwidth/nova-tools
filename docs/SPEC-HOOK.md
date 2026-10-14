@@ -178,11 +178,24 @@ A proof says a push reached a session once; the heartbeat says the model is stil
   pass unhooks the name as `nova-hook unhook` does (the epoch moves on, every lease, proof and challenge is
   cleared), with `reason` "missed 2 challenges", and logs one entry on the capped stream `hook:events`. Hooking
   in again clears `misses`, `reason` and `beat_at`.
-- **The coordinator is told once per change.** The set of unhooked names is compared with the row's `told`;
-  when it differs the server sends one blocker message, `HOOK UNHOOKED <names|none>`, to `--notify` (default
-  its own name).
+- **Each real change is told once, coalesced.** The pass compares the unhooked set and the coordinator (the
+  first hooked name of that role) with the row's `told` and `coord`; only a pass that finds a change tells it,
+  in at most two messages: the coordinator gets one judgment (bus kind `judgment`) naming every `FRIEND DOWN
+  <name>: <reason>` and `FRIEND BACK <name>`, and every other live name that did not itself change gets one
+  message with the same lines and `COORDINATOR IS <name>`, a judgment instead when the coordinator itself went
+  down (`COORDINATOR DOWN <name>: who takes over?`). A judgment is open in `hook:judgments` until one of its
+  recipients replies with `nova-bus send --re <id>` (the bus's answers record), and is pushed again as `OVERDUE`
+  once past `--judge-within` (two minutes), never twice. Each judgment and each answer is logged on `hook:events`.
 - **The asks' clock.** A taken pass also runs the bus's ask expiry (`bus.ExpireAsks`), whose once-key delivers
   each timeout once.
+- **The client's own timer.** A session's `nova-hook hook` loop reads the server row at each renewal; once a
+  server has passed, no move of its `at` for two of its intervals by the client's own clock is one line into the
+  session, `HOOK STATE state=not-connected since=<local time>` with the judgment NOT CONNECTED TO THE SERVER and its
+  answers (re-hook, check the network, tell the coordinator when reachable); the next move is one
+  `state=connected` line, and the episode is reported to `hook:events` once (event `not-connected`).
+- **Everyone can ask.** `nova-hook friends [--json]` lists every name's state from the hook record alone: up
+  (hooked and proven) or down, since, reason, the last challenge and answer, misses; and the coordinator and the
+  server's age.
 - **The client's timeout.** `nova-hook status --as <name>`, once a server has passed, fails with `NO CHALLENGE
   FOR <age>` (exit 1) when a challenged name's last challenge (or its arming) is more than two of the server's
   intervals old: the server is gone, and nothing checks the link.

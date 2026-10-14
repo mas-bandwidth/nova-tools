@@ -188,6 +188,7 @@ type Status struct {
 	Unhooked time.Time // when it was unhooked, zero when it is not
 	Reason   string    // why it was unhooked, when the heartbeat did it ("missed 2 challenges")
 	BeatAt   time.Time // when the heartbeat server last challenged it, zero when never
+	AnswerAt time.Time // when the session last answered a challenge, zero when never
 	Misses   int       // challenges in a row left unanswered
 	Pushes   []PushStatus
 }
@@ -205,6 +206,7 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 	st.Epoch, _ = strconv.ParseInt(rec["epoch"], 10, 64) // ignored: an epoch that is no number matches no stamp, so nothing counts
 	st.Armed = msTime(rec["armed"])
 	st.BeatAt = msTime(rec["beat_at"])
+	st.AnswerAt = msTime(rec["answered_at"])
 	st.Misses, _ = strconv.Atoi(rec["misses"]) // ignored: no count reads as none missed
 	st.Reason = rec["reason"]
 	if rec["state"] != "hooked" {

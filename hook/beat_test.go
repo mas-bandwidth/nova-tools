@@ -194,39 +194,39 @@ func (r *rig) passAll(t *testing.T, by string, next func() string) hook.Passed {
 	return got
 }
 
-// TestTheUnhookedSetIsToldOncePerChange pins the coordinator's note
-// (tla/HookBeat.tla, Tell): the set of unhooked names is told when it
-// changes, never once per pass, and a second server's pass in the same
-// interval is not taken, so it tells nothing.
-func TestTheUnhookedSetIsToldOncePerChange(t *testing.T) {
+// TestEachChangeIsToldOncePerTransition pins what a pass tells
+// (tla/HookBeat.tla, Tell): a name down, a name back and the coordinator
+// changing are each told by exactly one pass, never again for the same
+// state, and a second server's pass in the same interval tells nothing.
+func TestEachChangeIsToldOncePerTransition(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	r.Hook(t, "ada", hook.Comms)
+	r.Hook(t, "ada", hook.Coordinator)
 	r.Hook(t, "bob", hook.Comms)
 	next := nonces()
 	type told struct {
-		changed bool
-		set     []string
+		down, back []string
+		coord, was string
 	}
 	var got []told
 	step := func() {
 		p := r.passAll(t, "srv-a", next)
 		require.True(t, p.Taken)
 		assert.False(t, r.passAll(t, "srv-b", next).Taken, "a second server inside the interval")
-		got = append(got, told{p.Changed, p.Unhooked})
+		got = append(got, told{p.Down, p.Back, p.Coord, p.WasCoord})
 		r.pass(hook.BeatEvery)
 	}
 	step()
 	step()
-	step() // both missed twice: unhooked
+	step() // both missed twice: unhooked, the coordinator with them
 	step()
-	r.Hook(t, "ada", hook.Comms)
-	step() // ada back
+	r.Hook(t, "ada", hook.Coordinator)
+	step() // ada back, and the coordinator again
 	step()
 	assert.Equal(t, []told{
-		{false, nil}, {false, nil},
-		{true, []string{"ada", "bob"}}, {false, []string{"ada", "bob"}},
-		{true, []string{"bob"}}, {false, []string{"bob"}},
+		{nil, nil, "ada", ""}, {nil, nil, "ada", "ada"},
+		{[]string{"ada", "bob"}, nil, "", "ada"}, {nil, nil, "", ""},
+		{nil, []string{"ada"}, "ada", ""}, {nil, nil, "ada", "ada"},
 	}, got)
 }
 

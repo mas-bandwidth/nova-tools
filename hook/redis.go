@@ -146,7 +146,7 @@ for p in string.gmatch(c[3], '[^,]+') do
   end
 end
 redis.call('DEL', KEYS[2])
-redis.call('HSET', KEYS[1], 'misses', 0)
+redis.call('HSET', KEYS[1], 'misses', 0, 'answered_at', ms)
 return {n}
 `)
 
@@ -444,9 +444,11 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 // pass is a miss; at the limit the name is unhooked as unhookLua does, with
 // the reason, and the event logged once (code 2); else a fresh challenge is
 // set, due within the interval, naming the pushes of the role a session
-// receives (code 1). The server's row is stamped. Last, the set of unhooked
-// names is compared with the one the server last told (the row's told): the
-// answer is {1, {code, misses, epoch} per name, the set, 1 when it changed}.
+// receives (code 1). The server's row is stamped. Last, the pass reads what
+// changed since the last pass told it (the row's told and coord): the answer
+// is {1, {code, misses, epoch} per name, the unhooked set, the set told
+// before, the coordinator (the first hooked name of that role), the one told
+// before, and the live names (hooked, of a challenged role)}.
 // KEYS: events, serve, then per name its record and allKeys (8 keys; the challenge last).
 // ARGV: every ms, limit, ttl ms, by, events cap, the count of roles, a role and
 // the pushes its challenge names (comma) per role, then per name its name and
@@ -455,12 +457,12 @@ var beatLua = redis.NewScript(nowMS + `
 local now = tonumber(ms)
 local every, limit, ttl, by, cap = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5]
 local prev = tonumber(redis.call('HGET', KEYS[2], 'at') or '0')
-if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', 0} end
+if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', '', '', '', ''} end
 redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'by', by)
 local nroles = tonumber(ARGV[6])
 local bus = {}
 for i = 1, nroles do bus[ARGV[5 + 2 * i]] = ARGV[6 + 2 * i] end
-local out, gone = {}, {}
+local out, gone, live, coord = {}, {}, {}, ''
 local k, a = 3, 7 + 2 * nroles
 while k <= #KEYS do
   local rec, chal, name, sum = KEYS[k], KEYS[k + 7], ARGV[a], ARGV[a + 1]
@@ -487,13 +489,18 @@ while k <= #KEYS do
     end
   end
   table.insert(out, {did, misses, e})
-  if redis.call('HGET', rec, 'state') == 'unhooked' then table.insert(gone, name) end
+  local st = redis.call('HGET', rec, 'state')
+  if st == 'unhooked' then table.insert(gone, name) end
+  if st == 'hooked' and bus[role] then
+    table.insert(live, name)
+    if role == 'coordinator' and coord == '' then coord = name end
+  end
   k, a = k + 8, a + 2
 end
 local set = table.concat(gone, ',')
-if set == (redis.call('HGET', KEYS[2], 'told') or '') then return {1, out, set, 0} end
-redis.call('HSET', KEYS[2], 'told', set)
-return {1, out, set, 1}
+local was, wasc = redis.call('HGET', KEYS[2], 'told') or '', redis.call('HGET', KEYS[2], 'coord') or ''
+redis.call('HSET', KEYS[2], 'told', set, 'coord', coord)
+return {1, out, set, was, coord, wasc, table.concat(live, ',')}
 `)
 
 // What one heartbeat pass did to one name.
@@ -520,8 +527,15 @@ type Passed struct {
 	Taken    bool     // false: another pass (another server's) was taken inside nine tenths of the interval; nothing was done
 	Beats    []Beat   // one per name, in the order asked
 	Unhooked []string // every name unhooked now, sorted
-	Changed  bool     // Unhooked differs from the set the last pass told: tell it, once
+	Down     []string // unhooked since the last pass: in Unhooked, not in the set it told
+	Back     []string // back since the last pass: in the set it told, no longer unhooked
+	Coord    string   // the coordinator now: the first hooked name of that role, "" for none
+	WasCoord string   // the coordinator the last pass told
+	Live     []string // every hooked name of a challenged role: who hears a broadcast
 }
+
+// Changed is whether anything is to be told: a name down or back, or a new coordinator.
+func (p Passed) Changed() bool { return len(p.Down)+len(p.Back) > 0 || p.Coord != p.WasCoord }
 
 // Challenged is the pushes a heartbeat challenge names for each role a session
 // answers in: the bus push, and a friend's work push, which reaches the
@@ -561,8 +575,8 @@ func (s Store) Pass(ctx context.Context, names []string, every time.Duration, li
 	if err != nil {
 		return Passed{}, err
 	}
-	if len(got) != 4 {
-		return Passed{}, fmt.Errorf("the beat script answered %v, not a taken word, the names, the unhooked set and its change", got)
+	if len(got) != 7 {
+		return Passed{}, fmt.Errorf("the beat script answered %v, not a taken word, the names and five sets", got)
 	}
 	if t, _ := got[0].(int64); t != 1 { // ignored: a word that is no number reads as not taken
 		return Passed{}, nil
@@ -586,11 +600,25 @@ func (s Store) Pass(ctx context.Context, names []string, every time.Duration, li
 		}
 	}
 	out.Taken = true
-	if set, _ := got[2].(string); set != "" { // ignored: no set is none unhooked
-		out.Unhooked = strings.Split(set, ",")
+	str := func(i int) string { v, _ := got[i].(string); return v } // ignored: no string is an empty set
+	list := func(v string) []string {
+		if v == "" {
+			return nil
+		}
+		return strings.Split(v, ",")
 	}
-	changed, _ := got[3].(int64) // ignored: as above
-	out.Changed = changed == 1
+	out.Unhooked, out.Coord, out.WasCoord, out.Live = list(str(2)), str(4), str(5), list(str(6))
+	was := list(str(3))
+	for _, n := range out.Unhooked {
+		if !slices.Contains(was, n) {
+			out.Down = append(out.Down, n)
+		}
+	}
+	for _, n := range was {
+		if !slices.Contains(out.Unhooked, n) {
+			out.Back = append(out.Back, n)
+		}
+	}
 	return out, nil
 }
 
@@ -621,4 +649,124 @@ func (s Store) Serve(ctx context.Context) (Served, error) {
 		return Served{Now: now}, nil // ignored: no stamp, or one with no interval, is no server
 	}
 	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, OK: true}, nil
+}
+
+// JudgmentsKey holds the heartbeat's open judgments: a hash of message id to
+// the judgment (JSON), each open until one of its recipients answers it (the
+// bus's answers record, nova-bus send --re <id>), re-pushed as OVERDUE at most
+// once past its due (tla/HookBeat.tla, Judge).
+const JudgmentsKey = prefix + "judgments"
+
+// Judgment is one open judgment: the bus message that raised it.
+type Judgment struct {
+	ID      string    `json:"id"`
+	To      []string  `json:"to"`
+	Subject string    `json:"subject"`
+	Due     time.Time `json:"due"`
+	Overdue bool      `json:"overdue"` // re-pushed once already: never again
+}
+
+// openLua stores a judgment with its due at the store's TIME plus ARGV[2] ms,
+// and logs it. KEYS: judgments, events. ARGV: id, within ms, to (comma), subject, events cap.
+var openLua = redis.NewScript(nowMS + `
+local due = string.format('%d', tonumber(ms) + tonumber(ARGV[2]))
+local to = {}
+for n in string.gmatch(ARGV[3], '[^,]+') do table.insert(to, n) end
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode({id = ARGV[1], to = to, subject = ARGV[4], due_ms = tonumber(due), overdue = false}))
+redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[5], '*', 'event', 'judgment', 'id', ARGV[1], 'to', ARGV[3], 'subject', ARGV[4], 'at', ms)
+return 1
+`)
+
+// stored is a judgment as the hash holds it.
+type stored struct {
+	ID      string   `json:"id"`
+	To      []string `json:"to"`
+	Subject string   `json:"subject"`
+	DueMS   int64    `json:"due_ms"`
+	Overdue bool     `json:"overdue"`
+}
+
+// OpenJudgment records j (its ID the message's) as open, due within of the store's now.
+func (s Store) OpenJudgment(ctx context.Context, j Judgment, within time.Duration) error {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	return openLua.Run(ctx, s.C, []string{JudgmentsKey, EventsKey}, j.ID, within.Milliseconds(), strings.Join(j.To, ","), j.Subject, EventsMax).Err()
+}
+
+// Judgments is every open judgment and the store's now, in one round trip.
+func (s Store) Judgments(ctx context.Context) ([]Judgment, time.Time, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	var all *redis.MapStringStringCmd
+	var clock *redis.TimeCmd
+	if _, err := s.C.Pipelined(ctx, func(p redis.Pipeliner) error {
+		all, clock = p.HGetAll(ctx, JudgmentsKey), p.Time(ctx)
+		return nil
+	}); err != nil {
+		return nil, time.Time{}, err
+	}
+	var out []Judgment
+	for _, raw := range all.Val() {
+		var v stored
+		if json.Unmarshal([]byte(raw), &v) != nil {
+			continue // ignored: a value that is no judgment is nothing to answer
+		}
+		out = append(out, Judgment{ID: v.ID, To: v.To, Subject: v.Subject, Due: time.UnixMilli(v.DueMS).UTC(), Overdue: v.Overdue})
+	}
+	slices.SortFunc(out, func(a, b Judgment) int { return strings.Compare(a.ID, b.ID) })
+	return out, clock.Val().UTC(), nil
+}
+
+// Overdue marks j re-pushed, so it is never re-pushed again.
+func (s Store) Overdue(ctx context.Context, j Judgment) error {
+	raw, err := json.Marshal(stored{ID: j.ID, To: j.To, Subject: j.Subject, DueMS: j.Due.UnixMilli(), Overdue: true})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	return s.C.HSet(ctx, JudgmentsKey, j.ID, raw).Err()
+}
+
+// Answered says whether any of j's recipients replied to it: the bus's
+// answers record (bus2:answers:<name>, field the id replied to), in one round trip.
+func (s Store) Answered(ctx context.Context, j Judgment) (bool, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	cmds := make([]*redis.BoolCmd, len(j.To))
+	if _, err := s.C.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for i, n := range j.To {
+			cmds[i] = p.HExists(ctx, "bus2:answers:"+n, j.ID)
+		}
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	for _, c := range cmds {
+		if c.Val() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Close ends an answered judgment, and logs it.
+func (s Store) Close(ctx context.Context, j Judgment) error {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	_, err := s.C.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.HDel(ctx, JudgmentsKey, j.ID)
+		p.XAdd(ctx, &redis.XAddArgs{Stream: EventsKey, MaxLen: EventsMax, Approx: true, Values: map[string]any{"event": "answered", "id": j.ID, "subject": j.Subject}})
+		return nil
+	})
+	return err
+}
+
+// Lost is a client's report of an episode it could not reach the server: from
+// and until by its own clock, logged once on hook:events when it reaches the server again.
+func (s Store) Lost(ctx context.Context, name string, from, until time.Time) error {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	return s.C.XAdd(ctx, &redis.XAddArgs{Stream: EventsKey, MaxLen: EventsMax, Approx: true, Values: map[string]any{
+		"event": "not-connected", "name": name, "from": from.Format(time.RFC3339), "until": until.Format(time.RFC3339)}}).Err()
 }

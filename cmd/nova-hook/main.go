@@ -4,7 +4,7 @@
 // the module is hook/, the machine tla/Hook.tla). Tools gate the acting
 // identity; some bus mailbox proofs are advisory unless --require-push is set
 // or NOVA_BUS_REQUIRE_PUSH=1.
-// The verbs are hook, prove, unhook, status and serve (the heartbeat server);
+// The verbs are hook, prove, unhook, status, friends and serve (the heartbeat server);
 // the dispatch, the banner, the help, the version verb, the refusals and the
 // output envelope are pkg/tool's, and the rules are the hook module's.
 package main
@@ -225,25 +225,42 @@ example: nova-hook unhook --as ada`,
 				Run: w.unhook,
 			},
 			{
+				Name:    "friends",
+				Usage:   "friends [--json] [--as <me>] [--redis <addr>]",
+				Example: "", // the listing needs a bus store with hook records: no example line can carry it
+				Effect:  tool.Inspection,
+				Detail: `Every name's state from the hook record alone, by the store's TIME: FRIENDS OK count= up= coordinator=
+serve_alive= serve_age=, then one FRIENDS NAME line each: name, role, state (up: hooked and proven; down: not),
+since, reason, last_challenge_at, last_answer_at (the heartbeat's) and misses. No sprint state (a hold is the
+sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE line; --json carries every name.`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, optional: the listing is the same for every reader")
+					store(f)
+				},
+				Run: w.friends,
+			},
+			{
 				Name:    "serve",
-				Usage:   "serve --as <me> [--every <d>] [--notify <name>] [--once] [--redis <addr>]",
+				Usage:   "serve --as <me> [--every <d>] [--judge-within <d>] [--once] [--redis <addr>]",
 				Example: "", // a server needs a hooked name and a live bus store: no example line can carry it
 				Effect:  tool.Delivery + ": challenges every hooked name on its bus, unhooks after misses, and expires overdue asks",
 				Detail: `The heartbeat server (docs/SPEC-HOOK.md, the heartbeat; tla/HookBeat.tla). Every --every (default ` + hook.BeatEvery.String() + `),
 in one atomic pass by the store's TIME, each hooked name whose role a session answers in (coordinator, friend,
 comms) gets a fresh challenge as a bus message to its name, subject HOOK CHALLENGE nonce=<n>, due within the
 interval: the push it already has (its hook's HOOK PUSH line, or its friend daemon's adapter). A challenge left
-unanswered a whole interval is a miss; at ` + fmt.Sprint(hook.MissLimit) + ` in a row the name is unhooked (reason "missed ` + fmt.Sprint(hook.MissLimit) + ` challenges"), logged
-once on hook:events, and the set of unhooked names is sent to --notify (default: --as) once per change. The pass
-also expires overdue bus asks (nova-bus asks). Two servers take one pass per interval between them. Lines:
-SERVE CHALLENGE name=, SERVE UNHOOKED name= reason=, SERVE TOLD unhooked=, SERVE EXPIRED ask=, SERVE SKIP;
-a store or bus fault is a SERVE FAULT line and the loop goes on. --as must be hooked in as coordinator or comms.
+unanswered a whole interval is a miss; at ` + fmt.Sprint(hook.MissLimit) + ` in a row the name is unhooked (reason "missed ` + fmt.Sprint(hook.MissLimit) + ` challenges").
+Each real change is told once, coalesced per pass: the coordinator gets one judgment (bus kind judgment) naming
+every FRIEND DOWN and FRIEND BACK, open until answered with nova-bus send --re <id> and pushed again as OVERDUE
+once past --judge-within; every other live name gets one message with the changes and COORDINATOR IS <name>,
+a judgment instead when the coordinator went down (COORDINATOR DOWN: who takes over). The pass also expires
+overdue bus asks. Two servers take one pass per interval between them. Each line is SERVE STATE event=<challenge|
+judgment|told|overdue|answered|expired|skip|fault>; a fault is event=fault and the loop goes on. --as must be hooked in as coordinator or comms.
 --once runs one pass and exits 0. It stops on SIGINT or SIGTERM.
 example: nova-hook serve --as ada --once`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Duration("every", hook.BeatEvery, "the interval between passes, and each challenge's deadline")
-					f.String("notify", "", "the name told each change of the unhooked set (default: --as)")
+					f.Duration("judge-within", 2*time.Minute, "how long a judgment waits for its answer before it is pushed again, once, as OVERDUE")
 					f.Bool("once", false, "run one pass and exit 0; no loop")
 					store(f)
 				},
@@ -488,6 +505,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 	waiter, _ := s.bus.(bus.Waiter) // ignored: a store with no wait reads holds no bus push here; its loop only renews
 	nextRenew, nextChallenge := w.now().Add(hook.RenewEvery), w.now().Add(hook.ChallengeEvery)
 	lastState, unread := "", ""
+	var lk link
 	pause := func() {
 		select {
 		case <-ctx.Done():
@@ -514,7 +532,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			}
 			for _, e := range got {
 				cursor = e.Entry
-				if m := e.Message(); m.From != s.as {
+				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") { // a server may challenge its own name
 					line(c, tool.Done().As("PUSH").Fact("push", "bus").Fact("id", m.ID).Fact("from", m.From).Fact("subject", tool.Text(m.Subject)))
 				}
 			}
@@ -526,6 +544,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 		}
 		if !w.now().Before(nextRenew) {
 			nextRenew = w.now().Add(hook.RenewEvery)
+			w.watchServer(c, s, role, &lk)
 			err := w.renew(s, role, held, epoch)
 			if errors.Is(err, hook.ErrNotHooked) {
 				if e, ok := w.rearm(s, role, held); ok {
