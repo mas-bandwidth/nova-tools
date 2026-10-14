@@ -74,7 +74,10 @@ func TestNotificationOnlyNeverInvokesNativeMutationHooks(t *testing.T) {
 			r.d.Beat = func(context.Context, time.Time) error { assert.Fail(t, "native beat called"); return nil }
 			r.d.Held = func(context.Context) (Row, error) { assert.Fail(t, "held/claim path called"); return Row{}, nil }
 			r.d.Stage = func(context.Context, Packet) (string, error) { assert.Fail(t, "stage called"); return "", nil }
-			r.d.Prune = func(context.Context, map[string]bool) ([]string, error) { assert.Fail(t, "prune called"); return nil, nil }
+			r.d.Prune = func(context.Context, map[string]bool) ([]string, error) {
+				assert.Fail(t, "prune called")
+				return nil, nil
+			}
 			r.d.Finish = func(context.Context, []string) error { assert.Fail(t, "finish called"); return nil }
 			r.d.Progress = func(context.Context, []Card) error { assert.Fail(t, "progress called"); return nil }
 			r.d.Proof = func() (bool, string) { assert.Fail(t, "native proof called"); return true, "" }
