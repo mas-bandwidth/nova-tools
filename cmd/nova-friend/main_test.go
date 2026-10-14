@@ -980,7 +980,6 @@ func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...st
 	_, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "card c9", Body: "go\n"})
 	require.NoError(t, err)
 	dir := t.TempDir()
-	state := friend.StateDirIn(dir)
 	w := r.world()
 	checksStarted := 0
 	w.checkGo = func(f func()) {

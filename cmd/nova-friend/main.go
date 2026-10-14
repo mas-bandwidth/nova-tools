@@ -2291,7 +2291,7 @@ func (w world) conformance(c *tool.Call, name, harness, state, to string, within
 		Text: func(nonce string) string {
 			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), c.Str("dir")), to)
 		},
-		Pong: busPongReader(st, name),
+		Pong: func() (friend.Pong, bool, error) { return friend.Pong{}, false, nil },
 	}
 }
 
