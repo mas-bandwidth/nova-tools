@@ -36,9 +36,7 @@ func newTestInstallHost(t *testing.T) testInstallHost {
 	out, errb := &bytes.Buffer{}, &bytes.Buffer{}
 	gp := filepath.Join(dir, "github_path")
 	home := filepath.Join(dir, "home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	sleeps := new(int)
 	r := &fakeCmdRunner{onPath: map[string]string{}}
 	h := installHost{
@@ -73,7 +71,7 @@ func (h testInstallHost) published(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile(h.githubPath)
 	if err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	return string(b)
 }
@@ -105,7 +103,7 @@ func TestInstallRedisWithAptInstallsUnderTheLockAndReleasesIt(t *testing.T) {
 	h.runner.answer = func(c cmdSpec) (string, int, error) {
 		if c.Name == "apt-get" && len(c.Args) > 0 && c.Args[0] == "install" {
 			if !h.lockHeld() {
-				t.Error("apt-get install ran without the lock held")
+				assert.Fail(t, "apt-get install ran without the lock held")
 			}
 			h.runner.onPath["redis-server"] = "/usr/bin/redis-server"
 		}
@@ -119,7 +117,7 @@ func TestInstallRedisWithAptInstallsUnderTheLockAndReleasesIt(t *testing.T) {
 		t.Fatalf("commands %q, want %q", got, want)
 	}
 	if h.lockHeld() {
-		t.Fatal("the lock is still held after the install")
+		require.Fail(t, "the lock is still held after the install")
 	}
 	if h.published(t) != "/usr/bin\n" || h.out.String() != "redis-server /usr/bin/redis-server\n" {
 		t.Fatalf("published %q, stdout %q", h.published(t), h.out)
@@ -161,7 +159,7 @@ func TestInstallRedisReportsTheFailingAptCommandsCode(t *testing.T) {
 		t.Fatalf("exit %d, want the last command's 100", code)
 	}
 	if h.lockHeld() {
-		t.Fatal("a failed install left the lock held")
+		require.Fail(t, "a failed install left the lock held")
 	}
 }
 
@@ -200,10 +198,10 @@ func TestInstallRedisBuildsThePinnedSourceWhereThereIsNoPackageManager(t *testin
 			// make -C <tree> -jN redis-server: produce the binary the build would.
 			tree := c.Args[1]
 			if err := os.MkdirAll(filepath.Join(tree, "src"), 0o755); err != nil {
-				t.Error(err)
+				require.NoError(t, err)
 			}
 			if err := os.WriteFile(filepath.Join(tree, "src", "redis-server"), []byte("built"), 0o600); err != nil {
-				t.Error(err)
+				require.NoError(t, err)
 			}
 			h.runner.onPath["redis-server"] = filepath.Join(h.home, ".local", "bin", "redis-server")
 		}
@@ -221,9 +219,7 @@ func TestInstallRedisBuildsThePinnedSourceWhereThereIsNoPackageManager(t *testin
 	}
 	dest := filepath.Join(h.home, ".local", "bin", "redis-server")
 	fi, err := os.Stat(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if b, _ := os.ReadFile(dest); string(b) != "built" || fi.Mode().Perm() != 0o755 {
 		t.Fatalf("installed %q mode %v", b, fi.Mode())
 	}
@@ -258,12 +254,8 @@ func TestInstallRedisStillMissingAfterTheInstallIsRefused(t *testing.T) {
 func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if err := os.Mkdir(h.lock, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(h.lock, fixedNow, fixedNow); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
+	require.NoError(t, os.Chtimes(h.lock, fixedNow, fixedNow))
 	polls := 0
 	h.sleep = func(time.Duration) {
 		polls++
@@ -283,19 +275,15 @@ func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 		t.Fatalf("a waiter ran %v", h.runner.lines())
 	}
 	if !h.lockHeld() {
-		t.Fatal("a waiter released a lock it never took")
+		require.Fail(t, "a waiter released a lock it never took")
 	}
 }
 
 func TestInstallLockTimesOutAfterFortyPolls(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if err := os.Mkdir(h.lock, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(h.lock, fixedNow, fixedNow); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
+	require.NoError(t, os.Chtimes(h.lock, fixedNow, fixedNow))
 	if code := installRedisServer(h.installHost); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
@@ -313,13 +301,9 @@ func TestInstallLockTimesOutAfterFortyPolls(t *testing.T) {
 func TestInstallLockOlderThanSixHundredSecondsIsTakenOver(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if err := os.Mkdir(h.lock, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
 	old := fixedNow.Add(-601 * time.Second)
-	if err := os.Chtimes(h.lock, old, old); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(h.lock, old, old))
 	h.runner.onPath["apt-get"] = "/usr/bin/apt-get"
 	h.runner.answer = func(c cmdSpec) (string, int, error) {
 		if c.Name == "apt-get" && c.Args[0] == "install" {
@@ -341,13 +325,9 @@ func TestInstallLockOlderThanSixHundredSecondsIsTakenOver(t *testing.T) {
 func TestInstallLockExactlySixHundredSecondsOldIsStillHeld(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if err := os.Mkdir(h.lock, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
 	edge := fixedNow.Add(-600 * time.Second)
-	if err := os.Chtimes(h.lock, edge, edge); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(h.lock, edge, edge))
 	if code := installRedisServer(h.installHost); code != 1 || *h.sleeps != 40 {
 		t.Fatalf("exit %d after %d polls, want a timeout after 40 (a lock 600 s old is not stale: the rule is over 600)", code, *h.sleeps)
 	}
@@ -532,12 +512,8 @@ func TestInstallPostgresStillMissingAfterTheInstallIsRefused(t *testing.T) {
 func TestInstallPostgresLockTimeoutNamesPostgres(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	if err := os.Mkdir(h.lock, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(h.lock, fixedNow, fixedNow); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
+	require.NoError(t, os.Chtimes(h.lock, fixedNow, fixedNow))
 	if code := installPostgres(h.installHost); code != 1 || !strings.Contains(h.errb.String(), "timed out waiting to install postgres") {
 		t.Fatalf("exit %d stderr %q", code, h.errb)
 	}

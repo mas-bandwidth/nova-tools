@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func lispEnv(dir, tmpRoot string) (env, *bytes.Buffer, *bytes.Buffer) {
@@ -37,9 +39,7 @@ func TestLispTestWithNoLispTreeHasNothingToTest(t *testing.T) {
 func TestLispTestRefusesALispTreeItDoesNotKnow(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "lisp", "other-system"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lisp", "other-system"), 0o755))
 	e, _, errb := lispEnv(root, t.TempDir())
 	r := &fakeCmdRunner{}
 	if code := lispTest(e, r, 1, nil); code != 1 {
@@ -56,9 +56,7 @@ func TestLispTestRefusesALispTreeItDoesNotKnow(t *testing.T) {
 func TestLispTestRunsSbclUnderItsOwnShortTmpdirAndRemovesIt(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "lisp", "nova-work"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lisp", "nova-work"), 0o755))
 	tmpRoot := t.TempDir()
 	e, _, errb := lispEnv(root, tmpRoot)
 	var during string
@@ -104,9 +102,7 @@ func TestLispTestRunsSbclUnderItsOwnShortTmpdirAndRemovesIt(t *testing.T) {
 func TestLispTestWithNoSbclExits127(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "lisp", "nova-work"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lisp", "nova-work"), 0o755))
 	e, _, errb := lispEnv(root, t.TempDir())
 	r := &fakeCmdRunner{answer: func(cmdSpec) (string, int, error) { return "", 0, os.ErrNotExist }}
 	if code := lispTest(e, r, 1, nil); code != 127 {
