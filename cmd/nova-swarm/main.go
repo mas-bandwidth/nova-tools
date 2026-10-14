@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"os"
 
@@ -501,7 +502,14 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	c := swarm.Contract{Label: *label, ContractLine: *contract, MaxLines: *max, WallSeconds: -1, ExitCode: -1}
+	// 0 lists all (docs/CLI-STYLE.md, Flags, the --max row). CheckResult reads a
+	// non-positive ceiling as its own default, so the suite's all becomes the largest
+	// bound here, never a silent fall back to 20.
+	maxLines := *max
+	if maxLines == 0 {
+		maxLines = math.MaxInt
+	}
+	c := swarm.Contract{Label: *label, ContractLine: *contract, MaxLines: maxLines, WallSeconds: -1, ExitCode: -1}
 	if *card != "" {
 		raw, err := os.ReadFile(*card)
 		if err != nil {
