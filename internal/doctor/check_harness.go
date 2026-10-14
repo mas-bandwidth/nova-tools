@@ -90,7 +90,9 @@ func checkHarness(ctx context.Context, env Env) Result {
 		return Result{Status: Fail, Evidence: strings.Join(problems, "; "), Fix: "run nova-friend install --as <friend> --harness <h> --dir <friend-dir> and set --config-dir <dir> for Claude one-shot rows"}
 	}
 	if len(friends) == 0 {
-		return Result{Status: OK, Evidence: "no friend rows"}
+		// The evidence names the directory it read (docs/SPEC-DOCTOR.md,
+		// "the friend checks"): a reader sees which directory was empty.
+		return Result{Status: OK, Evidence: "no friend rows at " + home}
 	}
 	return Result{Status: OK, Evidence: "friends: " + strings.Join(friends, ", ")}
 }
