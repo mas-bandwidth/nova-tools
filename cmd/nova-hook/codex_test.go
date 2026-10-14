@@ -322,3 +322,89 @@ func TestCodexBurstOfFiftyMessagesCoalescesIntoSingleTurnAndOneSummaryAtTurnBoun
 	assert.Equal(t, "50 more messages from rowan, glenn, emma; read the bus", savedEvents[deliveredIDs[2]].Message.Body)
 	assert.Contains(t, out.String(), "50 more messages from rowan, glenn, emma; read the bus")
 }
+
+func TestCodexPendingSummaryDoesNotHideCurrentChallenge(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, nonce string
+		malformed   bool
+		wrongEpoch  bool
+		wantDeliver bool
+	}{
+		{"current", "current-nonce", false, false, true},
+		{"stale", "old-nonce", false, false, false},
+		{"lookalike", "current-nonce", true, false, false},
+		{"wrong epoch", "current-nonce", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t)
+			w := fakeCodexWorld(r)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+			epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
+			require.NoError(t, err)
+			require.NoError(t, r.h.Store.Renew(ctx, "ada", hook.Comms, hook.Bus, epoch, "test"))
+			created, err := r.h.Store.Challenge(ctx, "ada", hook.Comms, epoch, []hook.Push{hook.Bus}, "current-nonce")
+			require.NoError(t, err)
+			require.True(t, created)
+			if tc.wrongEpoch {
+				require.NoError(t, r.h.Client.HSet(ctx, hook.ChallengeKey("ada"), "epoch", epoch+1).Err())
+			}
+			s := recoverySession(r)
+			route := &codexRoute{socket: "/private/socket", thread: "thread-1", directory: "/private/events"}
+			route.startTurn(s, "summary-old", "turn-old")
+			route.fold(bus.Message{ID: "ordinary-old", From: "bob", Subject: "ordinary"})
+			message := bus.Message{ID: "challenge-new", From: "bob", Subject: "HOOK CHALLENGE nonce=" + tc.nonce, Body: challengeText("ada", tc.nonce, hook.ChallengeEvery)}
+			if tc.malformed {
+				message.Body += "external appendix"
+			}
+			saved := map[string]savedCodexEvent{}
+			w.codexSave = func(_, id string, data []byte) error {
+				var event savedCodexEvent
+				require.NoError(t, json.Unmarshal(data, &event))
+				saved[id] = event
+				return nil
+			}
+			var delivered []string
+			w.codexDeliver = func(_ context.Context, _, _, id, _ string) (string, error) {
+				delivered = append(delivered, id)
+				// The fake active model reads only the fresh notice's receiver file;
+				// no bus read or previous summary refresh supplies the nonce.
+				event := saved[id]
+				require.NotNil(t, event.Message)
+				assert.Equal(t, "HOOK CHALLENGE nonce=current-nonce", event.Message.Subject)
+				assert.Contains(t, event.Message.Body, "nova-hook prove --as ada --nonce current-nonce")
+				assert.Equal(t, "ada", event.LocalReceiver.Identity)
+				return "priority-turn", nil
+			}
+			reads := 0
+			s.bus = codexWaiter{Store: s.bus, read: func() []bus.Entry {
+				reads++
+				if reads == 1 {
+					return []bus.Entry{{Entry: "1-1", Fields: message.Fields()}}
+				}
+				cancel()
+				return nil
+			}}
+			result := w.loop(&tool.Call{Stdout: io.Discard}, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, route)
+			assert.Equal(t, tool.OK, result.Status)
+			if tc.wantDeliver {
+				assert.Equal(t, []string{"challenge-new"}, delivered, "a current challenge needs a fresh native notice while the summary is pending")
+				assert.Equal(t, 1, route.foldedCount, "priority delivery preserves ordinary coalescing")
+			} else {
+				assert.Empty(t, delivered, "stale and external lookalikes remain ordinary traffic")
+				assert.Equal(t, 2, route.foldedCount)
+			}
+			assert.Equal(t, "summary-old", route.pendingID)
+			assert.Equal(t, "turn-old", route.pendingTurn)
+			assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State, "native delivery never proves the challenge")
+			sum, err := r.h.Client.HGet(context.Background(), hook.ChallengeKey("ada"), "sum").Result()
+			require.NoError(t, err)
+			assert.Equal(t, hook.Sum("current-nonce"), sum, "only the model may consume the challenge")
+			proofs, err := r.h.Client.Exists(context.Background(), hook.ProofKey("ada", hook.Bus)).Result()
+			require.NoError(t, err)
+			assert.Zero(t, proofs, "native delivery writes no hook proof")
+		})
+	}
+}
