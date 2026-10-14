@@ -43,21 +43,25 @@ const Tick = time.Second
 // it opens, the clock, the signals the loop stops on and the nonce source.
 // main passes the real one; a test passes its own over hooktest's store.
 type world struct {
-	codexLock     func(string) (func() error, error)
-	codexValidate func(string, string, string) error
-	codexSave     func(string, string, []byte) error
-	codexDeliver  func(context.Context, string, string, string, string) (string, error)
-	getenv        func(string) string
-	open          func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
-	fleetBus      func(ctx context.Context, addr string) (string, error)
-	lookup        bus.Lookup
-	now           func() time.Time
-	signals       func(ctx context.Context) (context.Context, context.CancelFunc)
-	nonce         func() string
-	after         func(time.Duration) <-chan time.Time             // the heartbeat server's wait between passes
-	deliver       func(*bus.Bus, bus.Message) (bus.Message, error) // the heartbeat server's one send: Bus.Send under a call's deadline
-	holder        string                                           // who holds the pushes this process holds, as the lease shows it
-	tick          time.Duration                                    // one blocking read of the loop
+	codexLock          func(string) (func() error, error)
+	codexValidate      func(string, string, string) error
+	codexSave          func(string, string, []byte) error
+	codexDeliver       func(context.Context, string, string, string, string) (string, error)
+	antigravityExec    antigravityExecFunc
+	antigravityHome    func() (string, error)
+	antigravityInstall func(*antigravityRoute) error
+	antigravityDeliver func(context.Context, *antigravityRoute, string, string) (string, error)
+	getenv             func(string) string
+	open               func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
+	fleetBus           func(ctx context.Context, addr string) (string, error)
+	lookup             bus.Lookup
+	now                func() time.Time
+	signals            func(ctx context.Context) (context.Context, context.CancelFunc)
+	nonce              func() string
+	after              func(time.Duration) <-chan time.Time             // the heartbeat server's wait between passes
+	deliver            func(*bus.Bus, bus.Message) (bus.Message, error) // the heartbeat server's one send: Bus.Send under a call's deadline
+	holder             string                                           // who holds the pushes this process holds, as the lease shows it
+	tick               time.Duration                                    // one blocking read of the loop
 }
 
 func realWorld() world {
@@ -65,8 +69,21 @@ func realWorld() world {
 	if err != nil {
 		host = "unknown-host" // ignored: the holder's name is a label on the lease, never a key
 	}
-	w := world{codexLock: lockCodexRoute, codexValidate: validateCodexRoute, codexSave: saveCodexEvent, codexDeliver: codexdesktop.DeliverSaved, getenv: os.Getenv, now: time.Now, tick: Tick, after: time.After, deliver: deliver,
-		holder: fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
+	w := world{
+		codexLock:          lockCodexRoute,
+		codexValidate:      validateCodexRoute,
+		codexSave:          saveCodexEvent,
+		codexDeliver:       codexdesktop.DeliverSaved,
+		antigravityExec:    realAntigravityExec,
+		antigravityHome:    os.UserHomeDir,
+		antigravityInstall: installAntigravityRoute,
+		antigravityDeliver: deliverAntigravitySaved,
+		getenv:             os.Getenv,
+		now:                time.Now,
+		tick:               Tick,
+		after:              time.After,
+		deliver:            deliver,
+		holder:             fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
 		lookup: func(ctx context.Context, h string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
 		},
@@ -188,11 +205,17 @@ is not proof or acknowledgment: only the model runs nova-hook prove or answers w
 revokes route proof and stops renewal; unknown native outcomes are reported without declaring the model absent.
 Do not blindly restart after accepted or unknown delivery: inspect the saved event and model answer first.
 An explicit --codex-since UTC timestamp (or NOVA_HOOK_CODEX_SINCE) declares earlier ordinary messages archived history: work still needed must be resent. Persist that fixed timestamp in launch configuration; never reset it on restart. Current server challenge proof is independent of this boundary.
-Codex clients only bootstrap; the heartbeat server owns subsequent challenges. Other routes keep their existing cadence.
+Codex and Antigravity clients only bootstrap; the heartbeat server owns subsequent challenges. Other routes keep their existing cadence.
 Muse clients use --harness Muse: before arming it installs the nova-hook plugin bundle (--muse-bundle, or
 NOVA_HOOK_MUSE_BUNDLE, or muse-bundle beside the binary) with muse plugins install and approves its one hook
 capability (pending-challenges, PostToolUse) with muse plugins approve. The hook only reads nova-bus peek and
 prints pending lines; the model proves. --dry-run installs nothing.
+Antigravity desktop delivery uses --harness antigravity with --antigravity-dir <workspace> or --antigravity-session <uuid>
+(also --session, --antigravity-server, --antigravity-events-dir and --antigravity-since, or NOVA_HOOK_ANTIGRAVITY_*).
+Before arming, it installs its own harness setup (<home>/.gemini/antigravity/bin/agentapi and the private 0700 events
+directory), discovers the live Antigravity language_server and conversation, saves each event as bounded external JSON,
+and delivers via agentapi send-message --title=nova-hook: ordinary messages coalesce to at most one pending notice per turn,
+while HOOK CHALLENGE messages deliver immediately into a running turn.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
 remedy: what a daemon's start does, and what a role whose holders are daemons runs to hook in again after an unhook.
 --dry-run reads the record and prints the plan the real run would take (the role, the epoch, the pushes held and
@@ -201,13 +224,19 @@ example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Required("role", "the role you hook in as, one of "+roleNames())
-					f.String("harness", "", "install a harness adapter before arming: muse (the Muse plugin bundle); the Codex desktop route uses the --codex-* flags")
+					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "install a harness adapter before arming: muse or antigravity; the Codex desktop route uses the --codex-* flags")
 					f.String("muse-bundle", w.getenv("NOVA_HOOK_MUSE_BUNDLE"), "the Muse plugin bundle to install (default: muse-bundle beside the nova-hook binary)")
 					f.String("muse-bin", w.getenv("NOVA_HOOK_MUSE_BIN"), "the Muse CLI to run (default: muse on PATH)")
 					f.String("codex-socket", w.getenv("NOVA_HOOK_CODEX_SOCKET"), "native Codex desktop socket; requires thread and private event directory")
 					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID")
 					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "existing private directory for bounded external event JSON")
 					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
+					f.String("antigravity-dir", w.getenv("NOVA_HOOK_ANTIGRAVITY_DIR"), "Antigravity workspace directory for --harness antigravity")
+					f.String("antigravity-session", w.getenv("NOVA_HOOK_ANTIGRAVITY_SESSION"), "Antigravity conversation UUID (default: newest root conversation for --antigravity-dir)")
+					f.String("session", w.getenv("NOVA_HOOK_ANTIGRAVITY_SESSION"), "Antigravity conversation UUID alias for --antigravity-session")
+					f.String("antigravity-server", w.getenv("NOVA_HOOK_ANTIGRAVITY_SERVER"), "optional Antigravity server host:port override")
+					f.String("antigravity-events-dir", w.getenv("NOVA_HOOK_ANTIGRAVITY_EVENTS_DIR"), "private directory for Antigravity saved event JSON (default: ~/.gemini/antigravity/nova-hook/<as>)")
+					f.String("antigravity-since", w.getenv("NOVA_HOOK_ANTIGRAVITY_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds) for Antigravity recovery")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
 					store(f)
 					f.Check(func(c *tool.Call) {
@@ -439,13 +468,13 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	}
 	held := holds(role)
 	if native != nil && !slices.Contains(held, hook.Bus) {
-		return tool.Refuse("Codex delivery wants a role with the bus push")
+		return tool.Refuse(native.label() + " delivery wants a role with the bus push")
 	}
 	var recovery codexRecovery
 	if native != nil {
 		release, err := w.codexLock(native.directory)
 		if err != nil {
-			return tool.Refuse("Codex route is not exclusively held: " + err.Error())
+			return tool.Refuse(native.label() + " route is not exclusively held: " + err.Error())
 		}
 		defer func() {
 			if err := release(); err != nil {
@@ -494,6 +523,9 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		if !slices.Contains(held, p) {
 			armed.Note(fmt.Sprintf("the %s push is held by: %s", p, hook.HeldBy(s.as, role, p)))
 		}
+	}
+	if native != nil && native.antigravity != nil && !c.Bool("once") {
+		line(c, tool.Done().As("STATE").Fact("state", "antigravity-installed").Fact("conversation", native.antigravity.conversation).Fact("port", native.antigravity.port).Fact("events_dir", native.directory))
 	}
 	if native != nil && !native.since.IsZero() {
 		line(c, tool.Done().As("STATE").Fact("state", "recovery-cutover").Fact("since", native.since.Format(time.RFC3339)).Note("earlier ordinary messages are archived history; work still needed must be resent; retain this fixed boundary across restarts"))
