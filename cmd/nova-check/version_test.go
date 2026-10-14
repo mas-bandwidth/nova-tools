@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,9 +22,9 @@ func runVersion(ver string, args []string, out, errOut *bytes.Buffer) int {
 
 // The SHAPE, asserted field by field. `nova-check <identity> <goos>/<goarch> <go version>` is
 // what a person is asked to paste when two lines disagree about what they are running, so
-// a run of it has to be one line and four tokens -- and asserting only that the output
-// "contains" a version would pass over a line broken in two, which is the failure the
-// escaping in pkg/buildinfo exists to prevent.
+// a run of it has to be one line and four tokens followed by key=value extras -- and asserting
+// only that the output "contains" a version would pass over a line broken in two, which is the
+// failure the escaping in pkg/buildinfo exists to prevent.
 //
 // Before this verb existed the same invocation was:
 //
@@ -41,16 +42,20 @@ func TestVersionLineShape(t *testing.T) {
 	line := out.String()
 	require.True(t, strings.HasSuffix(line, "\n"), "want exactly one terminated line, got %q", line)
 	require.True(t, strings.Count(line, "\n") == 1, "want exactly one terminated line, got %q", line)
-	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
-	require.EqualValues(t, 4, len(fields), "want 4 fields, got %d: %q", len(fields), line)
-	assert.EqualValues(t, "nova-check", fields[0], "field 1 is the binary's name: got %q", fields[0])
-	assert.NotEqualValues(t, "", fields[1], "field 2 is the build identity and is never empty: %q", line)
-	assert.False(t, strings.ContainsAny(fields[1], " \t"), "field 2 is one token: %q", line)
+	f, ok := buildinfo.Parse(line)
+	require.True(t, ok, "want a line buildinfo.Parse accepts, got: %q", line)
+	assert.EqualValues(t, "nova-check", f.Tool, "field 1 is the binary's name: got %q", f.Tool)
+	assert.NotEqualValues(t, "", f.Version, "field 2 is the build identity and is never empty: %q", line)
+	assert.False(t, strings.ContainsAny(f.Version, " \t"), "field 2 is one token: %q", line)
 	{
 		want := runtime.GOOS + "/" + runtime.GOARCH
-		assert.EqualValues(t, want, fields[2], "field 3: got %q, want %q", fields[2], want)
+		assert.EqualValues(t, want, f.Platform, "field 3: got %q, want %q", f.Platform, want)
 	}
-	assert.EqualValues(t, runtime.Version(), fields[3], "field 4: got %q, want %q", fields[3], runtime.Version())
+	assert.EqualValues(t, runtime.Version(), f.GoVersion, "field 4: got %q, want %q", f.GoVersion, runtime.Version())
+	_, hasVerbs := f.Extra("verbs")
+	assert.True(t, hasVerbs, "verbs= extra present: %q", line)
+	_, hasVerbset := f.Extra("verbset")
+	assert.True(t, hasVerbset, "verbset= extra present: %q", line)
 }
 
 // The stamp is the ONE field of this line that comes from outside the toolchain, and a
@@ -67,8 +72,9 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 	line := out.String()
 	require.EqualValues(t, 1, strings.Count(line, "\n"), "a stamped newline broke the line in two: %q", line)
 	{
-		fields := strings.Fields(strings.TrimSuffix(line, "\n"))
-		require.EqualValues(t, 4, len(fields), "want 4 fields whatever the stamp holds, got %d: %q", len(fields), line)
+		f, ok := buildinfo.Parse(line)
+		require.True(t, ok, "want a line buildinfo.Parse accepts whatever the stamp holds, got: %q", line)
+		assert.EqualValues(t, "nova-check", f.Tool)
 	}
 	assert.Contains(t, line, `v1.2.3\x0a`, "the stamp is escaped rather than dropped or printed raw: %q", line)
 }
