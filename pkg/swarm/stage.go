@@ -154,20 +154,31 @@ func CardStageBranch(card []byte) string {
 	return "worker/card"
 }
 
-// FindBenchMirror finds the path to the bench's local mirror for baseRepo.
-// Candidate locations:
-// - baseRepo itself, if it is a directory on disk that exists
-// - $HOME/nova-bench/mirror/<repo>.git
-// - $HOME/nova-bench/mirror/<repo>
-// - /tmp/<repo>-mirror.git
-// - /tmp/<repo>.git
-func FindBenchMirror(benchHome, baseRepo string) string {
+// FindBenchMirror finds the path to the bench's local mirror for baseRepo and reports the
+// refusal of a mirror that is another owner's repository of the same name. A bench mirror
+// records its origin (`[remote "origin"] url` in its config), and the lookup key is the
+// card's owner/name, so a mirror of the same name under another owner is never handed to a
+// card as its own: staging takes the card's repository, not just a repository of its name
+// (docs/SPEC-SWARM.md, the clone; tla/CardContract.tla, StagedFromOrigin). The owner is what
+// two repositories of one name are told apart by. Candidate locations, in order:
+//
+//   - baseRepo itself, if it is a git directory on disk (a local path is no bench mirror)
+//   - $HOME/nova-bench/mirror/<owner>/<name>.git and $HOME/nova-bench/mirror/<owner>/<name>
+//     (owner-keyed: found by key, no further check)
+//   - the name-only candidates of today: $HOME/nova-bench/mirror/<name>.git,
+//     $HOME/nova-bench/mirror/<name>, /tmp/<name>-mirror.git and /tmp/<name>.git. A name-only
+//     candidate is read for the owner/name its origin records: its own key is the mirror, and
+//     another owner of the same name is refused by name, never fallen through to a later
+//     candidate. A mirror with no recorded origin (a bare test fixture) is accepted as before.
+//
+// No candidate is "", nil: the caller's own no-mirror path.
+func FindBenchMirror(benchHome, baseRepo string) (string, error) {
 	if baseRepo == "" {
-		return ""
+		return "", nil
 	}
 	if fi, err := os.Stat(baseRepo); err == nil && fi.IsDir() {
 		if isGitDir(baseRepo) {
-			return baseRepo
+			return baseRepo, nil
 		}
 	}
 	if benchHome == "" {
@@ -176,9 +187,19 @@ func FindBenchMirror(benchHome, baseRepo string) string {
 			benchHome, _ = os.UserHomeDir()
 		}
 	}
-	repoName := filepath.Base(baseRepo)
-	repoName = strings.TrimSuffix(repoName, ".git")
-	repoName = strings.TrimSuffix(repoName, "-mirror")
+	owner, name, keyed := repoOwnerName(baseRepo)
+	repoName := strings.TrimSuffix(name, "-mirror")
+
+	if keyed && benchHome != "" {
+		for _, c := range []string{
+			filepath.Join(benchHome, "nova-bench", "mirror", owner, name+".git"),
+			filepath.Join(benchHome, "nova-bench", "mirror", owner, name),
+		} {
+			if fi, err := os.Stat(c); err == nil && fi.IsDir() && isGitDir(c) {
+				return c, nil
+			}
+		}
+	}
 
 	var candidates []string
 	if benchHome != "" {
@@ -192,10 +213,83 @@ func FindBenchMirror(benchHome, baseRepo string) string {
 		filepath.Join("/tmp", repoName+".git"),
 	)
 	for _, c := range candidates {
-		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
-			if isGitDir(c) {
-				return c
-			}
+		if fi, err := os.Stat(c); err != nil || !fi.IsDir() || !isGitDir(c) {
+			continue
+		}
+		origin := mirrorRecordedOrigin(c)
+		if origin == "" {
+			return c, nil
+		}
+		oOwner, oName, _ := repoOwnerName(origin)
+		switch {
+		case keyed && strings.EqualFold(oOwner, owner) && strings.EqualFold(oName, name):
+			return c, nil
+		case keyed && strings.EqualFold(oName, name) && !strings.EqualFold(oOwner, owner):
+			return "", fmt.Errorf("staging refused: bench mirror %s is %s/%s, the card names %s/%s", c, oOwner, oName, owner, name)
+		default:
+			return c, nil
+		}
+	}
+	return "", nil
+}
+
+// repoOwnerName is the owner/name a repository value names: the last two path elements of a
+// https URL, an scp-style git@host:owner/name.git or an owner/name, with a trailing .git cut.
+// ok is false when the value names fewer than two path elements (no owner to key on).
+func repoOwnerName(value string) (owner, name string, ok bool) {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return "", "", false
+	}
+	if i := strings.Index(v, "://"); i >= 0 {
+		rest := v[i+3:]
+		j := strings.Index(rest, "/")
+		if j < 0 {
+			return "", "", false
+		}
+		v = rest[j+1:]
+	} else if i := strings.Index(v, ":"); i >= 0 && !strings.Contains(v[:i], "/") {
+		v = v[i+1:]
+	}
+	v = strings.TrimSuffix(v, ".git")
+	v = strings.Trim(v, "/")
+	parts := strings.Split(v, "/")
+	if len(parts) < 2 || parts[len(parts)-2] == "" || parts[len(parts)-1] == "" {
+		return "", strings.TrimSuffix(v, ".git"), false
+	}
+	return parts[len(parts)-2], parts[len(parts)-1], true
+}
+
+// mirrorRecordedOrigin reads the url of remote "origin" a bench mirror records: <dir>/config, else
+// <dir>/.git/config. "" when the mirror records none (a bare test fixture).
+func mirrorRecordedOrigin(dir string) string {
+	for _, p := range []string{filepath.Join(dir, "config"), filepath.Join(dir, ".git", "config")} {
+		raw, err := readRegular(p)
+		if err != nil {
+			continue
+		}
+		if url := originURLLine(raw); url != "" {
+			return url
+		}
+	}
+	return ""
+}
+
+// originURLLine is the url of remote "origin" in a git config, read a line at a time: the
+// `[remote "origin"]` section, then its `url = ...` line. "" when the config names none.
+func originURLLine(raw []byte) string {
+	inOrigin := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			inOrigin = strings.EqualFold(line, `[remote "origin"]`)
+			continue
+		}
+		if !inOrigin {
+			continue
+		}
+		if k, v, found := strings.Cut(line, "="); found && strings.EqualFold(strings.TrimSpace(k), "url") {
+			return strings.TrimSpace(v)
 		}
 	}
 	return ""
@@ -487,7 +581,10 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Branch: branch, Staged: true}, nil
 	}
 
-	mirror := FindBenchMirror(opts.BenchHome, baseRepo)
+	mirror, err := FindBenchMirror(opts.BenchHome, baseRepo)
+	if err != nil {
+		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, err
+	}
 	if mirror == "" && isRemoteRepo(baseRepo) {
 		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, fmt.Errorf("staging refused: no bench mirror for %s: a card may not clone directly from github without a bench mirror", baseRepo)
 	}

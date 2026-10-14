@@ -1703,7 +1703,10 @@ func scriptVerify(root, sandbox string, noWall bool) func(member.Packet, cardhdr
 	return func(p member.Packet, class cardhdr.Class) (ok bool, why string) {
 		repo := swarm.ReadCardBase([]byte(p.Brief)).Repo
 		home, _ := os.UserHomeDir()
-		mirror := swarm.FindBenchMirror(home, repo)
+		mirror, err := swarm.FindBenchMirror(home, repo)
+		if err != nil {
+			return false, err.Error()
+		}
 		if mirror == "" {
 			return false, "no bench mirror for " + repo
 		}

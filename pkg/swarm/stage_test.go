@@ -43,10 +43,12 @@ func TestFindBenchMirror(t *testing.T) {
 	require.NoError(t, os.MkdirAll(mirrorDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(mirrorDir, "HEAD"), []byte("ref: refs/heads/dev\n"), 0o644))
 
-	found := FindBenchMirror(home, "https://example.com/mas-bandwidth/nova-tools.git")
+	found, err := FindBenchMirror(home, "https://example.com/mas-bandwidth/nova-tools.git")
+	require.NoError(t, err)
 	require.Equal(t, mirrorDir, found, "expected %s, got %s", mirrorDir, found)
 
-	notFound := FindBenchMirror(home, "https://example.com/mas-bandwidth/nonexistent.git")
+	notFound, err := FindBenchMirror(home, "https://example.com/mas-bandwidth/nonexistent.git")
+	require.NoError(t, err)
 	require.Empty(t, notFound, "expected empty string, got %s", notFound)
 }
 
