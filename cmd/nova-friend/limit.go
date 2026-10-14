@@ -12,10 +12,12 @@
 package main
 
 import (
+	"cmp"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
@@ -122,18 +124,55 @@ func ReadRefusal(harness string, t LaneText, now time.Time) (Refusal, bool) {
 	return Refusal{}, false
 }
 
-// FirstErrorLine is a lane's first error line for the alike judgment: the
-// first non-empty line of stderr, else stdout, else the harness log, else the
-// REPORT.md, trimmed and capped. It is "" when the lane said nothing.
+// FirstErrorLine is a lane's first error line, the key the alike count is kept by: the
+// first line of stderr, else stdout, else the harness log, else the REPORT.md that has a
+// word in it (friend.BareLine: a bare "{" opening a pretty-printed JSON error is passed
+// over), trimmed and capped. It is "" when the lane said nothing readable.
 func FirstErrorLine(t LaneText) string {
 	for _, src := range []string{t.Stderr, t.Stdout, t.Log, t.Report} {
 		for _, line := range strings.Split(src, "\n") {
-			if line = strings.TrimSpace(line); line != "" {
+			// a bare brace is the first line of a pretty-printed JSON error and says
+			// nothing: the line that follows it is the first one that does
+			if line = strings.TrimSpace(line); !friend.BareLine(line) {
 				return oneline.Cap(line, 200)
 			}
 		}
 	}
 	return ""
+}
+
+// ErrorMessageMax bounds ErrorMessage.
+const ErrorMessageMax = 400
+
+// ErrorMessage is the whole of a lane's error as one line for the alike judgment: the text
+// FirstErrorLine took its line from, every non-empty line trimmed and joined with a space,
+// capped at ErrorMessageMax. A pretty-printed JSON error reads as `{ "error": "..." }` and not
+// as its first line. It is "" when the lane said nothing a person could read.
+func ErrorMessage(t LaneText) string {
+	for _, src := range []string{t.Stderr, t.Stdout, t.Log, t.Report} {
+		var words []string
+		for _, line := range strings.Split(src, "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				words = append(words, line)
+			}
+		}
+		if msg := strings.Join(words, " "); !friend.BareLine(msg) {
+			return oneline.Cap(msg, ErrorMessageMax)
+		}
+	}
+	return ""
+}
+
+// Unreadable says a lane left text, but none a person could read an error from: every source
+// is empty or only braces and punctuation. It is a read fault of the watcher, never a lane
+// failing alike (RefusalWatch.Unreadable).
+func Unreadable(t LaneText) bool {
+	for _, src := range t.Sources() {
+		if strings.TrimSpace(src) != "" {
+			return FirstErrorLine(t) == ""
+		}
+	}
+	return false
 }
 
 // DownReason is the reason the daemon sends with friend down: the card's
@@ -167,21 +206,30 @@ type alikeLanes struct {
 	line  string
 	count int
 	said  bool
+	last  time.Time
 }
 
-// observe adds one lane's first error line and answers the judgment on the
-// AlikeLanes-th alike failure, once.
-func (a *alikeLanes) observe(line string) (string, bool) {
-	if line == "" {
+// AlikeWithin is how long apart two alike failures may be and still count as in a row: the
+// run starts again after it, the bound a row's harness faults are counted within
+// (friend.FaultWithin). Three failing commands of one wording over a day are three stray
+// failures, not three lanes in a row.
+const AlikeWithin = friend.FaultWithin
+
+// observe adds one lane's first error line (the key the count is kept by) and the lane's whole
+// message (what the judgment says) at now, and answers the judgment on the AlikeLanes-th alike
+// failure, once. A line with no word in it is no failure to count (friend.BareLine).
+func (a *alikeLanes) observe(line, message string, now time.Time) (string, bool) {
+	if friend.BareLine(line) {
 		return "", false
 	}
-	if line != a.line {
+	if line != a.line || (!a.last.IsZero() && now.Sub(a.last) > AlikeWithin) {
 		a.line, a.count, a.said = line, 0, false
 	}
+	a.last = now
 	a.count++
 	if a.count == AlikeLanes && !a.said {
 		a.said = true
-		return AlikeJudgment(line), true
+		return AlikeJudgment(cmp.Or(message, line)), true
 	}
 	return "", false
 }
@@ -196,7 +244,12 @@ type RefusalWatch struct {
 	Now     func() time.Time
 	Down    func(r Refusal)
 	Judge   func(text string)
-	alike   alikeLanes
+	// Unreadable is called with a lane's first text when it left some but none a person could
+	// read an error from (a bare brace: Unreadable(t)): a read fault of this watcher, said
+	// once per run of them, that counts toward no lane failing alike and faults no lane.
+	Unreadable func(first string)
+	alike      alikeLanes
+	unread     bool
 }
 
 // Observe reads one lane's evidence: a refusal calls Down and answers it; a
@@ -216,8 +269,14 @@ func (w *RefusalWatch) Observe(t LaneText) (Refusal, bool) {
 		return r, true
 	}
 	if line := FirstErrorLine(t); line != "" {
-		if text, ok := w.alike.observe(line); ok && w.Judge != nil {
+		w.unread = false
+		if text, ok := w.alike.observe(line, ErrorMessage(t), now()); ok && w.Judge != nil {
 			w.Judge(text)
+		}
+	} else if Unreadable(t) && !w.unread {
+		w.unread = true
+		if w.Unreadable != nil {
+			w.Unreadable(oneline.Cap(strings.TrimSpace(cmp.Or(t.Stderr, t.Stdout, t.Log, t.Report)), 60))
 		}
 	}
 	return Refusal{}, false
@@ -233,6 +292,8 @@ var refusalReaders = [...]any{
 	LaneText.Sources,
 	ReadRefusal,
 	FirstErrorLine,
+	ErrorMessage,
+	Unreadable,
 	DownReason,
 	DownArgv,
 	AlikeJudgment,

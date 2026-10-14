@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 )
@@ -602,6 +603,7 @@ type loop struct {
 	streak       int
 	broken, told bool
 	laneFault    LaneFaultWatch       // a lane's provider refusals: the second identical one faults it (docs/SPEC-FRIEND.md, the lanes)
+	faultAt      time.Time            // when the lane fault stood: it clears itself LaneFaultHold later (LaneFaultClearing; tla/LaneFault.tla)
 	unable       string               // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
 	unableTries  int                  // the turns refused for it since
 	refusedTold  map[string]bool      // verbs whose refusal has been raised, once each (inbox.go, "A refused verb")
@@ -807,12 +809,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if d.FaultExternal != nil {
 				if fault := d.FaultExternal(); fault != "" {
 					l.laneFault.Set(fault)
+					l.faultAt = now
 					if d.FaultWrite != nil {
 						if err := d.FaultWrite(fault); err != nil {
 							d.Record(now.UTC().Format(time.RFC3339) + " lane fault: the report cannot be written to the state directory: " + oneLine(err.Error(), 300))
 						}
 					}
-					d.Record(now.UTC().Format(time.RFC3339) + " lane fault: " + fault + "; the lanes take no card until a restart")
+					d.Record(now.UTC().Format(time.RFC3339) + " lane fault: " + fault + "; the lanes take no card until a restart, or " + LaneFaultHold.String() + " from now")
 				}
 			}
 			switch file := d.Fault(); {
@@ -828,9 +831,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.Record(now.UTC().Format(time.RFC3339) + " lane fault cleared by a restart")
 			}
 		}
+		l.laneFaultClearing(now) // a fault that has stood LaneFaultHold clears itself (tla/LaneFault.tla)
 		switch {
 		case l.broken:
-		case l.laneFault.Faulted(): // a faulted lane takes no card until a restart or a clear (docs/SPEC-FRIEND.md, the lanes)
+		case l.laneFault.Faulted(): // a faulted lane takes no card until a restart, a clear, or LaneFaultHold (docs/SPEC-FRIEND.md, the lanes)
 		case !proven: // the push rule: nothing goes into a session that has not answered
 		case l.mode == ModeOneShot && l.proofReason != "": // the harness proof failed: no card is taken until the harness answers
 		case l.mode == ModeOneShot:
@@ -945,7 +949,7 @@ func (l *loop) drainResults(now time.Time) {
 			// the failure; the loop steps no lane while the fault stands.
 			if r.open {
 				if fault := l.laneFaulted(r.err, now); fault != "" {
-					l.d.Record(now.UTC().Format(time.RFC3339) + fmt.Sprintf(" lane %d: ", r.ln.n) + fault + "; the lane takes no card until a restart")
+					l.d.Record(now.UTC().Format(time.RFC3339) + fmt.Sprintf(" lane %d: ", r.ln.n) + fault + "; the lane takes no card until a restart, or " + LaneFaultHold.String() + " from now")
 				}
 			}
 			l.laneDone(r, now)
@@ -1624,6 +1628,50 @@ func LaneFaultText(friend string, p Pronouns, fault string) (subject, body strin
 	return subject, body
 }
 
+// LaneFaultHold is how long a lane fault stands before the daemon clears it itself and the
+// lanes take cards again: the same bound a row's harness fault is down for (FaultDownFor). A
+// fault that is real is counted anew from the first lane after it (a fresh run of alike
+// refusals, LaneFaultWatch.Clear) and stands again, one judgment per episode; a fault that was
+// a misreading no longer locks the lanes until a person restarts the daemon (the finding of
+// 2026-10-14: emma's lanes locked on a refusal read as "{"). A restart or a person's clear
+// ends it sooner, as before (tla/LaneFault.tla: FaultClears).
+const LaneFaultHold = FaultDownFor
+
+// laneFaultClearing clears a lane fault that has stood LaneFaultHold at now: the watch is
+// cleared, the fault file removed and the clearing recorded. A fault with no time of its own
+// (one the watch holds from before this field) is stamped now, so it clears LaneFaultHold
+// after it was first seen here.
+func (l *loop) laneFaultClearing(now time.Time) {
+	if !l.laneFault.Faulted() {
+		l.faultAt = time.Time{}
+		return
+	}
+	if l.faultAt.IsZero() {
+		l.faultAt = now
+		return
+	}
+	if now.Sub(l.faultAt) < LaneFaultHold {
+		return
+	}
+	l.laneFault.Clear()
+	l.faultAt = time.Time{}
+	d := l.d
+	if d.FaultWrite != nil {
+		if err := d.FaultWrite(""); err != nil {
+			d.Record(now.UTC().Format(time.RFC3339) + " lane fault: the clear cannot be written to the state directory: " + oneLine(err.Error(), 300))
+		}
+	}
+	d.Record(now.UTC().Format(time.RFC3339) + " lane fault cleared after " + LaneFaultHold.String() + "; the lanes take cards again")
+}
+
+// BareLine says the line carries no word: it is empty, or only brackets, braces, quotes and
+// punctuation ("{", "[{", "}"), the first line of a pretty-printed JSON error that says
+// nothing. Such a line is no refusal and no error line to count (cmd/nova-friend FirstErrorLine,
+// LaneFaultWatch.Observe).
+func BareLine(line string) bool {
+	return !strings.ContainsFunc(line, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) })
+}
+
 // LaneFaultWatch counts one lane's provider refusals: the LaneFaultAlike-th of
 // the same refusal is the fault, with the first refusal line; a different
 // line starts the count again. The zero value is ready.
@@ -1637,8 +1685,8 @@ type LaneFaultWatch struct {
 // Observe adds one provider-refusal line and answers the lane fault on the
 // LaneFaultAlike-th identical one, once per run of alike refusals.
 func (f *LaneFaultWatch) Observe(line string) (string, bool) {
-	if line == "" {
-		return "", false
+	if BareLine(line) {
+		return "", false // no refusal was read: an empty line or a bare brace is a read fault, never a lane fault
 	}
 	if line != f.line {
 		f.line, f.count, f.said = line, 0, false
@@ -1693,6 +1741,7 @@ func (l *loop) laneFaulted(err error, now time.Time) string {
 	if !yes {
 		return ""
 	}
+	l.faultAt = now
 	if l.d.FaultWrite != nil {
 		if err := l.d.FaultWrite(fault); err != nil {
 			l.d.Record(now.UTC().Format(time.RFC3339) + " lane fault: the report cannot be written to the state directory: " + oneLine(err.Error(), 300))

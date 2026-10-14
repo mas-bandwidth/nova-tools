@@ -1663,6 +1663,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// handed to the daemon as the same record a provider's refusal writes, so it
 	// holds the lane's card instead of only logging (docs/SPEC-FRIEND.md, the lanes)
 	var laneFaultPending atomic.Pointer[string]
+	// a failing command that left no readable error (a bare brace) is the watcher's read
+	// fault, said once; it counts toward no lane failing alike and faults no lane (limit.go)
+	rw.Unreadable = func(first string) {
+		record(w.now().UTC().Format(time.RFC3339) + " limit: a failing command left only " + strconv.Quote(first) + " to read as its error; not counted as a lane failing alike")
+	}
 	rw.Judge = func(text string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: " + text)
 		tellSeat(friend.LimitAlikeText(name, pro.Get(), text))
