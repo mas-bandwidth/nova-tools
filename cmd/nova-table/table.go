@@ -79,21 +79,9 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx := context.Background()
 	call := func(c redis.Cmdable) error { return ntable.Create(ctx, c, t, time.Now(), *write) }
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, call); done {
-		return code
-	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	if err := call(c); err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE CREATE table=%s columns=%d trips=%d\n", t.Name, len(t.Columns), trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		fmt.Fprintf(stdout, "TABLE CREATE table=%s columns=%d trips=%d\n", t.Name, len(t.Columns), trips)
+	})
 }
 
 func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
@@ -136,45 +124,37 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 		o.Visible = &v
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (int, error) { return ntable.Set(ctx, c, pos[0], o, *write) }
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-		return code
+	var n int
+	call := func(c redis.Cmdable) error {
+		var err error
+		n, err = ntable.Set(ctx, c, pos[0], o, *write)
+		return err
 	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	n, err := call(c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	line := "TABLE SET table=" + pos[0]
-	if o.Visible != nil {
-		line += fmt.Sprintf(" visible=%v", *o.Visible)
-	}
-	if o.Footer != nil {
-		line += fmt.Sprintf(" footer=%q", *o.Footer)
-	}
-	if o.Rename != "" {
-		line += fmt.Sprintf(" renamed=%s moved=%d", o.Rename, n)
-	}
-	if len(o.Columns) > 0 {
-		line += fmt.Sprintf(" columns=%d", len(o.Columns))
-	}
-	if len(o.Hide) > 0 {
-		line += fmt.Sprintf(" hide=%q", strings.Join(o.Hide, ","))
-	}
-	if len(o.Show) > 0 {
-		line += fmt.Sprintf(" show=%q", strings.Join(o.Show, ","))
-	}
-	if o.Hidden != nil {
-		line += fmt.Sprintf(" hidden=%q", strings.Join(*o.Hidden, ","))
-	}
-	fmt.Fprintf(stdout, "%s trips=%d\n", line, trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		line := "TABLE SET table=" + pos[0]
+		if o.Visible != nil {
+			line += fmt.Sprintf(" visible=%v", *o.Visible)
+		}
+		if o.Footer != nil {
+			line += fmt.Sprintf(" footer=%q", *o.Footer)
+		}
+		if o.Rename != "" {
+			line += fmt.Sprintf(" renamed=%s moved=%d", o.Rename, n)
+		}
+		if len(o.Columns) > 0 {
+			line += fmt.Sprintf(" columns=%d", len(o.Columns))
+		}
+		if len(o.Hide) > 0 {
+			line += fmt.Sprintf(" hide=%q", strings.Join(o.Hide, ","))
+		}
+		if len(o.Show) > 0 {
+			line += fmt.Sprintf(" show=%q", strings.Join(o.Show, ","))
+		}
+		if o.Hidden != nil {
+			line += fmt.Sprintf(" hidden=%q", strings.Join(*o.Hidden, ","))
+		}
+		fmt.Fprintf(stdout, "%s trips=%d\n", line, trips)
+	})
 }
 
 func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
@@ -195,23 +175,15 @@ func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
 		drop = ntable.DropDefinition
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (int, error) { return drop(ctx, c, pos[0], *write) }
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-		return code
+	var n int
+	call := func(c redis.Cmdable) error {
+		var err error
+		n, err = drop(ctx, c, pos[0], *write)
+		return err
 	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	n, err := call(c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE DROP table=%s rows=%d trips=%d\n", pos[0], n, trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		fmt.Fprintf(stdout, "TABLE DROP table=%s rows=%d trips=%d\n", pos[0], n, trips)
+	})
 }
 
 func (app *application) cmdList(args []string, stdout, stderr io.Writer) int {
@@ -226,21 +198,19 @@ func (app *application) cmdList(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "takes no table name: list")
 	}
 	ctx := context.Background()
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
+	var summaries []ntable.Summary
+	call := func(c redis.Cmdable) error {
+		var err error
+		summaries, err = ntable.Summaries(ctx, c)
+		return err
 	}
-	defer st.Close()
-	trips := st.CountTrips()
-	summaries, err := ntable.Summaries(ctx, c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE LIST tables=%d trips=%d\n", len(summaries), trips.N())
-	for _, row := range summaries {
-		fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d\n", row.Name, row.Columns, row.Rows)
-	}
-	return 0
+	return app.runRead(stdout, stderr, verb, *addr, call, func(trips int64) int {
+		fmt.Fprintf(stdout, "TABLE LIST tables=%d trips=%d\n", len(summaries), trips)
+		for _, row := range summaries {
+			fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d\n", row.Name, row.Columns, row.Rows)
+		}
+		return 0
+	})
 }
 
 func (app *application) cmdClear(args []string, stdout, stderr io.Writer) int {
@@ -256,24 +226,17 @@ func (app *application) cmdClear(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants one table name: clear <table>")
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (int64, error) { return ntable.Clear(ctx, c, pos[0], *write) }
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
-		return code
+	var n, ms int64
+	call := func(c redis.Cmdable) error {
+		start := time.Now()
+		var err error
+		n, err = ntable.Clear(ctx, c, pos[0], *write)
+		ms = time.Since(start).Milliseconds()
+		return err
 	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	start := time.Now()
-	n, err := call(c)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE CLEAR table=%s rows=%d ms=%d trips=%d\n", pos[0], n, time.Since(start).Milliseconds(), trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		fmt.Fprintf(stdout, "TABLE CLEAR table=%s rows=%d ms=%d trips=%d\n", pos[0], n, ms, trips)
+	})
 }
 
 func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
@@ -296,55 +259,52 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	ctx := context.Background()
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
 	var t ntable.Table
-	if *atEpoch == "" {
-		t, err = ntable.Read(ctx, c, pos[0])
-	} else {
-		t, err = ntable.ReadAt(ctx, c, pos[0], epoch)
-	}
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d trips=%d epoch=%d revision=%d", t.Name, len(t.Columns), len(t.Rows), trips.N(), t.Epoch, t.Revision)
-	if t.Sort != "" {
-		fmt.Fprintf(stdout, " sort=%s", t.Sort)
-	}
-	fmt.Fprintln(stdout)
-	for _, r := range t.Rows {
-		var b strings.Builder
-		fmt.Fprintf(&b, "TABLE ROW table=%s row=%s", t.Name, field(r.Key))
-		for j, col := range t.Columns {
-			b.WriteString(" " + col.Name + "=" + field(ntable.CellText(t.Columns, r, j)))
+	call := func(c redis.Cmdable) error {
+		var err error
+		if *atEpoch == "" {
+			t, err = ntable.Read(ctx, c, pos[0])
+		} else {
+			t, err = ntable.ReadAt(ctx, c, pos[0], epoch)
 		}
-		fmt.Fprintln(stdout, b.String())
+		return err
 	}
-	// the table's properties, one line each, in name order (L1 contract
-	// amendment, table properties, section 4)
-	for _, name := range slices.Sorted(maps.Keys(t.Props)) {
-		fmt.Fprintf(stdout, "TABLE PROP table=%s %s=%s\n", t.Name, name, field(t.Props[name]))
-	}
-	// A cell that did not come back prints as ? above, never as a false 0; show is
-	// the record of the table, so it also says which cell and why, and exits 1.
-	unread := 0
-	for _, r := range t.Rows {
-		for j, col := range t.Columns {
-			if j < len(r.Cells) && r.Cells[j].Unread {
-				unread++
-				fmt.Fprintf(stderr, "nova-table show: warning: table %q row %q column %q cannot be read: %s; run: nova-table set -h, and write the cell again\n", t.Name, oneline.Escape(r.Key), col.Name, oneline.Escape(r.Cells[j].UnreadWhy))
+	return app.runRead(stdout, stderr, verb, *addr, call, func(trips int64) int {
+		fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d trips=%d epoch=%d revision=%d", t.Name, len(t.Columns), len(t.Rows), trips, t.Epoch, t.Revision)
+		if t.Sort != "" {
+			fmt.Fprintf(stdout, " sort=%s", t.Sort)
+		}
+		fmt.Fprintln(stdout)
+		for _, r := range t.Rows {
+			var b strings.Builder
+			fmt.Fprintf(&b, "TABLE ROW table=%s row=%s", t.Name, field(r.Key))
+			for j, col := range t.Columns {
+				b.WriteString(" " + col.Name + "=" + field(ntable.CellText(t.Columns, r, j)))
+			}
+			fmt.Fprintln(stdout, b.String())
+		}
+		// the table's properties, one line each, in name order (L1 contract
+		// amendment, table properties, section 4)
+		for _, name := range slices.Sorted(maps.Keys(t.Props)) {
+			fmt.Fprintf(stdout, "TABLE PROP table=%s %s=%s\n", t.Name, name, field(t.Props[name]))
+		}
+		// A cell that did not come back prints as ? above, never as a false 0; show is
+		// the record of the table, so it also says which cell and why, and exits 1.
+		unread := 0
+		for _, r := range t.Rows {
+			for j, col := range t.Columns {
+				if j < len(r.Cells) && r.Cells[j].Unread {
+					unread++
+					fmt.Fprintf(stderr, "nova-table show: warning: table %q row %q column %q cannot be read: %s; run: nova-table set -h, and write the cell again\n", t.Name, oneline.Escape(r.Key), col.Name, oneline.Escape(r.Cells[j].UnreadWhy))
+				}
 			}
 		}
-	}
-	if unread > 0 {
-		fmt.Fprintf(stderr, "nova-table show: %d cell(s) printed as ? could not be read; run: nova-table check '%s'\n", unread, strings.ReplaceAll(t.Name, "'", `'\''`))
-		return 1
-	}
-	return 0
+		if unread > 0 {
+			fmt.Fprintf(stderr, "nova-table show: %d cell(s) printed as ? could not be read; run: nova-table check '%s'\n", unread, strings.ReplaceAll(t.Name, "'", `'\''`))
+			return 1
+		}
+		return 0
+	})
 }
 
 // renderFlags declares the render flags render and watch share.
@@ -408,33 +368,35 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	ctx := context.Background()
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
 	if *view != "" {
-		text, err := viewReader(c, *view, opts, false)(ctx)
-		if err != nil {
-			return st.refusal(stderr, verb, err)
+		var text string
+		call := func(c redis.Cmdable) error {
+			var err error
+			text, err = viewReader(c, *view, opts, false)(ctx)
+			return err
 		}
-		return publish("", text, stdout, stderr, verb)
+		return app.runRead(stdout, stderr, verb, *addr, call, func(trips int64) int {
+			return publish("", text, stdout, stderr, verb)
+		})
 	}
 	var t ntable.Table
-	if *atEpoch == "" {
-		t, err = ntable.Read(ctx, c, pos[0])
-	} else {
-		t, err = ntable.ReadAt(ctx, c, pos[0], epoch)
+	call := func(c redis.Cmdable) error {
+		var err error
+		if *atEpoch == "" {
+			t, err = ntable.Read(ctx, c, pos[0])
+		} else {
+			t, err = ntable.ReadAt(ctx, c, pos[0], epoch)
+		}
+		return err
 	}
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	// the table and nothing else: an empty table prints its header and footer
-	opts.Title = t.Name
-	if _, err := io.WriteString(stdout, ntable.Render(t, opts)); err != nil {
-		return refuse(stderr, verb, "stdout: "+err.Error())
-	}
-	return 0
+	return app.runRead(stdout, stderr, verb, *addr, call, func(trips int64) int {
+		// the table and nothing else: an empty table prints its header and footer
+		opts.Title = t.Name
+		if _, err := io.WriteString(stdout, ntable.Render(t, opts)); err != nil {
+			return refuse(stderr, verb, "stdout: "+err.Error())
+		}
+		return 0
+	})
 }
 
 // cmdView manages presentation configuration independently of table receipts.

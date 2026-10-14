@@ -30,21 +30,9 @@ func (app *application) cmdMember(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx := context.Background()
 	call := func(c redis.Cmdable) error { return ntable.MemberCreate(ctx, c, pos[0], pos[1], *write) }
-	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, call); done {
-		return code
-	}
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
-	if err := call(c); err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE MEMBER CREATE table=%s member=%s trips=%d\n", pos[0], field(pos[1]), trips.N())
-	printReceipt(stdout, write, *receipt)
-	return 0
+	return app.runWrite(stdout, stderr, fs, verb, *addr, pos, write, *receipt, call, func(trips int64) {
+		fmt.Fprintf(stdout, "TABLE MEMBER CREATE table=%s member=%s trips=%d\n", pos[0], field(pos[1]), trips)
+	})
 }
 
 func (app *application) cmdCheck(args []string, stdout, stderr io.Writer) int {
@@ -59,18 +47,16 @@ func (app *application) cmdCheck(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants one table name: check <table>")
 	}
 	ctx := context.Background()
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
+	var report ntable.CheckReport
+	call := func(c redis.Cmdable) error {
+		var err error
+		report, err = ntable.Check(ctx, c, pos[0])
+		return err
 	}
-	defer st.Close()
-	trips := st.CountTrips()
-	report, err := ntable.Check(ctx, c, pos[0])
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE CHECK table=%s epoch=%d revision=%d members=%d cells=%d trips=%d\n", pos[0], report.Epoch, report.Revision, report.Members, report.Cells, trips.N())
-	return 0
+	return app.runRead(stdout, stderr, verb, *addr, call, func(trips int64) int {
+		fmt.Fprintf(stdout, "TABLE CHECK table=%s epoch=%d revision=%d members=%d cells=%d trips=%d\n", pos[0], report.Epoch, report.Revision, report.Members, report.Cells, trips)
+		return 0
+	})
 }
 
 func (app *application) cmdMemberFind(args []string, stdout, stderr io.Writer) int {
@@ -85,22 +71,20 @@ func (app *application) cmdMemberFind(args []string, stdout, stderr io.Writer) i
 		return refuse(stderr, verb, "wants a table and a member ID: member find <table> <id>")
 	}
 	ctx := context.Background()
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
+	var loc ntable.MemberLocation
+	call := func(c redis.Cmdable) error {
+		var err error
+		loc, err = ntable.MemberFind(ctx, c, pos[0], pos[1])
+		return err
 	}
-	defer st.Close()
-	trips := st.CountTrips()
-	loc, err := ntable.MemberFind(ctx, c, pos[0], pos[1])
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE MEMBER table=%s member=%s state=%s", pos[0], field(pos[1]), loc.State)
-	if loc.State == "placed" {
-		fmt.Fprintf(stdout, " row=%s col=%s", field(loc.Row), loc.Column)
-	}
-	fmt.Fprintf(stdout, " epoch=%d table_revision=%d trips=%d\n", loc.Epoch, loc.Revision, trips.N())
-	return 0
+	return app.runRead(stdout, stderr, verb, *addr, call, func(trips int64) int {
+		fmt.Fprintf(stdout, "TABLE MEMBER table=%s member=%s state=%s", pos[0], field(pos[1]), loc.State)
+		if loc.State == "placed" {
+			fmt.Fprintf(stdout, " row=%s col=%s", field(loc.Row), loc.Column)
+		}
+		fmt.Fprintf(stdout, " epoch=%d table_revision=%d trips=%d\n", loc.Epoch, loc.Revision, trips)
+		return 0
+	})
 }
 
 // cellList is a repeatable --cell flag.
@@ -158,33 +142,31 @@ func (app *application) cmdMemberRead(args []string, stdout, stderr io.Writer) i
 		epoch = append(epoch, n)
 	}
 	ctx := context.Background()
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
+	var res ntable.ReadSetResult
+	call := func(c redis.Cmdable) error {
+		var err error
+		res, err = ntable.ReadSet(ctx, c, pos[0], scope, epoch...)
+		return err
 	}
-	defer st.Close()
-	trips := st.CountTrips()
-	res, err := ntable.ReadSet(ctx, c, pos[0], scope, epoch...)
-	if err != nil {
-		return st.refusal(stderr, verb, err)
-	}
-	if *asJSON {
-		return printJSON(stdout, stderr, verb, readJSON(res, trips.N()))
-	}
-	fmt.Fprintf(stdout, "TABLE READ table=%s epoch=%d table_revision=%d members=%d missing=%d trips=%d\n",
-		pos[0], res.Epoch, res.Revision, len(res.Members), len(res.Missing), trips.N())
-	for _, m := range res.Members {
-		place, score := "-", "-"
-		if m.Placed {
-			place, score = m.Row+":"+m.Col, m.ScoreText
+	return app.runRead(stdout, stderr, verb, *addr, call, func(trips int64) int {
+		if *asJSON {
+			return printJSON(stdout, stderr, verb, readJSON(res, trips))
 		}
-		fields, _ := json.Marshal(m.Fields)
-		fmt.Fprintf(stdout, "MEMBER %s place=%s score=%s member_revision=%d fields=%s\n", field(m.ID), field(place), score, m.Revision, fields)
-	}
-	for _, id := range res.Missing {
-		fmt.Fprintf(stdout, "MISSING %s\n", field(id))
-	}
-	return 0
+		fmt.Fprintf(stdout, "TABLE READ table=%s epoch=%d table_revision=%d members=%d missing=%d trips=%d\n",
+			pos[0], res.Epoch, res.Revision, len(res.Members), len(res.Missing), trips)
+		for _, m := range res.Members {
+			place, score := "-", "-"
+			if m.Placed {
+				place, score = m.Row+":"+m.Col, m.ScoreText
+			}
+			fields, _ := json.Marshal(m.Fields)
+			fmt.Fprintf(stdout, "MEMBER %s place=%s score=%s member_revision=%d fields=%s\n", field(m.ID), field(place), score, m.Revision, fields)
+		}
+		for _, id := range res.Missing {
+			fmt.Fprintf(stdout, "MISSING %s\n", field(id))
+		}
+		return 0
+	})
 }
 
 // printJSON writes v as one line of JSON.
