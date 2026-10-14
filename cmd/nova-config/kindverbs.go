@@ -594,14 +594,15 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 		o.Cap(*max)
 		return emit(stdout, o)
 	}
+	// docs/STANDARD.md section 2, "The status word leads every line".
 	if *max == 0 {
 		for _, row := range rows {
-			fmt.Fprintln(stdout, config.ListLine(k, row)+liveSuffix(bs, row.Name))
+			fmt.Fprintln(stdout, kindRowLine(k, row, false)+liveSuffix(bs, row.Name))
 		}
 	} else {
 		listing := bounded.Capped(stdout, *max, "CONFIG", k.Name, tool.MaxRemedy)
 		for _, row := range rows {
-			listing.Line(config.ListLine(k, row) + liveSuffix(bs, row.Name))
+			listing.Line(kindRowLine(k, row, false) + liveSuffix(bs, row.Name))
 		}
 		listing.More()
 	}
@@ -728,8 +729,58 @@ func showRow(ctx context.Context, k *config.Kind, name string, st pgStore, stdou
 		o.Item(k.Name, rowFields(k, row, extra...)...)
 		return emit(stdout, o)
 	}
-	fmt.Fprintln(stdout, config.ShowLine(k, row)+suffix)
+	// docs/STANDARD.md section 2, "The status word leads every line".
+	fmt.Fprintln(stdout, kindRowLine(k, row, true)+suffix)
 	return 0
+}
+
+// kindRowLine is one list or show row (docs/STANDARD.md section 2, "The
+// status word leads every line"): `<KIND> OK name=...`. A note, the free-text
+// field, goes through oneline.Quote so a blank inside the quotes is not
+// hex-escaped; an empty note stays "-". show is the whole note; a list cuts
+// it as ListLine does.
+func kindRowLine(k *config.Kind, row config.Row, show bool) string {
+	line := config.ListLine(k, row)
+	if show {
+		line = config.ShowLine(k, row)
+	}
+	return quoteNote(leadOK(line), row.Fields["note"], !show)
+}
+
+// leadOK inserts OK after the line's first token (docs/STANDARD.md section 2,
+// "The status word leads every line").
+func leadOK(line string) string {
+	i := strings.IndexByte(line, ' ')
+	if i < 0 {
+		return line + " OK"
+	}
+	return line[:i] + " OK" + line[i:]
+}
+
+// quoteNote replaces the note field with oneline.Quote (docs/STANDARD.md
+// section 2: free text is plain, oneline.Quote, a typed value oneline.Field).
+// cut is the list form: longer than ListNoteRunes, the note ends in "...".
+func quoteNote(line, note string, cut bool) string {
+	if cut {
+		if r := []rune(note); len(r) > config.ListNoteRunes {
+			note = string(r[:config.ListNoteRunes]) + "..."
+		}
+	}
+	const key = " note="
+	i := strings.Index(line, key)
+	if i < 0 {
+		return line
+	}
+	start := i + len(key)
+	end := start
+	for end < len(line) && line[end] != ' ' {
+		end++
+	}
+	rendered := "-"
+	if note != "" {
+		rendered = oneline.Quote(note)
+	}
+	return line[:start] + rendered + line[end:]
 }
 
 // laterKind is a kind whose table, or a column of it the verbs read and
