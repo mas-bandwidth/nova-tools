@@ -203,6 +203,33 @@ func TestSnapshotAddedRowNamesCreator(t *testing.T) {
 	assert.Equal(t, "created provider", row.Reason)
 }
 
+// TestSnapshotAddedRowIgnoresLaterLiveWrite keeps a migration's live reading
+// from erasing the operator's recorded creation of a provider row.
+func TestSnapshotAddedRowIgnoresLaterLiveWrite(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMem()
+	before, err := TakeSnapshot(ctx, m, "2026-10-13T20:00:00Z", "test")
+	require.NoError(t, err)
+	m.Now = func() time.Time { return time.Date(2026, 10, 13, 21, 0, 0, 0, time.UTC) }
+	_, err = m.Insert(WithReason(ctx, "created provider"), KindProvider, Row{Name: "p", Fields: map[string]string{
+		"billing": "metered", "funded": "false", "balance_usd": "10", "balance_as_of": "2026-10-13",
+	}}, "creator")
+	require.NoError(t, err)
+	m.Now = func() time.Time { return time.Date(2026, 10, 13, 21, 30, 0, 0, time.UTC) }
+	_, _, err = m.Update(ctx, KindProvider, "p", map[string]string{"balance_usd": "20", "balance_as_of": "2026-10-14"}, MigrationActor)
+	require.NoError(t, err)
+	after, err := TakeSnapshot(ctx, m, "2026-10-13T22:00:00Z", "test")
+	require.NoError(t, err)
+	res, err := CompareSnapshots(ctx, m, before, after, CompareOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, CompareOperator, res.Class)
+	row := findRow(t, res, KindProvider, "p")
+	assert.Equal(t, CompareAdded, row.Class)
+	assert.Equal(t, "creator", row.Actor)
+	assert.Equal(t, "created provider", row.Reason)
+}
+
 // TestSnapshotCompareNamesTheActBehindAChangedRow pins compare's rule: a row
 // that changed and whose change an operator's recorded history explains is
 // OPERATOR and never reverts, while a change only the migration actor

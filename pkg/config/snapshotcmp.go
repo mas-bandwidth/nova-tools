@@ -272,7 +272,7 @@ func classifyRow(ctx context.Context, st Store, kind, name string, diffs []Field
 }
 
 // classifyAddedRow requires an operator creation in the window and checks
-// that the final recorded operator write accounts for the observed row
+// that recorded non-live writes account for the observed row
 // (docs/SPEC-CONFIG.md, "Snapshot and compare").
 func classifyAddedRow(ctx context.Context, st Store, kind string, row CmpRow, ignoreSet map[string]bool, from, to time.Time) (RowDiff, error) {
 	rd := RowDiff{Kind: kind, Name: row.Name, Class: CompareCrit}
@@ -287,7 +287,7 @@ func classifyAddedRow(ctx context.Context, st Store, kind string, row CmpRow, ig
 		}
 		last = c
 	}
-	if created.Op != OpAdd || ignoreSet[created.Actor] || last.Op == OpRemove || ignoreSet[last.Actor] {
+	if created.Op != OpAdd || ignoreSet[created.Actor] || last.Op == OpRemove {
 		return rd, nil
 	}
 	for field, value := range row.Fields {
