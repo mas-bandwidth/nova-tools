@@ -328,14 +328,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
-  (item "friend-delivery-batching-and-receipts" :group "friends"
-   :title "Friend messages are batched, receipted and never silently lost"
-   :text "Pending messages go as one turn, each carries a receipt from delivery to returned work, the
-    failed-delivery count survives a restart, and a deaf friend is detected."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "cards moved out of the sprint (work record, 2026-10-04); issue #5192; card from the sprint store
-    (2026-10-10); card moved out of the sprint (work record, 2026-10-04)")
   (item "package-test-harness-steps" :group "tests"
    :title "Per-package test harness steps"
    :text "Stepwise work cards add or repair tests and checks per package across the tools. Each step has

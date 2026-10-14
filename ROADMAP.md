@@ -23,7 +23,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (24)
+- [Friends](#friends) (23)
 - [Setup, release and operations](#setup-release-and-operations) (96)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
@@ -169,14 +169,6 @@ A provider refusal, a usage limit or an empty balance is noticed once, said once
 Target: v1.3
 
 From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
-
-### Friend messages are batched, receipted and never silently lost
-
-Pending messages go as one turn, each carries a receipt from delivery to returned work, the failed-delivery count survives a restart, and a deaf friend is detected.
-
-Target: v1.3
-
-From: cards moved out of the sprint (work record, 2026-10-04); issue #5192; card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)
 
 ### One-shot friend lanes replace the hand-written runner scripts
 
