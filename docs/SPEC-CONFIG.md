@@ -807,19 +807,23 @@ the library reads or writes them.
 
 ## Lines
 
-One typed line per event; values go through `oneline.Field`, an empty value
-prints as `-`.
+One typed line per event. A typed value goes through `oneline.Field`; an empty
+value prints as `-`. A note is free text and goes through `oneline.Quote`
+(`"two words"`), so a blank inside the quotes is not hex-escaped (docs/STANDARD.md
+section 2, "The status word leads every line"). The status word follows the
+first token: `OK` on exit 0, `FAILED` when status exits non-zero, never `OK`
+on a non-zero exit.
 
 ```
 CONFIG ADD kind=<k> name=<n> rev=<id>
 CONFIG SET kind=<k> name=<n> rev=<id> changed=<f,g>
 CONFIG REMOVE kind=<k> name=<n> rev=<id>
-<KIND> name=<n> <field>=<v> ...                          (list: one per row; a note is cut to 60 characters and ends in ...)
-MACHINE name=<n> <field>=<v> ... os=<v> arch=<v> cores=<n> memory_gb=<n> beat=<t>   (list and show with a Redis: the live facts, - each when the beat lacks it)
-MACHINE name=<n> <field>=<v> ... beat=none                (with a Redis: no beat)
-MACHINE name=<n> <field>=<v> ... created=<t> updated=<t> loops=<l,...> [live facts]   (show: the machine's loops, - for none)
+<KIND> OK name=<n> <field>=<v> ...                          (list: one per row; a note is cut to 60 characters, quoted, and ends in ...)
+MACHINE OK name=<n> <field>=<v> ... os=<v> arch=<v> cores=<n> memory_gb=<n> beat=<t>   (list and show with a Redis: the live facts, - each when the beat lacks it)
+MACHINE OK name=<n> <field>=<v> ... beat=none                (with a Redis: no beat)
+MACHINE OK name=<n> <field>=<v> ... created=<t> updated=<t> loops=<l,...> [live facts]   (show: the machine's loops, - for none)
 CONFIG LIST kind=<k> rows=<n>
-<KIND> name=<n> <field>=<v> ... created=<t> updated=<t>  (show)
+<KIND> OK name=<n> <field>=<v> ... created=<t> updated=<t>  (show)
 HISTORY id=<id> kind=<k> name=<n> op=<op> actor=<a> at=<t> <field>=<before>><after> ...
 CONFIG HISTORY kind=<k> name=<n> changes=<n>
 CHECK ADD|SET|REMOVE kind=<k> name=<n> [changed=<f,g>]
@@ -833,10 +837,10 @@ MIGRATE NOT-OWNED table=config.<t> owner=<role> role=<role>   (migrate --dry-run
 MIGRATE SESSION role=<role> pid=<n> app=<name>|-   (migrate --dry-run: another nova session holding the database; migrate --window refuses while there is one)
 MIGRATE WOULD-REFUSE <the refusal migrate would print>; run: ALTER TABLE config."<t>" OWNER TO "<role>"; ...   (migrate --dry-run, ready=no)
 CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n> missing=<n> role=<role> ready=yes|no owner=<role>|mixed|none sessions=<n>]
-CONFIG STATUS pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
+CONFIG STATUS OK|FAILED pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (OK at exit 0; FAILED when status exits non-zero; a singleton: <kind>_rev alone)
 CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing <field>=<v>|<field>=<before>><after> ...   (add, set, remove --dry-run)
 NOTE machine=<m> width=0: no sprint member, ...; run: nova-config machine set <m> --width <n> ...   (machine add with no --width)
-LOOP name=<n> <field>=<v> ... created=<t> updated=<t>   (loop show; the argv is the words the unit runs)
+LOOP OK name=<n> <field>=<v> ... created=<t> updated=<t>   (loop show; the argv is the words the unit runs)
 CONFIG KIND name=<k> table=config.<t> fields=<f,...> required=<f,...> rows=many|one
 CONFIG KINDS count=<n>
 ```
