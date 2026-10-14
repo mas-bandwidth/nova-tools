@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 )
 
 // initCMakeRepo makes a throwaway git repository under t.TempDir() holding a CMakeLists.txt
@@ -19,9 +21,7 @@ func initCMakeRepo(t *testing.T) (dir, sha string) {
 	git := func(args ...string) string {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		cmd.Env = testgit.Environ()
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
 		return strings.TrimSpace(string(out))
@@ -74,7 +74,7 @@ func TestLintBriefHoldsACtestTestAtBase(t *testing.T) {
 		return os.WriteFile(filepath.Join(dir2, "CMakeLists.txt"), []byte("add_test(BareName COMMAND demo)\n"), 0o644)
 	}())
 	cmd := exec.Command("git", "-C", dir2, "commit", "-q", "-am", "bare")
-	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+	cmd.Env = testgit.Environ()
 	require.NoError(t, cmd.Run())
 	bareSha := strings.TrimSpace(mustGit(t, dir2, "rev-parse", "HEAD"))
 	_ = sha2

@@ -622,10 +622,10 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		name, email = id.Name, id.Email
 		identity = id.Env()
 	}
-	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.name", name).CombinedOutput(); err != nil {
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "--local", "--", "user.name", name).CombinedOutput(); err != nil {
 		return fail("config user.name", out, err)
 	}
-	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.email", email).CombinedOutput(); err != nil {
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "--local", "--", "user.email", email).CombinedOutput(); err != nil {
 		return fail("config user.email", out, err)
 	}
 

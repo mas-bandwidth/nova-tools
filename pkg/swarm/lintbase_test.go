@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 )
 
 // initBaseRepo makes a throwaway git repository under t.TempDir() holding a Go package
@@ -20,9 +22,7 @@ func initBaseRepo(t *testing.T) (dir, sha string) {
 	git := func(args ...string) string {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		cmd.Env = testgit.Environ()
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
 		return strings.TrimSpace(string(out))

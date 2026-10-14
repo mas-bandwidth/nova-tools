@@ -334,8 +334,6 @@ func ChildRemedy(rules []ChildRule, check string) string {
 		return LibrariesConsideredRemedy
 	case EmptyCardCheck:
 		return EmptyCardRemedy
-	case DashboardAskCheck:
-		return DashboardAskRemedy
 	}
 	return ""
 }

@@ -3,12 +3,15 @@ package swarm
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
@@ -19,9 +22,7 @@ import (
 // so the test's setup commits never depend on the machine's own identity.
 func stageTestGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	env := append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
-		"GIT_AUTHOR_NAME=setup", "GIT_AUTHOR_EMAIL=setup@example.invalid",
-		"GIT_COMMITTER_NAME=setup", "GIT_COMMITTER_EMAIL=setup@example.invalid")
+	env := testgit.Environ("GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
 	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir, Env: env, OwnRepo: dir != ""}, args...)
 	require.NoError(t, err, "git %v: %s", args, res.Stderr)
 	return strings.TrimSpace(string(res.Stdout))
@@ -33,19 +34,16 @@ func stageTestGit(t *testing.T, dir string, args ...string) string {
 // identity). The staging git runs with a planted global config naming the owner; the commit
 // must still be the configured identity.
 func TestReworkAtTipCarriesTheConfiguredIdentity(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	require.NoError(t, os.Mkdir(home, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
 		[]byte("[user]\n\tname = Owner\n\temail = owner@example.com\n"), 0o600))
-	// The staging git (stageGit) reads the process environment: plant a HOME naming the
-	// owner and a different author, so the configured identity is the only thing that can
-	// make the commit the machine's.
-	t.Setenv("HOME", home)
-	t.Setenv("GIT_AUTHOR_NAME", "owner")
-	t.Setenv("GIT_AUTHOR_EMAIL", "owner@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "owner")
-	t.Setenv("GIT_COMMITTER_EMAIL", "owner@example.com")
+	// The staging git runs with a HOME naming the owner and a different author in its own
+	// environment (ownerGit), so the configured identity is the only thing that can make the
+	// commit the machine's.
+	git := ownerGit(home)
 
 	bare := filepath.Join(root, "origin.git")
 	work := filepath.Join(root, "work")
@@ -79,7 +77,7 @@ func TestReworkAtTipCarriesTheConfiguredIdentity(t *testing.T) {
 	stageTestGit(t, root, "clone", "-q", bare, clone)
 	identity := config.GitIdentity{Name: "nova-sprint", Email: "nova-sprint@example.invalid"}
 	var fetchTime, checkoutTime time.Duration
-	carry, what, out, err := restageAtTip(context.Background(), stageGit, clone, "sprint/card", "base",
+	carry, what, out, err := restageAtTip(context.Background(), git, clone, "sprint/card", "base",
 		Rework{Prev: prev, From: 1}, identity.Env(), &fetchTime, &checkoutTime)
 	require.NoError(t, err, "%s: %s", what, out)
 	require.NotNil(t, carry)
@@ -97,16 +95,12 @@ func TestReworkAtTipCarriesTheConfiguredIdentity(t *testing.T) {
 // that writes the local config; StageJobAs is the launcher's staging that calls it, and
 // StageJob is the live wrapper that passes the machine's own default.
 func TestStageJobCloneCarriesTheConfiguredIdentity(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	require.NoError(t, os.Mkdir(home, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
 		[]byte("[user]\n\tname = Owner\n\temail = owner@example.com\n"), 0o600))
-	t.Setenv("HOME", home)
-	t.Setenv("GIT_AUTHOR_NAME", "owner")
-	t.Setenv("GIT_AUTHOR_EMAIL", "owner@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "owner")
-	t.Setenv("GIT_COMMITTER_EMAIL", "owner@example.com")
 
 	pool := filepath.Join(root, "pool")
 	job := filepath.Join(root, "job")
@@ -143,16 +137,13 @@ func TestStageJobCloneCarriesTheConfiguredIdentity(t *testing.T) {
 // machine's own default applies). This is the live path a launcher triggers, not restageAtTip
 // or a *As variant alone (docs/SPEC-SPRINT.md, the machine's commit identity).
 func TestStageCardReworkCarriesTheConfiguredIdentity(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	require.NoError(t, os.Mkdir(home, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
 		[]byte("[user]\n\tname = Owner\n\temail = owner@example.com\n"), 0o600))
-	t.Setenv("HOME", home)
-	t.Setenv("GIT_AUTHOR_NAME", "owner")
-	t.Setenv("GIT_AUTHOR_EMAIL", "owner@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "owner")
-	t.Setenv("GIT_COMMITTER_EMAIL", "owner@example.com")
+	git := ownerGit(home)
 
 	remote := filepath.Join(root, "origin.git")
 	work := filepath.Join(root, "work")
@@ -185,6 +176,7 @@ func TestStageCardReworkCarriesTheConfiguredIdentity(t *testing.T) {
 		TargetDir: clone,
 		JobDir:    filepath.Join(root, "job"),
 		Rework:    &Rework{Prev: prev, From: 1},
+		git:       git,
 	})
 	require.NoError(t, err)
 	require.True(t, res.Staged)
@@ -195,4 +187,18 @@ func TestStageCardReworkCarriesTheConfiguredIdentity(t *testing.T) {
 	require.Equal(t, cardcontract.CarryOK, res.Carry.State)
 	got := stageTestGit(t, clone, "log", "-1", "--format=%an <%ae>|%cn <%ce>", res.Carry.Staged)
 	require.Equal(t, "nova-sprint <nova-sprint@example.invalid>|nova-sprint <nova-sprint@example.invalid>", got)
+}
+
+// ownerGit is stageGit with the owner's HOME and author in the command's own environment,
+// the host a worker might run on: a global config and an author that are not the machine's.
+// The staging steps append the configured identity after it, so only that identity can
+// name a commit the machine makes.
+func ownerGit(home string) func(context.Context, ...string) *exec.Cmd {
+	return func(ctx context.Context, args ...string) *exec.Cmd {
+		cmd := stageGit(ctx, args...)
+		cmd.Env = append(cmd.Env, "HOME="+home, "GIT_CONFIG_GLOBAL="+filepath.Join(home, ".gitconfig"),
+			"GIT_AUTHOR_NAME=owner", "GIT_AUTHOR_EMAIL=owner@example.com",
+			"GIT_COMMITTER_NAME=owner", "GIT_COMMITTER_EMAIL=owner@example.com")
+		return cmd
+	}
 }
