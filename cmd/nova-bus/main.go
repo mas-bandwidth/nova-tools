@@ -639,6 +639,9 @@ func (w world) send(c *tool.Call) *tool.Out {
 		Wait: c.Dur("deadline"),
 	}
 	b.TokenLife, b.TokenCleanup = c.Dur("token-life"), c.Dur("token-cleanup")
+	if refused := w.checkRecipients(context.Background(), b, as, draft, dry); refused != nil {
+		return refused
+	}
 	send := b.Send
 	if dry {
 		send = b.Check
@@ -655,6 +658,99 @@ func (w world) send(c *tool.Call) *tool.Out {
 	}
 	o = loginFact(o.Fact("at", m.At.Format(time.RFC3339)).
 		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
+	return o
+}
+
+func downReason(st hook.Status) string {
+	switch {
+	case st.Down != "" && st.State == hook.StateProven:
+		return st.Down
+	case st.Reason != "":
+		return st.Reason
+	default:
+		return st.State
+	}
+}
+
+func (w world) checkRecipients(ctx context.Context, b *bus.Bus, as string, draft bus.Message, dry bool) *tool.Out {
+	var rcpts []string
+	for _, n := range slices.Compact(slices.Sorted(slices.Values(slices.Concat(draft.To, draft.CC)))) {
+		if bus.CheckName(n) == "" {
+			rcpts = append(rcpts, n)
+		}
+	}
+	if len(rcpts) == 0 {
+		return nil
+	}
+	sts, _, err := w.hooks(ctx, b.Store, rcpts...)
+	if err != nil {
+		return tool.Refuse("the hook record could not be read: " + err.Error())
+	}
+	allUp := true
+	for _, st := range sts {
+		if st.State != hook.StateProven || st.Down != "" {
+			allUp = false
+			break
+		}
+	}
+	if allUp {
+		return nil
+	}
+	if _, err := b.Check(ctx, draft); err != nil {
+		return answer(err)
+	}
+	if draft.Token != "" && !dry {
+		if _, found, serr := b.Store.Sent(ctx, bus.SentOf(as, draft.Token)); serr == nil && found {
+			return nil
+		}
+	}
+	coord := ""
+	if !dry {
+		if all, nerr := b.Names(ctx); nerr == nil {
+			if allSts, _, herr := w.hooks(ctx, b.Store, all...); herr == nil {
+				for _, st := range allSts {
+					if st.Role == hook.Coordinator && st.State == hook.StateProven && st.Down == "" {
+						coord = st.Name
+						break
+					}
+				}
+			}
+		}
+	}
+	var problems, reasons, notes []string
+	firstDown := ""
+	for _, st := range sts {
+		if st.State == hook.StateProven && st.Down == "" {
+			continue
+		}
+		if firstDown == "" {
+			firstDown = st.Name
+		}
+		why := downReason(st)
+		problems = append(problems, fmt.Sprintf("%s is down (%s)", st.Name, why))
+		reasons = append(reasons, hookgate.Reason)
+		if !dry && coord != "" {
+			once := fmt.Sprintf("hook:down:%s:%d:%s:%t", st.Name, st.Epoch, st.State, st.Down != "")
+			if _, found, serr := b.Store.Sent(ctx, once); serr == nil && !found {
+				subject := "FRIEND DOWN " + st.Name + ": " + why
+				body := subject + "\nAnswer with nova-bus send --re <this message's id> and one of: wait | reassign " + st.Name + "'s work | tell the owner.\n"
+				jm, jerr := b.Send(ctx, bus.Message{From: as, To: []string{coord}, Kind: bus.KindJudgment, Subject: subject, Body: body, Once: once})
+				if jerr == nil && jm.ID != "" {
+					if hs, herr := hookgate.Store(b.Store); herr == nil {
+						if oerr := hs.OpenJudgment(ctx, hook.Judgment{ID: jm.ID, To: []string{coord}, Subject: subject}, 2*time.Minute); oerr != nil {
+							notes = append(notes, "the judgment record could not be written: "+oerr.Error())
+						}
+					}
+				}
+			}
+		}
+	}
+	o := tool.Fail(problems...)
+	o.Reasons = reasons
+	o.Remedy = "nova-hook status --as " + firstDown
+	for _, n := range notes {
+		o.Note(n)
+	}
 	return o
 }
 
