@@ -33,7 +33,7 @@ func runSSH(t *testing.T, r sshRig) Result {
 				}
 				var b strings.Builder
 				for _, m := range r.benches {
-					fmt.Fprintf(&b, "MACHINE name=%s user=nova seat=%s slots=4 runners=0 width=- tla=false note=- os=- arch=- cores=4 memory_gb=- beat=none\n", m, m)
+					fmt.Fprintf(&b, "MACHINE OK name=%s user=nova seat=%s slots=4 runners=0 width=- tla=false note=- os=- arch=- cores=4 memory_gb=- beat=none\n", m, m)
 				}
 				fmt.Fprintf(&b, "CONFIG LIST kind=machine rows=%d\n", len(r.benches))
 				return b.String(), nil

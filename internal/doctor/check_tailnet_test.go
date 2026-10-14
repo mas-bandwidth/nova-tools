@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // tailnetJSON builds a `tailscale status --json` body: a backend in state, this
@@ -29,11 +30,12 @@ func tailnetJSON(state, self string, peers ...string) string {
 }
 
 // novaConfigList builds `nova-config machine list` output for the given machines:
-// one `MACHINE name=<n> ...` line each, then the `CONFIG LIST` tally.
+// one `MACHINE OK name=<n> ...` line each (docs/SPEC-CONFIG.md, "Lines"), then
+// the `CONFIG LIST` tally.
 func novaConfigList(names ...string) string {
 	var b strings.Builder
 	for _, n := range names {
-		fmt.Fprintf(&b, "MACHINE name=%s user=u seat=coordinator slots=1 runners=0 width=- tla=false note=-\n", n)
+		fmt.Fprintf(&b, "MACHINE OK name=%s user=u seat=coordinator slots=1 runners=0 width=- tla=false note=-\n", n)
 	}
 	fmt.Fprintf(&b, "CONFIG LIST kind=machine rows=%d\n", len(names))
 	return b.String()
@@ -130,6 +132,14 @@ func TestDoctorTailnetCheckNamesTheMissingPeer(t *testing.T) {
 		r := checkTailnet(context.Background(), env)
 		assert.Equal(t, Fail, r.Status, r)
 		assert.Contains(t, r.Evidence, "inventory")
+	})
+	t.Run("a printed list line is not read as zero machines", func(t *testing.T) {
+		t.Parallel()
+		printed := novaConfigList("m1", "m2")
+		names := MachineNames(printed)
+		require.NotEmpty(t, names, "printed list read as zero machines: %q", printed)
+		require.Equal(t, []string{"m1", "m2"}, names)
+		require.Empty(t, MachineNames(strings.ReplaceAll(printed, "MACHINE OK name=", "MACHINE name=")), "the old prefix is not the line the tool prints")
 	})
 	t.Run("under --local the check is skipped and says why", func(t *testing.T) {
 		t.Parallel()

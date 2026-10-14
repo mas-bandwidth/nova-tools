@@ -133,15 +133,25 @@ func firstLabel(s string) string {
 }
 
 // inventoryNames is the machine rows nova-config has applied, read from
-// `nova-config machine list` (docs/SPEC-CONFIG.md, "Lines"): one
-// `MACHINE name=<n> ...` line per machine, plus a `CONFIG LIST` tally.
+// `nova-config machine list` (docs/SPEC-CONFIG.md, "Lines"; docs/STANDARD.md
+// section 2, "The status word leads every line"): one
+// `MACHINE OK name=<n> ...` line per machine, plus a `CONFIG LIST` tally.
 func inventoryNames(ctx context.Context, env Env) ([]string, error) {
 	out, err := env.Exec(ctx, "nova-config", "machine", "list")
 	if err != nil {
 		return nil, fmt.Errorf("nova-config machine list: %w", err)
 	}
+	return MachineNames(out), nil
+}
+
+// MachineNames reads machine names from `nova-config machine list` stdout
+// (docs/SPEC-CONFIG.md, "Lines"; docs/STANDARD.md section 2, "The status word
+// leads every line"). A row is `MACHINE OK name=<n> ...`. The old
+// `MACHINE name=` prefix is not a row: a parser that still wants it reads
+// zero machines from the line the tool prints.
+func MachineNames(out string) []string {
+	const prefix = "MACHINE OK name="
 	var names []string
-	const prefix = "MACHINE name="
 	for _, l := range strings.Split(out, "\n") {
 		if !strings.HasPrefix(l, prefix) {
 			continue
@@ -155,5 +165,5 @@ func inventoryNames(ctx context.Context, env Env) ([]string, error) {
 			names = append(names, name)
 		}
 	}
-	return names, nil
+	return names
 }

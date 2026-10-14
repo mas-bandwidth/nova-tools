@@ -592,8 +592,10 @@ func novaConfigMachines(ctx context.Context) ([]benchRow, error) {
 	return parseMachineList(out.String()), nil
 }
 
-// parseMachineList reads the MACHINE lines of `nova-config machine list`: the
-// name, and tla=true for a record machine (a row with no tla field is none).
+// parseMachineList reads the MACHINE lines of `nova-config machine list`
+// (docs/SPEC-CONFIG.md, "Lines"; docs/STANDARD.md section 2, "The status word
+// leads every line"): `MACHINE OK name=<n> ...`, and tla=true for a record
+// machine (a row with no tla field is none).
 func parseMachineList(out string) []benchRow {
 	var rows []benchRow
 	for _, l := range strings.Split(out, "\n") {

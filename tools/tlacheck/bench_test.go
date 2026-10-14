@@ -435,7 +435,7 @@ func TestTheSSHCommandsAreQuotedAndNiced(t *testing.T) {
 // is none.
 func TestTheMachineRowsAreReadFromNovaConfigsList(t *testing.T) {
 	t.Parallel()
-	rows := parseMachineList("MACHINE name=vision user=glenn seat=vision slots=64 runners=0 width=32 tla=true\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 tla=false\nMACHINE name=old user=u seat=s slots=1 runners=0 width=0\nCONFIG LIST kind=machine rows=3\n")
+	rows := parseMachineList("MACHINE OK name=vision user=glenn seat=vision slots=64 runners=0 width=32 tla=true\nMACHINE OK name=studio user=glenn seat=studio slots=64 runners=1 width=0 tla=false\nMACHINE OK name=old user=u seat=s slots=1 runners=0 width=0\nCONFIG LIST kind=machine rows=3\n")
 	if fmt.Sprint(rows) != fmt.Sprint([]benchRow{{"vision", true}, {"studio", false}, {"old", false}}) {
 		t.Errorf("rows = %v", rows)
 	}
