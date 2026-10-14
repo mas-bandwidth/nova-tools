@@ -80,6 +80,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	gocacheGiB := fs.Int("gocache-limit", int(gocache.Limit/gib), "the `GiB` the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
+	serverHost := fs.Bool("server-host", false, "this member runs on the host that runs the sprint server: bound each card's threads and run its process group behind the server (default false; a member never guesses it is the server)")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -214,6 +215,11 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// decide read with it, a worker's the gate decision of a red gate, and neither
 	// hands it to the harness (nativedecide.go, nativegate.go, nativeChildEnv)
 	nativePass := append(append([]string{}, pass...), decide.JevSecret)
+	// the server host reserve (hostreserve.go): the policy is decided here, once,
+	// from --server-host or the fleet row's coordinator, and rides every launch
+	cores := runtime.NumCPU()
+	onServerHost := serverHostOf(*serverHost, nil, os.Hostname)
+	reserve := hostReserve(onServerHost, runtime.GOOS, cores)
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
@@ -221,6 +227,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		server: *server, as: *as,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
+		reserve:    reserve,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
@@ -271,6 +278,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		modelWord = "card,override:" + *model
 	}
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s server=%s harness=%s model=%s stage-wall=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*server), oneline.Field(*harness), oneline.Field(modelWord), oneline.Field(stageWall.d.String()))
+	// the reserve in force, once, so a reader sees the policy the launches run under
+	printReserve(stdout, onServerHost, reserve, cores)
 	// the machine's one model catalog, refreshed once here and never per launch (catalog.go)
 	fmt.Fprintf(stdout, "CATALOG %s\n", oneline.Escape(refreshCatalog(*harness, *root)))
 	if note := passNote(*model, pass, *auth); note != "" {
@@ -558,6 +567,13 @@ type nativeRunner struct {
 	load              hostload.Source
 	maxLoad, warnLoad float64
 
+	// reserve is the server host policy every launch runs under (hostreserve.go):
+	// the zero value changes nothing. background is the platform's QoS hook,
+	// called once for a launch's leader when reserve.Background; nil means the
+	// platform's own (setBackgroundQoS), a test's its fake.
+	reserve    reservePolicy
+	background func(int) error
+
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
 	// is the cleaner's queue; nil cleans in Ended
@@ -586,6 +602,23 @@ func (r *nativeRunner) stageTimeout() time.Duration {
 		return r.stageWall
 	}
 	return swarm.DefaultStageTimeout
+}
+
+// childEnvFor is the environment one native child starts with, with the server
+// host reserve applied (hostreserve.go, reserveEnv): GOMAXPROCS bounded on the
+// server host and unchanged elsewhere, and a card env that already sets
+// GOMAXPROCS keeps its value.
+func (r *nativeRunner) childEnvFor(model string) []string {
+	return reserveEnv(r.childEnv(model), r.reserve)
+}
+
+// backgroundHook is the platform's background-QoS hook for a launch: the test's
+// fake when one is set, else the platform's own (setBackgroundQoS).
+func (r *nativeRunner) backgroundHook() func(int) error {
+	if r.background != nil {
+		return r.background
+	}
+	return setBackgroundQoS
 }
 
 // started marks a launch running, so no prune of the pool touches its directory until the
@@ -811,7 +844,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	// native leads a session of its own, and the mark, the launch's slot, goes down to every
 	// process its harness starts (native keeps NOVA_SWARM_ names), so the lane's end reaches
 	// a process that left the session too
-	cmd.Env = append(environWithoutName(r.childEnv(model), swarm.LaneEnv), swarm.LaneEnv+"="+slot)
+	cmd.Env = append(environWithoutName(r.childEnvFor(model), swarm.LaneEnv), swarm.LaneEnv+"="+slot)
 	ownLaneSession(cmd)
 	logf, err := os.Create(logPath)
 	if err != nil {
@@ -825,6 +858,12 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		release()
 		logf.Close()
 		return nil, err
+	}
+	// the server host reserve: the leader and everything below it step behind the
+	// server's QoS before the card runs a step (hostreserve.go, applyBackground)
+	if err := applyBackground(r.reserve, cmd.Process.Pid, r.backgroundHook()); err != nil && r.stderr != nil {
+		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and the server host reserve could not set its background QoS (%s): the card runs at the priority it started with\n",
+			oneline.Field(p.Card), cmd.Process.Pid, oneline.Err(err))
 	}
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+" "+swarm.LaneStartStamp(cmd.Process.Pid)+"\n"), 0o644); err != nil && r.stderr != nil {
 		// the child runs; only a restart's way back to it is lost, so the member says so and goes on

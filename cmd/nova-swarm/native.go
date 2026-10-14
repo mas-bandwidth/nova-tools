@@ -2218,6 +2218,10 @@ func keepNativeEnv(name string) bool {
 	switch name {
 	case "PATH", "LANG", "TERM":
 		return true
+	case "GOMAXPROCS":
+		// the server host reserve bounds a card's threads when the member sets it
+		// (hostreserve.go, reserveEnv); the member's own environment otherwise
+		return true
 	case "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL":
 		return true
 	}
