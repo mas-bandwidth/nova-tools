@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -280,22 +281,10 @@ func compareFloorSeq(path, locus string, got, want []string, display map[string]
 			mismatch = true
 		}
 	}
-	if !mismatch && !equalSeq(got, want) {
+	if !mismatch && !slices.Equal(got, want) {
 		failures = append(failures, Failure{path, fmt.Sprintf("%s: all floors present but reordered: got %q; pinned order %q", locus, got, want)})
 	}
 	return failures
-}
-
-func equalSeq(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // sliceSection returns the body of the first `## ` section whose heading

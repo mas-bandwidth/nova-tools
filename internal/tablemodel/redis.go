@@ -76,14 +76,14 @@ type quiet struct{}
 
 func (quiet) Printf(context.Context, string, ...any) {}
 
-var quietOnce sync.Once
+var quietOnce = sync.OnceFunc(func() { redis.SetLogger(quiet{}) })
 
 // StartServer runs the redis-server program in a new directory under tmp (the
 // system temporary directory when empty) and connects to its socket. The
 // server has this long to create the socket, and its output is kept in
 // Dir/redis.log, which is what a caller reports when it does not come up.
 func StartServer(ctx context.Context, program, tmp string, startup time.Duration) (*Server, error) {
-	quietOnce.Do(func() { redis.SetLogger(quiet{}) })
+	quietOnce()
 	dir, err := os.MkdirTemp(tmp, "tablemodel-")
 	if err != nil {
 		return nil, cannotRun(err)

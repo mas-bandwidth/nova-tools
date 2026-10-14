@@ -1,6 +1,7 @@
 package update
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -1008,7 +1009,7 @@ func diffMoved(before, after movedInv, stated map[string]string) (entries []stri
 			consumed[old], consumed[name] = true, true
 		}
 	}
-	sort.Slice(renames, func(i, j int) bool { return renames[i][0] < renames[j][0] })
+	slices.SortFunc(renames, func(a, b [2]string) int { return cmp.Compare(a[0], b[0]) })
 	for _, r := range renames {
 		entries = append(entries, "renamed="+r[0]+"->"+r[1])
 		counts.renamed++

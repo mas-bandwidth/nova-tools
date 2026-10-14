@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -149,7 +149,7 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 			lines = append(lines, fmt.Sprintf("ADOPT ESCALATE check=%s to=%s", r.check.Name, r.check.Owner))
 		}
 	}
-	sort.Strings(lines)
+	slices.Sort(lines)
 	sha := shaText(strings.Join(lines, "\n"))[:12]
 	done := fmt.Sprintf("ADOPT DONE sha=%s ok=%d refused=%d", sha, ok, refused)
 	if _, err := okBuf.WriteTo(out); err != nil {

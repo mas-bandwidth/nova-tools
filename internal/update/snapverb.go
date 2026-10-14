@@ -1,12 +1,13 @@
 package update
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -232,7 +233,7 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	if len(rows) == 0 {
 		return tool.Refuse(fmt.Sprintf("--bin %s holds no nova-* regular file (supply a readable --bin: a directory of nova-* executables)", bin))
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].name < rows[j].name })
+	slices.SortFunc(rows, func(a, b snapRow) int { return cmp.Compare(a.name, b.name) })
 	for i := 1; i < len(rows); i++ {
 		if rows[i].stamp != rows[0].stamp {
 			return tool.Refuse(fmt.Sprintf("mixed stamps: %s=%s %s=%s (rebuild the set under one stamp with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", rows[0].name, rows[0].stamp, rows[i].name, rows[i].stamp))
@@ -279,7 +280,7 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	// SECURITY #81 finding 2: every nova-* non-directory entry skipped for
 	// not being a regular file (e.g. a symlink or failed Info) is noted on the
 	// success output so omitted binaries are never silent (SPEC-VERSION item 2).
-	sort.Strings(skipped)
+	slices.Sort(skipped)
 	for _, name := range skipped {
 		o.Note(fmt.Sprintf("%s: symlink, not a regular file; not snapshotted", oneline.Quote(name)))
 	}

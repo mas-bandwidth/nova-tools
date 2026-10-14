@@ -8,7 +8,6 @@ package converge
 import (
 	"maps"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,7 +53,7 @@ func Batches(merged []PR, logs map[int]int) []Batch {
 		}
 		out = append(out, b)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].MergedAt.Before(out[j].MergedAt) })
+	slices.SortFunc(out, func(a, b Batch) int { return a.MergedAt.Compare(b.MergedAt) })
 	return out
 }
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -114,9 +114,9 @@ func Check(out string, opt CheckOptions) (*CheckResult, error) {
 			r.Strays = append(r.Strays, path)
 		}
 	}
-	sort.Strings(days)
-	sort.Strings(r.Strays)
-	sort.Strings(r.Notes)
+	slices.Sort(days)
+	slices.Sort(r.Strays)
+	slices.Sort(r.Notes)
 	if len(days) > 0 {
 		r.First, r.Last = days[0], days[len(days)-1]
 	}

@@ -5,6 +5,7 @@ package allowlist
 // selects explicit package-qualified keys instead.
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -13,7 +14,6 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
@@ -131,7 +131,7 @@ func (p *Packages) Rows() []Row {
 	for _, list := range p.Lists() {
 		rows = append(rows, list.Rows()...)
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Key < rows[j].Key })
+	slices.SortFunc(rows, func(a, b Row) int { return cmp.Compare(a.Key, b.Key) })
 	return rows
 }
 
@@ -265,10 +265,10 @@ func CheckPackagesCountedMode(r Reporter, p *Packages, measured map[string]int, 
 			plans = append(plans, plan{list: list, text: text})
 		}
 	}
-	sort.Strings(result.Unlisted)
-	sort.Slice(result.Over, func(i, j int) bool { return result.Over[i].Key < result.Over[j].Key })
-	sort.Slice(result.Lowered, func(i, j int) bool { return result.Lowered[i].Key < result.Lowered[j].Key })
-	sort.Slice(result.Stale, func(i, j int) bool { return result.Stale[i].Key < result.Stale[j].Key })
+	slices.Sort(result.Unlisted)
+	slices.SortFunc(result.Over, func(a, b CountRow) int { return cmp.Compare(a.Key, b.Key) })
+	slices.SortFunc(result.Lowered, func(a, b CountRow) int { return cmp.Compare(a.Key, b.Key) })
+	slices.SortFunc(result.Stale, func(a, b Row) int { return cmp.Compare(a.Key, b.Key) })
 	if !update {
 		return result
 	}

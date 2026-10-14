@@ -12,6 +12,7 @@ package slowtests
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,7 +20,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -522,20 +522,16 @@ func Judge(events []Event, b Budgets) Report {
 	}
 
 	report := Report{Packages: len(order), Budget: time.Duration(b.Package * float64(time.Second)), OverTests: overTests, Sleepers: sleepers, Truncated: truncatedPackages(events)}
-	sort.SliceStable(report.OverTests, func(i, j int) bool {
-		if report.OverTests[i].Seconds != report.OverTests[j].Seconds {
-			return report.OverTests[i].Seconds > report.OverTests[j].Seconds
-		}
-		if report.OverTests[i].Package != report.OverTests[j].Package {
-			return report.OverTests[i].Package < report.OverTests[j].Package
-		}
-		return report.OverTests[i].Name < report.OverTests[j].Name
+	slices.SortStableFunc(report.OverTests, func(a, b OverTest) int {
+		return cmp.Or(
+			cmp.Compare(b.Seconds, a.Seconds),
+			cmp.Compare(a.Package, b.Package),
+			cmp.Compare(a.Name, b.Name),
+		)
 	})
 	for _, name := range order {
 		pkg := byPackage[name]
-		sort.SliceStable(pkg.Slowest, func(i, j int) bool {
-			return pkg.Slowest[i].Seconds > pkg.Slowest[j].Seconds
-		})
+		slices.SortStableFunc(pkg.Slowest, func(a, b Test) int { return cmp.Compare(b.Seconds, a.Seconds) })
 		if len(pkg.Slowest) > testsKept {
 			pkg.Slowest = pkg.Slowest[:testsKept]
 		}
@@ -547,11 +543,8 @@ func Judge(events []Event, b Budgets) Report {
 			report.Over = append(report.Over, *pkg)
 		}
 	}
-	sort.SliceStable(report.Over, func(i, j int) bool {
-		if report.Over[i].Seconds != report.Over[j].Seconds {
-			return report.Over[i].Seconds > report.Over[j].Seconds
-		}
-		return report.Over[i].Name < report.Over[j].Name
+	slices.SortStableFunc(report.Over, func(a, b Package) int {
+		return cmp.Or(cmp.Compare(b.Seconds, a.Seconds), cmp.Compare(a.Name, b.Name))
 	})
 	return report
 }

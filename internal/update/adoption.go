@@ -2,12 +2,12 @@ package update
 
 import (
 	"bufio"
+	"cmp"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
@@ -105,11 +105,8 @@ func adoptionVerb(name string, args []string, out, errs io.Writer) int {
 			selected = append(selected, r)
 		}
 	}
-	sort.SliceStable(selected, func(i, j int) bool {
-		if selected[i].Tool == selected[j].Tool {
-			return selected[i].Friend < selected[j].Friend
-		}
-		return selected[i].Tool < selected[j].Tool
+	slices.SortStableFunc(selected, func(a, b adoption) int {
+		return cmp.Or(cmp.Compare(a.Tool, b.Tool), cmp.Compare(a.Friend, b.Friend))
 	})
 	res := &tool.Out{Verb: "adoption", Status: tool.OK}
 	friends := map[string]bool{}

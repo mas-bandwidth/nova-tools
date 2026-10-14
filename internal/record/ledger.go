@@ -13,11 +13,12 @@
 package record
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -109,15 +110,8 @@ func CheckLedgerDay(day string, entries []LedgerEntry) error {
 
 // SortLedgerTotals is the report's order: by the key columns ascending.
 func SortLedgerTotals(t []LedgerTotal) {
-	sort.SliceStable(t, func(i, j int) bool {
-		a, b := t[i], t[j]
-		if a.Day != b.Day {
-			return a.Day < b.Day
-		}
-		if a.Model != b.Model {
-			return a.Model < b.Model
-		}
-		return a.Repo < b.Repo
+	slices.SortStableFunc(t, func(a, b LedgerTotal) int {
+		return cmp.Or(cmp.Compare(a.Day, b.Day), cmp.Compare(a.Model, b.Model), cmp.Compare(a.Repo, b.Repo))
 	})
 }
 
@@ -215,9 +209,9 @@ func (quietRedis) Printf(context.Context, string, ...interface{}) {}
 // silenceRedisLoggerOnce makes the install once per process: redis.SetLogger writes a
 // package-level variable inside go-redis, and two dials in one process writing it again is
 // a data race, so the install is serialized once per process.
-var silenceRedisLoggerOnce sync.Once
+var silenceRedisLoggerOnce = sync.OnceFunc(func() { redis.SetLogger(quietRedis{}) })
 
-func silenceRedisLogger() { silenceRedisLoggerOnce.Do(func() { redis.SetLogger(quietRedis{}) }) }
+func silenceRedisLogger() { silenceRedisLoggerOnce() }
 
 // Ping is one PING, so a verb names an unreachable store before it reads any file.
 func (s *RedisLedger) Ping(ctx context.Context) error { return s.rdb.Ping(ctx).Err() }
