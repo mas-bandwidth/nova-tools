@@ -252,7 +252,19 @@ const (
 // LedgerPath is the shrink-only ledger, found from this source file.
 func LedgerPath() string {
 	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
+	p := filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	if dir, err := os.Getwd(); err == nil {
+		for d := dir; d != "" && d != "/"; d = filepath.Dir(d) {
+			cand := filepath.Join(d, "internal", "ci", "testdata", "help-complete-ledger.txt")
+			if _, err := os.Stat(cand); err == nil {
+				return cand
+			}
+		}
+	}
+	return p
 }
 
 var (
