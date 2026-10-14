@@ -428,9 +428,9 @@ example: nova-bus overdue --older 10m`,
 				Run: w.overdue,
 			},
 			{
-				Name:    "asks",
-				Usage:   "asks [--as <me>] [--open | --timedout | --all] [--liveness [--window <duration>]] [--max <n>] [--timeout <duration>] [--redis <addr>]",
-				Effect:  tool.Inspection,
+				Name:   "asks",
+				Usage:  "asks [--as <me>] [--open | --timedout | --all] [--liveness [--window <duration>]] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Effect: tool.Inspection,
 				Detail: `Prints ASKS OK count=<n> open=<n> answered=<n> timedout=<n>, then one ASKS ASK id=<id>
 state=<open|answered|timedout> to=<names> deadline=<RFC3339> age=<duration> answered_by=<name|->
 timeout=<id|-> subject=<s> line per ask you sent (send --kind ask --deadline <d>), newest first; count is
