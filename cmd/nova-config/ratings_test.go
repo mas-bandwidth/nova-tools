@@ -128,7 +128,7 @@ func TestConfigInvalidEnumListsOptions(t *testing.T) {
 				return f
 			}
 		}
-		t.Fatal("provider billing descriptor not found")
+		require.Fail(t, "provider billing descriptor not found")
 		return config.Field{}
 	}()
 	args := []string{"provider", "add", "test", "--billing", "invalid", "--funded", "false", "--actor", "tester", "--file", "try.json"}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -288,7 +289,7 @@ func TestApplyRefusesMissingFleetEndpointsWithoutRewritingALegacyMember(t *testi
 			const argv = `["/usr/bin/env","NOVA_SPRINT_REDIS=bench-beta:6380","nova-swarm","member"]`
 			legacy := loopView("member-beta", "bench-beta", map[string]string{"argv": argv})
 			ap.views[KindLoop] = map[string]View{"member-beta": legacy}
-			_, err = Apply(context.Background(), st, ap, KindFleet, "operator", check, func(Op) { t.Error("refusal reported an operation") })
+			_, err = Apply(context.Background(), st, ap, KindFleet, "operator", check, func(Op) { assert.Fail(t, "refusal reported an operation") })
 			require.ErrorContains(t, err, "endpoints are unset: redis_port")
 			require.ErrorContains(t, err, "nova-config fleet set --redis_port <port> --pg_dsn <dsn>")
 			require.Empty(t, ap.log)
@@ -529,7 +530,7 @@ func TestApplyRefusesAnEnabledRouteWithNoPrice(t *testing.T) {
 			ctx := context.Background()
 			st, _ := insertRoute(t, "pro-mercury3", map[string]string{"tier": "pro", "provider": "inception", "model": "mercury-3-preview-1002", "deadline": "1800"})
 			ap := newFake()
-			res, err := Apply(ctx, st, ap, KindRoute, "operator", check, func(Op) { t.Error("a refusal reported an operation") })
+			res, err := Apply(ctx, st, ap, KindRoute, "operator", check, func(Op) { assert.Fail(t, "a refusal reported an operation") })
 			require.Error(t, err)
 			require.True(t, Refused(err), "a refusal (exit 1), not a failure")
 			require.ErrorIs(t, err, ErrInvalid)
