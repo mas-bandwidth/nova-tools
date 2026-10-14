@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -12,26 +11,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
-	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 )
 
 const (
 	maxCodexHistoryBytes = 1 << 20
 	maxCodexHistory      = 4096
 	maxCodexRecovery     = 128
-	codexLockName        = ".native-client.lock"
 )
-
-func lockCodexRoute(directory string) (func() error, error) {
-	if err := privateCodexDirectory(directory); err != nil {
-		return nil, err
-	}
-	lock, err := filelock.TryLock(filepath.Join(directory, codexLockName), "nova-hook native delivery")
-	if err != nil {
-		return nil, err
-	}
-	return lock.Unlock, nil
-}
 
 // codexBacklog covers the Redis-clock 24h range through captured tail within a
 // fixed budget. An answer to a later message never hides an earlier one.
@@ -143,7 +130,7 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 	seenSenders := map[string]bool{}
 	for _, entry := range entries {
 		m := entry.Message()
-		if canonicalHookChallenge(m, s.as) && !seenSenders[m.From] {
+		if canonical(m, s.as) && !seenSenders[m.From] {
 			if why := bus.CheckName(m.From); why != "" {
 				return codexRecovery{}, errors.New(why)
 			}
@@ -162,7 +149,7 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 		}
 	}
 	obsoleteProtocol := func(m bus.Message) bool {
-		return !isCurrentChallenge(m) && serverRole[m.From] && canonicalHookChallenge(m, s.as)
+		return !isCurrentChallenge(m) && serverRole[m.From] && canonical(m, s.as)
 	}
 	ids := make([]string, 0, len(entries))
 	historyBytes := 0
@@ -256,32 +243,6 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 	return plan, nil
 }
 
-// A reserved obsolete protocol event must match the server's entire existing
-// shape, including recipient and nonce, and come from an eligible server role.
-// This never grants permission to prove: only the current nonce hash can do so.
-func canonicalHookChallenge(m bus.Message, recipient string) bool {
-	if !strings.HasPrefix(m.Subject, "HOOK CHALLENGE nonce=") {
-		return false
-	}
-	nonce := strings.TrimPrefix(m.Subject, "HOOK CHALLENGE nonce=")
-	if _, err := codexdesktop.SavedPath("/validated", nonce); err != nil {
-		return false
-	}
-	_, rest, ok := strings.Cut(m.Body, ", before anything else, within ")
-	if !ok {
-		return false
-	}
-	interval, _, ok := strings.Cut(rest, ", with: ")
-	if !ok {
-		return false
-	}
-	every, err := time.ParseDuration(interval)
-	if err != nil || every < time.Second {
-		return false
-	}
-	return m.Body == challengeText(recipient, nonce, every)
-}
-
 func (p *codexRecovery) afterEpoch(epoch int64) {
 	if len(p.challengeIDs) == 0 || p.challengeEpoch == epoch {
 		return
@@ -294,4 +255,10 @@ func (p *codexRecovery) afterEpoch(epoch int64) {
 	}
 	p.messages = kept
 	p.challengeIDs = nil
+}
+
+// canonical reports whether m has the server's whole challenge shape.
+func canonical(m bus.Message, recipient string) bool {
+	_, ok := notice.Canonical(m, recipient)
+	return ok
 }

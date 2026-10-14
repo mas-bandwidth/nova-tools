@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
 )
 
 // BusNotice frames external data without making it a user instruction.
@@ -36,7 +37,7 @@ type notification struct {
 // PendingPath names the immutable queue record for one saved event. Publishing
 // and consuming different records never share a read/modify/write summary.
 func PendingPath(directory, eventID string) (string, error) {
-	if err := ValidateDirectory(directory); err != nil {
+	if err := codexdesktop.ValidateDirectory(directory); err != nil {
 		return "", err
 	}
 	if !safeID(eventID) {
@@ -75,7 +76,7 @@ func Deliver(r Route, eventID, notice string) (string, error) {
 		// error. The receiver can have observed it; never promise it was unsent.
 		return "", fmt.Errorf("%w: publish notice: %v", kind, err)
 	}
-	saved, _ := SavedPath(r.EventsDir, eventID)
+	saved, _ := codexdesktop.SavedPath(r.EventsDir, eventID)
 	return notice + " Saved external event JSON: " + saved, nil
 }
 
@@ -94,7 +95,7 @@ func safeID(value string) bool {
 
 // ValidateRoute checks the closed native configuration before advertising a lease.
 func ValidateRoute(r Route) error {
-	if err := ValidateDirectory(r.EventsDir); err != nil {
+	if err := codexdesktop.ValidateDirectory(r.EventsDir); err != nil {
 		return err
 	}
 	if !safeID(r.SessionID) {

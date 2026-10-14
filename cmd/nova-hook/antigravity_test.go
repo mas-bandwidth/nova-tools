@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -216,8 +216,8 @@ func envInt(env []string, key string) int {
 func fakeAntigravityWorld(r *rig, fh *fakeAntigravityHarness) world {
 	require.NoError(fh.t, r.h.Client.SAdd(context.Background(), "friends", "emma", "rowan", "stella", "glenn").Err())
 	w := r.world()
-	w.codexLock = lockCodexRoute
-	w.codexSave = saveCodexEvent
+	w.codexLock = notice.Lock
+	w.files = notice.Disk{}
 	w.antigravityExec = fh.exec
 	w.antigravityHome = func() (string, error) { return fh.home, nil }
 	w.antigravityInstall = installAntigravityRoute
@@ -412,148 +412,28 @@ func TestAntigravityHarnessInstallsSetupProbesAndDeliversBootstrap(t *testing.T)
 	// 3. Emitted antigravity-installed state line and bootstrap push line
 	assert.Contains(t, out.String(), "state=antigravity-installed conversation=conv-root-2 port=61101")
 	assert.Contains(t, out.String(), "push=antigravity")
-	assert.Contains(t, out.String(), "native=accepted")
-	assert.Contains(t, out.String(), "turn=msg-001.json")
+	assert.Contains(t, out.String(), "receipt=msg-001.json")
 	assert.Contains(t, out.String(), "recovery-cutover")
 
 	// 4. Sent fixed external-event notice into conv-root-2's mailbox
 	require.Len(t, fh.sentNotices, 1)
-	assert.Contains(t, fh.sentNotices[0], "nova-hook saved event recovery-")
+	assert.Contains(t, fh.sentNotices[0], "nova-hook saved event notice-")
+	// Glenn, 2026-10-14: the token never ends up in the session. It passes
+	// only through the agentapi environment: no notice, saved file or line.
+	assert.NotContains(t, fh.sentNotices[0], fh.token)
+	assert.NotContains(t, out.String(), fh.token)
+	saved, err := os.ReadDir(fh.eventsDir)
+	require.NoError(t, err)
+	for _, e := range saved {
+		raw, err := os.ReadFile(filepath.Join(fh.eventsDir, e.Name()))
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), fh.token, e.Name())
+	}
 	assert.Equal(t, []int{61101}, fh.sentPorts)
 	assert.Equal(t, []string{"csrf-tok-1"}, fh.sentTokens)
 
 	// 5. Native acceptance does not prove the hook until the model runs nova-hook prove
 	assert.Equal(t, hook.StateLive, r.h.State(t, "emma").State)
-}
-
-func TestAntigravityIdleWakeAndMidTurnChallengeWhileCoalescingOrdinaryBurst(t *testing.T) {
-	t.Parallel()
-	r := newRig(t)
-	fh := newFakeAntigravityHarness(t)
-	w := fakeAntigravityWorld(r, fh)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
-
-	saved := map[string]savedCodexEvent{}
-	origSave := w.codexSave
-	w.codexSave = func(dir, id string, data []byte) error {
-		if err := origSave(dir, id, data); err != nil {
-			return err
-		}
-		var e savedCodexEvent
-		require.NoError(t, json.Unmarshal(data, &e))
-		saved[id] = e
-		return nil
-	}
-
-	var deliveredIDs []string
-	origDeliver := w.antigravityDeliver
-	w.antigravityDeliver = func(dctx context.Context, ag *antigravityRoute, id, dir string) (string, error) {
-		deliveredIDs = append(deliveredIDs, id)
-		return origDeliver(dctx, ag, id, dir)
-	}
-
-	// Build a burst of 51 ordinary messages plus a mid-turn server challenge.
-	burst := make([]bus.Entry, 0, 52)
-	burst = append(burst, bus.Entry{
-		Entry: "100-0",
-		Fields: map[string]string{
-			"id": "m-0", "from": "rowan", "to": "emma",
-			"subject": "first task", "body": "initial ordinary message",
-		},
-	})
-	senders := []string{"rowan", "stella", "glenn"}
-	for i := 1; i <= 25; i++ {
-		burst = append(burst, bus.Entry{
-			Entry: fmt.Sprintf("%d-0", 100+i),
-			Fields: map[string]string{
-				"id":      fmt.Sprintf("m-%d", i),
-				"from":    senders[(i-1)%len(senders)],
-				"to":      "emma",
-				"subject": fmt.Sprintf("ordinary %d", i),
-				"body":    "burst payload",
-			},
-		})
-	}
-	// Mid-turn server challenge arrives in the middle of the 50-message burst!
-	burst = append(burst, bus.Entry{
-		Entry: "126-0",
-		Fields: map[string]string{
-			"id":      "c-mid",
-			"from":    "rowan",
-			"to":      "emma",
-			"subject": "HOOK CHALLENGE nonce=mid-nonce",
-			"body":    challengeText("emma", "mid-nonce", hook.ChallengeEvery),
-		},
-	})
-	for i := 26; i <= 50; i++ {
-		burst = append(burst, bus.Entry{
-			Entry: fmt.Sprintf("%d-0", 101+i),
-			Fields: map[string]string{
-				"id":      fmt.Sprintf("m-%d", i),
-				"from":    senders[(i-1)%len(senders)],
-				"to":      "emma",
-				"subject": fmt.Sprintf("ordinary %d", i),
-				"body":    "burst payload",
-			},
-		})
-	}
-
-	epoch, _, err := r.h.Store.HookAs(ctx, "emma", hook.Friend, "test")
-	require.NoError(t, err)
-	require.NoError(t, r.h.Store.Renew(ctx, "emma", hook.Friend, hook.Bus, epoch, "test"))
-	ag := &antigravityRoute{
-		as:           "emma",
-		workspaceDir: fh.workspaceDir,
-		sessionID:    fh.conversation,
-		eventsDir:    fh.eventsDir,
-		homeDir:      fh.home,
-		exec:         fh.exec,
-	}
-	require.NoError(t, installAntigravityRoute(ag))
-	route := &codexRoute{directory: fh.eventsDir, antigravity: ag}
-
-	step := 0
-	st := codexWaiter{Store: bus.Redis{C: r.h.Client}, read: func() []bus.Entry {
-		step++
-		switch step {
-		case 1:
-			// Write the server challenge into the hook record before delivering burst.
-			_, err := r.h.Store.Challenge(ctx, "emma", hook.Friend, epoch, []hook.Push{hook.Bus}, "mid-nonce")
-			require.NoError(t, err)
-			return burst
-		case 2:
-			// Model proves the mid-turn challenge while still working on m-0.
-			// Proving a mid-turn challenge must NOT flush the 50 folded ordinary messages!
-			_, err := r.h.Store.Answer(ctx, "emma", "mid-nonce", "session")
-			require.NoError(t, err)
-			return nil
-		case 3:
-			// Now the model finishes its ordinary turn by answering m-0 on the bus.
-			require.NoError(t, r.h.Client.HSet(ctx, bus.AnswersOf("emma"), "m-0", "1700000000").Err())
-			return nil
-		default:
-			cancel()
-			return nil
-		}
-	}}
-
-	s := &session{bus: st, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
-	var out bytes.Buffer
-	res := w.loop(&tool.Call{Stdout: &out}, s, hook.Friend, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, route)
-	require.Equal(t, tool.OK, res.Status, out.String())
-
-	// m-0 + mid-turn challenge c-mid + 1 coalesced summary = 3 total deliveries in loop.
-	require.Len(t, deliveredIDs, 3, "deliveredIDs=%v\nout=%s", deliveredIDs, out.String())
-	assert.Equal(t, "m-0", deliveredIDs[0])
-	assert.Equal(t, "c-mid", deliveredIDs[1], "mid-turn challenge must deliver immediately without waiting for m-0 turn boundary")
-	assert.True(t, strings.HasPrefix(deliveredIDs[2], "summary-"), "50 ordinary messages must coalesce into one summary turn at turn boundary")
-
-	summaryEvent := saved[deliveredIDs[2]]
-	assert.Equal(t, "50 more messages from rowan, stella, glenn; read the bus", summaryEvent.Summary)
-	assert.Contains(t, out.String(), `native=coalesced pending=50 summary="50 more messages from rowan, stella, glenn; read the bus"`)
-	assert.Equal(t, hook.StateProven, r.h.State(t, "emma").State)
 }
 
 func TestAntigravityServerRestartMidRunReDiscoversPortAndToken(t *testing.T) {
@@ -606,7 +486,8 @@ func TestAntigravityServerRestartMidRunReDiscoversPortAndToken(t *testing.T) {
 
 	s := &session{bus: st, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
 	var out bytes.Buffer
-	res := w.loop(&tool.Call{Stdout: &out}, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, route)
+	c := &tool.Call{Stdout: &out}
+	res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true)
 	require.Equal(t, tool.OK, res.Status, out.String())
 	require.Len(t, fh.sentPorts, 2)
 	assert.Equal(t, 61101, fh.sentPorts[0])
@@ -656,12 +537,13 @@ func TestAntigravityDeliveryOutcomesAndReconciliation(t *testing.T) {
 
 		s := &session{bus: st, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
 		var out bytes.Buffer
-		res := w.loop(&tool.Call{Stdout: &out}, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, route)
+		c := &tool.Call{Stdout: &out}
+		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true)
 		require.NotNil(t, res)
 		assert.Equal(t, tool.Failed, res.Status)
 		res.Verb = "hook"
 		res.Render(&out, false)
-		assert.Contains(t, out.String(), "Antigravity local delivery unknown")
+		assert.Contains(t, out.String(), "antigravity local delivery unknown")
 		assert.Contains(t, out.String(), "native=unknown")
 		assert.Equal(t, hook.StateLive, r.h.State(t, "emma").State)
 	})
@@ -704,9 +586,10 @@ func TestAntigravityDeliveryOutcomesAndReconciliation(t *testing.T) {
 
 		s := &session{bus: st, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
 		var out bytes.Buffer
-		res := w.loop(&tool.Call{Stdout: &out}, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, route)
+		c := &tool.Call{Stdout: &out}
+		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true)
 		assert.Equal(t, tool.OK, res.Status, out.String())
-		assert.Contains(t, out.String(), "push=antigravity id=msg-reconciled acknowledgment=model-answer")
+		assert.Empty(t, fh.sentNotices, "a message the model already answered makes no push")
 	})
 
 	t.Run("dry run writes nothing", func(t *testing.T) {
@@ -721,95 +604,4 @@ func TestAntigravityDeliveryOutcomesAndReconciliation(t *testing.T) {
 		assert.Contains(t, out.String(), "HOOK DRY-RUN")
 		assert.Equal(t, hook.StateNone, r.h.State(t, "emma").State)
 	})
-}
-
-func TestAntigravityPendingSummaryDoesNotHideCurrentChallenge(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, nonce string
-		malformed   bool
-		wrongEpoch  bool
-		wantDeliver bool
-	}{
-		{"current", "current-nonce", false, false, true},
-		{"stale", "old-nonce", false, false, false},
-		{"lookalike", "current-nonce", true, false, false},
-		{"wrong epoch", "current-nonce", false, true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			r := newRig(t)
-			fh := newFakeAntigravityHarness(t)
-			w := fakeAntigravityWorld(r, fh)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
-			epoch, _, err := r.h.Store.HookAs(ctx, "emma", hook.Comms, "test")
-			require.NoError(t, err)
-			require.NoError(t, r.h.Store.Renew(ctx, "emma", hook.Comms, hook.Bus, epoch, "test"))
-			created, err := r.h.Store.Challenge(ctx, "emma", hook.Comms, epoch, []hook.Push{hook.Bus}, "current-nonce")
-			require.NoError(t, err)
-			require.True(t, created)
-			if tc.wrongEpoch {
-				require.NoError(t, r.h.Client.HSet(ctx, hook.ChallengeKey("emma"), "epoch", epoch+1).Err())
-			}
-			s := &session{bus: bus.Redis{C: r.h.Client}, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
-			ag := &antigravityRoute{
-				as:           "emma",
-				workspaceDir: fh.workspaceDir,
-				eventsDir:    fh.eventsDir,
-				homeDir:      fh.home,
-				conversation: fh.conversation,
-				port:         fh.activePort,
-				csrfToken:    fh.token,
-				exec:         fh.exec,
-			}
-			require.NoError(t, installAntigravityRoute(ag))
-			route := &codexRoute{directory: fh.eventsDir, antigravity: ag}
-			route.startTurn(s, "summary-old", "turn-old")
-			route.fold(bus.Message{ID: "ordinary-old", From: "rowan", Subject: "ordinary"})
-			message := bus.Message{ID: "challenge-new", From: "rowan", Subject: "HOOK CHALLENGE nonce=" + tc.nonce, Body: challengeText("emma", tc.nonce, hook.ChallengeEvery)}
-			if tc.malformed {
-				message.Body += "external appendix"
-			}
-			saved := map[string]savedCodexEvent{}
-			w.codexSave = func(dir, id string, data []byte) error {
-				var event savedCodexEvent
-				require.NoError(t, json.Unmarshal(data, &event))
-				saved[id] = event
-				return saveCodexEvent(dir, id, data)
-			}
-			var delivered []string
-			w.antigravityDeliver = func(dctx context.Context, agRoute *antigravityRoute, id, dir string) (string, error) {
-				delivered = append(delivered, id)
-				event := saved[id]
-				require.NotNil(t, event.Message)
-				assert.Equal(t, "HOOK CHALLENGE nonce=current-nonce", event.Message.Subject)
-				assert.Contains(t, event.Message.Body, "nova-hook prove --as emma --nonce current-nonce")
-				assert.Equal(t, "emma", event.LocalReceiver.Identity)
-				return deliverAntigravitySaved(dctx, agRoute, id, dir)
-			}
-			reads := 0
-			s.bus = codexWaiter{Store: s.bus, read: func() []bus.Entry {
-				reads++
-				if reads == 1 {
-					return []bus.Entry{{Entry: "1-1", Fields: message.Fields()}}
-				}
-				cancel()
-				return nil
-			}}
-			result := w.loop(&tool.Call{Stdout: io.Discard}, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, route)
-			assert.Equal(t, tool.OK, result.Status)
-			if tc.wantDeliver {
-				assert.Equal(t, []string{"challenge-new"}, delivered, "a current challenge needs a fresh native notice while the summary is pending")
-				assert.Equal(t, 1, route.foldedCount, "priority delivery preserves ordinary coalescing")
-			} else {
-				assert.Empty(t, delivered, "stale and external lookalikes remain ordinary traffic")
-				assert.Equal(t, 2, route.foldedCount)
-			}
-			assert.Equal(t, "summary-old", route.pendingID)
-			assert.Equal(t, "turn-old", route.pendingTurn)
-			assert.Equal(t, hook.StateLive, r.h.State(t, "emma").State, "native delivery never proves the challenge")
-		})
-	}
 }

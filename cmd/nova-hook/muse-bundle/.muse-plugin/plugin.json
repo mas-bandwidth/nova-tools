@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "nova-hook",
   "displayName": "Nova Hook",
-  "description": "Surfaces pending nova-bus hook challenges after each tool call; the model proves, the hook never does.",
+  "description": "Surfaces the one pending nova-hook notice after each tool call; the model proves, the hook never does.",
   "version": "0.1.0",
   "compat": {"family": "native", "manifestDir": ".muse-plugin"},
   "capabilities": {

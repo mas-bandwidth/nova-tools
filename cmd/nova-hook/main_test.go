@@ -28,6 +28,7 @@ type rig struct {
 	clock  time.Time
 	cancel context.CancelFunc
 	nonces int
+	home   string // HOME as the tool reads it: a test's own directory
 	// failTells makes every judgment and told message fail to send, as a bus
 	// that does not answer would; challenges still go out.
 	failTells atomic.Bool
@@ -40,7 +41,7 @@ func newRig(t *testing.T) *rig {
 	t.Helper()
 	h := hooktest.New(t)
 	require.NoError(t, h.Client.SAdd(context.Background(), "friends", "ada", "bob").Err())
-	return &rig{h: h, clock: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
+	return &rig{h: h, home: t.TempDir(), clock: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
 }
 
 // TestHookHelpClarifiesEnforcementScope pins the distinction between a strict
@@ -84,6 +85,9 @@ func (r *rig) world() world {
 		getenv: func(k string) string {
 			if k == bus.RedisEnv {
 				return "127.0.0.1:6379"
+			}
+			if k == "HOME" {
+				return r.home
 			}
 			return ""
 		},
