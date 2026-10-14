@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "nova-hook",
+  "displayName": "Nova Hook",
+  "description": "Surfaces pending nova-bus hook challenges after each tool call; the model proves, the hook never does.",
+  "version": "0.1.0",
+  "compat": {"family": "native", "manifestDir": ".muse-plugin"},
+  "capabilities": {
+    "hooks": [
+      {
+        "id": "pending-challenges",
+        "event": "PostToolUse",
+        "command": ["sh", "hooks/nova-hook-pending.sh"],
+        "timeoutMs": 3000,
+        "statusMessage": "Checking for pending hook challenges"
+      }
+    ]
+  }
+}
