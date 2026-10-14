@@ -1439,4 +1439,24 @@
      TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs (unit, red at the base, green at the fix) and
      TestLoopsPlayStateExpressionRendersThroughTheTemplar (functional, red at the base with the quoted
      error, green at the fix where ansible-core is installed)."
-    :origin "the release children's rollout, 2026-10-13 ~21:56 EDT, v1.2.22 fleet plays; the card was first drafted as tmp/v1.3-cards/fleet-loops-yml-systemd-state-template-breaks-on-linux.md")))
+    :origin "the release children's rollout, 2026-10-13 ~21:56 EDT, v1.2.22 fleet plays; the card was first drafted as tmp/v1.3-cards/fleet-loops-yml-systemd-state-template-breaks-on-linux.md")
+   (fix "the-seat-play-writes-the-release-window-sentinel" :release "v1.2.24" :status "in-progress"
+    :title "The seat play writes the release window sentinel"
+    :text "During the v1.2.23 adopt's window every seat verb answered connection refused with no
+     sign the outage was planned, and a release child could not tell a planned window from a failure.
+     The seat play (fleet/tools.yml) now writes one JSON file, nova_release_window_file (default
+     $HOME/.nova/release-window.json, mode 0644), atomically (a temp name in the same directory, then a
+     rename) just before the first agent of its window is stopped, when seat_window is true and not
+     ansible_check_mode: {\"open\":true,\"reason\":\"adopt <version>\",\"opened\":\"<RFC3339 UTC>\",
+     \"until\":\"<RFC3339 UTC>\",\"back_in_s\":<n>}, with until = opened + nova_seat_window_max (default
+     1800 s) and back_in_s = nova_member_stop_timeout + nova_seat_quiet + 120. It removes the file when
+     the window closes (after the last agent is bootstrapped, loaded and fresh and the server answers on
+     its --listen addresses) and first in the rollback block, so a stale open never outlives the window;
+     a removal that cannot remove the file (permission) is a failed step with ADOPT REFUSED
+     step=window-sentinel. The file is advice for a human or an agent, nothing's behaviour depends on it,
+     and --check writes and removes nothing. The reader (nova-sprint) is a separate card; nothing here
+     calls a nova-sprint verb. Tests: TestTheSeatPlayWritesTheReleaseWindowSentinel
+     (fleet/release_window_test.go; red at the base, green at the fix); the seat's parallel functional
+     tests read the file present while the window is open and absent after."
+    :origin "the coordinator's release children, the v1.2.23 adopt, 2026-10-13: every seat verb answered connection refused during that window with no sign the outage was planned; the sprint half is the card a-seat-verb-says-when-a-release-window-is-open (stream sprint-v1224)"))
+ )

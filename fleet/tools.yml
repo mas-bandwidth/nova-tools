@@ -1054,6 +1054,19 @@
       {{ (seat_cur | default(dict(agents=[]))).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
          | rejectattr('loaded') | rejectattr('label', 'in', nova_seat_hold) | list }}
   tasks:
+    # The release window sentinel (docs/SPEC-RELEASE.md, "The seat adopts an
+    # approved build"; the contract is stated word for word in both
+    # repositories): the window's own upper bound, and the one JSON file the
+    # play writes when the window opens and removes when it ends or is rolled
+    # back. It is advice for a human or an agent; nothing's behaviour depends
+    # on it. nova_release_window_file names the file on the coordinator host,
+    # the host that runs the play's tasks, and a caller may override either
+    # with -e.
+    - name: "seat: the release window sentinel's bound and file"
+      ansible.builtin.set_fact:
+        nova_seat_window_max: 1800
+        nova_release_window_file: "{{ ansible_env.HOME }}/.nova/release-window.json"
+
     - name: "seat: what --check says with no candidate on this machine"
       ansible.builtin.debug:
         msg: >-
@@ -1113,6 +1126,53 @@
             - name: "window: the window is open"
               ansible.builtin.set_fact:
                 seat_opened: true
+
+            # The sentinel is written here, before the first agent of the
+            # window is stopped: a verb that cannot reach the store reads it
+            # and says RELEASE WINDOW OPEN. It is written atomically (a temp
+            # name in the same directory, then rename) so a reader never sees
+            # half a document, and a second adopt on a host with a leftover
+            # file overwrites it here and removes it when the window closes.
+            - name: "window: the moment the window opens (RFC3339 UTC)"
+              ansible.builtin.command: { argv: [date, -u, "+%Y-%m-%dT%H:%M:%SZ"] }
+              register: seat_window_now
+              changed_when: false
+              when: seat_window and not ansible_check_mode
+
+            - name: "window: the window's upper bound, now + nova_seat_window_max (RFC3339 UTC)"
+              ansible.builtin.command:
+                argv: >-
+                  {{ [date, -u, '+%Y-%m-%dT%H:%M:%SZ']
+                      + (['-v+' ~ nova_seat_window_max ~ 'S'] if ansible_system == 'Darwin'
+                         else ['-d', '+' ~ nova_seat_window_max ~ ' seconds']) }}
+              register: seat_window_until
+              changed_when: false
+              when: seat_window and not ansible_check_mode
+
+            - name: "window: the release window sentinel's directory"
+              ansible.builtin.file:
+                path: "{{ nova_release_window_file | dirname }}"
+                state: directory
+                mode: "0755"
+              when: seat_window and not ansible_check_mode
+
+            - name: "window: the release window sentinel is written (open, reason, opened, until, back_in_s)"
+              ansible.builtin.copy:
+                content: >-
+                  {"open":true,"reason":"adopt {{ nova_version }}","opened":"{{ seat_window_now.stdout }}",
+                   "until":"{{ seat_window_until.stdout }}","back_in_s":{{ seat_window_back }}}
+                dest: "{{ nova_release_window_file }}.tmp"
+                mode: "0644"
+              vars:
+                seat_window_back: "{{ (nova_member_stop_timeout | int) + (nova_seat_quiet | int) + 120 }}"
+              register: seat_window_written
+              when: seat_window and not ansible_check_mode
+
+            - name: "window: the release window sentinel is renamed into place (atomic)"
+              ansible.builtin.command:
+                argv: ["mv", "-f", "{{ nova_release_window_file }}.tmp", "{{ nova_release_window_file }}"]
+              changed_when: true
+              when: seat_window and not ansible_check_mode
 
             - name: "window: boot out each (a member drains on the SIGTERM)"
               ansible.builtin.command: { argv: ["{{ nova_launchctl }}", bootout, "{{ item.target }}"] }
@@ -1360,6 +1420,30 @@
                 + nova_seat_server_ports) | unique | list }}
           when: not ansible_check_mode
 
+        # The window closes here, once the last agent is bootstrapped, loaded
+        # and fresh and the server answers on every address it listens on: the
+        # sentinel is removed so the next verb that cannot reach the store
+        # reads no stale window. The rollback removes it too (below), first, so
+        # a stale "open" never outlives the window.
+        - name: "window: the release window sentinel is removed (the server answered, so the window is closed)"
+          ansible.builtin.file:
+            path: "{{ nova_release_window_file }}"
+            state: absent
+          register: seat_window_removed
+          # ignored: the assert below names the step, so a failed removal is refused
+          failed_when: false
+          when: seat_window and not ansible_check_mode
+
+        - name: "window: the release window sentinel is gone"
+          ansible.builtin.assert:
+            that: not (seat_window_removed.failed | default(false))
+            fail_msg: >-
+              ADOPT REFUSED step=window-sentinel host={{ inventory_hostname }}: the release window file
+              {{ nova_release_window_file }} could not be removed ({{ seat_window_removed.msg | default('the removal did not answer') }});
+              a stale window must never outlive the window
+            quiet: true
+          when: seat_window and not ansible_check_mode
+
         - name: "server: the receipt"
           vars:
             seat_after_rev: "{{ (seat_after.stdout | from_json).server.revision if (seat_after.stdout | default('')) is match('[{]') else seat_cur.server.revision }}"
@@ -1439,9 +1523,30 @@
             mode: "0755"
           when: not ansible_check_mode and seat_window
       rescue:
-        # A refusal once the window opened: stop whatever runs again, put the
-        # tools of before back, their library back (read back and compared),
-        # start the agents the window stopped on them; only then the refusal.
+        # A refusal once the window opened: the sentinel goes first, so by the
+        # time the rollback's own tasks run a stale "open" can never outlive
+        # the window; then stop whatever runs again, put the tools of before
+        # back, their library back (read back and compared), start the agents
+        # the window stopped on them; only then the refusal.
+        - name: "rollback: the release window sentinel is removed first (a stale open never outlives the window)"
+          ansible.builtin.file:
+            path: "{{ nova_release_window_file }}"
+            state: absent
+          register: seat_window_removed
+          # ignored: the assert below names the step, so a failed removal is refused
+          failed_when: false
+          when: seat_window and not ansible_check_mode
+
+        - name: "rollback: the release window sentinel is gone"
+          ansible.builtin.assert:
+            that: not (seat_window_removed.failed | default(false))
+            fail_msg: >-
+              ADOPT REFUSED step=window-sentinel host={{ inventory_hostname }}: the release window file
+              {{ nova_release_window_file }} could not be removed ({{ seat_window_removed.msg | default('the removal did not answer') }});
+              a stale window must never outlive the window
+            quiet: true
+          when: seat_window and not ansible_check_mode
+
         - name: "rollback: stop what the window started"
           ansible.builtin.command: { argv: ["{{ nova_launchctl }}", bootout, "{{ item.target }}"] }
           loop: "{{ (seat_stopped + seat_restart | default([])) | unique | list if seat_opened | default(false) else [] }}"
