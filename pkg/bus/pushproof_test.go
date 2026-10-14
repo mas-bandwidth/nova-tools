@@ -46,7 +46,7 @@ func TestAProofIsProvenUpAndYoungerThanTenMinutes(t *testing.T) {
 		assert.Contains(t, c.p.Unheard(now), "nova-friend install --as bob --harness <h> --dir <d>")
 	}
 	assert.Contains(t, down.Unheard(at), "(no session answer)")
-	assert.Contains(t, up.Unheard(at.Add(time.Hour)), "its daemon (claude) last renewed it 1h0m0s ago")
+	assert.Contains(t, up.Unheard(at.Add(time.Hour)), "their daemon (claude) last renewed it 1h0m0s ago")
 	assert.Contains(t, none.Unheard(at), "no daemon has recorded one")
 }
 

@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/hook"
 )
 
 // PushKey is the hash of every name's inbox push proof: one field per name,
 // its value the PushProof as JSON (SPEC-BUS.md, bus-requires-inbox-push-proof).
 // The proof is the seat's liveness rule, and advice to a sender: the friend
-// daemon writes it when its session answers a SESSION CHECK carried in by
+// daemon writes it when their session answers a SESSION CHECK carried in by
 // the harness's deliver adapter, renews it while the session stays up, and
 // writes it down when a check goes unanswered; names shows it, and send and
 // recv say it as a NOTE beside a message that landed or was read, never as a
@@ -22,7 +24,7 @@ const PushKey = "bus2:push"
 // daemon that stopped renewing is a push nobody has proven for this long.
 const PushFresh = 10 * time.Minute
 
-// PushProof is one name's proof that its inbox pushes into its session: the
+// PushProof is one name's proof that their inbox pushes into their session: the
 // harness whose deliver adapter carried the check, the nonce the session
 // answered and when (Proven, the daemon's clock), whether the daemon still
 // holds the session up (Up; Reason when it does not), and when the daemon
@@ -35,19 +37,30 @@ type PushProof struct {
 	Up      bool      `json:"up"`
 	Reason  string    `json:"reason,omitempty"`
 	At      time.Time `json:"at"`
+	// Hook is whether a live proven lease of the name's bus push stands in
+	// the hook record nova-hook writes (hook.LiveKey and hook.ProofKey),
+	// read beside bus2:push: a live proven lease is push proven even when no
+	// friend daemon's session check has written one (docs/SPEC-HOOK.md, the
+	// key layout and the states; SPEC-BUS.md, bus-requires-inbox-push-proof).
+	// It is never on bus2:push, so it unmarshals as false.
+	Hook bool `json:"-"`
 }
 
 // The push states names shows, read off a proof at the store's now.
 const (
 	PushProven = "proven" // up and younger than PushFresh: the name is heard
-	PushStale  = "stale"  // up when written, and older than PushFresh: its daemon stopped renewing
-	PushDown   = "down"   // its daemon says the session did not answer its check
+	PushStale  = "stale"  // up when written, and older than PushFresh: their daemon stopped renewing
+	PushDown   = "down"   // their daemon says the session did not answer their check
 	PushNone   = "none"   // no daemon ever recorded one
 )
 
-// State is the proof's push state at now; a zero proof is PushNone.
+// State is the proof's push state at now; a zero proof is PushNone, and a
+// proof from a live proven hook lease (Hook) is PushProven whatever bus2:push
+// holds (SPEC-BUS.md, bus-requires-inbox-push-proof).
 func (p PushProof) State(now time.Time) string {
 	switch {
+	case p.Hook:
+		return PushProven
 	case p.At.IsZero():
 		return PushNone
 	case !p.Up:
@@ -77,7 +90,7 @@ func (p PushProof) AgeWord(now time.Time) string {
 // Unheard is the advisory line for name at now, "" when its proof is proven:
 // the NOTE send and recv print beside their result (SPEC-BUS.md,
 // bus-requires-inbox-push-proof). It never refuses: a message to an unheard
-// name lands and waits on its stream; the line says what the proof's state
+// name lands and waits on their stream; the line says what the proof's state
 // is and what would prove one, so a sender knows nothing is pushing it in.
 func (p PushProof) Unheard(now time.Time) string {
 	var why string
@@ -87,15 +100,17 @@ func (p PushProof) Unheard(now time.Time) string {
 	case PushNone:
 		why = "no daemon has recorded one"
 	case PushDown:
-		why = fmt.Sprintf("its daemon holds no answered SESSION CHECK from the session (%s)", p.Reason)
+		why = fmt.Sprintf("their daemon holds no answered SESSION CHECK from the session (%s)", p.Reason)
 	case PushStale:
-		why = fmt.Sprintf("its daemon (%s) last renewed it %s ago, past %s", p.Harness, p.Age(now), PushFresh)
+		why = fmt.Sprintf("their daemon (%s) last renewed it %s ago, past %s", p.Harness, p.Age(now), PushFresh)
 	}
-	return fmt.Sprintf("push=%s for %s: no proven push since %s: %s; a message to %s waits on its stream until something reads it (nova-bus recv --as %s); the proof: %s runs its friend daemon (nova-friend install --as %s --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK; nova-bus names shows every name's push", p.State(now), p.Name, p.AgeWord(now), why, p.Name, p.Name, p.Name, p.Name)
+	return fmt.Sprintf("push=%s for %s: no proven push since %s: %s; a message to %s waits on its stream until something reads it (nova-bus recv --as %s); the proof: %s runs their friend daemon (nova-friend install --as %s --harness <h> --dir <d>) and their session answers the daemon's SESSION CHECK; nova-bus names shows every name's push", p.State(now), p.Name, p.AgeWord(now), why, p.Name, p.Name, p.Name, p.Name)
 }
 
-// Deaf is why name is not heard at now, "" when its proof is proven: the
-// refusal of nova-bus's --require-push, with the remedy.
+// Deaf is why name is not heard at now, "" when their proof is proven: the
+// refusal of nova-bus's --require-push, with the remedy (SPEC-BUS.md,
+// bus-requires-inbox-push-proof). A live proven hook lease is proven, and the
+// remedy speaks of the person as they.
 func (p PushProof) Deaf(now time.Time) string {
 	var why string
 	switch p.State(now) {
@@ -104,16 +119,16 @@ func (p PushProof) Deaf(now time.Time) string {
 	case PushNone:
 		why = "no daemon has recorded one"
 	case PushDown:
-		why = fmt.Sprintf("its daemon holds no answered SESSION CHECK from the session (%s)", p.Reason)
+		why = fmt.Sprintf("their daemon holds no answered SESSION CHECK from the session (%s)", p.Reason)
 	case PushStale:
-		why = fmt.Sprintf("its daemon (%s) last renewed it %s ago, past %s", p.Harness, p.Age(now), PushFresh)
+		why = fmt.Sprintf("their daemon (%s) last renewed it %s ago, past %s", p.Harness, p.Age(now), PushFresh)
 	}
-	return fmt.Sprintf("deaf: %s has no proven push since %s: %s; the remedy: %s runs its friend daemon with a deliver adapter for its harness (nova-friend install --as %s --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK, which records the proof; nova-bus names shows every name's push", p.Name, p.AgeWord(now), why, p.Name, p.Name)
+	return fmt.Sprintf("deaf: %s has no proven push since %s: %s; the remedy: %s runs their friend daemon with a deliver adapter for their harness (nova-friend install --as %s --harness <h> --dir <d>) and their session answers the daemon's SESSION CHECK, which records the proof; nova-bus names shows every name's push", p.Name, p.AgeWord(now), why, p.Name, p.Name)
 }
 
 // ProvePush records proof for name at the store's time, in one transaction
 // (HSET on PushKey through AddAll, with no stream): what the friend daemon
-// calls when its session answered a check carried in by the deliver adapter,
+// calls when their session answered a check carried in by the deliver adapter,
 // while it stays up, and with Up false when a check went unanswered.
 func (b *Bus) ProvePush(ctx context.Context, p PushProof) (PushProof, error) {
 	if e := CheckName(p.Name); e != "" {
@@ -143,8 +158,10 @@ func (b *Bus) PushProofs(ctx context.Context, names ...string) ([]PushProof, tim
 }
 
 // proofs is each name's proof, in the order asked, in one trip (HGETALL on
-// PushKey). A name with none, or whose value is no proof, has the zero
-// proof: PushNone.
+// PushKey). A name with none, or whose value is no proof, has the zero proof:
+// PushNone. A name whose bus push is proven where nova-hook records it has
+// Hook set, so State reads PushProven even when bus2:push holds none or says
+// down (SPEC-BUS.md, bus-requires-inbox-push-proof).
 func (b *Bus) proofs(ctx context.Context, names []string) ([]PushProof, error) {
 	hashes, err := b.Store.Marks(ctx, PushKey)
 	if err != nil {
@@ -157,9 +174,30 @@ func (b *Bus) proofs(ctx context.Context, names []string) ([]PushProof, error) {
 			p = PushProof{} // ignored: a value that is no proof proves nothing
 		}
 		p.Name = n
+		proven, err := b.hookProven(ctx, n)
+		if err != nil {
+			return nil, err
+		}
+		p.Hook = proven
 		out[i] = p
 	}
 	return out, nil
+}
+
+// hookProven is whether name's bus push is proven where nova-hook records
+// it: a live lease (hook.LiveKey) and a proof (hook.ProofKey), read through
+// the same store as bus2:push. Unhook and a fresh arm clear both keys
+// (docs/SPEC-HOOK.md, the key layout, the states, and the epoch and the clear
+// rule), so the two standing means a live proven lease at the record's epoch;
+// a lease without a proof, or a proof past its lease, is not proven
+// (docs/SPEC-BUS.md, bus-requires-inbox-push-proof: a live proven lease is
+// push proven).
+func (b *Bus) hookProven(ctx context.Context, name string) (bool, error) {
+	if _, ok, err := b.Store.Sent(ctx, hook.LiveKey(name, hook.Bus)); err != nil || !ok {
+		return false, err
+	}
+	_, ok, err := b.Store.Sent(ctx, hook.ProofKey(name, hook.Bus))
+	return ok, err
 }
 
 // Unheard is one advisory line for every name of names (deduplicated, in
