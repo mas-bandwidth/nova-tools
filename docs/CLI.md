@@ -1382,13 +1382,15 @@ message for fifteen minutes. With `--exec '<command>'` the command reads that sa
 stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
 non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
 answers `acked=false` for an id that is not pending, at exit 0. `names` prints
-each name's push (`push=proven|stale|down|none age= harness=`). What a first run
+each name's push and what it has done on the bus (`push=proven|stale|down|none age= harness=
+recv= sent= heard= deaf=`). What a first run
 gets wrong: a name that is not a nova-config friend or machine row (`send` and
-`recv` refuse it with the `nova-config friend add` line that adds one); a deaf
-name, the sender, a recipient or the reader, with no inbox push its friend daemon
-proved in the last ten minutes (`deaf: <name> has no proven push since <age>` and
-the remedy: run the friend daemon, `nova-friend install`, and answer its SESSION
-CHECK; [SPEC-BUS.md](SPEC-BUS.md), bus-requires-inbox-push-proof);
+`recv` refuse it with the `nova-config friend add` line that adds one); a name
+that has not received lately, the sender or a recipient (`send` says
+`<name> last received <age> ago (last sent <age> ago): the message is queued ...`
+and the re-arm steps, as a NOTE and never a refusal; a name is heard by a proven
+inbox push from its friend daemon or by a recv or ack under ten minutes ago;
+[SPEC-BUS.md](SPEC-BUS.md), bus-heard-activity);
 `--forever` without `--exec` (a loop that acks nothing would hand out the same
 message for ever); no store named (`--redis`, else `NOVA_BUS_REDIS`, else the fleet row's `bus` field read
 from the sprint store at `NOVA_SPRINT_REDIS`: `nova-config fleet set --bus <host:port>`, then `apply`); a store

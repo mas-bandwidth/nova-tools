@@ -225,8 +225,9 @@ Presence is therefore the session's, never the daemon's:
   `SessionBound` is down all the same. Until the session answers
   a check (or writes on the bus) the push is unproven and the daemon delivers
   nothing into the session (The push proof, below); nova-bus itself refuses
-  nothing on it, it says `push=<state>` as a NOTE beside a message
-  (SPEC-BUS.md, bus-requires-inbox-push-proof).
+  nothing on it, it says a NOTE beside a message to a name that has not
+  received lately (the proof, or a recv or ack under ten minutes ago, makes a
+  name heard; SPEC-BUS.md, bus-heard-activity).
 - The daemon is the one that proves its session to the sprint server, by
   nonces only: the beat after a check goes in says it, `friend beat --check
   <nonce> --run <run>`, and the beat after the session answers it names it,
@@ -1342,9 +1343,10 @@ enforced"). So the push is proved before the daemon starts, never left to a
 log line. The proof is the daemon's to make and the bus's to show: nova-bus
 `send` and `recv` never refuse a name on it (the owner, 2026-10-08, issue
 #5450: "it is important that we can talk to friends, if you can't that's
-totally a bug"); they print `push=<none|down|stale> for <name>` as a NOTE
-beside a message that landed or was read, and `names` shows every name's
-state (SPEC-BUS.md, bus-requires-inbox-push-proof).
+totally a bug"); they print `<name> last received <age> ago (last sent <age> ago): the message is
+queued ...` as a NOTE beside a message to a name that has not received lately, and
+`names` shows every name's push, recv and sent ages (SPEC-BUS.md,
+bus-heard-activity).
 
 - `nova-friend install` and `run` refuse, before anything is written, loaded
   or delivered, a harness whose adapter has no deliver command (a `Stub`:

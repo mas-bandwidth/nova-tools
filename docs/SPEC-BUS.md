@@ -87,9 +87,11 @@ takes `--json`; `log` takes `--max`.
   trailing newline is the body's and is kept by send, the store, log and recv. Refuses, naming every problem at once: an unknown name (with the
   nova-config line that adds one), a bad name, an empty body, a body over 1
   MiB, an empty subject, a body from both or neither source. The message
-  landed, a sender or recipient with no proven inbox push is one `SEND NOTE
-  push=<none|down|stale> for <name>: ...` line each after the `SEND OK` line,
-  advice and never a refusal (bus-requires-inbox-push-proof, below).
+  landed, and the send marked the sender heard (`bus2:heard:send`, in the
+  send's own transaction); a sender or recipient that is not heard (no
+  proven inbox push, and no recv or ack under ten minutes ago) is one `SEND
+  NOTE <name> last received <age> ago (last sent <age> ago): ...` line each
+  after the `SEND OK` line, advice and never a refusal (bus-heard-activity, below).
   `--token <t> [--token-life <d>] [--token-cleanup <d>]` makes the send safe
   to retry (a-lost-send-response-is-safe-to-retry.w1, below).
 - `recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec
@@ -105,9 +107,11 @@ takes `--json`; `log` takes `--max`.
   waiting for messages, needs `--exec`, and stops on SIGINT or SIGTERM (a message being
   delivered stays pending) or at the first command that fails. The push into a
   harness is `nova-bus recv --as <me> --forever --exec '<deliver-into-session>'`
-  beside the session. A recipient with no proven inbox push reads all the
-  same, with one `RECV NOTE push=<none|down|stale> for <name>: ...` line on
-  its first result (`--dry-run`, `--max`, `--all` and `--forever` alike),
+  beside the session. Every recv marks its reader heard (`bus2:heard:recv`, one
+  `HSET` beside it), and so does an ack by id. A reader whose last recv was
+  more than ten minutes ago reads all the same, with one `RECV NOTE <name>'s
+  receiver was not running: ...` line on its first result (`--dry-run`,
+  `--max`, `--all` and `--forever` alike; never on a name's first recv),
   advice and never a refusal.
 - `wait` is the wake a harness runs beside a session, general for any AI on
   the bus. Its flags are `--as <me>`, `--after <id>`, `--timeout <duration>`,
@@ -163,7 +167,10 @@ takes `--json`; `log` takes `--max`.
   group.
 - `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
 - `names` prints `NAMES OK count=<n> proven=<n>` and one line per known name:
-  `NAMES NAME name= push=<proven|stale|down|none> age=<age|never> harness=<h>`.
+  `NAMES NAME name= push=<proven|stale|down|none> age=<age|never> harness=<h>
+  recv=<age|never> sent=<age|never> heard=<true|false> deaf=<true|false>` (the
+  header also says `heard=<n> deaf=<n>`; the fields after `harness` are
+  additive).
 - `version`, `help`, `help <verb>`.
 
 Exit codes: 0 done; 1 the verb ran and said no (recv: nothing waiting; recv
@@ -260,26 +267,74 @@ an unheard name lands and waits on its stream, a recv by an unheard name
 reads, and the state is one line each, after the result:
 
 ```
-SEND NOTE push=<none|down|stale> for <x>: no proven push since <age|never>: <why>; a message to <x> waits on
-its stream until something reads it (nova-bus recv --as <x>); the proof: <x> runs its friend daemon
-(nova-friend install --as <x> --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK;
-nova-bus names shows every name's push
+SEND NOTE <x> last received <age> ago (last sent <age> ago): the message is queued on <x>'s stream and
+arrives when its receiver runs; if <x> is deaf, its receiver is not running: nova-hook status --as <x> shows
+the hook; to re-arm the session: nova-hook hook --as <x> --role <comms|friend> under the session's Monitor,
+then Monitor nova-bus recv --as <x> --forever --exec '<deliver-into-session>'; nova-bus names shows who is heard
 ```
 
-(`RECV NOTE` the same, once per recv run, on its first result; `--dry-run`
-prints the same lines.) `Bus.Unheard` is the lines for a list of names,
-deduplicated, in order, at the store's now (a roster trip and one `HGETALL`);
+`<x> has never received on the bus` when it never has, `(never sent)` when it
+never sent; a name its friend daemon fresh-says is down also carries `and its
+friend daemon says the session did not answer its SESSION CHECK (<reason>)`.
+The NOTE is about receiving: it says the message is queued, not that it failed.
+`Bus.Unheard` is the lines for a list of names, deduplicated, in order, at the
+store's now (a roster trip and one pipeline of three `HGETALL`s);
 `Bus.UnheardAt` is the same judged at a given instant with no roster trip,
 send's, judged at the `at` its message was stamped with. Nothing in the bus
-refuses on a proof: `peek`, `ack`, `log`, `wait` and the rest never read it.
+refuses on hearing: `peek`, `log`, `wait` and the rest never read it.
 
 The one exception is asked for by flag (the owner, 2026-10-07: adopt wide ASAP;
 the seat's push proof is card the-seats-pushes-are-proven-before-the-sprint-moves-b):
-`send --require-push` and `recv --require-push`, or `NOVA_BUS_REQUIRE_PUSH=1`,
-refuse each name not heard with `deaf: <x> has no proven push since <age|never>:
-<why>; the remedy: ...` and write and read nothing, `--dry-run` alike
-(`Bus.Heard`, at the store's now, after a send's own problems are named;
-`TestThePushGateIsAdvisoryUntilRequired`). `nova-bus names` is unchanged.
+`send --require-push`, or `NOVA_BUS_REQUIRE_PUSH=1`, refuses each name not
+heard with `deaf: <x> last received <age> ago ...; the remedy: ...` and writes
+nothing, `--dry-run` alike (`Bus.Heard`, at the store's now, after a send's own
+problems are named; `TestTheHeardGateIsAdvisoryUntilRequired`). `recv
+--require-push` is itself a receive, so it is refused only by a fresh word of the
+name's friend daemon that its session did not answer (`Bus.HeardReading`): a
+name that has never received can make its first recv.
+
+### bus-heard-activity: a name is heard by what it does on the bus
+
+The finding of 2026-10-13 (the owner: "Please debug and fix all friend harness
+and comms issues"): every message to a friend who worked by hand on the bus,
+reading and answering, carried `push=down ... no proven push since 36h` beside
+it, because the only proof was the one a friend daemon writes, and a friend with
+no daemon had none. The note read like a failure of a message that had landed,
+and said nothing of the real fault (a receiver not running, so a friend that can
+send and not receive: two friends in a row).
+
+So the bus records what each name really does (`tla/BusHeard.tla`): `send` writes
+the sender's name into the hash `bus2:heard:send`, in the send's own transaction
+(`AddAll`, or the send-once script); `recv` writes the reader's into
+`bus2:heard:recv`, one `HSET` at the start of each recv, whether or not a
+message waits (a blocked `--forever` loop marks every `ForeverBlock`), and `ack
+--id` does the same. The value is the store's clock, RFC 3339 in UTC to the
+millisecond; a mark is overwritten, so each hash holds one field per name for
+ever. A mark the store does not take never fails the verb. The sprint's
+presence rule reads both hashes raw.
+
+A name is **heard** when its friend daemon's proof is proven (up, under ten
+minutes), or it received (recv or ack) under ten minutes ago (`bus.PushFresh`)
+and its daemon has not written, under ten minutes ago, that its session did not
+answer its check: the daemon's own recv loop reads for a session that is not
+there, so the daemon's fresh `down` outweighs a recent recv
+(`DownOutweighsRecv`). A send never hears a name (`OnlyProofOrRecvHears`). A
+name is **deaf** when it sent under ten minutes ago and is not heard: it can
+send and cannot receive; `names` prints it. `Bus.Standings` reads the proof and
+both marks of every name in one trip after the roster's.
+
+The recv's own NOTE is for the reader that was silent: when its last recv is
+past ten minutes, its first result says its receiver was not running, with the
+re-arm steps; a first recv has nothing to say. The hook gate (`nova-hook`) is
+unchanged and still refuses a verb whose identity is not hooked in with its bus
+push live (`FAILED reason=unhooked`, the hook command its remedy).
+
+What it does not say, plainly: the marks are written by whichever reader runs
+`recv` as that name, so a friend daemon's recv loop marks the friend's name
+whether or not her session is there (the daemon's proof is the evidence of the
+session); a `--exec` command that runs longer than ten minutes lets the mark age
+(the delivery budget is fifteen); a send retried under a token that finds its
+record writes nothing, the mark with it.
 
 The proof is the friend daemon's SESSION CHECK round trip (SPEC-FRIEND.md,
 presence): a check carrying a fresh nonce goes into the session through the
@@ -307,9 +362,9 @@ What the proof does not say, plainly: between two checks (ten minutes quiet,
 then the five-minute bound) a session that stopped hearing still reads up, so
 deafness is seen within `SessionQuiet + SessionBound` of the last answer, and
 within ten minutes of a daemon that died. A name with no friend daemon (a
-machine row, a coordinator seat run without one) has no way to a proof and
-reads `none` for ever: its messages land and wait on its stream, and the NOTE
-says so every time. The ACL cannot stop a friend writing another's field of
+machine row, a coordinator seat run without one) has no proof and reads
+`none` for ever, but it is heard while it receives (bus-heard-activity, above);
+until it does, its messages land and wait on its stream, and the NOTE says so. The ACL cannot stop a friend writing another's field of
 `bus2:push`, as it cannot stop her reading another's stream; the tool is the
 boundary (the ACL per friend, below).
 
@@ -347,7 +402,9 @@ caller's `Raise`, never over the bus that is failing.
 
 The ACL line below gains `~bus2:owed:*` and `+hset +hdel +hgetall` for a
 store with users: a sender marks the recipients' hashes, as it writes their
-streams. message-receipts adds `~bus2:receipt:*` and `+hget`: a send naming
+streams. bus-heard-activity adds `~bus2:heard:*`: a send marks its own name in
+`bus2:heard:send` and a recv or an ack marks its own in `bus2:heard:recv`, with
+the `+hset` and `+hgetall` the line already grants. message-receipts adds `~bus2:receipt:*` and `+hget`: a send naming
 a message stamps the sender's own receipts, and recv its own.
 
 ### message-receipts: delivered, read, acted; overdue; a redelivered id is dropped
@@ -442,13 +499,13 @@ INFO` on Redis 8 answers):
 | Verb | Commands | Keys |
 | --- | --- | --- |
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
-| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`, then `HGETALL` (the NOTE); with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
-| recv | `SMEMBERS`, `TIME`, `HGETALL` (the NOTE, once per run), `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`; `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>`; `bus2:receipt:<f>` |
+| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`, then `HGETALL` (the NOTE: the proof and both heard hashes in one pipeline); with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `friends`, `machines` (read); `bus2:push`, `bus2:heard:recv` (read); `bus2:heard:send` (the sender's own field, in the transaction); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
+| recv | `SMEMBERS`, `TIME`, `HGETALL` (the NOTE, once per run), `MULTI`, `HSET`, `EXEC` (the heard mark, at the start of each recv), `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`; `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:push`, `bus2:heard:send` (read); `bus2:heard:recv` (the reader's own field); `bus2:to:<f>`; `bus2:receipt:<f>` |
 | wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
-| ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
+| ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL`; `SMEMBERS`, `TIME`, `MULTI`, `HSET`, `EXEC` (the heard mark) | `bus2:to:<f>`, `bus2:owed:<f>`, `bus2:heard:recv` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
-| names | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`, `bus2:push` |
+| names | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`, `bus2:push`, `bus2:heard:send`, `bus2:heard:recv` |
 | the friend daemon's push proof | `SMEMBERS`, `TIME`, `MULTI`, `HSET`, `EXEC` | `friends`, `machines`; `bus2:push` |
 
 The wrinkle, said plainly: a sender writes other friends' streams. `send` fans
@@ -464,7 +521,7 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:push ~bus2:sent:<f>:* ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:push ~bus2:heard:* ~bus2:sent:<f>:* ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
   +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hdel +hget +hgetall
   +eval +evalsha (~bus2:sent:<f>:* +get +set)

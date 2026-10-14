@@ -12,9 +12,8 @@ import (
 
 // A proof's state at the store's now: none with no proof, down whatever its
 // age when its daemon says the session did not answer, stale at PushFresh,
-// proven below; the unheard line names the state, the name, its age and what
-// would prove one, and is empty for a proven one (SPEC-BUS.md,
-// bus-requires-inbox-push-proof).
+// proven below (SPEC-BUS.md, bus-requires-inbox-push-proof); what the states
+// make of a name's hearing is heard_test.go's.
 func TestAProofIsProvenUpAndYoungerThanTenMinutes(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 10, 5, 18, 0, 0, 0, time.UTC)
@@ -37,17 +36,7 @@ func TestAProofIsProvenUpAndYoungerThanTenMinutes(t *testing.T) {
 		now := at.Add(c.after)
 		assert.Equal(t, c.state, c.p.State(now), "%+v at +%s", c.p, c.after)
 		assert.Equal(t, c.age, c.p.AgeWord(now))
-		if c.state == PushProven {
-			assert.Empty(t, c.p.Unheard(now))
-			continue
-		}
-		assert.Contains(t, c.p.Unheard(now), "push="+c.state+" for bob: no proven push since "+c.age+": ")
-		assert.Contains(t, c.p.Unheard(now), "waits on its stream until something reads it (nova-bus recv --as bob)")
-		assert.Contains(t, c.p.Unheard(now), "nova-friend install --as bob --harness <h> --dir <d>")
 	}
-	assert.Contains(t, down.Unheard(at), "(no session answer)")
-	assert.Contains(t, up.Unheard(at.Add(time.Hour)), "its daemon (claude) last renewed it 1h0m0s ago")
-	assert.Contains(t, none.Unheard(at), "no daemon has recorded one")
 }
 
 // ProvePush stamps the proof with the store's time and writes it in one
@@ -81,7 +70,7 @@ func TestProvePushWritesAndPushProofsReads(t *testing.T) {
 	assert.EqualError(t, err, "down")
 }
 
-// The push proof advises and never gates (the finding of 2026-10-08, issue
+// Hearing advises and never gates (the finding of 2026-10-08, issue
 // #5450: a claude friend and a machine with no daemon could never be written
 // to or read as): Send lands a message whoever is unheard, Recv reads for an
 // unheard name and makes its group, and Unheard is the lines a verb prints
@@ -102,8 +91,8 @@ func TestThePushProofAdvisesAndNeverRefuses(t *testing.T) {
 	lines, err := b.Unheard(ctx, "ada", "bob", "cy", "ada")
 	require.NoError(t, err)
 	require.Len(t, lines, 3, "ada, bob and cy, once each, in order: %v", lines)
-	assert.Contains(t, lines[0], "push=none for ada: no proven push since never")
-	assert.Contains(t, lines[2], "push=none for cy")
+	assert.Contains(t, lines[0], "ada has never received on the bus (last sent ")
+	assert.Contains(t, lines[2], "cy has never received on the bus (never sent)")
 
 	e, ok, err := b.Recv(ctx, "bob", 0)
 	require.NoError(t, err, "an unheard name reads")
@@ -125,7 +114,7 @@ func TestThePushProofAdvisesAndNeverRefuses(t *testing.T) {
 	lines, err = b.Unheard(ctx, "ada", "bob")
 	require.NoError(t, err)
 	require.Len(t, lines, 2)
-	assert.Contains(t, lines[0], "push=stale for ada: no proven push since 10m")
+	assert.Contains(t, lines[0], "ada has never received on the bus (last sent ", "a stale proof says nothing of receiving")
 	_, err = b.Send(ctx, m)
 	require.NoError(t, err, "stale is advice too")
 	assert.Equal(t, 2, f.Len(LogKey))

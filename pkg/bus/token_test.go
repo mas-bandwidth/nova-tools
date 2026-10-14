@@ -318,5 +318,6 @@ func TestARetryToANameThatWentDeafAnswersTheOriginal(t *testing.T) {
 	lines, err := b.Unheard(ctx, "ada", "bob")
 	require.NoError(t, err)
 	require.Len(t, lines, 1)
-	assert.Contains(t, lines[0], "push=down for bob")
+	assert.Contains(t, lines[0], "bob has never received on the bus")
+	assert.Contains(t, lines[0], "its friend daemon says the session did not answer its SESSION CHECK")
 }

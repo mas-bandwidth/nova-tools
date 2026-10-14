@@ -328,10 +328,13 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		streams = append(streams, StreamOf(n))
 	}
 	streams = append(streams, LogKey)
+	// the sender is heard the moment its message is on the streams: the mark is in
+	// the send's own transaction (heard.go; tla/BusHeard.tla: Send)
+	marks := append(owe(m, friends), heardMark(HeardSendKey, m.From, now))
 	if m.Token != "" {
-		return b.sendOnce(ctx, m, now, streams, owe(m, friends))
+		return b.sendOnce(ctx, m, now, streams, marks)
 	}
-	if err := b.Store.AddAll(ctx, streams, m.Fields(), owe(m, friends)...); err != nil {
+	if err := b.Store.AddAll(ctx, streams, m.Fields(), marks...); err != nil {
 		return Message{}, err
 	}
 	return m, nil
@@ -421,13 +424,14 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 	if p := CheckKinds(kinds...); p != "" {
 		return Entry{}, false, &Refusal{[]string{p}}
 	}
-	names, _, err := b.Store.Roster(ctx)
+	names, now, err := b.Store.Roster(ctx)
 	if err != nil {
 		return Entry{}, false, err
 	}
 	if !slices.Contains(names, as) {
 		return Entry{}, false, &Refusal{[]string{unknown(as)}}
 	}
+	b.markReceived(ctx, as, now) // the receiver is reading: heard.go; tla/BusHeard.tla: Recv
 	stream := StreamOf(as)
 	if err := b.Store.EnsureGroup(ctx, stream, as); err != nil {
 		return Entry{}, false, err
@@ -505,6 +509,9 @@ func (b *Bus) Ack(ctx context.Context, as string, ids []string) (map[string]bool
 	}
 	if _, err := b.Receipt(ctx, as, ids); err != nil {
 		return nil, err
+	}
+	if _, now, err := b.Store.Roster(ctx); err == nil { // ignored when it fails: the ack is done, and the mark is advice
+		b.markReceived(ctx, as, now) // an ack is the session reading: heard.go; tla/BusHeard.tla: Ack
 	}
 	return acked, nil
 }

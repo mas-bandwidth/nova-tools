@@ -26,8 +26,9 @@ const (
 // carrying its nonce (SessionCheck, presence.go). While the presence is up
 // the proof is up and renewed every PushRenewEvery; when the presence is
 // down (a check unanswered within its bound, or a daemon that has not yet
-// been answered) the proof is written down at once, so a sender is told
-// the moment the daemon knows. A passive harness (no deliver command: the
+// been answered) the proof is written down at once, and a fresh down proof
+// outweighs the recv loop's own reading (bus.Standing.Heard), so a sender is
+// told the moment the daemon knows. A passive harness (no deliver command: the
 // check only goes on the stream) pushes nothing into the session and is
 // written down whatever its pongs say.
 type PushProver struct {
@@ -111,7 +112,7 @@ func (p *PushProver) Step(s PresenceStatus) {
 	case up:
 		p.record(now, "push proof: up: the session answered "+proof.Nonce+" through "+p.Harness+"'s deliver adapter; nova-bus hears "+p.Friend)
 	default:
-		p.record(now, "push proof: down: "+reason+"; nova-bus names shows "+p.Friend+" push=down and a sender is told")
+		p.record(now, "push proof: down: "+reason+"; nova-bus names shows "+p.Friend+" push=down, and a sender is noted once "+p.Friend+" has not received for "+bus.PushFresh.String())
 	}
 }
 

@@ -6,7 +6,8 @@ package bus
 // witness records (tla/MCBus2*.cfg), so a change that lets the code drift
 // from the model turns it red. The models: tla/Bus2.tla (the delivery
 // machine), tla/Bus2Receipts.tla (the receipts beside it) and
-// tla/BusSendOnce.tla (a send under a token).
+// tla/BusSendOnce.tla (a send under a token); heard_test.go holds tla/BusHeard.tla
+// (what the marks of a send, a recv and an ack say of a name's ears).
 
 import (
 	"context"

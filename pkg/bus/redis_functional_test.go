@@ -149,7 +149,7 @@ func TestRedisStoreKeepsThePushProof(t *testing.T) {
 	lines, err := b.Unheard(ctx, "ada", "bob")
 	require.NoError(t, err)
 	require.Len(t, lines, 2)
-	assert.Contains(t, lines[0], "push=none for ada: no proven push since never")
+	assert.Contains(t, lines[0], "ada has never received on the bus (never sent)")
 	first, err := b.Send(ctx, m)
 	require.NoError(t, err, "unheard is advice, not a gate")
 	e, ok, err := b.Recv(ctx, "bob", 0)
@@ -173,7 +173,66 @@ func TestRedisStoreKeepsThePushProof(t *testing.T) {
 	lines, err = b.Unheard(ctx, "ada", "bob", "m1")
 	require.NoError(t, err)
 	require.Len(t, lines, 1)
-	assert.Contains(t, lines[0], "push=none for m1")
+	assert.Contains(t, lines[0], "m1 has never received on the bus (never sent)")
+}
+
+// The heard marks against the real commands: a send writes the sender's field in
+// its own transaction (the plain transaction and the send-once script both), a
+// recv writes the reader's whether or not a message waits, an ack by id writes it
+// again, every value is the server's clock to the millisecond, and a mark is
+// overwritten so a hash holds one field per name (tla/BusHeard.tla).
+func TestRedisStoreKeepsTheHeardMarks(t *testing.T) {
+	t.Parallel()
+	b, c, ctx := live(t)
+	const layout = "2006-01-02T15:04:05.000Z"
+	at := func(key, name string) time.Time {
+		t.Helper()
+		v, err := c.HGet(ctx, key, name).Result()
+		require.NoError(t, err, "%s %s", key, name)
+		got, err := time.Parse(layout, v)
+		require.NoError(t, err, "a mark is RFC 3339 UTC to the millisecond: %q", v)
+		return got
+	}
+
+	_, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.False(t, ok)
+	first := at(HeardRecvKey, "bob")
+	assert.WithinDuration(t, time.Now(), first, time.Minute, "the server's time")
+
+	m, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "s", Body: "x"})
+	require.NoError(t, err)
+	sent := at(HeardSendKey, "ada")
+	assert.False(t, sent.Before(m.At), "the mark is not before the message's at")
+	_, err = b.Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "s", Body: "y", Token: "heard-1"})
+	require.NoError(t, err, "a send under a token marks its sender through the script")
+	tokened := at(HeardSendKey, "bob")
+	assert.False(t, tokened.Before(first))
+	_, err = b.Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "s", Body: "y", Token: "heard-1"})
+	require.NoError(t, err)
+	assert.Equal(t, tokened, at(HeardSendKey, "bob"), "a retry that finds its record writes nothing, the mark with it")
+
+	e, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.False(t, at(HeardRecvKey, "bob").Before(first), "a recv marks again")
+	acked, err := b.Ack(ctx, "bob", []string{e.Message().ID})
+	require.NoError(t, err)
+	assert.True(t, acked[e.Message().ID])
+	assert.False(t, at(HeardRecvKey, "bob").Before(first))
+
+	for _, key := range []string{HeardSendKey, HeardRecvKey} {
+		n, err := c.HLen(ctx, key).Result()
+		require.NoError(t, err)
+		assert.LessOrEqual(t, n, int64(2), "%s holds one field per name, overwritten and never added to", key)
+	}
+
+	ss, now, err := b.Standings(ctx, "ada", "bob", "m1")
+	require.NoError(t, err)
+	assert.True(t, ss[1].Heard(now), "bob read a moment ago")
+	assert.False(t, ss[0].Heard(now), "ada only sent")
+	assert.True(t, ss[0].Deaf(now), "and so can send and not receive")
+	assert.False(t, ss[2].Deaf(now), "m1 did neither")
 }
 
 // Enroll on the real commands: a friend row the roster misses is added to the

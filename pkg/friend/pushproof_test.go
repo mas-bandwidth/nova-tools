@@ -72,7 +72,8 @@ func TestTheSessionChecksPongIsThePushProof(t *testing.T) {
 	assert.Equal(t, bus.PushDown, p.State(now), "a daemon that started proves nothing about the session")
 	assert.Equal(t, NotYetAnswered, p.Reason)
 	require.Error(t, heard())
-	assert.Contains(t, heard().Error(), "push=down for bob: no proven push since")
+	assert.Contains(t, heard().Error(), "bob has never received on the bus")
+	assert.Contains(t, heard().Error(), "its friend daemon says the session did not answer its SESSION CHECK")
 
 	r.send(t, r.daemon, "bob", DaemonPongSubject, "daemon-pong n1\n")
 	r.step(t, BeatEvery)
@@ -212,7 +213,7 @@ func TestAClaudeFriendsCheckGoesInByTheFolder(t *testing.T) {
 	lines, err := r.direct.Unheard(ctx, "bob")
 	require.NoError(t, err)
 	require.Len(t, lines, 1)
-	assert.Contains(t, lines[0], "push=down for bob")
+	assert.Contains(t, lines[0], "bob has never received on the bus")
 	deliver("while the check stands")
 
 	// a live session watching the folder answers the file: up, proven, and the beat carries it
