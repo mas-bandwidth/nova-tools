@@ -775,29 +775,43 @@ func TestReplayAndWitnessesRefuseWhatIsMissingBeforeStartingAnything(t *testing.
 			return "/usr/bin/" + name, nil
 		}
 	}
-	e, out, errs := testEnv(t, nil)
-	noRedis(&e)
-	r := do(e, out, errs, "witnesses", "table.lua")
-	require.Equal(t, 2, r.code, "witnesses without redis: %+v", r)
-	must.ContainsAll(t, r.stderr, "redis-server is not on PATH", "run: tlacheck witnesses --redis-server /path/to/redis-server")
-	e, out, errs = testEnv(t, nil)
-	noRedis(&e)
-	r = do(e, out, errs, "replay", "--root", root, "--jar", jar, "--source", "table.lua", "--dir", t.TempDir())
-	require.Equal(t, 2, r.code, "replay without redis: %+v", r)
-	assert.Contains(t, r.stderr, "redis-server is not on PATH", "replay without redis: %+v", r)
-	assert.NotContains(t, r.stdout, "REPLAY", "replay without redis: %+v", r)
 	// An unreadable source is a refusal of the environment (exit 2), not a
 	// finding that failed.
-	e, out, errs = testEnv(t, nil)
-	e.lookPath = func(name string) (string, error) { return "/nonexistent/" + name, nil }
-	r = do(e, out, errs, "witnesses", filepath.Join(t.TempDir(), "gone.lua"))
-	require.Equal(t, 2, r.code, "witnesses of a missing source: %+v", r)
-	assert.NotContains(t, r.stderr, "WITNESS FAIL", "witnesses of a missing source: %+v", r)
-	e, out, errs = testEnv(t, nil)
-	e.lookPath = func(name string) (string, error) { return "/nonexistent/" + name, nil }
-	r = do(e, out, errs, "replay", "--root", root, "--jar", jar, "--source", filepath.Join(t.TempDir(), "gone.lua"), "--dir", t.TempDir())
-	require.Equal(t, 2, r.code, "replay of a missing source: %+v", r)
-	assert.NotContains(t, r.stderr, "REPLAY FAIL", "replay of a missing source: %+v", r)
+	gone := func(e *env) {
+		e.lookPath = func(name string) (string, error) { return "/nonexistent/" + name, nil }
+	}
+	tests := []struct {
+		name                 string
+		tweak                func(*env)
+		args                 []string
+		want, notOut, notErr []string
+	}{
+		{"witnesses without redis", noRedis, []string{"witnesses", "table.lua"},
+			[]string{"redis-server is not on PATH", "run: tlacheck witnesses --redis-server /path/to/redis-server"}, nil, nil},
+		{"replay without redis", noRedis, []string{"replay", "--root", root, "--jar", jar, "--source", "table.lua", "--dir", t.TempDir()},
+			[]string{"redis-server is not on PATH"}, []string{"REPLAY"}, nil},
+		{"witnesses of a missing source", gone, []string{"witnesses", filepath.Join(t.TempDir(), "gone.lua")},
+			nil, nil, []string{"WITNESS FAIL"}},
+		{"replay of a missing source", gone, []string{"replay", "--root", root, "--jar", jar, "--source", filepath.Join(t.TempDir(), "gone.lua"), "--dir", t.TempDir()},
+			nil, nil, []string{"REPLAY FAIL"}},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e, out, errs := testEnv(t, nil)
+			tc.tweak(&e)
+			r := do(e, out, errs, tc.args...)
+			require.Equal(t, 2, r.code, "%+v", r)
+			must.ContainsAll(t, r.stderr, tc.want...)
+			for _, n := range tc.notOut {
+				assert.NotContains(t, r.stdout, n, "%+v", r)
+			}
+			for _, n := range tc.notErr {
+				assert.NotContains(t, r.stderr, n, "%+v", r)
+			}
+		})
+	}
 }
 
 // A remedy is a command that pastes: the ones that point at help run through
