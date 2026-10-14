@@ -164,6 +164,7 @@ const verbSetHashLen = 12
 // print it in. The count is redundant with the hash and is carried anyway, so a
 // reader that only needs the size never has to hash to get it.
 func VerbSet(verbs []string) (int, string) {
+	// cites docs/SPEC-VERSION.md item 12: the generation of the verb set
 	sorted := append([]string(nil), verbs...)
 	sort.Strings(sorted)
 	sum := sha256.Sum256([]byte(strings.Join(sorted, "\n")))
@@ -175,6 +176,7 @@ func VerbSet(verbs []string) (int, string) {
 // say names the set as extras after the four tokens, the way nova-sandbox names
 // `backend=` and `platform=`, so the writer and the one reader of the line agree.
 func VerbSetExtras(verbs []string) []string {
+	// cites docs/SPEC-VERSION.md: VerbSetExtras renders the pair for Line extras
 	n, hash := VerbSet(verbs)
 	return []string{"verbs=" + strconv.Itoa(n), "verbset=" + hash}
 }
