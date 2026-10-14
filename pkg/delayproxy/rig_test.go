@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 )
 
@@ -228,7 +229,7 @@ var epoch = time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 
 func (f *fakeClock) clock() Clock {
 	return Clock{
-		Now: func() time.Time { return epoch },
+		Now: clockwork.NewFakeClockAt(epoch).Now,
 		Wait: func(stop <-chan struct{}, d time.Duration) bool {
 			f.mu.Lock()
 			f.waits = append(f.waits, d)
@@ -273,7 +274,7 @@ func roundTrip(t *testing.T, c net.Conn, send string) string {
 // the reads the proxy stamps.
 type steppedClock struct {
 	mu      sync.Mutex
-	now     time.Time
+	fw      *clockwork.FakeClock
 	calls   int
 	waits   []time.Duration
 	waiting chan struct{}
@@ -283,7 +284,7 @@ type steppedClock struct {
 
 func newSteppedClock() *steppedClock {
 	return &steppedClock{
-		now:     epoch,
+		fw:      clockwork.NewFakeClockAt(epoch),
 		waiting: make(chan struct{}, 8),
 		release: make(chan struct{}),
 		ticked:  make(chan struct{}, 1),
@@ -305,13 +306,12 @@ func (c *steppedClock) clock() Clock {
 		Now: func() time.Time {
 			c.mu.Lock()
 			c.calls++
-			now := c.now
 			c.mu.Unlock()
 			select {
 			case c.ticked <- struct{}{}:
 			default:
 			}
-			return now
+			return c.fw.Now()
 		},
 		Wait: func(stop <-chan struct{}, d time.Duration) bool {
 			c.mu.Lock()
@@ -324,9 +324,7 @@ func (c *steppedClock) clock() Clock {
 			}
 			select {
 			case <-c.release:
-				c.mu.Lock()
-				c.now = c.now.Add(d)
-				c.mu.Unlock()
+				c.fw.Advance(d)
 				return true
 			case <-stop:
 				return false
