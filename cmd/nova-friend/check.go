@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -193,6 +194,21 @@ func (w world) checkSeams(c *tool.Call, st bus.Store) friend.CheckSeams {
 		return friend.FindStateDir(w.home, dir, name)
 	}
 
+	readHook := func(name string) (hook.Status, bool, error) {
+		if w.hookStore == nil || st == nil {
+			return hook.Status{}, false, nil
+		}
+		hs, err := w.hookStore(st)
+		if err != nil {
+			return hook.Status{}, false, err
+		}
+		sts, _, err := hs.Read(c.Ctx, name)
+		if err != nil || len(sts) == 0 {
+			return hook.Status{}, false, err
+		}
+		return sts[0], sts[0].State != hook.StateNone, nil
+	}
+
 	return friend.CheckSeams{
 		Now:       w.now,
 		Home:      w.home,
@@ -201,10 +217,28 @@ func (w world) checkSeams(c *tool.Call, st bus.Store) friend.CheckSeams {
 			return friend.ReadStatus(friendStateDir(name))
 		},
 		ReadPresence: func(name string) (friend.PresenceStatus, bool, error) {
-			return friend.ReadPresence(friendStateDir(name))
+			hst, ok, err := readHook(name)
+			if err != nil || !ok {
+				return friend.PresenceStatus{}, false, err
+			}
+			presence := friend.PresenceDown
+			if hst.State == hook.StateProven && hst.Down == "" {
+				presence = friend.PresenceUp
+			}
+			return friend.PresenceStatus{
+				Friend:    name,
+				Presence:  presence,
+				At:        hst.Armed,
+				LastHeard: hst.AnswerAt,
+				Reason:    hst.Reason,
+			}, true, nil
 		},
 		ReadPong: func(name string) (friend.Pong, bool, error) {
-			return friend.ReadPong(friendStateDir(name))
+			hst, ok, err := readHook(name)
+			if err != nil || !ok || hst.AnswerAt.IsZero() {
+				return friend.Pong{}, false, err
+			}
+			return friend.Pong{At: hst.AnswerAt}, true, nil
 		},
 		ReadLog: func(name string) ([]string, error) {
 			b, err := os.ReadFile(friend.LogPath(friendStateDir(name)))

@@ -142,14 +142,7 @@ func (h *daemonHook) step(ctx context.Context) {
 		err = h.holder.Start(ctx)
 	}
 	if err == nil {
-		bctx, cancel := context.WithTimeout(ctx, bus.CallTimeout)
-		proven := map[hook.Push]bool{hook.Bus: h.busProof(bctx)}
-		cancel()
-		if h.sprint {
-			at := h.answered.Load()
-			proven[hook.Work] = at != nil && h.now().Sub(*at) < hook.LeaseTTL
-		}
-		err = h.holder.Beat(ctx, proven)
+		err = h.holder.Beat(ctx, nil)
 	}
 	if err == nil {
 		err = h.holder.Gate(ctx, hook.PushesOf(h.holder.Role)...)
