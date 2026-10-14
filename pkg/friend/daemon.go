@@ -1633,7 +1633,7 @@ func LaneFaultText(friend string, p Pronouns, fault string) (subject, body strin
 // fault that is real is counted anew from the first lane after it (a fresh run of alike
 // refusals, LaneFaultWatch.Clear) and stands again, one judgment per episode; a fault that was
 // a misreading no longer locks the lanes until a person restarts the daemon (the finding of
-// 2026-10-14: emma's lanes locked on a refusal read as "{"). A restart or a person's clear
+// 2026-10-14: a friend's lanes locked on a refusal read as "{"). A restart or a person's clear
 // ends it sooner, as before (tla/LaneFault.tla: FaultClears).
 const LaneFaultHold = FaultDownFor
 

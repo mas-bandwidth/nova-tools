@@ -4,7 +4,7 @@
    the lanes). Lane refusals are watched: LaneFaultAlike identical real refusal lines in a row
    fault the lane, the fault file stands, and the lanes take no card. A line with no word in it
    (an empty line, a bare brace: BareLine) is no refusal: it is a read fault and counts toward
-   nothing. A fault ends by a restart, a person's clear, or, the finding of 2026-10-14 (emma's
+   nothing. A fault ends by a restart, a person's clear, or, the finding of 2026-10-14 (a friend's
    lanes locked on `refusal="{"` until a restart), by itself once it has stood Hold: the daemon's
    loop runs every second, a Hold of fifteen minutes, so time cannot pass the Hold with the
    fault standing and the clearing not done.

@@ -145,7 +145,7 @@ func FirstErrorLine(t LaneText) string {
 const ErrorMessageMax = 400
 
 // ErrorMessage is the whole of a lane's error as one line for the alike judgment: the text
-// FirstErrorLine took its line from, every non-empty line trimmed and joined with a space,
+// FirstErrorLine took its line from, every non-empty line trimmed and joined by single blanks,
 // capped at ErrorMessageMax. A pretty-printed JSON error reads as `{ "error": "..." }` and not
 // as its first line. It is "" when the lane said nothing a person could read.
 func ErrorMessage(t LaneText) string {
