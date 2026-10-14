@@ -61,8 +61,7 @@ func TestReportStoreRefusesANote(t *testing.T) {
 		{"report", "--store", "127.0.0.1:1", "--file", "m.tsv"},
 	} {
 		var out, errs bytes.Buffer
-		if code := Run("nova-update", args, "test", &out, &errs, Environment{}); code != 2 || !strings.Contains(errs.String(), "REPORT REFUSED") {
-			require.Failf(t, "", "%v: exit %d, want 2 with a refusal\n%s%s", args, code, out.String(), errs.String())
-		}
+		code := Run("nova-update", args, "test", &out, &errs, Environment{})
+		require.Falsef(t, code != 2 || !strings.Contains(errs.String(), "REPORT REFUSED"), "%v: exit %d, want 2 with a refusal\n%s%s", args, code, out.String(), errs.String())
 	}
 }
