@@ -53,6 +53,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	fs := flag.NewFlagSet("member", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	f := &flags{verb: "member", fs: fs}
+	fs.BoolVar(&f.json, "json", false, "print the result as one JSON object instead of lines")
 	as := fs.String("as", "", "required: this machine's `name`, its row in the fleet table (with --reader, its row in the readers table, reader-<machine>)")
 	width := fs.Int("width", 0, "an override of the most cards it runs at once, a twin's; a worker runs its fleet row's width, read every tick: a member its own row's, a reader its machine's (reader-<m> runs at m's width)")
 	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards, at its machine's width; a flash card's first read is a decide read, asked with JEV_API_KEY from this environment (docs/SPEC-SPRINT.md section 6)")
@@ -80,7 +81,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	gocacheGiB := fs.Int("gocache-limit", int(gocache.Limit/gib), "the `GiB` the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	f.want(*as, "as", "the member's name in the fleet table (a reader's in the readers table with --reader)")
@@ -167,7 +168,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 			pass = append(pass, w.Secret)
 		}
 	}
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	// the beat writes from its own goroutine (memberLoop), and each lane's end its LANE END
@@ -177,13 +178,13 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// a member only takes a card it can run at CI's priority: native refuses every card on
 	// an OS with no setpriority, so a member there would take and fail every card it is dealt
 	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
-		return refuse(stderr, " member", why)
+		return refuse(stdout, stderr, jsonAsked(args), " member", why)
 	}
 	// a name --pass lists that this environment does not hold is read here, in
 	// this process, before any directory is made (keys.go)
 	held, extra, err := prepareMemberKeys(pass, os.Getenv)
 	if err != nil {
-		return refuse(stderr, " member", err.Error())
+		return refuse(stdout, stderr, jsonAsked(args), " member", err.Error())
 	}
 	pass = append(pass, extra...)
 	if *slots == "" {
@@ -194,12 +195,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	for _, d := range []string{*slots, *resultsRoot} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
-			return refuse(stderr, " member", err.Error())
+			return refuse(stdout, stderr, jsonAsked(args), " member", err.Error())
 		}
 	}
 	self, err := os.Executable()
 	if err != nil {
-		return refuse(stderr, " member", "own executable: "+err.Error())
+		return refuse(stdout, stderr, jsonAsked(args), " member", "own executable: "+err.Error())
 	}
 	// the sprint's verbs go to its server, which runs them beside the store (pkg/sprintwire).
 	// The dialer re-dials it after a restart, rebuilding the client and backing off

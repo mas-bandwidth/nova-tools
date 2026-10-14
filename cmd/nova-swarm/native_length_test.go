@@ -52,7 +52,7 @@ func TestNativeSetsTheOutputTokenMax(t *testing.T) {
 		})
 	}
 	f, nf := nativeFlagSet()
-	require.True(t, f.parse([]string{"--output-token-max", "64000"}, &bytes.Buffer{}))
+	require.True(t, f.parse([]string{"--output-token-max", "64000"}, &bytes.Buffer{}, &bytes.Buffer{}))
 	assert.Equal(t, 64000, *nf.outputTokenMax)
 	_, defaults := nativeFlagSet()
 	assert.Equal(t, 128000, *defaults.outputTokenMax)

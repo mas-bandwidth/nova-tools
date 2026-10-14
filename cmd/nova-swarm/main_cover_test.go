@@ -37,7 +37,7 @@ func TestMainCoverStringListValueSet(t *testing.T) {
 		t.Parallel()
 		f, nf := nativeFlagSet()
 		var stderr bytes.Buffer
-		require.True(t, f.parse([]string{"--repo", "a/one", "--repo", "a/two", "--recipient", "lane"}, &stderr),
+		require.True(t, f.parse([]string{"--repo", "a/one", "--repo", "a/two", "--recipient", "lane"}, &stderr, &stderr),
 			"the flag set accepts repeated --repo and --recipient: %s", stderr.String())
 		assert.Equal(t, []string{"a/one", "a/two"}, nf.repos, "the run's repos, one entry per occurrence")
 		assert.Equal(t, []string{"lane"}, nf.recipients, "the run's recipients, one entry per occurrence")
@@ -51,7 +51,7 @@ func TestMainCoverStringListValueSet(t *testing.T) {
 		assert.Equal(t, []string{""}, got, "an empty occurrence is still recorded")
 		var stderr bytes.Buffer
 		f, _ := nativeFlagSet()
-		assert.False(t, f.parse([]string{"--repo", "a/one", "--no-such-flag"}, &stderr),
+		assert.False(t, f.parse([]string{"--repo", "a/one", "--no-such-flag"}, &stderr, &stderr),
 			"an unknown flag is refused by the flag set, before any code here runs")
 		assert.Contains(t, stderr.String(), "REFUSED", "the refusal is one line in the tool's grammar")
 	})

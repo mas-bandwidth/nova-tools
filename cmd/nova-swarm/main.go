@@ -33,6 +33,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
@@ -66,7 +67,7 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>] [--json]
                         (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
                          Each tick beats, reads the queue, reports ended children and takes cards to the
                          fleet row's width; --width overrides it, and --pass names environment secrets to
@@ -211,7 +212,9 @@ var helpVerbs = map[string]bool{
 // refuse is what an unusable invocation costs: ONE line, `nova-swarm[ <verb>] REFUSED:
 // <what was wrong>; run: <remedy>` (docs/STANDARD.md section 3, point 1), never the banner,
 // which is behind `nova-swarm help`. The remedy is the verb's help, or what names its own.
-func refuse(stderr io.Writer, where, what string) int {
+// Under --json (asJSON) it is the same result as one object on stdout from pkg/tool's
+// renderer, a refusal included (docs/STANDARD.md §2, "one output structure, two renderings").
+func refuse(stdout, stderr io.Writer, asJSON bool, where, what string) int {
 	run := "; run: nova-swarm help"
 	if w := strings.Fields(where); len(w) > 0 && helpVerbs[w[0]] {
 		run += " " + w[0]
@@ -219,9 +222,20 @@ func refuse(stderr io.Writer, where, what string) int {
 	if strings.Contains(what, "; run: ") {
 		run = ""
 	}
+	if asJSON {
+		o := tool.Refuse(what)
+		o.Verb = strings.TrimSpace(where)
+		o.Remedy = strings.TrimPrefix(run, "; run: ")
+		o.Render(stdout, true)
+		return 2
+	}
 	fmt.Fprintf(stderr, "nova-swarm%s REFUSED: %s%s\n", oneline.Escape(where), oneline.Escape(what), oneline.Escape(run))
 	return 2
 }
+
+// jsonAsked reports whether args ask for --json (verbflag.BoolAsked): the one flag every
+// verb of this tool now takes (docs/STANDARD.md §2), read before a flag set has parsed.
+func jsonAsked(args []string) bool { return verbflag.BoolAsked(args, "json") }
 
 func main() {
 	args := os.Args[1:]
@@ -244,10 +258,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	// file through the secrets library, in this process.
 	args, err := seatcred.FromArgs(args, os.Getenv)
 	if err != nil {
-		return refuse(stderr, "", err.Error())
+		return refuse(stdout, stderr, jsonAsked(args), "", err.Error())
 	}
+	asJSON := jsonAsked(args)
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; the verbs are "+strings.Join(verbNames, ", ")+"; `template --name card` is the one that only looks")
+		return refuse(stdout, stderr, asJSON, "", "no verb given; the verbs are "+strings.Join(verbNames, ", ")+"; `template --name card` is the one that only looks")
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
@@ -258,7 +273,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 			return run(append(append([]string{}, rest...), "--help"), stdin, stdout, stderr, now)
 		}
 		if cmd == "help" && len(rest) > 0 && !verbflag.IsHelp(rest[0]) {
-			return refuse(stderr, "", fmt.Sprintf("help %q: no such verb", rest[0])+"; the verbs are "+strings.Join(verbNames, ", "))
+			return refuse(stdout, stderr, asJSON, "", fmt.Sprintf("help %q: no such verb", rest[0])+"; the verbs are "+strings.Join(verbNames, ", "))
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -293,7 +308,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "worker":
 		return cmdWorker(rest, stdout, stderr)
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown verb %q", cmd)+"; the verbs are "+strings.Join(verbNames, ", "))
+	return refuse(stdout, stderr, asJSON, "", fmt.Sprintf("unknown verb %q", cmd)+"; the verbs are "+strings.Join(verbNames, ", "))
 }
 
 // ------------------------------------------------------------------------------- flags
@@ -308,13 +323,17 @@ type flags struct {
 	// positional names the one flag a bare argument fills (`lint <file>` is `lint
 	// --card <file>`); "" takes none, and every input is a flag.
 	positional string
+	// json is --json: the result as one JSON object instead of lines (docs/STANDARD.md §2).
+	json bool
 }
 
 func newFlags(verb string) *flags {
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	return &flags{verb: verb, fs: fs}
+	f := &flags{verb: verb, fs: fs}
+	fs.BoolVar(&f.json, "json", false, "print the result as one JSON object instead of lines")
+	return f
 }
 
 // stringListValue is a repeatable flag: every occurrence appends to the slice, so --repo a
@@ -359,14 +378,15 @@ func (s *secondsFlag) Set(v string) error {
 // parse runs the flag set. It reports nothing about required flags: those are checked by
 // want and wantCount, which collect EVERY independent problem so that one run names them
 // all (ONBOARDING point 2) rather than sending a first run back three times.
-func (f *flags) parse(args []string, stderr io.Writer) bool {
+func (f *flags) parse(args []string, stdout, stderr io.Writer) bool {
+	f.json = jsonAsked(args)
 	if err := verbflag.Parse(f.fs, args); err != nil {
 		// the nearest flag and the verb's flags, never the flag package's line (tool ledger X2)
-		refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
+		refuse(stdout, stderr, f.json, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
 		return false
 	}
 	if f.fs.NArg() > 0 && f.positional == "" {
-		refuse(stderr, " "+f.verb, fmt.Sprintf("takes no positional arguments, got %d: %q (every input is a flag)", f.fs.NArg(), f.fs.Args()))
+		refuse(stdout, stderr, f.json, " "+f.verb, fmt.Sprintf("takes no positional arguments, got %d: %q (every input is a flag)", f.fs.NArg(), f.fs.Args()))
 		return false
 	}
 	// the one bare argument fills its flag, and the flags after it are parsed
@@ -376,19 +396,19 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 		arg := f.fs.Arg(0)
 		if given := f.fs.Lookup(f.positional).Value.String(); given != "" {
 			if taken == "" {
-				refuse(stderr, " "+f.verb, fmt.Sprintf("--%s %q and the positional %q name two files; give one", f.positional, given, arg))
+				refuse(stdout, stderr, f.json, " "+f.verb, fmt.Sprintf("--%s %q and the positional %q name two files; give one", f.positional, given, arg))
 			} else {
-				refuse(stderr, " "+f.verb, fmt.Sprintf("takes one positional argument, the --%s file, got %q and %q", f.positional, taken, arg))
+				refuse(stdout, stderr, f.json, " "+f.verb, fmt.Sprintf("takes one positional argument, the --%s file, got %q and %q", f.positional, taken, arg))
 			}
 			return false
 		}
 		if err := f.fs.Set(f.positional, arg); err != nil {
-			refuse(stderr, " "+f.verb, fmt.Sprintf("--%s %q: %s", f.positional, arg, oneline.Err(err)))
+			refuse(stdout, stderr, f.json, " "+f.verb, fmt.Sprintf("--%s %q: %s", f.positional, arg, oneline.Err(err)))
 			return false
 		}
 		taken = arg
 		if err := verbflag.Parse(f.fs, f.fs.Args()[1:]); err != nil {
-			refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
+			refuse(stdout, stderr, f.json, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
 			return false
 		}
 	}
@@ -397,9 +417,10 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 
 // parseArgs parses flags without refusing positional arguments, for verbs that wrap a command
 // (docs/SPEC-SWARM.md, "Bench slot leases").
-func (f *flags) parseArgs(args []string, stderr io.Writer) bool {
+func (f *flags) parseArgs(args []string, stdout, stderr io.Writer) bool {
+	f.json = jsonAsked(args)
 	if err := verbflag.Parse(f.fs, args); err != nil {
-		refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
+		refuse(stdout, stderr, f.json, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
 		return false
 	}
 	return true
@@ -423,8 +444,21 @@ func (f *flags) wantCount(value int, name, wants string) {
 func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
 
 // refused prints every problem this run found, one line each, and reports whether there
-// were any. Three independent flags cost one run, not three.
-func (f *flags) refused(stderr io.Writer) bool {
+// were any. Three independent flags cost one run, not three. Under --json it is one object
+// on stdout whose reasons are the problems (docs/STANDARD.md §2).
+func (f *flags) refused(stdout, stderr io.Writer) bool {
+	if f.json {
+		if len(f.problems) > 0 {
+			o := tool.Refuse(f.problems...)
+			o.Verb = f.verb
+			o.Remedy = "nova-swarm help"
+			if helpVerbs[f.verb] {
+				o.Remedy += " " + f.verb
+			}
+			o.Render(stdout, true)
+		}
+		return len(f.problems) > 0
+	}
 	for _, p := range f.problems {
 		fmt.Fprintf(stderr, "nova-swarm %s: %s\n", f.verb, oneline.Escape(p))
 	}
@@ -489,7 +523,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	runRecord := f.fs.String("run-record", "", "the job's exit.json `file`: the harness's exit code joins the verdict")
 	usageFile := f.fs.String("usage", "", "the job's usage.tsv `file`: tokens, dollars and wall time join the receipt")
 	max := f.fs.Int("max", swarm.DefaultContractLines, "the most evidence lines past the disposition, at least 1")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	f.want(*result, "result", "the path to the job's RESULT.md whose line 1 is to be checked")
@@ -498,7 +532,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	if *max < 1 {
 		f.add(fmt.Sprintf("--max is at least 1, got %d; it bounds the evidence lines past the disposition", *max))
 	}
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 
@@ -566,13 +600,13 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("template")
 	name := f.fs.String("name", "", "required: the template's `name`: "+strings.Join(swarm.TemplateNames(), ", ")+" (card is a whole card that passes lint --child-rules)")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	// THE BANNER AND THE REFUSAL NAME THE SAME SET. The list was typed twice and the
 	// tool answered to a fifth name (`worker`) that neither copy mentioned.
 	f.want(*name, "name", "one of "+strings.Join(swarm.TemplateNames(), ", "))
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	body, err := swarm.Template(*name)
@@ -592,11 +626,11 @@ func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 func cmdProfile(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("profile")
 	jobs := f.fs.String("jobs", "", "required: a `glob` of job directories (or timeline.tsv files), each holding a native run's per-turn timeline")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	f.want(*jobs, "jobs", "a glob of job directories (or timeline.tsv files), each holding a native run's per-turn timeline")
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	return swarm.ProfileJobs(*jobs, stdout, stderr)
@@ -694,7 +728,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 
 func cmdNative(args []string, stdout, stderr io.Writer) int {
 	f, nf := nativeFlagSet()
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	harnessBin := nf.harness
@@ -783,7 +817,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			budgetUSD = r
 		}
 	}
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	// CARD-8349: a card budget below the harness's MEASURED startup cost is

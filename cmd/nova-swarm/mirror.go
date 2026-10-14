@@ -191,7 +191,7 @@ func runMirror(args []string, stdout, stderr io.Writer, git mirrorGit, wait func
 	benches := f.fs.String("benches", "", "the fleet rows (bench names) every mirror is converged to, a comma-separated `list`; empty is this bench's own flat mirror dir")
 	check := f.fs.Bool("check", false, "the converge-check: print one MIRROR MISSING <bench> <repo> per mirror the fleet lacks, write nothing, exit 1 when any is missing")
 	every := f.fs.Duration("every", 0, "refresh again after this `duration`, until stopped; 0 refreshes once (default 0)")
-	if !f.parse(args, stderr) {
+	if !f.parse(args, stdout, stderr) {
 		return 2
 	}
 	f.want(*base, "base", "the url the repositories live under, <url>/<name>.git")
@@ -209,14 +209,14 @@ func runMirror(args []string, stdout, stderr io.Writer, git mirrorGit, wait func
 	if *every < 0 {
 		f.add("--every is 0 or a positive duration, got " + oneline.Field(every.String()))
 	}
-	if f.refused(stderr) {
+	if f.refused(stdout, stderr) {
 		return 2
 	}
 	d := *dir
 	if rest, ok := strings.CutPrefix(d, "~/"); ok {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return refuse(stderr, " mirror", "the user's home could not be read: "+err.Error())
+			return refuse(stdout, stderr, jsonAsked(args), " mirror", "the user's home could not be read: "+err.Error())
 		}
 		d = filepath.Join(home, rest)
 	}
@@ -224,7 +224,7 @@ func runMirror(args []string, stdout, stderr io.Writer, git mirrorGit, wait func
 	// a missing --dir is every mirror missing, which is exactly the fault it names.
 	if !*check {
 		if err := os.MkdirAll(d, 0o755); err != nil {
-			return refuse(stderr, " mirror", "--dir could not be made: "+oneline.Err(err))
+			return refuse(stdout, stderr, jsonAsked(args), " mirror", "--dir could not be made: "+oneline.Err(err))
 		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
