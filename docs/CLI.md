@@ -1426,11 +1426,11 @@ file, so the next turn of the session is the message that arrived.
 | --- | --- |
 | `wait [--as <me>] [--after <id>] [--timeout <d>] [--skip-subject <p,...>] [--wake-file <path>]` | Watches your stream without taking anything, past a cursor; up to 5 `WAIT MESSAGE id= from= subject= bytes=` lines, then `WAIT OK after=<last id seen>`, or `WAIT WAKE` on a line appended to the wake file, or `WAIT NONE after= waited=` at exit 1 when `--timeout` runs out |
 | `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction; refused while the sender or a recipient is deaf (no proven inbox push) |
-| `peek [--as <me>]` | What waits: pending and new, moving nothing |
+| `peek [--as <me>] [--max <n>]` | What waits: pending and new, moving nothing; `--max` bounds the list with a MORE line |
 | `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0; refused while the reader is deaf |
 | `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |
-| `log [--bodies] [--max <n>]` | The log, oldest first |
-| `names` | The known names (nova-config's friend and machine rows), each with its inbox push: proven, stale, down or none, and its age |
+| `log [--bodies] [--max <n>] [--oldest]` | The log: the newest `--max` messages by default, oldest-first within the window, with a MORE line naming the older entries; `--oldest` reads from the start |
+| `names [--max <n>]` | The known names (nova-config's friend and machine rows), each with its inbox push: proven, stale, down or none, and its age; `--max` bounds the list with a MORE line |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`) and logs
