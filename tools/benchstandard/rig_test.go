@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The rig of tools/benchstandard (STANDARD.md section 8): bench and fakeHost,
@@ -26,9 +28,7 @@ func (b *bench) toolOnPath(tool, at string) string {
 func (b *bench) linkedTool(tool, at string) string {
 	b.t.Helper()
 	real := b.write(at, "#!/bin/sh\n", true)
-	if err := os.Symlink(real, filepath.Join(b.bin, tool)); err != nil {
-		b.t.Fatal(err)
-	}
+	require.NoError(b.t, os.Symlink(real, filepath.Join(b.bin, tool)))
 	return real
 }
 
@@ -38,8 +38,6 @@ func (b *bench) wantWallLines(tool, path string, want int) []string {
 	b.t.Helper()
 	_, output := b.standard()
 	lines := driftWith(output, tool+" on PATH is ")
-	if len(lines) != want {
-		b.t.Fatalf("the %s at %s drew %d wall lines, want %d:\n%s", tool, path, len(lines), want, output)
-	}
+	require.Len(b.t, lines, want, "the %s at %s drew %d wall lines, want %d:\n%s", tool, path, len(lines), want, output)
 	return lines
 }
