@@ -43,6 +43,7 @@ func TestPushProofReadsAProvenHookLeaseAndUsesTheirNotIts(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, lines, 1, "one NOTE for %s", n)
 		assert.Contains(t, lines[0], "push=none for "+n+": no proven push since never", "%s", n)
+		assert.NotContains(t, lines[0], " its ", "the NOTE speaks of the person as they")
 	}
 
 	remedy := PushProof{Name: "bob"}.Deaf(at)

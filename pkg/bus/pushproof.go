@@ -41,8 +41,8 @@ type PushProof struct {
 	// the hook record nova-hook writes (hook.LiveKey and hook.ProofKey),
 	// read beside bus2:push: a live proven lease is push proven even when no
 	// friend daemon's session check has written one (docs/SPEC-HOOK.md, the
-	// key layout and the states; SPEC-BUS.md, bus-requires-inbox-push-proof).
-	// It is never on bus2:push, so it unmarshals as false.
+	// key layout and the states). It is never on bus2:push, so it
+	// unmarshals as false.
 	Hook bool `json:"-"`
 }
 
@@ -56,7 +56,7 @@ const (
 
 // State is the proof's push state at now; a zero proof is PushNone, and a
 // proof from a live proven hook lease (Hook) is PushProven whatever bus2:push
-// holds (SPEC-BUS.md, bus-requires-inbox-push-proof).
+// holds (docs/SPEC-HOOK.md, the key layout and the states).
 func (p PushProof) State(now time.Time) string {
 	switch {
 	case p.Hook:
@@ -104,7 +104,7 @@ func (p PushProof) Unheard(now time.Time) string {
 	case PushStale:
 		why = fmt.Sprintf("their daemon (%s) last renewed it %s ago, past %s", p.Harness, p.Age(now), PushFresh)
 	}
-	return fmt.Sprintf("push=%s for %s: no proven push since %s: %s; a message to %s waits on its stream until something reads it (nova-bus recv --as %s); the proof: %s runs their friend daemon (nova-friend install --as %s --harness <h> --dir <d>) and their session answers the daemon's SESSION CHECK; nova-bus names shows every name's push", p.State(now), p.Name, p.AgeWord(now), why, p.Name, p.Name, p.Name, p.Name)
+	return fmt.Sprintf("push=%s for %s: no proven push since %s: %s; a message to %s waits on their stream until something reads it (nova-bus recv --as %s); the proof: %s runs their friend daemon (nova-friend install --as %s --harness <h> --dir <d>) and their session answers the daemon's SESSION CHECK; nova-bus names shows every name's push", p.State(now), p.Name, p.AgeWord(now), why, p.Name, p.Name, p.Name, p.Name)
 }
 
 // Deaf is why name is not heard at now, "" when their proof is proven: the
@@ -147,7 +147,8 @@ func (b *Bus) ProvePush(ctx context.Context, p PushProof) (PushProof, error) {
 }
 
 // PushProofs is each name's proof, in the order asked, and the store's now
-// they are read at (a roster trip, then one HGETALL).
+// they are read at (a roster trip, then the bus2:push hash and each name's
+// hook keys).
 func (b *Bus) PushProofs(ctx context.Context, names ...string) ([]PushProof, time.Time, error) {
 	_, now, err := b.Store.Roster(ctx)
 	if err != nil {
@@ -157,11 +158,13 @@ func (b *Bus) PushProofs(ctx context.Context, names ...string) ([]PushProof, tim
 	return proofs, now, err
 }
 
-// proofs is each name's proof, in the order asked, in one trip (HGETALL on
-// PushKey). A name with none, or whose value is no proof, has the zero proof:
-// PushNone. A name whose bus push is proven where nova-hook records it has
-// Hook set, so State reads PushProven even when bus2:push holds none or says
-// down (SPEC-BUS.md, bus-requires-inbox-push-proof).
+// proofs is each name's proof, in the order asked: the bus2:push hash in one
+// trip (HGETALL on PushKey, through Marks), then each name's hook keys read
+// one by one (Sent on hook.LiveKey and hook.ProofKey). A name with none, or
+// whose value is no proof, has the zero proof: PushNone. A name whose bus
+// push is proven where nova-hook records it has Hook set, so State reads
+// PushProven even when bus2:push holds none or says down (docs/SPEC-HOOK.md,
+// the key layout and the states).
 func (b *Bus) proofs(ctx context.Context, names []string) ([]PushProof, error) {
 	hashes, err := b.Store.Marks(ctx, PushKey)
 	if err != nil {
@@ -189,9 +192,7 @@ func (b *Bus) proofs(ctx context.Context, names []string) ([]PushProof, error) {
 // the same store as bus2:push. Unhook and a fresh arm clear both keys
 // (docs/SPEC-HOOK.md, the key layout, the states, and the epoch and the clear
 // rule), so the two standing means a live proven lease at the record's epoch;
-// a lease without a proof, or a proof past its lease, is not proven
-// (docs/SPEC-BUS.md, bus-requires-inbox-push-proof: a live proven lease is
-// push proven).
+// a lease without a proof, or a proof past its lease, is not proven.
 func (b *Bus) hookProven(ctx context.Context, name string) (bool, error) {
 	if _, ok, err := b.Store.Sent(ctx, hook.LiveKey(name, hook.Bus)); err != nil || !ok {
 		return false, err
@@ -201,13 +202,13 @@ func (b *Bus) hookProven(ctx context.Context, name string) (bool, error) {
 }
 
 // Unheard is one advisory line for every name of names (deduplicated, in
-// order) that is not heard at the store's now, in one trip after the roster's
-// (one HGETALL): what send prints as SEND NOTE after its message landed and
-// recv as RECV NOTE beside what it read. It is advice, never a gate: the
-// push proof is the seat's liveness rule (names, the coordinator's view),
-// and a message is never refused on it (the finding of 2026-10-08, issue
-// #5450: a claude friend and a machine with no daemon could never be
-// written to or read as).
+// order) that is not heard at the store's now, after the roster's trip (the
+// bus2:push hash, then each name's hook keys): what send prints as SEND NOTE
+// after its message landed and recv as RECV NOTE beside what it read. It is
+// advice, never a gate: the push proof is the seat's liveness rule (names,
+// the coordinator's view), and a message is never refused on it (the finding
+// of 2026-10-08, issue #5450: a claude friend and a machine with no daemon
+// could never be written to or read as).
 func (b *Bus) Unheard(ctx context.Context, names ...string) ([]string, error) {
 	_, now, err := b.Store.Roster(ctx)
 	if err != nil {
@@ -217,7 +218,8 @@ func (b *Bus) Unheard(ctx context.Context, names ...string) ([]string, error) {
 }
 
 // UnheardAt is Unheard judged at at, with no roster trip: send's, judged at
-// the store's time its message was stamped with (one HGETALL after the write).
+// the store's time its message was stamped with (the bus2:push hash, then
+// each name's hook keys, after the write).
 func (b *Bus) UnheardAt(ctx context.Context, at time.Time, names ...string) ([]string, error) {
 	return b.unheardAt(ctx, at, PushProof.Unheard, names...)
 }
@@ -243,7 +245,8 @@ func (b *Bus) Heard(ctx context.Context, names ...string) error {
 }
 
 // unheardAt is line(proof, at) for every name of names (deduplicated, in
-// order) whose proof is not proven at at, in one trip (one HGETALL).
+// order) whose proof is not proven at at: the bus2:push hash, then each
+// name's hook keys.
 func (b *Bus) unheardAt(ctx context.Context, at time.Time, line func(PushProof, time.Time) string, names ...string) ([]string, error) {
 	var uniq []string
 	for _, n := range names {
