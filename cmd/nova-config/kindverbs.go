@@ -21,21 +21,57 @@ import (
 
 // --- the kind verbs ---------------------------------------------------------
 
+// kindVerbs is the verbs a kind answers, in the order its help and refusals
+// name them: the generated CRUD verbs (add, set, remove, list, show, history)
+// with the extra verb a kind carries (machine's width and self, route's
+// prices, loop's run). A singleton kind has set, show and history and no
+// name, since migrate makes its one row (docs/STANDARD.md, section 3, point
+// 6).
+func kindVerbs(k *config.Kind) []string {
+	if k.Singleton {
+		return []string{"set", "show", "history"}
+	}
+	verbs := []string{"add", "set", "remove", "list", "show", "history"}
+	switch k.Name {
+	case config.KindMachine:
+		verbs = append(verbs, "width", "self")
+	case config.KindRoute:
+		verbs = append(verbs, "prices")
+	case config.KindLoop:
+		verbs = append(verbs, "run")
+	}
+	return verbs
+}
+
+// wantLine words a verb list as a refusal and a help line read it: `a, b or
+// c`.
+func wantLine(verbs []string) string {
+	if len(verbs) == 1 {
+		return verbs[0]
+	}
+	return strings.Join(verbs[:len(verbs)-1], ", ") + " or " + verbs[len(verbs)-1]
+}
+
+// kindHelpFlagSet is the flag set a kind's own help prints: in its usage line
+// the kind's verbs, and every schema field as a flag with the word its type
+// wants and its help (docs/STANDARD.md, section 3, points 1 and 6). The
+// schema is the one runKindWrite registers the add and set flags from, so the
+// two cannot drift.
+func kindHelpFlagSet(k *config.Kind) *stdflag.FlagSet {
+	name := k.Name + " <" + strings.Join(kindVerbs(k), "|") + ">"
+	fs := stdflag.NewFlagSet(name, stdflag.ContinueOnError)
+	registerFields(fs, k, true)
+	return fs
+}
+
 func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
-	if len(args) > 0 {
-		verbflag.HelpIfAsked(args[:1], k.Name)
+	if len(args) > 0 && verbflag.Asked(args[:1]) {
+		// A kind named alone is the group of its verbs: its help names the
+		// verbs and every schema field flag with its type, before anything is
+		// read or dialled (docs/STANDARD.md, section 3, points 1 and 6).
+		panic(verbflag.Help{FS: kindHelpFlagSet(k)})
 	}
-	want := "add, set, remove, list, show or history"
-	switch {
-	case k.Singleton:
-		want = "set, show or history"
-	case k.Name == config.KindMachine:
-		want = "add, set, remove, list, show, history, width or self"
-	case k.Name == config.KindRoute:
-		want = "add, set, remove, list, show, history or prices"
-	case k.Name == config.KindLoop:
-		want = "add, set, remove, list, show, history or run"
-	}
+	want := wantLine(kindVerbs(k))
 	if len(args) == 0 {
 		return refuse(stderr, k.Name, "want "+want)
 	}
@@ -114,6 +150,31 @@ func fieldUsage(f config.Field, add bool) string {
 	return head + ": " + f.Help
 }
 
+// registerFields registers a kind's schema fields on fs as the flags its add
+// and set take, each with the word its type wants and its help. An underscore
+// field also gets its hyphenated alias, both writing one value, so a caller
+// may spell either; the hyphen form sorts first and names the underscore form
+// as the alias (the same schema runKindWrite and kindHelpFlagSet read, so no
+// flag is removed). It returns the value pointer per field name and the field
+// name each registered flag means, an alias mapping to the field it fills
+// (docs/STANDARD.md, section 3, point 6).
+func registerFields(fs *stdflag.FlagSet, k *config.Kind, add bool) (values map[string]*string, fieldOf map[string]string) {
+	values, fieldOf = map[string]*string{}, map[string]string{}
+	for _, f := range k.Fields {
+		if f.Name == "seat" && !add {
+			continue
+		}
+		v := new(string)
+		fs.StringVar(v, f.Name, "", fieldUsage(f, add))
+		values[f.Name], fieldOf[f.Name] = v, f.Name
+		if alias := strings.ReplaceAll(f.Name, "_", "-"); alias != f.Name {
+			fs.StringVar(v, alias, "", fieldUsage(f, add)+"; the alias --"+f.Name+" is accepted for the old spelling and sets the same value")
+			fieldOf[alias] = f.Name
+		}
+	}
+	return values, fieldOf
+}
+
 func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, stdout, stderr io.Writer, d deps) int {
 	verb, op := k.Name+" set", config.OpSet
 	if add {
@@ -130,13 +191,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	reason := fs.String("reason", "", "why this change is made: one `line`, recorded in the history row beside the actor and the time; empty (the default) records none")
 	dry := fs.Bool("dry-run", false, "print the change the write would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
 	asJSON := jsonFlag(fs)
-	values := map[string]*string{}
-	for _, f := range k.Fields {
-		if f.Name == "seat" && !add {
-			continue
-		}
-		values[f.Name] = fs.String(f.Name, "", fieldUsage(f, add))
-	}
+	values, fieldOf := registerFields(fs, k, add)
 	name, rest := nameAndRest(k, args)
 	if code, ok := parse(fs, rest, stderr, verb); !ok {
 		return code
@@ -146,9 +201,9 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		return refuse(stderr, verb, err.Error())
 	}
 	given := map[string]string{}
-	fs.Visit(func(f *stdflag.Flag) {
-		if v, ok := values[f.Name]; ok {
-			given[f.Name] = *v
+	fs.Visit(func(fl *stdflag.Flag) {
+		if field, ok := fieldOf[fl.Name]; ok {
+			given[field] = *values[field]
 		}
 	})
 	var problems []string
