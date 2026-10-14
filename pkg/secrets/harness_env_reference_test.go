@@ -70,6 +70,6 @@ func harnessAPIKey(t *testing.T, raw []byte) string {
 	for _, p := range doc.Provider {
 		return p.Options.APIKey
 	}
-	t.Fatal("harness config names no provider")
+	require.Fail(t, "harness config names no provider")
 	return ""
 }

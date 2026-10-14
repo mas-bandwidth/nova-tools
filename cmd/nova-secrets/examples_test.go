@@ -112,7 +112,7 @@ func runSitting(t *testing.T, h sittingHome, banner []string, sitting []onboardi
 		}
 		assert.Equal(t, 0, code, "the example %s exits %d\nstdout: %s\nstderr: %s", line, code, stdout.String(), stderr.String())
 		for _, p := range onboarding.Compare(s, onboarding.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}, norms) {
-			t.Error(p)
+			assert.Fail(t, p.String())
 		}
 	}
 }

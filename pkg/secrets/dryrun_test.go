@@ -33,12 +33,9 @@ func treeOf(t *testing.T, dir string) map[string]string {
 			out[rel+"/"] = ""
 			return nil
 		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
+		b, readErr := os.ReadFile(p)
 		out[rel] = string(b)
-		return nil
+		return readErr
 	})
 	require.NoError(t, err)
 	return out
@@ -65,7 +62,7 @@ func planField(t *testing.T, lines, key string) string {
 			}
 		}
 	}
-	t.Fatalf("no %s= on any line of:\n%s", key, lines)
+	require.Failf(t, "plan field", "no %s= on any line of:\n%s", key, lines)
 	return ""
 }
 
@@ -81,7 +78,7 @@ func quotedField(t *testing.T, lines, key string) string {
 type untouchable struct{ t *testing.T }
 
 func (u untouchable) Read([]byte) (int, error) {
-	u.t.Error("the dry run read the value; a dry run takes no stdin")
+	assert.Fail(u.t, "the dry run read the value; a dry run takes no stdin")
 	return 0, io.EOF
 }
 

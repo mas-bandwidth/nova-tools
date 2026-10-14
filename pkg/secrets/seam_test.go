@@ -67,13 +67,13 @@ func scripted(f failer, steps ...scriptedStep) (execCommand, *int) {
 func (s *scriptedExec) run(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
 	s.t.Helper()
 	if s.i >= len(s.steps) {
-		s.t.Errorf("unexpected child %s %s: the script has no step left", name, strings.Join(args, " "))
+		assert.Failf(s.t, "scripted fake", "unexpected child %s %s: the script has no step left", name, strings.Join(args, " "))
 		return nil, errors.New("scripted fake: unexpected child")
 	}
 	step := s.steps[s.i]
 	s.i++
 	if name != step.name || !argsMatch(step.args, args) {
-		s.t.Errorf("child %d = %s %s, want %s %s", s.i, name, strings.Join(args, " "), step.name, strings.Join(step.args, " "))
+		assert.Failf(s.t, "scripted fake", "child %d = %s %s, want %s %s", s.i, name, strings.Join(args, " "), step.name, strings.Join(step.args, " "))
 		return nil, errors.New("scripted fake: wrong child")
 	}
 	if stdin != nil {

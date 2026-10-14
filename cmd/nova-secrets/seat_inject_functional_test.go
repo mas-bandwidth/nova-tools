@@ -216,7 +216,7 @@ func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 		got = append(got, res)
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, []onboarding.Field{{Name: "branch"}}) {
-		t.Error(p)
+		assert.Fail(t, p.String())
 	}
 	for _, res := range got {
 		for _, v := range injectValues {
