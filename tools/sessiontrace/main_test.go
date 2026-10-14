@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func captureFixture(t *testing.T, finish string, duplicate bool) string {
@@ -27,25 +30,19 @@ func captureFixture(t *testing.T, finish string, duplicate bool) string {
 				tr.Seed, tr.Keep = 1, false
 			}
 			raw, err := json.Marshal(tr)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			line := append([]byte("    test.go:1: SESSION_TRACE "), raw...)
 			line = append(line, '\n')
 			// Split inside JSON tokens as test2json does for long log lines.
 			for len(line) > 0 {
 				n := min(37, len(line))
-				if err := enc.Encode(testEvent{Action: "output", Test: "TestShellRandomSequencesProduceSessionTrace", Output: string(line[:n])}); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, enc.Encode(testEvent{Action: "output", Test: "TestShellRandomSequencesProduceSessionTrace", Output: string(line[:n])}))
 				line = line[n:]
 			}
 		}
 	}
 	if finish != "" {
-		if err := enc.Encode(testEvent{Action: finish}); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, enc.Encode(testEvent{Action: finish}))
 	}
 	return output.String()
 }
@@ -64,12 +61,12 @@ func TestCaptureRequiresCompletePassingSessions(t *testing.T) {
 		{"duplicate session", "pass", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			traces, raw, err := readTraces(strings.NewReader(captureFixture(t, tc.finish, tc.duplicate)))
-			if (err == nil) != tc.wantOK {
-				t.Fatalf("error=%v wantOK=%v", err, tc.wantOK)
-			}
-			if tc.wantOK && (len(raw) != 16 || len(traces) != 16) {
-				t.Fatal("fragmented output lost a session")
+			assert.Equal(t, tc.wantOK, err == nil, "readTraces error=%v", err)
+			if tc.wantOK {
+				assert.Len(t, raw, 16, "fragmented output lost a session")
+				assert.Len(t, traces, 16, "fragmented output lost a session")
 			}
 		})
 	}
@@ -78,69 +75,70 @@ func TestCaptureRequiresCompletePassingSessions(t *testing.T) {
 func TestReceiptCorruptionAndCloneIndependence(t *testing.T) {
 	t.Parallel()
 	traces, _, err := readTraces(strings.NewReader(captureFixture(t, "pass", false)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := checkReceipts(traces); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, checkReceipts(traces))
 	for i, mutate := range []func(*trace){
 		func(tr *trace) { tr.Steps[0].Receipts = append(tr.Steps[0].Receipts, tr.Steps[0].Receipts[0]) },
 		func(tr *trace) { tr.Steps[0].Receipts[0].Values["rev_after"] = "9" },
 		func(tr *trace) { tr.Steps[0].Receipts[0].ID = "wrong-event" },
 	} {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			t.Parallel()
 			bad := clone(traces)
 			mutate(&bad[0])
-			if checkReceipts(bad) == nil {
-				t.Fatal("corrupted receipt accepted")
-			}
-			if err := checkReceipts(traces); err != nil {
-				t.Fatalf("negative control changed original trace: %v", err)
-			}
+			assert.Error(t, checkReceipts(bad), "a corrupted receipt was accepted")
+			require.NoError(t, checkReceipts(traces), "the negative control changed the original trace")
 		})
 	}
 }
 
 func TestHelpAndArgumentRefusals(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{{"-h"}, {"--help"}, {}, {"--unknown"}} {
-		var stdout, stderr bytes.Buffer
-		code := command(args, &stdout, &stderr)
-		help := len(args) == 1 && (args[0] == "-h" || args[0] == "--help")
-		if help {
-			if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "usage: sessiontrace") {
-				t.Fatalf("%v: code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+	for _, tc := range []struct {
+		args []string
+		help bool
+	}{
+		{[]string{"-h"}, true},
+		{[]string{"--help"}, true},
+		{nil, false},
+		{[]string{"--unknown"}, false},
+	} {
+		t.Run(strings.Join(tc.args, "_"), func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+			code := command(tc.args, &stdout, &stderr)
+			if tc.help {
+				require.Equal(t, 0, code, "stdout=%q stderr=%q", stdout.String(), stderr.String())
+				assert.Empty(t, stderr.String())
+				assert.Contains(t, stdout.String(), "usage: sessiontrace")
+				return
 			}
-		} else if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "state:") || !strings.Contains(stderr.String(), "next:") {
-			t.Fatalf("%v: code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
-		}
+			require.Equal(t, 2, code, "stdout=%q stderr=%q", stdout.String(), stderr.String())
+			assert.Empty(t, stdout.String())
+			assert.Contains(t, stderr.String(), "state:")
+			assert.Contains(t, stderr.String(), "next:")
+		})
 	}
 }
 
 func TestTruncatedCaptureNamesEvidenceAndRecovery(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "capture.json")
-	if err := os.WriteFile(path, []byte(`{"Action":`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"Action":`), 0o600))
 	_, _, err := readCapture(path)
+	require.Error(t, err)
 	for _, want := range []string{path, "state:", "next:", "invalid test event", "unexpected EOF"} {
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("error=%v; want %q", err, want)
-		}
+		assert.Contains(t, err.Error(), want)
 	}
 }
 
 func TestDuplicateControlPreservesCountsAndOriginalTrace(t *testing.T) {
 	t.Parallel()
 	traces, _, err := readTraces(strings.NewReader(captureFixture(t, "pass", false)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := checkDuplicateControl(traces); err == nil || !strings.Contains(err.Error(), "two write receipts") {
-		t.Fatalf("missing second write must refuse: %v", err)
-	}
+	require.NoError(t, err)
+	err = checkDuplicateControl(traces)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "two write receipts")
 	tr := &traces[0]
 	a := action{Kind: "ok", Command: "put fixture", Write: true}
 	tr.Actions = append(tr.Actions, a)
@@ -150,13 +148,7 @@ func TestDuplicateControlPreservesCountsAndOriginalTrace(t *testing.T) {
 			"rev_before": "1", "rev_after": "2", "actor": "trace",
 		}}},
 	})
-	if err := checkReceipts(traces); err != nil {
-		t.Fatal(err)
-	}
-	if err := checkDuplicateControl(traces); err != nil {
-		t.Fatal(err)
-	}
-	if err := checkReceipts(traces); err != nil {
-		t.Fatalf("control modified original trace: %v", err)
-	}
+	require.NoError(t, checkReceipts(traces))
+	require.NoError(t, checkDuplicateControl(traces))
+	require.NoError(t, checkReceipts(traces), "the control modified the original trace")
 }

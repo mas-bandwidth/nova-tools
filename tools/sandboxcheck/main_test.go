@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/sandbox/darwincheck"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // recordingSystem is a darwin whose processes all succeed and are recorded, so the
@@ -62,9 +64,9 @@ func TestHelpPrintsUsageAndExitsZero(t *testing.T) {
 	t.Parallel()
 	for _, flag := range []string{"-h", "--help"} {
 		code, out, _, sys := invoke(t, []string{flag}, env())
-		if code != 0 || !strings.HasPrefix(out, "usage: sandboxcheck ") || len(sys.ran) != 0 {
-			t.Errorf("%s: exit %d, ran %d: %q", flag, code, len(sys.ran), out)
-		}
+		assert.Equal(t, 0, code, "%s: exit", flag)
+		assert.True(t, strings.HasPrefix(out, "usage: sandboxcheck "), "%s: %q", flag, out)
+		assert.Empty(t, sys.ran, "%s: the check ran", flag)
 	}
 }
 
@@ -72,9 +74,10 @@ func TestABadFlagOrAnArgumentIsRefusedWithUsage(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"--bogus"}, {"extra"}} {
 		code, out, errOut, sys := invoke(t, args, env())
-		if code != 2 || out != "" || !strings.Contains(errOut, "usage: sandboxcheck ") || len(sys.ran) != 0 {
-			t.Errorf("%v: exit %d out %q err %q", args, code, out, errOut)
-		}
+		assert.Equal(t, 2, code, "%v: exit", args)
+		assert.Empty(t, out, "%v: stdout", args)
+		assert.Contains(t, errOut, "usage: sandboxcheck ", "%v", args)
+		assert.Empty(t, sys.ran, "%v: the check ran", args)
 	}
 }
 
@@ -89,22 +92,14 @@ func TestDumpProfilePrintsTheFilledEmbeddedTemplate(t *testing.T) {
 		"variable": {nil, env("NOVA_CHECK_DUMP_PROFILE", "1", "NOVA_CHECK_SCRATCH", dir)},
 	} {
 		code, out, _, _ := invoke(t, tc.args, tc.env)
-		if code != 0 {
-			t.Errorf("%s: exit %d:\n%s", name, code, out)
-		}
+		require.Equal(t, 0, code, "%s:\n%s", name, out)
 		for _, l := range strings.Split(out, "\n") {
-			if strings.Contains(l, "@@") && !strings.HasPrefix(l, ";;") {
-				t.Errorf("%s: an unfilled marker: %s", name, l)
-			}
+			assert.False(t, strings.Contains(l, "@@") && !strings.HasPrefix(l, ";;"), "%s: an unfilled marker: %s", name, l)
 		}
 		for _, want := range []string{`(param "READ0")`, `(param "WRITE0")`, `(literal "/private/var/run/mDNSResponder")`} {
-			if !strings.Contains(out, want) {
-				t.Errorf("%s: the dump lacks %s", name, want)
-			}
+			assert.Contains(t, out, want, "%s", name)
 		}
-		if strings.Contains(out, "CHECK ") {
-			t.Errorf("%s: a dump ran checks:\n%s", name, out)
-		}
+		assert.NotContains(t, out, "CHECK ", "%s: a dump ran checks", name)
 	}
 }
 
@@ -120,12 +115,9 @@ func TestNoNetworkFromTheFlagAndFromTheVariable(t *testing.T) {
 		"variable not 1": {nil, env("NOVA_CHECK_NO_NETWORK", "yes"), false},
 		"neither":        {nil, env(), false},
 	} {
-		tc := tc
 		args := append(append([]string{}, tc.args...), "--scratch", scratch(t))
 		_, out, _, _ := invoke(t, args, tc.env)
-		if got := strings.Contains(out, "CHECK SKIP name=dns_resolves reason=no_network"); got != tc.skip {
-			t.Errorf("%s: skip = %v, want %v:\n%s", name, got, tc.skip, out)
-		}
+		assert.Equal(t, tc.skip, strings.Contains(out, "CHECK SKIP name=dns_resolves reason=no_network"), "%s:\n%s", name, out)
 	}
 }
 
@@ -140,34 +132,35 @@ func TestFillFromTheFlagAndFromTheVariableAndTheFlagWins(t *testing.T) {
 		}
 		return g
 	}
-	_, _, _, sys := invoke(t, []string{"--no-network", "--scratch", scratch(t), "--fill", "/tmp/from-flag"}, env())
-	if g := generators(sys); len(g) != 1 || g[0] != "/tmp/from-flag" {
-		t.Errorf("flag: generators %v", g)
-	}
-	_, _, _, sys = invoke(t, []string{"--no-network", "--scratch", scratch(t)}, env("NOVA_SANDBOX_FILL", "/tmp/from-env"))
-	if g := generators(sys); len(g) != 1 || g[0] != "/tmp/from-env" {
-		t.Errorf("variable: generators %v", g)
-	}
-	_, _, _, sys = invoke(t, []string{"--no-network", "--scratch", scratch(t), "--fill", "/tmp/from-flag"}, env("NOVA_SANDBOX_FILL", "/tmp/from-env"))
-	if g := generators(sys); len(g) != 1 || g[0] != "/tmp/from-flag" {
-		t.Errorf("both: generators %v", g)
-	}
-	_, _, _, sys = invoke(t, []string{"--no-network", "--scratch", scratch(t)}, env())
-	if g := generators(sys); len(g) != 0 {
-		t.Errorf("neither: generators %v", g)
+	for name, tc := range map[string]struct {
+		args []string
+		env  func(string) string
+		want []string
+	}{
+		"flag":     {[]string{"--no-network", "--scratch", scratch(t), "--fill", "/tmp/from-flag"}, env(), []string{"/tmp/from-flag"}},
+		"variable": {[]string{"--no-network", "--scratch", scratch(t)}, env("NOVA_SANDBOX_FILL", "/tmp/from-env"), []string{"/tmp/from-env"}},
+		"both":     {[]string{"--no-network", "--scratch", scratch(t), "--fill", "/tmp/from-flag"}, env("NOVA_SANDBOX_FILL", "/tmp/from-env"), []string{"/tmp/from-flag"}},
+		"neither":  {[]string{"--no-network", "--scratch", scratch(t)}, env(), nil},
+	} {
+		_, _, _, sys := invoke(t, tc.args, tc.env)
+		assert.Equal(t, tc.want, generators(sys), "%s", name)
 	}
 }
 
 func TestTheScratchFlagAndVariableNameWhereTheTreeIs(t *testing.T) {
 	t.Parallel()
 	flagDir, envDir := scratch(t), scratch(t)
-	_, _, _, sys := invoke(t, []string{"--dump-profile", "--scratch", flagDir}, env("NOVA_CHECK_SCRATCH", envDir))
-	if len(sys.ran) == 0 || !strings.HasPrefix(sys.ran[0].Args[len(sys.ran[0].Args)-1], evalDir(t, flagDir)) {
-		t.Errorf("the flag's scratch was not used: %v", sys.ran)
-	}
-	_, _, _, sys = invoke(t, []string{"--dump-profile"}, env("NOVA_CHECK_SCRATCH", envDir))
-	if len(sys.ran) == 0 || !strings.HasPrefix(sys.ran[0].Args[len(sys.ran[0].Args)-1], evalDir(t, envDir)) {
-		t.Errorf("the variable's scratch was not used: %v", sys.ran)
+	for name, tc := range map[string]struct {
+		args []string
+		env  func(string) string
+		dir  string
+	}{
+		"flag":     {[]string{"--dump-profile", "--scratch", flagDir}, env("NOVA_CHECK_SCRATCH", envDir), flagDir},
+		"variable": {[]string{"--dump-profile"}, env("NOVA_CHECK_SCRATCH", envDir), envDir},
+	} {
+		_, _, _, sys := invoke(t, tc.args, tc.env)
+		require.NotEmpty(t, sys.ran, "%s", name)
+		assert.True(t, strings.HasPrefix(sys.ran[0].Args[len(sys.ran[0].Args)-1], evalDir(t, tc.dir)), "%s: %v", name, sys.ran)
 	}
 }
 
@@ -175,9 +168,7 @@ func TestTheScratchFlagAndVariableNameWhereTheTreeIs(t *testing.T) {
 func evalDir(t *testing.T, dir string) string {
 	t.Helper()
 	parent, err := filepath.EvalSymlinks(filepath.Dir(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return filepath.Join(parent, filepath.Base(dir))
 }
 
@@ -186,7 +177,7 @@ func TestNotDarwinIsOneFailLine(t *testing.T) {
 	sys := &recordingSystem{goos: "linux"}
 	var out, errb bytes.Buffer
 	code := run(nil, env(), &out, &errb, sys)
-	if code != 1 || !strings.HasPrefix(out.String(), "CHECK FAIL name=platform") || len(sys.ran) != 0 {
-		t.Errorf("exit %d: %q", code, out.String())
-	}
+	assert.Equal(t, 1, code, "exit: %q", out.String())
+	assert.True(t, strings.HasPrefix(out.String(), "CHECK FAIL name=platform"), "%q", out.String())
+	assert.Empty(t, sys.ran)
 }

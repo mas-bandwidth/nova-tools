@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/delayproxy"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // farCeiling bounds each read of a socket here, generously: a test that is not
@@ -55,9 +57,8 @@ func TestFlagsParse(t *testing.T) {
 		},
 	} {
 		got, err := parse(c.args)
-		if err != nil || got != c.want {
-			t.Errorf("%s: parse(%q) = %+v, %v; want %+v", name, c.args, got, err, c.want)
-		}
+		require.NoError(t, err, "%s: parse(%q)", name, c.args)
+		assert.Equal(t, c.want, got, "%s: parse(%q)", name, c.args)
 	}
 }
 
@@ -65,24 +66,17 @@ func TestARunWithNoTargetIsRefusedBeforeItListens(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"--delay", "64ms"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("exit %d; want 2, could not run", code)
-	}
-	if got, want := stderr.String(), "fardelay: missing required flag --target; run: fardelay -h\n"; got != want {
-		t.Fatalf("stderr = %q; want %q", got, want)
-	}
-	if stdout.Len() != 0 {
-		t.Fatalf("stdout = %q; want nothing, for nothing was started", stdout.String())
-	}
+	code := run(context.Background(), []string{"--delay", "64ms"}, &stdout, &stderr)
+	assert.Equal(t, 2, code, "could not run")
+	assert.Equal(t, "fardelay: missing required flag --target; run: fardelay -h\n", stderr.String())
+	assert.Empty(t, stdout.String(), "nothing was started")
 
 	stdout.Reset()
 	stderr.Reset()
-	if code := run(context.Background(), nil, &stdout, &stderr); code != 2 {
-		t.Fatalf("exit %d with no flags; want 2", code)
-	}
-	if !strings.Contains(stderr.String(), "--target") || !strings.Contains(stderr.String(), "--delay") {
-		t.Fatalf("stderr = %q; want every missing flag named at once", stderr.String())
-	}
+	code = run(context.Background(), nil, &stdout, &stderr)
+	assert.Equal(t, 2, code, "no flags")
+	assert.Contains(t, stderr.String(), "--target")
+	assert.Contains(t, stderr.String(), "--delay")
 }
 
 func TestARunThatCannotBeServedIsRefusedAndNamesWhy(t *testing.T) {
@@ -104,12 +98,11 @@ func TestARunThatCannotBeServedIsRefusedAndNamesWhy(t *testing.T) {
 	} {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), c.args, &stdout, &stderr)
-		if code != 2 || !strings.Contains(stderr.String(), c.want) || !strings.HasSuffix(stderr.String(), "; run: fardelay -h\n") || stdout.Len() != 0 {
-			t.Errorf("%s: exit %d, stdout %q, stderr %q; want exit 2, nothing on stdout, and one line naming %q with the hint", name, code, stdout.String(), stderr.String(), c.want)
-		}
-		if lines := strings.Count(stderr.String(), "\n"); lines != 1 {
-			t.Errorf("%s: stderr is %d lines; want one", name, lines)
-		}
+		assert.Equal(t, 2, code, "%s", name)
+		assert.Contains(t, stderr.String(), c.want, "%s", name)
+		assert.True(t, strings.HasSuffix(stderr.String(), "; run: fardelay -h\n"), "%s", name)
+		assert.Empty(t, stdout.String(), "%s: stdout", name)
+		assert.Equal(t, 1, strings.Count(stderr.String(), "\n"), "%s: stderr lines", name)
 	}
 }
 
@@ -146,12 +139,9 @@ func TestHelpIsEnoughToUseTheToolCold(t *testing.T) {
 
 	for _, flag := range []string{"-h", "--help"} {
 		var stdout, stderr bytes.Buffer
-		if code := run(context.Background(), []string{flag}, &stdout, &stderr); code != 0 {
-			t.Fatalf("%s: exit %d; want 0", flag, code)
-		}
-		if stdout.String() != usage || stderr.Len() != 0 {
-			t.Fatalf("%s: stdout is not the usage, or stderr = %q", flag, stderr.String())
-		}
+		require.Equal(t, 0, run(context.Background(), []string{flag}, &stdout, &stderr), "%s: exit", flag)
+		require.Equal(t, usage, stdout.String(), "%s: stdout is not the usage", flag)
+		require.Empty(t, stderr.String(), "%s: stderr", flag)
 	}
 	// Each flag has an entry of its own, and the entry says what a reader needs of
 	// that flag: the synopsis and the other flags' entries cannot stand in for it.
@@ -161,14 +151,9 @@ func TestHelpIsEnoughToUseTheToolCold(t *testing.T) {
 		"--listen": {"HOST:PORT", "loopback", "Default"},
 	} {
 		entry, found := flagEntry(usage, flag)
-		if !found {
-			t.Errorf("the help has no entry for %s in its flags section", flag)
-			continue
-		}
+		require.True(t, found, "the help has no entry for %s in its flags section", flag)
 		for _, want := range need {
-			if !strings.Contains(entry, want) {
-				t.Errorf("the entry for %s does not say %q:\n%s", flag, want, entry)
-			}
+			assert.Contains(t, entry, want, "the entry for %s", flag)
 		}
 	}
 	for _, need := range []string{
@@ -179,9 +164,7 @@ func TestHelpIsEnoughToUseTheToolCold(t *testing.T) {
 		"redis-cli", // a client to try it with
 		"exit:",     // the exit codes
 	} {
-		if !strings.Contains(usage, need) {
-			t.Errorf("the help does not say %q", need)
-		}
+		assert.Contains(t, usage, need, "the help")
 	}
 }
 
@@ -195,9 +178,7 @@ func TestTheToolListensForwardsAndStopsWhenAsked(t *testing.T) {
 	t.Parallel()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var serving sync.WaitGroup
 	serving.Add(1)
 	go func() {
@@ -232,61 +213,40 @@ func TestTheToolListensForwardsAndStopsWhenAsked(t *testing.T) {
 	said := lines(out)
 
 	first, err := said.ReadString('\n')
-	if err != nil {
-		t.Fatalf("reading the first line: %v", err)
-	}
+	require.NoError(t, err, "reading the first line")
 	fields := strings.Fields(first)
-	if len(fields) != listenFields || fields[0] != "LISTEN" || fields[1] != "OK" || fields[3] != "target="+ln.Addr().String() || fields[4] != "delay=0s" || !strings.HasPrefix(fields[2], "addr=127.0.0.1:") {
-		t.Fatalf("first line %q; want LISTEN OK addr=127.0.0.1:<port> target=<the target> delay=0s", first)
-	}
+	require.True(t, len(fields) == listenFields && fields[0] == "LISTEN" && fields[1] == "OK" && fields[3] == "target="+ln.Addr().String() && fields[4] == "delay=0s" && strings.HasPrefix(fields[2], "addr=127.0.0.1:"),
+		"first line %q; want LISTEN OK addr=127.0.0.1:<port> target=<the target> delay=0s", first)
 	addr := strings.TrimPrefix(fields[2], "addr=")
-	if strings.HasSuffix(addr, ":0") {
-		t.Fatalf("the tool reports the port it was asked for, %s, and not the one it got", addr)
-	}
+	require.False(t, strings.HasSuffix(addr, ":0"), "the tool reports the port it was asked for, %s, and not the one it got", addr)
 
 	c, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = c.Close() }() // ignored: the test is done with the connection; no one reads the close error
-	if err := c.SetDeadline(time.Now().Add(farCeiling)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.WriteString(c, "through the tool"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.SetDeadline(time.Now().Add(farCeiling)))
+	_, err = io.WriteString(c, "through the tool")
+	require.NoError(t, err)
 	got := make([]byte, len("through the tool"))
-	if _, err := io.ReadFull(c, got); err != nil || string(got) != "through the tool" {
-		t.Fatalf("what came back was %q, %v", got, err)
-	}
+	_, err = io.ReadFull(c, got)
+	require.True(t, err == nil && string(got) == "through the tool", "what came back was %q, %v", got, err)
 
 	stop()
 	last, err := said.ReadString('\n')
-	if err != nil {
-		t.Fatalf("reading the last line: %v", err)
-	}
-	if !strings.HasPrefix(last, "STOP OK writes=1 shortest=") {
-		t.Fatalf("last line %q; want STOP OK writes=1 shortest=<duration>", last)
-	}
-	if code := <-exit; code != 0 {
-		t.Fatalf("exit %d; want 0, stopped as asked", code)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("stderr = %q; want nothing", stderr.String())
-	}
+	require.NoError(t, err, "reading the last line")
+	require.True(t, strings.HasPrefix(last, "STOP OK writes=1 shortest="), "last line %q; want STOP OK writes=1 shortest=<duration>", last)
+	require.Equal(t, 0, <-exit, "stopped as asked")
+	require.Empty(t, stderr.String())
 }
 
 func TestARunThatCannotListenIsRefused(t *testing.T) {
 	t.Parallel()
 
 	taken, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = taken.Close() }() // ignored: the listener only held the address for the refused run
 	var stdout, stderr bytes.Buffer
 	code := run(context.Background(), []string{"--listen", taken.Addr().String(), "--target", "127.0.0.1:7000", "--delay", "1ms"}, &stdout, &stderr)
-	if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "listening on") {
-		t.Fatalf("exit %d, stdout %q, stderr %q; want exit 2 and a line naming the listen that failed", code, stdout.String(), stderr.String())
-	}
+	assert.Equal(t, 2, code)
+	assert.Empty(t, stdout.String())
+	assert.Contains(t, stderr.String(), "listening on")
 }

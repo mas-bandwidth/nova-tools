@@ -13,6 +13,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/testredis"
 )
@@ -93,28 +95,23 @@ func viaTheTool(t *testing.T, store string) string {
 	t.Cleanup(func() {
 		stop()
 		rest, _ := io.ReadAll(said) // the tool's last line; its writer closes the pipe when it returns
-		if code := <-exit; code != 0 || stderr.Len() != 0 {
-			t.Errorf("the tool exited %d with stderr %q; want 0 and nothing", code, stderr.String())
-		}
+		code := <-exit
+		assert.Equal(t, 0, code, "the tool's exit with stderr %q", stderr.String())
+		assert.Empty(t, stderr.String())
 		last := strings.TrimSpace(string(rest))
 		_, shortest, ok := strings.Cut(last, " shortest=")
 		held, err := time.ParseDuration(shortest)
 		if !strings.HasPrefix(last, "STOP OK ") || !ok || err != nil {
-			t.Errorf("the tool's last line is %q; want STOP OK writes=<n> shortest=<duration>", last)
+			assert.Fail(t, "the tool's last line", "the tool's last line is %q; want STOP OK writes=<n> shortest=<duration>", last)
 			return
 		}
-		if held < farDistance {
-			t.Errorf("the tool says it held a write for %v, less than the %v it was asked for", held, farDistance)
-		}
+		assert.GreaterOrEqual(t, held, farDistance, "the tool held a write for less than the %v it was asked for", farDistance)
 	})
 	first, err := said.ReadString('\n')
-	if err != nil {
-		t.Fatalf("reading the tool's first line: %v (stderr %q)", err, stderr.String())
-	}
+	require.NoError(t, err, "reading the tool's first line (stderr %q)", stderr.String())
 	fields := strings.Fields(first)
-	if len(fields) != listenFields || !strings.HasPrefix(fields[2], "addr=") {
-		t.Fatalf("the tool's first line is %q; want LISTEN OK addr=<host:port> target=<host:port> delay=<duration>", first)
-	}
+	require.True(t, len(fields) == listenFields && strings.HasPrefix(fields[2], "addr="),
+		"the tool's first line is %q; want LISTEN OK addr=<host:port> target=<host:port> delay=<duration>", first)
 	return strings.TrimPrefix(fields[2], "addr=")
 }
 
@@ -136,9 +133,7 @@ func farWallClient(ctx context.Context, t *testing.T, addr string) *redis.Client
 		},
 	})
 	t.Cleanup(func() { _ = c.Close() })
-	if err := c.Ping(ctx).Err(); err != nil {
-		t.Fatalf("warming the connection through the proxy: %v", err)
-	}
+	require.NoError(t, c.Ping(ctx).Err(), "warming the connection through the proxy")
 	return c
 }
 
@@ -155,11 +150,9 @@ func farTook(f func()) time.Duration {
 // often or time spent outside the proxy's hold.
 func farWithin(t *testing.T, what string, took, least, most time.Duration) {
 	t.Helper()
-	if took < least {
-		t.Errorf("%s took %v; want at least %v: the delay was paid less than it should have been", what, took, least)
-	}
-	if most != 0 && took > most {
-		t.Errorf("%s took %v; want at most %v, the distance and %v of slack for a busy machine: the delay was paid more than it should have been, or time was spent outside the proxy's hold", what, took, most, farSlack)
+	assert.GreaterOrEqual(t, took, least, "%s took %v; the delay was paid less than it should have been", what, took)
+	if most != 0 {
+		assert.LessOrEqual(t, took, most, "%s took %v; the delay was paid more than it should have been, or time was spent outside the proxy's hold (%v of slack for a busy machine)", what, took, farSlack)
 	}
 }
 
@@ -178,9 +171,7 @@ func TestTheDistanceAtWallTimeThroughARealStore(t *testing.T) {
 				var got string
 				var err error
 				took := farTook(func() { got, err = c.Ping(ctx).Result() })
-				if err != nil || got != "PONG" {
-					t.Fatalf("PING = %q, %v", got, err)
-				}
+				require.True(t, err == nil && got == "PONG", "PING = %q, %v", got, err)
 				farWithin(t, "one PING", took, farDistance, farDistance+farSlack)
 				t.Logf("one PING through %v of distance: %v", farDistance, took)
 			})
@@ -195,13 +186,9 @@ func TestTheDistanceAtWallTimeThroughARealStore(t *testing.T) {
 					}
 					_, err = pipe.Exec(ctx)
 				})
-				if err != nil {
-					t.Fatalf("pipeline: %v", err)
-				}
+				require.NoError(t, err, "pipeline")
 				for i, cmd := range cmds {
-					if got := cmd.Val(); got != "PONG" {
-						t.Fatalf("command %d of the pipeline answered %q; want PONG", i, got)
-					}
+					assert.Equal(t, "PONG", cmd.Val(), "command %d of the pipeline", i)
 				}
 				farWithin(t, fmt.Sprintf("a pipeline of %d PINGs", farPipelined), took, farDistance, farDistance+farSlack)
 				t.Logf("a pipeline of %d PINGs through %v of distance: %v", farPipelined, farDistance, took)
@@ -214,9 +201,7 @@ func TestTheDistanceAtWallTimeThroughARealStore(t *testing.T) {
 						err = c.Ping(ctx).Err()
 					}
 				})
-				if err != nil {
-					t.Fatalf("PING: %v", err)
-				}
+				require.NoError(t, err, "PING")
 				farWithin(t, fmt.Sprintf("%d PINGs one after the other", farSeparate), took, farSeparate*farDistance, 0)
 				t.Logf("%d PINGs one after the other through %v of distance: %v", farSeparate, farDistance, took)
 			})
@@ -231,9 +216,7 @@ func TestTheDistanceAtWallTimeThroughARealStore(t *testing.T) {
 					}
 					_, err = pipe.Exec(ctx)
 				})
-				if err != nil {
-					t.Fatalf("pipeline of %d SETs of %d bytes: %v", farBulk, farBulkValue, err)
-				}
+				require.NoError(t, err, "pipeline of %d SETs of %d bytes", farBulk, farBulkValue)
 				farWithin(t, fmt.Sprintf("a pipeline of %d SETs of %d bytes", farBulk, farBulkValue), took, 2*farDistance, 2*farDistance+farSlack)
 				t.Logf("a pipeline of %d SETs of %d bytes through %v of distance: %v", farBulk, farBulkValue, farDistance, took)
 			})

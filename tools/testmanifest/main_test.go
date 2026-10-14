@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func testEvent(action, test string) string {
@@ -21,13 +24,13 @@ func passingStream(names ...string) string {
 }
 
 func TestCheckRequiresOnePassForEveryExactName(t *testing.T) {
+	t.Parallel()
 	names := []string{"TestOne", "TestTwo"}
-	if err := check(strings.NewReader(passingStream(names...)), names, true); err != nil {
-		t.Fatalf("passing exact manifest: %v", err)
-	}
+	require.NoError(t, check(strings.NewReader(passingStream(names...)), names, true), "a passing exact manifest")
 }
 
 func TestCheckRefusesMissingDuplicateNestedSkipFailAndRedCommand(t *testing.T) {
+	t.Parallel()
 	names := []string{"TestOne", "TestTwo"}
 	base := passingStream(names...)
 	tests := []struct {
@@ -44,15 +47,16 @@ func TestCheckRefusesMissingDuplicateNestedSkipFailAndRedCommand(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			err := check(strings.NewReader(tc.stream), names, tc.statusOK)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("check error = %v, want containing %q", err, tc.want)
-			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
 }
 
 func TestManifestNamesAreUniqueTopLevelGoTests(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		names []string
 		want  string
@@ -60,8 +64,11 @@ func TestManifestNamesAreUniqueTopLevelGoTests(t *testing.T) {
 		{names: []string{"TestOne", "TestOne"}, want: "duplicate manifested test"},
 		{names: []string{"TestOne/subtest"}, want: "invalid top-level test name"},
 	} {
-		if err := validateNames(tc.names); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Fatalf("validateNames(%q) = %v, want containing %q", tc.names, err, tc.want)
-		}
+		t.Run(tc.want, func(t *testing.T) {
+			t.Parallel()
+			err := validateNames(tc.names)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
 	}
 }
