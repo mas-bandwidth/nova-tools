@@ -147,18 +147,22 @@ func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
 	}
 }
 
-func TestBuildRefusesEmptyCorpus(t *testing.T) {
+func TestBuildRefusesCorpus(t *testing.T) {
 	t.Parallel()
-
-	_, err := Build(fstest.MapFS{"a.txt": {Data: []byte("no markdown here")}}, nil)
-	require.Error(t, err, "Build accepted a corpus with no markdown — the confident-zero engine this tool exists to remove")
-}
-
-func TestBuildRefusesCorpusWithNoIndexableParagraph(t *testing.T) {
-	t.Parallel()
-
-	_, err := Build(fstest.MapFS{"a.md": {Data: []byte("# h\n\nok\n")}}, nil)
-	require.Error(t, err, "Build accepted a corpus whose every paragraph is below MinTerms")
+	for _, tc := range []struct {
+		name string
+		fsys fstest.MapFS
+		msg  string
+	}{
+		{"empty corpus with no markdown", fstest.MapFS{"a.txt": {Data: []byte("no markdown here")}}, "Build accepted a corpus with no markdown — the confident-zero engine this tool exists to remove"},
+		{"corpus with no indexable paragraph", fstest.MapFS{"a.md": {Data: []byte("# h\n\nok\n")}}, "Build accepted a corpus whose every paragraph is below MinTerms"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Build(tc.fsys, nil)
+			require.Error(t, err, tc.msg)
+		})
+	}
 }
 
 func TestBuildHonoursExclude(t *testing.T) {
@@ -171,25 +175,20 @@ func TestBuildHonoursExclude(t *testing.T) {
 	}
 }
 
-func TestBM25FindsFunctionWordVariant(t *testing.T) {
+func TestBM25Retrieval(t *testing.T) {
 	t.Parallel()
-
-	// A phrase grep for "reliable on the gusts" finds nothing against a file
-	// saying "reliable about the gusts". Term retrieval must not care which
-	// preposition was used.
 	c := build(t)
-	hits := Retrieve(c, []Channel{NewBM25(c)}, "the anemometer is reliable on the gusts and unreliable on the mean", 3)
-	require.NotEmpty(t, hits, "function-word variant did not retrieve notes/wind.md first; hits=%+v", hits)
-	require.Equal(t, "notes/wind.md", hits[0].File, "function-word variant did not retrieve notes/wind.md first; hits=%+v", hits)
-}
-
-func TestBM25FindsWrappedPhrase(t *testing.T) {
-	t.Parallel()
-
-	c := build(t)
-	hits := Retrieve(c, []Channel{NewBM25(c)}, "somebody is awake and watching and the light is how that travels", 3)
-	require.NotEmpty(t, hits, "wrapped phrase did not retrieve HANDBOOK.md first; hits=%+v", hits)
-	require.Equal(t, "HANDBOOK.md", hits[0].File, "wrapped phrase did not retrieve HANDBOOK.md first; hits=%+v", hits)
+	for _, tc := range []struct{ name, query, wantFile, msg string }{
+		{"function word variant", "the anemometer is reliable on the gusts and unreliable on the mean", "notes/wind.md", "function-word variant did not retrieve notes/wind.md first"},
+		{"wrapped phrase", "somebody is awake and watching and the light is how that travels", "HANDBOOK.md", "wrapped phrase did not retrieve HANDBOOK.md first"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hits := Retrieve(c, []Channel{NewBM25(c)}, tc.query, 3)
+			require.NotEmpty(t, hits, "%s; hits=%+v", tc.msg, hits)
+			require.Equal(t, tc.wantFile, hits[0].File, "%s; hits=%+v", tc.msg, hits)
+		})
+	}
 }
 
 func TestRetrieveDeterministic(t *testing.T) {
@@ -215,23 +214,26 @@ func TestRetrieveDeterministic(t *testing.T) {
 	require.Equal(t, a, bOut, "two builds produced different results")
 }
 
-func TestRetrieveNeverEmptyForInVocabularyQuery(t *testing.T) {
+func TestRetrieveVocabularySensitivity(t *testing.T) {
 	t.Parallel()
-
-	// An unrelated but in-vocabulary query still returns the best k with
-	// visible low scores — never a bare zero. Only a fully out-of-vocabulary
-	// query may return nothing, and the CLI says so in words when it does.
 	c := build(t)
-	hits := Retrieve(c, []Channel{NewBM25(c)}, "the boat and the coast and the water", 5)
-	require.NotEmpty(t, hits, "expected low-score hits for an in-vocabulary unrelated query, got none")
-}
-
-func TestRetrieveEmptyForOutOfVocabularyQuery(t *testing.T) {
-	t.Parallel()
-
-	c := build(t)
-	hits := Retrieve(c, []Channel{NewBM25(c)}, "zzqq xxvv wwjj", 5)
-	require.Empty(t, hits, "out-of-vocabulary query returned hits: %+v", hits)
+	for _, tc := range []struct {
+		name, query string
+		wantHits    bool
+	}{
+		{"in-vocabulary query returns hits", "the boat and the coast and the water", true},
+		{"out-of-vocabulary query returns no hits", "zzqq xxvv wwjj", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hits := Retrieve(c, []Channel{NewBM25(c)}, tc.query, 5)
+			if tc.wantHits {
+				require.NotEmpty(t, hits, "expected low-score hits for an in-vocabulary unrelated query, got none")
+			} else {
+				require.Empty(t, hits, "out-of-vocabulary query returned hits: %+v", hits)
+			}
+		})
+	}
 }
 
 // crowdingFS holds one file owning far more matching paragraphs than any
@@ -466,11 +468,16 @@ func TestCoverageCollidingStemIsNotCoverage(t *testing.T) {
 
 func TestCoverageRefusesEmptySide(t *testing.T) {
 	t.Parallel()
-
-	_, err := Coverage(corpusFS(), "nothing/*.md", "notes/index-*.md")
-	assert.Error(t, err, "Coverage accepted an empty A side — a broken check reported as a pass")
-	_, err = Coverage(corpusFS(), "notes/*.md", "nothing/index-*.md")
-	assert.Error(t, err, "Coverage accepted an empty B side — a broken check reported as a pass")
+	for _, tc := range []struct{ name, a, b, side string }{
+		{"empty A side", "nothing/*.md", "notes/index-*.md", "A"},
+		{"empty B side", "notes/*.md", "nothing/index-*.md", "B"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Coverage(corpusFS(), tc.a, tc.b)
+			assert.Error(t, err, "Coverage accepted an empty %s side — a broken check reported as a pass", tc.side)
+		})
+	}
 }
 
 func TestWikilinks(t *testing.T) {

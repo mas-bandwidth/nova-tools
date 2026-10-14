@@ -5,11 +5,11 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,21 +20,11 @@ import (
 // output "contains" the version would pass over a line broken in two.
 func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
-
-	var stdout, stderr bytes.Buffer
-	code := cmdVersion(nil, &stdout, &stderr)
-	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, stderr.String())
-	assert.Zero(t, stderr.Len(), "wrote to stderr: %q", stderr.String())
-	line := stdout.String()
-	require.True(t, strings.HasSuffix(line, "\n"), "want exactly one terminated line, got %q", line)
-	require.Equal(t, 1, strings.Count(line, "\n"), "want exactly one terminated line, got %q", line)
-	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
-	require.Len(t, fields, 4, "want 4 fields, got %d: %q", len(fields), line)
-	assert.Equal(t, "nova-ci", fields[0], "field 1 is the binary's name: got %q", fields[0])
-	assert.NotEmpty(t, fields[1], "field 2 is the version and is never empty: %q", line)
-	want := runtime.GOOS + "/" + runtime.GOARCH
-	assert.Equal(t, want, fields[2], "field 3: got %q, want %q", fields[2], want)
-	assert.Equal(t, runtime.Version(), fields[3], "field 4: got %q, want %q", fields[3], runtime.Version())
+	testkit.VersionLineShape(t, "nova-ci", func() (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := cmdVersion(nil, &stdout, &stderr)
+		return code, stdout.String(), stderr.String()
+	})
 }
 
 // The stamp is the ONE field that comes from outside the toolchain: a release's ${TAG} is

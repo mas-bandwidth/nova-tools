@@ -445,17 +445,6 @@ func TestValidatePathsRefusesDotDotAndBareDoubleStar(t *testing.T) {
 // #1853.1 A WINDOWS DRIVE LETTER IS AN ABSOLUTE PATH ON EVERY BENCH. The check is
 // lexical (`^[A-Za-z]:`), not filepath.VolumeName, because a card is linted on one
 // bench and run on another.
-func TestValidatePathsRefusesAWindowsDriveLetter(t *testing.T) {
-	t.Parallel()
-
-	for _, bad := range []string{`C:/foo/bar`, `C:\Windows\system32\evil.go`, `d:/x/y.go`} {
-		err := ValidatePaths([]string{bad})
-		assert.Error(t, err, "ValidatePaths([%q]) = nil, want a refusal: a drive letter is absolute", bad)
-	}
-	err := ValidatePaths([]string{"pkg/hygiene/glob.go"})
-	require.NoError(t, err, "a repo-relative path is clean: %v", err)
-}
-
 // #1853.4 THE NAME SET IS kinds.txt. A kind the file does not hold is not declared;
 // there is no default kind (SPEC-TOOLWORK.md hygiene rule 6).
 func TestKindDeclaredRefusesAnUnknownKind(t *testing.T) {
@@ -633,6 +622,7 @@ func TestValidatePathsRefusesAWindowsDriveLetterAndALeadingBackslash(t *testing.
 	t.Parallel()
 
 	for _, bad := range []string{
+		`C:/foo/bar`,
 		`C:/Windows/system32/evil.go`,
 		`C:\Windows\system32\evil.go`,
 		`d:/x/y.go`,
@@ -644,6 +634,8 @@ func TestValidatePathsRefusesAWindowsDriveLetterAndALeadingBackslash(t *testing.
 		}
 		assert.Contains(t, err.Error(), "absolute", "ValidatePaths([%q]) = %v, want it to name absolute", bad, err)
 	}
+	err := ValidatePaths([]string{"pkg/hygiene/glob.go"})
+	require.NoError(t, err, "a repo-relative path is clean: %v", err)
 }
 
 // KindDeclared, Kinds and the embedded kinds.txt landed in a78f3ea9. The tests that

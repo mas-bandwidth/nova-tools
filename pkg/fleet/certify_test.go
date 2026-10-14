@@ -810,63 +810,49 @@ func TestBuildVersionRejectsErrorAndBannerText(t *testing.T) {
 	}
 }
 
-// TestMachineBuildProbeFailsOnRunScriptError tests that a failure in the machine-build probe's
-// remote script execution fails the certification, prints FAIL to stderr, and writes no row.
-func TestMachineBuildProbeFailsOnRunScriptError(t *testing.T) {
+// TestMachineBuildProbeRefusals tests that failures in the machine-build probe
+// (script error, banner/error output without a version, or an invalid build override)
+// fail certification with exit 1, log to stderr, and write no rows.
+func TestMachineBuildProbeRefusals(t *testing.T) {
 	t.Parallel()
-
-	certs := writeFile(t, "certs.tsv", "")
-	ans := benchOK()
-	ans["space|build"] = remoteAnswer{err: errors.New("ssh: connection timed out")}
-	remote := &fakeRemote{answers: ans}
-
-	out, errs, code := runCertify(t, CertifyInput{
-		Machines: testRegistry(t), Only: "space", Certs: certs,
-		Remote: remote, Hash: "h", Now: fixedNow,
-	})
-	require.Equal(t, 1, code, "exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
-	assert.Contains(t, errs, "CERTIFY space build FAIL evidence=", "stderr missing build FAIL line:\n%s", errs)
-	assert.Contains(t, errs, "ssh: connection timed out", "stderr does not name the connection error:\n%s", errs)
-	rows := mustRead(t, certs)
-	require.Empty(t, rows, "wrote %d certificate rows on build probe failure, want 0", len(rows))
-}
-
-// TestMachineBuildProbeFailsOnBannerOrErrorOutput tests that when the build probe script exits 0
-// but outputs banner or error text without a valid build version, certification fails cleanly with no row.
-func TestMachineBuildProbeFailsOnBannerOrErrorOutput(t *testing.T) {
-	t.Parallel()
-
-	certs := writeFile(t, "certs.tsv", "")
-	ans := benchOK()
-	ans["space|build"] = remoteAnswer{out: "Authorized uses only. All activity may be monitored.\n"}
-	remote := &fakeRemote{answers: ans}
-
-	out, errs, code := runCertify(t, CertifyInput{
-		Machines: testRegistry(t), Only: "space", Certs: certs,
-		Remote: remote, Hash: "h", Now: fixedNow,
-	})
-	require.Equal(t, 1, code, "exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
-	assert.Contains(t, errs, "CERTIFY space build FAIL evidence=", "stderr missing build FAIL line:\n%s", errs)
-	assert.Contains(t, errs, "no valid build version in output", "stderr does not explain missing version:\n%s", errs)
-	rows := mustRead(t, certs)
-	require.Empty(t, rows, "wrote %d certificate rows on invalid build output, want 0", len(rows))
-}
-
-// TestCertifyRefusesInvalidBuildOverride tests that passing an invalid build version string
-// to Certify causes failure and writes no certificate rows.
-func TestCertifyRefusesInvalidBuildOverride(t *testing.T) {
-	t.Parallel()
-
-	certs := writeFile(t, "certs.tsv", "")
-	remote := &fakeRemote{answers: benchOK()}
-
-	out, errs, code := runCertify(t, CertifyInput{
-		Machines: testRegistry(t), Only: "space", Certs: certs,
-		Remote: remote, Hash: "h", Now: fixedNow,
-		Build: "ssh: Connection refused",
-	})
-	require.Equal(t, 1, code, "exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
-	assert.Contains(t, errs, "CERTIFY space build FAIL evidence=\"invalid build version", "stderr missing invalid build version refusal:\n%s", errs)
-	rows := mustRead(t, certs)
-	require.Empty(t, rows, "wrote %d certificate rows on invalid build override, want 0", len(rows))
+	for _, tc := range []struct {
+		name    string
+		answers map[string]remoteAnswer
+		build   string
+		wantErr string
+	}{
+		{
+			name:    "remote script error",
+			answers: map[string]remoteAnswer{"space|build": {err: errors.New("ssh: connection timed out")}},
+			wantErr: "ssh: connection timed out",
+		},
+		{
+			name:    "banner output with no version",
+			answers: map[string]remoteAnswer{"space|build": {out: "Authorized uses only. All activity may be monitored.\n"}},
+			wantErr: "no valid build version in output",
+		},
+		{
+			name:    "invalid build override",
+			build:   "ssh: Connection refused",
+			wantErr: `CERTIFY space build FAIL evidence="invalid build version`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			certs := writeFile(t, "certs.tsv", "")
+			ans := benchOK()
+			for k, v := range tc.answers {
+				ans[k] = v
+			}
+			out, errs, code := runCertify(t, CertifyInput{
+				Machines: testRegistry(t), Only: "space", Certs: certs,
+				Remote: &fakeRemote{answers: ans}, Hash: "h", Now: fixedNow,
+				Build: tc.build,
+			})
+			require.Equal(t, 1, code, "exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
+			assert.Contains(t, errs, "CERTIFY space build FAIL evidence=")
+			assert.Contains(t, errs, tc.wantErr)
+			require.Empty(t, mustRead(t, certs))
+		})
+	}
 }

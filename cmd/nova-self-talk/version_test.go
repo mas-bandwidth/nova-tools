@@ -33,30 +33,37 @@ func TestVersionLineShape(t *testing.T) {
 	})
 }
 
-// The stamp is the ONE field of this line that comes from outside the toolchain, and a
-// release workflow's ${TAG} is a shell variable.
-func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
+// TestVersionStamp pins the stamp handling: a stamped build says the tag, an
+// unstamped one says what the toolchain recorded, and an embedded newline is
+// escaped so the line stays one line and four fields.
+func TestVersionStamp(t *testing.T) {
 	t.Parallel()
-
-	var out, errOut bytes.Buffer
-	code := cmdVersionWith(nil, &out, &errOut, "v1.2.3\nnova-self-talk v9.9.9 linux/amd64 go1.0 extra")
-	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
-	line := out.String()
-	require.Equal(t, 1, strings.Count(line, "\n"), "a stamped newline broke the line in two: %q", line)
-	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
-	require.Len(t, fields, 4, "want 4 fields whatever the stamp holds, got %d: %q", len(fields), line)
-	assert.Contains(t, line, `v1.2.3\x0a`, "the stamp is escaped rather than dropped or printed raw: %q", line)
-}
-
-// A stamped build says the tag and an unstamped one says what the toolchain recorded:
-// either way field two is an identity, never a dotted number this file made up.
-func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
-	t.Parallel()
-	var out, errOut bytes.Buffer
-	code := cmdVersionWith(nil, &out, &errOut, "v9.9.9")
-	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
-	got := strings.Fields(out.String())[1]
-	assert.Equal(t, "v9.9.9", got, "field 2 is the stamp: got %q", got)
+	for _, tc := range []struct {
+		name, stamp string
+		wantSub     string
+		fieldIdx    int
+		wantField   string
+	}{
+		{"newline escaped", "v1.2.3\nnova-self-talk v9.9.9 linux/amd64 go1.0 extra", `v1.2.3\x0a`, -1, ""},
+		{"identity is stamp", "v9.9.9", "", 1, "v9.9.9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out, errOut bytes.Buffer
+			code := cmdVersionWith(nil, &out, &errOut, tc.stamp)
+			require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
+			line := out.String()
+			require.Equal(t, 1, strings.Count(line, "\n"))
+			fields := strings.Fields(strings.TrimSuffix(line, "\n"))
+			require.Len(t, fields, 4)
+			if tc.wantSub != "" {
+				assert.Contains(t, line, tc.wantSub)
+			}
+			if tc.fieldIdx >= 0 {
+				assert.Equal(t, tc.wantField, fields[tc.fieldIdx])
+			}
+		})
+	}
 }
 
 func TestVersionRefusesFlagsAndArguments(t *testing.T) {

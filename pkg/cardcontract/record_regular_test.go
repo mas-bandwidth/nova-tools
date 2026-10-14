@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/fsx"
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,10 +39,10 @@ func TestASymlinkedFinishIsNoFinish(t *testing.T) {
 
 	t.Run("a regular finish still reads", func(t *testing.T) {
 		t.Parallel()
-		job := t.TempDir()
-		require.NoError(t, os.MkdirAll(filepath.Join(job, ".sprint"), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(job, FinishName), []byte(theFinish), 0o644))
-		require.NoError(t, os.WriteFile(filepath.Join(job, PushedName), []byte(thePushed), 0o644))
+		job := fsx.Tree(t, map[string]string{
+			FinishName: theFinish,
+			PushedName: thePushed,
+		})
 
 		cr, shimmed := ReadFinish(job)
 		require.True(t, shimmed, "a regular finish read as none")
@@ -60,7 +61,7 @@ func TestASymlinkedFinishIsNoFinish(t *testing.T) {
 		job := filepath.Join(root, "job")
 		require.NoError(t, os.MkdirAll(filepath.Join(job, ".sprint"), 0o755))
 		outside := filepath.Join(root, "outside.md")
-		require.NoError(t, os.WriteFile(outside, []byte(theFinish), 0o644))
+		fsx.Write(t, outside, theFinish)
 		require.NoError(t, os.Symlink(outside, filepath.Join(job, FinishName)))
 
 		cr, shimmed := ReadFinish(job)
@@ -75,8 +76,7 @@ func TestASymlinkedFinishIsNoFinish(t *testing.T) {
 		job := filepath.Join(root, "job")
 		require.NoError(t, os.MkdirAll(job, 0o755))
 		outside := filepath.Join(root, "outside-sprint")
-		require.NoError(t, os.MkdirAll(outside, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(outside, "finish.md"), []byte(theFinish), 0o644))
+		fsx.Write(t, filepath.Join(outside, "finish.md"), theFinish)
 		require.NoError(t, os.Symlink(outside, filepath.Join(job, ".sprint")))
 
 		_, shimmed := ReadFinish(job)
@@ -89,7 +89,7 @@ func TestASymlinkedFinishIsNoFinish(t *testing.T) {
 		job := filepath.Join(root, "job")
 		require.NoError(t, os.MkdirAll(filepath.Join(job, ".sprint"), 0o755))
 		outside := filepath.Join(root, "outside.tsv")
-		require.NoError(t, os.WriteFile(outside, []byte(thePushed), 0o644))
+		fsx.Write(t, outside, thePushed)
 		require.NoError(t, os.Symlink(outside, filepath.Join(job, PushedName)))
 
 		branch, head := LastPushed(job)
@@ -118,9 +118,8 @@ func TestAFifoFinishIsNoFinish(t *testing.T) {
 func TestAFinishPastTheSizeCapIsNoFinish(t *testing.T) {
 	t.Parallel()
 	job := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(job, ".sprint"), 0o755))
 	big := append(bytes.Repeat([]byte("x"), maxRecord), []byte("\n"+theFinish)...)
-	require.NoError(t, os.WriteFile(filepath.Join(job, FinishName), big, 0o644))
+	fsx.Write(t, filepath.Join(job, FinishName), string(big))
 
 	cr, shimmed := ReadFinish(job)
 	assert.False(t, shimmed, "a finish past the size cap read as a finish")

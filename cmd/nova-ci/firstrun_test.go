@@ -72,14 +72,25 @@ func TestUsageBannerSaysSlowtestsJudgesTimingNotSuccess(t *testing.T) {
 func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	t.Parallel()
 
-	exit, _, stderr := runCIIn(t, "", "slowtests", "--budget", "0")
-	assert.Equal(t, 2, exit, "--budget 0 exit = %d, want 2", exit)
-	assert.Contains(t, stderr, "greater than zero", "--budget 0 stderr = %q, want it to say the budget must be greater than zero", stderr)
-
-	exit, _, stderr = runCIIn(t, "not json\n", "slowtests")
-	assert.Equal(t, 2, exit, "a malformed stdin exit = %d, want 2", exit)
-	assert.Contains(t, stderr, "line 1", "a malformed stdin stderr = %q, want it to name line 1", stderr)
-	assert.Contains(t, stderr, "run: go test -json <packages> | nova-ci slowtests --budget 60", "a refusal stderr = %q, want the command that makes the input", stderr)
+	cases := []struct {
+		name  string
+		stdin string
+		args  []string
+		wants []string
+	}{
+		{"budget zero", "", []string{"slowtests", "--budget", "0"}, []string{"greater than zero"}},
+		{"malformed stdin", "not json\n", []string{"slowtests"}, []string{"line 1", "run: go test -json <packages> | nova-ci slowtests --budget 60"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			exit, _, stderr := runCIIn(t, tc.stdin, tc.args...)
+			assert.Equal(t, 2, exit)
+			for _, w := range tc.wants {
+				assert.Contains(t, stderr, w)
+			}
+		})
+	}
 }
 
 // (c) The `### First run` block of docs/TESTS.md is EXECUTED: every command in
