@@ -329,25 +329,36 @@ func TestRecoveryCutoverRetainsArchiveAndPostBoundaryAnswers(t *testing.T) {
 
 func TestRecoveryCutoverKeepsActualCurrentChallengeBeforeBoundary(t *testing.T) {
 	t.Parallel()
-	r := newRig(t)
-	s := recoverySession(r)
-	ctx := context.Background()
-	epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
-	require.NoError(t, err)
-	created, err := r.h.Store.Challenge(ctx, "ada", hook.Comms, epoch, []hook.Push{hook.Bus}, "current-cutover-nonce")
-	require.NoError(t, err)
-	require.True(t, created)
-	challenge := recoveryMessage(t, r, "HOOK CHALLENGE nonce=current-cutover-nonce")
-	recoveryMessage(t, r, "archived ordinary event")
-	r.h.Pass(time.Second)
-	since, err := r.h.Client.Time(ctx).Result()
-	require.NoError(t, err)
-	fresh := recoveryMessage(t, r, "new work")
-	plan, err := codexBacklog(s, recoveryTail(t, s), since)
-	require.NoError(t, err)
-	require.Len(t, plan.messages, 2)
-	assert.Equal(t, []string{challenge.ID, fresh.ID}, []string{plan.messages[0].ID, plan.messages[1].ID})
-	assert.Equal(t, epoch, plan.challengeEpoch)
+	for _, withFresh := range []bool{false, true} {
+		t.Run(strconv.FormatBool(withFresh), func(t *testing.T) {
+			r := newRig(t)
+			s := recoverySession(r)
+			ctx := context.Background()
+			epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
+			require.NoError(t, err)
+			created, err := r.h.Store.Challenge(ctx, "ada", hook.Comms, epoch, []hook.Push{hook.Bus}, "current-cutover-nonce")
+			require.NoError(t, err)
+			require.True(t, created)
+			challenge := recoveryMessage(t, r, "HOOK CHALLENGE nonce=current-cutover-nonce")
+			recoveryMessage(t, r, "archived ordinary event")
+			r.h.Pass(time.Second)
+			since, err := r.h.Client.Time(ctx).Result()
+			require.NoError(t, err)
+			want := []string{challenge.ID}
+			if withFresh {
+				fresh := recoveryMessage(t, r, "new work")
+				want = append(want, fresh.ID)
+			}
+			plan, err := codexBacklog(s, recoveryTail(t, s), since)
+			require.NoError(t, err)
+			got := make([]string, 0, len(plan.messages))
+			for _, m := range plan.messages {
+				got = append(got, m.ID)
+			}
+			assert.Equal(t, want, got)
+			assert.Equal(t, epoch, plan.challengeEpoch)
+		})
+	}
 }
 
 func TestRecoveryCutoverRefusesFutureEvenOnEmptyStream(t *testing.T) {
