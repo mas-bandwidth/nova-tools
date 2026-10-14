@@ -152,7 +152,7 @@ func TestReviewABoundedMemberLoopDoesNotReturnWithAStartInFlight(t *testing.T) {
 	<-rn.entered
 	select {
 	case <-done:
-		t.Fatal("memberLoop --once returned while the start it began is still in flight; the process exits under it")
+		require.FailNow(t, "memberLoop --once returned while the start it began is still in flight; the process exits under it")
 	default:
 	}
 	close(rn.release)
@@ -162,6 +162,6 @@ func TestReviewABoundedMemberLoopDoesNotReturnWithAStartInFlight(t *testing.T) {
 	select {
 	case <-rn.returned:
 	default:
-		t.Error("memberLoop --once returned before the start it began had ended")
+		assert.Fail(t, "memberLoop --once returned before the start it began had ended")
 	}
 }

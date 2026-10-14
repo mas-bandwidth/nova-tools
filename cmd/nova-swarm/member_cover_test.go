@@ -27,7 +27,7 @@ func TestMemberCoverWaitReturnsTheChildsDoneChannel(t *testing.T) {
 	case <-c.Wait():
 		assert.True(t, c.Done(), "the ended child is Done")
 	default:
-		t.Fatal("Wait does not wake after the child's end")
+		require.FailNow(t, "Wait does not wake after the child's end")
 	}
 }
 
@@ -39,7 +39,7 @@ func TestMemberCoverWaitRefusesAnUnendedChild(t *testing.T) {
 	c := &nativeChild{card: "c1", done: make(chan struct{})}
 	select {
 	case <-c.Wait():
-		t.Fatal("Wait is closed before the child has ended")
+		require.FailNow(t, "Wait is closed before the child has ended")
 	default:
 	}
 	assert.False(t, c.Done(), "a child that has not ended is not Done")

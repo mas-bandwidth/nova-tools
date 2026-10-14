@@ -144,7 +144,7 @@ func deadlineOnATree(t *testing.T) deadlineRun {
 				_ = syscall.Kill(bg, syscall.SIGKILL)
 			}
 		}
-		t.Fatalf("the run did not return after its deadline fired (or the harness never recorded its grandchild):\n%s", stderr.String())
+		require.FailNowf(t, "", "the run did not return after its deadline fired (or the harness never recorded its grandchild):\n%s", stderr.String())
 	}
 	bgRaw, err := os.ReadFile(bgPath)
 	if err != nil {

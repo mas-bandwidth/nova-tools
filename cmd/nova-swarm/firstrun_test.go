@@ -167,9 +167,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// one of them still matches line for line and is still short of a first run.
 	assert.Len(t, steps, 1, "the `### First run` block runs %d commands, want 1: template", len(steps))
 	t.Chdir(t.TempDir())
-	for _, p := range onboarding.Execute(steps, runDocumentedSwarm(t)) {
-		t.Error(p)
-	}
+	assert.Empty(t, onboarding.Execute(steps, runDocumentedSwarm(t)))
 }
 
 // runDocumentedSwarm calls this binary's own entry point with the documented
@@ -211,9 +209,7 @@ func TestTheCommandReferenceFirstRunIsWhatTheToolPrints(t *testing.T) {
 	for i := range steps {
 		steps[i].Args = localize(t, pool, steps[i].Args)
 	}
-	for _, p := range onboarding.Execute(steps, runDocumentedSwarm(t), onboarding.Path("./pool", pool)) {
-		t.Error(p)
-	}
+	assert.Empty(t, onboarding.Execute(steps, runDocumentedSwarm(t), onboarding.Path("./pool", pool)))
 }
 
 // TestUsageBannerExamplesRunThroughTheComparator: the banner's `example:` block
@@ -263,15 +259,13 @@ func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
 					want = append(want, "LINT RULE "+oneline.Field(rule)+" remedy="+oneline.Escape(cardLintRemedies[rule]))
 				}
 			default:
-				t.Fatalf("the banner example %q is in no `### First run` block of docs/CLI.md and prints neither a template nor the rule set", ex)
+				require.FailNowf(t, "", "the banner example %q is in no `### First run` block of docs/CLI.md and prints neither a template nor the rule set", ex)
 			}
 			step = onboarding.Step{Line: "$ " + ex, Args: strings.Fields(ex)[1:], Want: want}
 		}
 		step.Args = localize(t, pool, step.Args)
 		res, err := run(step)
 		require.NoError(t, err, "the banner example\n  %s\ncould not be run", ex)
-		for _, p := range onboarding.Compare(step, res, norms) {
-			t.Error(p)
-		}
+		assert.Empty(t, onboarding.Compare(step, res, norms))
 	}
 }
