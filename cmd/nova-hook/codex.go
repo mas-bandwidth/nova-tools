@@ -73,21 +73,13 @@ func (r *codexRoute) summary() string {
 	return fmt.Sprintf("%d more messages from %s; read the bus", r.foldedCount, strings.Join(r.foldedSenders, ", "))
 }
 
-func (r *codexRoute) startTurn(s *session, id, turn string, m *bus.Message) {
+func (r *codexRoute) startTurn(s *session, id, turn string) {
 	if r == nil {
 		return
 	}
-	wasPending := r.pending
-	isChal := m == nil || isChallengeMessage(m)
 	r.pending = true
-	if !wasPending || !isChal || r.pendingID == "" {
-		r.pendingID = id
-		if isChal {
-			r.pendingChallenge = id
-		} else {
-			r.pendingChallenge = ""
-		}
-	}
+	r.pendingID = id
+	r.pendingChallenge = ""
 	r.pendingTurn = turn
 	if s == nil || s.hooks.C == nil {
 		return
@@ -273,7 +265,10 @@ func (w world) codexPush(c *tool.Call, s *session, r *codexRoute, role hook.Role
 	e := savedCodexEvent{EventID: id, BootstrapNonce: nonce, Message: m, HookEpoch: epoch, HookRole: role}
 	out := w.codexSend(c, s, r, role, epoch, e)
 	if out == nil && r != nil {
-		r.startTurn(s, id, r.pendingTurn, m)
+		r.startTurn(s, id, r.pendingTurn)
+		if m == nil || isChallengeMessage(m) {
+			r.pendingChallenge = id
+		}
 	}
 	return out
 }
@@ -310,7 +305,7 @@ func (w world) codexStep(c *tool.Call, s *session, r *codexRoute, role hook.Role
 	r.foldedChallenge = nil
 	out := w.codexSend(c, s, r, role, epoch, e)
 	if out == nil {
-		r.startTurn(s, id, r.pendingTurn, e.Message)
+		r.startTurn(s, id, r.pendingTurn)
 	}
 	return out
 }

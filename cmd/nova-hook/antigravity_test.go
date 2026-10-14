@@ -766,7 +766,7 @@ func TestAntigravityPendingSummaryDoesNotHideCurrentChallenge(t *testing.T) {
 			}
 			require.NoError(t, installAntigravityRoute(ag))
 			route := &codexRoute{directory: fh.eventsDir, antigravity: ag}
-			route.startTurn(s, "summary-old", "turn-old", &bus.Message{ID: "summary-old", Subject: "ordinary"})
+			route.startTurn(s, "summary-old", "turn-old")
 			route.fold(bus.Message{ID: "ordinary-old", From: "rowan", Subject: "ordinary"})
 			message := bus.Message{ID: "challenge-new", From: "rowan", Subject: "HOOK CHALLENGE nonce=" + tc.nonce, Body: challengeText("emma", tc.nonce, hook.ChallengeEvery)}
 			if tc.malformed {

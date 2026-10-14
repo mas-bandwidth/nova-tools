@@ -2331,3 +2331,4 @@ cmd/nova-bus/pushproof_test.go nova-bus send, recv and names read the hook recor
 cmd/nova-friend/pong_defaults_test.go pong.json deleted as a record in v1.3 (E2c); nova-friend pong reads queue and width from QUEUE.json and status.json directly and sends on the bus
 pkg/bus/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record
 pkg/friend/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record
+internal/textbody/textbody_test.go StripQuotedAndCode is unreachable from every shipped main (go tool deadcode v0.50.0); no caller outside its own tests in nova-tools or current nova-sprint; package removed in dead-code pass2
