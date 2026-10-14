@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/fsx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,17 +23,18 @@ import (
 func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := fsx.Tree(t, map[string]string{
+		"toolchains/.keep": "",
+		"a-file":           "x",
+		"worker/.keep":     "",
+	})
 	good := filepath.Join(dir, "toolchains")
-	require.NoError(t, os.MkdirAll(good, 0o755))
 	file := filepath.Join(dir, "a-file")
-	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
 	// The key file lives OUTSIDE the worker directory, because a key inside it is copied
 	// into every slot and is refused at load in its own right (the test below).
 	home := filepath.Join(dir, "worker")
-	require.NoError(t, os.MkdirAll(home, 0o755))
 	key := filepath.Join(dir, "key")
-	require.NoError(t, os.WriteFile(key, []byte("k"), 0o600))
+	fsx.Write(t, key, "k")
 	desc := map[string]any{
 		"name": "w", "provider": "p", "model": "m", "env_var": "K", "key_file": key,
 		"usage": "none", "harness": "h", "worker_dir": home, "deadline": "1m",
@@ -41,7 +43,7 @@ func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
 	}
 	raw, _ := json.MarshalIndent(desc, "", "  ")
 	path := filepath.Join(dir, "worker.json")
-	require.NoError(t, os.WriteFile(path, raw, 0o644))
+	fsx.Write(t, path, string(raw))
 	w, problems := LoadWorker(path)
 	require.Len(t, problems, 3, "three read roots are wrong and the load reported %d problems: %v", len(problems), problems)
 	all := ""
@@ -57,7 +59,7 @@ func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
 	// A description that names none is sound: the system roots are the floor.
 	delete(desc, "read_roots")
 	raw, _ = json.MarshalIndent(desc, "", "  ")
-	require.NoError(t, os.WriteFile(path, raw, 0o644))
+	fsx.Write(t, path, string(raw))
 	_, problems = LoadWorker(path)
 	assert.Empty(t, problems, "a description naming no read root is refused: %v", problems)
 }
@@ -73,12 +75,12 @@ func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
 func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := fsx.Tree(t, map[string]string{
+		"worker/.keep":     "",
+		"toolchains/.keep": "",
+	})
 	home := filepath.Join(dir, "worker")
 	tools := filepath.Join(dir, "toolchains")
-	for _, d := range []string{home, tools} {
-		require.NoError(t, os.MkdirAll(d, 0o755))
-	}
 	descFor := func(workerDir, key string) string {
 		raw, _ := json.MarshalIndent(map[string]any{
 			"name": "w", "provider": "p", "model": "m", "env_var": "K", "key_file": key,
@@ -87,14 +89,14 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 			"read_roots":   []string{tools},
 		}, "", "  ")
 		path := filepath.Join(dir, "worker.json")
-		require.NoError(t, os.WriteFile(path, raw, 0o644))
+		fsx.Write(t, path, string(raw))
 		return path
 	}
 	desc := func(key string) string { return descFor(home, key) }
 	// The key file a description may NOT name: one inside the worker directory, which is
 	// copied into the slot before every job.
 	inside := filepath.Join(home, ".key")
-	require.NoError(t, os.WriteFile(inside, []byte("sk-not-a-key\n"), 0o600))
+	fsx.Write(t, inside, "sk-not-a-key\n")
 	_, problems := LoadWorker(desc(inside))
 	require.Len(t, problems, 1, "a key file inside worker_dir reported %d problems, want 1: %v", len(problems), problems)
 	said := problems[0].Error()
@@ -103,7 +105,7 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 	}
 	// And one inside a read root, which every job of this worker may read directly.
 	inRoot := filepath.Join(tools, "key")
-	require.NoError(t, os.WriteFile(inRoot, []byte("sk-not-a-key\n"), 0o600))
+	fsx.Write(t, inRoot, "sk-not-a-key\n")
 	_, problems = LoadWorker(desc(inRoot))
 	require.Len(t, problems, 1, "a key file inside a read root is not refused: %v", problems)
 	require.Contains(t, problems[0].Error(), "read_roots[0]", "a key file inside a read root is not refused: %v", problems)
@@ -113,9 +115,8 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 	// The refusal is at LOAD, so `nova-swarm run` returns before Run prints any RUN line --
 	// the task stays pending and no worker starts.
 	slotJobs := filepath.Join(dir, "worker-1", "jobs", "t1")
-	require.NoError(t, os.MkdirAll(slotJobs, 0o755))
 	inSlot := filepath.Join(dir, "worker-1", ".key")
-	require.NoError(t, os.WriteFile(inSlot, []byte("sk-not-a-key\n"), 0o600))
+	fsx.Write(t, inSlot, "sk-not-a-key\n")
 	_, problems = LoadWorker(desc(inSlot))
 	require.Len(t, problems, 1, "a key file inside a slot directory reported %d problems, want 1: %v", len(problems), problems)
 	said = problems[0].Error()
@@ -124,22 +125,19 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 	}
 	// The same key one level deeper, under the slot's own jobs/, is the same hole.
 	underJobs := filepath.Join(slotJobs, ".key")
-	require.NoError(t, os.WriteFile(underJobs, []byte("sk-not-a-key\n"), 0o600))
+	fsx.Write(t, underJobs, "sk-not-a-key\n")
 	_, problems = LoadWorker(desc(underJobs))
 	require.Len(t, problems, 1, "a key file under a slot's jobs/ is not refused: %v", problems)
 	// A sibling that merely starts the same way is NOT a slot and is sound: the tool
 	// refuses the placements it creates, not every neighbour of worker_dir.
-	neighbour := filepath.Join(dir, "worker-keys")
-	require.NoError(t, os.MkdirAll(neighbour, 0o700))
-	sound := filepath.Join(neighbour, "provider")
-	require.NoError(t, os.WriteFile(sound, []byte("sk-not-a-key\n"), 0o600))
+	sound := filepath.Join(dir, "worker-keys", "provider")
+	fsx.Write(t, sound, "sk-not-a-key\n")
 	_, problems = LoadWorker(desc(sound))
 	assert.Empty(t, problems, "a key file in a sibling that is not a slot is refused: %v", problems)
 	// The key file the README teaches -- outside both lists -- is sound, and a symlink
 	// into the worker directory does not walk around the check (rule 5 resolves paths).
 	outside := filepath.Join(dir, "keys", "provider")
-	require.NoError(t, os.MkdirAll(filepath.Dir(outside), 0o700))
-	require.NoError(t, os.WriteFile(outside, []byte("sk-not-a-key\n"), 0o600))
+	fsx.Write(t, outside, "sk-not-a-key\n")
 	_, problems = LoadWorker(desc(outside))
 	assert.Empty(t, problems, "a key file outside both lists is refused: %v", problems)
 	link := filepath.Join(dir, "linked-key")
@@ -152,13 +150,13 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 	// spelling left a key inside the wall under a green line (Rowan's Fable read 3 of #88 at
 	// 56c7dcc, L1). Exactly one refusal, naming the key and the slot the tool would build.
 	realDir := filepath.Join(dir, "real", "worker")
-	require.NoError(t, os.MkdirAll(realDir, 0o755))
+	fsx.Mkdir(t, realDir)
 	typedDir := filepath.Join(dir, "typed-worker")
 	require.NoError(t, os.Symlink(realDir, typedDir))
 	linkedSlot := Worker{WorkerDir: typedDir}.SlotDir(1)
-	require.NoError(t, os.MkdirAll(linkedSlot, 0o755))
+	fsx.Mkdir(t, linkedSlot)
 	inLinkedSlot := filepath.Join(linkedSlot, ".key")
-	require.NoError(t, os.WriteFile(inLinkedSlot, []byte("sk-not-a-key\n"), 0o600))
+	fsx.Write(t, inLinkedSlot, "sk-not-a-key\n")
 	_, problems = LoadWorker(descFor(typedDir, inLinkedSlot))
 	require.Len(t, problems, 1, "a key file inside the slot of a SYMLINKED worker_dir reported %d problems, want 1: %v", len(problems), problems)
 	said = problems[0].Error()
@@ -185,15 +183,14 @@ func TestAKeyFileSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing
 	t.Parallel()
 
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "CaseProbe"), []byte("x\n"), 0o600))
-	if _, err := os.Stat(filepath.Join(dir, "caseprobe")); err != nil {
+	fsx.Write(t, filepath.Join(dir, "CaseProbe"), "x\n")
+	if !fsx.Exists(t, filepath.Join(dir, "caseprobe")) {
 		t.Skipf("the filesystem under %s is case-SENSITIVE: caseprobe is not CaseProbe, so a key file spelled in another case is a different file here and the fold this test is about cannot happen", dir)
 	}
 	home := filepath.Join(dir, "worker")
 	tools := filepath.Join(dir, "toolchains")
-	for _, d := range []string{home, tools} {
-		require.NoError(t, os.MkdirAll(d, 0o755))
-	}
+	fsx.Mkdir(t, home)
+	fsx.Mkdir(t, tools)
 	desc := func(key string) string {
 		raw, _ := json.MarshalIndent(map[string]any{
 			"name": "w", "provider": "p", "model": "m", "env_var": "K", "key_file": key,
@@ -202,14 +199,14 @@ func TestAKeyFileSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing
 			"read_roots":   []string{tools},
 		}, "", "  ")
 		path := filepath.Join(dir, "worker.json")
-		require.NoError(t, os.WriteFile(path, raw, 0o644))
+		fsx.Write(t, path, string(raw))
 		return path
 	}
 	// The key inside worker_dir, spelled in another case. The write itself goes through the
 	// fold -- there is no `<dir>/Worker` directory, only `<dir>/worker` -- so the file this
 	// description names IS the file the slot copy would pick up.
 	folded := filepath.Join(dir, "Worker", ".key")
-	require.NoError(t, os.WriteFile(folded, []byte("sk-not-a-key\n"), 0o600))
+	fsx.Write(t, folded, "sk-not-a-key\n")
 	_, problems := LoadWorker(desc(folded))
 	require.Len(t, problems, 1, "a key file inside worker_dir spelled in another case reported %d problems, want 1: %v", len(problems), problems)
 	said := problems[0].Error()
@@ -219,15 +216,14 @@ func TestAKeyFileSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing
 	// And the other list: a read root spelled in another case is the same hole without the
 	// copy, because every job of this worker may read that directory directly.
 	foldedRoot := filepath.Join(dir, "Toolchains", "key")
-	require.NoError(t, os.WriteFile(foldedRoot, []byte("sk-not-a-key\n"), 0o600))
+	fsx.Write(t, foldedRoot, "sk-not-a-key\n")
 	_, problems = LoadWorker(desc(foldedRoot))
 	require.Len(t, problems, 1, "a key file inside a read root spelled in another case is not refused: %v", problems)
 	require.Contains(t, problems[0].Error(), "read_roots[0]", "a key file inside a read root spelled in another case is not refused: %v", problems)
 	// And the placement the README teaches is still sound with the new comparison: a
 	// directory that is not the worker directory under any spelling is not inside it.
 	outside := filepath.Join(dir, "keys", "provider")
-	require.NoError(t, os.MkdirAll(filepath.Dir(outside), 0o700))
-	require.NoError(t, os.WriteFile(outside, []byte("sk-not-a-key\n"), 0o600))
+	fsx.Write(t, outside, "sk-not-a-key\n")
 	_, problems = LoadWorker(desc(outside))
 	assert.Empty(t, problems, "a key file outside both lists is refused: %v", problems)
 }
