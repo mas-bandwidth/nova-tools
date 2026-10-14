@@ -1392,7 +1392,9 @@ the remedy: run the friend daemon, `nova-friend install`, and answer its SESSION
 CHECK; [SPEC-BUS.md](SPEC-BUS.md), bus-requires-inbox-push-proof);
 `--forever` without `--exec` (a loop that acks nothing would hand out the same
 message for ever); no store named (`--redis`, else `NOVA_BUS_REDIS`, else the fleet row's `bus` field read
-from the sprint store at `NOVA_SPRINT_REDIS`: `nova-config fleet set --bus <host:port>`, then `apply`); a store
+from the sprint store at `NOVA_SPRINT_REDIS`: `nova-config fleet set --bus <host:port>`, then `apply`); only the sprint
+store naming it with no login for it (`NOVA_SPRINT_REDIS_USER` is unset), refused before any dial, naming `--redis` and
+`NOVA_BUS_REDIS` as the way to say where the bus is; a store
 off loopback and the tailnet (100.64.0.0/10), refused before any dial in one line naming the rule.
 
 ### The harness loop
@@ -1452,7 +1454,9 @@ and role, naming the command below.
 
 ### First run
 
-A Redis at `--redis` or `NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-hook)):
+A Redis at `--redis`, else `NOVA_BUS_REDIS`, else the fleet row's `bus` read at
+`NOVA_SPRINT_REDIS`; with no login for that store it refuses before any dial,
+naming `--redis` and `NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-hook)):
 
 ```sh
 nova-hook status --as m1
