@@ -27,6 +27,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
@@ -42,17 +43,21 @@ const Tick = time.Second
 // it opens, the clock, the signals the loop stops on and the nonce source.
 // main passes the real one; a test passes its own over hooktest's store.
 type world struct {
-	getenv   func(string) string
-	open     func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
-	fleetBus func(ctx context.Context, addr string) (string, error)
-	lookup   bus.Lookup
-	now      func() time.Time
-	signals  func(ctx context.Context) (context.Context, context.CancelFunc)
-	nonce    func() string
-	after    func(time.Duration) <-chan time.Time             // the heartbeat server's wait between passes
-	deliver  func(*bus.Bus, bus.Message) (bus.Message, error) // the heartbeat server's one send: Bus.Send under a call's deadline
-	holder   string                                           // who holds the pushes this process holds, as the lease shows it
-	tick     time.Duration                                    // one blocking read of the loop
+	codexLock     func(string) (func() error, error)
+	codexValidate func(string, string, string) error
+	codexSave     func(string, string, []byte) error
+	codexDeliver  func(context.Context, string, string, string, string) (string, error)
+	getenv        func(string) string
+	open          func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
+	fleetBus      func(ctx context.Context, addr string) (string, error)
+	lookup        bus.Lookup
+	now           func() time.Time
+	signals       func(ctx context.Context) (context.Context, context.CancelFunc)
+	nonce         func() string
+	after         func(time.Duration) <-chan time.Time             // the heartbeat server's wait between passes
+	deliver       func(*bus.Bus, bus.Message) (bus.Message, error) // the heartbeat server's one send: Bus.Send under a call's deadline
+	holder        string                                           // who holds the pushes this process holds, as the lease shows it
+	tick          time.Duration                                    // one blocking read of the loop
 }
 
 func realWorld() world {
@@ -60,7 +65,7 @@ func realWorld() world {
 	if err != nil {
 		host = "unknown-host" // ignored: the holder's name is a label on the lease, never a key
 	}
-	w := world{getenv: os.Getenv, now: time.Now, tick: Tick, after: time.After, deliver: deliver,
+	w := world{codexLock: lockCodexRoute, codexValidate: validateCodexRoute, codexSave: saveCodexEvent, codexDeliver: codexdesktop.DeliverSaved, getenv: os.Getenv, now: time.Now, tick: Tick, after: time.After, deliver: deliver,
 		holder: fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
 		lookup: func(ctx context.Context, h string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
@@ -175,6 +180,14 @@ nova-hook prove --as <me> --nonce <n>, within ` + hook.AnswerBound.String() + `,
 each time the record changes. Run it under the session's Monitor: each line is a notification. It stops on SIGINT or
 SIGTERM (HOOK STOP, exit 0; the leases lapse after ` + hook.LeaseTTL.String() + `), or when the record is unhooked under it (exit 1).
 This proof records a protocol response to the challenge; it does not establish foreground session presence or native idle-wake behavior.
+Codex desktop delivery uses --codex-socket, --codex-thread and --codex-events-dir together (or NOVA_HOOK_CODEX_SOCKET,
+NOVA_HOOK_CODEX_THREAD, NOVA_HOOK_CODEX_EVENTS_DIR). The directory must exist, be private (0700), canonical and owned
+by the current user. The route probes the native thread owner before arming. Each event is saved as external JSON
+and one fixed native notice names that file; message body and subject never enter native turn text. Native acceptance
+is not proof or acknowledgment: only the model runs nova-hook prove or answers with nova-bus send --re. A local failure
+revokes route proof and stops renewal; unknown native outcomes are reported without declaring the model absent.
+Do not blindly restart after accepted or unknown delivery: inspect the saved event and model answer first.
+Codex clients only bootstrap; the heartbeat server owns subsequent challenges. Other routes keep their existing cadence.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
 remedy: what a daemon's start does, and what a role whose holders are daemons runs to hook in again after an unhook.
 --dry-run reads the record and prints the plan the real run would take (the role, the epoch, the pushes held and
@@ -183,6 +196,9 @@ example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Required("role", "the role you hook in as, one of "+roleNames())
+					f.String("codex-socket", w.getenv("NOVA_HOOK_CODEX_SOCKET"), "native Codex desktop socket; requires thread and private event directory")
+					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID")
+					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "existing private directory for bounded external event JSON")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
 					store(f)
 					f.Check(func(c *tool.Call) {
@@ -283,6 +299,7 @@ example: nova-hook serve --as ada --once`,
 // session is one verb's open store: the bus store, its hook record and the
 // identity the verb acts as.
 type session struct {
+	addr  string
 	bus   bus.Store
 	hooks hook.Store
 	as    string
@@ -311,7 +328,7 @@ func (w world) openSession(c *tool.Call, needAs bool) (*session, *tool.Out) {
 		closeStore()
 		return nil, tool.Refuse(err.Error())
 	}
-	s := &session{bus: st, hooks: hs, close: closeStore}
+	s := &session{addr: addr, bus: st, hooks: hs, close: closeStore}
 	if needAs || c.Str("as") != "" || login != "" {
 		as, refusal := bus.Identity(c.Str("as"), login)
 		if refusal != "" {
@@ -363,6 +380,10 @@ func holds(r hook.Role) []hook.Push {
 // hook is the verb: arm, hold, challenge, then stream until a signal or an unhook
 // (docs/SPEC-HOOK.md, the hook verb; tla/Hook.tla, Arm, Renew and Challenge).
 func (w world) hook(c *tool.Call) *tool.Out {
+	native, nativeErr := w.codexConfig(c)
+	if nativeErr != nil {
+		return tool.Refuse(nativeErr.Error())
+	}
 	s, refused := w.openSession(c, true)
 	if refused != nil {
 		return refused
@@ -378,6 +399,34 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		return w.hookPlan(ctx, s, role)
 	}
 	held := holds(role)
+	if native != nil && !slices.Contains(held, hook.Bus) {
+		return tool.Refuse("Codex delivery wants a role with the bus push")
+	}
+	var recovery codexRecovery
+	if native != nil {
+		release, err := w.codexLock(native.directory)
+		if err != nil {
+			return tool.Refuse("Codex route is not exclusively held: " + err.Error())
+		}
+		defer func() {
+			if err := release(); err != nil {
+				line(c, tool.Done().As("STATE").Fact("state", "unlock-failed").Note(err.Error()))
+			}
+		}()
+	}
+	// Capture the boundary before publishing any lease, then cover everything
+	// through that boundary before streaming strictly after it.
+	cursor, refused := w.cursor(s, held)
+	if refused != nil {
+		return refused
+	}
+	if native != nil {
+		var err error
+		recovery, err = codexBacklog(s, cursor)
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+	}
 	// the identity's own word (hook.Store.HookAs): it joins a record hooked as role,
 	// and otherwise arms a new epoch: after an unhook, or over a record hooked as
 	// another role, which it takes over (a holder's start never does either)
@@ -391,15 +440,13 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse("the hook record could not be written: " + err.Error())
 	}
+	if native != nil {
+		recovery.afterEpoch(epoch)
+	}
 	if err := w.renew(s, role, held, epoch); err != nil {
 		return tool.Refuse("the lease could not be written: " + err.Error())
 	}
-	// the cursor is read before anything is printed, so a message that lands while the
-	// session reads the first lines is a push of this hook (as nova-bus wait arms)
-	cursor, refused := w.cursor(s, held)
-	if refused != nil {
-		return refused
-	}
+
 	armed := tool.Done().As("ARMED").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", joined).Fact("hold", pushList(held))
 	if took != "" {
 		armed.Note("the record was hooked as " + took + ": it is " + string(role) + " from now, and the holders of " + took + " hold nothing until it is hooked as " + took + " again")
@@ -408,6 +455,9 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		if !slices.Contains(held, p) {
 			armed.Note(fmt.Sprintf("the %s push is held by: %s", p, hook.HeldBy(s.as, role, p)))
 		}
+	}
+	if native != nil && recovery.coverageUnknown {
+		line(c, tool.Done().As("STATE").Fact("state", "recovery-coverage-unknown").Fact("oldest", recovery.oldest).Note("24h coverage before oldest retained entry is unverified; coordinator must inspect retention before cutover"))
 	}
 	once := c.Bool("once")
 	if !once {
@@ -420,15 +470,36 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		nonce := w.nonce()
 		ctx, cancel := call()
 		defer cancel()
-		if err := s.hooks.Challenge(ctx, s.as, role, epoch, held, nonce); err != nil {
+		created, err := s.hooks.Challenge(ctx, s.as, role, epoch, held, nonce)
+		if err != nil {
 			return tool.Refuse("the challenge could not be written: " + err.Error())
 		}
+		if native != nil {
+			nonceForEvent := ""
+			if created {
+				nonceForEvent = nonce
+			}
+			if created || len(recovery.messages) > 0 || recovery.coverageUnknown {
+				e := savedCodexEvent{EventID: "recovery-" + w.nonce(), BootstrapNonce: nonceForEvent, HookEpoch: epoch, HookRole: role, Recovery: recovery.messages, PossibleDuplicates: true}
+				if recovery.coverageUnknown {
+					e.RecoveryCoverage = "24h history before oldest retained entry " + recovery.oldest + " is unverified; stream creation and trimming are indistinguishable"
+				}
+				recovery = codexRecovery{}
+				if out := w.codexSend(c, s, native, role, epoch, e); out != nil {
+					return out
+				}
+			}
+		}
+		if !created {
+			return nil
+		}
+
 		o := tool.Done().As("CHALLENGE").Fact("nonce", nonce).Fact("push", pushList(held)).Fact("within", hook.AnswerBound.String())
 		o.Note("run: nova-hook prove --as " + s.as + " --nonce " + nonce)
 		return o
 	}
 	ch := challenge(epoch)
-	if ch != nil && ch.Status == tool.Refused {
+	if ch != nil && ch.Status != tool.OK {
 		return ch
 	}
 	if once {
@@ -437,7 +508,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if ch != nil {
 		line(c, ch)
 	}
-	return w.loop(c, s, role, held, epoch, cursor, challenge)
+	return w.loop(c, s, role, held, epoch, cursor, challenge, native)
 }
 
 // cursor is the bus stream's last entry id when this process holds the bus
@@ -508,7 +579,7 @@ func (w world) onceResult(s *session, role hook.Role, held []hook.Push, armed, c
 // floods the Monitor. A record lost under the loop (none: deleted, or the
 // store flushed) is armed again, the session's hook being the identity's word;
 // an unhook ends the loop.
-func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out) *tool.Out {
+func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out, native *codexRoute) *tool.Out {
 	ctx, stop := w.signals(context.Background())
 	defer stop()
 	stream := bus.StreamOf(s.as)
@@ -544,6 +615,11 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				cursor = e.Entry
 				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") { // a server may challenge its own name
 					line(c, tool.Done().As("PUSH").Fact("push", "bus").Fact("id", m.ID).Fact("from", m.From).Fact("subject", tool.Text(m.Subject)))
+					if native != nil {
+						if out := w.codexPush(c, s, native, role, epoch, m.ID, "", &m); out != nil {
+							return out
+						}
+					}
 				}
 			}
 		} else {
@@ -562,6 +638,14 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 					epoch, err = e, nil
 					line(c, tool.Done().As("ARMED").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", false).Fact("hold", pushList(held)).Note("the hook record was lost under this hook (no record: deleted, or the store flushed); armed again"))
 					nextChallenge = w.now()
+					if native != nil {
+						if ch := challenge(epoch); ch != nil {
+							if ch.Status != tool.OK {
+								return ch
+							}
+							line(c, ch)
+						}
+					}
 				}
 			}
 			if errors.Is(err, hook.ErrNotHooked) {
@@ -573,7 +657,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				line(c, tool.Done().As("STATE").Fact("state", "unrenewed").Note("the lease could not be renewed: "+err.Error()+"; it is tried again at the next renewal, inside the lease"))
 			}
 		}
-		if !w.now().Before(nextChallenge) {
+		if native == nil && !w.now().Before(nextChallenge) {
 			nextChallenge = w.now().Add(hook.ChallengeEvery)
 			if ch := challenge(epoch); ch != nil {
 				line(c, ch)

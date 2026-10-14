@@ -216,9 +216,11 @@ func TestARefusedStopReturnIsTriedAgainWhateverTheWord(t *testing.T) {
 	c := r.child("c1")
 	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
 	s.set("stop-return", 2, "nova-sprint stop-return: unknown verb")
+	_, err = m.Tick(time.Unix(10, 0))
+	require.NoError(t, err)
 	c.end(Result{OK: true, Head: "abc"})
-	for i := range 3 {
-		_, err = m.Tick(time.Unix(10+int64(i), 0))
+	for i := range 2 {
+		_, err = m.Tick(time.Unix(11+int64(i), 0))
 		require.NoError(t, err)
 	}
 	assert.Len(t, s.lines("stop-return"), 1, "one try, then StopReturnRetry: no verb a pass")
@@ -428,7 +430,7 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	// initial beat with 0 owed
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live c1@1 --load 0.0"}, s.lines("beat"))
 
 	// the machine stops: c1 is cancelled, now 1 stop-return is owed
 	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
@@ -436,7 +438,7 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	require.NoError(t, err)
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 1 --load 0.0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 1 --live c1@1 --load 0.0"}, s.lines("beat"))
 
 	// child ends and is handed back via stop-return
 	r.child("c1").end(Result{OK: true})
@@ -447,7 +449,7 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	// beat after hand-back: owed returns to 0
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --load 0.0"}, s.lines("beat"))
 }
 
 // While Room says no (the disk floor), the member's fleet beat carries its word (--no-room),
@@ -461,13 +463,13 @@ func TestBeatCarriesNoRoomWhileRoomSaysNo(t *testing.T) {
 	require.NoError(t, err)
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why + " --load 0.0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --no-room " + why + " --load 0.0"}, s.lines("beat"))
 	room = true
 	_, err = m.Tick(time.Unix(10, 0))
 	require.NoError(t, err)
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --load 0.0"}, s.lines("beat"))
 }
 
 // A draining member's beat carries this tick's word, not a stale one: Room is asked before
@@ -488,12 +490,12 @@ func TestADrainingMembersBeatCarriesThisTicksNoRoom(t *testing.T) {
 		require.NoError(t, m.Beat())
 		return s.lines("beat")
 	}
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why + " --load 0.0"}, beat(0))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --no-room " + why + " --load 0.0"}, beat(0))
 	m.Drain()
 	room = true
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --draining --load 0.0"}, beat(10), "the disk freed while draining: the word is gone, the drain is said")
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --draining --load 0.0"}, beat(10), "the disk freed while draining: the word is gone, the drain is said")
 	room = false
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why + " --draining --load 0.0"}, beat(20), "under the floor again while draining: the word is said")
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --no-room " + why + " --draining --load 0.0"}, beat(20), "under the floor again while draining: the word is said")
 }
 
 // A member that drains (its binary was replaced) says so on every beat from the drain on
@@ -508,14 +510,14 @@ func TestADrainingMembersBeatSaysItDrains(t *testing.T) {
 	require.NoError(t, err)
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, s.lines("beat"), "a member that takes says nothing of a drain")
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --load 0.0"}, s.lines("beat"), "a member that takes says nothing of a drain")
 	m.Drain()
 	for at := int64(10); at <= 20; at += 10 {
 		_, err = m.Tick(time.Unix(at, 0))
 		require.NoError(t, err)
 		s.reset()
 		require.NoError(t, m.Beat())
-		assert.Equal(t, []string{"fleet beat m --stop-returns 0 --draining --load 0.0"}, s.lines("beat"), "every beat from the drain on says it")
+		assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --draining --load 0.0"}, s.lines("beat"), "every beat from the drain on says it")
 	}
 }
 
