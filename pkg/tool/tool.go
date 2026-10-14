@@ -376,7 +376,25 @@ func (t *Tool) writeHelp(name string, fs *flag.FlagSet, stdout io.Writer) {
 		usage, rest, _ := strings.Cut(text, "\n")
 		text = usage + "\n" + t.Stage + "\n" + rest
 	}
-	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(text, detail), effect)
+	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(text, detail), joinEffect(string(effect)))
+}
+
+// joinEffect drops a default Effect's tail when a caller appends a clause to
+// it, so the help's `effect:` line has one colon after the class word: a
+// verb set to LocalWrite plus a clause holds "local write: writes files on
+// this machine: the cursor ...", which renders as "effect: local write: the
+// cursor ...". A caller's own text survives unchanged.
+func joinEffect(e string) string {
+	if r, ok := strings.CutPrefix(e, "inspection: reads, writes nothing: "); ok {
+		return "inspection: " + r
+	}
+	if r, ok := strings.CutPrefix(e, "local write: writes files on this machine: "); ok {
+		return "local write: " + r
+	}
+	if r, ok := strings.CutPrefix(e, "delivery: sends beyond this machine: "); ok {
+		return "delivery: " + r
+	}
+	return e
 }
 
 // HowLines and HowWidth bound the banner's how-it-works text: a reader takes
@@ -505,9 +523,13 @@ func (t *Tool) Banner() string {
 	if t.UsageNote != "" {
 		b.WriteString(t.UsageNote + "\n\n")
 	}
+	// own is the verbs that truly lack --json: the skeleton adds the flag to
+	// every verb but a Prints one, and a Prints verb that registers its own
+	// --json still takes it, so the banner names only the verbs whose flags
+	// define none (ONBOARDING point 6: the help and the output cannot drift).
 	var own []string
 	for _, v := range t.shown() {
-		if v.flags().prints {
+		if v.flags().Lookup("json") == nil {
 			own = append(own, v.Name)
 		}
 	}
@@ -548,10 +570,15 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
 		o := Refuse(flagProblems(&v, f, args, err)...)
 		o.Remedy = t.Name + " " + v.Name + " -h"
-		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
+		return t.emit(&v, o, f.Lookup("json") != nil && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
 	}
 	f.Visit(func(fl *flag.Flag) { c.given[fl.Name] = true })
-	asJSON := !f.prints && c.Bool("json")
+	// asJSON is true when the verb takes --json and was asked for it: a verb
+	// that renders its own stdout (Prints) but registers its own --json still
+	// answers a pre-run refusal (a missing required flag, a bad flag) as the
+	// JSON object on stdout (skeleton contract 1.4 and 1.6: --json is always
+	// stdout). A Prints verb without --json never renders JSON.
+	asJSON := f.Lookup("json") != nil && c.Bool("json")
 	c.asJSON = asJSON
 	// One pass over every rule the verb declared, so one run names every
 	// problem: the required flags, the verb's own checks, --max, arguments.
