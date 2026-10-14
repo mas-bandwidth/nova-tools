@@ -194,47 +194,53 @@ func TestRunReportsALeakAndPaysForItWithTheExitCode(t *testing.T) {
 	require.Contains(t, errOut, "freed=0", "a leaked volume freed nothing and the receipt should say so:\n%s", errOut)
 }
 
-// A volume that was made and not mounted is not a volume that could not be made, and the
-// printed line has to be the one the caller can act on: the verb's own prefix would tell a
-// reader the create failed, which sends them to diskutil and to the container for a fault
-// in neither. The words come from the manager, which is the half that knows which of the
-// two happened.
-func TestRunSaysTheMountWasDeniedRatherThanTheCreateFailed(t *testing.T) {
+// The refusals a broken disk earns, each with its reason and the line a reader acts on.
+// A volume that was made and not mounted is not a volume that could not be made: the
+// verb's own prefix would send a reader to diskutil and to the container for a fault in
+// neither, so the words come from the manager, which knows which of the two happened.
+// Every other create failure keeps the verb's prefix and names the container the volume
+// would have been made in; a container that cannot be read is a refusal with a remedy.
+func TestRunRefusesWhenTheVolumeCannotBeMade(t *testing.T) {
 	t.Parallel()
 
-	b := newRunBench(t, 0)
-	b.vols.createErr = fmt.Errorf("%w: the volume disk3s7 was created in disk3 and is not mounted under /Volumes", errVolumeNotMounted)
-	code, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Equal(t, 125, code, "a volume that came up unmounted is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=volume_failed", "a volume that came up unmounted is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
-	require.NotContains(t, errOut, "could not be created", "the refusal says the volume could not be created, over an error that says it was:\n%s", errOut)
-	require.Contains(t, errOut, "was created in disk3 and is not mounted under /Volumes", "the refusal drops what the manager said happened:\n%s", errOut)
-	require.Contains(t, errOut, runRemedy, "the refusal carries no remedy line:\n%s", errOut)
-}
+	type says struct{ text, msg string }
+	for _, c := range []struct {
+		name, reason, msg string
+		breaks            func(*fakeVolumes)
+		has               []says
+		lacks             []says
+	}{
+		{"TestRunSaysTheMountWasDeniedRatherThanTheCreateFailed", "volume_failed", "a volume that came up unmounted is not refused with reason=volume_failed: exit %d\n%s",
+			func(v *fakeVolumes) {
+				v.createErr = fmt.Errorf("%w: the volume disk3s7 was created in disk3 and is not mounted under /Volumes", errVolumeNotMounted)
+			},
+			[]says{{"was created in disk3 and is not mounted under /Volumes", "the refusal drops what the manager said happened:\n%s"}, {runRemedy, "the refusal carries no remedy line:\n%s"}},
+			[]says{{"could not be created", "the refusal says the volume could not be created, over an error that says it was:\n%s"}}},
+		{"TestRunNamesTheContainerWhenTheCreateItselfFails", "volume_failed", "a create that failed is not refused with reason=volume_failed: exit %d\n%s",
+			func(v *fakeVolumes) {
+				v.createErr = errors.New("diskutil apfs addVolume: exit status 1: quota too small")
+			},
+			[]says{{"the disposable volume could not be created in disk3", "the refusal does not name the container the volume would have been made in:\n%s"}}, nil},
+		{"TestRunRefusesWhenTheContainerCannotBeRead", "no_container", "an unreadable container is not refused with reason=no_container: exit %d\n%s",
+			func(v *fakeVolumes) { v.containerErr = errors.New("no such thing") },
+			[]says{{"--container disk3", "the refusal does not name the flag that answers it:\n%s"}}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 
-// Every other create failure keeps the verb's own prefix: the container is where the
-// volume would have been made, and a reader of that line needs to know which one.
-func TestRunNamesTheContainerWhenTheCreateItselfFails(t *testing.T) {
-	t.Parallel()
-
-	b := newRunBench(t, 0)
-	b.vols.createErr = errors.New("diskutil apfs addVolume: exit status 1: quota too small")
-	code, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Equal(t, 125, code, "a create that failed is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=volume_failed", "a create that failed is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "the disposable volume could not be created in disk3", "the refusal does not name the container the volume would have been made in:\n%s", errOut)
-}
-
-// A container that cannot be read is a refusal with a remedy, and nothing is made.
-func TestRunRefusesWhenTheContainerCannotBeRead(t *testing.T) {
-	t.Parallel()
-
-	b := newRunBench(t, 0)
-	b.vols.containerErr = errors.New("no such thing")
-	code, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Equal(t, 125, code, "an unreadable container is not refused with reason=no_container: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=no_container", "an unreadable container is not refused with reason=no_container: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "--container disk3", "the refusal does not name the flag that answers it:\n%s", errOut)
+			b := newRunBench(t, 0)
+			c.breaks(b.vols)
+			code, errOut := runOnce(t, b, runFlagsFor(t)...)
+			require.Equal(t, 125, code, c.msg, code, errOut)
+			require.Contains(t, errOut, "reason="+c.reason, c.msg, code, errOut)
+			for _, w := range c.has {
+				require.Contains(t, errOut, w.text, w.msg, errOut)
+			}
+			for _, w := range c.lacks {
+				require.NotContains(t, errOut, w.text, w.msg, errOut)
+			}
+		})
+	}
 }
 
 // Every independent problem in ONE run, and each one naming the form its flag wants.
