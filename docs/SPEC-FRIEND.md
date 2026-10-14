@@ -1697,6 +1697,28 @@ one-shot turn printed since that card's last stamp (`stampProgress`, at most
 every `ProgressEvery`; docs/SPEC-SPRINT.md section 8, the rules table's row
 late), so the late rule never returns a printing card for want of a stamp.
 
+**The LANE line.** A lane's ask (`take --as friend.<name> --lane <n>`, and a
+reader's `take --as reader-<name> --lane <n>`) is answered on one line, as
+nova-sprint's `laneLine` prints it:
+
+    LANE <member> lane=<n> epoch=<e> holds=<card>@<gen> rank=<d> kind=<work|read> job=<job>
+    LANE <member> lane=<n> epoch=<e> holds=-
+
+A read card a reader-only friend is dealt (`<card>.r<n>.<friend>`, job
+`<card>.r<n>.<friend>~<epoch>`) comes on the same line with `kind=read`, and
+her lane runs it as it runs a work card. `ParseLaneHold` reads the words after
+`holds=` as `key=value` fields in any order and skips a field it does not read
+(`rank`), so a field the server adds never stops the lanes (the fault of
+2026-10-14 03:51Z: `rank=` between `holds=` and `kind=` made every lane of a
+reader-only friend refuse every line, once a `TakeRetry`, all night;
+`TestAReaderLaneRunsAReadCardFromTheLaneLine`). A line for the lane that asked
+whose card lacks its generation, a `kind` of work or read, or a valid `job` is
+`Unparseable`: the lane says one refusal naming the missing field and asks no
+more until the daemon restarts, since the same server would answer the same
+line (`TestAnUnparseableLaneLineIsOneRefusalNotALoop`). An answer with no LANE
+line, or one naming another member or lane, is an ordinary refusal and is
+asked again after `TakeRetry`.
+
 Only a harness that can open a session and deliver into a named one has
 lanes (`LaneHarness`; OpenCode today: `opencode run <seed>`, run in the
 friend's directory, with no `--session` opens one, found as the session the listing of the directory
