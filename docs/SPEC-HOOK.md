@@ -156,6 +156,37 @@ leave the push unprovable); the local verbs that open no bus store (`install`, `
 `status`, `resume`, `refuse-go`, `acceptance`, the Claude `hook` adapter); `wait-pong`, which names no
 identity.
 
+## The heartbeat
+
+A proof says a push reached a session once; the heartbeat says the model is still there, every minute
+(tla/HookBeat.tla). `nova-hook serve --as <name>`, hooked in as coordinator or comms, makes one pass every
+`--every` (BeatEvery, one minute), all in one script by the store's TIME:
+
+- **One pass an interval.** The server's row `hook:serve` (at, every, by, told) is the once-key: a pass less
+  than nine tenths of an interval after the last is not taken, so two servers make one pass between them.
+- **A challenge to each name a session answers for.** Each hooked coordinator, friend or comms name gets a fresh
+  challenge in `hook:chal:<name>` (its nonce's sum, the pushes it names, `until` = now + every), and the nonce
+  goes to the name as a bus message, subject `HOOK CHALLENGE nonce=<n>`: the push it already has (a session's
+  hook prints it as a HOOK PUSH line; a friend daemon delivers it through its harness adapter, the path its
+  session check uses). A coordinator's and a comms name's challenge names the bus push; a friend's names the
+  bus and work pushes, which reach her session by the same adapter, so her answer proves both. A member or
+  reader loop has no session and is never challenged; the sprint push is the seat hook's own.
+- **Only the model answers.** `nova-hook prove --as <name> --nonce <n>`, from inside its own turn, within the
+  interval; no daemon, loop or script may call it. A nonce that is not the current one, or one past `until`, is
+  refused with the reason, and an answer clears the record's `misses`.
+- **Two misses unhook.** A challenge still standing at the next pass is a miss; at MissLimit (two) in a row the
+  pass unhooks the name as `nova-hook unhook` does (the epoch moves on, every lease, proof and challenge is
+  cleared), with `reason` "missed 2 challenges", and logs one entry on the capped stream `hook:events`. Hooking
+  in again clears `misses`, `reason` and `beat_at`.
+- **The coordinator is told once per change.** The set of unhooked names is compared with the row's `told`;
+  when it differs the server sends one blocker message, `HOOK UNHOOKED <names|none>`, to `--notify` (default
+  its own name).
+- **The asks' clock.** A taken pass also runs the bus's ask expiry (`bus.ExpireAsks`), whose once-key delivers
+  each timeout once.
+- **The client's timeout.** `nova-hook status --as <name>`, once a server has passed, fails with `NO CHALLENGE
+  FOR <age>` (exit 1) when a challenged name's last challenge (or its arming) is more than two of the server's
+  intervals old: the server is gone, and nothing checks the link.
+
 ## The verbs
 
 - `nova-hook hook --as <name> --role <role> [--once] [--dry-run]`: arms (or joins) the record, holds the `bus` push

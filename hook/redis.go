@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,7 +77,7 @@ if st and ARGV[4] ~= '` + armFresh + `' then
 end
 local e = redis.call('HINCRBY', KEYS[1], 'epoch', 1)
 redis.call('HSET', KEYS[1], 'role', ARGV[2], 'state', 'hooked', 'armed', ms, 'by', ARGV[3])
-redis.call('HDEL', KEYS[1], 'unhooked')
+redis.call('HDEL', KEYS[1], 'unhooked', 'reason', 'misses', 'beat_at')
 for i = 3, #KEYS do redis.call('DEL', KEYS[i]) end
 redis.call('SADD', KEYS[2], ARGV[1])
 return {e, 0}
@@ -122,14 +123,18 @@ return 1
 
 // answerLua answers name's challenge (tla/Hook.tla, Answer): with the nonce's
 // sum, under the record's epoch, it proves every push the challenge named whose
-// lease is live, and clears the challenge. It answers {proven} or {code}: -1 no
-// challenge stands, -2 another nonce, -3 the record moved since.
+// lease is live, clears the challenge and the heartbeat's count of misses
+// (tla/HookBeat.tla, Answer). It answers {proven} or {code}: -1 no challenge
+// stands, -2 another nonce, -3 the record moved since, -4 a heartbeat
+// challenge past its interval (its until).
 // KEYS: record, challenge, then per push of Pushes its lease and proof.
 // ARGV: sum, ttl ms, by (JSON), then the names of Pushes.
 var answerLua = redis.NewScript(nowMS + `
 local c = redis.call('HMGET', KEYS[2], 'epoch', 'sum', 'pushes')
 if not c[1] then return {-1} end
 if c[2] ~= ARGV[1] then return {-2} end
+local u = redis.call('HGET', KEYS[2], 'until')
+if u and tonumber(ms) > tonumber(u) then return {-4} end
 if redis.call('HGET', KEYS[1], 'state') ~= 'hooked' or redis.call('HGET', KEYS[1], 'epoch') ~= c[1] then return {-3} end
 local n = 0
 for p in string.gmatch(c[3], '[^,]+') do
@@ -141,6 +146,7 @@ for p in string.gmatch(c[3], '[^,]+') do
   end
 end
 redis.call('DEL', KEYS[2])
+redis.call('HSET', KEYS[1], 'misses', 0)
 return {n}
 `)
 
@@ -301,6 +307,7 @@ func (s Store) Challenge(ctx context.Context, name string, role Role, epoch int6
 var (
 	ErrNoChallenge = errors.New("no challenge stands for this name: its hook has not asked one, or it lapsed past its bound; read the hook's stream for the next HOOK CHALLENGE")
 	ErrWrongNonce  = errors.New("the nonce is not the one the challenge asked; copy it from the newest HOOK CHALLENGE line of the hook's stream")
+	ErrExpired     = errors.New("the heartbeat challenge is past its interval: it counts as missed; answer the next one, which the heartbeat server sends within the interval")
 )
 
 // Answer answers name's challenge with nonce: every push it named whose lease
@@ -328,6 +335,8 @@ func (s Store) Answer(ctx context.Context, name, nonce, by string) (int, error) 
 		return 0, ErrWrongNonce
 	case -3:
 		return 0, ErrNotHooked
+	case -4:
+		return 0, ErrExpired
 	}
 	return int(got[0]), nil
 }
@@ -424,4 +433,192 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 		return r
 	}
 	return nil
+}
+
+// beatLua is one heartbeat pass over every name, in one atomic step
+// (tla/HookBeat.tla, Pass). The pass is taken once an interval: a pass less
+// than nine tenths of an interval after the last one (another server's) does
+// nothing and answers {0} (the once-key is the server row's at). Otherwise,
+// for each name: a record that is not hooked, or hooked as a role with no bus
+// push, is left as it is (code 0); a challenge still standing from the last
+// pass is a miss; at the limit the name is unhooked as unhookLua does, with
+// the reason, and the event logged once (code 2); else a fresh challenge is
+// set, due within the interval, naming the pushes of the role a session
+// receives (code 1). The server's row is stamped. Last, the set of unhooked
+// names is compared with the one the server last told (the row's told): the
+// answer is {1, {code, misses, epoch} per name, the set, 1 when it changed}.
+// KEYS: events, serve, then per name its record and allKeys (8 keys; the challenge last).
+// ARGV: every ms, limit, ttl ms, by, events cap, the count of roles, a role and
+// the pushes its challenge names (comma) per role, then per name its name and
+// its nonce's sum.
+var beatLua = redis.NewScript(nowMS + `
+local now = tonumber(ms)
+local every, limit, ttl, by, cap = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5]
+local prev = tonumber(redis.call('HGET', KEYS[2], 'at') or '0')
+if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', 0} end
+redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'by', by)
+local nroles = tonumber(ARGV[6])
+local bus = {}
+for i = 1, nroles do bus[ARGV[5 + 2 * i]] = ARGV[6 + 2 * i] end
+local out, gone = {}, {}
+local k, a = 3, 7 + 2 * nroles
+while k <= #KEYS do
+  local rec, chal, name, sum = KEYS[k], KEYS[k + 7], ARGV[a], ARGV[a + 1]
+  local did, misses, e = 0, 0, 0
+  local role = redis.call('HGET', rec, 'role')
+  if redis.call('HGET', rec, 'state') == 'hooked' and bus[role] then
+    local last = tonumber(redis.call('HGET', rec, 'beat_at') or '0')
+    misses = tonumber(redis.call('HGET', rec, 'misses') or '0')
+    if last > 0 and redis.call('EXISTS', chal) == 1 then misses = misses + 1 end
+    if misses >= limit then
+      e = redis.call('HINCRBY', rec, 'epoch', 1)
+      local why = 'missed ' .. misses .. ' challenges'
+      redis.call('HSET', rec, 'state', 'unhooked', 'unhooked', ms, 'reason', why, 'misses', misses)
+      for i = k + 1, k + 7 do redis.call('DEL', KEYS[i]) end
+      redis.call('XADD', KEYS[1], 'MAXLEN', '~', cap, '*', 'name', name, 'event', 'unhooked', 'reason', why, 'role', role, 'epoch', e, 'at', ms, 'by', by)
+      did = 2
+    else
+      e = tonumber(redis.call('HGET', rec, 'epoch'))
+      redis.call('HSET', rec, 'misses', misses, 'beat_at', ms)
+      redis.call('DEL', chal)
+      redis.call('HSET', chal, 'epoch', e, 'sum', sum, 'pushes', bus[role], 'until', string.format('%d', now + every))
+      redis.call('PEXPIRE', chal, ttl)
+      did = 1
+    end
+  end
+  table.insert(out, {did, misses, e})
+  if redis.call('HGET', rec, 'state') == 'unhooked' then table.insert(gone, name) end
+  k, a = k + 8, a + 2
+end
+local set = table.concat(gone, ',')
+if set == (redis.call('HGET', KEYS[2], 'told') or '') then return {1, out, set, 0} end
+redis.call('HSET', KEYS[2], 'told', set)
+return {1, out, set, 1}
+`)
+
+// What one heartbeat pass did to one name.
+const (
+	BeatLeft       = 0 // not hooked, no bus push, or challenged already this interval
+	BeatChallenged = 1 // a fresh challenge is set: deliver its nonce
+	BeatUnhooked   = 2 // missed the limit in a row: unhooked
+)
+
+// Beat is one name's outcome of a heartbeat pass.
+type Beat struct {
+	Name   string
+	Did    int    // BeatLeft, BeatChallenged or BeatUnhooked
+	Nonce  string // the challenge's nonce, when challenged: the store keeps only its sum
+	Misses int
+	Epoch  int64
+}
+
+// Reason is why an unhooked beat unhooked its name, as the record and the event say it.
+func (b Beat) Reason() string { return fmt.Sprintf("missed %d challenges", b.Misses) }
+
+// Passed is what one heartbeat pass did.
+type Passed struct {
+	Taken    bool     // false: another pass (another server's) was taken inside nine tenths of the interval; nothing was done
+	Beats    []Beat   // one per name, in the order asked
+	Unhooked []string // every name unhooked now, sorted
+	Changed  bool     // Unhooked differs from the set the last pass told: tell it, once
+}
+
+// Challenged is the pushes a heartbeat challenge names for each role a session
+// answers in: the bus push, and a friend's work push, which reaches the
+// session through the same deliver path as its bus push (the friend daemon's
+// adapter), so the session's answer proves both. The sprint push is the seat
+// hook's own (nova-sprint hook), and a member's or reader's loop has no
+// session: neither is challenged.
+var Challenged = map[Role][]Push{Coordinator: {Bus}, Friend: {Bus, Work}, Comms: {Bus}}
+
+// Pass is one heartbeat pass over names (sorted), in one round trip and one
+// atomic step (beatLua): taken once an interval however many servers pass; in
+// it each hooked name of a role in Challenged is challenged, a challenge left
+// standing a whole interval is a miss, and at limit misses in a row the name
+// is unhooked, once; and the set of unhooked names is told once per change
+// (tla/HookBeat.tla).
+func (s Store) Pass(ctx context.Context, names []string, every time.Duration, limit int, nonce func() string, by string) (Passed, error) {
+	keys := []string{EventsKey, ServeKey}
+	args := []any{every.Milliseconds(), limit, (2*every + AnswerBound).Milliseconds(), by, EventsMax, len(Challenged)}
+	for _, r := range Roles {
+		if ps, ok := Challenged[r]; ok {
+			var w []string
+			for _, p := range ps {
+				w = append(w, string(p))
+			}
+			args = append(args, string(r), strings.Join(w, ","))
+		}
+	}
+	out := Passed{Beats: make([]Beat, len(names))}
+	for i, n := range names {
+		out.Beats[i] = Beat{Name: n, Nonce: nonce()}
+		keys = append(append(keys, RecordKey(n)), allKeys(n)...)
+		args = append(args, n, Sum(out.Beats[i].Nonce))
+	}
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	got, err := beatLua.Run(ctx, s.C, keys, args...).Slice()
+	if err != nil {
+		return Passed{}, err
+	}
+	if len(got) != 4 {
+		return Passed{}, fmt.Errorf("the beat script answered %v, not a taken word, the names, the unhooked set and its change", got)
+	}
+	if t, _ := got[0].(int64); t != 1 { // ignored: a word that is no number reads as not taken
+		return Passed{}, nil
+	}
+	rows, _ := got[1].([]any) // ignored: checked by the count below
+	if len(rows) != len(names) {
+		return Passed{}, fmt.Errorf("the beat script answered %d names, not %d", len(rows), len(names))
+	}
+	for i, row := range rows {
+		v, ok := row.([]any)
+		if !ok || len(v) != 3 {
+			return Passed{}, fmt.Errorf("the beat script answered %v for %s, not a code, a count and an epoch", row, names[i])
+		}
+		b := &out.Beats[i]
+		did, _ := v[0].(int64)    // ignored: a code that is no number reads as left alone
+		misses, _ := v[1].(int64) // ignored: as above
+		b.Did, b.Misses = int(did), int(misses)
+		b.Epoch, _ = v[2].(int64) // ignored: as above
+		if b.Did != BeatChallenged {
+			b.Nonce = ""
+		}
+	}
+	out.Taken = true
+	if set, _ := got[2].(string); set != "" { // ignored: no set is none unhooked
+		out.Unhooked = strings.Split(set, ",")
+	}
+	changed, _ := got[3].(int64) // ignored: as above
+	out.Changed = changed == 1
+	return out, nil
+}
+
+// Served is the heartbeat server's stamp as the store holds it: when it last
+// passed and its interval, with the store's now; ok false when no server ever passed.
+type Served struct {
+	At, Now time.Time
+	Every   time.Duration
+	OK      bool
+}
+
+// Serve reads the heartbeat server's stamp and the store's TIME, in one round trip.
+func (s Store) Serve(ctx context.Context) (Served, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	var rec *redis.MapStringStringCmd
+	var clock *redis.TimeCmd
+	if _, err := s.C.Pipelined(ctx, func(p redis.Pipeliner) error {
+		rec, clock = p.HGetAll(ctx, ServeKey), p.Time(ctx)
+		return nil
+	}); err != nil {
+		return Served{}, err
+	}
+	now := clock.Val().UTC()
+	m := rec.Val()
+	every, err := strconv.ParseInt(m["every"], 10, 64)
+	if err != nil || every <= 0 {
+		return Served{Now: now}, nil // ignored: no stamp, or one with no interval, is no server
+	}
+	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, OK: true}, nil
 }

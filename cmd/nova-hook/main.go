@@ -4,7 +4,7 @@
 // the module is hook/, the machine tla/Hook.tla). Tools gate the acting
 // identity; some bus mailbox proofs are advisory unless --require-push is set
 // or NOVA_BUS_REQUIRE_PUSH=1.
-// The verbs are hook, prove, unhook and status;
+// The verbs are hook, prove, unhook, status and serve (the heartbeat server);
 // the dispatch, the banner, the help, the version verb, the refusals and the
 // output envelope are pkg/tool's, and the rules are the hook module's.
 package main
@@ -49,8 +49,9 @@ type world struct {
 	now      func() time.Time
 	signals  func(ctx context.Context) (context.Context, context.CancelFunc)
 	nonce    func() string
-	holder   string        // who holds the pushes this process holds, as the lease shows it
-	tick     time.Duration // one blocking read of the loop
+	after    func(time.Duration) <-chan time.Time // the heartbeat server's wait between passes
+	holder   string                               // who holds the pushes this process holds, as the lease shows it
+	tick     time.Duration                        // one blocking read of the loop
 }
 
 func realWorld() world {
@@ -58,7 +59,7 @@ func realWorld() world {
 	if err != nil {
 		host = "unknown-host" // ignored: the holder's name is a label on the lease, never a key
 	}
-	w := world{getenv: os.Getenv, now: time.Now, tick: Tick,
+	w := world{getenv: os.Getenv, now: time.Now, tick: Tick, after: time.After,
 		holder: fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
 		lookup: func(ctx context.Context, h string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
@@ -123,9 +124,10 @@ func hookTool(w world) *tool.Tool {
 strict gates require the acting name's role push to be live and proven.
 nova-bus send/recv note unproven mailboxes unless --require-push or NOVA_BUS_REQUIRE_PUSH=1.
 a hook proof is a protocol response only, not foreground presence or native idle-wake evidence.
-the record is in bus Redis; address: --redis, NOVA_BUS_REDIS, else fleet:bus.`,
+the record is in bus Redis; serve challenges each hooked name every minute, two misses unhook.`,
 		ExitTable: "0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"ARMED", "CHALLENGE", "PUSH", "STATE", "STOP", "DRY-RUN"},
+		UsageNote: "only the model answers a challenge, with nova-hook prove from inside its own turn; no daemon, loop or script may call prove.",
 		Verbs: []tool.Verb{
 			{
 				Name:    "status",
@@ -136,6 +138,9 @@ the record is in bus Redis; address: --redis, NOVA_BUS_REDIS, else fleet:bus.`,
 live and the command that hooks it in (exit 1). Without it, every name that ever hooked in: STATUS OK count=<n>
 proven=<n>, then one STATUS NAME name= state= role= epoch= <push>=<down|armed|proven> line each, at exit 0.
 The states: none, unhooked, expired (no push live), partial, live (every push live, not every one proven), proven.
+Once a heartbeat server (nova-hook serve) has passed, --as is also the client's timeout: a hooked name the server
+challenges that has had no challenge for two of the server's intervals is STATUS FAILED NO CHALLENGE FOR <age>
+(exit 1): the server is down, so nothing is checking the link. Without --as the first line carries serve_age=.
 example: nova-hook status --as ada`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "the name whose record to read (default: every name that ever hooked in)")
@@ -186,10 +191,13 @@ example: nova-hook hook --as ada --role coordinator`,
 				Example: "", // the nonce is the one a hook's stream printed: no example line can carry it
 				Effect:  tool.Delivery + ": writes the proof of each push the challenge named",
 				DryRun:  true,
-				Detail: `Answers the challenge the hook printed (HOOK CHALLENGE nonce=<n>): with that nonce, under the record's
-epoch, every push the challenge named whose lease is live is proven for ` + hook.ProofTTL.String() + `, and the challenge is spent.
-Prints PROVE OK proven=<n> and the record's state. A nonce that is not the one asked, a challenge that lapsed or
-was answered, or a record unhooked since is FAILED at exit 1, with what to do.
+				Detail: `Answers the challenge the hook printed (HOOK CHALLENGE nonce=<n>), or the heartbeat's (a bus message with the
+subject HOOK CHALLENGE nonce=<n>): with that nonce, under the record's epoch, every push the challenge named whose
+lease is live is proven for ` + hook.ProofTTL.String() + `, the challenge is spent and the heartbeat's misses are cleared.
+Only the model answers, from inside its own turn: no daemon, loop or script may call prove, since an answer is
+the proof that the model itself read the push. Prints PROVE OK proven=<n> and the record's state. A nonce that is
+not the one asked, a heartbeat challenge past its interval, a challenge answered or lapsed, or a record unhooked
+since is FAILED at exit 1, with the reason.
 --dry-run reads the record and prints what it would prove (the state, the role and how many live pushes a
 proof would cover) and writes nothing.
 example: nova-hook prove --as ada --nonce 9f2c4e1a0b3d5c7e`,
@@ -215,6 +223,31 @@ example: nova-hook unhook --as ada`,
 					store(f)
 				},
 				Run: w.unhook,
+			},
+			{
+				Name:    "serve",
+				Usage:   "serve --as <me> [--every <d>] [--notify <name>] [--once] [--redis <addr>]",
+				Example: "", // a server needs a hooked name and a live bus store: no example line can carry it
+				Effect:  tool.Delivery + ": challenges every hooked name on its bus, unhooks after misses, and expires overdue asks",
+				Detail: `The heartbeat server (docs/SPEC-HOOK.md, the heartbeat; tla/HookBeat.tla). Every --every (default ` + hook.BeatEvery.String() + `),
+in one atomic pass by the store's TIME, each hooked name whose role a session answers in (coordinator, friend,
+comms) gets a fresh challenge as a bus message to its name, subject HOOK CHALLENGE nonce=<n>, due within the
+interval: the push it already has (its hook's HOOK PUSH line, or its friend daemon's adapter). A challenge left
+unanswered a whole interval is a miss; at ` + fmt.Sprint(hook.MissLimit) + ` in a row the name is unhooked (reason "missed ` + fmt.Sprint(hook.MissLimit) + ` challenges"), logged
+once on hook:events, and the set of unhooked names is sent to --notify (default: --as) once per change. The pass
+also expires overdue bus asks (nova-bus asks). Two servers take one pass per interval between them. Lines:
+SERVE CHALLENGE name=, SERVE UNHOOKED name= reason=, SERVE TOLD unhooked=, SERVE EXPIRED ask=, SERVE SKIP;
+a store or bus fault is a SERVE FAULT line and the loop goes on. --as must be hooked in as coordinator or comms.
+--once runs one pass and exits 0. It stops on SIGINT or SIGTERM.
+example: nova-hook serve --as ada --once`,
+				Flags: func(f *tool.Flags) {
+					as(f)
+					f.Duration("every", hook.BeatEvery, "the interval between passes, and each challenge's deadline")
+					f.String("notify", "", "the name told each change of the unhooked set (default: --as)")
+					f.Bool("once", false, "run one pass and exit 0; no loop")
+					store(f)
+				},
+				Run: w.serve,
 			},
 		},
 	}
@@ -560,7 +593,7 @@ func (w world) prove(c *tool.Call) *tool.Out {
 	}
 	n, err := s.hooks.Answer(ctx, s.as, c.Str("nonce"), "session")
 	switch {
-	case errors.Is(err, hook.ErrNoChallenge), errors.Is(err, hook.ErrWrongNonce):
+	case errors.Is(err, hook.ErrNoChallenge), errors.Is(err, hook.ErrWrongNonce), errors.Is(err, hook.ErrExpired):
 		o := tool.Fail(err.Error())
 		o.Remedy = "nova-hook status --as " + s.as
 		return o
@@ -675,6 +708,15 @@ func (w world) status(c *tool.Call) *tool.Out {
 		}
 		o := tool.Done()
 		o.Facts = statusFacts(st[0])
+		sv, err := s.hooks.Serve(ctx)
+		if err != nil {
+			return tool.Refuse("the heartbeat server's stamp could not be read: " + err.Error())
+		}
+		if age, lost := noChallenge(st[0], sv); lost {
+			o = tool.Fail(fmt.Sprintf("NO CHALLENGE FOR %s: the heartbeat server last passed %s ago (every %s), so nothing checks this link", age, sv.Now.Sub(sv.At).Round(time.Second), sv.Every))
+			o.Remedy = "nova-hook serve --as <a coordinator or comms name>"
+			o.Facts = statusFacts(st[0])
+		}
 		return o
 	}
 	names, err := s.hooks.Names(ctx)
@@ -693,7 +735,30 @@ func (w world) status(c *tool.Call) *tool.Out {
 		}
 		o.Item("name", fieldsOf(statusFacts(st))...)
 	}
-	return o.Fact("count", len(sts)).Fact("proven", proven)
+	o.Fact("count", len(sts)).Fact("proven", proven)
+	if sv, err := s.hooks.Serve(ctx); err == nil && sv.OK {
+		o.Fact("serve_age", sv.Now.Sub(sv.At).Round(time.Second).String())
+	}
+	return o
+}
+
+// noChallenge is the client's timeout (tla/HookBeat.tla, ClientTimeout): a
+// hooked name of a challenged role with no challenge for two of the server's
+// intervals, timed from its last challenge or its arming, whichever is later.
+// No server ever passed: no timeout (nothing was lost).
+func noChallenge(st hook.Status, sv hook.Served) (time.Duration, bool) {
+	if !sv.OK || st.State == hook.StateNone || st.State == hook.StateUnhooked {
+		return 0, false
+	}
+	if _, ok := hook.Challenged[st.Role]; !ok {
+		return 0, false
+	}
+	last := st.BeatAt
+	if st.Armed.After(last) {
+		last = st.Armed
+	}
+	age := sv.Now.Sub(last).Round(time.Second)
+	return age, age > 2*sv.Every
 }
 
 // statusFacts is a record's facts: name, state, role, epoch and each push.

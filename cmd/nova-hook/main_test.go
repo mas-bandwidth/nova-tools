@@ -102,6 +102,7 @@ func (r *rig) world() world {
 		},
 		holder: "test",
 		tick:   time.Millisecond,
+		after:  func(time.Duration) <-chan time.Time { return nil }, // serve's tests run --once
 	}
 }
 
