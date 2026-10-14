@@ -10,13 +10,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
 	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
-	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
@@ -25,6 +25,7 @@ import (
 type actorList struct{ vals []string }
 
 func (a *actorList) String() string { return strings.Join(a.vals, ",") }
+func (a *actorList) Get() any       { return a.vals }
 func (a *actorList) Set(v string) error {
 	a.vals = append(a.vals, v)
 	return nil
@@ -34,22 +35,55 @@ func (a *actorList) Set(v string) error {
 // exactly as the release executor's snap.sh does: the read-only core of the
 // verb is config.TakeSnapshot, the files config.WriteSnapshot.
 func runSnapshot(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
+	return compareTool(d).RunContext(ctx, append([]string{"snapshot"}, args...), os.Stdin, stdout, stderr)
+}
+
+// compareTool lets pkg/tool own both verbs' flags, help, parse and exit.
+func compareTool(d deps) *tool.Tool {
+	return &tool.Tool{
+		Name:      toolName,
+		What:      "configuration snapshots and recorded changes",
+		How:       "snapshot captures the eight kinds; compare attributes changes to store history.",
+		ExitTable: "0 same or operator, 1 critical difference, 2 could not run",
+		Verbs: []tool.Verb{
+			{Name: "snapshot", Usage: "snapshot --out <dir> [--pg <dsn> | --file <path>] [--json]", Effect: tool.LocalWrite,
+				Detail: "Captures the eight configuration kinds and their capture time into a directory.\nexample: " + toolExamples["snapshot"], Flags: snapshotFlags,
+				Run: func(c *tool.Call) *tool.Out { return tool.Exit(snapshotBody(c, d)) }},
+			{Name: "compare", Usage: "compare --before <dir> --after <dir> [--ignore-actor <name>...] [--max <n>] [--json]", Effect: tool.Inspection,
+				Detail: "Compares two captures and names recorded acts behind changed rows.\nexample: " + toolExamples["compare"], Flags: compareFlags,
+				Run: func(c *tool.Call) *tool.Out { return tool.Exit(compareBody(c, d)) }},
+		},
+	}
+}
+
+func snapshotFlags(f *tool.Flags) {
+	f.Prints()
+	seatStoreFlags(f.FlagSet)
+	f.String("out", "", "the `dir` to write {kind}.json and when.json into")
+	f.Bool("json", false, "print the result as one JSON object instead of lines")
+}
+
+func compareFlags(f *tool.Flags) {
+	f.Prints()
+	seatStoreFlags(f.FlagSet)
+	f.String("before", "", "the `dir` of the before snapshot")
+	f.String("after", "", "the `dir` of the after snapshot")
+	f.Int("max", bounded.Default, "maximum comparison rows to print; 0 prints all")
+	f.Var(&actorList{}, "ignore-actor", "an actor whose history entries are the tool writing the store, not an operator act (repeatable); default: "+config.MigrationActor)
+	f.Bool("json", false, "print the result as one JSON object instead of lines")
+}
+
+func snapshotBody(call *tool.Call, d deps) int {
 	const verb = "snapshot"
-	fs := verbflag.New(verb)
-	c := seatStoreFlags(fs)
-	out := fs.String("out", "", "the `dir` to write {kind}.json and when.json into")
-	asJSON := jsonFlag(fs)
-	if code, ok := parse(fs, args, stderr, verb); !ok {
-		return code
-	}
-	if fs.NArg() > 0 {
-		return refuse(stderr, verb, "snapshot takes no arguments")
-	}
+	ctx, stdout, stderr := call.Ctx, call.Stdout, call.Stderr
+	pg, file, seat := call.Str("pg"), call.Str("file"), call.Str("seat")
+	store := conn{pg: &pg, file: &file, seat: &seat}
+	out, asJSON := call.Str("out"), call.Bool("json")
 	var problems []string
-	if *out == "" {
+	if out == "" {
 		problems = append(problems, "--out is required: the directory to write the snapshot into")
 	}
-	dsn, err := c.dsn(ctx, d)
+	dsn, err := store.dsn(ctx, d)
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -65,15 +99,15 @@ func runSnapshot(ctx context.Context, args []string, stdout, stderr io.Writer, d
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if err := config.WriteSnapshot(*out, snap); err != nil {
+	if err := config.WriteSnapshot(out, snap); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if *asJSON {
-		o := tool.Done().Fact("out", *out).Fact("kinds", len(snap.Kinds)).Fact("at", snap.At).Fact("tool", snap.Tool)
+	if asJSON {
+		o := tool.Done().Fact("out", out).Fact("kinds", len(snap.Kinds)).Fact("at", snap.At).Fact("tool", snap.Tool)
 		o.Verb = verb
 		return emit(stdout, o)
 	}
-	fmt.Fprintf(stdout, "CONFIG SNAPSHOT out=%s kinds=%d at=%s tool=%s\n", config.Value(*out), len(snap.Kinds), snap.At, snap.Tool)
+	fmt.Fprintf(stdout, "CONFIG SNAPSHOT out=%s kinds=%d at=%s tool=%s\n", config.Value(out), len(snap.Kinds), snap.At, snap.Tool)
 	return 0
 }
 
@@ -82,46 +116,42 @@ func runSnapshot(ctx context.Context, args []string, stdout, stderr io.Writer, d
 // instants and names the act behind it (config.CompareSnapshots). It writes
 // nothing and reverts nothing; the caller decides what a CRIT means.
 func runCompare(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
+	return compareTool(d).RunContext(ctx, append([]string{"compare"}, args...), os.Stdin, stdout, stderr)
+}
+
+func compareBody(call *tool.Call, d deps) int {
 	const verb = "compare"
-	fs := verbflag.New(verb)
-	c := seatStoreFlags(fs)
-	before := fs.String("before", "", "the `dir` of the before snapshot")
-	after := fs.String("after", "", "the `dir` of the after snapshot")
-	max := fs.Int("max", bounded.Default, "maximum comparison rows to print; 0 prints all")
-	ign := &actorList{}
-	fs.Var(ign, "ignore-actor", "an actor whose history entries are the tool writing the store, not an operator act (repeatable); default: "+config.MigrationActor)
-	asJSON := jsonFlag(fs)
-	if code, ok := parse(fs, args, stderr, verb); !ok {
-		return code
-	}
-	if fs.NArg() > 0 {
-		return refuse(stderr, verb, "compare takes no arguments")
-	}
-	if *max < 0 {
+	ctx, stdout, stderr := call.Ctx, call.Stdout, call.Stderr
+	pg, file, seat := call.Str("pg"), call.Str("file"), call.Str("seat")
+	store := conn{pg: &pg, file: &file, seat: &seat}
+	before, after, max := call.Str("before"), call.Str("after"), call.Int("max")
+	ign := call.Get("ignore-actor").([]string)
+	asJSON := call.Bool("json")
+	if max < 0 {
 		return refuse(stderr, verb, "--max must be zero or more; run: "+toolName+" compare -h")
 	}
 	var problems []string
-	if *before == "" {
+	if before == "" {
 		problems = append(problems, "--before is required: the directory of the before snapshot")
 	}
-	if *after == "" {
+	if after == "" {
 		problems = append(problems, "--after is required: the directory of the after snapshot")
 	}
 	if len(problems) > 0 {
 		return refuse(stderr, verb, strings.Join(problems, "; "))
 	}
-	bSnap, err := config.LoadSnapshot(*before)
+	bSnap, err := config.LoadSnapshot(before)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	aSnap, err := config.LoadSnapshot(*after)
+	aSnap, err := config.LoadSnapshot(after)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
 	// The store answers why a row changed: without it a difference has no
 	// history and every verdict would be a sterile CRIT, so the verb refuses
 	// a store it cannot open the way any other read does.
-	dsn, err := c.dsn(ctx, d)
+	dsn, err := store.dsn(ctx, d)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -130,12 +160,12 @@ func runCompare(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 		return refuse(stderr, verb, err.Error())
 	}
 	defer func() { _ = st.Close() }() // ignored: the verdict the verb needs is already read, so a close error changes nothing
-	res, err := config.CompareSnapshots(ctx, st, bSnap, aSnap, config.CompareOptions{IgnoreActors: ign.vals})
+	res, err := config.CompareSnapshots(ctx, st, bSnap, aSnap, config.CompareOptions{IgnoreActors: ign})
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	res, shown, total := capCompareRows(res, *max)
-	if *asJSON {
+	res, shown, total := capCompareRows(res, max)
+	if asJSON {
 		o := tool.Done().Fact("class", res.Class).Fact("rows", total)
 		o.Verb = verb
 		for _, kd := range res.Kinds {

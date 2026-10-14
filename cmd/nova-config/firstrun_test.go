@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
 	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -76,4 +77,25 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	assert.Equal(t, len(steps), h.opens, "each line opened the one store, the --file")
 	assert.Zero(t, h.redis.opens, "a first run opens no Redis")
 	assert.FileExists(t, filepath.Join(h.dir, "try.json"), "the first run's rows are in the one file it names")
+}
+
+// TestSnapshotCompareFileFirstRun runs the two new readback verbs on the local
+// file store and keeps every output under the test's own directory.
+func TestSnapshotCompareFileFirstRun(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	h.dir = t.TempDir()
+	code, _, errs := h.run(t, "migrate", "--file", "try.json")
+	require.Zero(t, code, errs)
+	snapDir := filepath.Join(h.dir, "snap")
+	code, out, errs := h.run(t, "snapshot", "--out", snapDir, "--file", "try.json")
+	require.Zero(t, code, errs)
+	assert.Contains(t, out, "CONFIG SNAPSHOT")
+	assert.FileExists(t, filepath.Join(snapDir, "when.json"))
+	for _, kind := range config.Kinds {
+		assert.FileExists(t, filepath.Join(snapDir, kind.Name+".json"))
+	}
+	code, out, errs = h.run(t, "compare", "--before", snapDir, "--after", snapDir, "--file", "try.json")
+	require.Zero(t, code, errs)
+	assert.Contains(t, out, "COMPARE SAME")
 }

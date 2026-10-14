@@ -845,6 +845,11 @@ its history id (`rev=`); `list` is one typed line per row and a count;
 `history` is every change, who made it and when, a set as
 `<field>=<before>><after>`.
 
+The snapshot and compare file-store first run is exercised by
+`TestSnapshotCompareFileFirstRun` with its snapshot directory inside a
+per-test temporary directory. It checks the eight-kind capture and a
+`COMPARE SAME` readback without a database or service.
+
 `kinds` (no store) is one line per kind: its table under schema `config`, its fields in
 the order every line prints them, the fields `add` requires, and whether the
 kind is many rows or one (`rows=one`: the fleet and the sprint, a row
