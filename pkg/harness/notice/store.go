@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -141,4 +142,20 @@ func PrivateDir(dir string) error {
 		return errors.New("event directory wants a canonical path without symlink ancestors")
 	}
 	return nil
+}
+
+// MakeDir creates a shim's private notice directory at mode 0700 and answers
+// its canonical path, the one a notice names.
+func MakeDir(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	return real, PrivateDir(real)
 }

@@ -93,4 +93,3 @@ func MailboxConfirm(dir string, before map[string]bool, id string) string {
 	sort.Strings(added)
 	return added[len(added)-1]
 }
-

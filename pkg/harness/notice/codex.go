@@ -58,4 +58,3 @@ func Lock(directory string) (func() error, error) {
 	}
 	return lock.Unlock, nil
 }
-

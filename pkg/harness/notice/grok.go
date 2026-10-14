@@ -263,4 +263,3 @@ func deliverGrokWake(wake, text string) error {
 	}
 	return cerr
 }
-

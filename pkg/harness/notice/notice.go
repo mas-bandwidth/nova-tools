@@ -1,5 +1,6 @@
 // Package notice is the one delivery rule every nova-hook harness shares
-// (docs/SPEC-HOOK.md, the harness notice; tla/HarnessNotice.tla). A harness
+// (docs/SPEC-HOOK.md, the harness notice; TLA+ model owed: tla/HarnessNotice.tla,
+// TLC on a bench later). A harness
 // is a Shim: only its mechanism, how text gets into a running turn, how an
 // idle session is woken, and how consumption is observed. The Core owns the
 // rules, once:
@@ -44,9 +45,6 @@ const challengePrefix = "HOOK CHALLENGE nonce="
 func ChallengeText(name, nonce string, every time.Duration) string {
 	return fmt.Sprintf("HOOK CHALLENGE nonce=%s\nThe hook's heartbeat asks whether the model is here. Answer from inside this turn, before anything else, within %s, with: nova-hook prove --as %s --nonce %s\nOnly the model answers: no daemon, loop or script may. %d unanswered in a row unhook %s.\n", nonce, every, name, nonce, hook.MissLimit, name)
 }
-
-// Shaped reports whether m claims to be a challenge: its subject alone.
-func Shaped(m bus.Message) bool { return strings.HasPrefix(m.Subject, challengePrefix) }
 
 // Canonical is the nonce of m when m has the server's whole challenge shape
 // for recipient: the subject, a safe nonce and the body byte for byte. It
@@ -167,10 +165,10 @@ type Core struct {
 	NewID func() string
 	Say   func(*tool.Out) // one PUSH line per push; the Monitor harnesses take it as their mechanism
 
-	held  Notice    // everything since the last consumption
-	out   *Notice   // pushed and not consumed
-	shown string    // the nonce the pushed notice held when it was pushed
-	mark  Activity  // the model's bus activity when it was pushed
+	held  Notice   // everything since the last consumption
+	out   *Notice  // pushed and not consumed
+	shown string   // the nonce the pushed notice held when it was pushed
+	mark  Activity // the model's bus activity when it was pushed
 }
 
 // Pending is the pushed notice not yet consumed, if any.
@@ -180,9 +178,6 @@ func (c *Core) Pending() (Notice, bool) {
 	}
 	return *c.out, true
 }
-
-// Held is what the next push, or the in-place rewrite, carries.
-func (c *Core) Held() Notice { return c.held }
 
 // Rearm moves the Core to a new epoch: a held challenge of the old one is
 // cleared at the next step, as any no longer active is.
@@ -206,6 +201,9 @@ func (c *Core) Offer(ctx context.Context, ms []bus.Message) error {
 		if m.ID != "" {
 			ids = append(ids, m.ID)
 		}
+	}
+	if err := c.settle(ctx); err != nil {
+		return err
 	}
 	answered, err := c.Store.Answered(ctx, c.As, ids)
 	if err != nil {
@@ -253,22 +251,8 @@ func (c *Core) Offer(ctx context.Context, ms []bus.Message) error {
 // held notice when none is pending. A push error stops the route: it is
 // never retried here.
 func (c *Core) Step(ctx context.Context) error {
-	if c.out != nil {
-		done, err := c.consumed(ctx)
-		if err != nil || !done {
-			return err
-		}
-		consumed := *c.out
-		c.out = nil
-		c.held.Count, c.held.Senders, c.held.Recovery = 0, nil, nil
-		if c.held.Nonce == c.shown {
-			c.held.Challenge, c.held.Nonce = nil, ""
-		}
-		if cl, ok := c.Shim.(Clearer); ok {
-			if err := cl.Clear(ctx, consumed); err != nil {
-				return err
-			}
-		}
+	if err := c.settle(ctx); err != nil || c.out != nil {
+		return err
 	}
 	if c.held.Challenge != nil {
 		sum, epoch, err := c.Store.Active(ctx, c.As)
@@ -311,6 +295,30 @@ func (c *Core) Step(ctx context.Context) error {
 	return nil
 }
 
+// settle observes whether the pending notice was consumed and, once it is,
+// clears what it told: the count, the recovery, and the challenge it held
+// when pushed. It runs before an arrival folds, so a message that arrives
+// with the consumption is never cleared with it.
+func (c *Core) settle(ctx context.Context) error {
+	if c.out == nil {
+		return nil
+	}
+	done, err := c.consumed(ctx)
+	if err != nil || !done {
+		return err
+	}
+	consumed := *c.out
+	c.out = nil
+	c.held.Count, c.held.Senders, c.held.Recovery = 0, nil, nil
+	if c.held.Nonce == c.shown {
+		c.held.Challenge, c.held.Nonce = nil, ""
+	}
+	if cl, ok := c.Shim.(Clearer); ok {
+		return cl.Clear(ctx, consumed)
+	}
+	return nil
+}
+
 func (c *Core) consumed(ctx context.Context) (bool, error) {
 	done, err := c.Shim.Consumed(ctx, *c.out)
 	if err != nil || done {
@@ -331,7 +339,7 @@ func (c *Core) Fail(ctx context.Context, err error) *tool.Out {
 	if errors.Is(err, codexdesktop.ErrOutcomeUnknown) {
 		outcome = "unknown"
 	}
-	o := tool.Fail(c.Shim.Name() + " local delivery " + outcome + ": " + err.Error()).Fact("native", outcome)
+	o := tool.Fail(c.Shim.Name()+" local delivery "+outcome+": "+err.Error()).Fact("native", outcome)
 	o.Remedy = "inspect the saved notice and the model's bus answers before restarting the route; never blindly retry an accepted or unknown delivery"
 	if dropErr != nil {
 		o.Note("the route proof could not be revoked: " + dropErr.Error() + "; this client stops renewing its lease")
@@ -382,4 +390,3 @@ func (c *Core) save(ctx context.Context, n Notice, replace bool) error {
 	}
 	return c.Files.Save(n.Path, data, replace)
 }
-

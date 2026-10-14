@@ -3,6 +3,7 @@ package notice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,7 +32,9 @@ type fakeStore struct {
 	unproved int
 }
 
-func (f *fakeStore) Active(context.Context, string) (string, int64, error) { return f.sum, f.epoch, nil }
+func (f *fakeStore) Active(context.Context, string) (string, int64, error) {
+	return f.sum, f.epoch, nil
+}
 func (f *fakeStore) Answered(_ context.Context, _ string, ids []string) (map[string]bool, error) {
 	out := map[string]bool{}
 	for _, id := range ids {
@@ -290,6 +293,26 @@ func TestEveryShimConforms(t *testing.T) {
 			assert.Len(t, r.h.pushes, 1)
 			assert.Equal(t, "lost-3", r.act())
 		}},
+		{"a message that arrives with the consumption is told by the next push", func(t *testing.T, r *rig) {
+			r.arrive(ordinary(1))
+			r.h.idle(t)
+			r.store.read()
+			r.arrive(ordinary(2))
+			require.Len(t, r.h.pushes, 2)
+			assert.Equal(t, 1, r.file().Messages)
+		}},
+		{"a failed push drops the route proof and is not retried", func(t *testing.T, r *rig) {
+			r.core.Shim = failing{r.h.shim}
+			err := r.core.Offer(context.Background(), []bus.Message{ordinary(1)})
+			require.NoError(t, err)
+			err = r.core.Step(context.Background())
+			require.Error(t, err)
+			out := r.core.Fail(context.Background(), err)
+			assert.Equal(t, tool.Failed, out.Status)
+			assert.Equal(t, 1, r.store.unproved)
+			_, pending := r.core.Pending()
+			assert.False(t, pending)
+		}},
 		{"an answered message is not counted", func(t *testing.T, r *rig) {
 			r.store.answered["m-01"] = true
 			r.arrive(ordinary(1))
@@ -304,4 +327,11 @@ func TestEveryShimConforms(t *testing.T) {
 			})
 		}
 	}
+}
+
+// failing is a harness whose mechanism refuses every push.
+type failing struct{ Shim }
+
+func (failing) Push(context.Context, Notice) (string, error) {
+	return "", errors.New("harness refused")
 }

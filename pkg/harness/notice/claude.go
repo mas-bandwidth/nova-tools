@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 )
 
 // Claude is the Claude Code shim (supersedes #5776's adapter). Into a running
@@ -64,4 +66,27 @@ func ClaudeGeneration(state string) (int, error) {
 		return 0, errors.New("claude generation wants a decimal count")
 	}
 	return n, nil
+}
+
+// InstallClaude writes the Stop hook script into settings and adds it to
+// settings.json once. The script runs bin with --claude-boundary, which
+// advances the generation file Consumed reads.
+func InstallClaude(bin, as, role, state, settings string) error {
+	script := filepath.Join(settings, "nova-hook-claude-boundary.sh")
+	body := "#!/bin/sh\nexec " + shQuote(bin) + " hook --as " + shQuote(as) + " --role " + shQuote(role) +
+		" --harness claude --claude-state " + shQuote(state) + " --claude-settings " + shQuote(settings) + " --claude-boundary\n"
+	if err := atomicfile.Write(script, []byte(body), 0o700, atomicfile.ExactMode()); err != nil {
+		return err
+	}
+	return mergeClaudeStopHook(filepath.Join(settings, "settings.json"), shQuote(script))
+}
+
+// ClaudeBoundary advances the generation file: the Stop hook's one write.
+func ClaudeBoundary(state string) (int, error) {
+	n, err := ClaudeGeneration(state)
+	if err != nil {
+		return 0, err
+	}
+	n++
+	return n, atomicfile.Write(filepath.Join(state, "generation"), []byte(strconv.Itoa(n)+"\n"), 0o600, atomicfile.ExactMode())
 }
