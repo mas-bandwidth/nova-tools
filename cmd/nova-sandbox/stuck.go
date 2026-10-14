@@ -243,26 +243,6 @@ func selectStuck(rows []procRow, opts stuckOpts) []procRow {
 	return out
 }
 
-// chainOf returns a process and its ancestors, the candidate first, up to the
-// top of the table. It is the `ps` chain the verb prints, one row per process.
-func chainOf(byPID map[int]procRow, r procRow) []procRow {
-	var out []procRow
-	seen := map[int]bool{}
-	for {
-		if seen[r.PID] {
-			break
-		}
-		seen[r.PID] = true
-		out = append(out, r)
-		parent, ok := byPID[r.PPID]
-		if !ok || r.PPID == 0 {
-			break
-		}
-		r = parent
-	}
-	return out
-}
-
 // parseSample reads /usr/bin/sample's call graph: the top symbol is the DEEPEST
 // frame of the main thread -- the call it is parked in, a mach_msg or
 // bootstrap_look_up -- and the lines are the graph, bounded to forty.
@@ -525,6 +505,7 @@ func builtinProfile() string { return profiles.DarwinTemplate }
 // stuckVerb is the verb: it parses its flags, gathers the host's data outside
 // the wall and prints the one value. It writes nothing, kills nothing and
 // starts nothing but the read-only probes (`ps`, `sample`, `log`, `sw_vers`).
+// Implements docs/SPEC-SANDBOX.md "The stuck verb — what a launch that sits at exec was denied".
 func stuckVerb(args []string, stdout, stderr io.Writer) int {
 	helpIfAsked(args, "stuck")
 	fs := flag.NewFlagSet("stuck", flag.ContinueOnError)
