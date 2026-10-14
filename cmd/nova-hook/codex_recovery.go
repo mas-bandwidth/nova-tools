@@ -43,17 +43,25 @@ type codexRecovery struct {
 	challengeEpoch  int64
 }
 
-func codexBacklog(s *session, tail string) (codexRecovery, error) {
-	if tail == "0-0" {
-		return codexRecovery{oldest: "none", coverageUnknown: true}, nil
-	}
+func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, error) {
 	ctx, cancel := call()
 	defer cancel()
 	states, now, err := s.hooks.Read(ctx, s.as)
 	if err != nil {
 		return codexRecovery{}, err
 	}
-	floor := bus.IDAt(now.Add(-24 * time.Hour))
+	window := now.Add(-24 * time.Hour)
+	if since.After(now) {
+		return codexRecovery{}, errors.New("codex cutover timestamp is after Redis TIME; use the actual fixed cutover time, not a future boundary")
+	}
+	if tail == "0-0" {
+		return codexRecovery{oldest: "none", coverageUnknown: true}, nil
+	}
+	start := window
+	if since.After(start) {
+		start = since
+	}
+	floor := bus.IDAt(start)
 	oldest, err := s.bus.Range(ctx, bus.StreamOf(s.as), "-", tail, 1)
 	if err != nil {
 		return codexRecovery{}, err
@@ -68,7 +76,7 @@ func codexBacklog(s *session, tail string) (codexRecovery, error) {
 		if parseErr != nil {
 			return codexRecovery{}, errors.New("recipient stream has malformed oldest entry ID")
 		}
-		plan.coverageUnknown = millis >= now.Add(-24*time.Hour).UnixMilli()
+		plan.coverageUnknown = millis >= start.UnixMilli()
 	}
 	entries, err := s.bus.Range(ctx, bus.StreamOf(s.as), floor, tail, maxCodexHistory+1)
 	if err != nil {
@@ -95,6 +103,40 @@ func codexBacklog(s *session, tail string) (codexRecovery, error) {
 	}
 	isCurrentChallenge := func(m bus.Message) bool {
 		return activeSum != "" && strings.HasPrefix(m.Subject, "HOOK CHALLENGE nonce=") && hook.Sum(strings.TrimPrefix(m.Subject, "HOOK CHALLENGE nonce=")) == activeSum
+	}
+	// The explicit ordinary-history boundary never authorizes dropping a current
+	// server challenge. Recover only its actual hash-matching event before it.
+	if activeSum != "" && since.After(window) {
+		found := false
+		for _, entry := range entries {
+			if isCurrentChallenge(entry.Message()) {
+				found = true
+			}
+		}
+		if !found {
+			earlier, err := s.bus.Range(ctx, bus.StreamOf(s.as), bus.IDAt(window), "("+floor, maxCodexHistory-len(entries)+1)
+			if err != nil {
+				return codexRecovery{}, err
+			}
+			if len(earlier)+len(entries) > maxCodexHistory {
+				return codexRecovery{}, errors.New("native startup recovery incomplete: current challenge search exceeds history budget")
+			}
+			rawBytes := 0
+			selected := make([]bus.Entry, 0)
+			for _, entry := range earlier {
+				rawBytes += codexMessageBytes(entry.Message())
+				if isCurrentChallenge(entry.Message()) {
+					selected = append(selected, entry)
+				}
+			}
+			for _, entry := range entries {
+				rawBytes += codexMessageBytes(entry.Message())
+			}
+			if rawBytes > maxCodexHistoryBytes {
+				return codexRecovery{}, errors.New("native startup recovery incomplete: current challenge search exceeds byte budget")
+			}
+			entries = append(selected, entries...)
+		}
 	}
 	observed := func(m bus.Message) bool { return m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") }
 	senderNames := make([]string, 0)
