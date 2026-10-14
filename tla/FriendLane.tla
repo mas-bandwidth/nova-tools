@@ -52,11 +52,43 @@
 (*               lane that died stays holding it, WorkingResolves fails.  *)
 (*   KeepOnMismatch  a lane keeps running its card after a row read       *)
 (*               disagrees: WorkingOnlyOnTheServersSay fails.              *)
+(*                                                                         *)
+(* The width (nova-tools#5726, v1.2.26; docs/SPEC-SWARM.md, the width).    *)
+(* The server is the one source of the width: W is nova-config's, read by  *)
+(* the server and changed there at any step (ChangeWidth). The client     *)
+(* holds only the copy its last answer gave it, cw (0 until one answers),  *)
+(* and acts on nothing else; RowWidth is its read (the friend daemon's     *)
+(* row(), the beat answer's row_width, every step; a member's Tick, the    *)
+(* queue answer's Width, every pass). Lanes are numbered 1..N (the code's *)
+(* ln.n). A lane starts a card (takes, or is told it holds one, and runs  *)
+(* it in the same step: laneStep takes and starts the turn in one pass)   *)
+(* only while its number is within cw and fewer than cw lanes are live    *)
+(* (laneStep: ln.n > limit, then s.live() >= limit). Member is the        *)
+(* member's lanes: no number, the count alone (member.go full, room:      *)
+(* Running() >= m.width), the same invariants. A lower width kills no     *)
+(* lane: running lanes finish their cards; a raised one is taken up to.   *)
+(*   LanesStartNeverPastWidth  no start while |Live| >= cw.               *)
+(*   NothingStartsUnanswered   no start while cw = 0 (no answer, or 0).   *)
+(*   NoLaneKilledOnLower       a lowered cw leaves every live lane live.  *)
+(*   WidthIsFilled             a width that stays >= k with a ready card  *)
+(*               has k lanes live, or nothing ready (liveness).           *)
+(* Reversed witnesses (MCFriendLaneWidthBroken*.cfg):                     *)
+(*   SlotGate    the code before #5726: a lane is held by its own number  *)
+(*               alone (ln.n > limit), so after a lower lane 1 refills    *)
+(*               while lanes 2 and 3 still run: LanesStartNeverPastWidth. *)
+(*   FloorOne    the code before #5726: row() floored the width at 1, so  *)
+(*               width 0 or no answer opened a lane:                      *)
+(*               NothingStartsUnanswered fails.                            *)
+(*   KillOnLower a lower cuts the lanes past it: NoLaneKilledOnLower.     *)
+(*   NoFollow    the width given at start and never read again (the       *)
+(*               retired --width flag and Config.Width override): a       *)
+(*               width raised from 0 is never taken up: WidthIsFilled.    *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Cards, Lanes, Reads, Steady, MaxClears, MaxCrashes, MaxGones, MaxReturns,
-          RunOnNone, LocalEpoch, KeepOnRefusal, CardOnly, NoGone, KeepOnMismatch
+          RunOnNone, LocalEpoch, KeepOnRefusal, CardOnly, NoGone, KeepOnMismatch,
+          Widths, Member, SlotGate, FloorOne, KillOnLower, NoFollow
 
 None == "none"
 Nobody == [card |-> None, ep |-> 0]
@@ -70,13 +102,22 @@ VARIABLES
     stale,     \* ghost: the server changed this lane's record (or the lane lost its own) since its last RPC
     granted,   \* ghost: lane -> the <<card, ep>> the server's answers gave it
     staleStep, \* ghost: a verb naming an epoch not current changed state
-    clears, crashes, gones, returns
+    clears, crashes, gones, returns,
+    W,         \* the server: the width nova-config gives (the one definition of a width)
+    cw,        \* the client: the width its last answer gave it (0: none yet, or 0)
+    pastWidth, \* ghost: a lane started while |Live| >= cw
+    unanswered \* ghost: a lane started while cw = 0
 
-vars == <<epoch, col, srv, alive, lc, stale, granted, staleStep, clears, crashes, gones, returns>>
+wvars == <<W, cw, pastWidth, unanswered>>
+vars == <<epoch, col, srv, alive, lc, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
 
 Idle == [st |-> "idle", card |-> None, ep |-> 0]
 
 Init ==
+    /\ W \in Widths
+    \* unanswered until the first read; NoFollow: the width given at start, never read again
+    /\ cw = IF NoFollow THEN W ELSE 0
+    /\ pastWidth = FALSE /\ unanswered = FALSE
     /\ epoch = 1
     /\ col = [c \in Cards |-> "ready"]
     /\ srv = [l \in Lanes |-> Nobody]
@@ -91,6 +132,27 @@ Holding(l) == lc[l].st \in {"taken", "running"}
 LaneSays(l) == IF Holding(l) THEN <<lc[l].card, lc[l].ep>> ELSE <<None, 0>>
 ServerSays(l) == <<srv[l].card, srv[l].ep>>
 HeldBySome == {srv[l].card : l \in Lanes} \ {None}
+
+\* The lanes live now (the code's laneSet.live(), a member's Running()): a lane holding a
+\* card, taken and running being one step apart in the code.
+Live == {l \in Lanes : Holding(l)}
+ReadyN == Cardinality({c \in Cards : col[c] = "ready"})
+
+\* The width the client acts on: its last answer's alone (FloorOne: floored at 1, before).
+Eff == IF FloorOne /\ cw < 1 THEN 1 ELSE cw
+
+\* A lane may start a card: within the width by its number and by the live count
+\* (laneStep); a member's lanes by the count alone (full, room); SlotGate by the number alone.
+WidthGate(l) ==
+    IF SlotGate THEN l <= Eff
+    ELSE IF Member THEN Cardinality(Live) < Eff
+    ELSE l <= Eff /\ Cardinality(Live) < Eff
+
+\* The ghost of a start: what the client's own copy said when it started.
+Started ==
+    /\ pastWidth' = (pastWidth \/ Cardinality(Live) >= cw)
+    /\ unanswered' = (unanswered \/ cw = 0)
+    /\ UNCHANGED <<W, cw>>
 
 \* The epoch the lane names: the server's, or (the code's Card.Epoch, lanes.go) the job
 \* directory's epoch (0 for a job with none) when the server named none -- the LocalEpoch
@@ -109,7 +171,8 @@ Exchanged(l) == stale' = [stale EXCEPT ![l] = FALSE]
 
 -----------------------------------------------------------------------------
 \* take --lane l: the lane names itself only; the server picks.
-TakeAsk(l) == alive[l] /\ lc[l].st = "idle"
+\* The width gate stands before the ask (laneStep: the live check, then laneAsk).
+TakeAsk(l) == alive[l] /\ lc[l].st = "idle" /\ WidthGate(l)
 TakeRest == UNCHANGED <<epoch, alive, staleStep, clears, crashes, gones, returns>>
 
 \* HOLDS: the server's record holds a card: the lane is told it holds it.
@@ -119,6 +182,7 @@ TakeHolds(l) ==
     /\ lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> srv[l].card, ep |-> srv[l].ep]]
     /\ granted' = [granted EXCEPT ![l] = @ \cup {ServerSays(l)}]
     /\ UNCHANGED <<col, srv>>
+    /\ Started
     /\ Exchanged(l) /\ TakeRest
 
 \* TAKEN: the server picks a card ready on her row, at its epoch.
@@ -130,6 +194,7 @@ TakeGrant(l, c) ==
     /\ srv' = [srv EXCEPT ![l] = [card |-> c, ep |-> epoch]]
     /\ lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> c, ep |-> epoch]]
     /\ granted' = [granted EXCEPT ![l] = @ \cup {<<c, epoch>>}]
+    /\ Started
     /\ Exchanged(l) /\ TakeRest
 
 \* NONE (nothing ready for her) or a refusal (STOPPED, her width full): nothing moves, and
@@ -140,9 +205,10 @@ TakeNone(l) ==
     /\ srv[l].card = None
     /\ UNCHANGED <<col, srv, granted>>
     /\ IF RunOnNone /\ \E c \in Cards : col[c] = "ready"
-       THEN \E c \in Cards : col[c] = "ready" /\
-              lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> c, ep |-> epoch]]
-       ELSE UNCHANGED lc
+       THEN /\ \E c \in Cards : col[c] = "ready" /\
+                 lc' = [lc EXCEPT ![l] = [st |-> "taken", card |-> c, ep |-> epoch]]
+            /\ Started
+       ELSE UNCHANGED <<lc, wvars>>
     /\ Exchanged(l) /\ TakeRest
 
 Take(l) == TakeHolds(l) \/ (\E c \in Cards : TakeGrant(l, c)) \/ TakeNone(l)
@@ -156,7 +222,7 @@ Held(l) ==
        ELSE /\ lc' = [lc EXCEPT ![l] = Idle]
             /\ UNCHANGED granted
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, col, srv, alive, staleStep, clears, crashes, gones, returns>>
+    /\ UNCHANGED <<epoch, col, srv, alive, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
 
 \* A refused verb: the lane drops the job (KeepOnRefusal: it runs on regardless).
 Drop(l) == lc' = [lc EXCEPT ![l] = IF KeepOnRefusal THEN lc[l] ELSE Idle]
@@ -174,14 +240,14 @@ Begin(l) ==
             /\ UNCHANGED staleStep
        ELSE /\ Drop(l) /\ UNCHANGED staleStep
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, col, srv, alive, granted, clears, crashes, gones, returns>>
+    /\ UNCHANGED <<epoch, col, srv, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
 
 \* A work card's start: taken to running with no request (lane_take.go laneAsk runs exactly
 \* what the take's answer named; no begin is sent).
 Run(l) ==
     /\ alive[l] /\ lc[l].st = "taken" /\ lc[l].card \notin Reads
     /\ lc' = [lc EXCEPT ![l].st = "running"]
-    /\ UNCHANGED <<epoch, col, srv, alive, stale, granted, staleStep, clears, crashes, gones, returns>>
+    /\ UNCHANGED <<epoch, col, srv, alive, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
 
 Progress(l) ==
     /\ alive[l] /\ lc[l].st = "running"
@@ -189,7 +255,7 @@ Progress(l) ==
        THEN UNCHANGED lc
        ELSE Drop(l)
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, col, srv, alive, granted, staleStep, clears, crashes, gones, returns>>
+    /\ UNCHANGED <<epoch, col, srv, alive, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
 
 Finish(l) ==
     /\ alive[l] /\ lc[l].st = "running"
@@ -201,7 +267,7 @@ Finish(l) ==
             /\ Applied(l, lc[l].ep)
        ELSE /\ Drop(l) /\ UNCHANGED <<col, srv, staleStep>>
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns>>
+    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
 
 \* The lane finishes, failed, a card it was told it holds and cannot run: its outbox holds
 \* the report of a run before that no step finished (lane_take.go finishStale).
@@ -215,7 +281,7 @@ TakenFinish(l) ==
             /\ Applied(l, lc[l].ep)
        ELSE /\ Drop(l) /\ UNCHANGED <<col, srv, staleStep>>
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns>>
+    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
 
 \* The lane gives its card back: it was told it holds a card it will not run (after a
 \* restart, the job's tree gone), or its run was cut (the machine's stop, a cap).
@@ -230,7 +296,7 @@ Return(l) ==
        ELSE UNCHANGED <<col, srv, staleStep>>
     /\ lc' = [lc EXCEPT ![l] = Idle]
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones>>
+    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, W, cw, pastWidth, unanswered>>
 
 \* A row read that disagrees with the lane (the card left her row, is not working there, or
 \* another lane holds it: lane_take.go laneCheck) revokes the grant and the lane drops the
@@ -243,7 +309,7 @@ RowDrop(l) ==
     /\ IF KeepOnMismatch
        THEN UNCHANGED lc
        ELSE lc' = [lc EXCEPT ![l] = Idle]
-    /\ UNCHANGED <<epoch, col, srv, alive, stale, staleStep, clears, crashes, gones, returns>>
+    /\ UNCHANGED <<epoch, col, srv, alive, stale, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
 
 -----------------------------------------------------------------------------
 \* The lane's process dies (a crash, the daemon stopped); what it held is the server's.
@@ -254,14 +320,14 @@ Crash(l) ==
     /\ lc' = [lc EXCEPT ![l] = [st |-> "down", card |-> None, ep |-> 0]]
     /\ stale' = [stale EXCEPT ![l] = TRUE]
     /\ crashes' = crashes + 1
-    /\ UNCHANGED <<epoch, col, srv, granted, staleStep, clears, gones, returns>>
+    /\ UNCHANGED <<epoch, col, srv, granted, staleStep, clears, gones, returns, W, cw, pastWidth, unanswered>>
 
 \* It comes back with nothing: its first word is Held.
 Restart(l) ==
     /\ ~alive[l]
     /\ alive' = [alive EXCEPT ![l] = TRUE]
     /\ lc' = [lc EXCEPT ![l] = [st |-> "restart", card |-> None, ep |-> 0]]
-    /\ UNCHANGED <<epoch, col, srv, stale, granted, staleStep, clears, crashes, gones, returns>>
+    /\ UNCHANGED <<epoch, col, srv, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
 
 \* The server: a lane that has not asked within the bound is gone; its card bounces back.
 \* A dead lane never asks; a live one may be slow past the bound too (bounded).
@@ -274,7 +340,7 @@ Gone(l) ==
     /\ srv' = [srv EXCEPT ![l] = Nobody]
     /\ stale' = [stale EXCEPT ![l] = TRUE]
     /\ gones' = IF alive[l] THEN gones + 1 ELSE gones
-    /\ UNCHANGED <<epoch, alive, lc, granted, staleStep, clears, crashes, returns>>
+    /\ UNCHANGED <<epoch, alive, lc, granted, staleStep, clears, crashes, returns, W, cw, pastWidth, unanswered>>
 
 \* clear: tabula rasa, a new epoch and a new deal; every record of the old epoch dropped.
 Clear ==
@@ -284,19 +350,44 @@ Clear ==
     /\ srv' = [l \in Lanes |-> Nobody]
     /\ stale' = [l \in Lanes |-> TRUE]
     /\ clears' = clears + 1
-    /\ UNCHANGED <<alive, lc, granted, staleStep, crashes, gones, returns>>
+    /\ UNCHANGED <<alive, lc, granted, staleStep, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+
+-----------------------------------------------------------------------------
+\* The width. The server's changes on its own (nova-config friend/machine set --width, an
+\* apply): any width at any step, the client not told.
+ChangeWidth ==
+    /\ \E w \in Widths \ {W} : W' = w
+    /\ UNCHANGED <<epoch, col, srv, alive, lc, stale, granted, staleStep, clears, crashes, gones, returns,
+                   cw, pastWidth, unanswered>>
+
+\* The client's read (RowWidth): the beat answer's row_width every daemon step (row), the
+\* queue answer's Width every member pass (Tick); no answer naming one is 0 (max(w, 0)).
+\* A lower kills nothing: the lanes past it finish their cards (KillOnLower: they are cut).
+\* NoFollow: never read after the start.
+RowWidth ==
+    /\ ~NoFollow
+    /\ cw' = W
+    /\ IF KillOnLower /\ W < cw
+       THEN lc' = [l \in Lanes |-> IF Holding(l) /\ l > W THEN Idle ELSE lc[l]]
+       ELSE UNCHANGED lc
+    /\ UNCHANGED <<epoch, col, srv, alive, stale, granted, staleStep, clears, crashes, gones, returns,
+                   W, pastWidth, unanswered>>
 
 Next ==
     \/ \E l \in Lanes :
           Take(l) \/ Held(l) \/ Begin(l) \/ Run(l) \/ Progress(l) \/ Finish(l) \/ TakenFinish(l) \/ Return(l)
           \/ RowDrop(l) \/ Crash(l) \/ Restart(l) \/ Gone(l)
     \/ Clear
+    \/ ChangeWidth
+    \/ RowWidth
 
 Fairness ==
     /\ \A l \in Lanes : WF_vars(TakeHolds(l)) /\ WF_vars(\E c \in Cards : TakeGrant(l, c))
     /\ \A l \in Lanes : WF_vars(Held(l)) /\ WF_vars(Begin(l)) /\ WF_vars(Run(l)) /\ WF_vars(Finish(l))
     \* the bound passes for a lane that is down: its card bounces back
     /\ \A l \in Lanes : WF_vars(~alive[l] /\ Gone(l))
+    \* the client reads its width again on its next step
+    /\ WF_vars(RowWidth)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
@@ -307,6 +398,9 @@ TypeOK ==
     /\ srv \in [Lanes -> [card : Cards \cup {None}, ep : 0..(MaxClears + 1)]]
     /\ alive \in [Lanes -> BOOLEAN]
     /\ \A l \in Lanes : lc[l].st \in {"idle", "restart", "taken", "running", "down"}
+    /\ W \in Widths
+    /\ cw \in Widths \cup {0}
+    /\ pastWidth \in BOOLEAN /\ unanswered \in BOOLEAN
 
 \* A card is working only on the server's say-so: a lane holds only what an answer gave
 \* it, and every working card is held by one lane's record.
@@ -329,4 +423,23 @@ WorkingResolves == \A c \in Cards : col[c] = "working" ~> col[c] # "working"
 
 \* With a steady lane, every card of the last deal is eventually done.
 AllDone == <>[](\A c \in Cards : col[c] = "done")
+
+\* The width. No lane starts a card while as many lanes are live as the client's width
+\* (a lowered width: nothing new until the live count is under it).
+LanesStartNeverPastWidth == ~pastWidth
+
+\* No lane starts a card while the width is unanswered or 0.
+NothingStartsUnanswered == ~unanswered
+
+\* A lowered width kills no lane: a lane live before the read is live after it.
+NoLaneKilledOnLower ==
+    [][cw' < cw => \A l \in Live : lc'[l].st \in {"taken", "running"}]_vars
+
+\* A width the server holds at k or more is taken up to: with a card ready and fewer
+\* than k lanes live, k lanes come to be live, or nothing is ready, or the width fell.
+Ks == {k \in Widths : k > 0}
+WidthIsFilled ==
+    \A k \in Ks :
+        (W >= k /\ ReadyN > 0 /\ Cardinality(Live) < k)
+            ~> (Cardinality(Live) >= k \/ ReadyN = 0 \/ W < k)
 =============================================================================

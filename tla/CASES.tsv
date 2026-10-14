@@ -154,6 +154,13 @@ MCFriendLaneBrokenKeepOnRefusal.cfg	MCFriendLane.tla	invariant	OneRequestApart	i
 MCFriendLaneBrokenCardOnly.cfg	MCFriendLane.tla	invariant	NoStaleStep	ignore-terminal	friendlane	required	-
 MCFriendLaneBrokenNoGone.cfg	MCFriendLane.tla	temporal	WorkingResolves	ignore-terminal	friendlane	required	-
 MCFriendLaneBrokenKeepOnMismatch.cfg	MCFriendLane.tla	invariant	WorkingOnlyOnTheServersSay	ignore-terminal	friendlane	required	-
+MCFriendLaneWidth.cfg	MCFriendLane.tla	pass	-	ignore-terminal	friendlane	required	-
+MCFriendLaneWidthMember.cfg	MCFriendLane.tla	pass	-	ignore-terminal	friendlane	required	-
+MCFriendLaneWidthThree.cfg	MCFriendLane.tla	pass	-	ignore-terminal	friendlane	required	-
+MCFriendLaneWidthBrokenSlotGate.cfg	MCFriendLane.tla	invariant	LanesStartNeverPastWidth	ignore-terminal	friendlane	required	-
+MCFriendLaneWidthBrokenFloorOne.cfg	MCFriendLane.tla	invariant	NothingStartsUnanswered	ignore-terminal	friendlane	required	-
+MCFriendLaneWidthBrokenKillOnLower.cfg	MCFriendLane.tla	action	NoLaneKilledOnLower	ignore-terminal	friendlane	required	-
+MCFriendLaneWidthBrokenNoFollow.cfg	MCFriendLane.tla	temporal	WidthIsFilled	ignore-terminal	friendlane	required	-
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-
 MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-
 MCFriendBrokenNoProof.cfg	MCFriend.tla	action	NoTurnBeforeProof	ignore-terminal	friend	required	-
