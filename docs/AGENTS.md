@@ -13,3 +13,4 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `ratings/` | cold ratings of the tools, one file per rater and tool | `go test ./internal/docs` | `go test ./internal/docs` |
 | `spec/` | release specs in layers, one directory per release: each layer's owner fills its file, and every friend ratifies the whole at one sha before work starts | `go test ./internal/docs` | `go test ./internal/docs` |
 | `stranger/` | cold stranger runs of the tools, one file per run, every stumble with its proposed card | `go test ./internal/docs` | `go test ./internal/docs` |
+| `v1.3/` | v1.3 research records: what a friend's client keeps locally today and what the v1.3 server-truth spec replaces | `go test ./internal/docs` | `go test ./internal/docs` |
