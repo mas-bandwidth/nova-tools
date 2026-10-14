@@ -107,7 +107,7 @@ func TestFreshStoreFirstVerbLoadsTheLibrary(t *testing.T) {
 	require.EqualValues(t, 1, strings.Count(errOut, "; run: "), "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
 	require.Contains(t, errOut, "ERR Function not found: function ns_table_create", "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
 	require.Contains(t, errOut, "older than this nova-table", "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
-	require.Contains(t, errOut, "run: nova-redis fn load --addr <host:port>", "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
+	require.Contains(t, errOut, "run: nova-redis fn load --redis <host:port>", "create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
 	code, out, errOut = novaTable(t, "list", "--redis", older)
 	require.EqualValues(t, 1, code, "list on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal with one remedy", code, out, errOut)
 	require.Empty(t, out, "list on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal with one remedy", code, out, errOut)

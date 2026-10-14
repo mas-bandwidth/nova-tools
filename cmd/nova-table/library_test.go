@@ -134,7 +134,7 @@ func TestFirstContactLoadsOnlyWhenMissingAndOnce(t *testing.T) {
 	require.Error(t, err, "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
 	require.EqualValues(t, 1, fresh.loads, "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
 	require.Contains(t, err.Error(), "ERR Function not found: function ns_table_drop", "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
-	require.Contains(t, err.Error(), "; run: nova-redis fn load --addr <host:port>", "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
+	require.Contains(t, err.Error(), "; run: nova-redis fn load --redis <host:port>", "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
 	require.True(t, remedied(err.Error()), "a miss after the load: err %v, %d loads; want the remedy and no second load", err, fresh.loads)
 	require.Equal(t, redisconn.Other, redisconn.Classify(err), "a miss is the store's refusal (exit 1), got class %s", redisconn.Classify(err))
 	require.False(t, lost(err), "a miss is the store's refusal (exit 1), got class %s", redisconn.Classify(err))
