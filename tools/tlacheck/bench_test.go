@@ -15,7 +15,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit/fsx"
+	tverb "github.com/mas-bandwidth/nova-tools/internal/testkit/verb"
 	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+var (
+	_ = assert.Equal
+	_ = require.NoError
+	_ = fsx.Tree
+	_ = tverb.Run
 )
 
 // loads reads the given 1-minute loads in turn, the last one again and again.
@@ -37,14 +48,16 @@ func TestTroughWaitsUntilTheLoadIsUnderTheLimit(t *testing.T) {
 	var slept []time.Duration
 	sleep := func(d time.Duration) { slept = append(slept, d) }
 	load, waited, err := trough(context.Background(), loads(60, 51.2, 12.5), 51.2, 15*time.Second, time.Hour, sleep)
-	if err != nil || load != 12.5 || waited != 30*time.Second || len(slept) != 2 {
-		t.Fatalf("load=%v waited=%v slept=%v err=%v; want 12.5 after two polls of 15s (51.2 is not under 51.2)", load, waited, slept, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 12.5, load)
+	assert.Equal(t, 30*time.Second, waited)
+	assert.Len(t, slept, 2)
 	slept = nil
 	load, waited, err = trough(context.Background(), loads(0.5), 51.2, 15*time.Second, time.Hour, sleep)
-	if err != nil || load != 0.5 || waited != 0 || len(slept) != 0 {
-		t.Fatalf("a quiet bench waited: load=%v waited=%v slept=%v err=%v", load, waited, slept, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 0.5, load)
+	assert.Equal(t, time.Duration(0), waited)
+	assert.Len(t, slept, 0)
 }
 
 // TestTroughGivesUpAfterTheWait: a bench whose load never falls under the
@@ -54,27 +67,24 @@ func TestTroughGivesUpAfterTheWait(t *testing.T) {
 	t.Parallel()
 	polls := 0
 	_, waited, err := trough(context.Background(), loads(90), 51.2, 15*time.Second, time.Minute, func(time.Duration) { polls++ })
-	if err == nil || polls != 4 || waited != time.Minute || !strings.Contains(err.Error(), "the 1-minute load stayed at or over 51.20 for 1m0s (last 90.00)") {
-		t.Fatalf("polls=%d waited=%v err=%v", polls, waited, err)
-	}
+	require.Error(t, err)
+	assert.Equal(t, 4, polls)
+	assert.Equal(t, time.Minute, waited)
+	assert.Contains(t, err.Error(), "the 1-minute load stayed at or over 51.20 for 1m0s (last 90.00)")
 	broken := func(context.Context) (float64, error) {
 		return 0, errors.New("ssh: connect to host vision port 22: timed out")
 	}
-	if _, _, err := trough(context.Background(), broken, 51.2, time.Second, time.Minute, func(time.Duration) { t.Error("slept on a load it could not read") }); err == nil || !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("err=%v", err)
-	}
+	_, _, err = trough(context.Background(), broken, 51.2, time.Second, time.Minute, func(time.Duration) { t.Error("slept on a load it could not read") })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out")
 }
 
 // TestTheDefaultLimitIsFourFifthsOfTheBenchsCores: --load-below 0 is 0.8 x
 // the bench's logical CPUs; a value given is taken as it is.
 func TestTheDefaultLimitIsFourFifthsOfTheBenchsCores(t *testing.T) {
 	t.Parallel()
-	if got := loadLimit(0, 64); got != 51.2 {
-		t.Errorf("loadLimit(0, 64) = %v, want 51.2", got)
-	}
-	if got := loadLimit(3, 64); got != 3 {
-		t.Errorf("loadLimit(3, 64) = %v, want 3", got)
-	}
+	assert.Equal(t, 51.2, loadLimit(0, 64))
+	assert.Equal(t, 3.0, loadLimit(3, 64))
 }
 
 // fakeBench is a record machine with no ssh: its disk is a temp dir, its
@@ -95,13 +105,9 @@ func newFakeBench(t *testing.T, jarBytes []byte, load func(context.Context) (flo
 	t.Helper()
 	f := &fakeBench{t: t, disk: t.TempDir(), cores: 64, load: load, exec: scriptedTLC(t, map[string]int{"MCABroken": 12, "MCAStale": 13}, nil)}
 	f.jar = filepath.Join(f.disk, "opt", "tla", "tla2tools.jar")
-	if err := os.MkdirAll(filepath.Dir(f.jar), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(f.jar), 0o755))
 	if jarBytes != nil {
-		if err := os.WriteFile(f.jar, jarBytes, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(f.jar, jarBytes, 0o644))
 	}
 	return f
 }
@@ -153,7 +159,7 @@ func (f *fakeBench) Stage(_ context.Context, archive io.Reader) (string, error) 
 func (f *fakeBench) Run(_ context.Context, dir string, args []string, stdout, stderr io.Writer) (int, error) {
 	f.ran = append(f.ran, args)
 	if _, err := os.Stat(filepath.Join(dir, "tlacheck")); err != nil {
-		f.t.Errorf("the bench ran a tlacheck that was not staged: %v", err)
+		require.NoError(f.t, err, "the bench ran a tlacheck that was not staged")
 	}
 	e, _, _ := testEnv(f.t, f.exec)
 	e.stdout, e.stderr = stdout, stderr
@@ -197,16 +203,10 @@ func benchCheckout(t *testing.T, jarBytes []byte) string {
 	t.Helper()
 	root, _ := checkout(t)
 	var b bytes.Buffer
-	if err := tlc.WriteRecords(&b, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "tla", tlc.RunsFile), b.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, tlc.WriteRecords(&b, nil))
+	fsx.Write(t, filepath.Join(root, "tla", tlc.RunsFile), string(b.Bytes()))
 	sum := sha256.Sum256(jarBytes)
-	if err := os.WriteFile(filepath.Join(root, "tla", pinnedSumFile), []byte(hex.EncodeToString(sum[:])+"  tla2tools.jar\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	fsx.Write(t, filepath.Join(root, "tla", pinnedSumFile), hex.EncodeToString(sum[:])+"  tla2tools.jar\n")
 	return root
 }
 
@@ -253,12 +253,9 @@ func TestRunOnABenchMeasuresEachStaleCaseInATroughAndMergesTheRecords(t *testing
 	dir := filepath.Join(t.TempDir(), "o")
 
 	r := do(e, out, errs, "run", "--root", root, "--dir", dir, "--bench", "vision", "--jar", f.jar, "--trough-poll", "20s")
-	if r.code != 0 {
-		t.Fatalf("%+v", r)
-	}
-	if len(*slept) != 2 || (*slept)[0] != 20*time.Second {
-		t.Errorf("slept %v, want two polls of 20s while the load was 70 and 60 (limit 51.2)", *slept)
-	}
+	require.Equal(t, 0, r.code)
+	require.Len(t, *slept, 2)
+	assert.Equal(t, 20*time.Second, (*slept)[0])
 	want := [][]string{}
 	for _, g := range []struct {
 		name string
@@ -269,12 +266,9 @@ func TestRunOnABenchMeasuresEachStaleCaseInATroughAndMergesTheRecords(t *testing
 				"--group", g.name, "--shards", fmt.Sprint(g.n), "--shard", fmt.Sprint(i), "--workers", "2", "--timeout", "1m50s"})
 		}
 	}
-	if fmt.Sprint(f.ran) != fmt.Sprint(want) {
-		t.Errorf("ran\n%v\nwant\n%v", f.ran, want)
-	}
-	if len(f.gone) != 1 || f.gone[0] != f.staged[0] {
-		t.Errorf("removed %v, want the staged %v", f.gone, f.staged)
-	}
+	assert.Equal(t, fmt.Sprint(want), fmt.Sprint(f.ran))
+	require.Len(t, f.gone, 1)
+	assert.Equal(t, f.staged[0], f.gone[0])
 	for _, w := range []string{
 		"BENCH OK bench=vision platform=linux-amd64 cpus=64 load=0.50 below=51.20 jar=" + f.jar,
 		"TROUGH OK bench=vision group=alpha case=1/2 load=3.00 below=51.20 waited=40s",
@@ -282,24 +276,21 @@ func TestRunOnABenchMeasuresEachStaleCaseInATroughAndMergesTheRecords(t *testing
 		"CASE OK config=MCABroken.cfg result=PASS",
 		"MERGE OK runs=4 records=4 out=" + filepath.Join(root, "tla", tlc.RunsFile),
 	} {
-		if !strings.Contains(r.stdout, w) {
-			t.Errorf("stdout lacks %q:\n%s", w, r.stdout)
-		}
+		assert.Contains(t, r.stdout, w)
 	}
 	e2, out2, errs2 := testEnv(t, nil)
-	if g := do(e2, out2, errs2, "groups", "--root", root, "--stale"); g.code != 0 || g.stdout != "[]\n" {
-		t.Errorf("after the bench run the records are not current: %+v", g)
-	}
+	g := do(e2, out2, errs2, "groups", "--root", root, "--stale")
+	require.Equal(t, 0, g.code)
+	assert.Equal(t, "[]\n", g.stdout)
 	for _, l := range strings.Split(strings.TrimSpace(r.stdout), "\n") {
-		if !eventRE.MatchString(l) {
-			t.Errorf("not an event: %q", l)
-		}
+		assert.Regexp(t, eventRE, l)
 	}
 	// Run again: nothing is stale, so the bench is not reached.
 	e3, out3, errs3, _ := benchEnv(t, f, nil)
-	if again := do(e3, out3, errs3, "run", "--root", root, "--dir", filepath.Join(t.TempDir(), "o"), "--bench", "vision", "--jar", f.jar); again.code != 0 || again.stdout != "BENCH OK bench=vision stale=0 records="+filepath.Join(root, "tla", tlc.RunsFile)+"\n" || len(f.staged) != 1 {
-		t.Errorf("a run with nothing stale: %+v staged %v", again, f.staged)
-	}
+	again := do(e3, out3, errs3, "run", "--root", root, "--dir", filepath.Join(t.TempDir(), "o"), "--bench", "vision", "--jar", f.jar)
+	require.Equal(t, 0, again.code)
+	assert.Equal(t, "BENCH OK bench=vision stale=0 records="+filepath.Join(root, "tla", tlc.RunsFile)+"\n", again.stdout)
+	require.Len(t, f.staged, 1)
 }
 
 // TestRunOnABenchRefusesWhatIsNotARecordMachine: a bench whose jar is not
