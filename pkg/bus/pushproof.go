@@ -87,7 +87,7 @@ func (p PushProof) AgeWord(now time.Time) string {
 	return p.Age(now).String()
 }
 
-// Unheard is the advisory line for name at now, "" when its proof is proven:
+// Unheard is the advisory line for name at now, "" when their proof is proven:
 // the NOTE send and recv print beside their result (SPEC-BUS.md,
 // bus-requires-inbox-push-proof). It never refuses: a message to an unheard
 // name lands and waits on their stream; the line says what the proof's state
