@@ -34,7 +34,7 @@ const (
 	sprintServerEnv     = "NOVA_SPRINT_SERVER"
 	DefaultSprintServer = "127.0.0.1:6390"
 	// ServerLaneLease is the sprint server's lane lease: a lane unheard this long is gone and
-	// its card returned ready (nova-sprint internal/sprint/lane_hold.go LaneGoneAfter). The
+	// its card returned ready (nova-sprint's LaneGoneAfter, in its lane_hold.go). The
 	// client's renewal is paced against it, never against the hook's challenge cadence.
 	ServerLaneLease = 10 * time.Minute
 	// LaneEvery is how often the lane client asks, and so renews: a third of the lease, so a
