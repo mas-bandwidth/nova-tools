@@ -560,7 +560,7 @@ func TestAntigravityServerRestartMidRunReDiscoversPortAndToken(t *testing.T) {
 	s := &session{bus: st, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
 	var out bytes.Buffer
 	c := &tool.Call{Stdout: &out}
-	res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true)
+	res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true, nil)
 	require.Equal(t, tool.OK, res.Status, out.String())
 	require.Len(t, fh.sentPorts, 2)
 	assert.Equal(t, 61101, fh.sentPorts[0])
@@ -611,7 +611,7 @@ func TestAntigravityDeliveryOutcomesAndReconciliation(t *testing.T) {
 		s := &session{bus: st, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
 		var out bytes.Buffer
 		c := &tool.Call{Stdout: &out}
-		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true)
+		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true, nil)
 		require.NotNil(t, res)
 		assert.NotEqual(t, tool.Failed, res.Status, "an unknown outcome is not a failed route (notice rule 5)")
 		assert.NotContains(t, out.String(), "local delivery unknown")
@@ -659,7 +659,7 @@ func TestAntigravityDeliveryOutcomesAndReconciliation(t *testing.T) {
 		s := &session{bus: st, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
 		var out bytes.Buffer
 		c := &tool.Call{Stdout: &out}
-		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true)
+		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true, nil)
 		assert.Equal(t, tool.OK, res.Status, out.String())
 		assert.Empty(t, fh.sentNotices, "a message the model already answered makes no push")
 	})
