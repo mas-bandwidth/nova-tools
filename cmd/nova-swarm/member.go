@@ -259,13 +259,17 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
+	facts := member.DetectFacts(member.RealSources())
 	cfg := memberConfig(*as, *reader, meter, room, *root, *noWall)
 	cfg.Sleep = time.Sleep // harness starts StartGap apart
 	// a beat the server refuses marks this member's own status file, read by doctor
 	// (member.Config.Status); the --load-unmeasured probe is asked once at start
 	cfg.Status = memberStatusFile(*as, *root)
 	if !*reader {
-		cfg.LoadUnmeasured = probeLoadUnmeasured(send)
+		p := probeBeatFlags(send)
+		cfg.LoadUnmeasured = func() bool { return p("load-unmeasured") }
+		cfg.FactsFlag = func() bool { return p("facts") }
+		cfg.Facts = facts
 	}
 	// the attempt decision reads the decision key in this process when --pass names
 	// it and the environment does not hold it (keys.go)
@@ -281,6 +285,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		modelWord = "card,override:" + *model
 	}
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s server=%s harness=%s model=%s stage-wall=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*server), oneline.Field(*harness), oneline.Field(modelWord), oneline.Field(stageWall.d.String()))
+	fmt.Fprintf(stdout, "facts: %s\n", oneline.Field(strings.Join(facts, ",")))
+	if !*reader && runtime.GOOS == "linux" {
+		if why := member.XDPNote(); why != "" {
+			fmt.Fprintf(stdout, "NOTE facts: xdp not provisioned (%s)\n", oneline.Field(why))
+		}
+	}
 	// the machine's one model catalog, refreshed once here and never per launch (catalog.go)
 	fmt.Fprintf(stdout, "CATALOG %s\n", oneline.Escape(refreshCatalog(*harness, *root)))
 	if note := passNote(*model, pass, *auth); note != "" {
@@ -336,22 +346,24 @@ func memberStatusFile(as, root string) func(word string) error {
 	}
 }
 
-// probeLoadUnmeasured asks the sprint server's `fleet beat -h` once and returns a function
-// that reports whether it lists --load-unmeasured (member.Config.LoadUnmeasured, the caller's
-// one probe at start). A server that does not answer for it says the flag is not listed, so a
-// beat that carries 0 for want of a reading sends a plain --load 0, never a flag the sprint
-// would refuse.
-func probeLoadUnmeasured(send func(context.Context, ...[]string) ([]sprintwire.Result, error)) func() bool {
+// probeBeatFlags asks the server's fleet beat -h once and returns a func that answers
+// for each flag name (without --) whether the help lists it. A server that does not
+// answer says no flag is listed, so a beat never sends a flag the sprint would refuse.
+func probeBeatFlags(send func(context.Context, ...[]string) ([]sprintwire.Result, error)) func(name string) bool {
 	var once sync.Once
-	var listed bool
-	return func() bool {
+	var listed map[string]bool
+	return func(name string) bool {
 		once.Do(func() {
+			listed = map[string]bool{}
 			res, err := send(context.Background(), []string{"fleet", "beat", "-h"})
 			if err == nil && len(res) > 0 {
-				listed = strings.Contains(res[0].Stdout, "--load-unmeasured") || strings.Contains(res[0].Stderr, "--load-unmeasured")
+				h := res[0].Stdout + res[0].Stderr
+				for _, f := range []string{"load-unmeasured", "facts"} {
+					listed[f] = strings.Contains(h, "--"+f)
+				}
 			}
 		})
-		return listed
+		return listed[name]
 	}
 }
 

@@ -469,6 +469,14 @@ type Config struct {
 	// a beat that carries 0 for want of a reading of the machine also says so; nil means the
 	// flag is never sent and the beat carries a plain --load 0.
 	LoadUnmeasured func() bool
+	// Facts are the gate facts this member detected for itself once at start (os, arch,
+	// CPU feature flags, tla, xdp); the caller hands DetectFacts result here. The list is
+	// sent on the beat as --facts <comma-list> only when the sprint's `fleet beat -h` lists
+	// the flag. Empty or nil: none sent.
+	Facts []string
+	// FactsFlag reports whether the sprint's `fleet beat -h` lists --facts (probed once);
+	// if false or nil, --facts not appended even if Facts set.
+	FactsFlag func() bool
 	// Status marks this member's own status file with a word ("beat-refused" while a beat
 	// the server refused stands, "" once a beat is taken), so doctor and the dashboard row
 	// can show it (nova-sprint reads the status); nil writes nothing.
@@ -603,6 +611,10 @@ type Member struct {
 	// --load-unmeasured (Config.LoadUnmeasured, probed once at New), so a beat that carries 0
 	// for want of a reading also says so.
 	loadUnmeasuredFlag bool
+	// facts are the gate facts from Config.Facts (detected once at start by caller); factsFlag
+	// says the sprint's fleet beat -h lists --facts, so they are sent on the beat.
+	facts     []string
+	factsFlag bool
 	// lastBeatRefusal is when the member last logged a beat the server refused (exit 2),
 	// so a refusal is logged at most once a minute (Beat)
 	lastBeatRefusal time.Time
@@ -743,6 +755,12 @@ func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 	// so it runs here, once, never on a later beat (Beat reads the flag it set)
 	if cfg.LoadUnmeasured != nil && !cfg.Reader {
 		m.loadUnmeasuredFlag = cfg.LoadUnmeasured()
+	}
+	if len(cfg.Facts) > 0 && !cfg.Reader {
+		m.facts = append([]string(nil), cfg.Facts...)
+	}
+	if cfg.FactsFlag != nil && !cfg.Reader {
+		m.factsFlag = cfg.FactsFlag()
 	}
 	m.advanced() // a member begins with its pass going on
 	return m
@@ -988,6 +1006,9 @@ func (m *Member) Beat() error {
 		}
 		args = append(args, m.noRoomArgs()...)
 		args = append(args, m.drainArgs()...)
+		if len(m.facts) > 0 && m.factsFlag {
+			args = append(args, "--facts", strings.Join(m.facts, ","))
+		}
 		var pct float64
 		var ok bool
 		if m.cfg.Meter != nil {
