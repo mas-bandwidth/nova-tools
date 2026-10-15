@@ -792,7 +792,7 @@ source are pinned by `cmd/nova-config/seat_login_redis_test.go`
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=44 applied=44
+CONFIG MIGRATE file=try.json from=0 to=45 applied=45
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1

@@ -22,7 +22,7 @@ The record and its rules live in `github.com/mas-bandwidth/nova-tools/hook` (`ho
 | role | pushes | who hooks in as it |
 |---|---|---|
 | `coordinator` | `bus`, `sprint` | the seat: its session's bus stream and the sprint server's pushes |
-| `friend` | `bus`, `work` | a friend working the sprint: her bus stream and the work dealt to her |
+| `friend` | `bus` | a live friend: the session proves its bus stream; its hook service renews sprint lane leases while proven |
 | `comms` | `bus` | a friend on the bus who takes no sprint work |
 | `member` | `work` | a machine's member loop |
 | `reader` | `work` | a machine's reader loop |
@@ -32,9 +32,14 @@ A push is held by the process that receives it:
 | push | holder | its proof |
 |---|---|---|
 | `bus` of a session | `nova-hook hook --as <name> --role <role>`, under the session's Monitor | the session answers `HOOK CHALLENGE nonce=<n>` with `nova-hook prove --as <name> --nonce <n>` |
-| `work` of a friend | her lane daemon, `nova-friend run`; the session owns `bus` separately | her session answers the heartbeat challenge (`nova-hook prove --as <name> --nonce <n>`, proving both `bus` and `work`); the daemon renews only `work` and never proves or renews `bus` |
+| optional `work` lease of a friend | the lane daemon, `nova-friend run`, when used | the daemon renews only `work`, never proves or renews `bus`; this optional lease does not decide the friend role's presence |
 | `sprint` | the sprint server, `nova-sprint run` | the server holds it for the coordinator while it runs and reaches the bus |
 | `work` of a member or reader | its loop, `nova-swarm member` | the loop's own round trip to the sprint server |
+
+The hook service's live friend lane client renews the sprint server's lane leases
+by asking what each lane holds. Those server leases are distinct from `hook:live:<name>:work`:
+the client holds only the session's `bus` push. A one-shot friend uses the member
+loop and identity prompt instead (`docs/SPEC-SWARM.md`); it has no live session presence.
 
 ## The key layout
 
@@ -141,6 +146,10 @@ Every line runs as printed:
   loop emits `HOOK STATE state=not-connected` when `hook:serve` has not moved for two intervals on the
   client's clock, and `state=connected` when it resumes. `nova-hook status --as <name>` fails with
   `NO CHALLENGE FOR <age>` (exit 1) when no challenge arrived for two intervals.
+
+## The friend lane client
+
+A friend's supervised hook service (`nova-hook hook --role friend` under `nova-hook.client.<name>`) is also her lane client (`internal/friend`, `cmd/nova-hook/lanes.go`; the card the-friend-lane-is-a-client-with-no-local-state). The sprint server owns every lane's record: the card it holds, its generation, its lease and the finish. Every `LaneEvery` (a third of the server's 10m lane lease, `ServerLaneLease`, never the challenge cadence), and at once on start, the client asks for each lane 1..`--lanes` (default 8; the server's width for her row bounds what is taken; `--lanes 0` asks nothing) with the fleet's lane take, `take --as friend.<name> --lane <n> --json`, at `--sprint-server` (`NOVA_SPRINT_SERVER`, else `127.0.0.1:6390`). An ask renews that lane's lease; one round is bounded to half the hook's own renewal (`hook.RenewEvery`) so a hung sprint server never stalls the hook. The client asks only while the friend's record reads proven: a model that stops answering its challenges stops the asks, and the server returns its cards when the lease runs out. New holds make one bus message to her own name, subject `SPRINT CARDS n=<N> as=friend.<name>`, which the loop folds into the one pending notice like any other: "N cards taken; briefs at <paths>; work each in a child agent to width", with the server's finish and progress verbs for every card she holds. The briefs are cached under `~/.local/state/nova-hook/<name>/briefs/<job>/BRIEF.md`, a cache rebuilt from the server's answers: a client started in an empty directory resumes from the server alone and tells the model again what she holds. The model is `tla/FriendLaneClient.tla`.
 
 ## The verbs
 

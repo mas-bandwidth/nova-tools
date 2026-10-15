@@ -28,6 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/harness"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -65,8 +66,8 @@ usage:
                         OK|FAILED line per step; --remainder prints the card a failed step leaves.)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>] [--prompt <file>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>] [--prompt <file>]
                         (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
                          Each tick beats, reads the queue, reports ended children and takes cards to the
                          fleet row's width; --width overrides it, and --pass names environment secrets to
@@ -628,6 +629,7 @@ type nativeFlags struct {
 	stageTimeout    *string
 	frame           *string
 	identity        *string
+	prompt          *string
 	budgetServer    *string
 	budgetAs        *string
 	budgetHolder    *string
@@ -680,6 +682,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	nf.stageTimeout = f.fs.String("stage-timeout", "", "the bound on staging the card's checkout from the bench mirror, a `duration` (default 120s)")
 	nf.frame = f.fs.String("frame", "", "the frame `file` a member wrote: the repository, commit and branch to stage, from which JOB.md and the shims are written")
 	nf.identity = f.fs.String("identity", "", "the pool identity the child commits under, `owner,name,email` (default: <root>/identity.tsv)")
+	nf.prompt = f.fs.String("prompt", "", "an identity prompt `file` (a one-shot friend's name, pronouns and voice) prepended to the card's prompt as the harness is handed it; the card file itself is unchanged")
 	// a limited route's global rate budget (nova-sprint routes limit): every model request
 	// takes it from the sprint's server first (budget take) and stalls while it is spent;
 	// absent, the route is unlimited and the proxy is as it was (providerbudget.go)
@@ -841,6 +844,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm native: --card wants a readable file: %s\n", oneline.Err(err))
 		return 2
 	}
+	// a one-shot friend's identity prompt, read once: an unreadable or empty file is
+	// refused here, before any spend, never run as a card without it
+	identityPrompt, perr := member.ReadIdentityPrompt(*nf.prompt)
+	if perr != nil {
+		fmt.Fprintf(stderr, "nova-swarm native: %s\n", oneline.WithRemedy(oneline.Err(perr), "nova-swarm native -h"))
+		return 2
+	}
 	// the pool identity from the loop's argv (nova-config), over <root>/identity.tsv
 	var identity *swarm.StagingIdentity
 	if *nf.identity != "" {
@@ -891,6 +901,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		model:          effectiveModel,
 		label:          lbl,
 		card:           cardRaw,
+		prompt:         identityPrompt,
 		slotDir:        *slot,
 		root:           *root,
 		authFile:       *auth,

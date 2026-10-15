@@ -80,6 +80,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/filelock", "process-exclusive file locks whose holder is named in the file", "go test ./pkg/filelock", "go test ./pkg/filelock"),
 	E("pkg/fleet", "runner fleet discovery and status", "go test ./pkg/fleet", "go test ./pkg/fleet"),
 	E("pkg/friend", "nova-friend's card lanes and reader slots, metadata beats, delivery-check adapters, state files and launchd agent", "go test ./pkg/friend", "go test ./pkg/friend"),
+	E("internal/friend", "the friend lane client in a friend's hook service: asks the sprint server what each lane holds, caches nothing that decides (tla/FriendLaneClient.tla)", "go test ./internal/friend", "go test ./internal/friend"),
 	E("internal/fuse", "the fuse box: read and write the lockdown and quarantine state", "go test ./internal/fuse", "go test ./internal/fuse"),
 	Page("internal/ghevent", "the GitHub event Redis stream: append and read", "go test ./internal/ghevent", "go test ./internal/ghevent"),
 	E("internal/ghevent/wire", "shared GitHub event stream identity without ingestion dependencies", "go test ./internal/ci", "go test ./internal/ci"),

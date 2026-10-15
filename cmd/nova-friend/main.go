@@ -473,7 +473,7 @@ wording is read (claude, codex, opencode, grok, antigravity, dsh, gemini), its k
 reset when it names one (a clock time in the zone it names, "resets Oct 10 at 5am (America/New_York)"), else
 --limit-rest, and the seat is told once, as a judgment, the text it could not read; status says session=limited limit_kind= limit_until= while it stands. The friend
 row's mode and width come with each beat's answer (row_mode=, row_width=, row_config_dir=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
-memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
+memory/, kept in memory; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the card alone, and hands the
 next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. A claude
 lane is a process per card instead (env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the brief>, stdin
@@ -1480,7 +1480,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 			defer rowMu.Unlock()
 			return resolveCurrentRow(c.Str("mode"), rowMode, rowWidth)
 		},
-		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
 		// the lane fault's truth is the file in the state directory: the daemon
 		// writes it when a lane faults and reads it to release the lanes a person
 		// cleared (docs/SPEC-FRIEND.md, the lanes)
@@ -1536,12 +1535,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return nil
 		},
-		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
-		Held:      w.held(name, server),
-		Seat:      w.seat(server),
-		Stage:     stager.stage(),
-		Prune:     stager.prune(),
-		Tip:       w.tip,
+		Held:  w.held(name, server),
+		Seat:  w.seat(server),
+		Stage: stager.stage(),
+		Prune: stager.prune(),
+		Tip:   w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md

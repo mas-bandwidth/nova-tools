@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/dshdesktop"
@@ -50,8 +51,10 @@ type world struct {
 	codexLock          func(string) (func() error, error)
 	codexValidate      func(string, string, string) error
 	codexDeliver       func(context.Context, string, string, string, string) (string, error)
+	codexChats         func(home string) ([]codexdesktop.Chat, error) // the desktop chats a Codex home holds
 	dshValidate        func(dshdesktop.Route) error
 	dshDeliver         func(dshdesktop.Route, string, string) (string, error)
+	dshHeld            dshdesktop.HeldFunc // which session.lock files a process holds open
 	antigravityExec    antigravityExecFunc
 	antigravityHome    func() (string, error)
 	antigravityInstall func(*antigravityRoute) error
@@ -65,12 +68,14 @@ type world struct {
 	now                func() time.Time
 	signals            func(ctx context.Context) (context.Context, context.CancelFunc)
 	nonce              func() string
-	after              func(time.Duration) <-chan time.Time             // the heartbeat server's wait between passes
-	wait               func(context.Context, time.Duration)             // the hook loop's pause or retry backoff wait
-	deliver            func(*bus.Bus, bus.Message) (bus.Message, error) // the heartbeat server's one send: Bus.Send under a call's deadline
-	holder             string                                           // who holds the pushes this process holds, as the lease shows it
-	tick               time.Duration                                    // one blocking read of the loop
-	service            serviceManager                                   // the one supervised hook service per friend
+	after              func(time.Duration) <-chan time.Time                                  // the heartbeat server's wait between passes
+	wait               func(context.Context, time.Duration)                                  // the hook loop's pause or retry backoff wait
+	deliver            func(*bus.Bus, bus.Message) (bus.Message, error)                      // the heartbeat server's one send: Bus.Send under a call's deadline
+	holder             string                                                                // who holds the pushes this process holds, as the lease shows it
+	tick               time.Duration                                                         // one blocking read of the loop
+	service            serviceManager                                                        // the one supervised hook service per friend
+	sprint             func(ctx context.Context, addr string, argv []string) (string, error) // one verb to the sprint server (the lane client's ask)
+	home               func() (string, error)                                                // the user's home, where the lane client caches briefs
 }
 
 func realWorld() world {
@@ -82,8 +87,10 @@ func realWorld() world {
 		codexLock:          notice.Lock,
 		codexValidate:      notice.ValidateCodex,
 		codexDeliver:       codexdesktop.DeliverSaved,
+		codexChats:         func(home string) ([]codexdesktop.Chat, error) { return codexdesktop.DesktopChats(os.DirFS(home)) },
 		dshValidate:        notice.ValidateDsh,
 		dshDeliver:         dshdesktop.Deliver,
+		dshHeld:            dshdesktop.LsofHeld,
 		antigravityExec:    realAntigravityExec,
 		antigravityHome:    os.UserHomeDir,
 		antigravityInstall: installAntigravityRoute,
@@ -95,6 +102,8 @@ func realWorld() world {
 		tick:               Tick,
 		after:              time.After,
 		deliver:            deliver,
+		sprint:             sprintAsk,
+		home:               userHome,
 		holder:             fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
 		lookup: func(ctx context.Context, h string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
@@ -206,7 +215,7 @@ example: nova-hook status --as ada`,
 its epoch, otherwise a new epoch starts and every lease and proof of the old one is cleared. This process holds
 the bus push when the role carries it: it renews the lease every ` + hook.RenewEvery.String() + ` and prints each message on your bus
 stream as it lands, HOOK PUSH push=bus id= from= subject=. A push it does not hold (the sprint push, held by
-nova-sprint hook; the work push, held by the friend daemon or the member loop) is named with its holder on the
+nova-sprint run; the work push, held by the friend daemon or the member loop) is named with its holder on the
 HOOK ARMED line's notes. It prints HOOK CHALLENGE nonce=<n> at start and every ` + hook.ChallengeEvery.String() + `: run the line it carries,
 nova-hook prove --as <me> --nonce <n>, within ` + hook.AnswerBound.String() + `, and the pushes it holds are proven. HOOK STATE state= line
 each time the record changes. Run it under the session's Monitor: each line is a notification. It stops on SIGINT or
@@ -247,18 +256,18 @@ example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Required("role", "the role you hook in as, one of "+roleNames())
-					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "install a harness adapter before arming: grok, muse, claude, deepseek (alias dsh) or antigravity; the Codex desktop route uses the --codex-* flags")
+					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "install a harness adapter before arming: grok, muse, claude, deepseek (alias dsh), antigravity, or codex (the Codex desktop route: the friend's current chat, followed to a new one; the --codex-* flags override its defaults)")
 					f.String("grok-home", w.getenv("GROK_HOME"), "absolute grok config directory the adapter installs into; empty uses GROK_HOME, else the grok directory under the user home")
 					f.String("muse-bundle", w.getenv("NOVA_HOOK_MUSE_BUNDLE"), "the Muse plugin bundle to install (default: muse-bundle beside the nova-hook binary)")
 					f.String("muse-bin", w.getenv("NOVA_HOOK_MUSE_BIN"), "the Muse CLI to run (default: muse on PATH)")
-					f.String("codex-socket", w.getenv("NOVA_HOOK_CODEX_SOCKET"), "native Codex desktop socket; requires thread and private event directory")
-					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID")
-					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "existing private directory for bounded external event JSON")
-					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
-					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "existing private directory for bounded external event JSON and the native notification queue")
-					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "absolute native Cordis include .json path; mount in the harness profile before use")
-					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "exact existing live harness session identity; never creates or resumes a session")
-					f.String("dsh-since", w.getenv("NOVA_HOOK_DSH_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
+					f.String("codex-socket", w.getenv("NOVA_HOOK_CODEX_SOCKET"), "native Codex desktop socket (default: CODEX_HOME/ipc/ipc.sock)")
+					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID; an override: by default the route finds the friend's current desktop chat (newest in a workspace named for the friend) and follows the friend to a new one")
+					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "private directory for bounded external event JSON (default: ~/.local/state/nova-hook/<name>-codex, created 0700)")
+					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); by default the store's time at the first hook, kept in the events directory's .cutover; earlier work must be resent")
+					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "private directory for bounded external event JSON and the native notification queue (default ~/.local/state/nova-hook/<as>-dsh, created 0700)")
+					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "absolute native Cordis include .json path, mounted into the harness desktop profile (default ~/.dsh/<as>-hook/hooks.json)")
+					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "pin one existing harness session (default: the newest live session in the friend's workspace, followed when she starts another); never creates or resumes a session")
+					f.String("dsh-since", w.getenv("NOVA_HOOK_DSH_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); by default the store's time at the first hook, kept in the events directory's .cutover; earlier work must be resent")
 					f.String("antigravity-dir", w.getenv("NOVA_HOOK_ANTIGRAVITY_DIR"), "Antigravity workspace directory for --harness antigravity")
 					f.String("antigravity-session", w.getenv("NOVA_HOOK_ANTIGRAVITY_SESSION"), "Antigravity conversation UUID (default: newest root conversation for --antigravity-dir)")
 					f.String("session", w.getenv("NOVA_HOOK_ANTIGRAVITY_SESSION"), "Antigravity conversation UUID alias for --antigravity-session")
@@ -269,6 +278,7 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("claude-settings", w.getenv("NOVA_HOOK_CLAUDE_SETTINGS"), "existing directory where the Claude Code Stop hook is installed")
 					f.Bool("claude-boundary", false, "advance the Claude Code generation file and exit; the installed Stop hook runs this")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
+					laneFlags(w, f)
 					store(f)
 					f.Check(func(c *tool.Call) {
 						if r := c.Str("role"); r != "" {
@@ -565,8 +575,10 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		}
 	}
 	if w.service != nil && !c.Bool("once") && !w.isServiceRun() && (strings.TrimSpace(c.Str("harness")) != "" || native != nil || dsh != nil || claude != nil) {
+		dshRestart := false
 		if dsh != nil {
-			if err := dshdesktop.Install(dsh.route); err != nil {
+			var err error
+			if dshRestart, err = dshSetup(dsh); err != nil {
 				return tool.Refuse("dsh harness-side setup failed: " + err.Error())
 			}
 		}
@@ -597,6 +609,12 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		}
 		o := tool.Done().Fact("as", s.as).Fact("role", string(role)).Fact("service", svc)
 		o.Note("supervised hook service installed and started; only nova-hook unhook --as " + s.as + " stops it")
+		if dsh != nil {
+			o.Fact("dsh_session", dsh.route.SessionID)
+			if dshRestart {
+				o.Note(dshRestartNote)
+			}
+		}
 		return o
 	}
 	var shim notice.Shim
@@ -620,11 +638,16 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	}
 	switch {
 	case dsh != nil:
-		if err := dshdesktop.Install(dsh.route); err != nil {
+		restart, err := dshSetup(dsh)
+		if err != nil {
 			return tool.Refuse("dsh harness-side setup failed: " + err.Error())
 		}
-		line(c, tool.Done().As("STATE").Fact("state", "native-include-written").Fact("path", dsh.route.HooksFile).Note("mount this include in the harness profile; writing files does not mount a plugin or prove delivery"))
-		shim = &notice.Dsh{Route: dsh.route, Deliver: w.dshDeliver}
+		st := tool.Done().As("STATE").Fact("state", "native-include-mounted").Fact("path", dsh.route.HooksFile).Fact("session", dsh.route.SessionID)
+		if restart {
+			st.Note(dshRestartNote)
+		}
+		line(c, st)
+		shim = &notice.Dsh{Route: dsh.route, Deliver: w.dshDeliver, Discover: dsh.discover}
 	case grokR != nil:
 		grokR.as = s.as
 		grokR.role = role
@@ -641,6 +664,11 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	case muse != nil:
 		shim = &notice.Muse{Notices: muse.notices}
 	case native != nil:
+		if native.antigravity != nil {
+			if out := w.probeAntigravity(c, native.antigravity); out != nil {
+				return out
+			}
+		}
 		shim = w.nativeShim(native)
 	}
 	var recovery codexRecovery
@@ -652,6 +680,11 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	}
 	if native != nil {
 		var err error
+		if native.since.IsZero() && native.cutoverFile != "" {
+			if native.since, err = codexCutover(s, native.cutoverFile); err != nil {
+				return tool.Refuse(err.Error())
+			}
+		}
 		recovery, err = codexBacklog(s, cursor, native.since)
 		if err != nil {
 			return tool.Refuse(err.Error())
@@ -773,7 +806,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if ch != nil {
 		line(c, ch)
 	}
-	return w.loop(c, s, role, held, epoch, cursor, challenge, core, serverOwned)
+	return w.loop(c, s, role, held, epoch, cursor, challenge, core, serverOwned, w.laneClient(c, s.as, role))
 }
 
 // nativeShim is the Codex desktop route's shim, or the Antigravity route's.
@@ -784,7 +817,7 @@ func (w world) nativeShim(r *codexRoute) notice.Shim {
 				return w.antigravityDeliver(ctx, ag, id, dir)
 			}}
 	}
-	return &notice.Codex{Socket: r.socket, Thread: r.thread, Directory: r.directory, Deliver: w.codexDeliver}
+	return &notice.Codex{Socket: r.socket, Thread: r.thread, Directory: r.directory, Deliver: w.codexDeliver, Discover: r.discover}
 }
 
 // newCore wires one friend's pending notice: the store, the shim, the saved
@@ -862,12 +895,13 @@ func (w world) onceResult(s *session, role hook.Role, held []hook.Push, armed, c
 // floods the Monitor. A record lost under the loop (none: deleted, or the
 // store flushed) is armed again, the session's hook being the identity's word;
 // an unhook ends the loop.
-func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out, core *notice.Core, serverOwned bool) *tool.Out {
+func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out, core *notice.Core, serverOwned bool, lanes *friend.Client) *tool.Out {
 	ctx, stop := w.signals(context.Background())
 	defer stop()
 	stream := bus.StreamOf(s.as)
 	waiter, _ := s.bus.(bus.Waiter) // ignored: a store with no wait reads holds no bus push here; its loop only renews
 	nextRenew, nextChallenge := w.now().Add(hook.RenewEvery), w.now().Add(hook.ChallengeEvery)
+	nextLanes := w.now() // the lane client's first round is at once: a restart resumes from the server
 	lastState, unread := "", ""
 	renewAttempts := 0
 	var lk link
@@ -895,7 +929,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			var batch []bus.Message
 			for _, e := range got {
 				cursor = e.Entry
-				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") { // a server may challenge its own name
+				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") || laneSelf(m, s.as) { // a server may challenge its own name; the lane client tells its own
 					if core != nil {
 						batch = append(batch, m)
 						continue
@@ -967,6 +1001,16 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 		if err == nil && st[0].Words() != lastState {
 			lastState = st[0].Words()
 			line(c, stateLine(st[0], role))
+		}
+		if lanes != nil && err == nil && !w.now().Before(nextLanes) {
+			// the lane client's round: asks (and so renews) only while the model proves
+			// (tla/FriendLaneClient.tla DeadModelReleases)
+			nextLanes = w.now().Add(LaneEvery)
+			lctx, lcancel := context.WithTimeout(ctx, laneRoundWait)
+			for _, o := range lanePass(lctx, lanes, proven(st[0]), sendSelf(s, w)) {
+				line(c, o)
+			}
+			lcancel()
 		}
 	}
 }

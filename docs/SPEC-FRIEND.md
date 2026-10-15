@@ -63,7 +63,8 @@ leaves admission unchanged.
 - **The state directory**: `<dir>/.nova-friend` under the friend's working
   directory unless `--state-dir` names another (`~/.nova-friend/<friend>` when
   `<dir>` sits on a removable volume that refuses background writes). It holds
-  `status.json`, `deliver.log`, `lanes.json`, `watch.json`, and `host.json`.
+  `status.json`, `deliver.log`, `watch.json`, and `host.json`. Lane state remains
+  in memory; the sprint server owns the lane records.
   `inbox/QUEUE.json` under `<dir>` holds queued, working, and done tasks.
 - **The launchd agent**: `com.nova.friend-<friend>` (`RunAtLoad`, `KeepAlive`,
   5 s throttle), with its log under the home directory. When the source binary

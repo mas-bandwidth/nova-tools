@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
@@ -29,25 +30,27 @@ func canonicalTempDir(t *testing.T) string {
 }
 
 type fakeAntigravityHarness struct {
-	t            *testing.T
-	home         string
-	workspaceDir string
-	eventsDir    string
-	pid          int
-	token        string
-	ports        []int
-	activePort   int
-	conversation string
-	serverBin    string
-	noServer     bool
-	noPorts      bool
-	noConv       bool
-	probeErr     error
-	sendErr      error
-	sendTimeout  bool
-	sentNotices  []string
-	sentPorts    []int
-	sentTokens   []string
+	t             *testing.T
+	home          string
+	workspaceDir  string
+	eventsDir     string
+	pid           int
+	token         string
+	ports         []int
+	activePort    int
+	conversation  string
+	serverBin     string
+	noServer      bool
+	noPorts       bool
+	noConv        bool
+	probeErr      error
+	probeTimeouts int
+	probeAttempts int
+	sendErr       error
+	sendTimeout   bool
+	sentNotices   []string
+	sentPorts     []int
+	sentTokens    []string
 }
 
 func newFakeAntigravityHarness(t *testing.T) *fakeAntigravityHarness {
@@ -164,6 +167,11 @@ func (f *fakeAntigravityHarness) exec(_ context.Context, _ string, env []string,
 			}
 			if port != f.activePort || tok != f.token {
 				return []byte("connection refused"), errors.New("exit status 1")
+			}
+			f.probeAttempts++
+			if f.probeTimeouts > 0 {
+				f.probeTimeouts--
+				return nil, context.DeadlineExceeded
 			}
 			return []byte(`{"id":"` + f.conversation + `"}`), nil
 		}
@@ -312,46 +320,6 @@ func TestAntigravityRouteRefusesBeforeArming(t *testing.T) {
 			want: "0700",
 		},
 		{
-			name: "no language server",
-			setup: func(fh *fakeAntigravityHarness) []string {
-				fh.noServer = true
-				return []string{"hook", "--as", "emma", "--role", "friend", "--harness", "antigravity", "--antigravity-dir", fh.workspaceDir}
-			},
-			want: "no Antigravity language_server running",
-		},
-		{
-			name: "missing csrf token",
-			setup: func(fh *fakeAntigravityHarness) []string {
-				fh.token = ""
-				return []string{"hook", "--as", "emma", "--role", "friend", "--harness", "antigravity", "--antigravity-dir", fh.workspaceDir}
-			},
-			want: "has no --csrf_token",
-		},
-		{
-			name: "no listening ports",
-			setup: func(fh *fakeAntigravityHarness) []string {
-				fh.noPorts = true
-				return []string{"hook", "--as", "emma", "--role", "friend", "--harness", "antigravity", "--antigravity-dir", fh.workspaceDir}
-			},
-			want: "no listening TCP ports",
-		},
-		{
-			name: "no conversation found",
-			setup: func(fh *fakeAntigravityHarness) []string {
-				fh.noConv = true
-				return []string{"hook", "--as", "emma", "--role", "friend", "--harness", "antigravity", "--antigravity-dir", fh.workspaceDir}
-			},
-			want: "no Antigravity conversation found",
-		},
-		{
-			name: "probe fails on all ports",
-			setup: func(fh *fakeAntigravityHarness) []string {
-				fh.probeErr = errors.New("probe refused")
-				return []string{"hook", "--as", "emma", "--role", "friend", "--harness", "antigravity", "--antigravity-dir", fh.workspaceDir}
-			},
-			want: "did not answer get-conversation-metadata",
-		},
-		{
 			name: "role without bus push",
 			setup: func(fh *fakeAntigravityHarness) []string {
 				return []string{"hook", "--as", "emma", "--role", "member", "--harness", "antigravity", "--antigravity-dir", fh.workspaceDir}
@@ -370,6 +338,111 @@ func TestAntigravityRouteRefusesBeforeArming(t *testing.T) {
 			assert.Equal(t, 2, code, out.String())
 			assert.Contains(t, out.String(), tc.want)
 			assert.Equal(t, hook.StateNone, r.h.State(t, "emma").State)
+		})
+	}
+}
+
+func TestAntigravityStartupProbeRetriesWithBackoffAndNeverExits(t *testing.T) {
+	t.Parallel()
+
+	t.Run("agentapi get-conversation-metadata times out twice then answers", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t)
+		fh := newFakeAntigravityHarness(t)
+		fh.probeTimeouts = 2
+		w := fakeAntigravityWorld(r, fh)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+
+		var waits []time.Duration
+		w.wait = func(_ context.Context, d time.Duration) {
+			waits = append(waits, d)
+			r.advance(d)
+			if len(fh.sentNotices) > 0 {
+				cancel()
+			}
+		}
+
+		var out bytes.Buffer
+		args := []string{
+			"hook", "--as", "emma", "--role", "friend",
+			"--harness", "antigravity",
+			"--antigravity-dir", fh.workspaceDir,
+		}
+		code := run(args, strings.NewReader(""), &out, &out, w)
+		require.Zero(t, code, out.String())
+		assert.Equal(t, 3, fh.probeAttempts, "probed twice with timeout and succeeded on the third attempt")
+		assert.GreaterOrEqual(t, len(waits), 2)
+		assert.Equal(t, []time.Duration{w.tick, 2 * w.tick}, waits[:2], "startup probe backed off exponentially")
+		assert.Equal(t, 1, strings.Count(out.String(), "state=probe-retry"), "identical probe fault is logged once")
+		assert.Contains(t, out.String(), "did not answer get-conversation-metadata: port 61101: context deadline exceeded; retrying with backoff")
+		assert.Contains(t, out.String(), "state=antigravity-installed conversation=conv-root-2 port=61101")
+		assert.Contains(t, out.String(), "push=antigravity")
+		require.Len(t, fh.sentNotices, 1)
+		assert.Equal(t, hook.StateLive, r.h.State(t, "emma").State)
+	})
+
+	for _, tc := range []struct {
+		name  string
+		setup func(*fakeAntigravityHarness)
+		want  string
+	}{
+		{
+			name:  "no language server",
+			setup: func(fh *fakeAntigravityHarness) { fh.noServer = true },
+			want:  "no Antigravity language_server running",
+		},
+		{
+			name:  "missing csrf token",
+			setup: func(fh *fakeAntigravityHarness) { fh.token = "" },
+			want:  "has no --csrf_token",
+		},
+		{
+			name:  "no listening ports",
+			setup: func(fh *fakeAntigravityHarness) { fh.noPorts = true },
+			want:  "no listening TCP ports",
+		},
+		{
+			name:  "no conversation found",
+			setup: func(fh *fakeAntigravityHarness) { fh.noConv = true },
+			want:  "no Antigravity conversation found",
+		},
+		{
+			name:  "probe fails on all ports",
+			setup: func(fh *fakeAntigravityHarness) { fh.probeErr = errors.New("probe refused") },
+			want:  "did not answer get-conversation-metadata",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			fh := newFakeAntigravityHarness(t)
+			tc.setup(fh)
+			w := fakeAntigravityWorld(r, fh)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+
+			var waits []time.Duration
+			w.wait = func(_ context.Context, d time.Duration) {
+				waits = append(waits, d)
+				r.advance(d)
+				if len(waits) >= 2 {
+					cancel()
+				}
+			}
+
+			var out bytes.Buffer
+			args := []string{"hook", "--as", "emma", "--role", "friend", "--harness", "antigravity", "--antigravity-dir", fh.workspaceDir}
+			code := run(args, strings.NewReader(""), &out, &out, w)
+			assert.Zero(t, code, out.String())
+			assert.Equal(t, []time.Duration{w.tick, 2 * w.tick}, waits)
+			assert.Equal(t, 1, strings.Count(out.String(), "state=probe-retry"))
+			assert.Contains(t, out.String(), tc.want)
+			assert.Equal(t, hook.StateNone, r.h.State(t, "emma").State, "never armed while startup probe was failing")
 		})
 	}
 }
@@ -487,7 +560,7 @@ func TestAntigravityServerRestartMidRunReDiscoversPortAndToken(t *testing.T) {
 	s := &session{bus: st, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
 	var out bytes.Buffer
 	c := &tool.Call{Stdout: &out}
-	res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true)
+	res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true, nil)
 	require.Equal(t, tool.OK, res.Status, out.String())
 	require.Len(t, fh.sentPorts, 2)
 	assert.Equal(t, 61101, fh.sentPorts[0])
@@ -538,7 +611,7 @@ func TestAntigravityDeliveryOutcomesAndReconciliation(t *testing.T) {
 		s := &session{bus: st, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
 		var out bytes.Buffer
 		c := &tool.Call{Stdout: &out}
-		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true)
+		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true, nil)
 		require.NotNil(t, res)
 		assert.NotEqual(t, tool.Failed, res.Status, "an unknown outcome is not a failed route (notice rule 5)")
 		assert.NotContains(t, out.String(), "local delivery unknown")
@@ -586,7 +659,7 @@ func TestAntigravityDeliveryOutcomesAndReconciliation(t *testing.T) {
 		s := &session{bus: st, hooks: r.h.Store, as: "emma", addr: "127.0.0.1:6379"}
 		var out bytes.Buffer
 		c := &tool.Call{Stdout: &out}
-		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true)
+		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true, nil)
 		assert.Equal(t, tool.OK, res.Status, out.String())
 		assert.Empty(t, fh.sentNotices, "a message the model already answered makes no push")
 	})

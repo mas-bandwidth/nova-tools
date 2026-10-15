@@ -116,3 +116,8 @@ ident DeferredSaidEvery nova-hook owns session delivery and retries
 ident FolderCheck nova-hook owns session delivery
 ident FolderCheckLine nova-hook owns session delivery
 ident FlockHeld hook records own presence
+
+# The sprint server owns lane records; no daemon lane-state file.
+ident ReadLanes lane state is rebuilt from the sprint server
+ident WriteLanes lane state is rebuilt from the sprint server
+ident LanesFile lane state is rebuilt from the sprint server

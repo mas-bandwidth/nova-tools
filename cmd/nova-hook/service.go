@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -206,10 +207,14 @@ func hookServiceArgs(c *tool.Call, as string, role hook.Role, addr string) []str
 		"antigravity-since",
 		"claude-state",
 		"claude-settings",
+		"sprint-server",
 	} {
 		if v := strings.TrimSpace(c.Str(flag)); v != "" {
 			args = append(args, "--"+flag, v)
 		}
+	}
+	if c.Given("lanes") {
+		args = append(args, "--lanes", strconv.Itoa(c.Int("lanes")))
 	}
 	return args
 }

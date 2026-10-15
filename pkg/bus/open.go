@@ -22,6 +22,20 @@ const (
 	FleetBusKey    = "fleet:bus"
 )
 
+// A friend's applied session, as nova-config apply writes it (pkg/config
+// FriendDesiredKey and FriendSessionOneShot; TestTheBusReadsTheSessionApplyWrites
+// holds the copies equal): the session field of FriendDesiredKey(name) says
+// SessionOneShot for a friend with no live session, who is never on the psychic
+// link (the v1.3 comms spec, guarantee 19). Kept here, not imported, so the
+// bus does not link the configuration store's Postgres driver.
+const (
+	SessionField   = "session"
+	SessionOneShot = "one-shot"
+)
+
+// FriendDesiredKey is the hash apply writes a friend row's desired fields to.
+func FriendDesiredKey(name string) string { return "friend:" + name + ":desired" }
+
 // LoginOptions is the fleet's login for a store at addr: NOVA_SPRINT_REDIS_USER
 // names the user and NOVA_SPRINT_REDIS_PASSWORD_ENV the variable that holds its
 // password (NOVA_REDIS_BENCH_PASSWORD when it names none); no user is the

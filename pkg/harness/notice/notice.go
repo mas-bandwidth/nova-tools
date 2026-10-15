@@ -25,6 +25,11 @@
 //     route keeps running and the record keeps its epoch. Only rule 3a pushes
 //     it again; an unknown outcome never stops the route, so it never lets
 //     the heartbeat unhook the name (tla/HarnessNoticeUnknown.tla).
+//  6. A shim whose session can move (Follower: a friend who starts a new
+//     chat) is asked where it is once a FollowEvery. When it moved, the
+//     pending notice, told to the place it left, is pushed once into the new
+//     one (same id and file); there is still one pending notice
+//     (tla/HarnessNoticeUnknown.tla, Follow).
 package notice
 
 import (
@@ -157,6 +162,16 @@ type Shim interface {
 	Consumed(ctx context.Context, n Notice) (bool, error)
 }
 
+// Follower is a shim whose session can move: a friend who starts a new chat.
+// Follow points the shim at where the session is now.
+type Follower interface {
+	Follow(ctx context.Context) (from, to string, moved bool, err error)
+}
+
+// FollowEvery is how often, on the store clock, the Core asks a Follower
+// where the session is.
+const FollowEvery = hook.RenewEvery
+
 // Clearer is a shim that removes its in-turn surface once a notice is consumed.
 type Clearer interface {
 	Clear(ctx context.Context, n Notice) error
@@ -185,6 +200,7 @@ type Core struct {
 	shown  string    // the nonce the pending notice held when it was last pushed
 	mark   Activity  // the model's bus activity when it was pushed
 	pushed time.Time // the store clock at the pending notice's last push
+	looked time.Time // the store clock when a Follower was last asked
 }
 
 // Pending is the pushed notice not yet consumed, if any.
@@ -269,6 +285,11 @@ func (c *Core) Offer(ctx context.Context, ms []bus.Message) error {
 // failure stops the route: it is never retried here. An unknown outcome keeps
 // the notice pending (rule 5).
 func (c *Core) Step(ctx context.Context) error {
+	if f, ok := c.Shim.(Follower); ok {
+		if err := c.follow(ctx, f); err != nil {
+			return err
+		}
+	}
 	if err := c.settle(ctx); err != nil {
 		return err
 	}
@@ -308,6 +329,45 @@ func (c *Core) Step(ctx context.Context) error {
 	// blindly, only by rule 3a, and the route and the record stand.
 	c.out, c.shown, c.mark, c.pushed = &n, n.Nonce, mark, at
 	c.sayUnknown(n, receipt, false, err)
+	return nil
+}
+
+// follow is rule 6: once a FollowEvery, the Core asks where the session is.
+// When it moved (a friend who started a new chat), a pending notice was told
+// to the chat it left, so the same notice (same id and file) is pushed once
+// into the new one. A failed look keeps the route where it is and says so: it
+// never stops the route.
+func (c *Core) follow(ctx context.Context, f Follower) error {
+	now, err := c.Store.Now(ctx)
+	if err != nil {
+		return fmt.Errorf("read the store clock: %w", err)
+	}
+	if !c.looked.IsZero() && now.Sub(c.looked) < FollowEvery {
+		return nil
+	}
+	c.looked = now
+	from, to, moved, err := f.Follow(ctx)
+	if err != nil {
+		if c.Say != nil {
+			c.Say(tool.Done().As("STATE").Fact("state", "follow-unknown").Fact("at", from).Note("where the session is now could not be read: " + err.Error() + "; the route stays where it is and looks again in " + FollowEvery.String()))
+		}
+		return nil
+	}
+	if !moved {
+		return nil
+	}
+	if c.Say != nil {
+		c.Say(tool.Done().As("STATE").Fact("state", "moved").Fact("from", from).Fact("to", to).Note("the session moved: the route follows it"))
+	}
+	if c.out == nil {
+		return nil
+	}
+	receipt, err := c.Shim.Push(ctx, *c.out)
+	if err != nil && !errors.Is(err, codexdesktop.ErrOutcomeUnknown) {
+		return err
+	}
+	c.shown, c.pushed = c.out.Nonce, now
+	c.sayUnknown(*c.out, receipt, true, err)
 	return nil
 }
 

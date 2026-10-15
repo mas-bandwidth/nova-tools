@@ -117,8 +117,8 @@ type Daemon struct {
 	// it (ParseLaneCaps off its beat), read every step; nil, or a tier it names none for,
 	// is DefaultLaneCaps (lane_cap.go).
 	LaneCaps func() map[string]time.Duration
-	// LoadLanes and SaveLanes keep the one-shot lanes' state (ReadLanes,
-	// WriteLanes over the state files); nil keeps it in memory only.
+	// LoadLanes and SaveLanes let tests carry lane state between loop instances.
+	// Production keeps that state in memory; the sprint server owns lane records.
 	LoadLanes func() (LaneState, error)
 	SaveLanes func(LaneState) error
 	// CardDone is the one bus line a lane's session sends when its card is

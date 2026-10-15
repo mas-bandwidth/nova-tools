@@ -48,20 +48,18 @@ const (
 	InstantFailRepeats = 2
 )
 
-// LaneState is what the lanes keep across restarts, in the state directory
-// (lanes.json): each lane's session, so a lane is the same friend's session
-// for its life, the cards set aside after CardTurns, so a restart does
-// not hand them again, and the cards a lane has begun and not ended, so a
-// restart finishes each (a lane's end, lane_end.go). Epoch is the sprint's
-// epoch the sessions were opened under (epoch.go): her row's past it forgets
-// every session, so a full or stale session never carries across a clear.
+// LaneState is the running daemon's in-memory lane connections and unfinished
+// outcomes. It never decides what a lane holds: the sprint server owns those
+// records (tla/FriendLaneClient.tla). Sessions are reused during this daemon's
+// life; an epoch change forgets them so a stale session cannot cross a clear
+// (epoch.go). No lanes.json file restores this cache after restart.
 type LaneState struct {
 	Sessions map[int]string     `json:"sessions"`
 	Epoch    uint64             `json:"epoch,omitempty"`
 	GivenUp  []string           `json:"given_up,omitempty"`
 	Started  map[string]Started `json:"started,omitempty"`
 	// StopReturns is every card the machine's stop took out of a lane and the stop-return
-	// owed or taken for it (stop.go): a daemon starting up sends what is owed first.
+	// owed or taken for it (stop.go): the next loop pass sends what is owed first.
 	StopReturns []StopReturn `json:"stop_returns,omitempty"`
 }
 
@@ -1008,21 +1006,6 @@ func (l *loop) saveLanes(now time.Time) {
 		l.d.Record(now.UTC().Format(time.RFC3339) + " lanes: the lane state cannot be written: " + err.Error())
 	}
 }
-
-// ReadLanes is the lanes' state in stateDir; none is an empty state.
-func ReadLanes(stateDir string) (LaneState, error) {
-	var s LaneState
-	_, err := read(filepath.Join(stateDir, LanesFile), &s) // a file not there is found=false and no error
-	return s, err
-}
-
-// WriteLanes is the lanes' state written whole to stateDir.
-func WriteLanes(stateDir string, s LaneState) error {
-	return write(filepath.Join(stateDir, LanesFile), s)
-}
-
-// LanesFile is the lanes' state in the state directory.
-const LanesFile = "lanes.json"
 
 // ParseRow reads the friend's row off her beat's answer (nova-sprint friend
 // beat prints row_mode=<mode> row_width=<n>, as friend sync last wrote her
