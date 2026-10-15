@@ -138,8 +138,8 @@ Every line runs as printed:
   (`answered_at`, or `armed` if later) is older than `--down-after` (`DownAfter`, 5 min) by the store's
   `TIME`, with `reason` `"no answer in 5m0s (<n> challenges missed)"`, and logs to `hook:events`.
   Challenges still go out every `--every`: a harness that cannot answer mid-turn (Antigravity) answers
-  between turns and stays up. Glenn, 2026-10-14: "1m is too fast" unless every harness can be injected
-  into mid-turn. The model is `tla/HookBeat.tla` (`DownAfter`, `NoDownBeforeDownAfter`; the reversed
+  between turns and stays up (2026-10-14: one minute is too fast unless every harness can be
+  injected into mid-turn). The model is `tla/HookBeat.tla` (`DownAfter`, `NoDownBeforeDownAfter`; the reversed
   witness `MCHookBeatBrokenDownEarly` is the old two-miss rule).
 - **Coalesced telling, one write per audience.** Changes in the unhooked set or coordinator are sent
   once per audience (`hook:told:<audience>:<gen>`): one `judgment` to the coordinator (`FRIEND DOWN

@@ -6,5 +6,8 @@ EXTENDS HookBeat
 \* its separate mark reuses its once-key, suppressing the later change.
 \* The property and LiveSpec fairness are unchanged. Positive safety and
 \* liveness cases still use the unconstrained HookBeat instance.
+\* BrokenMarkBeforeSend takes the same constraint: one change marked told
+\* before a send that fails is never told, within the first epoch, and the
+\* unconstrained search ran past the record budget.
 SingleEpoch == \A n \in Names : hooks[n] = 1
 =============================================================================

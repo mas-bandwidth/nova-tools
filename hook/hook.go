@@ -105,7 +105,7 @@ const (
 	// nova-hook serve unhooks a name only once its last answer (or its
 	// hooking in, whichever is later) is older than DownAfter by the store's TIME
 	// and the challenge of the last pass still stands unanswered; challenges
-	// still go out every interval (Glenn, 2026-10-14: a harness that cannot
+	// still go out every interval (2026-10-14: a harness that cannot
 	// answer mid-turn needs more than two one-minute intervals). The readers'
 	// up (Served.Down) uses the same window (tla/HookBeat.tla, DownAfter).
 	DownAfter = 5 * time.Minute

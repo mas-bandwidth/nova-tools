@@ -10,7 +10,7 @@
 \* the pass is taken once between them (the server row's at is the once-key);
 \* a pass challenges each hooked name and counts a challenge still standing as a
 \* miss; a miss when the name's last answer (or its hooking in) is DownAfter
-\* intervals old unhooks the name, logging it once (Glenn, 2026-10-14: down
+\* intervals old unhooks the name, logging it once (2026-10-14: down
 \* only after a friend has not talked to us for five minutes, not two missed
 \* one-minute challenges; nova-hook serve --down-after). The interval is the
 \* model's unit, so Every = 1 and DownAfter counts intervals. The code fires on
@@ -470,7 +470,7 @@ ShownIgnoresClientClock == [][\A n \in Names : UNCHANGED <<hooked[n], qtime[n], 
 \* An ask's timeout is delivered once.
 AskExpiresOnce == \A n \in Names : expiries[n] <= 1 /\ (expiries[n] = 1 <=> ask[n] = "timedout")
 
-\* Glenn's ruling (2026-10-14): a name goes down only once it has not answered
+\* The down-after rule (2026-10-14): a name goes down only once it has not answered
 \* (nor hooked in) for DownAfter intervals, however many challenges it missed
 \* meanwhile. Under "twomisses" (the old rule) it fails: two misses come at
 \* qtime 2, under DownAfter = 3.

@@ -401,7 +401,7 @@ func (r *rig) beats(t *testing.T, n int, answer func(i int) bool, serve ...strin
 	return after, downs
 }
 
-// TestAFriendAnsweringEveryFourMinutesStaysUp pins Glenn's ruling of
+// TestAFriendAnsweringEveryFourMinutesStaysUp pins the down-after rule of
 // 2026-10-14 (tla/HookBeat.tla, NoDownBeforeDownAfter): a harness that cannot
 // answer mid-turn answers between turns, every four minutes here; under the
 // default --down-after (5m) it is challenged every minute, misses three in a
