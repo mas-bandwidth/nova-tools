@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // THE WORKER DESCRIPTION: which provider, which model, which environment variable the
@@ -624,21 +622,6 @@ func (w Worker) HarnessConfig() []byte {
 func (w Worker) WriteHarnessConfig(slot int) (string, error) {
 	path := filepath.Join(w.SlotDir(slot), "opencode.json")
 	return path, writeAtomic(path, w.HarnessConfig(), 0o644)
-}
-
-// HarnessTail is the LAST thing the harness said, bounded: the one diagnosis of a failed
-// job, which lived in <job>/harness.log, was printed by no verb, and was then deleted with
-// the job directory by `reclaim`. A line whose key is wrong had no printed route to the
-// word `unauthorized` (the new-user audit, F5, 2026-09-11).
-func HarnessTail(jobDir string) string {
-	kept, dropped := tailBytes(filepath.Join(jobDir, "harness.log"), oneline.TailBytes)
-	if kept == "" {
-		return ""
-	}
-	if dropped <= 0 {
-		return kept
-	}
-	return fmt.Sprintf("...+%dB", dropped) + kept
 }
 
 // tailBytes streams the LAST n bytes of a worker-writable regular file, never holding the

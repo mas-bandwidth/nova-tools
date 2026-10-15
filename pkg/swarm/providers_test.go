@@ -16,7 +16,7 @@ import (
 var providersTSV string
 
 // TestEveryProviderLaunchesThroughOneArgv asserts that for EVERY row of the
-// providers table, LaunchArgv returns an argv for both linux and darwin, that
+// providers table, LaunchArgvFor with an empty request returns an argv for both linux and darwin, that
 // none of them names a per-provider script, that the two OS argvs differ only
 // in the fields the table declares as OS-specific, and that an unknown provider
 // returns an error rather than a guessed argv.
@@ -45,21 +45,21 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 	}
 
 	for _, p := range providers {
-		// linux and darwin differ only in the GOOS handed to LaunchArgv, so
+		// linux and darwin differ only in the GOOS handed to LaunchArgvFor, so
 		// the table is the OS.
 		for _, goos := range []string{"linux", "darwin"} {
 			t.Run(p.Name+"/"+goos, func(t *testing.T) {
-				argv, err := LaunchArgv(p.Name, goos)
-				require.NoError(t, err, "LaunchArgv(%q, %s): %v", p.Name, goos, err)
-				require.NotEmpty(t, argv, "LaunchArgv(%q, %s) returned empty argv", p.Name, goos)
+				argv, err := LaunchArgvFor(p.Name, goos, LaunchRequest{})
+				require.NoError(t, err, "LaunchArgvFor(%q, %s): %v", p.Name, goos, err)
+				require.NotEmpty(t, argv, "LaunchArgvFor(%q, %s) returned empty argv", p.Name, goos)
 
 				harness := argv[0]
-				assert.False(t, isBespokeScript(harness), "LaunchArgv(%q, %s) harness %q is a bespoke per-provider script; want the one launcher", p.Name, goos, harness)
-				assert.True(t, standardLaunchers[harness], "LaunchArgv(%q, %s) harness %q is not a recognized standard launcher", p.Name, goos, harness)
+				assert.False(t, isBespokeScript(harness), "LaunchArgvFor(%q, %s) harness %q is a bespoke per-provider script; want the one launcher", p.Name, goos, harness)
+				assert.True(t, standardLaunchers[harness], "LaunchArgvFor(%q, %s) harness %q is not a recognized standard launcher", p.Name, goos, harness)
 
 				args := argv[1:]
 				argsJSON, _ := json.Marshal(args)
-				t.Logf("LaunchArgv(%q, %s): %s %s", p.Name, goos, harness, string(argsJSON))
+				t.Logf("LaunchArgvFor(%q, %s): %s %s", p.Name, goos, harness, string(argsJSON))
 
 				if p.HarnessArgs != "" {
 					var expectedArgs []string
@@ -75,7 +75,7 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 									break
 								}
 							}
-							assert.True(t, found, "LaunchArgv(%q, %s) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, goos, args, p.Model)
+							assert.True(t, found, "LaunchArgvFor(%q, %s) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, goos, args, p.Model)
 						}
 					}
 				}
@@ -83,11 +83,11 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 		}
 
 		t.Run(p.Name+"/os-diff", func(t *testing.T) {
-			linuxArgv, errL := LaunchArgv(p.Name, "linux")
-			darwinArgv, errD := LaunchArgv(p.Name, "darwin")
-			require.NoError(t, errL, "LaunchArgv(%q, linux/darwin): linux=%v darwin=%v", p.Name, errL, errD)
-			require.NoError(t, errD, "LaunchArgv(%q, linux/darwin): linux=%v darwin=%v", p.Name, errL, errD)
-			if !assert.Len(t, linuxArgv, len(darwinArgv), "LaunchArgv(%q) linux argv len %d != darwin argv len %d", p.Name, len(linuxArgv), len(darwinArgv)) {
+			linuxArgv, errL := LaunchArgvFor(p.Name, "linux", LaunchRequest{})
+			darwinArgv, errD := LaunchArgvFor(p.Name, "darwin", LaunchRequest{})
+			require.NoError(t, errL, "LaunchArgvFor(%q, linux/darwin): linux=%v darwin=%v", p.Name, errL, errD)
+			require.NoError(t, errD, "LaunchArgvFor(%q, linux/darwin): linux=%v darwin=%v", p.Name, errL, errD)
+			if !assert.Len(t, linuxArgv, len(darwinArgv), "LaunchArgvFor(%q) linux argv len %d != darwin argv len %d", p.Name, len(linuxArgv), len(darwinArgv)) {
 				return
 			}
 			// The two OS argvs must differ only in the harness path (the table
@@ -98,25 +98,25 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 			}
 			// Different launcher: every other field must be identical.
 			for i := 1; i < len(linuxArgv); i++ {
-				assert.Equal(t, linuxArgv[i], darwinArgv[i], "LaunchArgv(%q) linux[%d]=%q != darwin[%d]=%q (non-OS field differs)", p.Name, i, linuxArgv[i], i, darwinArgv[i])
+				assert.Equal(t, linuxArgv[i], darwinArgv[i], "LaunchArgvFor(%q) linux[%d]=%q != darwin[%d]=%q (non-OS field differs)", p.Name, i, linuxArgv[i], i, darwinArgv[i])
 			}
 			// If the harness paths differ, both must be standard launchers.
-			assert.False(t, isBespokeScript(linuxArgv[0]), "LaunchArgv(%q) linux harness %q is a bespoke script", p.Name, linuxArgv[0])
-			assert.False(t, isBespokeScript(darwinArgv[0]), "LaunchArgv(%q) darwin harness %q is a bespoke script", p.Name, darwinArgv[0])
+			assert.False(t, isBespokeScript(linuxArgv[0]), "LaunchArgvFor(%q) linux harness %q is a bespoke script", p.Name, linuxArgv[0])
+			assert.False(t, isBespokeScript(darwinArgv[0]), "LaunchArgvFor(%q) darwin harness %q is a bespoke script", p.Name, darwinArgv[0])
 		})
 	}
 
 	// An unknown provider returns an error rather than a guessed argv.
 	t.Run("unknown", func(t *testing.T) {
-		argv, err := LaunchArgv("nonexistent-provider-xyz", runtime.GOOS)
-		assert.Error(t, err, "LaunchArgv(%q, %s) returned argv %v with no error; want an error for an unknown provider", "nonexistent-provider-xyz", runtime.GOOS, argv)
+		argv, err := LaunchArgvFor("nonexistent-provider-xyz", runtime.GOOS, LaunchRequest{})
+		assert.Error(t, err, "LaunchArgvFor(%q, %s) returned argv %v with no error; want an error for an unknown provider", "nonexistent-provider-xyz", runtime.GOOS, argv)
 	})
 
 	// Unsupported GOOS values return an error rather than falling back to Linux.
 	t.Run("unsupported-goos", func(t *testing.T) {
 		for _, unsupported := range []string{"windows", "freebsd", "openbsd", "netbsd", "plan9", "solaris", "unknown"} {
-			argv, err := LaunchArgv(providers[0].Name, unsupported)
-			assert.Error(t, err, "LaunchArgv(%q, %q) returned argv %v with no error; want error for unsupported GOOS", providers[0].Name, unsupported, argv)
+			argv, err := LaunchArgvFor(providers[0].Name, unsupported, LaunchRequest{})
+			assert.Error(t, err, "LaunchArgvFor(%q, %q) returned argv %v with no error; want error for unsupported GOOS", providers[0].Name, unsupported, argv)
 		}
 	})
 

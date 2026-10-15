@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +45,7 @@ func TestReadFileSteadyRefusesASymlink(t *testing.T) {
 	require.False(t, missing(err), "a planted symlink must not read as a record that is simply gone")
 }
 
-func TestHarnessTailRefusesASymlink(t *testing.T) {
+func TestHarnessLogTailRefusesASymlink(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -52,7 +53,7 @@ func TestHarnessTailRefusesASymlink(t *testing.T) {
 	require.NoError(t, os.MkdirAll(job, 0o755))
 	v := outsideFile(t, dir)
 	plantLink(t, v, filepath.Join(job, "harness.log"))
-	tail := HarnessTail(job)
+	tail, _ := tailBytes(filepath.Join(job, "harness.log"), oneline.TailBytes)
 	require.Empty(t, tail, "the log= tail carried a file from outside the wall: %q", tail)
 }
 
