@@ -16,6 +16,33 @@ type Dsh struct {
 	Route dshdesktop.Route
 	// Deliver is dshdesktop.Deliver; a test passes its fake harness.
 	Deliver func(r dshdesktop.Route, id, notice string) (string, error)
+	// Discover, when set, is the friend's current harness session
+	// (dshdesktop.Discover): the route follows her to a new one. It is nil
+	// when the session was pinned with --dsh-session.
+	Discover func() (string, error)
+}
+
+// Follow is rule 6: it moves the receiver to the friend's current session by
+// rewriting the follow file (dshdesktop.WriteTarget), which the mounted
+// receiver reads on every drain, so no harness restart is needed
+// (tla/DshNativeWake.tla, Retarget).
+func (d *Dsh) Follow(context.Context) (from, to string, moved bool, err error) {
+	from = d.Route.SessionID
+	if d.Discover == nil {
+		return from, from, false, nil
+	}
+	current, err := d.Discover()
+	if err != nil {
+		return from, from, false, err
+	}
+	if current == "" || current == from {
+		return from, from, false, nil
+	}
+	if _, err := dshdesktop.WriteTarget(d.Route.EventsDir, current); err != nil {
+		return from, from, false, err
+	}
+	d.Route.SessionID = current
+	return from, current, true, nil
 }
 
 // Name is the harness word.

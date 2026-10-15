@@ -129,3 +129,21 @@ test('mounted entry returns an idempotent Cordis disposer that releases normal l
  assert.equal(listeners,0);
  assert.ok(!fs.existsSync(path.join(base,'.native-receiver')));
 });
+test('session.json target follows a new session without reload; the old hold is not inherited',t=>{
+ const base=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-receiver-'));
+ fs.chmodSync(base,0o700);
+ const mk=id=>{const a={id,status:'idle',messages:[],ctx:{on(){return()=>{}}},steer(m){a.messages.push(m)},followup(m){a.messages.push(m);a.status='running'}};return a};
+ const agents=new Map([['session-old',mk('session-old')],['session-new',mk('session-new')]]);
+ const ctx={agents:{get(id){return agents.get(id)}},logger:{warn(){}},on(){return()=>{}}};
+ const target=id=>fs.writeFileSync(path.join(base,'session.json'),JSON.stringify({version:1,sessionId:id}),{mode:0o600});
+ target('session-old');
+ const receiver=applyReceiver(ctx,{eventsDir:base});
+ t.after(()=>{receiver.dispose();fs.rmSync(base,{recursive:true,force:true})});
+ let seq=0;
+ const publish=id=>{fs.writeFileSync(path.join(base,`${id}.json`),'{}',{mode:0o600});fs.writeFileSync(path.join(base,'.notices',`notice-${id}.json`),JSON.stringify({version:1,eventID:id,challenge:false,queuedAt:String(++seq).padStart(20,'0')}),{mode:0o600})};
+ publish('one');receiver.drain();
+ assert.equal(agents.get('session-old').messages.length,1);
+ target('session-new');publish('two');receiver.drain();
+ assert.equal(agents.get('session-new').messages.length,1,'the new session is woken; the old ordinary hold does not carry over');
+ assert.equal(agents.get('session-old').messages.length,1);
+});
