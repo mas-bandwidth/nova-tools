@@ -40,7 +40,7 @@ func allKeys(name string) []string {
 	for _, p := range Pushes {
 		keys = append(keys, LiveKey(name, p), ProofKey(name, p))
 	}
-	return append(keys, ChallengeKey(name))
+	return append(keys, ChallengeKey(name), DeliveryKey(name))
 }
 
 // nowMS is the store's TIME in ms, as a Lua expression's lines: every stamp the
@@ -77,7 +77,7 @@ if st and ARGV[4] ~= '` + armFresh + `' then
 end
 local e = redis.call('HINCRBY', KEYS[1], 'epoch', 1)
 redis.call('HSET', KEYS[1], 'role', ARGV[2], 'state', 'hooked', 'armed', ms, 'by', ARGV[3])
-redis.call('HDEL', KEYS[1], 'unhooked', 'reason', 'misses', 'beat_at', 'recent')
+redis.call('HDEL', KEYS[1], 'unhooked', 'reason', 'misses', 'beat_at', 'recent', 'pending_until', 'pending_missed', 'pending_sent', 'quiet_after', 'bus_sent_at')
 for i = 3, #KEYS do redis.call('DEL', KEYS[i]) end
 redis.call('SADD', KEYS[2], ARGV[1])
 return {e, 0}
@@ -155,7 +155,10 @@ for x in string.gmatch(redis.call('HGET', KEYS[1], 'recent') or '', '%S+') do
 end
 if hit then
   if st ~= 'hooked' then return {-3, window} end
-  if c[2] == ARGV[1] then redis.call('DEL', KEYS[2]) end
+  if c[2] == ARGV[1] or at == redis.call('HGET', KEYS[1], 'beat_at') then
+    redis.call('DEL', KEYS[2], KEYS[#KEYS - 1])
+    redis.call('HDEL', KEYS[1], 'pending_until', 'pending_missed', 'pending_sent')
+  end
   redis.call('HSET', KEYS[1], 'recent', table.concat(keep, ' '))
 else
   if not c[1] then return {-1, window} end
@@ -164,7 +167,8 @@ else
   if u and now > tonumber(u) then return {-4, window} end
   if st ~= 'hooked' or ep ~= c[1] then return {-3, window} end
   back, pushes = 0, c[3]
-  redis.call('DEL', KEYS[2])
+  redis.call('DEL', KEYS[2], KEYS[#KEYS - 1])
+  redis.call('HDEL', KEYS[1], 'pending_until', 'pending_missed', 'pending_sent')
 end
 local n = 0
 for p in string.gmatch(pushes, '[^,]+') do
@@ -378,7 +382,7 @@ func (s Store) AnswerProof(ctx context.Context, name, nonce, by string) (Proof, 
 		keys = append(keys, LiveKey(name, p), ProofKey(name, p))
 		args = append(args, string(p))
 	}
-	keys = append(keys, ServeKey)
+	keys = append(keys, DeliveryKey(name), ServeKey)
 	ctx, cancel := s.call(ctx)
 	defer cancel()
 	got, err := answerLua.Run(ctx, s.C, keys, args...).Int64Slice()
@@ -542,50 +546,105 @@ for i = 1, nroles do bus[ARGV[6 + 2 * i]] = ARGV[7 + 2 * i] end
 local out, gone, live, coord = {}, {}, {}, ''
 local k, a = 3, 8 + 2 * nroles
 while k <= #KEYS do
-  local rec, chal, name, sum = KEYS[k], KEYS[k + 7], ARGV[a], ARGV[a + 1]
+  local rec, chal, delivery, name, sum = KEYS[k], KEYS[k + 7], KEYS[k + 8], ARGV[a], ARGV[a + 1]
+  local deliveredNonce = ''
   local did, misses, e = 0, 0, 0
   local role = redis.call('HGET', rec, 'role')
   if redis.call('HGET', rec, 'state') == 'hooked' and bus[role] then
     local last = tonumber(redis.call('HGET', rec, 'beat_at') or '0')
     misses = tonumber(redis.call('HGET', rec, 'misses') or '0')
-    local miss = last > 0 and redis.call('EXISTS', chal) == 1
-    if miss then misses = misses + 1 end
-    local heard = math.max(tonumber(redis.call('HGET', rec, 'answered_at') or '0'), tonumber(redis.call('HGET', rec, 'armed') or '0'))
+    local pending = tonumber(redis.call('HGET', rec, 'pending_until') or '0')
+    -- A pre-upgrade outstanding challenge keeps its own issued deadline.
+    if pending == 0 and last > 0 then pending = tonumber(redis.call('HGET', chal, 'until') or '0') end
+    local once = redis.call('HGET', delivery, 'once')
+    local sent = redis.call('HGET', rec, 'pending_sent') == '1'
+    if not sent and once and redis.call('EXISTS', once) == 1 then
+      sent = true
+      redis.call('HSET', rec, 'pending_sent', '1')
+    end
+    local miss = pending > 0 and now > pending and sent
+    if miss and redis.call('HGET', rec, 'pending_missed') ~= '1' then
+      misses = misses + 1
+      redis.call('HSET', rec, 'misses', misses, 'pending_missed', '1')
+    end
+    local answer = tonumber(redis.call('HGET', rec, 'answered_at') or '0')
+    local armed = tonumber(redis.call('HGET', rec, 'armed') or '0')
+    local heard = math.max(answer, armed, tonumber(redis.call('HGET', rec, 'bus_sent_at') or '0'))
+    local quiet = ` + strconv.FormatInt(QuietAfter.Milliseconds(), 10) + `
+    if role == 'coordinator' then quiet = ` + strconv.FormatInt(CoordinatorEvery.Milliseconds(), 10) + `
+    elseif role == 'friend' and ARGV[a + 2] == '1' then quiet = ` + strconv.FormatInt(BusyQuietAfter.Milliseconds(), 10) + ` end
+    redis.call('HSET', rec, 'quiet_after', quiet)
+    local proofDue = now - math.max(answer, armed) >= ` + strconv.FormatInt((ProofTTL-AnswerBound).Milliseconds(), 10) + ` - every
     if miss and now - heard > after then
       e = redis.call('HINCRBY', rec, 'epoch', 1)
       local why = 'no answer in ' .. label .. ' (' .. misses .. ' challenges missed)'
       redis.call('HSET', rec, 'state', 'unhooked', 'unhooked', ms, 'reason', why, 'misses', misses)
-      redis.call('HDEL', rec, 'recent')
-      for i = k + 1, k + 7 do redis.call('DEL', KEYS[i]) end
+      redis.call('HDEL', rec, 'recent', 'pending_until', 'pending_missed', 'pending_sent')
+      for i = k + 1, k + 8 do redis.call('DEL', KEYS[i]) end
       redis.call('XADD', KEYS[1], 'MAXLEN', '~', cap, '*', 'name', name, 'event', 'unhooked', 'reason', why, 'role', role, 'epoch', e, 'at', ms, 'by', by)
       did = 2
     else
+      -- An expired challenge cannot be answered alongside its replacement.
+      -- Activity may keep a name hooked, but never extends this nonce or proof.
+      if pending > 0 and now > pending then
+        redis.call('DEL', chal, delivery)
+        redis.call('HDEL', rec, 'recent', 'pending_until', 'pending_missed', 'pending_sent')
+        pending = 0
+      end
+      if pending > 0 and not sent then
+        deliveredNonce = redis.call('HGET', delivery, 'nonce') or ''
+        if deliveredNonce ~= '' then
+          did = 1
+          e = tonumber(redis.call('HGET', rec, 'epoch'))
+        end
+      elseif pending == 0 and redis.call('EXISTS', chal) == 0 and (now - heard > quiet or proofDue) then
       e = tonumber(redis.call('HGET', rec, 'epoch'))
       local recent = {string.format('%d:%s:%s:%d:%s', e, sum, ms, now + after, bus[role])}
       for x in string.gmatch(redis.call('HGET', rec, 'recent') or '', '%S+') do
         if #recent >= keep then break end
         table.insert(recent, x)
       end
-      redis.call('HSET', rec, 'misses', misses, 'beat_at', ms, 'recent', table.concat(recent, ' '))
+      local deadline = now + ` + strconv.FormatInt(AnswerBound.Milliseconds(), 10) + `
+      redis.call('HSET', rec, 'misses', misses, 'beat_at', ms, 'pending_until', string.format('%d', deadline), 'recent', table.concat(recent, ' '))
+      redis.call('HDEL', rec, 'pending_missed', 'pending_sent')
       redis.call('DEL', chal)
-      redis.call('HSET', chal, 'epoch', e, 'sum', sum, 'pushes', bus[role], 'until', string.format('%d', now + every))
+      redis.call('HSET', chal, 'epoch', e, 'sum', sum, 'pushes', bus[role], 'until', string.format('%d', deadline))
       redis.call('PEXPIRE', chal, ttl)
+      deliveredNonce = ARGV[a + 3]
+      redis.call('HSET', delivery, 'nonce', deliveredNonce, 'epoch', e, 'once', delivery .. ':' .. e .. ':' .. sum)
       did = 1
+      end
     end
   end
-  table.insert(out, {did, misses, e})
+  table.insert(out, {did, misses, e, deliveredNonce})
   local st = redis.call('HGET', rec, 'state')
   if st == 'unhooked' then table.insert(gone, name) end
   if st == 'hooked' and bus[role] then
     table.insert(live, name)
     if role == 'coordinator' and coord == '' then coord = name end
   end
-  k, a = k + 8, a + 2
+  k, a = k + 9, a + 4
 end
 local set = table.concat(gone, ',')
 local f = redis.call('HMGET', KEYS[2], 'told:coordinator', 'coord:coordinator', 'gen:coordinator', 'told:rest', 'coord:rest', 'gen:rest')
 return {1, out, set, coord, table.concat(live, ','), f[1] or '', f[2] or '', f[3] or '0', f[4] or '', f[5] or '', f[6] or '0'}
 `)
+
+// deliveredLua marks only the pending payload that actually reached the bus;
+// a failed or unknown call retries the same once-key (tla/HookBeat.tla, Deliver).
+var deliveredLua = redis.NewScript(`
+if redis.call('HGET', KEYS[2], 'nonce') ~= ARGV[1] or redis.call('HGET', KEYS[2], 'epoch') ~= ARGV[2] then return 0 end
+redis.call('HSET', KEYS[1], 'pending_sent', '1')
+redis.call('DEL', KEYS[2])
+return 1
+`)
+
+// Delivered confirms the bus accepted a challenge, without extending its deadline.
+func (s Store) Delivered(ctx context.Context, beat Beat) error {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	return deliveredLua.Run(ctx, s.C, []string{RecordKey(beat.Name), DeliveryKey(beat.Name)}, beat.Nonce, beat.Epoch).Err()
+}
 
 // What one heartbeat pass did to one name.
 const (
@@ -724,7 +783,7 @@ var Challenged = map[Role][]Push{Coordinator: {Bus}, Friend: {Bus}, Comms: {Bus}
 // standing a whole interval is a miss, and a miss when the name has not
 // answered (nor hooked in) for more than downAfter unhooks it, once; and the set of
 // unhooked names is told once per change (tla/HookBeat.tla, DownAfter).
-func (s Store) Pass(ctx context.Context, names []string, every, downAfter time.Duration, nonce func() string, by string) (Passed, error) {
+func (s Store) Pass(ctx context.Context, names []string, every, downAfter time.Duration, nonce func() string, by string, busy ...string) (Passed, error) {
 	keys := []string{EventsKey, ServeKey}
 	args := []any{every.Milliseconds(), downAfter.Milliseconds(), (2*every + AnswerBound).Milliseconds(), by, EventsMax, downAfter.String(), len(Challenged)}
 	for _, r := range Roles {
@@ -740,7 +799,11 @@ func (s Store) Pass(ctx context.Context, names []string, every, downAfter time.D
 	for i, n := range names {
 		out.Beats[i] = Beat{Name: n, Nonce: nonce(), DownAfter: downAfter}
 		keys = append(append(keys, RecordKey(n)), allKeys(n)...)
-		args = append(args, n, Sum(out.Beats[i].Nonce))
+		active := "0"
+		if slices.Contains(busy, n) {
+			active = "1"
+		}
+		args = append(args, n, Sum(out.Beats[i].Nonce), active, out.Beats[i].Nonce)
 	}
 	ctx, cancel := s.call(ctx)
 	defer cancel()
@@ -760,12 +823,13 @@ func (s Store) Pass(ctx context.Context, names []string, every, downAfter time.D
 	}
 	for i, row := range rows {
 		v, ok := row.([]any)
-		if !ok || len(v) != 3 {
+		if !ok || len(v) != 4 {
 			return Passed{}, fmt.Errorf("the beat script answered %v for %s, not a code, a count and an epoch", row, names[i])
 		}
 		b := &out.Beats[i]
-		did, _ := v[0].(int64)    // ignored: a code that is no number reads as left alone
-		misses, _ := v[1].(int64) // ignored: as above
+		out.Beats[i].Nonce, _ = v[3].(string) // ignored: no delivery payload means no delivery
+		did, _ := v[0].(int64)                // ignored: a code that is no number reads as left alone
+		misses, _ := v[1].(int64)             // ignored: as above
 		b.Did, b.Misses = int(did), int(misses)
 		b.Epoch, _ = v[2].(int64) // ignored: as above
 		if b.Did != BeatChallenged {
@@ -829,8 +893,15 @@ func (sv Served) Down(st Status) string {
 	case sv.Stale():
 		return StaleReason
 	}
-	if _, ok := Challenged[st.Role]; ok && (st.AnswerAt.IsZero() || sv.Now.Sub(st.AnswerAt) > sv.Window()) {
-		return NoAnswerReason
+	if _, ok := Challenged[st.Role]; ok {
+		if st.AnswerAt.IsZero() {
+			return NoAnswerReason
+		}
+		if st.PendingSent && !st.PendingUntil.IsZero() {
+			if sv.Now.After(st.PendingUntil) && sv.Now.Sub(st.LastActivity()) > sv.Window() {
+				return NoAnswerReason
+			}
+		}
 	}
 	return ""
 }

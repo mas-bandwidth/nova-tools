@@ -112,13 +112,13 @@ func TestARedisCallThatStallsFailsWithinTheNamedTimeout(t *testing.T) {
 
 func TestASendIsNotRetriedWhenTheStoreStalls(t *testing.T) {
 	t.Parallel()
-	s, c := newStalled(t, "XADD", "XACK")
+	s, c := newStalled(t, "EVALSHA", "XACK")
 	r := Redis{C: c, Timeout: 20 * time.Millisecond}
 
 	err := r.AddAll(context.Background(), []string{"bus2:bob"}, map[string]string{"k": "v"})
 	var te *TimeoutError
 	require.ErrorAs(t, err, &te)
-	assert.EqualValues(t, 1, s.words["XADD"].Load())
+	assert.EqualValues(t, 1, s.words["EVALSHA"].Load())
 
 	_, err = r.Ack(context.Background(), "bus2:bob", "g", "1-0")
 	require.ErrorAs(t, err, &te)

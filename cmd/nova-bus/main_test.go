@@ -526,3 +526,46 @@ func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) 
 	// Help send should contain the full precedence
 	assert.Contains(t, sendHelp, precedence, "help send should name the full Redis address precedence")
 }
+
+// TestExplicitSendAttributesOnlyModelWork pins HookBeat's BusSend boundary:
+// work messages and explicit replies count, automated subjects never do.
+func TestExplicitSendAttributesOnlyModelWork(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, kind, subject, re string
+		want                    bool
+	}{
+		{"report", bus.KindReport, "work progress", "", true},
+		{"request", bus.KindRequest, "review requested", "", true},
+		{"ask", bus.KindAsk, "review decision", "", true},
+		{"blocker", bus.KindBlocker, "blocked on input", "", true},
+		{"ack", bus.KindAck, "received the review", "", true},
+		{"reply", bus.KindStatus, "review complete", "01ARZ3NDEKTSV4RRFFQ69G5FAV", true},
+		{"status", bus.KindStatus, "status", "", false},
+		{"pong", bus.KindAck, "pong", "", false},
+		{"ping", bus.KindRequest, "ping now", "", false},
+		{"presence", bus.KindReport, "presence up", "", false},
+		{"hook", bus.KindReport, "HOOK CHALLENGE nonce=fixture", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig("ada", "bob")
+			ctx := context.Background()
+			key := hook.RecordKey("ada")
+			require.NoError(t, r.store.AddAll(ctx, nil, nil, bus.Mark{Key: key, Field: "state", Value: "hooked"}))
+			argv := []string{"send", "--as", "ada", "--to", "bob", "--kind", tc.kind, "--subject", tc.subject, "--body", "message body"}
+			if tc.kind == bus.KindAsk {
+				argv = append(argv, "--deadline", "10m")
+			}
+			if tc.re != "" {
+				argv = append(argv, "--re", tc.re)
+			}
+			res := r.cli().Run(argv...)
+			require.Zero(t, res.Code, res.Stdout+res.Stderr)
+			marks, err := r.store.Marks(ctx, key)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, marks[0]["bus_sent_at"] != "")
+			assert.Empty(t, marks[0]["answered_at"], "a message is never a nonce proof")
+		})
+	}
+}

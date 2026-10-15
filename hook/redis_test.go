@@ -376,6 +376,8 @@ func TestBootstrapPreservesHeartbeatOwnership(t *testing.T) {
 			e, _, err := r.s.Arm(ctx, "ada", hook.Comms, "test", false)
 			require.NoError(t, err)
 			require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, e, "hook"))
+			r.pass(hook.QuietAfter + time.Minute)
+			require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, e, "holder"))
 			b := r.beat(t, "server", nonces())["ada"]
 			require.Equal(t, hook.BeatChallenged, b.Did)
 			switch state {

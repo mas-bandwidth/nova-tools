@@ -698,6 +698,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body, Token: c.Str("token"),
 		Wait: c.Dur("deadline"),
 	}
+	draft.ModelActivity = modelActivity(draft)
 	b.TokenLife, b.TokenCleanup = c.Dur("token-life"), c.Dur("token-cleanup")
 	if refused := w.checkRecipients(context.Background(), b, as, draft, dry); refused != nil {
 		return refused
@@ -719,6 +720,19 @@ func (w world) send(c *tool.Call) *tool.Out {
 	o = loginFact(o.Fact("at", m.At.Format(time.RFC3339)).
 		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
 	return o
+}
+
+// modelActivity identifies the explicit CLI's work message, never background
+// library traffic (tla/HookBeat.tla, BusSend/DaemonSend). Scripts can invoke
+// this same CLI; this operational boundary is not a model attestation.
+func modelActivity(m bus.Message) bool {
+	subject := strings.ToLower(strings.TrimSpace(m.Subject))
+	for _, prefix := range []string{"ping", "pong", "presence", "hook"} {
+		if strings.HasPrefix(subject, prefix) {
+			return false
+		}
+	}
+	return m.Kind == bus.KindRequest || m.Kind == bus.KindReport || m.Kind == bus.KindAck || m.Kind == bus.KindAsk || m.Kind == bus.KindBlocker || (m.Kind == bus.KindStatus && m.Re != "")
 }
 
 func downReason(st hook.Status) string {

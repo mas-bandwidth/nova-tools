@@ -62,8 +62,14 @@ const wireMisses = 2
 
 // ChallengeText is the canonical body of a heartbeat challenge: the server
 // writes it, and Canonical holds a received challenge to it byte for byte.
-func ChallengeText(name, nonce string, every time.Duration) string {
+func legacyChallengeText(name, nonce string, every time.Duration) string {
 	return fmt.Sprintf("HOOK CHALLENGE nonce=%s\nThe hook's heartbeat asks whether the model is here. Answer from inside this turn, before anything else, within %s, with: nova-hook prove --as %s --nonce %s\nOnly the model answers: no daemon, loop or script may. %d unanswered in a row unhook %s.\n", nonce, every, name, nonce, wireMisses, name)
+}
+
+// ChallengeText is the current canonical body. Receivers also accept the old
+// body during rollout; a returning old receiver updates through adopt.
+func ChallengeText(name, nonce string, bound time.Duration) string {
+	return fmt.Sprintf("HOOK CHALLENGE nonce=%s\nThe hook's heartbeat asks whether the model is here. Answer from inside this turn, before anything else, within %s, with: nova-hook prove --as %s --nonce %s\nOnly the model answers: no daemon, loop or script may. An unanswered challenge past its deadline and continued silence can unhook %s.\n", nonce, bound, name, nonce, name)
 }
 
 // Canonical is the nonce of m when m has the server's whole challenge shape
@@ -92,7 +98,7 @@ func canonical(m bus.Message, recipient string) (string, time.Duration, bool) {
 		return "", 0, false
 	}
 	every, err := time.ParseDuration(interval)
-	if err != nil || every < time.Second || m.Body != ChallengeText(recipient, nonce, every) {
+	if err != nil || every < time.Second || (m.Body != legacyChallengeText(recipient, nonce, every) && m.Body != ChallengeText(recipient, nonce, every)) {
 		return "", 0, false
 	}
 	return nonce, every, true

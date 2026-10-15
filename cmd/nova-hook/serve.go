@@ -10,12 +10,57 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	friendcards "github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // serve is the heartbeat server (docs/SPEC-HOOK.md, the heartbeat;
 // tla/HookBeat.tla): one pass now, then one every --every until a signal. A
+// busyFriends reads the authoritative ready/working rows in one sprint
+// request (tla/HookBeat.tla, SetBusy). Unknown rows use the shorter busy
+// window and surface a fault; no cached counter is a source of truth.
+func (w world) busyFriends(c *tool.Call, s *session, names []string) []string {
+	ctx, cancel := call()
+	defer cancel()
+	rows, _, err := s.hooks.Read(ctx, names...)
+	if err != nil {
+		fault(c, "friend roles", err)
+		return names
+	}
+	var friends []string
+	var verbs [][]string
+	for _, row := range rows {
+		if row.Role == hook.Friend && row.State != hook.StateUnhooked {
+			friends = append(friends, row.Name)
+			verbs = append(verbs, friendcards.FriendCardsArgv(row.Name))
+		}
+	}
+	if len(friends) == 0 {
+		return nil
+	}
+	if w.sprintBatch == nil {
+		fault(c, "friend cards", fmt.Errorf("sprint reader unavailable; using busy silence window"))
+		return friends
+	}
+	results, err := w.sprintBatch(ctx, c.Str("sprint-server"), verbs...)
+	if err != nil || len(results) != len(friends) {
+		fault(c, "friend cards", fmt.Errorf("sprint rows unavailable (%v, %d of %d replies); using busy silence window", err, len(results), len(friends)))
+		return friends
+	}
+	var busy []string
+	for i, name := range friends {
+		cards, err := friendcards.ParseHeld(name, results[i].Stdout)
+		if results[i].Code != 0 || err != nil {
+			fault(c, "friend cards "+name, fmt.Errorf("sprint row refused or invalid (%d, %v); using busy silence window", results[i].Code, err))
+			busy = append(busy, name)
+		} else if slices.ContainsFunc(cards, func(card friendcards.HeldCard) bool { return card.Col == "ready" || card.Col == "working" }) {
+			busy = append(busy, name)
+		}
+	}
+	return busy
+}
+
 // fault is a line and the loop goes on: the server never stops on one.
 func (w world) serve(c *tool.Call) *tool.Out {
 	s, refused := w.openSession(c, true)
@@ -91,8 +136,9 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, downAfter, with
 		fault(c, "names", err)
 		return
 	}
+	busy := w.busyFriends(c, s, names)
 	ctx, cancel = call()
-	p, err := s.hooks.Pass(ctx, names, every, downAfter, w.nonce, w.holder)
+	p, err := s.hooks.Pass(ctx, names, every, downAfter, w.nonce, w.holder, busy...)
 	cancel()
 	if err != nil {
 		fault(c, "pass", err)
@@ -107,8 +153,16 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, downAfter, with
 			continue
 		}
 		// the nonce goes only to the name's own stream: never on this server's lines
-		if err := w.send(b, bus.Message{From: s.as, To: []string{bt.Name}, Subject: "HOOK CHALLENGE nonce=" + bt.Nonce, Body: notice.ChallengeText(bt.Name, bt.Nonce, every)}); err != nil {
-			fault(c, "challenge "+bt.Name, err)
+		m := bus.Message{From: s.as, To: []string{bt.Name}, Subject: "HOOK CHALLENGE nonce=" + bt.Nonce,
+			Body: notice.ChallengeText(bt.Name, bt.Nonce, hook.AnswerBound), Once: hook.DeliveryOnce(bt.Name, bt.Epoch, bt.Nonce)}
+		if _, ok := w.sendOnce(c, s, b, m); !ok {
+			continue
+		}
+		ctx, cancel := call()
+		err := s.hooks.Delivered(ctx, bt)
+		cancel()
+		if err != nil {
+			fault(c, "challenge delivery "+bt.Name, err)
 			continue
 		}
 		serveLine(c, "challenge", "", "name", bt.Name, "misses", bt.Misses)
