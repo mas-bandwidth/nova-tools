@@ -1,5 +1,26 @@
 # nova-tools changelog
 
+## v1.3.16 — 2026-10-15
+
+Cut from 6cdb2c08d6eb39f0dacec1f65f74e323b1e50426. 2 pull requests since v1.3.15.
+
+CI waived: Glenn Fiedler, 2026-10-15T20:05Z
+CI waived checks: perf-plan, race-cache (macos-latest), race-cache (ubuntu-latest), release-build (darwin, amd64), release-build (darwin, arm64), release-build (linux, amd64), release-build (linux, arm64), release-build (windows, amd64) (not finished)
+
+Recovery journeys incomplete, gate waived: Glenn live 2026-10-15 coordinator: ship v1.3.16 now, waivers granted as for v1.3.15, fix forward
+
+- TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce: not-run (no --journeys evidence)
+- TestNoServerOrNoAnswerIsNoEvidence: not-run (no --journeys evidence)
+- TestTheGateRefusesEveryoneWhileTheServerIsStale: not-run (no --journeys evidence)
+- TestAStaleAnswerIsDownWithAFreshServer: not-run (no --journeys evidence)
+- TestALostAnswerIsNeverToldTwice: not-run (no --journeys evidence)
+
+Spend gate waived: Glenn live 2026-10-15 coordinator: ship v1.3.16 now, waivers granted as for v1.3.15, fix forward (window 2026-10-15T00:00:00Z..2026-10-15T20:05:40Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #5847 member: a refused finish is held, never run again; a launch refused before its harness lands its finish
+- #5846 nova-hook: challenge a name only after silence (heartbeat-challenges-only-after-silence.w8)
+
 ## v1.2.3 — unreleased
 
 - split (layer L5): the sprint's TLA+ models and docs move to mas-bandwidth/nova-sprint. 24 modules that model only nova-sprint, nova-card and nova-work code leave `tla/` with their MC modules, 328 configurations, `CASES.tsv` and `RUNS.tsv` rows, 15 `COVERAGE.tsv` rows, READMEs and benches (CardMachine, CardContract, the Friend* models and StopReturn stay beside the code they model). SPEC-SPRINT.md, SPRINT-COORDINATOR.md, SPRINT-COORDINATOR-SEAT.md, SPEC-WORK-V1.md, SPEC-WORKLANG.md, docs/sprint/GLOSSARY.md and the sprint and work ratings move; links to them point at nova-sprint. SPEC-SPRINT-DASHBOARD.md stays until internal/sprintdash, whose test holds the page to it, leaves. The "Push, not poll" loop table, which covers every nova-tools loop, stays here as docs/PUSH-NOT-POLL.md.
