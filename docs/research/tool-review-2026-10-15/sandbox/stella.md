@@ -1,7 +1,7 @@
 # nova-sandbox AI-usability review, 2026-10-15
 
 Reviewer: mercury-3-preview-1002
-Build: d7e47f037ea8
+Build: 181f25ae0ddb
 Score: 9.5/10 (51/55)
 
 ## Rubric
