@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // DefaultStageTimeout is the hard timeout for card staging (120 s).
@@ -328,6 +329,10 @@ type StageOptions struct {
 	// pushed carried on top where it applies cleanly (restageAtTip). A first attempt leaves it
 	// nil and is staged as before.
 	Rework *Rework
+	// NeedHeads is each need of the primary and the commit it landed at, from the member's
+	// packet (member.Packet.NeedHeads; nova-sprint tla/StageNeeds.tla): StageCard refuses a
+	// base that does not contain every non-empty need head before handing over the checkout.
+	NeedHeads []member.NeedHead
 	// GitIdentity, when set, is the author and committer the clone's local config is set to
 	// ("Name <email>"), the sprint row's git_identity; "" uses the machine's own default
 	// (gitrun.DefaultGitIdentity), never the host's global git config.
@@ -453,6 +458,9 @@ func StageCard(opts StageOptions) (StageResult, error) {
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Staged: true}, nil
 		}
 		if stageCmd(ctx, "-C", opts.TargetDir, "merge-base", "--is-ancestor", "--end-of-options", baseSha, "HEAD").Run() == nil {
+			if err := checkNeedHeads(ctx, stageCmd, opts.TargetDir, baseSha, opts.NeedHeads); err != nil {
+				return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, err
+			}
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Staged: true}, nil
 		}
 		var fetchTime, checkoutTime time.Duration
@@ -488,6 +496,9 @@ func StageCard(opts StageOptions) (StageResult, error) {
 			}
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref},
 				fmt.Errorf("git checkout failed: %s (%w)", strings.TrimSpace(string(out)), cerr)
+		}
+		if err := checkNeedHeads(ctx, stageCmd, opts.TargetDir, baseSha, opts.NeedHeads); err != nil {
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, err
 		}
 		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Branch: branch, Staged: true}, nil
 	}
@@ -604,7 +615,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	if herr != nil {
 		return fail("rev-parse", headOut, herr)
 	}
-	head := strings.TrimSpace(string(headOut))
+	head := cmp.Or(strings.TrimSpace(string(headOut)), baseSha)
 
 	// A checkout whose identity could not be set would take the model's commits under no
 	// name, found only when it commits: the stage fails here instead, saying which. The
@@ -642,6 +653,10 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		}
 	}
 
+	if err := checkNeedHeads(ctx, stageCmd, opts.TargetDir, head, opts.NeedHeads); err != nil {
+		return StageResult{BaseRepo: baseRepo, BaseSha: head, Ref: cb.Ref, Mirror: mirror, Wall: time.Since(start)}, err
+	}
+
 	return StageResult{
 		BaseRepo: baseRepo,
 		BaseSha:  head,
@@ -656,6 +671,25 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		Checkout: checkoutTime,
 		Carry:    carry,
 	}, nil
+}
+
+// checkNeedHeads checks that every need of the primary that carries a recorded landed
+// commit is an ancestor of baseSha in the checkout at dir, refusing a base that does not
+// contain it before any child runs (nova-sprint tla/StageNeeds.tla). A need with an empty
+// head has not landed and is not checked.
+func checkNeedHeads(ctx context.Context, stageCmd func(context.Context, ...string) *exec.Cmd, dir, baseSha string, needs []member.NeedHead) error {
+	for _, n := range needs {
+		if n.Head == "" {
+			continue
+		}
+		if err := refuseOptionLike("need head", n.Head); err != nil {
+			return err
+		}
+		if stageCmd(ctx, "-C", dir, "merge-base", "--is-ancestor", "--end-of-options", n.Head, baseSha).Run() != nil {
+			return fmt.Errorf("staging refused: need %s landed %s and base %s does not contain it", n.ID, short12(n.Head), short12(baseSha))
+		}
+	}
+	return nil
 }
 
 // stageHead makes baseSha's tree present in the checkout at dir: the cat-file probe of
