@@ -510,8 +510,9 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 
 // beatLua performs one atomic server pass (tla/HookBeat.tla, Pass). The
 // server row prevents two passes in one interval. Each hooked bus role gets
-// a challenge only after its selected quiet window or when proof renewal is
-// due. A valid pending nonce is retained; its outbox is retried until the bus
+// a challenge at the next pass after it is armed (it has not proved since),
+// then only after its selected quiet window or when proof renewal is due. A
+// valid pending nonce is retained; its outbox is retried until the bus
 // confirms delivery. Expiry invalidates its recent entry and latches failed
 // renewal until silence or a fresh model proof permits another challenge.
 // Only a delivered expired challenge plus activity older than down-after
@@ -563,6 +564,10 @@ while k <= #KEYS do
     elseif role == 'friend' and ARGV[a + 2] == '1' then quiet = ` + strconv.FormatInt(BusyQuietAfter.Milliseconds(), 10) + ` end
     if not dry then redis.call('HSET', rec, 'quiet_after', quiet) end
     local proofDue = now - math.max(answer, armed) >= ` + strconv.FormatInt((ProofTTL-AnswerBound).Milliseconds(), 10) + ` - 2 * every and redis.call('HGET', rec, 'renewal_failed') ~= '1'
+    -- A name with no proof since its current arming is challenged at the next pass: arming is
+    -- not activity, so the silence window opens only once she has proved after it. A challenge
+    -- that lapsed unanswered (renewal_failed) falls back to the silence window, not a new one each pass.
+    local unproven = answer < armed and redis.call('HGET', rec, 'renewal_failed') ~= '1'
     if miss and now - heard > after then
       did = 2
       if dry then
@@ -585,6 +590,7 @@ while k <= #KEYS do
           redis.call('HSET', rec, 'renewal_failed', '1')
         end
         proofDue = false
+        unproven = false
         pending = 0
       end
       if pending > 0 and not sent then
@@ -593,7 +599,7 @@ while k <= #KEYS do
           did = 1
           e = tonumber(redis.call('HGET', rec, 'epoch'))
         end
-      elseif pending == 0 and redis.call('EXISTS', chal) == 0 and (now - heard > quiet or proofDue) then
+      elseif pending == 0 and redis.call('EXISTS', chal) == 0 and (unproven or now - heard > quiet or proofDue) then
         e = tonumber(redis.call('HGET', rec, 'epoch'))
         local recent = {string.format('%d:%s:%s:%d:%s', e, sum, ms, now + after, bus[role])}
         for x in string.gmatch(redis.call('HGET', rec, 'recent') or '', '%S+') do

@@ -551,3 +551,48 @@ func TestAProofGrantsAFreshSilenceWindow(t *testing.T) {
 	r.pass(hook.BeatEvery)
 	assert.Equal(t, hook.BeatChallenged, pass().Did, "challenged again once the window from her proof has passed")
 }
+
+// TestAFreshlyArmedNameIsChallengedAtTheNextPass pins that arming is not
+// activity (tla/HookBeat.tla, Pass): a name with no proof since its current
+// arming is challenged at the very next pass, whatever its silence window; the
+// window applies only once she has proved after the arming. Armed at t,
+// challenged at the next pass; proven at t+1m, not challenged again before
+// t+1m+QuietAfter, challenged at the pass after. A re-arm after an unhook is
+// unproven again and is challenged at once.
+func TestAFreshlyArmedNameIsChallengedAtTheNextPass(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.startHeartbeat(t)
+	next := nonces()
+	arm := func() {
+		_, _, err := r.s.HookAs(ctx, "ada", hook.Comms, "ada")
+		require.NoError(t, err)
+	}
+	prove := func(b hook.Beat) {
+		require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, b.Epoch, "holder"))
+		_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
+		require.NoError(t, err)
+	}
+
+	arm() // t
+	b := r.beat(t, "srv", next)["ada"]
+	require.Equal(t, hook.BeatChallenged, b.Did, "challenged at the next pass, with no silence window run")
+	r.pass(time.Minute) // t+1m
+	prove(b)
+	for range int(hook.QuietAfter / hook.BeatEvery) { // t+2m ... t+1m+QuietAfter: silence not yet past the window
+		r.pass(hook.BeatEvery)
+		require.Equal(t, hook.BeatLeft, r.beatAfter(t, "srv", next, hook.DownAfter)["ada"].Did)
+	}
+	r.pass(hook.BeatEvery)
+	b = r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+	require.Equal(t, hook.BeatChallenged, b.Did, "challenged once the window from her proof has passed")
+	r.pass(time.Minute)
+	prove(b)
+
+	r.Unhook(t, "ada") // re-armed after an unhook: unproven again, challenged at once
+	r.pass(time.Minute)
+	arm()
+	r.pass(hook.BeatEvery)
+	assert.Equal(t, hook.BeatChallenged, r.beatAfter(t, "srv", next, hook.DownAfter)["ada"].Did)
+}

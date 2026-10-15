@@ -77,22 +77,8 @@ func (w world) serve(c *tool.Call) *tool.Out {
 		return tool.Refuse(fmt.Sprintf("--down-after %s is under --every %s; it wants the silence before a name goes down, at least one interval, such as %s", downAfter, every, hook.DownAfter))
 	}
 	within := c.Dur("judge-within")
-	// the server's own gate, with the evidence it exists to give set aside: no
-	// server row, or a stale one, refuses every name, and a server must still be able to start
-	ctx, cancel := call()
-	st, _, err := s.hooks.Read(ctx, s.as)
-	cancel()
-	if err == nil {
-		st[0].Down = ""
-		if r := st[0].Gate(hook.Want{Name: s.as, Need: []hook.Push{hook.Bus}, Roles: []hook.Role{hook.Coordinator, hook.Comms}, Role: hook.Comms}); r != nil {
-			err = r
-		}
-	}
-	if err != nil {
-		o := tool.Fail("the heartbeat server must itself be hooked in, as coordinator or comms: " + err.Error())
-		o.Remedy = hook.HookCommand(s.as, hook.Comms)
-		return o
-	}
+	// the server needs only its store: no hook record of its own name is read here,
+	// so a server starts however its name is hooked (absent, partial or unhooked)
 	b := &bus.Bus{Store: s.bus}
 	if c.DryRun() {
 		return w.plan(c, s, b, every, downAfter)
