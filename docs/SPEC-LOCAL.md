@@ -175,19 +175,21 @@ used it. `--harness-args` is split on `,` with no escape.
 
 ### `status`
 
-Reads each engine's health inside `--timeout`, its models (`/api/tags`, `/api/ps`), the
-store (`/api/show` of the first model) and the box. Writes nothing.
+Reads each engine's health inside `--timeout`. An engine that answers is read for its
+models (`/api/tags`, `/api/ps`) and its store (`/api/show` of the first model). One that
+is down or timed out does not answer, so its line is `store=unknown shared=unknown: the engine did not answer`, which is no verdict. The box is read either way. Writes nothing.
 
 ```
 STATUS OK engines=<n> answering=<n> loaded=<n> models=<n> mem_used=<n> mem_free=<n> mem_total=<n> wired_cap=<n|unset> load1=<f>
-STATUS ENGINE name=<e> state=<up|down|timeout> [status=<code>] base=<url> [loaded=<n> advertised=<n>] [num_ctx=<n>] [store=<dir|unknown> shared=<yes|no|unknown>][: <why>]
+STATUS ENGINE name=<e> state=<up|down|timeout> [status=<code>] base=<url> [loaded=<n> advertised=<n>] [num_ctx=<n>] store=<dir|unknown> shared=<yes|no|unknown>[: <why>]
 STATUS MODEL engine=<e> model=<ref> digest=<sha256:...|none> weights=<n> loaded=<yes|no> [num_ctx=<n>]
 STATUS MORE kind=model shown=<n> total=<n> ...
 STATUS FAILED: no engine answers (<n> asked); start one, such as the ollama daemon; run: ollama serve
 ```
 
 `state=up` is a 2xx on the health path inside `--timeout` and nothing weaker; a slow
-engine is `state=timeout` at exit 0.
+engine is `state=timeout` at exit 0. `store=unknown` is no verdict, and status does not
+refuse on it.
 
 ### `serve` (with `--stop`)
 

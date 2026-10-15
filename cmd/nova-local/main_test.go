@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -217,6 +220,45 @@ func TestTheSharedStore(t *testing.T) {
 	}
 	r := rig(newFake(filepath.Join(shared, "ollama")), "").OK(t, "status")
 	assert.Contains(t, r.Stdout, "shared=unknown: no AI root")
+}
+
+// namedEngine is ollama at its own base, so one status names more than one engine.
+type namedEngine struct {
+	Ollama
+	name, base string
+}
+
+func (n namedEngine) Name() string        { return n.name }
+func (n namedEngine) DefaultBase() string { return n.base }
+
+// Every ENGINE line names its store, a down or timed-out engine included (rule 15):
+// store=unknown shared=unknown when the engine did not answer, and status does not refuse.
+func TestEveryEngineLineNamesItsStore(t *testing.T) {
+	t.Parallel()
+	up := newFake("/ai/shared/models/ollama")
+	do := func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Port() {
+		case "1503":
+			rec := httptest.NewRecorder()
+			rec.WriteHeader(http.StatusServiceUnavailable)
+			return rec.Result(), nil
+		case "1504":
+			return nil, context.DeadlineExceeded
+		default:
+			return up.do(req)
+		}
+	}
+	w := world{do: do, box: fakeBox(), now: up.now, lookup: fakeLookup,
+		getenv: func(string) string { return "/ai" }, stat: os.Stat,
+		adapters: []Adapter{
+			namedEngine{name: "ollama", base: "http://127.0.0.1:11434/v1"},
+			namedEngine{name: "down", base: "http://127.0.0.1:1503/v1"},
+			namedEngine{name: "slow", base: "http://127.0.0.1:1504/v1"},
+		}}
+	r := testkit.Main(localTool(w).Run).OK(t, "status")
+	assert.Contains(t, r.Stdout, "STATUS ENGINE name=ollama state=up base=http://127.0.0.1:11434/v1 loaded=0 advertised=1 store=/ai/shared/models/ollama shared=yes")
+	assert.Contains(t, r.Stdout, "STATUS ENGINE name=down state=down status=503 base=http://127.0.0.1:1503/v1 store=unknown shared=unknown: the engine did not answer")
+	assert.Contains(t, r.Stdout, "STATUS ENGINE name=slow state=timeout base=http://127.0.0.1:1504/v1 store=unknown shared=unknown: the engine did not answer")
 }
 
 // worker writes nova-swarm's description: it decodes with zero problems, carries
