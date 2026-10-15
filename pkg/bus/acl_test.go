@@ -308,7 +308,7 @@ func deriveACLNeeds(t *testing.T, srcs map[string]string) aclNeeds {
 	var needs aclNeeds
 	family := map[string]bool{}
 	for n, v := range consts {
-		if strings.HasPrefix(v, "bus2:") {
+		if strings.HasPrefix(v, "bus2:") || strings.HasPrefix(v, "hook:rec:") { // the bus families, and the one hook record a send stamps
 			family[n] = true
 		}
 	}
@@ -611,6 +611,7 @@ var aclFamilies = map[string]aclPolicy{
 	"OwedPrefix":       {Kind: "writes", Why: "send: HSET for every friend recipient; ack and a reply: HDEL"},
 	"StagePrefix":      {Kind: "writes", Why: "recv and stamp: the receipt script; a reply acts in the send"},
 	"SentPrefix":       {Kind: "writes", Own: true, Why: "send --token: the token's record, GET and SET in a selector"},
+	"HookRecPrefix":    {Kind: "writes", Own: true, Why: "send --model-activity: HGET and HSET bus_sent_at on the sender's own hook record, in the send script"},
 	"AskPrefix":        {Kind: "writes", Why: "send --kind ask: HSET bus2:ask:<id>, a new id, so no name to pin; asks reads the records"},
 	"AsksPrefix":       {Kind: "writes", Own: true, Others: true, Why: "send --kind ask: HSET the sender's index; asks --liveness and overdue read every name's"},
 	"AnswersPrefix":    {Kind: "writes", Own: true, Others: true, Why: "every reply: HSETNX the sender's own; asks reads the recipients'"},

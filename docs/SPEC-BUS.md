@@ -524,7 +524,7 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:sent:<f>:* ~bus2:ask:* ~bus2:asks:<f> %R~bus2:asks:* ~bus2:answers:<f> %R~bus2:answers:* %R~friends %R~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:sent:<f>:* ~hook:rec:<f> ~bus2:ask:* ~bus2:asks:<f> %R~bus2:asks:* ~bus2:answers:<f> %R~bus2:answers:* %R~friends %R~machines resetchannels
   +hello +ping +smembers +time +type +xadd +xgroup|create +xreadgroup
   +xautoclaim +xclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hsetnx +hdel +hget +hgetall
   +eval +evalsha (~bus2:sent:<f>:* +get +set)
@@ -541,6 +541,8 @@ others' (`%R~bus2:asks:*`, `%R~bus2:answers:*`) are read-only selectors,
 because `asks` reads the recipients' answers and `--liveness` every name's
 index. `+hsetnx` is a root command, and adds no reach to `+hset`: every key
 the line makes writable to a hash command can already be `HSET`.
+
+`~hook:rec:<f>` is the sender's own hook record: an explicit model send stamps it with `bus_sent_at` in the same script (`activityLua`, tla/HookBeat.tla, BusSend), and `+hget` and `+hset` are root commands already. Like `bus2:answers:<f>` it is her own and no one else's, so she cannot write another name's record. A send with no once-key declares `bus2:sent:<f>:-` as its first key, because Redis checks every declared key against the login and the empty key is on no line.
 
 The roster patterns `%R~friends` and `%R~machines` grant reads only.
 Even a root `+set` cannot overwrite them.

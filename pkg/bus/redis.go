@@ -115,6 +115,14 @@ func (r Redis) Members(ctx context.Context) (friends, machines []string, now tim
 	return friends, machines, now, nil
 }
 
+// HookRecPrefix is the hook record of a name (hook.RecordKey): a model send
+// stamps the sender's own, and the friend's ACL line lets her touch only that
+// one (docs/SPEC-BUS.md).
+const HookRecPrefix = "hook:rec:"
+
+// HookRecOf is the hook record of name.
+func HookRecOf(name string) string { return HookRecPrefix + name }
+
 // activityLua stamps a successful explicit model send at Redis TIME. It
 // never creates a hook record or changes a proof (tla/HookBeat.tla, BusSend).
 const activityLua = `
@@ -139,7 +147,7 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 // expiry in ms, the count of streams, the count of field pairs, the pairs,
 // then each mark as "set" field value, "del" field, "fwd" field state or "nx" field value.
 var addOnce = redis.NewScript(forwardLua + activityLua + `
-if KEYS[1] ~= '' then
+if ARGV[1] ~= '' then
   local prior = redis.call('GET', KEYS[1])
   if prior then return {1, prior} end
 end
@@ -148,9 +156,9 @@ local ns, nf = tonumber(ARGV[3]), tonumber(ARGV[4])
 -- Redis scripts isolate writes but do not roll back runtime errors. Refuse
 -- conflicting/malformed keys and invalid arguments before the first XADD.
 if ns > 0 and nf == 0 then return redis.error_reply('XADD wants fields') end
-if KEYS[1] ~= '' and tonumber(ARGV[2]) <= 0 then return redis.error_reply('send-once lifetime must be positive') end
+if ARGV[1] ~= '' and tonumber(ARGV[2]) <= 0 then return redis.error_reply('send-once lifetime must be positive') end
 local expected = {}
-if KEYS[1] ~= '' then expected[KEYS[1]] = 'string' end
+if ARGV[1] ~= '' then expected[KEYS[1]] = 'string' end
 for i = 2, #KEYS do
   local want = 'hash'
   if i <= ns + 1 then want = 'stream' end
@@ -190,13 +198,19 @@ while j <= #ARGV do
   end
   k = k + 1
 end
-if KEYS[1] ~= '' then redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2]) end
+if ARGV[1] ~= '' then redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2]) end
 if activityKey then activity(activityKey) end
 return {0, ''}
 `)
 
 func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, marks ...Mark) (prior string, found bool, err error) {
 	err = r.call(ctx, false, 0, func(ctx context.Context) error {
+		if key == "" {
+			// A send with no once-key still declares a first key: Redis checks every declared
+			// key against the login's patterns, and the empty string is on no friend's line.
+			// The script reads ARGV[1] (the record), not this key, to tell a once-send.
+			key = SentOf(fields["from"], "-")
+		}
 		keys := append([]string{key}, streams...)
 		names := slices.Sorted(maps.Keys(fields))
 		args := []any{record, keep.Milliseconds(), len(streams), len(names)}
@@ -217,7 +231,7 @@ func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Durati
 			}
 		}
 		if fields["model_activity"] == "1" && len(streams) > 0 {
-			keys = append(keys, "hook:rec:"+fields["from"])
+			keys = append(keys, HookRecOf(fields["from"]))
 			args = append(args, "activity")
 		}
 		res, err := addOnce.Eval(ctx, r.C, keys, args...).Slice() // one round trip even on a cold script cache
