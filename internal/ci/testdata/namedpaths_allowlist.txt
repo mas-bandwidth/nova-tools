@@ -76,6 +76,10 @@ internal/sprintdash nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.
 internal/sprintdash/page nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/sprintdash/page/OFL.txt nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/sprintdash/page/nunito-800.woff2 nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
+internal/sprintdash/pageview.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
+internal/sprintdash/dashboard.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
+internal/sprintdash/page/ nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
+internal/sprintdash/pagelock.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/workfile nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/workgh nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/worklang nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
