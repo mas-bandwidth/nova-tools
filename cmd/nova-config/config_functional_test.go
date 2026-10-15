@@ -117,7 +117,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "friend", "set", "rowan", "--width", "16", "--roles", "")
 	require.Equal(t, "CONFIG SET kind=friend name=rowan rev=3 changed=roles,width\n", out, "friend set: %q", out)
 	out, _ = r.run(t, 0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan tiers=frontier,pro roles=- width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated)\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Equal(t, "FRIEND name=rowan tiers=frontier,pro roles=- width=16 mode=one-shot config_dir=- token_cap=6000000 streams=- kinds=- pronouns=they/them(unstated) session=live\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = r.run(t, 0, "machine", "show", "studio")
 	require.True(t, strings.HasPrefix(out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 roles=bench width=- tla=false note=- created="), "machine show: %q", out)
 	// The fleet row: there since migrate, set without a name, a machine it

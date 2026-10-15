@@ -470,6 +470,16 @@ be read is a refusal at exit 2. The gate is the actor's: a message to a
 recipient that is not hooked in lands and waits on its stream, the push proof
 below saying so as advice.
 
+A one-shot friend (nova-config `friend --session one-shot`: no live session
+between cards) is never on the psychic link, so a send naming one, alone or
+beside other recipients, `--dry-run` too, is refused at once at exit 2 with the
+reason `one_shot` and the remedy `<name> is a one-shot: put it in the next
+card's brief`; nothing is admitted for any recipient and nothing queues (the v1.3 comms spec, guarantee
+19). The bus reads the session apply wrote to
+`friend:<name>:desired` (its `session` field) in the store it opened; a name with
+no such field is not a one-shot. Work and context for a one-shot travel in the
+card brief.
+
 ## The ACL per friend
 
 The user for friend `<f>` is named `<f>` and needs, measured against what

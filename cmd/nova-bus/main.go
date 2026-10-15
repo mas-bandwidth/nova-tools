@@ -30,6 +30,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
@@ -89,11 +91,16 @@ type world struct {
 	// hooks reads each named identity's hook status and the store's now from
 	// the hook record (hook.Store.Read); a test passes its own.
 	hooks func(ctx context.Context, st bus.Store, names ...string) ([]hook.Status, time.Time, error)
+	// oneShots answers which of names are one-shot friends (nova-config friend
+	// --session one-shot, applied to friend:<name>:desired): a friend with no live
+	// session, never on the psychic link, so a send naming one is refused at once
+	// (the v1.3 comms spec, guarantee 19); a test passes its own.
+	oneShots func(ctx context.Context, st bus.Store, names ...string) ([]string, error)
 }
 
 func realWorld() world {
 	w := world{getenv: os.Getenv, run: runShell, now: time.Now,
-		wakeArm: realWakeArm, wakeLine: realWakeLine, gate: hookgate.Gate, hooks: realHooks,
+		wakeArm: realWakeArm, wakeLine: realWakeLine, gate: hookgate.Gate, hooks: realHooks, oneShots: realOneShots,
 		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
@@ -111,6 +118,59 @@ func realHooks(ctx context.Context, st bus.Store, names ...string) ([]hook.Statu
 		return nil, time.Time{}, err
 	}
 	return hs.Read(ctx, names...)
+}
+
+// realOneShots reads each name's applied session (bus.FriendDesiredKey, its
+// session field) in one round trip; a name with no hash, or one written before the
+// field, is not a one-shot. A store that is not Redis (no applied rows) holds none.
+func realOneShots(ctx context.Context, st bus.Store, names ...string) ([]string, error) {
+	r, ok := st.(bus.Redis)
+	if !ok || r.C == nil || len(names) == 0 {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, bus.CallTimeout)
+	defer cancel()
+	pipe := r.C.Pipeline()
+	cmds := make([]*redis.StringCmd, len(names))
+	for i, n := range names {
+		cmds[i] = pipe.HGet(ctx, bus.FriendDesiredKey(n), bus.SessionField)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	var out []string
+	for i, n := range names {
+		if cmds[i].Val() == bus.SessionOneShot {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+// OneShotReason is the code of a send refused because it names a one-shot friend.
+const OneShotReason = "one_shot"
+
+// refuseOneShots is the refusal of a send naming any one-shot friend, alone or among
+// others: nothing is admitted and nothing queues, and each is named with the remedy
+// (the v1.3 comms spec, guarantee 19; tla/FriendLane.tla, OneShot). nil when it
+// names none.
+func (w world) refuseOneShots(ctx context.Context, b *bus.Bus, rcpts []string) *tool.Out {
+	if w.oneShots == nil {
+		return nil
+	}
+	ones, err := w.oneShots(ctx, b.Store, rcpts...)
+	if err != nil {
+		return tool.Refuse("the friend rows could not be read: " + err.Error())
+	}
+	if len(ones) == 0 {
+		return nil
+	}
+	o := tool.Refuse()
+	for _, n := range ones {
+		o.Why = append(o.Why, n+" is a one-shot: put it in the next card's brief")
+		o.Reasons = append(o.Reasons, OneShotReason)
+	}
+	return o
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
@@ -681,6 +741,9 @@ func (w world) checkRecipients(ctx context.Context, b *bus.Bus, as string, draft
 	}
 	if len(rcpts) == 0 {
 		return nil
+	}
+	if o := w.refuseOneShots(ctx, b, rcpts); o != nil {
+		return o
 	}
 	sts, _, err := w.hooks(ctx, b.Store, rcpts...)
 	if err != nil {
