@@ -111,7 +111,7 @@ func TestAHalfHookedCoordinatorIsRefused(t *testing.T) {
 	assert.Equal(t, 1, res.Code)
 	out := res.Stdout + res.Stderr
 	assert.Contains(t, out, "partial as coordinator (bus=proven sprint=down)")
-	assert.Contains(t, out, "the sprint push of a coordinator is held by: nova-sprint hook --as ada")
+	assert.Contains(t, out, "the sprint push of a coordinator is held by: the sprint's server (nova-sprint run), which holds it for the coordinator while it runs and reaches the bus")
 }
 
 // TestTheGateFailsClosed pins that a hook record that cannot be read refuses
