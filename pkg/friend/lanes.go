@@ -48,8 +48,10 @@ const (
 	InstantFailRepeats = 2
 )
 
-// LaneState is what the lanes keep across restarts, in the state directory
-// (lanes.json): each lane's session, so a lane is the same friend's session
+// LaneState is what the lanes keep while the daemon runs, in memory only (the
+// lanes.json file that kept it across restarts is deleted: a local file never
+// decides what a lane holds; the server's lane records do, tla/FriendLaneClient.tla):
+// each lane's session, so a lane is the same friend's session
 // for its life, the cards set aside after CardTurns, so a restart does
 // not hand them again, and the cards a lane has begun and not ended, so a
 // restart finishes each (a lane's end, lane_end.go). Epoch is the sprint's
@@ -1046,21 +1048,6 @@ func (l *loop) saveLanes(now time.Time) {
 		l.d.Record(now.UTC().Format(time.RFC3339) + " lanes: the lane state cannot be written: " + err.Error())
 	}
 }
-
-// ReadLanes is the lanes' state in stateDir; none is an empty state.
-func ReadLanes(stateDir string) (LaneState, error) {
-	var s LaneState
-	_, err := read(filepath.Join(stateDir, LanesFile), &s) // a file not there is found=false and no error
-	return s, err
-}
-
-// WriteLanes is the lanes' state written whole to stateDir.
-func WriteLanes(stateDir string, s LaneState) error {
-	return write(filepath.Join(stateDir, LanesFile), s)
-}
-
-// LanesFile is the lanes' state in the state directory.
-const LanesFile = "lanes.json"
 
 // ParseRow reads the friend's row off her beat's answer (nova-sprint friend
 // beat prints row_mode=<mode> row_width=<n>, as friend sync last wrote her

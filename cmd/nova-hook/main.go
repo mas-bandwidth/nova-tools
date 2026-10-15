@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/dshdesktop"
@@ -65,12 +66,14 @@ type world struct {
 	now                func() time.Time
 	signals            func(ctx context.Context) (context.Context, context.CancelFunc)
 	nonce              func() string
-	after              func(time.Duration) <-chan time.Time             // the heartbeat server's wait between passes
-	wait               func(context.Context, time.Duration)             // the hook loop's pause or retry backoff wait
-	deliver            func(*bus.Bus, bus.Message) (bus.Message, error) // the heartbeat server's one send: Bus.Send under a call's deadline
-	holder             string                                           // who holds the pushes this process holds, as the lease shows it
-	tick               time.Duration                                    // one blocking read of the loop
-	service            serviceManager                                   // the one supervised hook service per friend
+	after              func(time.Duration) <-chan time.Time                                  // the heartbeat server's wait between passes
+	wait               func(context.Context, time.Duration)                                  // the hook loop's pause or retry backoff wait
+	deliver            func(*bus.Bus, bus.Message) (bus.Message, error)                      // the heartbeat server's one send: Bus.Send under a call's deadline
+	holder             string                                                                // who holds the pushes this process holds, as the lease shows it
+	tick               time.Duration                                                         // one blocking read of the loop
+	service            serviceManager                                                        // the one supervised hook service per friend
+	sprint             func(ctx context.Context, addr string, argv []string) (string, error) // one verb to the sprint server (the lane client's ask)
+	home               func() (string, error)                                                // the user's home, where the lane client caches briefs
 }
 
 func realWorld() world {
@@ -95,6 +98,8 @@ func realWorld() world {
 		tick:               Tick,
 		after:              time.After,
 		deliver:            deliver,
+		sprint:             sprintAsk,
+		home:               userHome,
 		holder:             fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
 		lookup: func(ctx context.Context, h string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
@@ -269,6 +274,7 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("claude-settings", w.getenv("NOVA_HOOK_CLAUDE_SETTINGS"), "existing directory where the Claude Code Stop hook is installed")
 					f.Bool("claude-boundary", false, "advance the Claude Code generation file and exit; the installed Stop hook runs this")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
+					laneFlags(w, f)
 					store(f)
 					f.Check(func(c *tool.Call) {
 						if r := c.Str("role"); r != "" {
@@ -773,7 +779,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if ch != nil {
 		line(c, ch)
 	}
-	return w.loop(c, s, role, held, epoch, cursor, challenge, core, serverOwned)
+	return w.loop(c, s, role, held, epoch, cursor, challenge, core, serverOwned, w.laneClient(c, s.as, role))
 }
 
 // nativeShim is the Codex desktop route's shim, or the Antigravity route's.
@@ -862,12 +868,13 @@ func (w world) onceResult(s *session, role hook.Role, held []hook.Push, armed, c
 // floods the Monitor. A record lost under the loop (none: deleted, or the
 // store flushed) is armed again, the session's hook being the identity's word;
 // an unhook ends the loop.
-func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out, core *notice.Core, serverOwned bool) *tool.Out {
+func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, epoch int64, cursor string, challenge func(int64) *tool.Out, core *notice.Core, serverOwned bool, lanes *friend.Client) *tool.Out {
 	ctx, stop := w.signals(context.Background())
 	defer stop()
 	stream := bus.StreamOf(s.as)
 	waiter, _ := s.bus.(bus.Waiter) // ignored: a store with no wait reads holds no bus push here; its loop only renews
 	nextRenew, nextChallenge := w.now().Add(hook.RenewEvery), w.now().Add(hook.ChallengeEvery)
+	nextLanes := w.now() // the lane client's first round is at once: a restart resumes from the server
 	lastState, unread := "", ""
 	renewAttempts := 0
 	var lk link
@@ -895,7 +902,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			var batch []bus.Message
 			for _, e := range got {
 				cursor = e.Entry
-				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") { // a server may challenge its own name
+				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") || laneSelf(m, s.as) { // a server may challenge its own name; the lane client tells its own
 					if core != nil {
 						batch = append(batch, m)
 						continue
@@ -967,6 +974,16 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 		if err == nil && st[0].Words() != lastState {
 			lastState = st[0].Words()
 			line(c, stateLine(st[0], role))
+		}
+		if lanes != nil && err == nil && !w.now().Before(nextLanes) {
+			// the lane client's round: asks (and so renews) only while the model proves
+			// (tla/FriendLaneClient.tla DeadModelReleases)
+			nextLanes = w.now().Add(LaneEvery)
+			lctx, lcancel := context.WithTimeout(ctx, time.Duration(lanes.Width+1)*laneAskWait)
+			for _, o := range lanePass(lctx, lanes, proven(st[0]), sendSelf(s, w)) {
+				line(c, o)
+			}
+			lcancel()
 		}
 	}
 }
