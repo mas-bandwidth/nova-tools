@@ -1219,8 +1219,11 @@ var (
 	// states idle reaping, and the finish names the reaping and never the deadline,
 	// which never fired for it (docs/roadmap.sexp, swarm-idle-reap-verdict)
 	nativeIdleReap = regexp.MustCompile(`\breason=idle-reap\b`)
-	nativeKilled   = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
-	nativeTermed   = regexp.MustCompile(`\breason=terminated\b`)
+	// nativeIdleCause is the cause an idle reap names beside its mark (idleSuffix):
+	// `reason=idle-reap cause=harness-never-started`
+	nativeIdleCause = regexp.MustCompile(`\breason=idle-reap cause=(\S+)`)
+	nativeKilled    = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
+	nativeTermed    = regexp.MustCompile(`\breason=terminated\b`)
 	// nativeWall is native's WALL line: the harness's own fence or the OS wall refused a
 	// write outside the job, so the run ended the card for it (swarm.WallLine's `WALL
 	// task=` and swarm.WallRefusedLine's `WALL REFUSED`). On a read it is the reader's own
@@ -1239,7 +1242,7 @@ func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
 		exit := 0
-		var end, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
+		var end, endCause, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
 		var wall time.Duration
 		nativeHasSpend := false
 		if b, err := os.ReadFile(c.logPath); err == nil {
@@ -1298,6 +1301,11 @@ func (c *nativeChild) Result() member.Result {
 				nativeSpendLine = string(s[1])
 			}
 			end = nativeEnd(b)
+			if end == member.EndIdleReap {
+				if m := nativeIdleCause.FindSubmatch(b); m != nil {
+					endCause = string(m[1])
+				}
+			}
 			if c.read && nativeWall.Match(b) {
 				// the wall refused a write outside the job: on a read that is the reader's
 				// own environment, not the work's verdict (member.EndEnvironment)
@@ -1418,7 +1426,7 @@ func (c *nativeChild) Result() member.Result {
 			// their rerun passed: the work is done as far as its gate says; the readers read it
 			verdict, report = "ok", "gate: "+gateTests+" flaky, green on the rerun; "+report
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry, Wall: wall, Exit: exit, HarnessOutput: harnessOutputTail(c.job)}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, EndCause: endCause, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry, Wall: wall, Exit: exit, HarnessOutput: harnessOutputTail(c.job)}
 	})
 	return c.result
 }

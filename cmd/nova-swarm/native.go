@@ -121,6 +121,11 @@ type nativeRunConfig struct {
 	// test runs in parallel with the others instead of swapping the seam under
 	// them. Nil is production's timer.
 	deadlineFn func(time.Duration) (<-chan time.Time, func() bool)
+	// idleFn, when set, is this one run's idle watch, in place of the package seam
+	// nativeWatchIdle, for the same reason deadlineFn is a field: a test hands the wait
+	// the very end the watch would send, with the time passed in, and runs in parallel.
+	// Nil is production's watch.
+	idleFn func(swarm.IdleWatch, <-chan struct{}) <-chan swarm.IdleEnd
 	// headerWait is how long the proxy waits for response headers after the
 	// request is written; expiry ends the attempt UNKNOWN. Zero means
 	// ProviderHeaderTimeout (45s). Production leaves it zero.
@@ -1281,7 +1286,11 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 		// a request stalled on its budget is a card waiting, never an idle one
 		watchCfg.Stalled = s.prep.proxy.Stalling
 	}
-	idleC := nativeWatchIdle(watchCfg, stopWatch)
+	watchIdle := nativeWatchIdle
+	if s.prep.cfg.idleFn != nil {
+		watchIdle = s.prep.cfg.idleFn
+	}
+	idleC := watchIdle(watchCfg, stopWatch)
 
 	return &nativeStarted{
 		cmd:            cmd,
@@ -1507,7 +1516,22 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	if !s.res.lost && ((s.res.wallRefusal != swarm.WallRefusal{}) || (s.res.shellDenial != swarm.ShellDenial{})) {
 		s.res.end = swarm.EndWall
 	}
+	idleCredit := false
 	if !harnessFault && !s.res.lost && s.res.idled {
+		// THE ROUTE'S REFUSAL FOR CREDIT COMES FIRST: a run the idle watch reaped that the
+		// provider had refused for credit is the provider's end, out-of-credit, and not
+		// the card's or the harness's (providerEnd reads a killed run for that class
+		// alone), so the member's finish rests the route and the card is redealt.
+		if cause, ok := providerEnd(s.prep.cfg.headless(), s.prep.dataHome, s.providerMark, s.runStart, s.res.rc, tailSince(s.outLog, s.captureMark)); ok && cause.Class == swarm.CauseCredit {
+			fmt.Fprintln(errOut, oneline.Escape(providerLine(s.prep.cfg.label, s.res.wallSeconds, s.prep.cfg.model, cause)))
+			s.res.end = swarm.EndProvider
+			idleCredit = true
+		} else {
+			// else a harness that never started work says so: the end names its cause
+			s.res.idleEnd.Cause = idleCauseOf(s.prep.cfg.headless(), s.res.harness, s.prep.dataHome, s.res.spent, s.res.observed)
+		}
+	}
+	if !harnessFault && !s.res.lost && s.res.idled && !idleCredit {
 		s.res.end = swarm.EndWall
 		reason := fmt.Sprintf("the card's log and its process tree were both still for %.0fs; the run ended it rather than holding the slot to its deadline", s.res.idleEnd.Idle.Seconds())
 		if wr, named := s.res.idleEnd.WallRefusal(); named {
@@ -1515,6 +1539,9 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 			reason = fmt.Sprintf("the wall refused %s %s and the card wrote nothing for %.0fs after it",
 				oneline.Field(s.res.idleEnd.Kind), oneline.Field(s.res.idleEnd.Path), s.res.idleEnd.Idle.Seconds())
 		} else {
+			if s.res.idleEnd.Cause == swarm.IdleCauseNeverStarted {
+				reason = fmt.Sprintf("the harness never started work (no harness store, nothing printed, no tokens) and the run ended it after %.0fs rather than holding the slot to its deadline", s.res.idleEnd.Idle.Seconds())
+			}
 			// A REAPED CARD IS NOT GIVEN A WALL DEATH THAT NAMES NOTHING
 			// (docs/roadmap.sexp, swarm-idle-reap-verdict): a refusal with no path in it
 			// is no cause a reader can act on, and the cause this end reports is the
@@ -1534,7 +1561,7 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 			s.res.blockedPath = path
 		}
 	}
-	handedBack, providerEnded := false, false
+	handedBack, providerEnded := false, idleCredit
 	if !harnessFault && !s.res.lost && !s.res.idled && !s.res.terminated && s.res.wallReport == "" && (s.res.wallRefusal == swarm.WallRefusal{}) {
 		if raw, err := os.ReadFile(s.outLog); err == nil {
 			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: s.prep.jobDir, RC: s.res.rc, Wall: time.Duration(s.res.wallSeconds * float64(time.Second)), Route: s.prep.cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
@@ -1834,6 +1861,25 @@ func harnessSpoke(path string) bool {
 		return true
 	}
 	return false
+}
+
+// idleCauseOf is the cause an idle reap names when the harness never started work, else "":
+// the capture holds no words of the child's (harness silent: no printed output and no
+// result), the run spent no tokens, and the harness created no store in its data home. A
+// harness that worked and then went still has at least one of those, and keeps the plain
+// idle reaping. A headless harness keeps no opencode store, so only the first two apply.
+func idleCauseOf(headless, harness, dataHome string, spent int, observed bool) string {
+	if harness != "silent" || (observed && spent > 0) {
+		return ""
+	}
+	if headless == "" {
+		for _, p := range swarm.OpenCodeStoreLocations(dataHome) {
+			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+				return ""
+			}
+		}
+	}
+	return swarm.IdleCauseNeverStarted
 }
 
 // wroteBytes says whether a path is a regular file holding at least one byte: the test
