@@ -27,6 +27,24 @@ func localBox() Box {
 	}
 }
 
+// parseDarwinLoadavg is the one-minute load from the vm.loadavg sysctl, a struct loadavg:
+// three uint32 ldavg, four bytes of padding, then a 64-bit fscale, little-endian, 24 bytes.
+// syscall.Sysctl returns the raw bytes as a string with one trailing zero byte cut, so a
+// 23-byte value is padded back; load1 is ldavg[0] / fscale.
+func parseDarwinLoadavg(s string) (float64, bool) {
+	const size = 24
+	if len(s) != size && len(s) != size-1 {
+		return 0, false
+	}
+	var b [size]byte
+	copy(b[:], s)
+	fscale := binary.LittleEndian.Uint64(b[16:])
+	if fscale == 0 {
+		return 0, false
+	}
+	return float64(binary.LittleEndian.Uint32(b[0:])) / float64(fscale), true
+}
+
 // sysctlUint reads an integer sysctl. syscall.Sysctl hands back the value's raw
 // little-endian bytes with one trailing zero byte dropped, so the bytes are padded back.
 func sysctlUint(name string) (uint64, bool) {

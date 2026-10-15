@@ -25,6 +25,20 @@ func localBox() Box {
 	}
 }
 
+// parseProcLoadavg is the one-minute load from the bytes of /proc/loadavg, whose first
+// field is load1. A missing, malformed or negative field is not a reading.
+func parseProcLoadavg(b []byte) (float64, bool) {
+	f := strings.Fields(string(b))
+	if len(f) == 0 {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(f[0], 64)
+	if err != nil || v < 0 || v != v {
+		return 0, false
+	}
+	return v, true
+}
+
 // meminfo is MemAvailable and MemTotal from /proc/meminfo, in bytes.
 func meminfo(s string) (free, total uint64, ok bool) {
 	var seen int

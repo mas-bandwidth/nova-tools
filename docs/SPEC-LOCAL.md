@@ -39,14 +39,15 @@ are not restated. The command is `cmd/nova-local`, and the engines (`engine.go`,
 
 Every rule is normative and has a test (**Tests**, below).
 
-1. **No dependencies** (the owner: *"no deps"*). One Go binary whose imports are the
-   standard library and this module's own packages, and no shelling out to learn what
-   the standard library cannot read: the box's memory and load are `sysctl` on darwin
-   and `/proc` on linux, read in process (load from `vm.loadavg` and `/proc/loadavg`; other
-   platforms report load unknown). Measured with `go list -deps` on darwin, linux and windows:
-   no package outside the standard library and this module, and none of `os/exec`,
-   `pkg/subproc` or `pkg/hostload` (`pkg/tool` brings no module outside the standard library). What the stranger installs (ollama, the
-   harness) is not this binary's dependency.
+ 1. **No dependencies** (the owner: *"no deps"*). One Go binary whose imports are the
+    standard library and this module's own packages, and no shelling out to learn what
+    the standard library cannot read: the box's memory and load are `sysctl` on darwin
+    and `/proc` on linux, read in process (load from `vm.loadavg` and `/proc/loadavg`; other
+    platforms report load unknown). Measured with `go list -deps` on darwin, linux and windows:
+    no package outside the standard library and this module, and none of `os/exec`,
+    `pkg/subproc` or `pkg/hostload` (the module's `pkg/tool` brings no module outside the
+    standard library). What the stranger installs (ollama, the
+    harness) is not this binary's dependency.
 
 2. **An engine is an adapter, and adding one changes nothing else.** An adapter
    (`Adapter`, `cmd/nova-local/engine.go`) declares its name, its default base URL, its health check,
