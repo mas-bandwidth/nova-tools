@@ -263,7 +263,7 @@ doctor` prints one `DOCTOR HARNESS` line per headless harness: its binary, its v
 and whether its login verb (`claude auth status`, `codex login status`, `grok models`)
 says it is logged in. The functional test
 `TestHeadlessHarnessesRunAOneLineCard` (`NOVA_SWARM_HEADLESS=1`) runs one one-line card
- through each harness on the machine and prints the usage it read.
+through each harness on the machine and prints the usage it read.
 
 ## local-native-launches-at-the-endpoint: a local provider is declared at its endpoint
 
