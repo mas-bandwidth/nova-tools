@@ -459,10 +459,10 @@ func redisReceiver(e ast.Expr, depth int) bool {
 	return false
 }
 
-func refersTo(n ast.Node, object *ast.Object) bool {
+func refersTo(n ast.Node, object *ast.Ident) bool {
 	found := false
 	ast.Inspect(n, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && id.Obj == object {
+		if id, ok := n.(*ast.Ident); ok && id.Obj == object.Obj {
 			found = true
 		}
 		return !found
@@ -473,7 +473,7 @@ func refersTo(n ast.Node, object *ast.Object) bool {
 // stableCommandArgs accepts the current tail-append construction only. A
 // replacement, indexed write, alias or opaque call can change the command;
 // fail closed instead of claiming its initializer is still the command.
-func stableCommandArgs(file *ast.File, object *ast.Object, use *ast.CallExpr) bool {
+func stableCommandArgs(file *ast.File, object *ast.Ident, use *ast.CallExpr) bool {
 	stable := true
 	appendOnly := func(e ast.Expr) bool {
 		call, ok := e.(*ast.CallExpr)
@@ -481,12 +481,12 @@ func stableCommandArgs(file *ast.File, object *ast.Object, use *ast.CallExpr) bo
 			return false
 		}
 		id, ok := call.Args[0].(*ast.Ident)
-		return ok && id.Obj == object
+		return ok && id.Obj == object.Obj
 	}
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.AssignStmt:
-			if n == object.Decl {
+			if n == object.Obj.Decl {
 				break
 			}
 			for _, lhs := range n.Lhs {
@@ -532,7 +532,7 @@ func doCommand(call *ast.CallExpr, consts map[string]string, file *ast.File) (st
 	e := call.Args[1]
 	if call.Ellipsis.IsValid() {
 		if id, ok := e.(*ast.Ident); ok {
-			if id.Obj == nil || !stableCommandArgs(file, id.Obj, call) {
+			if id.Obj == nil || !stableCommandArgs(file, id, call) {
 				return "", false
 			}
 			e = initialValue(id)
