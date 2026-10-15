@@ -17,25 +17,25 @@ Score: 7.5/10 (41/55)
 | 8 | one word | 5 | `nova-bus help` -> `the verbs are wait, send, peek, recv, ack, receipts, overdue, asks, log, names, version` |
 | 9 | push | 4 | `nova-bus help wait` -> `reads your stream past the cursor with XREAD` |
 | 10 | no leaks | 4 | `nova-bus names --as <me> --redis 127.0.0.1:6381 --timeout 5s` -> `NAMES OK count=21 proven=3`; no secret appeared in captured safe output |
-| 11 | true help | 3 | `nova-bus overdue --dry-run` -> `OVERDUE REFUSED: unknown flag --dry-run; the flags of overdue are --as, --json, --max, --older, --redis, --timeout; run: nova-bus overdue -h`; help says expiry sends timeout messages |
+| 11 | true help | 3 | `nova-bus help overdue` -> `effect: delivery: sends beyond this machine: an ask past its deadline gets its one timeout message, to its sender`; this write behavior could not be safely exercised |
 
 ## 10/10 blockers
 | # | where | what an AI meets | fix | size |
 |---|---|---|---|---|
-| 1 | `nova-bus overdue --dry-run` | Help describes overdue as expiring asks by sending a timeout message, but this write-capable verb refuses `--dry-run` as an unknown flag. A safe rehearsal cannot establish what it would change. | Add a dry-run mode that reports timeout messages without writing them, and pin that no-write behavior in a test. | S |
-| 2 | `nova-bus help` first-run example | The older 2026-10-02 cold-start finding remains: help shows a send loop but does not explain the roster and hook setup needed before a name can send. Current help says every verb needs a hooked identity, but gives no setup path. | Add a safe, complete first-run path that provisions and verifies a test identity before the send example. | S |
-| 3 | `nova-bus names` | With no configured login user, the first attempt refuses because `--as` is required; the remedy is generic help, which does not identify how to discover the required bus identity. | Include a direct, safe identity-discovery command in the refusal. | S |
+| 1 | `nova-bus help` first-run example | The older 2026-10-02 cold-start finding remains: help shows a send loop but does not explain the roster and hook setup needed before a name can send. Current help says every verb needs a hooked identity, but gives no setup path. | Add a safe, complete first-run path that provisions and verifies a test identity before the send example. | S |
+| 2 | `nova-bus names` | With no configured login user, the first attempt refuses because `--as` is required; the remedy is generic help, which does not identify how to discover the required bus identity. | Include a direct, safe identity-discovery command in the refusal. | S |
 
 ## Nice-to-haves
 | # | where | what | fix | size |
 |---|---|---|---|---|
-| 1 | `nova-bus help` | The first successful read required manually supplying both an acting name and store address. | Add a short first-run path that explains how to obtain these values without guessing. | S |
-| 2 | `nova-bus wait` | Help describes cursor and wake-file rearming in depth, but the read-only probes could not exercise the blocking and restart paths. | Add focused examples covering a timeout and a rearm from returned cursors. | S |
+| 1 | `nova-bus overdue` | This write-capable command can send timeout messages, and help does not offer a dry-run mode. | Add `--dry-run` to preview timeout messages without writing them, and pin that no-write behavior in a test. | S |
+| 2 | `nova-bus help` | The first successful read required manually supplying both an acting name and store address. | Add a short first-run path that explains how to obtain these values without guessing. | S |
+| 3 | `nova-bus wait` | Help describes cursor and wake-file rearming in depth, but the read-only probes could not exercise the blocking and restart paths. | Add focused examples covering a timeout and a rearm from returned cursors. | S |
 
 ## Top 3 fixes
-1. Add and test `overdue --dry-run` so the ask-expiry write can be inspected safely.
-2. Document and verify the complete first-run roster and hook setup before the send example.
-3. Make missing `--as` errors name a safe identity-discovery command.
+1. Document and verify the complete first-run roster and hook setup before the send example.
+2. Make missing `--as` errors name a safe identity-discovery command.
+3. Consider adding `overdue --dry-run` so ask-expiry writes can be inspected safely.
 
 ## Good, keep
 Refusals consistently identify the cause and a relevant next help command; the tested parser failures exit 2.
