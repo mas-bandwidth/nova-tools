@@ -477,15 +477,6 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 	return ids, held, share, free, holders, true, nil
 }
 
-// ReleaseSlotLeases removes owner's leases: all of them with all=true, or only the
-// ones carrying label otherwise. It reports the removed count and the owner's leases
-// still held. It never frees a seat whose holder is still running; see
-// ReleaseSlotLeasesForcing.
-func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int, err error) {
-	released, held, _, err = ReleaseSlotLeasesForcing(store, owner, label, all, false)
-	return released, held, err
-}
-
 // ReleaseSlotLeasesForcing is the body, with the live-seat fence spelled out.
 //
 // A LEASE IS NOT A TICKET SOMEBODY ELSE MAY TEAR UP (issue #1902). Deleting a lease
