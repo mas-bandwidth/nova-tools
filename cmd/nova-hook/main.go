@@ -1152,9 +1152,6 @@ func (w world) pruneNoticesOnProve(c *tool.Call, as, nonce string, o *tool.Out) 
 		}
 		if _, err := dshdesktop.PruneOnProve(dir, nonce); err != nil {
 			msg := fmt.Sprintf("prune resolved notices in %s: %v", dir, err)
-			if c != nil && c.Stderr != nil {
-				_, _ = fmt.Fprintln(c.Stderr, "nova-hook prove: "+msg)
-			}
 			o.Note(msg)
 		}
 	}
