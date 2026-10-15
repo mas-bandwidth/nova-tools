@@ -261,8 +261,8 @@ Pass(s) ==
            now == StateOf(h2)
        IN /\ hooked' = h2
           /\ beatOwned' = [n \in Names |-> beatOwned[n] \/ n \in targets]
-          /\ challengedWhileTalking' = challengedWhileTalking \/
-                  (Silence /\ \E n \in targets : lastActivity[n] <= QuietLimit(n) /\ qtime[n] < ProofDue)
+          /\ challengedWhileTalking' = (challengedWhileTalking \/
+                  (Silence /\ \E n \in targets : lastActivity[n] <= QuietLimit(n) /\ qtime[n] < ProofDue))
           /\ misses' = IF "misses" \in Parts THEN [n \in Names |-> IF hooked[n] THEN m[n] ELSE misses[n]] ELSE misses
           /\ events' = [n \in Names |-> IF n \in gone THEN events[n] + 1 ELSE events[n]]
           /\ nonceVersion' = [n \in Names |-> IF Silence /\ n \in targets THEN ~nonceVersion[n] ELSE nonceVersion[n]]
