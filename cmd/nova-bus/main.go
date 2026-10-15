@@ -451,8 +451,9 @@ example: nova-bus receipts --as bob`,
 			},
 			{
 				Name:      "overdue",
-				Usage:     "overdue [--as <me>] [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Usage:     "overdue [--as <me>] [--older <duration>] [--dry-run] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Effect:    tool.Delivery + ": an ask past its deadline gets its one timeout message, to its sender",
+				DryRun:    true,
 				ExitTable: "0 OVERDUE OK, nothing short of delivered past --older; 1 BUS OVERDUE, one or more, or not hooked in (FAILED reason=unhooked); 2 could not run (a flag, a store that did not answer).",
 				Detail: `The alarm the coordinator's loop and the seat check run. Looks at every known name's stream and
 lists each message still short of delivered (new, never taken by a reader, or pending with no
@@ -463,7 +464,9 @@ age=<duration> subject=<s> line each, oldest first, at exit 1. A message acked i
 It is also the expiry of asks, first: every ask past its deadline (the store's clock) with no answer by
 it gets its timeout, exactly once however many loops run the alarm: one message to the ask's sender,
 kind timeout, re=<ask id>, which wakes its session; one OVERDUE TIMEOUT ask=<id> from=<sender>
-to=<names> message=<id> line each. A timeout never changes the exit.
+to=<names> message=<id> line each. A timeout never changes the exit. --dry-run delivers no timeout: it
+lists each ask that would get one now as OVERDUE TIMEOUT ask=<id> from=<sender> to=<names> message=-,
+and the overdue messages as without it.
 example: nova-bus overdue --older 10m`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
@@ -1139,8 +1142,19 @@ func (w world) overdue(c *tool.Call) *tool.Out {
 		return refused
 	}
 	// the expiry of asks first (bus.ExpireAsks): a timeout is a message, and
-	// the alarm below sees it like any other
-	expired, err := b.ExpireAsks(context.Background())
+	// the alarm below sees it like any other; --dry-run reads the asks it
+	// would time out (bus.DueAsks) and delivers nothing
+	var expired []bus.Expired
+	var err error
+	if c.DryRun() {
+		var due []bus.Ask
+		due, err = b.DueAsks(context.Background())
+		for _, a := range due {
+			expired = append(expired, bus.Expired{Ask: a, MessageID: "-"})
+		}
+	} else {
+		expired, err = b.ExpireAsks(context.Background())
+	}
 	if err != nil {
 		return answer(err)
 	}

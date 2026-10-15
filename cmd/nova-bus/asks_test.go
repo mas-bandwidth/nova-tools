@@ -43,6 +43,11 @@ func TestAsksAndTheTimeoutTheOverdueAlarmDelivers(t *testing.T) {
 
 	r.advance(6 * time.Minute)
 	cli.Do(t, "asks", "--as", "ada", "--timedout").Exit(0).Out("ASKS OK count=1", "id="+a2+" state=timedout", "timeout=-")
+	// --dry-run names the timeout it would deliver and delivers none
+	logged := r.store.Len(bus.LogKey)
+	cli.Do(t, "overdue", "--as", "ada", "--dry-run").Out("OVERDUE TIMEOUT ask="+a2+" from=ada to=cy message=-", "dry_run=true")
+	assert.Equal(t, logged, r.store.Len(bus.LogKey), "a dry run writes nothing")
+	cli.Do(t, "asks", "--as", "ada", "--timedout").Exit(0).Out("id="+a2+" state=timedout", "timeout=-")
 	got := cli.Do(t, "overdue", "--as", "ada").Stdout
 	assert.Contains(t, got, "OVERDUE TIMEOUT ask="+a2+" from=ada to=cy")
 	cli.Do(t, "overdue", "--as", "ada").NotOut("OVERDUE TIMEOUT")
