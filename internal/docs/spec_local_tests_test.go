@@ -37,7 +37,7 @@ func TestSpecLocalTestsAreRealOrOwed(t *testing.T) {
 	for _, m := range matches {
 		name := table[m[2]:m[3]]
 		after := table[m[1]:]
-		// take up to next ` or , or ; or | or newline
+		// take up to next delimiter (backquote, comma, semicolon, pipe, or newline)
 		cut := len(after)
 		for i, c := range after {
 			if c == '`' || c == ',' || c == ';' || c == '|' || c == '\n' {
