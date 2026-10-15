@@ -80,7 +80,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint mod-tidy preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp check clean darwin-timeout map new-rule new-verb clidoc roadmap schemawire-check
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint mod-tidy preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp check clean darwin-timeout map new-rule new-verb clidoc roadmap schemawire-check schemawire-conformance
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -119,6 +119,7 @@ help:
 	@echo "make clidoc      regenerate CLI.md reference blocks from tool help"
 	@echo "make roadmap     regenerate ROADMAP.md and FIXES.md from their sexp"
 	@echo "make schemawire-check go generate every pkg/*wire package, then git diff --exit-code -- pkg schemas (schemas/README.md)"
+	@echo "make schemawire-conformance run the pinned schema compiler's Go oracle and wire fuzz over every unit in schemas/, bounded, and print the elapsed seconds"
 
 map:
 	$(GO) run ./tools/agentsmap
@@ -147,6 +148,47 @@ schemawire-check:
 	untracked=$$(git ls-files --others --exclude-standard -- pkg schemas); \
 	if [ -n "$$untracked" ]; then echo "schemawire-check: generated files are not committed: $$untracked; commit them (schemas/README.md)" >&2; exit 1; fi; \
 	echo "schemawire-check: OK"
+
+# schemawire-conformance is the schema wire's conformance gate: for every
+# unit in schemas/ (each schemas/<area>/ holding .schema files,
+# schemas/README.md), the pinned schema compiler's Go oracle reads the unit
+# (its check, the one per-unit invocation the bump recipe names), then the
+# compiler's own wire fuzz harness drives the unit's Go leg over every mutant
+# its fuzz corpus carries, under one time bound per unit, and any finding
+# fails the gate. The pin is read from the pkg/*wire/generate.go files, the
+# one place schemas/README.md keeps it, so there is no second copy of the
+# version to bump. A unit with no pinned compiler, no fuzz corpus or no leg
+# to drive refuses by name rather than pass empty; a schemas/ home with no
+# unit yet says so and passes, exactly as schemawire-check passes with no
+# generated package. A cold module cache fetches the pinned compiler once.
+SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS ?= 30
+schemawire-conformance:
+	@set -e; start=$$(date +%s); \
+	test -d schemas || { echo "schemawire-conformance: the schemas/ home is absent (nova-tools-schema-home-and-pin, schemas/README.md)" >&2; exit 2; }; \
+	pin=$$(sed -n 's@^//go:generate go run github.com/mas-bandwidth/schema/v2/cmd/schema@\(v[0-9][^ ]*\) generate.*@\1@p' pkg/*wire/generate.go 2>/dev/null | sort -u); \
+	if [ "$$(printf '%s\n' "$$pin" | grep -c .)" -gt 1 ]; then echo "schemawire-conformance: the pkg/*wire/generate.go pins disagree; one compiler writes the whole tree (schemas/README.md)" >&2; exit 2; fi; \
+	units=""; for d in schemas/*/; do ls "$$d"*.schema >/dev/null 2>&1 && units="$$units $${d%/}"; done; \
+	if [ -z "$$(printf '%s' "$$units" | tr -d ' ')" ]; then \
+		echo "schemawire-conformance: no unit in schemas/ yet (no schemas/*/*.schema; the first lands with the first area, schemas/README.md); nothing to run"; \
+	else \
+	for u in $$units; do \
+		area=$${u#schemas/}; \
+		if [ -z "$$pin" ]; then echo "schemawire-conformance: unit $$u has no pinned schema compiler (no pkg/*wire/generate.go; schemas/README.md)" >&2; exit 2; fi; \
+		echo "schemawire-conformance: the Go oracle over $$u (schema@$$pin check $$u)"; \
+		$(GO) run github.com/mas-bandwidth/schema/v2/cmd/schema@$$pin check $$u; \
+		test -f $$u/fuzz/MANIFEST.txt || { echo "schemawire-conformance: unit $$u carries no fuzz corpus (schemas/<area>/fuzz/MANIFEST.txt, the harness's manifest format, test/conformance/README.md in the schema repository)" >&2; exit 2; }; \
+		test -d pkg/$${area}wire/cmd/$${area}-driver || { echo "schemawire-conformance: unit $$u has no Go leg to fuzz (pkg/$${area}wire/cmd/$${area}-driver, the wire-fuzz driver contract, test/conformance/README.md in the schema repository)" >&2; exit 2; }; \
+		mkdir -p scratch; \
+		$(GO) build -o scratch/$${area}-driver ./pkg/$${area}wire/cmd/$${area}-driver; \
+		echo "schemawire-conformance: the wire fuzz over $$u, bounded at $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS)s"; \
+		timeout $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS) $(GO) run github.com/mas-bandwidth/schema/v2/test/conformance/harness@$$pin wire-fuzz \
+			--manifest $$u/fuzz/MANIFEST.txt --json $$u/fuzz --vectors '' \
+			--driver "scratch/$${area}-driver wire-fuzz" --seed 24845619678 --n 100 \
+			|| { echo "schemawire-conformance: the wire fuzz over $$u failed or overran its $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS)s bound; a failing mutant is written where the harness's --failed flag names" >&2; exit 1; }; \
+	done; \
+	fi; \
+	elapsed=$$(($$(date +%s) - $$start)); \
+	echo "schemawire-conformance: OK ($${elapsed}s)"
 
 # TLC runs on Linux benches with an explicit installed jar and owned output path.
 TLC_JAR ?=
@@ -441,7 +483,7 @@ compile-lisp:
 # against the old 60 s package budget and a SLEEPS skip off the ledger is red;
 # the target variables ride into `test` as its prerequisite.
 check: SLOWTESTS_FLAGS := --budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt
-check: build lint test test-functional test-e2e
+check: build lint test test-functional test-e2e schemawire-conformance
 
 # An explicit list, never a computed path: clean removes the two directories a
 # local build and a worker's notes land in, and nothing else.
