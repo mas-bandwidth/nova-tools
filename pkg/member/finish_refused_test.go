@@ -121,20 +121,44 @@ func TestTheMemoryGoesWhenTheQueueMovesTheCard(t *testing.T) {
 	assert.Equal(t, []string{"c1", "c1"}, g.r.started(), "the card is recovered and run again at the moved generation")
 }
 
-// A refused finish of a run that pushed nothing is forgotten as today: no memory and no
-// resend, because the member has no pushed generation it must not run again.
-func TestARefusedFinishWithNothingPushedIsForgotten(t *testing.T) {
+// A refused finish of a run that pushed nothing is held exactly as a pushed one is: the same
+// finish is sent again on its backoff, the card is never run again at that generation, and
+// after FinishRefusedMax of the same refusal it is handed back once. Red at BASE: the memory
+// was kept only for a pushed generation, so recoverWorking ran the card again on the very next
+// pass and every run's finish met the same refusal (hetzner1, 2026-10-15: the receipt-contract
+// refusal below, one card run 78 times in 22 minutes on a paid route).
+func TestARefusedFinishWithNothingPushedIsHeldNotRunAgain(t *testing.T) {
 	t.Parallel()
 	pu := &fakePusher{def: Push{Sha: fullSha}}
-	g, _ := pushRig(t, pu, Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: "nothing to commit"})
-	g.s.set("finish", 1, "REFUSED finish: no such column")
-	_, err := g.m.Tick(time.Unix(0, 0))
-	require.NoError(t, err)
-	assert.Empty(t, pu.cards(), "nothing was pushed")
-	assert.Contains(t, g.out.String(), "NOTE finish c1 refused: REFUSED finish: no such column")
+	g, _ := pushRig(t, pu, Result{Ran: false, Report: "native refused: pool has no identity row in identity.tsv"})
+	const refusal = "nova-sprint receipt-contract REFUSED: invalid raw usage JSON; run: nova-sprint receipt-contract -h"
+	g.s.set("finish", 1, refusal)
 
-	g.s.set("finish", 0, "")
-	_, err = g.m.Tick(time.Unix(0, 0).Add(2*FinishRefusedRetry + time.Second))
+	// the member's every=3s, for a minute: one run, one finish, the card held
+	for i := 0; i < 20; i++ {
+		_, err := g.m.Tick(time.Unix(int64(3*i), 0))
+		require.NoError(t, err)
+	}
+	assert.Empty(t, pu.cards(), "nothing was pushed")
+	assert.Equal(t, []string{"c1"}, g.r.started(), "the refused finish never runs the card again")
+	assert.Len(t, g.s.lines("finish"), 1, "not due yet: one finish in the first minute")
+	assert.Contains(t, g.out.String(), "NOTE finish c1 refused: "+refusal)
+	assert.Contains(t, g.out.String(), "recover c1 held: generation 1 pushed nothing; its finish is sent again, never the run")
+
+	// the backoff (1m, then 2m): the same finish twice more, then the one hand-back
+	_, err := g.m.Tick(time.Unix(0, 0).Add(FinishRefusedRetry + 11*time.Second))
 	require.NoError(t, err)
-	assert.Len(t, g.s.lines("finish"), 1, "a refused finish with nothing pushed is not remembered or sent again")
+	_, err = g.m.Tick(time.Unix(0, 0).Add(4*FinishRefusedRetry + time.Second))
+	require.NoError(t, err)
+	finish := g.s.lines("finish")
+	require.Len(t, finish, FinishRefusedMax)
+	assert.Equal(t, finish[0], finish[FinishRefusedMax-1], "the finish is sent again byte for byte")
+	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason finish refused 3 times: " + refusal}, g.s.lines("stop-return"))
+	assert.Equal(t, []string{"c1"}, g.r.started(), "one run across every pass")
+
+	// the memory goes with the hand-back: nothing more is sent
+	_, err = g.m.Tick(time.Unix(0, 0).Add(20 * time.Minute))
+	require.NoError(t, err)
+	assert.Len(t, g.s.lines("finish"), FinishRefusedMax)
+	assert.Len(t, g.s.lines("stop-return"), 1)
 }

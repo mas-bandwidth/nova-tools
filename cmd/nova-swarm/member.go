@@ -1242,6 +1242,11 @@ func (c *nativeChild) Result() member.Result {
 		var end, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
 		var wall time.Duration
 		nativeHasSpend := false
+		// noChild: native refused the launch before it opened the harness output log, so
+		// no harness ran and nothing was spent (native.go, the refusals ahead of the child's
+		// start: the pool identity, the harness binary, the slot). Its missing receipt is
+		// the truth, not a lost one: the finish records the usage unknown and lands.
+		noChild := false
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			carry = cardcontract.ParseCarryLine(b)
 			if m := nativeGateLine.FindSubmatch(b); m != nil {
@@ -1249,6 +1254,9 @@ func (c *nativeChild) Result() member.Result {
 			}
 			if m := nativeRefusedWhy.FindSubmatch(b); m != nil {
 				refused = strings.TrimSpace(string(m[1]))
+				if _, statErr := os.Lstat(filepath.Join(c.job, "harness-output.log")); c.job != "" && !nativeRC.Match(b) && errors.Is(statErr, os.ErrNotExist) {
+					noChild = true
+				}
 			}
 			if m := nativeStageFail.FindSubmatch(b); m != nil {
 				// refused at staging: no child ran, so no result of this launch exists to read
@@ -1319,7 +1327,7 @@ func (c *nativeChild) Result() member.Result {
 				if recovered.ReceiptVersion != 0 && !strings.Contains(usage, "receipt_version=") {
 					usage += " receipt_version=2"
 				}
-			} else if !found && (c.billing != "" || strings.Contains(usage, "receipt_version=")) {
+			} else if !found && !noChild && (c.billing != "" || strings.Contains(usage, "receipt_version=")) {
 				usageError = "typed launch has no authoritative durable receipt"
 			} else if found && nativeHasSpend && (c.billing != "" || recovered.ReceiptVersion != 0) && !spendMatchesReceipt(nativeSpendLine, recovered) {
 				usageError = "typed summary disagrees with authoritative durable receipt; preserve all attempt files"
@@ -1408,6 +1416,14 @@ func (c *nativeChild) Result() member.Result {
 				u.ReceiptVersion = cardcost.ReceiptVersion
 				u.Billing = c.billing
 				u.Extra = []string{"raw_usage=INVALID", "usage_source_error=receipt-missing"}
+				if noChild {
+					// no harness ran (noChild): nothing was spent, so the receipt is not
+					// missing. The usage is recorded unknown, with no raw_usage the paired
+					// parser refuses: raw_usage=INVALID here made every finish of a launch
+					// native refused before its start a receipt-contract refusal, and the
+					// member ran the card again at once (hetzner1, 2026-10-15).
+					u.Extra = []string{"usage_source_error=no-launch"}
+				}
 				usage = u.String()
 			} else {
 				usage = noUsageReported
