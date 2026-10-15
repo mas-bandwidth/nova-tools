@@ -49,6 +49,9 @@ func (w world) serve(c *tool.Call) *tool.Out {
 		return o
 	}
 	b := &bus.Bus{Store: s.bus}
+	if c.DryRun() {
+		return w.plan(s, b, every, downAfter)
+	}
 	if c.Bool("once") {
 		w.pass(c, s, b, every, downAfter, within)
 		return tool.Done().Fact("as", s.as).Fact("every", every.String()).Fact("down_after", downAfter.String())
@@ -124,6 +127,52 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, downAfter, with
 	if err != nil {
 		fault(c, "asks", err)
 	}
+}
+
+// plan is --dry-run: what one pass now would do (pass), read from the same
+// script with its writes off (hook.Store.PlanPass) and the asks' expiry plan
+// (bus.DueAsks); nothing is challenged, sent, told or marked.
+func (w world) plan(s *session, b *bus.Bus, every, downAfter time.Duration) *tool.Out {
+	ctx, cancel := call()
+	names, err := s.hooks.Names(ctx)
+	cancel()
+	if err != nil {
+		return tool.Fail("names: " + err.Error())
+	}
+	ctx, cancel = call()
+	p, err := s.hooks.PlanPass(ctx, names, every, downAfter, w.holder)
+	cancel()
+	if err != nil {
+		return tool.Fail("pass: " + err.Error())
+	}
+	o := tool.Done().Fact("as", s.as).Fact("every", every.String()).Fact("down_after", downAfter.String()).Fact("taken", p.Taken)
+	if !p.Taken {
+		return o.Note("another server took this interval's pass")
+	}
+	for _, bt := range p.Beats {
+		switch bt.Did {
+		case hook.BeatChallenged:
+			o.Item("challenge", "name", bt.Name, "misses", bt.Misses)
+		case hook.BeatUnhooked:
+			o.Item("unhook", "name", bt.Name, "misses", bt.Misses)
+		}
+	}
+	for _, a := range hook.Audiences {
+		if p.Changed(a) {
+			down, back, _ := p.Diff(a)
+			o.Item("tell", "audience", a, "down", cmp.Or(strings.Join(down, ","), "-"), "back", cmp.Or(strings.Join(back, ","), "-"))
+		}
+	}
+	ctx, cancel = call()
+	due, err := b.DueAsks(ctx)
+	cancel()
+	if err != nil {
+		return tool.Fail("asks: " + err.Error())
+	}
+	for _, a := range due {
+		o.Item("expire", "ask", a.ID, "from", a.From)
+	}
+	return o
 }
 
 // fault is one store or bus fault, said and passed over.

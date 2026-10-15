@@ -188,3 +188,37 @@ func TestLivenessFromAsks(t *testing.T) {
 	assert.Equal(t, map[string]string{"ada": LiveUp, "bob": LiveDeaf, "cy": LiveUnreached, "di": LiveDown, "ed": LiveDown}, states)
 	assert.Equal(t, "A1", got[0].AskID)
 }
+
+// DueAsks is the expiry's plan: the asks ExpireAsks would time out now, read
+// and never written; once expired an ask is no longer due.
+func TestDueAsksIsTheExpiryPlanAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	start := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	f := NewFake(start, "rowan", "ada")
+	f.Friends = []string{"rowan", "ada"}
+	b := &Bus{Store: f}
+	ask, err := b.Send(ctx, Message{From: "rowan", To: []string{"ada"}, Subject: "are you there", Body: "?", Kind: KindAsk, Wait: 5 * time.Minute})
+	require.NoError(t, err)
+
+	due, err := b.DueAsks(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, due, "nothing before the deadline")
+
+	f.Advance(5 * time.Minute)
+	due, err = b.DueAsks(ctx)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	assert.Equal(t, ask.ID, due[0].ID)
+	es, err := f.Range(ctx, StreamOf("rowan"), "-", "+", 0)
+	require.NoError(t, err)
+	assert.Empty(t, es, "the plan delivers no timeout")
+
+	got, err := b.ExpireAsks(ctx)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the expiry times out what the plan named")
+	assert.Equal(t, ask.ID, got[0].Ask.ID)
+	due, err = b.DueAsks(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, due, "a timed-out ask is no longer due")
+}

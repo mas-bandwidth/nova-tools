@@ -532,9 +532,10 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 var beatLua = redis.NewScript(nowMS + `
 local now = tonumber(ms)
 local every, after, ttl, by, cap, label = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5], ARGV[6]
+local dry = ARGV[#ARGV] == '1'
 local prev = tonumber(redis.call('HGET', KEYS[2], 'at') or '0')
 if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', '', '', '', '', '', '', '', ''} end
-redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'down_after', ARGV[2], 'by', by)
+if not dry then redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'down_after', ARGV[2], 'by', by) end
 local nroles = tonumber(ARGV[7])
 local keep = math.min(math.floor(after * 10 / (9 * every)) + 1, ` + strconv.Itoa(RecentMax) + `)
 local bus = {}
@@ -552,29 +553,36 @@ while k <= #KEYS do
     if miss then misses = misses + 1 end
     local heard = math.max(tonumber(redis.call('HGET', rec, 'answered_at') or '0'), tonumber(redis.call('HGET', rec, 'armed') or '0'))
     if miss and now - heard > after then
-      e = redis.call('HINCRBY', rec, 'epoch', 1)
-      local why = 'no answer in ' .. label .. ' (' .. misses .. ' challenges missed)'
-      redis.call('HSET', rec, 'state', 'unhooked', 'unhooked', ms, 'reason', why, 'misses', misses)
-      redis.call('HDEL', rec, 'recent')
-      for i = k + 1, k + 7 do redis.call('DEL', KEYS[i]) end
-      redis.call('XADD', KEYS[1], 'MAXLEN', '~', cap, '*', 'name', name, 'event', 'unhooked', 'reason', why, 'role', role, 'epoch', e, 'at', ms, 'by', by)
       did = 2
+      if dry then
+        e = tonumber(redis.call('HGET', rec, 'epoch') or '0') + 1
+      else
+        e = redis.call('HINCRBY', rec, 'epoch', 1)
+        local why = 'no answer in ' .. label .. ' (' .. misses .. ' challenges missed)'
+        redis.call('HSET', rec, 'state', 'unhooked', 'unhooked', ms, 'reason', why, 'misses', misses)
+        redis.call('HDEL', rec, 'recent')
+        for i = k + 1, k + 7 do redis.call('DEL', KEYS[i]) end
+        redis.call('XADD', KEYS[1], 'MAXLEN', '~', cap, '*', 'name', name, 'event', 'unhooked', 'reason', why, 'role', role, 'epoch', e, 'at', ms, 'by', by)
+      end
     else
+      did = 1
       e = tonumber(redis.call('HGET', rec, 'epoch'))
       local recent = {string.format('%d:%s:%s:%d:%s', e, sum, ms, now + after, bus[role])}
       for x in string.gmatch(redis.call('HGET', rec, 'recent') or '', '%S+') do
         if #recent >= keep then break end
         table.insert(recent, x)
       end
-      redis.call('HSET', rec, 'misses', misses, 'beat_at', ms, 'recent', table.concat(recent, ' '))
-      redis.call('DEL', chal)
-      redis.call('HSET', chal, 'epoch', e, 'sum', sum, 'pushes', bus[role], 'until', string.format('%d', now + every))
-      redis.call('PEXPIRE', chal, ttl)
-      did = 1
+      if not dry then
+        redis.call('HSET', rec, 'misses', misses, 'beat_at', ms, 'recent', table.concat(recent, ' '))
+        redis.call('DEL', chal)
+        redis.call('HSET', chal, 'epoch', e, 'sum', sum, 'pushes', bus[role], 'until', string.format('%d', now + every))
+        redis.call('PEXPIRE', chal, ttl)
+      end
     end
   end
   table.insert(out, {did, misses, e})
   local st = redis.call('HGET', rec, 'state')
+  if did == 2 then st = 'unhooked' end -- what the unhook above wrote, or a dry run would
   if st == 'unhooked' then table.insert(gone, name) end
   if st == 'hooked' and bus[role] then
     table.insert(live, name)
@@ -725,6 +733,22 @@ var Challenged = map[Role][]Push{Coordinator: {Bus}, Friend: {Bus}, Comms: {Bus}
 // answered (nor hooked in) for more than downAfter unhooks it, once; and the set of
 // unhooked names is told once per change (tla/HookBeat.tla, DownAfter).
 func (s Store) Pass(ctx context.Context, names []string, every, downAfter time.Duration, nonce func() string, by string) (Passed, error) {
+	return s.pass(ctx, names, every, downAfter, nonce, by, false)
+}
+
+// PlanPass is what Pass would do now, from the same script, writing nothing
+// (nova-hook serve --dry-run): the same Passed, with no nonce on any beat, as
+// no challenge is set. A plan of a pass inside another's interval is not taken.
+func (s Store) PlanPass(ctx context.Context, names []string, every, downAfter time.Duration, by string) (Passed, error) {
+	p, err := s.pass(ctx, names, every, downAfter, func() string { return "" }, by, true)
+	for i := range p.Beats {
+		p.Beats[i].Nonce = ""
+	}
+	return p, err
+}
+
+// pass is Pass, or with dry its plan: the script's last argument says which.
+func (s Store) pass(ctx context.Context, names []string, every, downAfter time.Duration, nonce func() string, by string, dry bool) (Passed, error) {
 	keys := []string{EventsKey, ServeKey}
 	args := []any{every.Milliseconds(), downAfter.Milliseconds(), (2*every + AnswerBound).Milliseconds(), by, EventsMax, downAfter.String(), len(Challenged)}
 	for _, r := range Roles {
@@ -742,6 +766,7 @@ func (s Store) Pass(ctx context.Context, names []string, every, downAfter time.D
 		keys = append(append(keys, RecordKey(n)), allKeys(n)...)
 		args = append(args, n, Sum(out.Beats[i].Nonce))
 	}
+	args = append(args, map[bool]string{false: "0", true: "1"}[dry]) // ARGV[#ARGV]: a dry run writes nothing
 	ctx, cancel := s.call(ctx)
 	defer cancel()
 	got, err := beatLua.Run(ctx, s.C, keys, args...).Slice()
