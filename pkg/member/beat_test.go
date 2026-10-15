@@ -165,3 +165,18 @@ func TestARefusedBeatMarksTheMemberBeatRefused(t *testing.T) {
 	require.NoError(t, g.m.Beat())
 	require.Equal(t, []string{"beat-refused", ""}, marks, "a beat taken clears the mark")
 }
+
+// TestBeatSendsFactsWhenListed pins that facts detected at start are sent on the beat
+// only when the sprint help lists --facts (generalised probe at cmd, the one -h call).
+// When listed the argv has --facts darwin,arm64,neon,sme,sme2 ; when not listed, no --facts.
+func TestBeatSendsFactsWhenListed(t *testing.T) {
+	t.Parallel()
+	g := newWidthRig(1, Config{As: "m", Meter: hostload.NewSampler(hostload.Source{}), Facts: []string{"darwin", "arm64", "neon", "sme", "sme2"}, FactsFlag: func() bool { return true }, LoadUnmeasured: func() bool { return false }})
+	g.s.set("queue", 0, queueJSON(t, 7))
+	require.NoError(t, g.m.Beat())
+	require.Equal(t, []string{"fleet beat m --stop-returns 0 --facts darwin,arm64,neon,sme,sme2 --load 0.0"}, g.s.lines("beat"))
+	g2 := newWidthRig(1, Config{As: "m", Meter: hostload.NewSampler(hostload.Source{}), Facts: []string{"darwin", "arm64", "neon", "sme", "sme2"}, FactsFlag: func() bool { return false }, LoadUnmeasured: func() bool { return false }})
+	g2.s.set("queue", 0, queueJSON(t, 7))
+	require.NoError(t, g2.m.Beat())
+	require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, g2.s.lines("beat"))
+}
