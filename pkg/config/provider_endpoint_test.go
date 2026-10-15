@@ -77,6 +77,27 @@ func TestALocalProviderNamesItsEndpoint(t *testing.T) {
 	}
 }
 
+func TestALocalProviderAcceptsLoopbackAndTailnetIPHosts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := migratedFileStore(t)
+
+	for _, tc := range []struct {
+		provider, host string
+	}{
+		{"local-loopback", "127.0.0.1"},
+		{"local-tailnet", "100.64.5.5"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			require.NoError(t, putProvider(t, st, tc.provider, engineBase("http", tc.host, "/v1")))
+			got, found, err := st.Get(ctx, KindProvider, tc.provider)
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.Equal(t, engineBase("http", tc.host, "/v1"), got.Fields["endpoint"])
+		})
+	}
+}
+
 func TestALocalEndpointOnTheCoordinatingMachineIsRefused(t *testing.T) {
 	t.Parallel()
 	st := migratedFileStore(t)
