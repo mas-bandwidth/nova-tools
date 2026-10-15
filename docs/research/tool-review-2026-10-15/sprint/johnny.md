@@ -23,7 +23,7 @@ Score: 9/10 (49/55)
 | # | where | what an AI meets | fix | size |
 |---|---|---|---|---|
 | 1 | `nova-sprint add -h`, `nova-sprint init -h`, `nova-sprint clear -h`, `nova-sprint start -h` | `--dry-run` is absent from most write verbs (init, add, clear, start, stop, take, finish, read, merge, accept, stream remove, reader add, set): an AI cannot preview a write before committing it | add a `--dry-run` flag to every write verb that prints the same plan the real run would take and writes nothing | L |
-| 2 | `nova-sprint help` | help is one monolithic wall: `90+ verb usage lines print before any flag or example, so a cold AI scrolls heavily to find one verb | add a compact verb index and an `example:` block near the top, or a `help <verb>` pointer in the first lines | S |
+| 2 | `nova-sprint help` | help is one monolithic wall: 90+ verb usage lines print before any flag or example, so a cold AI scrolls heavily to find one verb | add a compact verb index and an `example:` block near the top, or a `help <verb>` pointer in the first lines | S |
 | 3 | `nova-sprint add --stream s9 --plan .` | exits 0 and prints nothing (silent plan), so an AI gets no feedback that the preview ran | always print at least one summary or `PLAN OK` line | S |
 
 ## Nice-to-haves
