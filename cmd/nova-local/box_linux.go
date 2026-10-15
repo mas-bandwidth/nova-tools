@@ -4,13 +4,17 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 )
 
 func localBox() Box {
 	return Box{
-		Load1: hostload.Local().Load1,
+		Load1: func() (float64, bool) {
+			raw, err := os.ReadFile("/proc/loadavg")
+			if err != nil {
+				return 0, false
+			}
+			return parseProcLoadavg(raw)
+		},
 		Mem: func() (uint64, uint64, bool) {
 			raw, err := os.ReadFile("/proc/meminfo")
 			if err != nil {
@@ -19,6 +23,20 @@ func localBox() Box {
 			return meminfo(string(raw))
 		},
 	}
+}
+
+// parseProcLoadavg is the one-minute load from the bytes of /proc/loadavg, whose first
+// field is load1. A missing, malformed or negative field is not a reading.
+func parseProcLoadavg(b []byte) (float64, bool) {
+	f := strings.Fields(string(b))
+	if len(f) == 0 {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(f[0], 64)
+	if err != nil || v < 0 || v != v {
+		return 0, false
+	}
+	return v, true
 }
 
 // meminfo is MemAvailable and MemTotal from /proc/meminfo, in bytes.
