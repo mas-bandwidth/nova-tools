@@ -2332,3 +2332,10 @@ cmd/nova-friend/pong_defaults_test.go pong.json deleted as a record in v1.3 (E2c
 pkg/bus/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record
 pkg/friend/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record
 internal/textbody/textbody_test.go StripQuotedAndCode is unreachable from every shipped main (go tool deadcode v0.50.0); no caller outside its own tests in nova-tools or current nova-sprint; package removed in dead-code pass2
+cmd/nova-friend/serve_test.go nova-friend serve, the coordinator's one-second PING keepalive loop, is retired (v1.3.5): liveness is the nova-hook server's per-minute challenge (cmd/nova-hook serve, tla/Hook.tla), whose tests cover it
+cmd/nova-friend/wakeping_test.go nova-friend ping --wake --to-friends, ping-install and ping-uninstall are retired (v1.3.5): the nova-hook challenge is the wake, and nova-friend reach is the escalation ladder with its own tests
+pkg/friend/keepalive_test.go friend.Keepalive (PingEvery, DownAfter) went with nova-friend serve (v1.3.5); the hook record is the one liveness truth
+pkg/friend/wakeping_test.go friend.WakeTargets and DeafChange went with the wake ping loop (v1.3.5); nova-hook serve tells the coordinator FRIEND DOWN once per change
+pkg/friend/presence_test.go friend.Presence and SessionCheck were unreachable from every shipped main (go tool deadcode) once the daemon stopped wiring them (E2); only the model's nova-hook prove proves a session (v1.3.5)
+pkg/friend/proof_test.go the SessionCheck push proof was unreachable from every shipped main (go tool deadcode); retired with Presence (v1.3.5)
+pkg/friend/liveness_test.go the SessionCheck liveness rig was unreachable from every shipped main (go tool deadcode); retired with Presence (v1.3.5)

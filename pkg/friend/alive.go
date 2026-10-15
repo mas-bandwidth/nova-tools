@@ -376,7 +376,7 @@ func (s Stub) Alive(context.Context) Liveness {
 // the harness check). Every Every (AliveEvery when zero) it asks Alive and
 // keeps the answer on the daemon's status (Status.HarnessSeen), saying each
 // change on the record. It is advisory: it never holds the beat back and never
-// makes the friend down. Presence is the session's (SessionCheck): the finding
+// makes the friend down. Liveness is the nova-hook record's alone: the finding
 // of 2026-10-05 was a friend run from the dsh command line, answering every
 // session check for three hours, held down because no app was in the process
 // table. An adapter that cannot tell changes nothing. The model is app in
@@ -398,8 +398,7 @@ type HarnessWatch struct {
 
 // WatchHarness puts a HarnessWatch over adapter beside d's beat; call it
 // once d is built and before Run. Pass the bare adapter, the one
-// NewDeliverer returned: the gates in front of it (SessionCheck.Gate,
-// Limits.Gate) are Deliverers that answer no Alive. A nil adapter is d's
+// NewDeliverer returned: the gates in front of it (Limits.Gate) are Deliverers that answer no Alive. A nil adapter is d's
 // Deliver. Alive is optional by assertion: an adapter that is no Aliver
 // cannot tell.
 func WatchHarness(d *Daemon, adapter Deliverer) *HarnessWatch {

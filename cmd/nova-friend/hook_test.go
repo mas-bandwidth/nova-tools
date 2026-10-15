@@ -170,9 +170,7 @@ func TestCoordinatorVerbsRefuseUntilHooked(t *testing.T) {
 		return code, out.String() + errb.String()
 	}
 	for _, args := range [][]string{
-		{"ping", "--as", "ada", "--to", "bob", "--nonce", "abc123"},
 		{"watch", "--as", "ada", "--timeout", "1s"},
-		{"serve", "--as", "ada", "--dry-run"},
 	} {
 		code, out := run1(args...)
 		assert.Equal(t, 1, code, out)
@@ -184,9 +182,8 @@ func TestCoordinatorVerbsRefuseUntilHooked(t *testing.T) {
 	assert.Empty(t, es, "nothing was sent")
 
 	h.Hook(t, "ada", hook.Comms)
-	code, out := run1("ping", "--as", "ada", "--to", "bob", "--nonce", "abc123")
-	assert.Equal(t, 0, code, out)
-	assert.Contains(t, out, "PING OK nonce=abc123")
+	_, out := run1("watch", "--as", "ada", "--timeout", "1s")
+	assert.NotContains(t, out, "reason=unhooked", "hooked in, the verb runs")
 }
 
 // TestTheDaemonNeverTakesARecordOver pins that a daemon started while its
@@ -258,62 +255,9 @@ func TestALostRecordReArmsUnderARunningDaemon(t *testing.T) {
 	assert.Equal(t, hook.StateProven, r.h.State(t, "bob").State)
 }
 
-// TestASessionProofNeedsHerSessionPresent pins a session harness's bus push
-// proof: proved once is not enough; it stands while her session is present
-// and for BusGrace after it was last seen, and then it falls.
-func TestASessionProofNeedsHerSessionPresent(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	now := start
-	sc := &fakePresence{}
-	proof := sessionProof(sc, func() time.Time { return now }, BusGrace)
-	assert.False(t, proof(ctx), "never proved: unproven")
-	sc.proved, sc.up = true, true
-	assert.True(t, proof(ctx))
-	sc.up = false
-	now = now.Add(BusGrace - time.Second)
-	assert.True(t, proof(ctx), "inside the grace her lanes go on")
-	now = now.Add(2 * time.Second)
-	assert.False(t, proof(ctx), "past the grace, with her session gone, the bus push is unproven")
-	sc.up = true
-	assert.True(t, proof(ctx), "her session back: proven again")
-}
-
-type fakePresence struct{ proved, up bool }
-
-func (f *fakePresence) Proof() (bool, string)   { return f.proved, "" }
-func (f *fakePresence) Present() (bool, string) { return f.up, "no answer" }
-
-// TestAPerCardFriendsBusPushIsTheDaemonsRoundTrip pins a per-card harness's
-// bus push proof (a claude friend): no interactive session is waited for, so
-// her lanes are not stopped by its absence; the daemon's own round trip on
-// her bus store proves it, and a store that does not answer does not.
-func TestAPerCardFriendsBusPushIsTheDaemonsRoundTrip(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	r := newRig(t, "bob")
-	assert.True(t, roundTripProof(r.store)(ctx))
-	assert.False(t, roundTripProof(rosterDown{r.store})(ctx))
-
-	h := newHookRig(t, hook.Friend)
-	w := world{now: func() time.Time { return h.now }, hookStore: func(bus.Store) (hook.Store, error) { return h.h.Store, nil }}
-	h.dh = w.newDaemonHook(nil, "bob", hook.Friend, roundTripProof(r.store), func(string) {})
-	h.h.Hook(t, "bob", hook.Friend)
-	h.dh.step(ctx)
-	ok, why := h.dh.ok()
-	assert.True(t, ok, "with no session at all, her lanes take: %s", why)
-}
-
-// rosterDown is a bus store whose round trip fails.
-type rosterDown struct{ bus.Store }
-
-func (rosterDown) Roster(context.Context) ([]string, time.Time, error) {
-	return nil, time.Time{}, errors.New("LOADING the store is loading")
-}
-
 // TestAFriendHookOpensNoCoordinatorVerb pins the coordinator's verbs on the
 // role, not merely on the bus push: a name hooked in as friend (the seat's own
-// friend daemon arming it) is refused by ping; as comms (until nova-sprint
+// friend daemon arming it) is refused by watch; as comms (until nova-sprint
 // hook ships) it is let through.
 func TestAFriendHookOpensNoCoordinatorVerb(t *testing.T) {
 	t.Parallel()
@@ -327,43 +271,10 @@ func TestAFriendHookOpensNoCoordinatorVerb(t *testing.T) {
 		return code, out.String() + errb.String()
 	}
 	h.Hook(t, "ada", hook.Friend)
-	code, out := run1("ping", "--as", "ada", "--to", "bob", "--nonce", "abc123")
+	code, out := run1("watch", "--as", "ada", "--timeout", "1s")
 	assert.Equal(t, 1, code, out)
 	assert.Contains(t, out, "ada is hooked in as friend, and this act is only for coordinator or comms")
 	h.Hook(t, "ada", hook.Comms)
-	code, out = run1("ping", "--as", "ada", "--to", "bob", "--nonce", "abc123")
-	assert.Equal(t, 0, code, out)
-}
-
-// TestTheBeatCanaryIsGated pins the hand beat on --as: not hooked in as a
-// friend, no beat is sent; hooked in, it is.
-func TestTheBeatCanaryIsGated(t *testing.T) {
-	t.Parallel()
-	r := newRig(t, "bob")
-	h := hooktest.New(t)
-	w := r.world()
-	w.gate = func(ctx context.Context, _ bus.Store, want hook.Want) error { return h.Store.Gate(ctx, want) }
-	var beats []string
-	w.beat = func(_ context.Context, server, name string, _ time.Time, _ friend.BeatWords) (string, error) {
-		beats = append(beats, server+" "+name)
-		return "FRIEND-BEAT " + name, nil
-	}
-	run1 := func(args ...string) (int, string) {
-		var out, errb strings.Builder
-		code := run(args, strings.NewReader(""), &out, &errb, w)
-		return code, out.String() + errb.String()
-	}
-	code, out := run1("beat", "--as", "bob", "--server", "127.0.0.1:6390")
-	assert.Equal(t, 1, code, out)
-	assert.Contains(t, out, "BEAT FAILED reason=unhooked: bob is not hooked in")
-	assert.Contains(t, out, "; run: nova-hook hook --as bob --role friend")
-	assert.Empty(t, beats, "no beat was sent")
-
-	h.Hook(t, "bob", hook.Comms)
-	code, _ = run1("beat", "--as", "bob", "--server", "127.0.0.1:6390")
-	assert.Equal(t, 1, code, "comms takes no sprint work: its beat is not a friend's")
-	h.Hook(t, "bob", hook.Friend)
-	code, out = run1("beat", "--as", "bob", "--server", "127.0.0.1:6390")
-	assert.Equal(t, 0, code, out)
-	assert.Equal(t, []string{"127.0.0.1:6390 bob"}, beats)
+	_, out = run1("watch", "--as", "ada", "--timeout", "1s")
+	assert.NotContains(t, out, "this act is only for coordinator or comms", out)
 }

@@ -54,13 +54,11 @@ nova-decide score example
 nova-decide version description,example
 nova-friend acceptance example
 nova-friend install example
-nova-friend ping example
 nova-friend pong example
 nova-friend run example
 nova-friend status example
 nova-friend uninstall description,example
 nova-friend version description,example
-nova-friend wait-pong example
 nova-memory boot example
 nova-memory check example
 nova-memory eval example

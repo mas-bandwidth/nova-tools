@@ -1502,49 +1502,41 @@ ordinary `uninstall --as <name>` targets the native daemon. See
 `nova-friend help`:
 
 ```
-nova-friend: what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon
+nova-friend: what a friend runs to be part of the team: the lanes that work the friend's cards, and messages into the session, as one daemon
 
 how it works: one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
-nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
-harness's deliver command), beats to the sprint server while the session answers, answers the
-coordinator PING at once (daemon-pong); presence is the session's word on the bus, never a process.
+nova-bus stream, pushes every waiting message in as one turn when the session is free, and
+beats to the sprint server, whose answer carries the friend's row; liveness is the nova-hook
+record's alone (nova-hook serve's challenge, answered by the model's nova-hook prove).
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.
 
 usage:
   nova-friend hook --harness claude
   nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
-  nova-friend beat --as <me> [--server <addr>] [--redis <addr>]
   nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend uninstall --as <me> [--dry-run]
   nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
   nova-friend reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
-  nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
-  nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
-  nova-friend ping-uninstall --as <coordinator> [--dry-run]
   nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
-  nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
   nova-friend lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]
   nova-friend refuse-go --name go|gofmt
   nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]
-  nova-friend serve --as <coordinator> [--redis <addr>] [--dry-run]
   nova-friend acceptance --as <friend> --dir <working_dir> --harness <h> [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--coordinator <seat>]
   nova-friend version
   nova-friend help [<verb>]
 
-Every verb but run, serve takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+Every verb but run takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
 
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 
 example:
   nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
   nova-friend uninstall --as bob --dry-run
   nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
-  nova-friend ping --as ada --to bob --nonce abc123
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
-  nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
   nova-friend status --as bob --dir ./bob
   nova-friend lanes --as bob --clear-faults
 ```
@@ -1558,7 +1550,7 @@ from `nova-friend help`:
 flags:
   --harness <string>  claude: the harness whose PreToolUse JSON is on stdin (required)
   --json  print the result as one JSON object instead of lines
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: inspection: reads, writes nothing: reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON
 ```
 
@@ -1604,25 +1596,8 @@ flags:
   --wall-jobs <string>  job directories outside --dir that are writable inside the lane's wall, comma-separated
   --wall-reads <string>  directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)
   --width <int>  retired, refused when given: the width is the nova-config friend row's alone, read from each beat's answer (nova-config friend set <me> --width <n>)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: the daemon; messages go into the session, beats and pongs go out, until a signal
-```
-
-`nova-friend beat -h`:
-
-```
-usage: nova-friend beat [flags]
-from `nova-friend help`:
-  nova-friend beat --as <me> [--server <addr>] [--redis <addr>]
-example: nova-friend beat --as bob --server 127.0.0.1:6390
-flags:
-  --as <string>  your name, a nova-config friend row (required)
-  --dry-run  print what the verb would write and write nothing
-  --json  print the result as one JSON object instead of lines
-  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
-  --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
-effect: delivery: sends beyond this machine: one beat to the sprint server, the same beat the daemon's loop sends while its session is alive; --dry-run sends nothing
 ```
 
 `nova-friend install -h`:
@@ -1662,7 +1637,7 @@ flags:
   --wall-reads <string>  directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)
   --width <int>  retired, refused when given: the width is the nova-config friend row's alone, read from each beat's answer (nova-config friend set <me> --width <n>)
   --within <duration>  how long the delivery check after loading waits for the session's pong
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: local write: writes files on this machine: writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it
 ```
 
@@ -1677,7 +1652,7 @@ flags:
   --as <string>  your name, the friend the agent was installed for (required)
   --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: local write: writes files on this machine: boots the agent out and removes its plist
 ```
 
@@ -1706,7 +1681,7 @@ flags:
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --to <string>  who the pong goes to (default: the seat the daemon's status names, else --as)
   --within <duration>  how long to wait for the session's pong (delivery check)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: without --harness it only reads (the health check); with --harness it delivers one session check into the live session (the delivery check)
 ```
 
@@ -1725,7 +1700,7 @@ flags:
   --json  print the result as one JSON object instead of lines
   --prompt <string>  the idle prompt, a regular expression the last non-empty line of the pane matches (default: the harness's)
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: local write: writes files on this machine: starts the launch command in a new detached tmux session friend-<me> and saves the session and prompt in the state directory
 ```
 
@@ -1752,31 +1727,6 @@ exit codes: 0 a proof, 1 no proof, 2 could not run.
 effect: delivery: sends beyond this machine: a bus message, then a push into the session, then the friend's window, stopping at the first proof
 ```
 
-`nova-friend ping -h`:
-
-```
-usage: nova-friend ping [flags]
-from `nova-friend help`:
-  nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
-  nova-friend ping --as ada --to bob --nonce abc123
-flags:
-  --as <string>  your name, the coordinator (required)
-  --dry-run  print what the verb would write and write nothing
-  --every <duration>  with --to-friends: pass again each d until interrupted (default: one pass)
-  --json  print the result as one JSON object instead of lines
-  --never-wake <string>  with --to-friends: friends never wake-pinged, comma-separated
-  --nonce <string>  the nonce to carry (default: six random characters)
-  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
-  --server <string>  with --to-friends: the sprint server, host:port, whose coordinator view holds the friends table (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
-  --since <string>  since when you hold the seat, RFC3339 (default: now)
-  --to <string>  the friend to ping (required without --to-friends)
-  --to-friends  ping every friend the friends table holds up: wake pings, with --wake
-  --wake  a wake check: the session is pushed the pong line as its own turn when it is free
-  --within <duration>  with --to-friends: how long each pass waits for the sessions' pongs
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
-effect: delivery: sends beyond this machine: one PING on the friend's stream, as the coordinator
-```
-
 `nova-friend pong -h`:
 
 ```
@@ -1796,7 +1746,7 @@ flags:
   --to <string>  the coordinator (default: the seat the last ping named)
   --width <int>  your width, from the nova-config friend row
   --working <int>  tasks working, from your own task list
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: the session's answer to a PING, one note on the bus to the coordinator, and the pong file
 ```
 
@@ -1830,7 +1780,7 @@ flags:
   --json  print the result as one JSON object instead of lines
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: inspection: reads, writes nothing
 ```
 
@@ -1866,20 +1816,6 @@ flags:
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
 exit codes: 0 done, 2 could not run (the marker cannot be removed).
 effect: local write: writes files on this machine: removes the lanes' pause marker PAUSED from the state directory
-```
-
-`nova-friend serve -h`:
-
-```
-usage: nova-friend serve [flags]
-from `nova-friend help`:
-  nova-friend serve --as <coordinator> [--redis <addr>] [--dry-run]
-flags:
-  --as <string>  your name, the coordinator: the pings come from it and the pongs come to it (required)
-  --dry-run  print what the verb would write and write nothing
-  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
-effect: delivery: sends beyond this machine: the coordinator's ping loop; a PING to every friend each second, until a signal
 ```
 
 `nova-friend acceptance -h`:
@@ -1920,7 +1856,7 @@ flags:
   --wall-reads <string>  directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)
   --width <int>  retired, refused when given: the width is the nova-config friend row's alone, read from each beat's answer (nova-config friend set <me> --width <n>)
   --within <duration>  accepted and ignored: the install's delivery-check window
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: the acceptance run; one lane runs the friend's own program under the real lane wall, writes RESULT.md, and exits with the wall's real code
 ```
 
@@ -1932,7 +1868,7 @@ from `nova-friend help`:
   nova-friend version
 flags:
   --json  print the result as one JSON object instead of lines
-exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: inspection: reads, writes nothing
 ```
 <!-- clidoc:end nova-friend -->
@@ -1964,34 +1900,26 @@ A Redis whose nova-config rows name ada and bob, its address in `--redis` or
 ```sh
 nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
 nova-friend uninstall --as bob --dry-run
-nova-friend ping --as ada --to bob --nonce abc123
 nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
-nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 nova-friend status --as bob --dir ./bob
 ```
 
 `install --dry-run` prints the agent's label, plist path and launchd log, and
 the plan (`INSTALL PLAN command=`): write the plist, boot out whatever runs
 under that label, bootstrap the new one; without `--dry-run` it does them
-(`INSTALL RAN`) and running it again replaces the agent. `ping` prints `PING OK
-nonce= id= to= at=` and the `wait-pong` line to run next. `pong` prints `PONG
-OK nonce= to= id= at=` and writes the pong file in the state directory
-(`--state-dir`, as the session check's line names the daemon's, else
-`~/.nova-friend/<me>`). The daemon keeps its state under `<dir>/.nova-friend`,
+(`INSTALL RAN`) and running it again replaces the agent. `pong` prints `PONG
+OK nonce= to= id= at=`, its answer one note on the bus. The daemon keeps its state under `<dir>/.nova-friend`,
 inside the directory a sandboxed session may write, unless `--state-dir` names
 another or `<dir>` refuses it (then `~/.nova-friend/<me>`, said on its
-record); the queue file is under `--dir`, the friend's working directory. `wait-pong` prints `WAIT-PONG
-OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
-pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
+record); the queue file is under `--dir`, the friend's working directory. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
 last_pong= queue= working= width= session=<ok|broken> held= inbox= missing=` (broken:
 `session_id= broken_at= reason=`; held, inbox and missing are the daemon's last reconcile of
 her inbox with her row, `-` until the sprint server has answered: SPEC-FRIEND.md, "The
 daemon writes every card she holds"), then `status= why= evidence= harness_seen=`, or
-`STATUS NONE` at exit 1 where no daemon ever ran. A friend is up on her session's
-answer, never on a process: `harness_seen=running|not-seen` is the daemon's look at
-the process table, advisory, so a session run from its command line (`dsh` headless,
-`codex exec`, `claude -p`) is as up as one in an app. What a first run gets wrong: a `--harness` that is not one
+`STATUS NONE` at exit 1 where no daemon ever ran. Whether a friend is up is the
+nova-hook record's alone, never a process: `harness_seen=running|not-seen` is the
+daemon's look at the process table, advisory and deciding nothing. What a first run gets wrong: a `--harness` that is not one
 of opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor,
 amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (the surveyed harnesses
 without a delivery route are known but passive, with their refusal reasons);
@@ -2130,7 +2058,7 @@ nova-friend reach --as ada --to bob --dry-run
 
 `reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run] [--json]`
 
-This verb is reach. see also: nova-friend ping --wake is the coordinator's periodic wake check; reach is this escalation ladder.
+This verb is reach. see also: nova-hook serve's per-minute challenge is the periodic liveness check (nova-hook friends --json reads it); reach is this escalation ladder.
 
 Each step has one `--step-timeout` budget (default 60s), including delivery and waiting for a proof. A proof is a pong for the nonce the step carries, or any other message from the friend. A daemon-pong is not a proof. The bus step's line is `REACH STEP step=bus sent=<id> nonce=<n>`. The status file is read when the push begins, and the push is skipped when the daemon is down: `REACH NONE step=push waited=0s: daemon down: <reason>`. The window of a GUI harness needs the accessibility permission a person grants to this binary. When it is absent the step is refused and the tool does not ask: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask.
 
@@ -2206,43 +2134,27 @@ the check once after loading the agent (its `--within`) and says the line in a
 NOTE; a fail never undoes the install. It runs once a night on each friend's
 machine as a nova-config loop record ([TESTING.md](TESTING.md)).
 
-### The coordinator's ping loop
+### Liveness is not nova-friend's
 
-```sh
-nova-friend serve --as <coordinator> --dry-run
-nova-config loop add friend-serve --machine <m> --argv '["/usr/bin/env","NOVA_BUS_REDIS=127.0.0.1:6381","nova-friend","serve","--as","<coordinator>"]' --keepalive true --as <coordinator>
-```
-
-`serve` is the coordinator's side of the connection: each second it reads the
-pongs on its own stream, says each friend whose state changed, and pings every
-nova-config friend row but its own, read from the bus store's `friends` set
-(what `nova-config apply` writes), so the loop needs the bus store and nothing
-else; a friend is down after ten seconds without a pong to a ping of the last
-ten seconds. `--dry-run` reads the rows and prints
-`SERVE OK friends= every=1s down_after=10s dry_run=true`, sending nothing. The
-loop prints that line once, then one line per state change, never one per
-ping: `SERVE UP friend= at=` and `SERVE DOWN friend= at= last_pong= reason=`;
-`SERVE STOP interrupted` at a signal. It is installed as the loop row above,
-kept alive, its log the loop's; it replaces a hand ping loop, which is retired
-once the row's unit runs. What it gets wrong first: no `--redis` and no
-`NOVA_BUS_REDIS` (refused); no friend row but its own (refused, with
-`nova-config friend add`).
+Whether a friend is there is the nova-hook record's alone: `nova-hook serve`
+challenges every hooked name once a minute, only the model answers with
+`nova-hook prove`, and two misses unhook it (`nova-hook friends --json` reads
+the state; docs/SPEC-HOOK.md). The coordinator's ping loop, the
+wake ping loop, the coordinator's ping and pong wait, and the hand beat are
+retired (v1.3.5); `internal/ci/retired_presence_class_test.go` refuses their
+return, naming each in `internal/ci/testdata/retired-presence.txt`.
+To get a silent friend's attention, `nova-friend reach` is the ladder.
 
 ### Commands
 
 | Command | What it does |
 | --- | --- |
-| `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>]` | The daemon: the recv loop with the deliver adapter, the beat, the ping and pong machine; until a signal |
+| `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>]` | The daemon: the recv loop with the deliver adapter, the one-shot lanes, the beat; until a signal |
 | `install --as <me> --harness <h> --dir <d> [...] [--launchd-log <file>] [--dry-run]` | Writes and loads the launchd agent `com.nova.friend-<me>`; idempotent |
 | `uninstall --as <me> [--dry-run]` | Boots the agent out and removes its plist |
-| `ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>]` | One `PING <nonce>` on the friend's stream, with the seat line |
-| `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer: one note to the coordinator, and the pong file |
-| `ping --as <coordinator> --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]` | The wake loop: a wake `PING` to every friend the friends table holds up (never held, down, or never-wake), each session's pong waited for, one blocker note to the coordinator per change of who is deaf |
-| `ping-install --as <coordinator> --every <d> [...]` / `ping-uninstall --as <coordinator>` | Installs the wake loop as the launchd agent `com.nova.friend-wake-ping-<as>`; removes it |
-| `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
+| `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer to a `reach` step or a delivery check: one note to the coordinator |
 | `watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]` | The coordinator's wake: waits on its stream, its wake file and events (subject `event:`), prints one line per wake, then `WATCH OK after=<cursor>` (exit 1 `WATCH NONE` past `--timeout`); the cursor is saved in the state directory |
 | `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts, and the envelope size: `envelope=<n>` messages the last turn's envelope carried and `envelope_bytes=<b>` its size (at most the harness's text limit, 262144 bytes unless it names its own; the first message always goes in; 0 before the first) |
-| `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the

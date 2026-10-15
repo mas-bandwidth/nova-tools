@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
@@ -36,7 +36,13 @@ func museWakeNote(as, role string) string {
 }
 
 type museRoute struct {
-	bundle, bin string
+	bundle, bin, notices string
+}
+
+// museNotices is the directory a Muse friend's one pending notice lives in:
+// the hook writes it, and the PostToolUse hook reads it.
+func museNotices(home, as string) string {
+	return filepath.Join(home, ".muse", "nova-hook", as)
 }
 
 // museConfig resolves the Muse install before any hook record or lease is
@@ -92,61 +98,33 @@ func (w world) museInstall(c *tool.Call, r *museRoute) *tool.Out {
 			return o
 		}
 	}
+	home := w.getenv("HOME")
+	if home == "" {
+		return tool.Refuse("Muse delivery wants HOME for its notice directory")
+	}
+	notices, err := notice.MakeDir(museNotices(home, c.Str("as")))
+	if err != nil {
+		return tool.Refuse("Muse notice directory could not be made: " + err.Error())
+	}
+	r.notices = notices
 	line(c, tool.Done().As("STATE").Fact("state", "muse-installed").Fact("plugin", "nova-hook").Fact("capability", museApproveTarget).Note(museWakeNote(c.Str("as"), c.Str("role"))))
 	return nil
 }
 
-// pendingBound bounds one peek from the hook: the bundle allows 3000ms, so
-// the child is cut short of that and a slow bus can never hold the turn.
-const pendingBound = 2500 * time.Millisecond
-
-// pending is the bundle's PostToolUse hook as a Go verb (no shell ships): it
-// discards stdin, runs `nova-bus peek` for the name and prints only its
-// PEEK MESSAGE lines, one per line, so a HOOK CHALLENGE reaches the model
-// inside its turn. It only reads: it never proves, sends, acks or writes,
-// and it always exits 0 — a missing or failing bus prints nothing.
+// pending is the bundle's PostToolUse hook as a Go verb: it discards stdin
+// and prints the one pending notice line the hook left for this name, if
+// any, so the newest challenge reaches the model inside its turn. It only
+// reads: it never proves, sends, acks or writes, and it always exits 0.
 func (w world) pending(c *tool.Call) *tool.Out {
 	if c.Stdin != nil {
 		_, _ = io.Copy(io.Discard, c.Stdin) // ignored: the hook input is discarded unread; a failed drain changes nothing the hook prints
-	}
-	bus := c.Str("bus")
-	if bus == "" {
-		found, err := exec.LookPath("nova-bus")
-		if err == nil {
-			bus = found
-		} else if home := w.getenv("HOME"); home != "" {
-			candidate := filepath.Join(home, ".local", "bin", "nova-bus")
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				bus = candidate
-			}
-		}
-	}
-	if bus == "" {
-		return tool.Exit(0)
 	}
 	name := c.Str("as")
 	if name == "" {
 		name = "aurora"
 	}
-	redis := c.Str("redis")
-	if redis == "" {
-		redis = "127.0.0.1:6381"
-	}
-	ctx := c.Ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	cmd, cancel := subproc.CommandFor(ctx, pendingBound, bus, "peek", "--as", name, "--redis", redis)
-	defer cancel()
-	cmd.Stderr = io.Discard
-	out, err := cmd.Output()
-	if err != nil {
-		return tool.Exit(0)
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, "PEEK MESSAGE") {
-			fmt.Fprintln(c.Stdout, line)
-		}
+	if home := w.getenv("HOME"); home != "" {
+		fmt.Fprint(c.Stdout, notice.MusePending(museNotices(home, name)))
 	}
 	return tool.Exit(0)
 }

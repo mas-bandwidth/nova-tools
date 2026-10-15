@@ -104,25 +104,21 @@ func TestMuseHarnessRefusals(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "no Muse CLI call before validation passes")
 }
 
-// TestPendingPrintsChallengesAndAlwaysExitsZero runs the pending verb
-// against a fake nova-bus: pending challenge lines print one per line,
-// stdin is discarded, and a missing bus still exits 0 with no output.
-func TestPendingPrintsChallengesAndAlwaysExitsZero(t *testing.T) {
+// TestPendingPrintsTheOnePendingNoticeAndAlwaysExitsZero runs the pending
+// verb: the one line the hook left prints once, stdin is discarded, and no
+// notice prints nothing at exit 0.
+func TestPendingPrintsTheOnePendingNoticeAndAlwaysExitsZero(t *testing.T) {
 	t.Parallel()
-	binDir := t.TempDir()
-	busPath := filepath.Join(binDir, "nova-bus")
-	busScript := "#!/bin/sh\n" +
-		"printf '%s\\n' 'PEEK OK pending=1 new=1' 'PEEK MESSAGE state=pending id=1-0 from=bob subject=\"HOOK CHALLENGE nonce=abc123\"' 'PEEK MESSAGE state=new id=2-0 from=bob subject=\"hello\"'\n"
-	require.NoError(t, os.WriteFile(busPath, []byte(busScript), 0o755))
-
-	cli := newRig(t).cli()
-	res := cli.RunIn(`{"tool":"x"}`, "pending", "--bus", busPath, "--as", "ada")
-	assert.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
-	assert.Contains(t, res.Stdout, "PEEK MESSAGE state=pending id=1-0 from=bob subject=\"HOOK CHALLENGE nonce=abc123\"")
-	assert.Contains(t, res.Stdout, "PEEK MESSAGE state=new id=2-0 from=bob subject=\"hello\"")
-	assert.NotContains(t, res.Stdout, "PEEK OK")
-
-	res = cli.RunIn(`{"tool":"x"}`, "pending", "--bus", filepath.Join(binDir, "missing-bus"), "--as", "ada")
+	r := newRig(t)
+	cli := r.cli()
+	res := cli.RunIn(`{"tool":"x"}`, "pending", "--as", "ada")
 	assert.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
 	assert.Empty(t, res.Stdout)
+
+	dir := museNotices(r.home, "ada")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pending"), []byte("nova-hook notice: read /x/n1.json\n"), 0o600))
+	res = cli.RunIn(`{"tool":"x"}`, "pending", "--as", "ada")
+	assert.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Equal(t, "nova-hook notice: read /x/n1.json\n", res.Stdout)
 }

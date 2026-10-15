@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,25 +85,77 @@ type fixedRecoveryHistory struct {
 	entries []bus.Entry
 }
 
-func (s fixedRecoveryHistory) Range(_ context.Context, _, _, _ string, count int) ([]bus.Entry, error) {
-	if count < len(s.entries) {
-		return s.entries[:count], nil
+func (s fixedRecoveryHistory) Range(_ context.Context, _, from, to string, count int) ([]bus.Entry, error) {
+	slice := s.entries
+	if after, ok := strings.CutPrefix(from, "("); ok {
+		idx := len(slice)
+		for i, e := range slice {
+			if e.Entry == after {
+				idx = i + 1
+				break
+			}
+		}
+		slice = slice[idx:]
 	}
-	return s.entries, nil
+	if before, ok := strings.CutPrefix(to, "("); ok {
+		idx := 0
+		for i, e := range slice {
+			if e.Entry == before {
+				idx = i
+				break
+			}
+		}
+		slice = slice[:idx]
+	}
+	if count > 0 && count < len(slice) {
+		return slice[:count], nil
+	}
+	return slice, nil
 }
 
-func TestRecoveryOverflowFailsBeforeLease(t *testing.T) {
+func TestRecoveryOverflowCutsOverAndArchivesExcessBacklog(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	s := recoverySession(r)
-	entries := make([]bus.Entry, maxCodexHistory+1)
+	ctx := context.Background()
+	epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
+	require.NoError(t, err)
+	created, err := r.h.Store.Challenge(ctx, "ada", hook.Comms, epoch, []hook.Push{hook.Bus}, "page2-nonce")
+	require.NoError(t, err)
+	require.True(t, created)
+
+	total := maxCodexHistory + 250
+	entries := make([]bus.Entry, total)
 	for i := range entries {
-		entries[i] = bus.Entry{Entry: "1791720000000-1", Fields: bus.Message{ID: "event-1", From: "bob"}.Fields()}
+		seq := strconv.Itoa(i + 1)
+		id := "event-" + seq
+		msg := bus.Message{ID: id, From: "bob", Subject: "ordinary-" + seq, Body: "body-" + seq}
+		if i+1 == maxCodexHistory+100 {
+			msg = bus.Message{
+				ID:      "challenge-" + seq,
+				From:    "bob",
+				Subject: "HOOK CHALLENGE nonce=page2-nonce",
+				Body:    notice.ChallengeText("ada", "page2-nonce", hook.ChallengeEvery),
+			}
+		}
+		entries[i] = bus.Entry{Entry: "1791720000000-" + seq, Fields: msg.Fields()}
 	}
+	tail := entries[len(entries)-1].Entry
 	s.bus = fixedRecoveryHistory{Store: s.bus, entries: entries}
-	_, err := codexBacklog(s, "1791720000000-1", time.Time{})
-	require.ErrorContains(t, err, "recovery incomplete")
-	assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
+	plan, err := codexBacklog(s, tail, time.Time{})
+	require.NoError(t, err)
+	require.Len(t, plan.messages, maxCodexRecovery)
+	assert.Equal(t, total-maxCodexRecovery, plan.archived)
+	assert.False(t, plan.cutover.IsZero())
+	assert.Equal(t, "event-"+strconv.Itoa(total), plan.messages[len(plan.messages)-1].ID, "newest ordinary message beyond page 1 survives cutover")
+	foundChallenge := false
+	for _, m := range plan.messages {
+		if m.ID == "challenge-"+strconv.Itoa(maxCodexHistory+100) {
+			foundChallenge = true
+			break
+		}
+	}
+	assert.True(t, foundChallenge, "current challenge beyond page 1 survives cutover")
 }
 
 // The client hook runs after XINFO returned, injecting a send precisely between
@@ -143,15 +199,15 @@ func TestMessageBetweenCursorAndLeaseIsStreamed(t *testing.T) {
 	defer cancel()
 	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
 	saw := false
-	w.codexSave = func(_ string, _ string, data []byte) error {
-		var e savedCodexEvent
+	w.files = filesFunc(func(_ string, data []byte, replace bool) error {
+		var e notice.Envelope
 		require.NoError(t, json.Unmarshal(data, &e))
-		if e.Message != nil && e.Message.ID == sent.ID {
-			saw = true
+		if replace && e.Messages == 1 && slices.Contains(e.Senders, sent.From) {
+			saw = true // the one pending notice is rewritten in place with it
 			cancel()
 		}
 		return nil
-	}
+	})
 	code := run(codexArgs, strings.NewReader(""), io.Discard, io.Discard, w)
 	assert.Zero(t, code)
 	assert.True(t, saw)
@@ -173,25 +229,55 @@ func TestRecoveryWindowUsesRedisTime(t *testing.T) {
 
 func TestOneExplicitStartupRecoveryAttemptStopsOnLocalOutcome(t *testing.T) {
 	t.Parallel()
-	for _, outcome := range []error{codexdesktop.ErrOutcomeUnknown, codexdesktop.ErrPreSend, codexdesktop.ErrRejected} {
+	for _, outcome := range []error{codexdesktop.ErrPreSend, codexdesktop.ErrRejected} {
 		r := newRig(t)
 		w := fakeCodexWorld(r)
 		m := recoveryMessage(t, r, "unanswered prior event")
 		attempts := 0
-		var saved savedCodexEvent
-		w.codexSave = func(_, id string, data []byte) error {
+		var saved notice.Envelope
+		w.files = filesFunc(func(_ string, data []byte, _ bool) error {
 			require.NoError(t, json.Unmarshal(data, &saved))
 			assert.True(t, saved.PossibleDuplicates)
 			require.Len(t, saved.Recovery, 1)
 			assert.Equal(t, m.ID, saved.Recovery[0].ID)
 			return nil
-		}
+		})
 		w.codexDeliver = func(context.Context, string, string, string, string) (string, error) { attempts++; return "", outcome }
 		code := run(codexArgs, strings.NewReader(""), io.Discard, io.Discard, w)
 		assert.Equal(t, 1, code)
 		assert.Equal(t, 1, attempts)
 		assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State, "local delivery failure removes route proof, not identity")
 	}
+}
+
+// TestUnknownStartupOutcomeKeepsTheHook is the 2026-10-14 regression: an
+// unknown native outcome stopped the route, the heartbeat then missed its
+// challenges and unhooked the name (a new epoch). Unknown keeps the route
+// running, the notice pending, the record and its epoch as they were, and
+// makes no second native call.
+func TestUnknownStartupOutcomeKeepsTheHook(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	w := fakeCodexWorld(r)
+	recoveryMessage(t, r, "unanswered prior event")
+	attempts := 0
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+	w.codexDeliver = func(context.Context, string, string, string, string) (string, error) {
+		attempts++
+		cancel() // the route is past its first push: stop the loop at its next check
+		return "", fmt.Errorf("%w: start turn: request-timeout", codexdesktop.ErrOutcomeUnknown)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(codexArgs, strings.NewReader(""), &stdout, &stderr, w)
+	assert.Zero(t, code, "an unknown outcome is not a failed route: "+stderr.String())
+	assert.Equal(t, 1, attempts, "never retried blindly")
+	assert.Contains(t, stdout.String(), "native=unknown")
+	assert.NotContains(t, stderr.String(), "HOOK FAILED")
+	st := r.h.State(t, "ada")
+	assert.NotEqual(t, hook.StateUnhooked, st.State)
+	assert.NotEqual(t, hook.StateNone, st.State)
 }
 
 func TestHistoricalSavedEvidenceCannotBlockNewHookEpoch(t *testing.T) {
@@ -254,10 +340,10 @@ func TestCanonicalDayFitsRecoveryScanWithoutReplayingObsoleteChallenges(t *testi
 	entries := make([]bus.Entry, 0, 1441)
 	for i := 0; i < 1440; i++ {
 		nonce := "old-" + strconv.Itoa(i)
-		m := bus.Message{ID: "challenge-" + strconv.Itoa(i), From: "bob", Subject: "HOOK CHALLENGE nonce=" + nonce, Body: challengeText("ada", nonce, time.Minute)}
+		m := bus.Message{ID: "challenge-" + strconv.Itoa(i), From: "bob", Subject: "HOOK CHALLENGE nonce=" + nonce, Body: notice.ChallengeText("ada", nonce, time.Minute)}
 		entries = append(entries, bus.Entry{Entry: "1791720000000-" + strconv.Itoa(i+1), Fields: m.Fields()})
 	}
-	altered := bus.Message{ID: "ordinary-altered-body", From: "bob", Subject: "HOOK CHALLENGE nonce=external", Body: challengeText("ada", "external", time.Minute) + "external appendix"}
+	altered := bus.Message{ID: "ordinary-altered-body", From: "bob", Subject: "HOOK CHALLENGE nonce=external", Body: notice.ChallengeText("ada", "external", time.Minute) + "external appendix"}
 	entries = append(entries, bus.Entry{Entry: "1791720000000-1441", Fields: altered.Fields()})
 	s.bus = fixedRecoveryHistory{Store: s.bus, entries: entries}
 	plan, err := codexBacklog(s, "1791720000000-1441", time.Time{})
@@ -283,17 +369,17 @@ func TestRoleTakeoverDropsAllMatchedOldEpochChallenges(t *testing.T) {
 		cancel()
 		return ctx, cancel
 	}
-	w.codexSave = func(_, id string, data []byte) error {
-		var e savedCodexEvent
+	w.files = filesFunc(func(_ string, data []byte, _ bool) error {
+		var e notice.Envelope
 		require.NoError(t, json.Unmarshal(data, &e))
 		require.Len(t, e.Recovery, 1)
 		assert.Equal(t, ordinary.ID, e.Recovery[0].ID)
 		assert.NotEqual(t, old.ID, e.Recovery[0].ID)
 		assert.NotEqual(t, oldCopy.ID, e.Recovery[0].ID)
 		assert.Greater(t, e.HookEpoch, epoch)
-		assert.NotEmpty(t, e.BootstrapNonce)
+		require.NotNil(t, e.Challenge, "the bootstrap challenge is in the first notice")
 		return nil
-	}
+	})
 	code := run(codexArgs, strings.NewReader(""), io.Discard, io.Discard, w)
 	assert.Zero(t, code)
 }

@@ -59,132 +59,6 @@ func TestRunHookHelpIsTheToolsHelpNotTheClaudeHook(t *testing.T) {
 	}
 }
 
-// serve (serve.go:39) says one NOTE while the store is down and one NOTE when
-// it answers again, never one per tick (serve.go:90-96, 144-147).
-func TestServeNotesAStoreThatFailsOneTickThenAnswers(t *testing.T) {
-	t.Parallel()
-	s := newServeRig(t)
-	w := s.world()
-	w.now = func() time.Time { return s.clock }
-	var cancel context.CancelFunc
-	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
-		ctx, cancel = context.WithCancel(ctx)
-		return ctx, cancel
-	}
-	ticks := 0
-	w.sleep = func(_ context.Context, d time.Duration) {
-		ticks++
-		switch ticks {
-		case 1:
-			s.store.Fail = errors.New("store down")
-		case 2:
-			s.store.Fail = nil
-		}
-		s.clock = s.clock.Add(d)
-		if ticks >= 5 {
-			cancel()
-		}
-	}
-	var out, errb strings.Builder
-	code := run([]string{"serve", "--as", "ada"}, strings.NewReader(""), &out, &errb, w)
-	require.Equal(t, 0, code, errb.String())
-	assert.Equal(t, 1, strings.Count(out.String(), "trying again each tick"), out.String())
-	assert.Contains(t, out.String(), "the store did not answer: store down", out.String())
-	assert.Contains(t, out.String(), "the rows and the store answer again", out.String())
-}
-
-// serve says one NOTE when the friend rows cannot be read again after
-// friend.RowsEvery, and its pings go on to the names it already had
-// (serve.go:101-109).
-func TestServeNotesTheFriendRowsCannotBeReadAndPingsGoOn(t *testing.T) {
-	t.Parallel()
-	s := newServeRig(t)
-	w := s.world()
-	w.now = func() time.Time { return s.clock }
-	var cancel context.CancelFunc
-	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
-		ctx, cancel = context.WithCancel(ctx)
-		return ctx, cancel
-	}
-	ticks := 0
-	w.sleep = func(_ context.Context, d time.Duration) {
-		ticks++
-		switch ticks {
-		case 60: // the re-read of the rows happens on the tick at friend.RowsEvery
-			s.store.Fail = errors.New("store down")
-		case 61:
-			s.store.Fail = nil
-		}
-		s.clock = s.clock.Add(d)
-		if ticks >= 63 {
-			cancel()
-		}
-	}
-	var out, errb strings.Builder
-	code := run([]string{"serve", "--as", "ada"}, strings.NewReader(""), &out, &errb, w)
-	require.Equal(t, 0, code, errb.String())
-	assert.Equal(t, 1, strings.Count(out.String(), "the friend rows cannot be read"), out.String())
-	require.GreaterOrEqual(t, pingsOn(s, "bob"), 61, "pings go on to the names it had: %s", out.String())
-}
-
-// pingsOn counts the PINGs a friend's stream holds.
-func pingsOn(s *serveRig, name string) int {
-	es, err := s.store.Range(context.Background(), bus.StreamOf(name), "-", "+", 0)
-	if err != nil {
-		return 0
-	}
-	n := 0
-	for _, e := range es {
-		if strings.HasPrefix(e.Message().Subject, friend.PingPrefix) {
-			n++
-		}
-	}
-	return n
-}
-
-// openUntil's doc (main.go:1095-1099) says a store down at the start is no
-// reason to exit: serve waits, doubling the wait, and a signal ends it at 0.
-func TestServeWaitsForAStoreThatWillNotOpenThenStopsOnASignal(t *testing.T) {
-	t.Parallel()
-	r := newRig(t, "ada", "bob")
-	r.store.Friends = []string{"ada", "bob"}
-	r.store.Fail = errors.New("store down")
-	w := r.world()
-	var cancel context.CancelFunc
-	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
-		ctx, cancel = context.WithCancel(ctx)
-		return ctx, cancel
-	}
-	var slept []time.Duration
-	w.sleep = func(_ context.Context, d time.Duration) {
-		slept = append(slept, d)
-		if len(slept) >= 3 {
-			cancel()
-		}
-	}
-	var out, errb strings.Builder
-	code := run([]string{"serve", "--as", "ada"}, strings.NewReader(""), &out, &errb, w)
-	require.Equal(t, 0, code, errb.String())
-	require.GreaterOrEqual(t, len(slept), 3)
-	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second}, slept[:2], "the wait doubles")
-	assert.Contains(t, out.String(), "opening again in 1s")
-	assert.Contains(t, out.String(), "opening again in 2s")
-	assert.Contains(t, out.String(), "SERVE STOP interrupted")
-}
-
-// serve --dry-run with a store that will not open refuses at exit 2 with the
-// open error (serve.go:48-58).
-func TestServeDryRunRefusesAStoreThatWillNotOpen(t *testing.T) {
-	t.Parallel()
-	r := newRig(t, "ada", "bob")
-	r.store.Fail = errors.New("store down")
-	w := r.world()
-	var out, errb strings.Builder
-	code := run([]string{"serve", "--as", "ada", "--dry-run"}, strings.NewReader(""), &out, &errb, w)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errb.String(), "store down")
-}
-
 // A harness at its limit with no seat and no --coordinator says so on the
 // record instead of telling no one (main.go:1448-1451, tellSeat's empty answer).
 func TestRunSaysThereIsNoSeatOrCoordinatorToTellOfALimit(t *testing.T) {
@@ -203,8 +77,8 @@ func TestRunSaysThereIsNoSeatOrCoordinatorToTellOfALimit(t *testing.T) {
 		}
 		go f()
 	}
-	w.friends = func(context.Context, string) ([]friend.WakeRow, string, error) {
-		return nil, "ada", nil
+	w.seatHolder = func(context.Context, string) (string, error) {
+		return "ada", nil
 	}
 	var mu sync.Mutex
 	clock := start
@@ -282,8 +156,8 @@ func driveCreditRefusal(t *testing.T, down func(context.Context, string, []strin
 		}
 		go f()
 	}
-	w.friends = func(context.Context, string) ([]friend.WakeRow, string, error) {
-		return nil, "ada", nil
+	w.seatHolder = func(context.Context, string) (string, error) {
+		return "ada", nil
 	}
 	var mu sync.Mutex
 	clock := start

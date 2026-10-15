@@ -28,12 +28,6 @@ import (
 // HookRetry is how soon the daemon looks again while its friend is not hooked in.
 const HookRetry = 5 * time.Second
 
-// BusGrace is how long a session harness's bus push stays proven after her
-// session was last seen present (friend.SessionCheck.Present): one check
-// cadence, so a check answered late, or a turn that runs past one check's
-// bound, does not stop her lanes, and a session that is gone for longer does.
-const BusGrace = friend.SessionQuiet
-
 // ErrUnhooked is what a gated sprint verb answers while the friend is not hooked in.
 var ErrUnhooked = errors.New("not hooked in")
 
@@ -42,7 +36,7 @@ type daemonHook struct {
 	holder   *hook.Holder
 	now      func() time.Time
 	record   func(string)
-	busProof func(ctx context.Context) bool // the bus push's proof (sessionProof, or the daemon's own round trip)
+	busProof func(ctx context.Context) bool // the bus push's proof
 	sprint   bool                           // the role carries the work push, proven by the server's answers
 
 	hooked   atomic.Bool
@@ -96,38 +90,6 @@ func (h *daemonHook) beatAnswered(err error) {
 	}
 	at := h.now()
 	h.answered.Store(&at)
-}
-
-// sessionProof is a session harness's bus push proof: proven while the push
-// was proved this run (her session answered a check) and her session is
-// present, or was within grace (the cold reads' finding 7): a proof proved
-// once must not stand for the whole run after her session is gone.
-func sessionProof(sc interface {
-	Proof() (bool, string)
-	Present() (bool, string)
-}, now func() time.Time, grace time.Duration) func(context.Context) bool {
-	var lastUp time.Time
-	return func(context.Context) bool {
-		if proved, _ := sc.Proof(); !proved {
-			return false
-		}
-		if up, _ := sc.Present(); up {
-			lastUp = now()
-			return true
-		}
-		return !lastUp.IsZero() && now().Sub(lastUp) < grace
-	}
-}
-
-// roundTripProof is a per-card harness's bus push proof (a claude friend,
-// friend.SessionCheck.BeatAlways): her cards run as processes of their own, so
-// no interactive session holds her bus push and none is waited for; the daemon
-// reads her stream itself, and its own round trip to the bus store proves it.
-func roundTripProof(st bus.Store) func(context.Context) bool {
-	return func(ctx context.Context) bool {
-		_, _, err := st.Roster(ctx)
-		return err == nil
-	}
 }
 
 // step hooks in on the first call and renews and proves after: one beat of

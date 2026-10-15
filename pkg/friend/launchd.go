@@ -51,7 +51,7 @@ type Agent struct {
 	// when set.
 	WallReads string
 	// Command, when set, is what the agent runs in place of the daemon: this tool's
-	// own verb and flags, after Binary (the wake ping loop, nova-friend ping-install).
+	// own verb and flags, after Binary.
 	Command []string
 	// Sleep is how Install waits between two looks at the old service after the
 	// bootout (ReleasePoll); nil is time.Sleep. A test passes its own clock.
