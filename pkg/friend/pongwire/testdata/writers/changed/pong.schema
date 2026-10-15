@@ -1,0 +1,10 @@
+package pongv3
+
+// a writer whose width changed kind: uint32 to string
+table Pong
+{
+    nonce   string(32)
+    queue   uint32 | min = 0, max = 100000
+    working uint32 | min = 0, max = 10000
+    width   string(8)
+}

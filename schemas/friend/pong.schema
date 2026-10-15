@@ -1,0 +1,22 @@
+// pong.schema: the friend pong as it travels in a bus body (nova-friend pong),
+// read back by ParsePong (pkg/friend/machine.go). A VARIABLE table, not a fixed
+// one (nova-sprint docs/research/schema-tables/UNION.md D1): an older reader
+// skips and counts a newer writer's fields instead of refusing the message.
+// No version or kind field: the table wire's form byte versions the file, and
+// a field's identity is the hash of its name. Generated Go lives in
+// pkg/friend/pongwire (go generate ./pkg/friend/pongwire).
+package pongwire
+
+table Pong
+{
+    // nonce: today six characters from [a-z0-9] (cmd/nova-friend random) or
+    // six clock digits; 32 leaves room for a 16-byte hex nonce and is the plan's
+    // bound (UNION.md 4.2). A longer nonce is clamped and counted by the reader,
+    // and ParsePong refuses any clamp.
+    nonce   string(32)
+    // the friend's queue depth, lanes working and lane width; unsigned, and the
+    // bounds are the plan's (UNION.md 4.2).
+    queue   uint32 | min = 0, max = 100000
+    working uint32 | min = 0, max = 10000
+    width   uint32 | min = 0, max = 1024
+}

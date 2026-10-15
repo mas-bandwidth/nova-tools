@@ -1,0 +1,11 @@
+package pongv2
+
+// a newer writer: a wider nonce bound and one field the reader has never seen
+table Pong
+{
+    nonce   string(64)
+    queue   uint32 | min = 0, max = 100000
+    working uint32 | min = 0, max = 10000
+    width   uint32 | min = 0, max = 1024
+    sent_ms int64
+}
