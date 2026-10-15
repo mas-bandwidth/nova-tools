@@ -2,6 +2,7 @@ package notice
 
 import (
 	"context"
+	"os"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/dshdesktop"
 )
@@ -23,8 +24,15 @@ func (d *Dsh) Name() string { return "dsh" }
 // Dir is the private events directory.
 func (d *Dsh) Dir() string { return d.Route.EventsDir }
 
-// Push queues one immutable record naming the saved file.
+// Push queues one immutable record naming the saved file. A re-push of a
+// notice whose record the receiver has not taken yet is that record: it is
+// still queued, and the saved file it names holds the newest challenge.
 func (d *Dsh) Push(_ context.Context, n Notice) (string, error) {
+	if path, err := dshdesktop.PendingPath(d.Route.EventsDir, n.ID); err == nil {
+		if _, err := os.Lstat(path); err == nil {
+			return "queued", nil
+		}
+	}
 	kind := dshdesktop.BusNotice
 	if n.Challenge != nil {
 		kind = dshdesktop.ChallengeNotice

@@ -30,6 +30,7 @@ type fakeStore struct {
 	answered map[string]bool
 	act      Activity
 	unproved int
+	clock    time.Duration // how far the store clock has moved from its start
 }
 
 func (f *fakeStore) Active(context.Context, string) (string, int64, error) {
@@ -44,7 +45,7 @@ func (f *fakeStore) Answered(_ context.Context, _ string, ids []string) (map[str
 }
 func (f *fakeStore) Activity(context.Context, string) (Activity, error) { return f.act, nil }
 func (f *fakeStore) Now(context.Context) (time.Time, error) {
-	return time.Date(2026, 10, 14, 23, 0, 0, 0, time.UTC), nil
+	return time.Date(2026, 10, 14, 23, 0, 0, 0, time.UTC).Add(f.clock), nil
 }
 func (f *fakeStore) Unprove(context.Context, string, hook.Role, int64) error {
 	f.unproved++
@@ -312,6 +313,31 @@ func TestEveryShimConforms(t *testing.T) {
 			assert.Equal(t, 1, r.store.unproved)
 			_, pending := r.core.Pending()
 			assert.False(t, pending)
+		}},
+		{"the model answers once, then is busy: the next two challenges each reach it", func(t *testing.T, r *rig) {
+			r.arrive(r.store.challenge("first"))
+			assert.Equal(t, "first", r.act(), "the model answers the first")
+			r.h.busy(t)
+			r.store.clock += hook.ChallengeEvery
+			r.arrive(r.store.challenge("second"))
+			require.Len(t, r.h.pushes, 2, "the second challenge is pushed: the first notice was consumed")
+			first, _ := r.core.Pending()
+			r.store.clock += hook.ChallengeEvery / 2
+			require.NoError(t, r.core.Step(context.Background()))
+			assert.Len(t, r.h.pushes, 2, "no re-push inside one interval")
+			r.store.clock += hook.ChallengeEvery / 2
+			r.arrive(r.store.challenge("third"))
+			require.Len(t, r.h.pushes, 3, "the unanswered notice is re-pushed after one interval, holding the third")
+			again, _ := r.core.Pending()
+			assert.Equal(t, first.ID, again.ID, "a re-push of the one notice, never a second pending one")
+			assert.Equal(t, challengePrefix+"third", r.file().Challenge.Subject)
+			require.NoError(t, r.core.Step(context.Background()))
+			r.store.clock += 2 * hook.ChallengeEvery
+			require.NoError(t, r.core.Step(context.Background()))
+			assert.Len(t, r.h.pushes, 3, "the same challenge is never re-pushed")
+			assert.Equal(t, "third", r.act(), "the model proves the newest from the one notice")
+			_, pending := r.core.Pending()
+			assert.False(t, pending, "consumed")
 		}},
 		{"an answered message is not counted", func(t *testing.T, r *rig) {
 			r.store.answered["m-01"] = true
