@@ -169,7 +169,7 @@ func TestTalkingStillRenewsProofAndDaemonTrafficDoesNotCount(t *testing.T) {
 					require.NoError(t, r.h.Store.Delivered(ctx, bt))
 					challenges++
 					if model {
-						assert.GreaterOrEqual(t, i, 34, "conversation suppresses silence challenges until proof renewal")
+						assert.GreaterOrEqual(t, i, 33, "conversation suppresses silence challenges until proof renewal")
 						require.NoError(t, r.h.Store.Renew(ctx, "bob", hook.Comms, hook.Bus, bt.Epoch, "holder"))
 						_, err := r.h.Store.Answer(ctx, "bob", bt.Nonce, "model")
 						require.NoError(t, err)
@@ -370,4 +370,28 @@ func TestBusyPolicyBatchesReadyWorkingIdleAndUnknownRows(t *testing.T) {
 		assert.Equal(t, hook.BusyQuietAfter, r.h.State(t, n).QuietAfter)
 	}
 	assert.Equal(t, hook.QuietAfter, r.h.State(t, "dana").QuietAfter)
+}
+
+// A pass may take work time before the loop sleeps; a gap under two intervals
+// remains healthy. Its whole answer window must still precede proof expiry.
+func TestProofRenewalAllowsAHealthySlowPass(t *testing.T) {
+	t.Parallel()
+	r := newQuietRig(t)
+	r.h.Hook(t, "bob", hook.Comms)
+	ctx := context.Background()
+	expiry := r.h.State(t, "bob").AnswerAt.Add(hook.ProofTTL)
+	b := &bus.Bus{Store: bus.Redis{C: r.h.Client}}
+	pass := func() {
+		_, err := b.Send(ctx, bus.Message{From: "bob", To: []string{"ada"}, Kind: bus.KindReport, Subject: "work", Body: "progress", ModelActivity: true})
+		require.NoError(t, err)
+		_, err = r.h.Store.Pass(ctx, []string{"bob"}, hook.BeatEvery, hook.DownAfter, func() string { return "slow" }, "test")
+		require.NoError(t, err)
+	}
+	r.h.Pass(33*time.Minute + 59*time.Second)
+	pass()
+	r.h.Pass(90 * time.Second)
+	pass()
+	deadline := r.h.State(t, "bob").PendingUntil
+	require.False(t, deadline.IsZero())
+	assert.False(t, deadline.After(expiry), "a healthy slow pass must retain the full answer bound before proof expiry")
 }

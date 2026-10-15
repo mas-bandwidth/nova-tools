@@ -82,12 +82,13 @@ A push is `down` (no lease of the record's epoch), `armed` (a lease and no proof
 The record is `none` (never hooked), `unhooked`, `expired` (hooked, no push of its role live), `partial`
 (some live), `live` (every push live, not every one proven), or `proven` (every push live and proven).
 Furthermore, `Served.Down` refuses evidence when the server never ran or its last pass is more than
-two intervals old by store `TIME`. A session must have answered a nonce at least once. Before a new
-challenge, its activity stays inside the selected quiet window; while a challenge stands, its full
-`AnswerBound` is allowed. Past that deadline, activity older than `DownAfter` reads down. A successful
-explicit model send stamps `bus_sent_at` in the same transaction as the message; a duplicate token or
+two intervals old by store `TIME`. A session must have answered a nonce at least once. Without a
+pending challenge, crossing the quiet window only schedules the next challenge; it does not read
+down. A delivered challenge retains its full `AnswerBound`. Past that deadline, activity older than
+`DownAfter` reads down. A successful
+explicit model send stamps `bus_sent_at` in the same Redis script as the message; a duplicate token or
 once-key does not refresh it. Only the explicit `nova-bus send` call site opts into `ModelActivity` for
-request, report, ack, or an explicit reply (`--re`), excluding ping, pong, presence and hook subjects.
+request, report, ack, ask, blocker, or a status reply (`--re`), excluding ping, pong, presence and hook subjects.
 Library and daemon sends default false. This is operational call-site attribution, not model attestation:
 a script can imitate the CLI. The nonce proof remains the only proof, and its TTL is never extended by
 activity. The gate's yes remains `proven` and not `Down`, with the required role and pushes.
@@ -142,8 +143,8 @@ Every line runs as printed:
   working cards has a 5m quiet window, an idle friend or comms name 10m, and a coordinator 30m. The
   server batches authoritative `friend cards <name> --json` reads through `--sprint-server`; an unknown
   row uses 5m and prints a fault. The selected policy is recorded as `quiet_after`, not a copied work
-  counter. A proof reaches renewal at `ProofTTL - AnswerBound - BeatEvery` (34m after proof
-  with current constants), reserving a full answer window even between passes, and triggers a challenge, even while the name talks. One outstanding nonce is retained through its
+  counter. A proof reaches renewal at `ProofTTL - AnswerBound - 2*BeatEvery` (33m after proof
+  with current constants), reserving a full answer window for any pass gap within the fresh-server limit, and triggers a challenge, even while the name talks. One outstanding nonce is retained through its
   deadline. The challenge names `bus`, is delivered through the name's existing push, and is answered
   only by the model with `nova-hook prove`.
 - **A proof window, not only the newest nonce.** A harness may hand a challenge to the model's turn
@@ -172,7 +173,8 @@ Every line runs as printed:
 - **Down after an unanswered challenge.** A delivered challenge past `AnswerBound` counts once as a miss.
   When its last activity is also older than `--down-after`, the pass unhooks the name and logs the
   event once. `pending_until` retains that obligation even if the transient challenge key expires.
-  With uninterrupted minute passes and successful challenge delivery, silence is detected after the quiet window plus the 5m answer
+  With uninterrupted minute passes and successful challenge delivery, silence is detected after
+  the quiet window plus the 5m answer
   bound, rounded to the next pass at each strict boundary: busy friend about 10m, idle friend/comms
   about 15m, coordinator about 35m. A server outage adds its duration; stale-server detection remains
   two pass intervals. The model checks all prior invariants and liveness, role quiet and detection

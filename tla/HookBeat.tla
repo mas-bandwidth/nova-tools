@@ -75,7 +75,8 @@ QuietAfter == 2 * DownAfter
 CoordinatorEvery == 6 * DownAfter
 ActivityCap == IF Silence THEN CoordinatorEvery + 1 ELSE DownAfter + 1
 ProofLife == 8 * DownAfter
-ProofDue == ProofLife - DownAfter - 1
+\* A fresh server may pass up to two intervals apart, including work time.
+ProofDue == ProofLife - DownAfter - 2
 QCap == IF Silence THEN ProofLife + 1 ELSE DownAfter + 1
 \* quiet's cap: past the most passes an up name can have gone unanswered.
 QuietCap == IF Silence THEN CoordinatorEvery + 3 ELSE DownAfter + 2
@@ -227,7 +228,7 @@ Init ==
 \* window at DownAfter, an open ask and an open judgment are past their due,
 \* the row ages.
 Tick ==
-    /\ "renewal" \notin Parts \/ (taken /\ \A n \in Names : chal[n] # "open")
+    /\ "renewal" \notin Parts \/ (rowAge < 2 /\ \A n \in Names : chal[n] # "open")
     /\ lastActivity' = [n \in Names |-> IF "renewal" \in Parts THEN 0 ELSE IF lastActivity[n] < ActivityCap THEN lastActivity[n] + 1 ELSE ActivityCap]
     /\ taken' = FALSE
     /\ passed' = {}

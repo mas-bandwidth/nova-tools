@@ -507,32 +507,16 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 	return nil
 }
 
-// beatLua is one heartbeat pass over every name, in one atomic step
-// (tla/HookBeat.tla, Pass). The pass is taken once an interval: a pass less
-// than nine tenths of an interval after the last one (another server's) does
-// nothing and answers {0} (the once-key is the server row's at). Otherwise,
-// for each name: a record that is not hooked, or hooked as a role with no bus
-// push, is left as it is (code 0); a challenge still standing from the last
-// pass is a miss (counted in misses, for the reason); a miss when the name's
-// last answer, or its hooking in if later (armed), is older than down-after
-// unhooks the name as unhookLua does, with the reason, and the event logged
-// once (code 2); else a fresh challenge is set, due within the interval,
-// naming the pushes of the role a session receives (code 1), which joins the
-// record's recent, the challenges a proof may answer (newest first, each with
-// its epoch, sum, issue time, deadline (issue time plus down-after) and
-// pushes, as many as the window holds; an unhook clears it). The server's row
-// is stamped, with the down-after the readers' up uses (Served.Down). Last, the pass reads the
-// unhooked set, the coordinator (the first hooked name of that role) and the
-// live names (hooked, of a challenged role), and what each audience was last
-// told: the answer is {1, {code, misses, epoch} per name, the set, the
-// coordinator, the live names, then per audience in Audiences the set and the
-// coordinator it was told}. Nothing is marked told here: the server marks an
-// audience told only after its message went out (Store.Told), so a send that
-// fails is told again by the next pass.
-// KEYS: events, serve, then per name its record and allKeys (8 keys; the challenge last).
-// ARGV: every ms, down-after ms, ttl ms, by, events cap, the down-after as
-// the reason says it, the count of roles, a role and the pushes its challenge
-// names (comma) per role, then per name its name and its nonce's sum.
+// beatLua performs one atomic server pass (tla/HookBeat.tla, Pass). The
+// server row prevents two passes in one interval. Each hooked bus role gets
+// a challenge only after its selected quiet window or when proof renewal is
+// due. A valid pending nonce is retained; its outbox is retried until the bus
+// confirms delivery. Expiry invalidates its recent entry before replacement.
+// Only a delivered expired challenge plus activity older than down-after
+// unhooks a name and logs the transition. Activity never creates a proof.
+// KEYS: events, serve, then each name's record, six push keys, challenge and
+// delivery outbox. ARGV: every, down-after, key TTL, by, event cap, reason
+// label, role count and role/push pairs, then name, sum, busy flag and nonce.
 var beatLua = redis.NewScript(nowMS + `
 local now = tonumber(ms)
 local every, after, ttl, by, cap, label = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5], ARGV[6]
@@ -574,7 +558,7 @@ while k <= #KEYS do
     if role == 'coordinator' then quiet = ` + strconv.FormatInt(CoordinatorEvery.Milliseconds(), 10) + `
     elseif role == 'friend' and ARGV[a + 2] == '1' then quiet = ` + strconv.FormatInt(BusyQuietAfter.Milliseconds(), 10) + ` end
     redis.call('HSET', rec, 'quiet_after', quiet)
-    local proofDue = now - math.max(answer, armed) >= ` + strconv.FormatInt((ProofTTL-AnswerBound).Milliseconds(), 10) + ` - every
+    local proofDue = now - math.max(answer, armed) >= ` + strconv.FormatInt((ProofTTL-AnswerBound).Milliseconds(), 10) + ` - 2 * every
     if miss and now - heard > after then
       e = redis.call('HINCRBY', rec, 'epoch', 1)
       local why = 'no answer in ' .. label .. ' (' .. misses .. ' challenges missed)'
@@ -777,12 +761,10 @@ func (s Store) Sent(ctx context.Context, once string) (bool, error) {
 // is challenged.
 var Challenged = map[Role][]Push{Coordinator: {Bus}, Friend: {Bus}, Comms: {Bus}}
 
-// Pass is one heartbeat pass over names (sorted), in one round trip and one
-// atomic step (beatLua): taken once an interval however many servers pass; in
-// it each hooked name of a role in Challenged is challenged, a challenge left
-// standing a whole interval is a miss, and a miss when the name has not
-// answered (nor hooked in) for more than downAfter unhooks it, once; and the set of
-// unhooked names is told once per change (tla/HookBeat.tla, DownAfter).
+// Pass applies the silence/proof-renewal rule in one store round trip
+// (tla/HookBeat.tla, Pass). busy names come from the authoritative sprint
+// ready/working rows; omitted names use the idle policy. Beats with a nonce
+// require delivery, including retry of a prepared but undelivered nonce.
 func (s Store) Pass(ctx context.Context, names []string, every, downAfter time.Duration, nonce func() string, by string, busy ...string) (Passed, error) {
 	keys := []string{EventsKey, ServeKey}
 	args := []any{every.Milliseconds(), downAfter.Milliseconds(), (2*every + AnswerBound).Milliseconds(), by, EventsMax, downAfter.String(), len(Challenged)}
@@ -877,15 +859,11 @@ const (
 // never passed, or not for more than two of its intervals by the store's TIME.
 func (sv Served) Stale() bool { return !sv.OK || sv.Now.Sub(sv.At) > 2*sv.Every }
 
-// Down is why st reads down at this read whatever its state says, "" when the
-// evidence stands (tla/HookBeat.tla, the findings of the model run): no server
-// row, or one older than two intervals, puts every name down; and a name of a
-// challenged role is up only when it answered a challenge within the server's
-// down-after (Window), by the store's TIME, however fresh the server row is:
-// the window the server unhooks on, so a name the server keeps hooked does not
-// read down meanwhile. A role the heartbeat never challenges (a member's
-// or reader's loop: no session) needs only the server. The one rule every
-// reader uses: Store.Read sets Status.Down from it, and the gate refuses on it.
+// Down is the shared reader rule (tla/HookBeat.tla, ActivityUp): a missing
+// or stale server is down. A challenged role needs an initial nonce answer;
+// afterward only a delivered pending challenge past its deadline with old
+// activity reads down. Quiet eligibility alone never changes reader status.
+// The separate proof lease gate remains mandatory.
 func (sv Served) Down(st Status) string {
 	switch {
 	case !sv.OK:
