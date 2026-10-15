@@ -239,3 +239,6 @@ MCFriendNotices.cfg	MCFriendNotices.tla	pass	-	ignore-terminal	friend-notices	re
 MCFriendNoticesNewToken.cfg	MCFriendNotices.tla	invariant	AtMostOnce	ignore-terminal	friend-notices	required	-
 MCFriendNoticesDropLost.cfg	MCFriendNotices.tla	invariant	NoNoticeLost	ignore-terminal	friend-notices	required	-
 MCConfigApplyBrokenSilentUnapplied.cfg	MCConfigApply.tla	invariant	NoSilentUnappliedWrite	ignore-terminal	configapply	required	-
+MCBenchGrant.cfg	MCBenchGrant.tla	pass	-	ignore-terminal	benchgrant	required	-
+MCBenchGrantBrokenNoTimer.cfg	MCBenchGrant.tla	temporal	EveryExpiryIsPushed	ignore-terminal	benchgrant	required	-
+MCBenchGrantBrokenToldBeforeSend.cfg	MCBenchGrant.tla	temporal	EveryExpiryIsPushed	ignore-terminal	benchgrant	required	-

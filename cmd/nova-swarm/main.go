@@ -88,6 +88,12 @@ usage:
                         nova-swarm mirror as a nova-config loop row.)
   nova-swarm uninstall <disk-guard|mirror-refresh> [--dir <dir>] [--dry-run]
                        (unloads that unit and removes its file; a dry run removes nothing.)
+  nova-swarm grant add --bench <name> --to <name> --for <duration>
+  nova-swarm grant extend <id> --for <duration>
+  nova-swarm grant end <id>
+  nova-swarm grant list
+  nova-swarm grant watch
+                       (store-clock grant records and expiry pushes; grant -h names the store and identity flags)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -199,13 +205,13 @@ func verbHelpLines(verb string) string {
 
 // verbNames are the verbs, in the usage's order: what a bare command and an unknown verb
 // are answered with (the tool-answers rule).
-var verbNames = []string{"template", "lint", "member", "native", "step", "disk-guard", "mirror", "install", "uninstall", "worker", "verify", "doctor", "profile", "slots", "version"}
+var verbNames = []string{"template", "lint", "member", "native", "step", "disk-guard", "mirror", "install", "uninstall", "worker", "verify", "doctor", "profile", "slots", "grant", "version"}
 
 // helpVerbs are the verbs `help <verb>` answers with that verb's help, the same text
 // `<verb> -h` prints.
 var helpVerbs = map[string]bool{
 	"version": true, "doctor": true, "verify": true, "lint": true,
-	"template": true, "profile": true, "native": true, "member": true, "slots": true, "worker": true,
+	"template": true, "profile": true, "native": true, "member": true, "slots": true, "grant": true, "worker": true,
 	"step": true, "disk-guard": true, "mirror": true, "install": true, "uninstall": true,
 }
 
@@ -279,6 +285,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdStep(rest, stdout, stderr)
 	case "member":
 		return cmdMember(rest, stdout, stderr, nil)
+	case "grant":
+		return cmdGrant(rest, stdout, stderr)
 	case "slots":
 		return cmdSlots(rest, stdout, stderr)
 	case "mirror":

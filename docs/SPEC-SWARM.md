@@ -788,3 +788,48 @@ scanned as before:
 ## Test inventory
 
 List the current unit tests with `go test -list . ./cmd/nova-swarm/`.
+
+## Bench grants
+
+`nova-swarm grant add --bench <name> --to <name> --for <duration>` records a
+bench grant in the bus Redis. It returns its id; `grant extend <id> --for
+<duration>` moves its deadline to store time plus that duration, `grant end
+<id>` ends it, and `grant list` reads the records. The acting identity comes
+from the store login or `--as`, and must pass the hook gate. These records do
+not grant operating-system access or change the separate liveness-fenced slot
+leases.
+
+Each `swarm:grants:<id>` hash holds `bench`, `grantee`, `by`, `granted`,
+`deadline`, `ended`, `owed` and `told`. Times are Redis TIME milliseconds.
+Creation, extension and ending each use one atomic write, including the index
+and an event in `swarm:grants:changes`. A mutation at or after an open deadline
+first preserves that deadline as `owed`: ending or extending cannot erase an
+expiry notification already owed. One id has one notification lifecycle; use
+add for a new grant after its first expiry notification.
+
+`grant watch` selects the currently proven hooked coordinator as the seat.
+It reads the index and change cursor atomically, then reads all grant hashes
+and server time in a second atomic batch. A change between these reads remains
+past that cursor. Each wake sweeps all records, including expiry obligations
+preserved by an end or extension, and sends one status message to the grantee
+and seat with subject `BENCH GRANT EXPIRED <bench> grantee=<name>
+deadline=<RFC3339>`. The bus once-key and the grant's told mark commit in the
+same transaction as the message. A failed send leaves the obligation due.
+
+The watcher blocks in XREAD on the change stream until a change or the earliest
+open deadline; Redis TIME immediately before the block supplies its duration.
+With no deadline it waits for a change. After a failed send it also schedules a
+one-minute retry backstop. Every wake, including startup and a late deadline,
+sweeps again. There is no polling cadence for discovering expiries. Stopping
+the watcher closes its own connection to interrupt its blocking read.
+
+The existing bus once-key retention is seven days. A watcher holding a stale
+snapshot must resume within that retention: resuming that stale send after
+seven days is outside the deduplication guarantee. Normal restarts reread the
+persistent told mark even after the once-key expires. `BenchGrant.tla` models
+these assumptions, `EveryExpiryIsPushed`, `NeverToldTwice` and
+`PushedWithinOneEvent`; the no-timer and told-before-send variants violate the
+liveness property. The tests pin both the expiry event and the seven-day
+boundary. At 10,000 records of approximately 512 bytes each, the snapshot is
+approximately 5 MiB; reading uses two batched store trips, independent of row
+count, without a table-sized Lua loop.
