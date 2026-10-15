@@ -42,6 +42,33 @@ func TestStatusPrintsTheEngineAndTheBox(t *testing.T) {
 	assert.Contains(t, r.Stdout, "STATUS MODEL engine=ollama model=gemma4-32k:latest digest=sha256:9a8b7c6d5e4f weights=8149190253 loaded=yes num_ctx=32768")
 }
 
+// Every STATUS OK and SERVE OK line carries the five box fields, unknown or unset
+// where the box cannot read one, so a reader can tell absent from unread (rule 10).
+func TestTheBoxFieldsAreAlwaysPrinted(t *testing.T) {
+	t.Parallel()
+	const unread = "mem_used=unknown mem_free=unknown mem_total=unknown wired_cap=unset load1=unknown"
+	f := newFake("/ai/shared/models/ollama")
+	run := func(b Box) testkit.Main {
+		w := world{do: f.do, box: b, now: f.now, lookup: fakeLookup, getenv: func(string) string { return "/ai" }, stat: os.Stat, adapters: Adapters()}
+		return testkit.Main(localTool(w).Run)
+	}
+	blank := run(Box{})
+	assert.Contains(t, blank.OK(t, "status").Stdout, "STATUS OK engines=1 answering=1 loaded=0 models=1 "+unread)
+	dry := blank.OK(t, append(args(serveGemma), "--dry-run")...)
+	assert.Contains(t, dry.Stdout, "SERVE OK ")
+	assert.Contains(t, dry.Stdout, unread)
+
+	none := fakeBox()
+	none.WiredCap = func() (uint64, bool) { return 0, false }
+	assert.Contains(t, run(none).OK(t, "status").Stdout, "wired_cap=unset")
+
+	const giB = uint64(96)
+	capped := fakeBox()
+	capped.WiredCap = func() (uint64, bool) { return giB << 10, true }
+	assert.Contains(t, run(capped).OK(t, "status").Stdout, fmt.Sprintf("wired_cap=%d", giB<<30))
+	assert.Contains(t, run(capped).OK(t, append(args(serveGemma), "--dry-run")...).Stdout, fmt.Sprintf("wired_cap=%d", giB<<30))
+}
+
 // The memory is read at the moment of each call, never cached (rule 10).
 func TestStatusReadsTheMemoryEachCall(t *testing.T) {
 	t.Parallel()
