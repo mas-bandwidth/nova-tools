@@ -165,3 +165,9 @@ presence. A later explicit startup recovery may repeat an unanswered message
 as disclosed above. The sender and existing bus ask server own deadlines; the
 configured one-minute ask deadline without a model answer is failure evidence.
 No 10-second watchdog or repeated model notification is added.
+
+## The one-line setup and the current chat
+
+`nova-hook hook --as <name> --role comms --harness codex` is the whole setup. The socket defaults to `CODEX_HOME/ipc/ipc.sock` (`~/.codex` without `CODEX_HOME`), and the events directory to `$XDG_STATE_HOME/nova-hook/<name>-codex` (`~/.local/state` without it), created 0700. With that defaulted directory, the cutover is the store's time at the first hook, kept in its `.cutover` file and read again at every restart. A named directory keeps the earlier rule: the 24h window, or `--codex-since`.
+
+The chat is the friend's current one: the newest chat that the desktop started for a person (session_meta `originator: "Codex Desktop"`, `thread_source: "user"`) in a workspace named for the friend. The workspace's base name, case folded, is the name, or the name plus the macOS copy suffix (`ada 2`). The chats are read from the first line of each rollout under `CODEX_HOME/sessions` (`codexdesktop.DesktopChats`); archived chats have left that directory. Once a `FollowEvery` (store clock), the route reads the newest chat again. When the friend has moved to a new chat, the route follows, and a pending notice is pushed once into the new chat (notice rule 6, `tla/HarnessNoticeUnknown.tla`). A failed read keeps the route where it is. `--codex-thread` names a chat as an override, and that route does not follow.
