@@ -239,3 +239,5 @@ MCCodexHookRecoveryBrokenRetry.cfg	MCCodexHookRecovery.tla	invariant	OneAttemptP
 MCDshNativeWake.cfg	MCDshNativeWake.tla	pass	-	ignore-terminal	dshnativewake	required	-
 MCDshNativeWakeBrokenHide.cfg	MCDshNativeWake.tla	invariant	PriorityUnblocked	ignore-terminal	dshnativewake	required	-
 MCDshNativeWakeWitnessIdle.cfg	MCDshNativeWake.tla	invariant	IdleWakeUnreachable	ignore-terminal	dshnativewake	required	-
+MCHarnessNoticeUnknown.cfg	MCHarnessNoticeUnknown.tla	pass	-	ignore-terminal	harnessnoticeunknown	required	-
+MCHarnessNoticeUnknownBrokenStop.cfg	MCHarnessNoticeUnknown.tla	invariant	NeverUnhooked	ignore-terminal	harnessnoticeunknown	required	-

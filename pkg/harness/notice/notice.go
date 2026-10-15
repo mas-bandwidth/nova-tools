@@ -20,6 +20,11 @@
 //     clock) without consumption, the Core re-pushes that same notice (same
 //     id and file, rewritten in place). There is never a second pending one.
 //  4. Only the model proves. The Core never runs prove and never writes a proof.
+//  5. A push whose native outcome is unknown (codexdesktop.ErrOutcomeUnknown)
+//     may have reached the session: the notice is pending as if accepted, the
+//     route keeps running and the record keeps its epoch. Only rule 3a pushes
+//     it again; an unknown outcome never stops the route, so it never lets
+//     the heartbeat unhook the name (tla/HarnessNoticeUnknown.tla).
 package notice
 
 import (
@@ -260,8 +265,9 @@ func (c *Core) Offer(ctx context.Context, ms []bus.Message) error {
 
 // Step observes consumption, clears what no longer stands, and pushes the
 // held notice when none is pending, or re-pushes the pending one when a newer
-// challenge has waited behind it for one interval (rule 3a). A push error
-// stops the route: it is never retried here.
+// challenge has waited behind it for one interval (rule 3a). A certain push
+// failure stops the route: it is never retried here. An unknown outcome keeps
+// the notice pending (rule 5).
 func (c *Core) Step(ctx context.Context) error {
 	if err := c.settle(ctx); err != nil {
 		return err
@@ -294,11 +300,14 @@ func (c *Core) Step(ctx context.Context) error {
 		return fmt.Errorf("read the store clock: %w", err)
 	}
 	receipt, err := c.Shim.Push(ctx, n)
-	if err != nil {
+	if err != nil && !errors.Is(err, codexdesktop.ErrOutcomeUnknown) {
 		return err
 	}
+	// An unknown outcome may have reached the session, so the notice is
+	// pending exactly as an accepted one (rule 5): it is never pushed again
+	// blindly, only by rule 3a, and the route and the record stand.
 	c.out, c.shown, c.mark, c.pushed = &n, n.Nonce, mark, at
-	c.say(n, receipt, false)
+	c.sayUnknown(n, receipt, false, err)
 	return nil
 }
 
@@ -340,12 +349,29 @@ func (c *Core) repush(ctx context.Context) error {
 		return err
 	}
 	receipt, err := c.Shim.Push(ctx, *c.out)
-	if err != nil {
+	if err != nil && !errors.Is(err, codexdesktop.ErrOutcomeUnknown) {
 		return err
 	}
 	c.shown, c.pushed = c.held.Nonce, now
-	c.say(*c.out, receipt, true)
+	c.sayUnknown(*c.out, receipt, true, err)
 	return nil
+}
+
+// sayUnknown is say, or, for an unknown outcome (err non-nil), the PUSH line
+// that says so: the notice stays pending and only rule 3a pushes it again.
+func (c *Core) sayUnknown(n Notice, receipt string, again bool, err error) {
+	if err == nil {
+		c.say(n, receipt, again)
+		return
+	}
+	if c.Say == nil {
+		return
+	}
+	o := tool.Done().As("PUSH").Fact("push", c.Shim.Name()).Fact("id", n.ID).Fact("receipt", "unknown").Fact("native", "unknown").Fact("messages", n.Count)
+	if again {
+		o.Fact("repush", true)
+	}
+	c.Say(o.Note("native outcome unknown: " + err.Error() + "; the notice stays pending and the hook stays as it is; it is pushed again only when a newer challenge has waited one interval behind it"))
 }
 
 // say is the one PUSH line a push prints.

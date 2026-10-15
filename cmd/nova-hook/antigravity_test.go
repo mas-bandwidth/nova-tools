@@ -498,7 +498,7 @@ func TestAntigravityServerRestartMidRunReDiscoversPortAndToken(t *testing.T) {
 func TestAntigravityDeliveryOutcomesAndReconciliation(t *testing.T) {
 	t.Parallel()
 
-	t.Run("unknown timeout revokes proof without unhook", func(t *testing.T) {
+	t.Run("unknown timeout keeps the route, the proof and the hook", func(t *testing.T) {
 		t.Parallel()
 		r := newRig(t)
 		fh := newFakeAntigravityHarness(t)
@@ -540,12 +540,11 @@ func TestAntigravityDeliveryOutcomesAndReconciliation(t *testing.T) {
 		c := &tool.Call{Stdout: &out}
 		res := w.loop(c, s, hook.Comms, []hook.Push{hook.Bus}, epoch, "0-0", func(int64) *tool.Out { return nil }, w.newCore(c, s, hook.Comms, epoch, w.nativeShim(route)), true)
 		require.NotNil(t, res)
-		assert.Equal(t, tool.Failed, res.Status)
-		res.Verb = "hook"
-		res.Render(&out, false)
-		assert.Contains(t, out.String(), "antigravity local delivery unknown")
+		assert.NotEqual(t, tool.Failed, res.Status, "an unknown outcome is not a failed route (notice rule 5)")
+		assert.NotContains(t, out.String(), "local delivery unknown")
 		assert.Contains(t, out.String(), "native=unknown")
-		assert.Equal(t, hook.StateLive, r.h.State(t, "emma").State)
+		assert.Equal(t, hook.StateProven, r.h.State(t, "emma").State, "the proof and the epoch stand")
+		assert.Equal(t, epoch, r.h.State(t, "emma").Epoch)
 	})
 
 	t.Run("unknown timeout reconciled by existing model answer", func(t *testing.T) {
