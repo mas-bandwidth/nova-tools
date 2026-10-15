@@ -13,6 +13,7 @@
 # --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
+docs/research/ a directory prefix the spike rule in pkg/swarm names (ResearchRoots) as the place a spike's own files go; the directory is not in this tree
 
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
