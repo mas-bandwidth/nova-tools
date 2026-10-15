@@ -15,12 +15,16 @@ No area is here yet. The first generated package lands with the first area.
   nova-tools require; it keeps no copy of the definition and no generated copy.
 - **A type only one repository reads lives beside its consumer**, in that repository,
   under the same rules.
-- One area is one directory: `schemas/<area>/` holds its `.schema` files and, for a
-  fixed table, its `schema.lock` and `tables.baseline`, committed beside the definition
-  before the first edit to it (the next build otherwise refuses every existing image as
-  `layout_newer`).
+- One area is one directory: `schemas/<area>/` holds its `.schema` files, the
+  `tables.baseline` of its tables (`schema tables-baseline --update --reason "first
+  baseline" schemas/<area>`; without one, `schema check` only prints a notice that
+  evolution is unguarded) and, for a fixed table, its `schema.lock`. Both are committed
+  beside the definition before the first edit to it (the next build otherwise refuses
+  every existing fixed image as `layout_newer`).
 - One area generates one package: `pkg/<area>wire/`. Every `.go` file in it is generated
-  except `generate.go`, which is hand-written and holds the package doc and the pin.
+  except `generate.go`, which is hand-written and holds the package doc and the pin. The
+  package is a package like any other: it gets its row in `internal/docs/catalog.go` and
+  a `make map`.
 - Generated Go is committed and never edited by hand. Edit the `.schema` and run
   `go generate`. A generated file carries Go's standard header
   (`// Code generated ... DO NOT EDIT.` before the package clause), and the line linters
@@ -81,8 +85,10 @@ A bump moves every pin to one new schema commit, in one commit of its own.
    `go list -m -json github.com/mas-bandwidth/schema/v2@<commit>` (the `Version` field).
 2. Replace the pseudo-version in every `pkg/*wire/generate.go`; no other line changes.
 3. Regenerate: `go generate ./pkg/<area>wire` for each package.
-4. For each fixed-table area, run the compiler's `check` over `schemas/<area>/` with the
-   new pin and read its notices; a `layout_newer` or a lock refusal stops the bump.
+4. For each area, run the compiler's `check` over `schemas/<area>/` with the new pin
+   (`go run github.com/mas-bandwidth/schema/v2/cmd/schema@<pseudo-version> check
+   schemas/<area>`) and read every line it prints; a `layout_newer`, a lock refusal or a
+   baseline refusal stops the bump.
 5. Read the diff of the generated Go. A change in a refusal's name, a bound or a wire
    byte is a behaviour change and is named in the commit message.
 6. Test the packages that import the regenerated ones (`nova-ci local` runs the unit
