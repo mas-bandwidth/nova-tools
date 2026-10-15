@@ -244,6 +244,8 @@ func TestExpiredPendingTrafficCanRecoverWithoutOldNonceReplay(t *testing.T) {
 	require.Error(t, err, "expired pending must be invalidated even with custom down-after=10m")
 	r.h.Pass(18 * time.Minute)
 	send()
+	assert.Equal(t, hook.BeatLeft, pass("still-talking").Did, "failed renewal stays latched while talking")
+	r.h.Pass(hook.QuietAfter + time.Minute)
 	next := pass("fresh")
 	require.Equal(t, hook.BeatChallenged, next.Did)
 	require.NoError(t, r.h.Store.Renew(ctx, "bob", hook.Comms, hook.Bus, next.Epoch, "holder"))
@@ -394,4 +396,75 @@ func TestProofRenewalAllowsAHealthySlowPass(t *testing.T) {
 	deadline := r.h.State(t, "bob").PendingUntil
 	require.False(t, deadline.IsZero())
 	assert.False(t, deadline.After(expiry), "a healthy slow pass must retain the full answer bound before proof expiry")
+}
+
+// ReaderBackstop uses only store time and activity, even when the bus loses
+// every challenge and the heartbeat server continues to pass.
+func TestReaderBackstopBoundsLostDeliveryForEveryRole(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		role  hook.Role
+		quiet time.Duration
+		busy  bool
+	}{
+		{"busy friend", hook.Friend, hook.BusyQuietAfter, true},
+		{"idle friend", hook.Friend, hook.QuietAfter, false},
+		{"comms", hook.Comms, hook.QuietAfter, false},
+		{"coordinator", hook.Coordinator, hook.CoordinatorEvery, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newQuietRig(t)
+			r.h.Hook(t, "bob", tc.role)
+			ctx := context.Background()
+			var busy []string
+			if tc.busy {
+				busy = []string{"bob"}
+			}
+			pass := func() {
+				_, err := r.h.Store.Pass(ctx, []string{"bob"}, hook.BeatEvery, hook.DownAfter, func() string { return "lost" }, "test", busy...)
+				require.NoError(t, err)
+			}
+			pass()
+			limit := tc.quiet + hook.AnswerBound + hook.DownAfter + 2*hook.BeatEvery
+			r.h.Pass(limit)
+			pass()
+			assert.Empty(t, r.h.State(t, "bob").Down, "the exact boundary remains allowed")
+			r.h.Pass(time.Millisecond)
+			assert.Equal(t, hook.NoAnswerReason, r.h.State(t, "bob").Down, "lost delivery cannot leave a silent name up indefinitely")
+		})
+	}
+}
+
+func TestExpiredRenewalDoesNotRechallengeEachTalkingPass(t *testing.T) {
+	t.Parallel()
+	r := newQuietRig(t)
+	r.h.Hook(t, "bob", hook.Comms)
+	ctx := context.Background()
+	b := &bus.Bus{Store: bus.Redis{C: r.h.Client}}
+	send := func() {
+		_, err := b.Send(ctx, bus.Message{From: "bob", To: []string{"ada"}, Kind: bus.KindStatus, Subject: "status", Body: "working", ModelActivity: true})
+		require.NoError(t, err)
+	}
+	pass := func() hook.Beat {
+		p, err := r.h.Store.Pass(ctx, []string{"bob"}, hook.BeatEvery, hook.DownAfter, func() string { return "renewal" }, "test")
+		require.NoError(t, err)
+		return p.Beats[0]
+	}
+	r.h.Pass(hook.ProofTTL - hook.AnswerBound - 2*hook.BeatEvery)
+	send()
+	first := pass()
+	require.Equal(t, hook.BeatChallenged, first.Did)
+	require.NoError(t, r.h.Store.Delivered(ctx, first))
+	r.h.Pass(hook.AnswerBound + time.Minute)
+	for range 4 {
+		send()
+		assert.Equal(t, hook.BeatLeft, pass().Did, "expiry does not create another proof challenge while talking")
+		r.h.Pass(hook.BeatEvery)
+	}
+	_, err := r.h.Store.Answer(ctx, "bob", first.Nonce, "model")
+	require.Error(t, err, "the old nonce is expired, never extended by talking")
+	st := r.h.State(t, "bob")
+	assert.NotEqual(t, hook.StateProven, st.State, "talking does not extend proof TTL")
 }

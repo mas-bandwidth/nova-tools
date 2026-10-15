@@ -73,7 +73,7 @@ CONSTANTS Names, Servers, DownAfter, Broken, CoordRole, NoCoord, Parts
 Silence == "silence" \in Parts
 QuietAfter == 2 * DownAfter
 CoordinatorEvery == 6 * DownAfter
-ActivityCap == IF Silence THEN CoordinatorEvery + 1 ELSE DownAfter + 1
+ActivityCap == IF Silence THEN CoordinatorEvery + 2 * DownAfter + 3 ELSE DownAfter + 1
 ProofLife == 8 * DownAfter
 \* A fresh server may pass up to two intervals apart, including work time.
 ProofDue == ProofLife - DownAfter - 2
@@ -175,7 +175,9 @@ States == (SUBSET Names) \X (Names \cup {NoCoord})
 Stale == rowAge > 2 /\ "nostale" \notin Broken
 
 \* nova-hook's up: hooked, answered by its deadline in server time.
-ActivityUp(n) == ~(chal[n] = "late" /\ delivered[n] /\ lastActivity[n] > DownAfter)
+ReaderLimit(n) == QuietLimit(n) + 2 * DownAfter + 2
+ActivityUp(n) == /\ ~(chal[n] = "late" /\ delivered[n] /\ lastActivity[n] > DownAfter)
+                 /\ (lastActivity[n] <= ReaderLimit(n) \/ "nobackstop" \in Broken)
 HookUp(n) == hooked[n] /\ ((IF Silence THEN ActivityUp(n) ELSE qtime[n] <= DownAfter) \/ "nodeadline" \in Broken)
 
 \* The dashboard's friend row (BLANK-SLATE.md's table), under a live server row.
@@ -256,8 +258,8 @@ Pass(s) ==
            gone == {n \in Names : n \in miss /\ IF "twomisses" \in Broken THEN m[n] >= 2 ELSE ("nodown" \notin Broken /\ IF Silence THEN lastActivity[n] > DownAfter ELSE qtime[n] >= DownAfter)}
            h2 == [n \in Names |-> hooked[n] /\ n \notin gone]
            targets == {n \in Names : h2[n] /\
-                       (~Silence \/ (chal[n] \in {"none", "late"} /\
-                       (lastActivity[n] > QuietLimit(n) \/ (qtime[n] >= ProofDue /\ "ignoreexpiry" \notin Broken) \/ "talking" \in Broken)))}
+                       (~Silence \/ (chal[n] \in {"none", "late", "failed"} /\
+                       (lastActivity[n] > QuietLimit(n) \/ (qtime[n] >= ProofDue /\ "ignoreexpiry" \notin Broken /\ (chal[n] = "none" \/ "retryexpired" \in Broken)) \/ "talking" \in Broken)))}
            now == StateOf(h2)
        IN /\ hooked' = h2
           /\ beatOwned' = [n \in Names |-> beatOwned[n] \/ n \in targets]
@@ -267,7 +269,7 @@ Pass(s) ==
           /\ events' = [n \in Names |-> IF n \in gone THEN events[n] + 1 ELSE events[n]]
           /\ nonceVersion' = [n \in Names |-> IF Silence /\ n \in targets THEN ~nonceVersion[n] ELSE nonceVersion[n]]
           /\ delivered' = [n \in Names |-> IF n \in targets THEN "delivery" \notin Parts ELSE IF n \in gone \/ (Silence /\ chal[n] = "late") THEN FALSE ELSE delivered[n]]
-          /\ chal' = [n \in Names |-> IF n \in targets THEN "open" ELSE IF n \in gone \/ (Silence /\ chal[n] = "late") THEN "none" ELSE chal[n]]
+          /\ chal' = [n \in Names |-> IF n \in targets THEN "open" ELSE IF n \in gone THEN "none" ELSE IF Silence /\ chal[n] = "late" THEN "failed" ELSE chal[n]]
           \* each challenge set joins the name's recent; an unhook clears it
           /\ issued' = IF "window" \in Parts
                           THEN {c \in issued : c.to \notin gone}
@@ -579,7 +581,7 @@ TypeOK ==
     /\ challengedWhileTalking \in BOOLEAN
     /\ hooked \in [Names -> BOOLEAN]
     /\ beatOwned \in [Names -> BOOLEAN]
-    /\ chal \in [Names -> {"none", "open", "late", "bootstrap", "clobbered"}]
+    /\ chal \in [Names -> {"none", "open", "late", "failed", "bootstrap", "clobbered"}]
     /\ misses \in [Names -> 0..2]
     /\ quiet \in [Names -> 0..QuietCap]
     /\ elapsed \in [Names -> 0..2]
@@ -703,4 +705,11 @@ TalkingProofStaysFresh == \A n \in Names : qtime[n] <= ProofLife
 \* the pass in the activity interval; the "nodown" mutation breaks this.
 SilentDetectionBound == \A n \in Names :
     Silence /\ ~alive[n] /\ hooked[n] => quiet[n] <= QuietLimit(n) + 2
+\* Reader evidence expires even if every challenge delivery is lost while
+\* the server itself continues to pass. This does not forge an unhook event.
+ReaderBackstop == \A n \in Names :
+    Silence /\ lastActivity[n] > ReaderLimit(n) => Shown(n) = "down"
+NoExpiredRetryWhileTalking ==
+    [][\A n \in Names : Silence /\ chal[n] \in {"late", "failed"} /\
+       lastActivity[n] <= QuietLimit(n) => chal'[n] # "open"]_vars
 =============================================================================

@@ -84,11 +84,12 @@ The record is `none` (never hooked), `unhooked`, `expired` (hooked, no push of i
 Furthermore, `Served.Down` refuses evidence when the server never ran or its last pass is more than
 two intervals old by store `TIME`. A session must have answered a nonce at least once. Without a
 pending challenge, crossing the quiet window only schedules the next challenge; it does not read
-down. A delivered challenge retains its full `AnswerBound`. Past that deadline, activity older than
-`DownAfter` reads down. A successful
+down. A delivered challenge past its `AnswerBound` with activity older than `DownAfter` reads down.
+An independent reader backstop also reads down once activity is older than
+`quiet + AnswerBound + DownAfter + 2*every`, even when no challenge reaches the bus. A successful
 explicit model send stamps `bus_sent_at` in the same Redis script as the message; a duplicate token or
 once-key does not refresh it. Only the explicit `nova-bus send` call site opts into `ModelActivity` for
-request, report, ack, ask, blocker, or a status reply (`--re`), excluding ping, pong, presence and hook subjects.
+every allowed kind and subject, including status without `--re`.
 Library and daemon sends default false. This is operational call-site attribution, not model attestation:
 a script can imitate the CLI. The nonce proof remains the only proof, and its TTL is never extended by
 activity. The gate's yes remains `proven` and not `Down`, with the required role and pushes.
@@ -166,7 +167,8 @@ Every line runs as printed:
 - **Durable challenge delivery.** A private `hook:delivery:<name>` outbox keeps the nonce, epoch and
   bus once-key. Failed or unknown sends retry that nonce without moving its deadline. A committed
   bus once-key recovers a crash before delivery acknowledgement. Expiry invalidates the old nonce
-  and recent entry before another challenge is issued; activity never renews nonce or proof.
+  and recent entry. Failed renewal is latched: continued traffic cannot trigger another proof-expiry
+  challenge until the name is quiet or the model proves a fresh nonce. Activity never renews nonce or proof.
 - **Notice rollout.** Receivers accept both canonical body versions; the server emits the truthful
   silence wording. Returning older binaries update through the existing adopt/back-up flow. Their
   byte-for-byte parser does not understand the new body until updated.
@@ -177,7 +179,9 @@ Every line runs as printed:
   the quiet window plus the 5m answer
   bound, rounded to the next pass at each strict boundary: at most 12m for a busy friend, 17m for
   an idle friend/comms name, and 37m for a coordinator (`quiet + AnswerBound + 2*BeatEvery`). A server outage adds its duration; stale-server detection remains
-  two pass intervals. The model checks all prior invariants and liveness, role quiet and detection
+  two pass intervals. Independently of delivery, the reader backstop is 17m / 22m / 42m for busy friend /
+  idle friend or comms / coordinator at the defaults. This reader decision does not fabricate a delivered
+  challenge or an unhook event. The model checks all prior invariants and liveness, role quiet and detection
   bounds, daemon non-activity, and proof renewal. Legacy short-cadence configurations overapproximate
   old issued-nonce compatibility and the delivery protocol; silence configurations check current
   scheduling. Each new hazard has a broken witness. Quiet policy cases explore one name per role;

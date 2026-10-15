@@ -528,7 +528,7 @@ func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) 
 }
 
 // TestExplicitSendAttributesOnlyModelWork pins HookBeat's BusSend boundary:
-// work messages and explicit replies count, automated subjects never do.
+// every explicit CLI kind and subject counts; library/daemon sends opt out.
 func TestExplicitSendAttributesOnlyModelWork(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -541,11 +541,12 @@ func TestExplicitSendAttributesOnlyModelWork(t *testing.T) {
 		{"blocker", bus.KindBlocker, "blocked on input", "", true},
 		{"ack", bus.KindAck, "received the review", "", true},
 		{"reply", bus.KindStatus, "review complete", "01ARZ3NDEKTSV4RRFFQ69G5FAV", true},
-		{"status", bus.KindStatus, "status", "", false},
-		{"pong", bus.KindAck, "pong", "", false},
-		{"ping", bus.KindRequest, "ping now", "", false},
-		{"presence", bus.KindReport, "presence up", "", false},
-		{"hook", bus.KindReport, "HOOK CHALLENGE nonce=fixture", "", false},
+		{"status", bus.KindStatus, "status", "", true},
+		{"judgment", bus.KindJudgment, "decision", "", true},
+		{"pong", bus.KindAck, "pong", "", true},
+		{"ping", bus.KindRequest, "ping now", "", true},
+		{"presence", bus.KindReport, "presence up", "", true},
+		{"hook", bus.KindReport, "HOOK CHALLENGE nonce=fixture", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

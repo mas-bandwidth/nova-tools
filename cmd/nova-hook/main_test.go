@@ -279,7 +279,7 @@ func TestProveSaysWhichChallengeItMatched(t *testing.T) {
 	cli := r.cli()
 	res := cli.Run("prove", "--as", "ada", "--nonce", "handed")
 	require.Zero(t, res.Code, res.Stdout+res.Stderr)
-	assert.Contains(t, res.Stdout, "matched=1-back issued="+oldAt.Format(time.RFC3339))
+	assert.Contains(t, res.Stdout, "matched=1-back issued="+oldAt.UTC().Format(time.RFC3339))
 	res = cli.Run("prove", "--as", "ada", "--nonce", "ancient")
 	assert.Equal(t, 1, res.Code)
 	assert.Contains(t, res.Stdout+res.Stderr, "(the window: 5m0s)")

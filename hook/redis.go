@@ -77,7 +77,7 @@ if st and ARGV[4] ~= '` + armFresh + `' then
 end
 local e = redis.call('HINCRBY', KEYS[1], 'epoch', 1)
 redis.call('HSET', KEYS[1], 'role', ARGV[2], 'state', 'hooked', 'armed', ms, 'by', ARGV[3])
-redis.call('HDEL', KEYS[1], 'unhooked', 'reason', 'misses', 'beat_at', 'recent', 'pending_until', 'pending_missed', 'pending_sent', 'quiet_after', 'bus_sent_at')
+redis.call('HDEL', KEYS[1], 'unhooked', 'reason', 'misses', 'beat_at', 'recent', 'pending_until', 'pending_missed', 'pending_sent', 'quiet_after', 'bus_sent_at', 'renewal_failed')
 for i = 3, #KEYS do redis.call('DEL', KEYS[i]) end
 redis.call('SADD', KEYS[2], ARGV[1])
 return {e, 0}
@@ -180,6 +180,7 @@ for p in string.gmatch(pushes, '[^,]+') do
   end
 end
 redis.call('HSET', KEYS[1], 'misses', 0, 'answered_at', ms)
+redis.call('HDEL', KEYS[1], 'renewal_failed')
 return {n, back, tonumber(at)}
 `)
 
@@ -192,7 +193,7 @@ local st = redis.call('HGET', KEYS[1], 'state')
 if not st then return 0 end
 redis.call('HINCRBY', KEYS[1], 'epoch', 1)
 redis.call('HSET', KEYS[1], 'state', 'unhooked', 'unhooked', ms)
-redis.call('HDEL', KEYS[1], 'recent')
+redis.call('HDEL', KEYS[1], 'recent', 'renewal_failed')
 for i = 2, #KEYS do redis.call('DEL', KEYS[i]) end
 if st == 'hooked' then return 1 end
 return 2
@@ -511,7 +512,8 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 // server row prevents two passes in one interval. Each hooked bus role gets
 // a challenge only after its selected quiet window or when proof renewal is
 // due. A valid pending nonce is retained; its outbox is retried until the bus
-// confirms delivery. Expiry invalidates its recent entry before replacement.
+// confirms delivery. Expiry invalidates its recent entry and latches failed
+// renewal until silence or a fresh model proof permits another challenge.
 // Only a delivered expired challenge plus activity older than down-after
 // unhooks a name and logs the transition. Activity never creates a proof.
 // KEYS: events, serve, then each name's record, six push keys, challenge and
@@ -558,12 +560,12 @@ while k <= #KEYS do
     if role == 'coordinator' then quiet = ` + strconv.FormatInt(CoordinatorEvery.Milliseconds(), 10) + `
     elseif role == 'friend' and ARGV[a + 2] == '1' then quiet = ` + strconv.FormatInt(BusyQuietAfter.Milliseconds(), 10) + ` end
     redis.call('HSET', rec, 'quiet_after', quiet)
-    local proofDue = now - math.max(answer, armed) >= ` + strconv.FormatInt((ProofTTL-AnswerBound).Milliseconds(), 10) + ` - 2 * every
+    local proofDue = now - math.max(answer, armed) >= ` + strconv.FormatInt((ProofTTL-AnswerBound).Milliseconds(), 10) + ` - 2 * every and redis.call('HGET', rec, 'renewal_failed') ~= '1'
     if miss and now - heard > after then
       e = redis.call('HINCRBY', rec, 'epoch', 1)
       local why = 'no answer in ' .. label .. ' (' .. misses .. ' challenges missed)'
       redis.call('HSET', rec, 'state', 'unhooked', 'unhooked', ms, 'reason', why, 'misses', misses)
-      redis.call('HDEL', rec, 'recent', 'pending_until', 'pending_missed', 'pending_sent')
+      redis.call('HDEL', rec, 'recent', 'pending_until', 'pending_missed', 'pending_sent', 'renewal_failed')
       for i = k + 1, k + 8 do redis.call('DEL', KEYS[i]) end
       redis.call('XADD', KEYS[1], 'MAXLEN', '~', cap, '*', 'name', name, 'event', 'unhooked', 'reason', why, 'role', role, 'epoch', e, 'at', ms, 'by', by)
       did = 2
@@ -573,6 +575,8 @@ while k <= #KEYS do
       if pending > 0 and now > pending then
         redis.call('DEL', chal, delivery)
         redis.call('HDEL', rec, 'recent', 'pending_until', 'pending_missed', 'pending_sent')
+        redis.call('HSET', rec, 'renewal_failed', '1')
+        proofDue = false
         pending = 0
       end
       if pending > 0 and not sent then
@@ -590,7 +594,7 @@ while k <= #KEYS do
       end
       local deadline = now + ` + strconv.FormatInt(AnswerBound.Milliseconds(), 10) + `
       redis.call('HSET', rec, 'misses', misses, 'beat_at', ms, 'pending_until', string.format('%d', deadline), 'recent', table.concat(recent, ' '))
-      redis.call('HDEL', rec, 'pending_missed', 'pending_sent')
+      redis.call('HDEL', rec, 'pending_missed', 'pending_sent', 'renewal_failed')
       redis.call('DEL', chal)
       redis.call('HSET', chal, 'epoch', e, 'sum', sum, 'pushes', bus[role], 'until', string.format('%d', deadline))
       redis.call('PEXPIRE', chal, ttl)
@@ -861,8 +865,9 @@ func (sv Served) Stale() bool { return !sv.OK || sv.Now.Sub(sv.At) > 2*sv.Every 
 
 // Down is the shared reader rule (tla/HookBeat.tla, ActivityUp): a missing
 // or stale server is down. A challenged role needs an initial nonce answer;
-// afterward only a delivered pending challenge past its deadline with old
-// activity reads down. Quiet eligibility alone never changes reader status.
+// afterward a delivered expired challenge with old activity reads down.
+// The independent reader backstop also bounds silence when delivery is lost;
+// quiet eligibility alone never changes reader status.
 // The separate proof lease gate remains mandatory.
 func (sv Served) Down(st Status) string {
 	switch {
@@ -873,6 +878,9 @@ func (sv Served) Down(st Status) string {
 	}
 	if _, ok := Challenged[st.Role]; ok {
 		if st.AnswerAt.IsZero() {
+			return NoAnswerReason
+		}
+		if sv.Now.Sub(st.LastActivity()) > st.QuietWindow()+AnswerBound+sv.Window()+2*sv.Every {
 			return NoAnswerReason
 		}
 		if st.PendingSent && !st.PendingUntil.IsZero() {

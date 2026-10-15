@@ -225,7 +225,7 @@ HOOK ARMED line's notes. A standalone loop asks at start and every ` + hook.Chal
 Codex, DeepSeek and Antigravity clients bootstrap once. The heartbeat server checks every hooked name whose
 role carries the bus push every ` + hook.BeatEvery.String() + `; it challenges after ` + hook.BusyQuietAfter.String() + ` of silence for a friend
 holding ready or working sprint cards, ` + hook.QuietAfter.String() + ` for an idle friend or comms name, and ` + hook.CoordinatorEvery.String() + ` for a coordinator.
-Proof renewal starts ` + (hook.ProofTTL - hook.AnswerBound - hook.BeatEvery).String() + ` after the last proof, reserving the answer bound and two pass intervals. Run the line it carries,
+Proof renewal starts ` + (hook.ProofTTL - hook.AnswerBound - 2*hook.BeatEvery).String() + ` after the last proof, reserving the answer bound and two pass intervals. Run the line it carries,
 nova-hook prove --as <me> --nonce <n>, within ` + hook.AnswerBound.String() + `, and the pushes it holds are proven. HOOK STATE state= line
 each time the record changes. Run it under the session's Monitor: each line is a notification. It stops on SIGINT or
 SIGTERM (HOOK STOP, exit 0; the leases lapse after ` + hook.LeaseTTL.String() + `), or when the record is unhooked under it (exit 1).
@@ -368,10 +368,11 @@ A friend holding ready or working sprint cards is challenged after ` + hook.Busy
 an idle friend or comms name after ` + hook.QuietAfter.String() + `; a coordinator after ` + hook.CoordinatorEvery.String() + `.
 The sprint server's friend cards answers choose busy or idle; an unavailable answer uses the shorter window
 and prints a fault. Last activity is the latest nonce proof or explicit model bus send, with arming as the
-initial boundary. Daemon traffic never counts. Proof renewal starts at proof TTL minus the answer bound and two pass intervals (default ` + (hook.ProofTTL - hook.AnswerBound - hook.BeatEvery).String() + ` after proof).
+initial boundary. Daemon traffic never counts. Proof renewal starts at proof TTL minus the answer bound and two pass intervals (default ` + (hook.ProofTTL - hook.AnswerBound - 2*hook.BeatEvery).String() + ` after proof).
 Only one challenge stands, delivered to the name's bus stream with subject HOOK CHALLENGE nonce=<n>.
 Its answer is due within ` + hook.AnswerBound.String() + `. Past that deadline, a name whose activity is older than
---down-after (default ` + hook.DownAfter.String() + `) is unhooked. Passes never replace an outstanding nonce.
+--down-after (default ` + hook.DownAfter.String() + `) is unhooked. Passes never replace a valid outstanding nonce. An expired unanswered renewal waits for silence or a fresh model proof before retrying.
+Readers also mark a name down after silence exceeds its quiet window plus the answer bound, --down-after and two pass intervals, even if challenge delivery is lost.
 A bus send does not create or extend a proof; only the model answers with nova-hook prove.
 Each real change is told once, coalesced per pass: the coordinator gets one judgment (bus kind judgment) naming
 every FRIEND DOWN and FRIEND BACK, open until answered with nova-bus send --re <id> and pushed again as OVERDUE
