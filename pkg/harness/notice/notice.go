@@ -54,16 +54,19 @@ const MaxSaved = 64 << 10
 // challengePrefix is the subject of every heartbeat challenge.
 const challengePrefix = "HOOK CHALLENGE nonce="
 
-// wireMisses is the count the challenge body has always named. The body is a
-// wire contract: every deployed receiver (Canonical) holds a challenge to it
-// byte for byte, so it stays as it is until every receiver reads a new form,
-// although the server now unhooks on silence (hook.DownAfter), not on a count.
+// wireMisses is the historical body's count. New readers accept this exact
+// old body during rollout but the server emits the current silence wording.
 const wireMisses = 2
 
-// ChallengeText is the canonical body of a heartbeat challenge: the server
-// writes it, and Canonical holds a received challenge to it byte for byte.
-func ChallengeText(name, nonce string, every time.Duration) string {
+// legacyChallengeText retains the exact old wire form for backward reading.
+func legacyChallengeText(name, nonce string, every time.Duration) string {
 	return fmt.Sprintf("HOOK CHALLENGE nonce=%s\nThe hook's heartbeat asks whether the model is here. Answer from inside this turn, before anything else, within %s, with: nova-hook prove --as %s --nonce %s\nOnly the model answers: no daemon, loop or script may. %d unanswered in a row unhook %s.\n", nonce, every, name, nonce, wireMisses, name)
+}
+
+// ChallengeText is the current canonical body. Receivers also accept the old
+// body during rollout; a returning old receiver updates through adopt.
+func ChallengeText(name, nonce string, bound time.Duration) string {
+	return fmt.Sprintf("HOOK CHALLENGE nonce=%s\nThe hook's heartbeat asks whether the model is here. Answer from inside this turn, before anything else, within %s, with: nova-hook prove --as %s --nonce %s\nOnly the model answers: no daemon, loop or script may. An unanswered challenge past its deadline and continued silence can unhook %s.\n", nonce, bound, name, nonce, name)
 }
 
 // Canonical is the nonce of m when m has the server's whole challenge shape
@@ -92,7 +95,7 @@ func canonical(m bus.Message, recipient string) (string, time.Duration, bool) {
 		return "", 0, false
 	}
 	every, err := time.ParseDuration(interval)
-	if err != nil || every < time.Second || m.Body != ChallengeText(recipient, nonce, every) {
+	if err != nil || every < time.Second || (m.Body != legacyChallengeText(recipient, nonce, every) && m.Body != ChallengeText(recipient, nonce, every)) {
 		return "", 0, false
 	}
 	return nonce, every, true
