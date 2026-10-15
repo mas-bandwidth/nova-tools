@@ -85,6 +85,10 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the git push refspec HEAD:main, not a RESULT parser"},
 	{file: "internal/docs/ratings_form.go", fn: "ratingFormParts", record: "heading", since: "861ec8bc45",
 		reason: "the words of the rating form the docs/ratings README must state (TestRatingFileIsInForm), checked as plain substrings; not a RESULT parser"},
+	{file: "pkg/swarm/lintpaths.go", fn: "spikeOutsideResearch", record: "SPEC-CARD", since: "94cbd541f",
+		reason: "the card brief's PATHS and NEW header keys (the lint's own headerField map, filled by the card-header reader), read at add before any RESULT exists; not a RESULT parser"},
+	{file: "pkg/swarm/lintpaths.go", fn: "modelTouchLine", record: "SPEC-CARD", since: "63155a6d9",
+		reason: "the card brief's PATHS and NEW header keys (the lint's own headerField map, filled by the card-header reader), read at add before any RESULT exists; not a RESULT parser"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)

@@ -8,6 +8,7 @@ import (
 	stdflag "flag"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"time"
 
@@ -124,7 +125,10 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		stage := "connecting"
 		// fail is a store failure: the deadline, or the store's own words.
 		fail := func(err error) int {
-			if ctx.Err() != nil {
+			// The store's socket deadline is the context's, so its i/o timeout can be read
+			// a moment before ctx.Err() reports the deadline: either is the deadline.
+			var ne net.Error
+			if ctx.Err() != nil || (errors.As(err, &ne) && ne.Timeout()) {
 				return refuseLine(stderr, verb, fmt.Sprintf("timed out after %s waiting for the store at %s while %s; check that Redis answers there; run: %s", *timeout, addr, stage, again("--timeout", (*timeout*3).String())), 2)
 			}
 			return refuse(stderr, verb, err.Error())
