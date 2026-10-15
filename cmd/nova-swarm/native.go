@@ -73,6 +73,10 @@ type nativeRunConfig struct {
 	noWall         bool   // the caller typed --no-wall: run with no containment, named by its OK line
 	noSharedCaches bool   // the caller typed --no-shared-caches: the Go caches stay under HOME as today
 	configFile     string // optional: an opencode.json provider config copied beside the auth copy
+	// localBase is a local route's serving endpoint (--local-base): the job's config declares
+	// the provider local-<host> there at that base with no key (docs/SPEC-LOCAL.md, "Fleet");
+	// "" for every other route.
+	localBase string
 	// benchHome is the BENCH's home -- this process's own, never the child's -- and it is
 	// where the provisioning standard puts the toolchain (swarm.ToolchainRoots). Empty is
 	// the ordinary case and means "ask the OS"; a test names a home of its own, because the
@@ -497,6 +501,26 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		return nil, nativeRunResult{}, 2
 	}
 
+	// (2aa) A LOCAL ROUTE'S BASE. A provider named local-<host> is served by the engine at
+	// the --local-base endpoint this launch names (docs/SPEC-LOCAL.md, "Fleet"): each requires
+	// the other, and the endpoint's host must be loopback or the tailnet (rule 3). A refusal
+	// is made here, before any launch, so a misnamed local route never starts a harness.
+	isLocal := strings.HasPrefix(provider, "local-")
+	switch {
+	case isLocal && cfg.localBase == "":
+		refuseNative(errOut, fmt.Sprintf("--model %s names a local provider, which is served by an engine at a base this launch does not name; a local launch wants --local-base <endpoint>", oneline.Field(cfg.model)))
+		return nil, nativeRunResult{}, 2
+	case !isLocal && cfg.localBase != "":
+		refuseNative(errOut, fmt.Sprintf("--local-base is for a local provider (a model local-<host>/<tag>), but --model %s names provider %s; a non-local route carries no local base", oneline.Field(cfg.model), oneline.Field(provider)))
+		return nil, nativeRunResult{}, 2
+	}
+	if cfg.localBase != "" {
+		if p := localBaseProblem(cfg.localBase); p != "" {
+			refuseNative(errOut, p)
+			return nil, nativeRunResult{}, 2
+		}
+	}
+
 	// (2a) THE ONE LAUNCHER. The harness argv comes from the providers
 	// table, never a literal here: the route's provider row (or the table's default row)
 	// gives the shape, and this run's binary, model, label and card fill it. A table that
@@ -824,6 +848,12 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	// because `(allow network-outbound (remote ip))` does not reach 127.0.0.1: a
 	// local-model card runs and dies silently without the named grant.
 	cfg.netAllow = nativeNetAllow(cfg, provider)
+	// a local route served at a loopback endpoint opens that one address back up in the wall
+	if cfg.localBase != "" {
+		if u, err := url.Parse(cfg.localBase); err == nil && loopbackHost(u.Hostname()) && u.Port() != "" {
+			cfg.netAllow = net.JoinHostPort(u.Hostname(), u.Port())
+		}
+	}
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
 	// caller can prove later that neither the card nor the binary changed under it.
@@ -3083,6 +3113,15 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		raw = body
 	}
 	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
+	// a local route's provider is declared at its endpoint with no key (docs/SPEC-LOCAL.md,
+	// "Fleet"), before its model is, so the model lands under it (swarm.DeclareLocalProvider)
+	if merged && cfg.localBase != "" {
+		if declared, ok := swarm.DeclareLocalProvider(body, provider, cfg.model[len(provider)+1:], cfg.localBase); ok {
+			body = declared
+		} else if notes != nil {
+			fmt.Fprintf(notes, "NATIVE NOTE: the local provider %s could not be declared in the config %s (its provider entry is not an object)\n", oneline.Field(provider), oneline.Field(dash(configPath)))
+		}
+	}
 	// the route's model is declared in the config, so the harness knows it whatever
 	// catalog it starts with (swarm.DeclareRouteModel: the fresh-home catalog race)
 	if merged && strings.HasPrefix(cfg.model, provider+"/") {
@@ -3271,6 +3310,45 @@ func loopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// localBaseProblem is why base cannot be a local route's serving endpoint, "" when it can:
+// an http URL whose host may serve on loopback or the tailnet (docs/SPEC-LOCAL.md, rule 3).
+func localBaseProblem(base string) string {
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme != "http" || u.Hostname() == "" {
+		return fmt.Sprintf("--local-base wants an http URL of an engine's /v1, such as http://127.0.0.1:11434/v1 (got %q)", base)
+	}
+	if p := localServingHostProblem(u.Hostname()); p != "" {
+		return "--local-base " + oneline.Field(base) + ": " + p
+	}
+	return ""
+}
+
+// localServingHostProblem is why host may not serve a local model, "" when it may:
+// loopback, or an address in the tailnet's range (100.64.0.0/10, RFC 6598).
+func localServingHostProblem(host string) string {
+	if strings.EqualFold(host, "localhost") {
+		return ""
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Sprintf("the host %s does not resolve here, so it cannot be checked to be loopback or the tailnet's", oneline.Field(host))
+	}
+	if !(ip.IsLoopback() || localTailnetContains(ip)) {
+		return fmt.Sprintf("the host %s is neither loopback nor the tailnet's (100.64.0.0/10); a local tier pointed at a remote endpoint is not a local tier", oneline.Field(host))
+	}
+	return ""
+}
+
+// localTailnetContains reports whether ip is in the tailnet's shared range, the one a
+// tailnet hands its machines (100.64.0.0/10, RFC 6598).
+func localTailnetContains(ip net.IP) bool {
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	return v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
 }
 
 // fileSHA256 returns the lowercase hex sha256 of a file's bytes.

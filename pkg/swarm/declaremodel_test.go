@@ -49,6 +49,42 @@ func TestDeclareRouteModelNamesTheModelInTheConfig(t *testing.T) {
 	assert.Contains(t, string(out), `"chunkTimeout": 45000`)
 }
 
+// TestDeclareLocalProviderPointsTheHarnessAtTheEndpoint: a local route's provider is
+// declared in the config as OpenCode's OpenAI-compatible provider whose options.baseURL is
+// the serving endpoint, with no key field, and the route's model lands under it; an entry
+// already there is kept and a config that is not an object is left unchanged.
+func TestDeclareLocalProviderPointsTheHarnessAtTheEndpoint(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, body, provider, model, base string
+		ok                                bool
+	}{
+		{"no provider block", `{}`, "local-g1", "gemma4-32k", "http://127.0.0.1:11434/v1", true},
+		{"an existing entry is kept", `{"provider":{"local-g1":{"models":{"old":{"name":"O"}},"options":{"chunkTimeout":45000}}}}`, "local-g1", "gemma4-32k", "http://127.0.0.1:11434/v1", true},
+		{"not an object", `[1,2]`, "local-g1", "m", "http://127.0.0.1:11434/v1", false},
+		{"no model", `{}`, "local-g1", "", "http://127.0.0.1:11434/v1", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, ok := DeclareLocalProvider([]byte(c.body), c.provider, c.model, c.base)
+			require.Equal(t, c.ok, ok)
+			if !ok {
+				assert.Equal(t, c.body, string(out), "an undeclarable config is returned unchanged")
+				return
+			}
+			var cfg map[string]any
+			require.NoError(t, json.Unmarshal(out, &cfg))
+			entry := cfg["provider"].(map[string]any)[c.provider].(map[string]any)
+			assert.Equal(t, "@ai-sdk/openai-compatible", entry["npm"], "the provider is the OpenAI-compatible one")
+			opts := entry["options"].(map[string]any)
+			assert.Equal(t, c.base, opts["baseURL"], "the provider's base is the serving endpoint")
+			assert.NotContains(t, entry, "apiKey", "a local provider carries no key")
+			_, hasModel := entry["models"].(map[string]any)[c.model]
+			assert.True(t, hasModel, "the route's model is declared under the local provider")
+		})
+	}
+}
+
 // TestCauseFromTextNamesTheHarnessCatalog: the harness's printed refusal of a model
 // (verbatim shape from opencode v1.18.20, 2026-10-01) is class unknown-model with the
 // message `model not found in the harness catalog: <model>`, never `other`.
