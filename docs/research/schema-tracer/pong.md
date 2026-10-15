@@ -309,7 +309,7 @@ not matter: they are tens of bytes against the bus's 1 MiB `MaxBody`.
      schema/internal/tablenames, each written without the schema/ prefix) trip adopters' path and
      name linters.
    - Smallest fix: use local copies in `Error()`, and write comment references as
-     `schema:docs/SPEC-TABLES.md` (or full URLs) so they read as another repo's paths.
+     `schema/docs/SPEC-TABLES.md` (or full URLs) so they read as another repo's paths.
 9. **schema-go-adopter-recipe**
    - Evidence: CARDS.md "Import and module setup" describes only the local-module-plus-replace
      route. An adopter has to discover that table-only units are stdlib-only and that
@@ -353,7 +353,13 @@ not matter: they are tens of bytes against the bus's 1 MiB `MaxBody`.
 3. **`schemas/friend/tables.baseline`:**
    `schema tables-baseline --update --reason "first baseline" schemas/friend`, committed
    beside the definition.
-4. **`cmd/nova-friend/main.go`:**
+4. **internal/docs catalog.** `TestCommittedMapMatchesTree` refuses the two new directories
+   (`schemas` and `docs/research`) as uncatalogued. They need rows in
+   `internal/docs/catalog.go` and a `make map` run. The root map then goes over its byte cap:
+   `TestRootMapStaysUnderTheByteCap` measures 32787 bytes against 32768, and base is at 32760,
+   which leaves 8 bytes of headroom. So the first schema adoption card also has to shorten a
+   catalog row, or put `schemas/` under an existing catalogued directory.
+5. **`cmd/nova-friend/main.go`:**
    - Call `friend.EncodePong` in the pong verb and refuse at the CLI (exit 2, the
      `PONG REFUSED` line) instead of sending `PongLine`'s legacy fallback.
    - Update the help text at :759 to name the schema pong and the legacy reader.
@@ -368,16 +374,37 @@ ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-friend	10.086s
 FAIL	github.com/mas-bandwidth/nova-tools/internal/ci	32.839s
 ```
 
-Both internal/ci failures name only `pkg/friend/pongwire/*` (the generated files and the
-go:generate line). Proposed diff 1 removes them. Before the commit,
+Last run, after the finding was committed:
+
+```
+ok  	github.com/mas-bandwidth/nova-tools/pkg/friend
+ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-friend
+--- FAIL: TestEveryNamedRepoPathExists
+--- FAIL: TestGeneralityText
+--- FAIL: TestGeneralityGuardrail
+FAIL	github.com/mas-bandwidth/nova-tools/internal/ci
+--- FAIL: TestRootMapStaysUnderTheByteCap
+--- FAIL: TestCommittedMapMatchesTree
+FAIL	github.com/mas-bandwidth/nova-tools/internal/docs   (not in the card's set; run for the record)
+```
+
+- `TestEveryNamedRepoPathExists` and `TestGeneralityGuardrail` name only
+  `pkg/friend/pongwire/*`: the generated files, and the module path in the go:generate line.
+- `TestGeneralityText` names this finding's one remaining module path, which is the pin
+  itself, kept because the sibling tracer needs it verbatim.
+- The internal/docs pair is proposed diff 4. Proposed diff 1 removes them. Before the commit,
 `TestNoTestWritesIntoTheSourceTree` also failed on the uncommitted work tree; it passes once
 the work is committed. The red baseline (step 2, today's ParsePong) was 6 of 6 hostile lines
 read as pongs.
 
 ## Not done
 
-- internal/ci is red (two class tests, generated files only). The fix is proposed diff 1,
-  outside PATHS.
+- internal/ci is red:
+  - two class tests on generated files only (proposed diff 1)
+  - `TestGeneralityText` on the pin's module path in this finding
+- internal/docs is red on the two new directories and the root map's byte cap (proposed
+  diff 4).
+- All of these fixes are outside PATHS.
 - There is no CI-visible regenerate check yet (proposed diff 2) and no `tables.baseline`
   (proposed diff 3).
 - The nova-sprint copy of `PongLine`/`ParsePong` is untouched, so the two repos now disagree
