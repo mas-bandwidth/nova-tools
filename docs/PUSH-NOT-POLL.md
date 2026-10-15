@@ -13,9 +13,8 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 
 | loop | direction | mechanism | cadence | card or reason |
 |---|---|---|---|---|
-| friend bus read | bus to the friend's daemon | timer poll | XREADGROUP BLOCK BeatEvery (1 s) while the session is free; while a turn runs, in one-shot mode or for a passive harness a 0-block read or a peek, then a 1 s Pause | card friend-bus-read-blocks |
-| notification delivery recovery | bus to the existing Codex queue | timer poll | one bounded XREADGROUP BLOCK pass of at most 32 entries, then BeatEvery (1 s); enqueue failures back off ten seconds to one minute; ready courtesies share a 30 s configurable coalescing window | the journal owes recovery and queue capacity is observed only when enqueue is due; the Codex queue offers no capacity-change event, so bounded retries preserve full payloads without an unread-input flood (SPEC-FRIEND.md, Notifications) |
-| friend delivery | the friend's daemon into her session | delivery into a session | each batch as one turn; the tmux adapter looks at the pane every TmuxPoll (500 ms) until its prompt is free | the pane has no idle event; the wait is for the pane, never for a message |
+| friend lane loop | the friend's inbox and lanes to her daemon | timer poll | one step a beat: a Pause of BeatEvery (1 s) while the lanes' turns run; the daemon reads nothing off her bus stream | measured: the lanes' turns and the inbox files have no event the daemon can wait on; the step is the beat |
+| friend delivery | a reach push or a delivery check into her session | delivery into a session | one push; the tmux adapter looks at the pane every TmuxPoll (500 ms) until its prompt is free | the pane has no idle event; the wait is for the pane, never for a message |
 | friend card reconcile | sprint to the friend's daemon (the cards she holds) | timer poll | Held asked once an InboxEvery (1 s), on the daemon's step | card friend-cards-pushed-on-the-bus |
 | friend reader ask | sprint to the friend's reader row (reader-<friend>; a bud's reader is this row) | timer poll | queue --as reader-<friend> once a ReadAskEvery (10 s) | card friend-reads-pushed-on-the-bus |
 | friend beat | the friend's daemon to the sprint | beat | BeatEvery (1 s) | liveness is the beat's absence (FriendBeatEvery; down after fifteen without one) |

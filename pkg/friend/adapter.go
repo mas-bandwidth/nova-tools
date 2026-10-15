@@ -29,16 +29,6 @@ type Deliverer interface {
 	Deliver(ctx context.Context, text string) (exit int, err error)
 }
 
-// TextLimit is the most bytes of text d takes as one turn: its own
-// TextLimit() when it has one above zero, else BatchBytes. The daemon's
-// envelope is cut to it (Envelope).
-func TextLimit(d Deliverer) int {
-	if l, ok := d.(interface{ TextLimit() int }); ok && l.TextLimit() > 0 {
-		return l.TextLimit()
-	}
-	return BatchBytes
-}
-
 // Deferred is a Deliverer's answer when the session cannot take a turn now
 // and nothing has failed (for example, neither Codex queue nor resume can
 // accept it). The daemon keeps the message in hand, tries again
@@ -275,8 +265,6 @@ type OpenCode struct {
 	// run in this process, with this environment. CheckRun sets it when the
 	// installed run lists the flag, so an older opencode is never handed it.
 	Standalone bool
-
-	turns SessionTurns // the session's last turns, its liveness (alive.go)
 }
 
 // runVerb is the run verb as this opencode takes it: `run`, and --standalone
@@ -389,7 +377,6 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	exit, err = refused(id, out, exit, err)
-	o.turns.saw(id, exit, err)
 	return exit, err
 }
 

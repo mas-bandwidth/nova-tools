@@ -2339,3 +2339,15 @@ pkg/friend/wakeping_test.go friend.WakeTargets and DeafChange went with the wake
 pkg/friend/presence_test.go friend.Presence and SessionCheck were unreachable from every shipped main (go tool deadcode) once the daemon stopped wiring them (E2); only the model's nova-hook prove proves a session (v1.3.5)
 pkg/friend/proof_test.go the SessionCheck push proof was unreachable from every shipped main (go tool deadcode); retired with Presence (v1.3.5)
 pkg/friend/liveness_test.go the SessionCheck liveness rig was unreachable from every shipped main (go tool deadcode); retired with Presence (v1.3.5)
+cmd/nova-friend/notifications_test.go the --notifications-only receiver and its agent are retired with the daemon's session delivery (v1.3.6); pkg/harness/notice is the one delivery path
+pkg/friend/notifications_test.go the notification receiver (Daemon.runNotifications) was the daemon's own session delivery, retired in v1.3.6; pkg/harness/notice is the one delivery path
+pkg/friend/present_test.go the PRESENT turn and the backlog supersede were the daemon's session delivery, retired in v1.3.6; the daemon reads nothing off her stream
+pkg/friend/daemon_e2e_test.go the batch envelope, the daemon's PING answer and its batch-turn broken streak are retired with the daemon's session delivery (v1.3.6); the lanes keep their own silent-stop and refusal tests
+pkg/friend/idle_wake_test.go the idle wake turn was a batch session delivery, retired in v1.3.6
+pkg/friend/ping_text_test.go the daemon's PING path is retired (v1.3.6): nothing sends or answers a PING
+pkg/friend/alive_test.go the harness process check (WatchHarness, SessionTurns, Alive) is retired in v1.3.6: liveness is the nova-hook record's alone
+pkg/friend/adapter_codex_test.go the Codex queue adapter no factory built (CodexPushUnavailable) is retired with the daemon's session delivery (v1.3.6)
+pkg/friend/codex_queue_test.go the Codex app-server queue was the retired Codex adapter's (v1.3.6)
+pkg/friend/codex_session_test.go NewestCodexSession was the retired Codex adapter's (v1.3.6)
+pkg/friend/spendcap_daemon_test.go the spend cap through the daemon's batch turns is retired with them (v1.3.6); the cap's gate and lane tests stay in spendcap_test.go
+pkg/friend/spendcap_redis_functional_test.go the spend cap through the daemon's batch turns on a private store is retired with them (v1.3.6)

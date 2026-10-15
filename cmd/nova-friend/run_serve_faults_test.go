@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -59,180 +60,133 @@ func TestRunHookHelpIsTheToolsHelpNotTheClaudeHook(t *testing.T) {
 	}
 }
 
-// A harness at its limit with no seat and no --coordinator says so on the
-// record instead of telling no one (main.go:1448-1451, tellSeat's empty answer).
-func TestRunSaysThereIsNoSeatOrCoordinatorToTellOfALimit(t *testing.T) {
-	t.Parallel()
-	r := newRig(t, "ada", "bob")
-	_, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "card c9", Body: "go\n"})
-	require.NoError(t, err)
-	dir := t.TempDir()
-	w := r.world()
-	checksStarted := 0
-	w.checkGo = func(f func()) {
-		checksStarted++
-		if checksStarted == 1 {
-			f()
-			return
-		}
-		go f()
-	}
-	w.seatHolder = func(context.Context, string) (string, error) {
-		return "ada", nil
-	}
-	var mu sync.Mutex
-	clock := start
-	w.now = func() time.Time { mu.Lock(); defer mu.Unlock(); clock = clock.Add(time.Second); return clock }
-	var cancel context.CancelFunc
-	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
-		ctx, cancel = context.WithCancel(ctx)
-		return ctx, cancel
-	}
-	sleeps := 0
-	w.sleep = func(context.Context, time.Duration) {
-		mu.Lock()
-		defer mu.Unlock()
-		clock = clock.Add(5 * time.Second)
-		if sleeps++; sleeps == 2000 {
-			cancel()
-		}
-	}
-	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
-		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
-	}
-	limited := false
-	hits := 0
-	w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
-		text := args[len(args)-1]
-		if strings.HasPrefix(text, friend.SessionCheckPrefix) {
-			nonce, _, _ := strings.Cut(strings.TrimPrefix(text, friend.SessionCheckPrefix), "\n")
-			r.answer(nonce)
-			return "answered\n", 0, nil
-		}
-		if strings.HasPrefix(text, "nova-friend: your harness's usage limit has reset") {
-			fields := strings.Fields(text)
-			return fields[len(fields)-1] + "\n", 0, nil
-		}
-		if strings.Contains(text, "card c9") {
-			mu.Lock()
-			hits++
-			mu.Unlock()
-			if !limited {
-				limited = true
-				return "working\nInsufficient AI Credits. Your credits will refresh in 10 minutes.\n", 1, nil
-			}
-			cancel()
-			return "I ran card c9.\n", 0, nil
-		}
-		return "", 0, nil
-	}
-	out, errb := &lockedBuilder{mu: &mu}, &strings.Builder{}
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir}, strings.NewReader(""), out, errb, w)
-	require.Equal(t, 0, code, errb.String())
-	mu.Lock()
-	defer mu.Unlock()
-	require.Positive(t, hits, "the turn hit the limit: %s", out.String())
-	assert.Contains(t, out.String(), "limit: no seat or coordinator to tell: friend bob down: their harness is at its limit until", out.String())
-}
-
-// driveCreditRefusal runs the opencode daemon over one queued card whose turn
-// fails with a credit refusal the harness's own wording does not name (the 402
-// table, cmd/nova-friend/limit.go), so RefusalWatch hands it to rw.Down
-// (main.go:1461-1471). It answers the record and the rig.
-func driveCreditRefusal(t *testing.T, down func(context.Context, string, []string) error, flags ...string) (string, *rig) {
+// laneLimitRun runs a claude friend's one-shot lane over one queued card whose run
+// prints laneOut and exits 1 (a limit or a credit refusal), the daemon's limit and
+// refusal readers watching it: the daemon delivers nothing into a session, so a
+// lane's own output is where a limit is read. It answers the record and the rig.
+func laneLimitRun(t *testing.T, laneOut, beatReply string, down func(context.Context, string, []string) error, extra ...string) (string, *rig) {
 	t.Helper()
 	r := newRig(t, "ada", "bob")
-	_, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "card c9", Body: "go\n"})
-	require.NoError(t, err)
 	dir := t.TempDir()
 	w := r.world()
 	w.down = down
-	checksStarted := 0
-	w.checkGo = func(f func()) {
-		checksStarted++
-		if checksStarted == 1 {
-			f()
-			return
-		}
-		go f()
-	}
-	w.seatHolder = func(context.Context, string) (string, error) {
-		return "ada", nil
-	}
-	var mu sync.Mutex
-	clock := start
-	w.now = func() time.Time { mu.Lock(); defer mu.Unlock(); clock = clock.Add(time.Second); return clock }
 	var cancel context.CancelFunc
 	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
 		ctx, cancel = context.WithCancel(ctx)
 		return ctx, cancel
 	}
-	sleeps := 0
+	var sleeps atomic.Int32
 	w.sleep = func(context.Context, time.Duration) {
-		mu.Lock()
-		defer mu.Unlock()
-		clock = clock.Add(5 * time.Second)
-		if sleeps++; sleeps == 2000 {
+		synctest.Wait()
+		if sleeps.Add(1) == 40 { // a beat held back while she is down never counts: the run is bounded by its steps
 			cancel()
 		}
 	}
-	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
-		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
-	}
-	hit := false
-	w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
-		text := args[len(args)-1]
-		if strings.HasPrefix(text, friend.SessionCheckPrefix) {
-			nonce, _, _ := strings.Cut(strings.TrimPrefix(text, friend.SessionCheckPrefix), "\n")
-			r.answer(nonce)
-			return "answered\n", 0, nil
-		}
-		if strings.Contains(text, "card c9") {
-			mu.Lock()
-			if !hit {
-				hit = true
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
+	var mu sync.Mutex
+	hits := 0
+	w.wall = func(_ friend.Wall, _ friend.Exec) friend.Exec {
+		return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+			if friend.InLane(ctx) {
+				mu.Lock()
+				hits++
 				mu.Unlock()
-				cancel()
-				return "Error 402\n", 1, nil
+				return laneOut, 1, nil
 			}
-			mu.Unlock()
-			return "", 0, nil
+			return `{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0,"session_id":"s1","result":"ok"}` + "\n", 0, nil
 		}
-		return "", 0, nil
+	}
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+		return beatReply, nil
 	}
 	out, errb := &lockedBuilder{mu: &mu}, &strings.Builder{}
-	args := append([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir}, flags...)
-	code := run(args, strings.NewReader(""), out, errb, w)
+	code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--config-dir", t.TempDir()}, extra...), strings.NewReader(""), out, errb, w)
 	require.Equal(t, 0, code, errb.String())
 	mu.Lock()
 	defer mu.Unlock()
+	require.Positive(t, hits, "the lane ran its card: %s", out.String())
 	return out.String(), r
 }
 
+const laneBeat = "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1"
+
+// adaGot is what the coordinator ada was told on the bus, subject and body.
+func adaGot(t *testing.T, r *rig) string {
+	t.Helper()
+	got, err := r.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 0)
+	require.NoError(t, err)
+	var told []string
+	for _, e := range got {
+		told = append(told, e.Fields["subject"]+"\n"+e.Fields["body"])
+	}
+	return strings.Join(told, "\n")
+}
+
+// A harness at its limit with no seat and no --coordinator says so on the
+// record instead of telling no one (tellSeat's empty answer).
+func TestRunSaysThereIsNoSeatOrCoordinatorToTellOfALimit(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		said, _ := laneLimitRun(t, "working\nInsufficient AI Credits. Your credits will refresh in 10 minutes.\n", laneBeat, nil)
+		assert.Contains(t, said, "limit: no seat or coordinator to tell: friend bob down: their harness is at its limit until", said)
+	})
+}
+
+// A lane whose harness says it is at its limit makes the friend down until the
+// reset, and the coordinator is told once, in the friend's pronouns: the startup
+// flag, or the synced row's when its beat names one.
+func TestRunTellsTheCoordinatorOfALimitInTheFriendsPronouns(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ row, flag, want string }{
+		{"", "", "friend bob down: their harness is at its limit until "},
+		{"", "she/her", "friend bob down: her harness is at its limit until "},
+		{"", "he/him", "friend bob down: his harness is at its limit until "},
+		{"she/her", "he/him", "friend bob down: her harness is at its limit until "},
+		{"he/him", "they/them", "friend bob down: his harness is at its limit until "},
+		{"they/them", "she/her", "friend bob down: their harness is at its limit until "},
+	} {
+		t.Run(tc.row+"/"+tc.flag, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				beat := laneBeat
+				if tc.row != "" {
+					beat += " row_pronouns=" + tc.row
+				}
+				flags := []string{"--coordinator", "ada"}
+				if tc.flag != "" {
+					flags = append(flags, "--pronouns", tc.flag)
+				}
+				said, r := laneLimitRun(t, "working\nInsufficient AI Credits. Your credits will refresh in 10 minutes.\n", beat, nil, flags...)
+				assert.Contains(t, said, "limit: down until ")
+				all := adaGot(t, r)
+				assert.Contains(t, all, tc.want)
+				assert.Contains(t, all, "nova-sprint friend down bob --reason 'harness limit: ")
+			})
+		})
+	}
+}
+
 // A credit refusal with no down verb (w.down nil) is said on the record, never
-// sent anywhere (main.go:1463-1465).
+// sent anywhere.
 func TestRunNotesACreditRefusalWithNoDownVerb(t *testing.T) {
 	t.Parallel()
-	said, _ := driveCreditRefusal(t, nil)
-	assert.Contains(t, said, "credit refusal: no down verb to send: no credits: opencode: Error 402", said)
+	synctest.Test(t, func(t *testing.T) {
+		said, _ := laneLimitRun(t, "Error 402\n", laneBeat, nil)
+		assert.Contains(t, said, "credit refusal: no down verb to send: ", said)
+	})
 }
 
 // A credit refusal with a down verb that errors says so on the record and
-// tells the seat once on the bus (main.go:1467-1470).
+// tells the seat once on the bus.
 func TestRunSendsTheDownVerbAndNotesItsRefusal(t *testing.T) {
 	t.Parallel()
-	said, r := driveCreditRefusal(t, func(context.Context, string, []string) error { return errors.New("refused") }, "--coordinator", "ada")
-	assert.Contains(t, said, "credit refusal: friend down: refused", said)
-	es, err := r.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 0)
-	require.NoError(t, err)
-	var told []string
-	for _, e := range es {
-		if e.Message().Subject == "friend bob: the down verb was refused" {
-			told = append(told, e.Message().Subject)
-		}
-	}
-	require.Len(t, told, 1, "one bus message to the seat names the down verb's refusal: %v", told)
-	assert.Equal(t, "friend bob: the down verb was refused", told[0])
+	synctest.Test(t, func(t *testing.T) {
+		said, r := laneLimitRun(t, "Error 402\n", laneBeat, func(context.Context, string, []string) error { return errors.New("refused") }, "--coordinator", "ada")
+		assert.Contains(t, said, "credit refusal: friend down: refused", said)
+		assert.Equal(t, 1, strings.Count(adaGot(t, r), "friend bob: the down verb was refused"), "one bus message to the seat names the down verb's refusal")
+	})
 }
 
 // --refuse-go with a shim that cannot be built (w.binary fails) makes every

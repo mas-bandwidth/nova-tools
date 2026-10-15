@@ -192,18 +192,7 @@ and no live session launches no turn),
 `TestSpendCapStopsWhenTheLimitGateReadsAFundsRefusal` (the real gate chain —
 the limit gate under the spend cap — reads the incident's wording and a 402
 from a harness turn, hands the funds refusal to the spend cap, and stops with
-the one judgment before the limit's Rest retry). The daemon's wiring (the
-`--spend-cap` flag, the harness's usage report as `Spent`, the judgment to the
-seat) is pinned by `TestTheDaemonStopsTurnsPastTheCapAndRaisesOneJudgment` and
-`TestTheDaemonLaunchesNothingWhenIdle` (`pkg/friend/spendcap_daemon_test.go`):
-a fake harness reports usage past the cap over the daemon's in-process bus
-store, the daemon's own loop drives it, and the gate stops the turn and raises
-one judgment; with the cap reading idle no turn launches and the message stays
-pending. `TestTheDaemonOnAPrivateServerStopsTurnsPastTheCapAndRaisesOneJudgment`
-(`pkg/friend/spendcap_redis_functional_test.go`, the functional tier) runs that
-loop over its own throwaway redis-server (loopback only, nothing kept) with a
-fake harness that reports its usage and no provider secret in the environment,
-so the cap is measured from the harness's own report on the real store.
+the one judgment before the limit's Rest retry). The daemon delivers nothing into a session (v1.3.6), so the cap stands in front of the lanes alone.
 
 ### First run
 

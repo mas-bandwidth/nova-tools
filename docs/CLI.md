@@ -1481,22 +1481,9 @@ writes nothing.
 
 ## nova-friend
 
-For a Codex chat whose coordinator owns card dispatch, `run --notifications-only`
-uses one filtered notification receiver and makes no sprint beat, proof, job or
-pruning changes. `--notify-kinds request,blocker,report` is the default: requests
-and blockers are immediately eligible, reports keep their payload, and plain
-transport acknowledgments and routine status are audited without model wakes.
-Card-delivery status bursts across many cards produce one global ready-queue wake
-inside `--notify-window` (30 seconds). The app queue accepts that input; acceptance
-is not evidence that the model processed it. The mode keeps its journal under
-`<state-dir>/notifications/` and uses a separate notification agent label on install.
-A coordinated handoff stops competing receivers before this mode owns the stream;
-installation and live handoff are separate from building or testing the change.
-Notification install uses a content-addressed executable separate from the native binary
-and makes no harness-setting or proof changes. Stop only its label with
-`launchctl bootout gui/<uid>/com.nova.friend-notifications-<name>` and preserve its journal;
-ordinary `uninstall --as <name>` targets the native daemon. See
-[Notifications](SPEC-FRIEND.md#notifications) for replay and failure behavior.
+The daemon runs the friend's lanes and delivers nothing into a session: a message to
+the friend reaches the session through nova-hook (`nova-hook hook --harness <h>`,
+pkg/harness/notice), the one delivery path (v1.3.6).
 
 <!-- clidoc:begin nova-friend -->
 `nova-friend help`:
@@ -1579,9 +1566,6 @@ flags:
   --load-width <int>  the lanes that run while the load is above --load-max
   --mode <string>  override the friend row's delivery mode, one-shot, for a test (default: one-shot; batch is retired)
   --model <string>  the friend's model as provider/model, to price a card by the store's route row (default: none, cards are unpriced)
-  --notifications-only  unavailable: the retired Codex queue receiver refuses; use active-session tool notifications
-  --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
-  --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --pause-on <string>  funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)
   --profile <string>  the wall profile every lane child runs inside when the friend row names none (row_profile=): friend
   --pronouns <string>  the friend's startup pronouns, one of she/her, he/him, they/them (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them
@@ -1597,7 +1581,7 @@ flags:
   --wall-reads <string>  directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated; install writes it into the agent (a pinned harness whose shim lives under the home needs its directory here)
   --width <int>  retired, refused when given: the width is the nova-config friend row's alone, read from each beat's answer (nova-config friend set <me> --width <n>)
 exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
-effect: delivery: sends beyond this machine: the daemon; messages go into the session, beats and pongs go out, until a signal
+effect: delivery: sends beyond this machine: the daemon; the lanes run the friend's cards and the beats go out, until a signal
 ```
 
 `nova-friend install -h`:
@@ -1622,9 +1606,6 @@ flags:
   --launchd-log <string>  launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
   --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (required for opencode)
-  --notifications-only  unavailable: the retired Codex queue receiver refuses; use active-session tool notifications
-  --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
-  --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --pronouns <string>  the friend's startup pronouns, one of she/her, he/him, they/them (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --seat <string>  the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets
@@ -1839,9 +1820,6 @@ flags:
   --launchd-log <string>  accepted and ignored: launchd's stdout and stderr file the daemon's plist records
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
   --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (required for opencode)
-  --notifications-only  unavailable: the retired Codex queue receiver refuses; use active-session tool notifications
-  --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
-  --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --profile <string>  the wall profile every lane child runs inside when the friend row names none: friend
   --pronouns <string>  the friend's startup pronouns, one of she/her, he/him, they/them (default: they/them); a beat's row_pronouns replaces this initial value; every text the daemon writes about the friend says them
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)

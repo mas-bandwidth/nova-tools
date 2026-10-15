@@ -86,7 +86,7 @@ func TestEveryHeldCardIsWrittenToTheInbox(t *testing.T) {
 	r.run(t, 1)
 
 	assert.Equal(t, taken.Brief, briefOf(t, dir, taken.Job), "the card taken onto her row is written after one loop")
-	assert.Equal(t, dealt.Brief, briefOf(t, dir, dealt.Job), "the card dealt in batch mode is written after one loop")
+	assert.Equal(t, dealt.Brief, briefOf(t, dir, dealt.Job), "the card dealt is written after one loop")
 	assert.NoDirExists(t, filepath.Join(dir, "inbox", dropped.Job), "a dropped card's job leaves her inbox")
 	assert.FileExists(t, filepath.Join(dir, RetiredDir, dropped.Job, "BRIEF.md"), "and is retired, not deleted")
 	assert.FileExists(t, filepath.Join(dir, "inbox", "by-hand", "BRIEF.md"), "a job no sprint brief heads is never moved")
@@ -102,11 +102,7 @@ func TestEveryHeldCardIsWrittenToTheInbox(t *testing.T) {
 	s := r.last()
 	assert.True(t, s.HeldKnown)
 	assert.Equal(t, [3]int{42, 42, 0}, [3]int{s.Held, s.InboxJobs, s.Missing}, "held, inbox and missing as status prints them")
-	// the turn runs on its own goroutine, which the loop's end does not wait for
-	delivered := func() string { r.mu.Lock(); defer r.mu.Unlock(); return strings.Join(r.delivered, "\n") }
-	require.Eventually(t, func() bool { return delivered() != "" }, 10*time.Second, time.Millisecond)
-	assert.Contains(t, delivered(), "inbox/taken.w2~15/BRIEF.md", "the batch session is told of each brief written")
-	assert.Contains(t, delivered(), "inbox/dealt.w3~15/BRIEF.md")
+	assert.Empty(t, r.delivered, "nothing is pushed into her session: friend sync's bus message reaches her through nova-hook")
 
 	// the taken card goes back off her row (returned): the next loop retires its job, and a
 	// brief there is never written over

@@ -1,8 +1,7 @@
 # SPEC-FRIEND: what a friend runs to be part of the team
 
 The tool is `nova-friend` (`cmd/nova-friend`); the rules are `pkg/friend`; the
-models are `tla/Friend.tla`, `tla/FriendEnvelope.tla`, `tla/Delivery.tla`,
-`tla/FriendNotifications.tla`, `tla/FriendNotificationsCapacity.tla`,
+models are `tla/Friend.tla` (its lanes), `tla/FriendLane.tla`,
 `tla/FriendStage.tla`, and `tla/Reach.tla`.
 
 ## Presence
@@ -12,13 +11,16 @@ A friend's presence and liveness live in the hook record in the bus Redis
 `tla/HookBeat.tla`), never in a daemon beat, process table check, or ping/pong
 file:
 
-- `nova-friend run --as <friend>` holds the friend's `bus` and `work` leases
-  (`hook.Holder`) while hooked in as `friend` (`comms` under
-  `--notifications-only`).
+- `nova-hook hook --as <friend> --role friend --harness <h>` in the friend's
+  session holds her `bus` push; `nova-friend run --as <friend>`, while it runs
+  her lanes, holds her `work` lease (`hook.Holder`).
 - `nova-hook serve` challenges every hooked friend once a minute with a bus
-  message (`HOOK CHALLENGE nonce=<n>`); the daemon delivers it into the session
-  through the harness adapter, and the model answers inside its turn with
+  message (`HOOK CHALLENGE nonce=<n>`); the session's `nova-hook hook` delivers
+  it into the session (pkg/harness/notice, one shim per harness, the one
+  delivery path), and the model answers inside its turn with
   `nova-hook prove --as <friend> --nonce <n>`, proving both `bus` and `work`.
+- The daemon reads nothing off the friend's bus stream and delivers nothing
+  into her session: a message to her reaches her through `nova-hook hook`.
 - Two missed challenges in a row unhook the friend (`missed 2 challenges`) and
   send one coalesced `judgment` (`FRIEND DOWN <friend>: <reason>`) to the
   coordinator.
@@ -33,11 +35,14 @@ file:
   identifier, verb and flag): the coordinator's one-second keepalive loop, the
   coordinator's ping, the wake ping loop and its launchd agent, the pong wait,
   the hand beat, the daemon's session-check presence and its `presence.json`,
-  `pong.json` and `bus2:push`. `nova-friend pong` stays as the answer to a `nova-friend
-  reach` step and to the delivery check (`check --harness`). The daemon still
-  answers a `PING` that reaches its stream with a `daemon-pong` and still runs
-  its advisory harness process check (`WatchHarness`); nothing sends a `PING`
-  any more, and both go when the daemon's own delivery is retired.
+  `pong.json` and `bus2:push`; and (v1.3.6) the daemon's own session delivery
+  (the batch turn and its envelope, the present, the dealt-brief and idle-wake
+  turns, the notification receiver, messages riding with a card), its answer
+  to a `PING` and the wake turn, the limit's wake after a reset (a limit now
+  lapses at its reset), and the harness process check. `nova-friend pong` stays
+  as the answer to a `nova-friend reach` step and to the delivery check
+  (`check --harness`). `nova-friend status` and `check` read the hook record:
+  its state, since when, the model's last answer, and the challenges missed.
 
 ## The local child load gate
 
@@ -69,47 +74,33 @@ leaves admission unchanged.
 
 ## The loop (`pkg/friend/daemon.go`)
 
-- **Envelope delivery** (`tla/FriendEnvelope.tla`): when the session is free,
-  pending messages are read off the stream and delivered in one turn (`Envelope`)
-  oldest first, capped at `TextLimit` (256 KiB, `BatchBytes`; remaining messages
-  are listed under `and <n> more: nova-bus recv --as <me> --all` for the next
-  turn). Exit 0 acknowledges every message in the envelope; a third failed
-  delivery acknowledges with `given_up=true`; a `Deferred` turn stays in hand and
-  retries every `RecheckEvery` (10 s) without counting as a failure.
-- **The present comes first** (`pkg/friend/present.go`, `tla/Delivery.tla`): on
-  daemon start, a new `--session` id, a delivery after `StaleAfter` (30 m), or a
-  self-message with subject `present`, `PlanPresent` drains the backlog into one
-  `PRESENT` turn carrying her live queue, the skipped counts (`deals`, `notes`),
-  and the newest coordinator note, acknowledging older entries as
-  `superseded by the present at <time>`.
-- **Sender authority** (`pkg/friend`): only a message from the
-  coordinator seat holder (`Daemon.Seat`, cached for `SeatCacheFor` = 10 s) is
-  delivered as a plain instruction; every other sender's metadata and body are
-  quoted behind `> ` (`Quoted`, `BatchFor`) as data, never instructions.
+- **No session delivery**: the daemon reads nothing off the friend's bus stream
+  and delivers nothing into her session. A message to her, a dealt card's notice
+  (friend sync's bus message) and the hook's challenge all reach her session
+  through her session's `nova-hook hook --harness <h>` (pkg/harness/notice).
+  The daemon runs her one-shot lanes (`pkg/friend/lanes.go`, `tla/FriendLane.tla`),
+  each handed one card a turn with nothing riding along, and serves her reader row.
 - **Silent-turn stop and refusals** (`pkg/friend/limit.go`,
   `pkg/friend/limits.go`, `cmd/nova-friend/limit.go`, `tla/Friend.tla`):
-  - A batch turn with no stdout/stderr for `--silent-stop` (20 m) has its
+  - A lane turn with no stdout/stderr for `--silent-stop` (20 m) has its
     process group signalled (`SIGTERM` then `SIGKILL`).
   - A terminal provider refusal repeated `--broken-after` (3) turns in a row
     marks `session=broken` and notifies the coordinator once; two identical
     provider refusals on a lane mark `lane-fault` (`LaneFaultWatch`, cleared by
     `nova-friend lanes --as <friend> --clear-faults`).
-  - `DSHRefusal` (an agent preset refusal or `MISSING_CREDENTIAL`, even on exit
-    0) marks `session=broken` immediately and defers messages until a turn
-    succeeds.
   - Usage and credit limits (`ParseLimit` over `pkg/friend/testdata/limits.tsv`,
     `ReadLimit` on Claude `rate_limit_event`, and `resetOfText` in the stated
-    timezone) hold deliveries in `Limits.Gate` until the reset time (`--limit-rest`
+    timezone) hold the friend down in `Limits` until the reset time (`--limit-rest`
     1 h default when no reset time is stated, raising one `LimitUnreadText`
-    judgment), then wake the session.
-- **Harness adapters**:
+    judgment); the limit lapses at the reset, and nothing is pushed into the
+    session to wake it.
+- **Harness adapters** (the lanes, `nova-friend check --harness`, and `nova-friend reach`'s push step):
   - `opencode`: runs `opencode run --session <id> <text>` in `<dir>` without a
     `--dir` flag, after verifying `--session` and `--model` in `opencode run --help`.
   - `codex`: requires an explicit watched-folder route
     (`--harness codex --session <id> --adapter folder --delivery-dir <dir>`),
     writing `<payload>.meta.json` and `FRIEND-*.md`. Implicit queue or
-    `exec resume` routes and `--notifications-only` are refused before any side
-    effect.
+    `exec resume` routes are refused before any side effect.
   - `antigravity`: delivers into the conversation mailbox via
     `agentapi send-message --title=nova-friend <conversation> <text>`, tracks
     deliveries and `read.json` receipts in `antigravity-ledger.json`, waits when
@@ -126,17 +117,6 @@ leaves admission unchanged.
     (`<state>/<me>.wake`, read by `nova-bus wait --wake-file`).
   - `dsh` and `gemini`: headless session resume; unmeasured harnesses are
     `Stub` (`pkg/friend/adapter_refused.go`) and refused by `install` and `run`.
-
-## Notifications
-
-The transport-independent notification receiver
-(`com.nova.friend-notifications-<name>`, state in `<state-dir>/notifications/`,
-modeled in `tla/FriendNotifications.tla` and
-`tla/FriendNotificationsCapacity.tla`) owns a single recipient group, coalesces
-deal notices per friend across 32-entry passes (`--notify-window` 30 s,
-withdrawing notices whose cards have all left her row), preserves requests,
-blockers, and reports without payload loss in an atomic file-synced journal, and
-refuses Codex notification-only deployment.
 
 ## The daemon writes and stages every card she holds (`pkg/friend/inbox.go`, `pkg/friend/stage.go`)
 

@@ -56,9 +56,9 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 	coord := bustest.NewFake(now, "coord", "bob")
 	clock := &limitClock{t: now}
 	var downs, judged, ups []string
-	l := &Limits{Now: clock.now, Harness: "claude", Rest: time.Hour, Nonce: func() string { return "w4k3up" },
+	l := &Limits{Now: clock.now, Harness: "claude", Rest: time.Hour,
 		Down: func(until time.Time, reason string) { downs = append(downs, until.UTC().Format(time.RFC3339)) },
-		Up:   func(string) { ups = append(ups, "up") },
+		Up:   func() { ups = append(ups, "up") },
 		Unread: func(text string) {
 			judged = append(judged, text)
 			subject, body := LimitUnreadText("bob", DefaultPronouns, time.Hour, text)
@@ -67,8 +67,8 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 		},
 	}
 	se := &scriptExec{
-		outs:  []string{"You've hit your weekly limit · resets Oct 10 at 5am (America/New_York)\n", "w4k3up\n", "done\n"},
-		exits: []int{1, 0, 0},
+		outs:  []string{"You've hit your weekly limit · resets Oct 10 at 5am (America/New_York)\n", "done\n"},
+		exits: []int{1, 0},
 	}
 	d := l.Gate(&OpenCode{Dir: "/w/bob", Session: "s1", Run: l.Watch(se.run)})
 	_, err = d.Deliver(context.Background(), "card")
@@ -84,15 +84,15 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 
 	clock.t = time.Date(2026, 10, 10, 5, 0, 1, 0, ny).UTC()
 	_, err = d.Deliver(context.Background(), "card")
-	require.NoError(t, err, "back at the reset by herself: the wake, then the card")
+	require.NoError(t, err, "back at the reset by herself: the card goes in, no wake turn")
 	assert.Equal(t, []string{"up"}, ups)
-	require.Len(t, se.texts, 3)
-	assert.Equal(t, "card", se.texts[2])
+	require.Len(t, se.texts, 2)
+	assert.Equal(t, "card", se.texts[1])
 
 	// a message with no readable reset: held for the rest, one judgment naming the text,
-	// not said again while the wakes keep meeting the same wall
+	// not said again while the turns after each rest keep meeting the same wall
 	unread := "You've hit your weekly limit · resets whenever\n"
-	se2 := &scriptExec{outs: []string{unread, unread, unread, "w4k3up\n", "done\n"}, exits: []int{1, 1, 1, 0, 0}}
+	se2 := &scriptExec{outs: []string{unread, unread, unread, "done\n"}, exits: []int{1, 1, 1, 0}}
 	d = l.Gate(&OpenCode{Dir: "/w/bob", Session: "s1", Run: l.Watch(se2.run)})
 	start := clock.t
 	_, err = d.Deliver(context.Background(), "card")
@@ -103,7 +103,7 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		clock.t = start.Add(time.Duration(i)*time.Hour + time.Second)
 		_, err = d.Deliver(context.Background(), "card")
-		require.ErrorAs(t, err, &deferred, "the wake meets the same wall")
+		require.ErrorAs(t, err, &deferred, "the turn after the rest meets the same wall")
 	}
 	require.Equal(t, []string{"You've hit your weekly limit · resets whenever"}, judged, "one judgment, naming the text")
 	pending, fresh, err := (&bus.Bus{Store: coord}).Peek(context.Background(), "coord")
@@ -115,7 +115,7 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 
 	clock.t = start.Add(3*time.Hour + time.Second)
 	_, err = d.Deliver(context.Background(), "card")
-	require.NoError(t, err, "a wake answered ends the hold")
+	require.NoError(t, err, "a turn that runs clean ends the hold")
 	_, _, limited = l.Limited()
 	assert.False(t, limited)
 

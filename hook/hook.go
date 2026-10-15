@@ -414,13 +414,9 @@ func HookCommand(name string, r Role) string {
 // comms (the bus alone).
 const SprintHookPR = "nova-sprint PR #93"
 
-// AgentLabel is the service that holds a friend's pushes for role: her daemon
-// (com.nova.friend-<name>) as a friend, her notifications receiver
-// (com.nova.friend-notifications-<name>) as comms.
+// AgentLabel is the service that runs a friend's lanes: her daemon
+// (com.nova.friend-<name>).
 func AgentLabel(name string, r Role) string {
-	if r == Comms {
-		return "com.nova.friend-notifications-" + name
-	}
 	return "com.nova.friend-" + name
 }
 
@@ -440,9 +436,6 @@ func HeldBy(name string, r Role, p Push) string {
 	switch {
 	case p == Sprint:
 		return "nova-sprint hook --as " + name + " under its own Monitor (nova-sprint hook ships with " + SprintHookPR + "; until then: --role comms, " + HookCommand(name, Comms) + ")"
-	case p == Bus && (r == Friend || r == Comms):
-		label := AgentLabel(name, r)
-		return "the friend daemon's service " + label + ", which hooks in at its start; restart it: " + RestartCommand(runtime.GOOS, label) + "; or a session's own " + HookCommand(name, r) + " under a Monitor"
 	case p == Bus:
 		return HookCommand(name, r) + " under the session's Monitor (each line it prints is a push; it prints HOOK CHALLENGE, answered with nova-hook prove --as " + name + " --nonce <nonce>)"
 	case r == Friend:

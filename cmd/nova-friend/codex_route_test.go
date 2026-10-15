@@ -15,10 +15,7 @@ import (
 func TestCodexImplicitDeliveryRefusesBeforeAnySideEffect(t *testing.T) {
 	t.Parallel()
 	for _, verb := range []string{"install", "run", "check"} {
-		for _, mode := range []string{"default", "named", "notifications", "folder notifications"} {
-			if verb == "check" && strings.Contains(mode, "notifications") {
-				continue // check has no notification flag
-			}
+		for _, mode := range []string{"default", "named"} {
 			for _, dry := range []bool{false, true} {
 				t.Run(verb+"/"+mode+map[bool]string{true: "/dry", false: "/real"}[dry], func(t *testing.T) {
 					t.Parallel()
@@ -41,12 +38,6 @@ func TestCodexImplicitDeliveryRefusesBeforeAnySideEffect(t *testing.T) {
 					args := []string{verb, "--as", "bob", "--harness", "codex", "--dir", "/w/bob"}
 					if mode != "default" {
 						args = append(args, "--session", "real-thread")
-					}
-					if strings.Contains(mode, "notifications") {
-						args = append(args, "--notifications-only")
-					}
-					if mode == "folder notifications" {
-						args = append(args, "--adapter", "folder", "--delivery-dir", t.TempDir())
 					}
 					if dry {
 						args = append(args, "--dry-run")

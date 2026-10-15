@@ -26,11 +26,12 @@ without `REPORT.md`, and done once `REPORT.md` exists.
 A friend is up or down from her hook record in the bus Redis (`hook:rec:<name>`,
 docs/SPEC-HOOK.md), never from a daemon beat, a process check, or a ping script:
 
-- Her daemon (`nova-friend run --as <name>`) holds her `bus` and `work` leases
-  (`comms` under `--notifications-only`).
+- Her session's `nova-hook hook --as <name> --role friend --harness <h>` holds
+  her `bus` push; her daemon (`nova-friend run --as <name>`), while it runs her
+  lanes, holds her `work` lease.
 - `nova-hook serve` challenges every hooked friend once a minute with a bus
-  message (`HOOK CHALLENGE nonce=<n>`), delivered into her session through her
-  harness adapter.
+  message (`HOOK CHALLENGE nonce=<n>`), delivered into her session by her
+  session's `nova-hook hook` (pkg/harness/notice, the one delivery path).
 - Her session answers from inside its own turn with
   `nova-hook prove --as <name> --nonce <n>`, proving both `bus` and `work`.
 - Two missed challenges in a row unhook her (`missed 2 challenges`) and send one

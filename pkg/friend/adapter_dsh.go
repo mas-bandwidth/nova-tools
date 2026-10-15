@@ -45,9 +45,8 @@ type DSH struct {
 	Sessions     string    // the sessions root; DSH_HOME/sessions, else ~/.dsh/sessions, when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
 
-	mu    sync.Mutex
-	cost  float64      // total spend in USD, as the harness's usage report says it
-	turns SessionTurns // the session's last turns, its liveness (alive.go)
+	mu   sync.Mutex
+	cost float64 // total spend in USD, as the harness's usage report says it
 }
 
 // SpentUSD is the cost of every run so far, in US dollars, as the harness's
@@ -132,8 +131,6 @@ func NewestDSHSession(sessions, dir string) (string, error) {
 }
 
 func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
-	d.turns.begin()
-	defer d.turns.end()
 	id := d.Session
 	if id == "" {
 		root := d.Sessions
@@ -152,7 +149,6 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 	out, exit, err := d.Run(ctx, d.Dir, program, DSHArgs(id), text)
 	if err == nil {
 		if r, ok := DSHRefusal(id, d.Dir, out); ok {
-			d.turns.saw(id, 0, r)
 			return 0, r // the output is not kept: a credential's name and its lookup stay off the record
 		}
 	}
@@ -165,7 +161,6 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	exit, err = refused(id, out, exit, err)
-	d.turns.saw(id, exit, err)
 	return exit, err
 }
 

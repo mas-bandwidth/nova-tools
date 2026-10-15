@@ -22,7 +22,7 @@ import (
 
 // fakeSession is a friend's session behind a harness: when a session check
 // reaches it, it runs the pong line the check carries, as the pong verb does
-// (the pong file in the state directory, then the note on the bus). Each
+// (the note on the bus). Each
 // nonce is acted on once. Lost drops the note: the line ran, nothing reached
 // the bus. Deaf never acts.
 type fakeSession struct {
@@ -30,8 +30,6 @@ type fakeSession struct {
 	store       bus.Store
 	state       string
 	acted       map[string]bool
-	pong        Pong
-	hasPong     bool
 	lost, deaf  bool
 	poll        func() // what the session reads each poll interval (a wake file), nil reads nothing
 	deliverText string // the last text an adapter handed in
@@ -60,7 +58,6 @@ func (s *fakeSession) act(text string) {
 		return
 	}
 	s.acted[nonce] = true
-	s.pong, s.hasPong = Pong{Nonce: nonce, To: to}, true
 	if s.lost {
 		return
 	}
@@ -99,14 +96,6 @@ var harnessRigs = map[string]func(t *testing.T, s *fakeSession, dir string) Deli
 			s.act(args[3])
 			return "done\n", 0, nil
 		})}
-	},
-	"codex": func(t *testing.T, s *fakeSession, dir string) Deliverer {
-		return &Codex{Dir: dir, Session: "thr_1", Home: t.TempDir(), Held: func(string) bool { return false },
-			Run: s.exec(func(name string, args []string, _ string) (string, int, error) {
-				require.Equal(t, ResumeArgs("thr_1", args[len(args)-1]), args)
-				s.act(args[len(args)-1])
-				return "done\n", 0, nil
-			})}
 	},
 	"gemini": func(t *testing.T, s *fakeSession, dir string) Deliverer {
 		return &Gemini{Dir: dir, Session: "g1", Run: s.exec(func(name string, args []string, _ string) (string, int, error) {
@@ -236,7 +225,6 @@ func newConformanceRig(t *testing.T, harness string) *conformanceRig {
 		Text: func(nonce string) string {
 			return SessionCheckText(nonce, "nova-friend pong --as bob --nonce "+nonce+" --state-dir "+state+" --redis store.test:6379", "ada")
 		},
-		Pong: func() (Pong, bool, error) { return r.session.pong, r.session.hasPong, nil },
 	}
 	return r
 }
@@ -252,7 +240,7 @@ func TestEveryAdapterPassesDeliveryConformance(t *testing.T) {
 	for harness := range harnessRigs {
 		require.True(t, Known(harness), "a rig for %s, which is no harness", harness)
 	}
-	assert.Len(t, harnessRigs, 8, "the eight adapters with a deliver command each run the check")
+	assert.Len(t, harnessRigs, 7, "the seven adapters with a deliver command each run the check")
 	for _, harness := range Harnesses {
 		t.Run(harness, func(t *testing.T) {
 			t.Parallel()
@@ -303,7 +291,7 @@ func TestDeliveryConformanceNamesTheStageThatFailed(t *testing.T) {
 			r.check.Deliver = deferring{}
 		}},
 		{"the session never acts", StageAct, "no pong c0ffee from bob within 5m0s", func(r *conformanceRig) { r.session.deaf = true }},
-		{"the pong never reaches the bus", StageReply, "the pong file holds c0ffee", func(r *conformanceRig) { r.session.lost = true }},
+		{"the pong never reaches the bus", StageAct, "no pong c0ffee from bob", func(r *conformanceRig) { r.session.lost = true }},
 		{"another friend's pong does not count", StageAct, "no pong c0ffee from bob", func(r *conformanceRig) {
 			r.session.deaf = true
 			_, err := (&bus.Bus{Store: r.check.Store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"ada"}, Subject: PongSubject, Body: PongLine("c0ffee", 0, 0, 0)})

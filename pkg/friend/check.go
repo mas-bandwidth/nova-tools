@@ -19,28 +19,23 @@ import (
 const (
 	VerdictOK     = "ok"
 	VerdictBroken = "broken"
-	VerdictDeaf   = "deaf"
-	VerdictSilent = "silent"
 	VerdictDown   = "down"
 	VerdictUntrue = "untrue"
 )
 
-// DaemonFacts carries facts about the launchd agent and daemon.
+// DaemonFacts carries facts about the launchd agent, the daemon, and her
+// nova-hook record: the one truth of whether she is there.
 type DaemonFacts struct {
-	Friend     string `json:"friend"`
-	Agent      string `json:"agent"`      // loaded, not-loaded, none
-	PID        string `json:"pid"`        // numeric string or "-"
-	Status     string `json:"status"`     // ok, stale, none
-	Connection string `json:"connection"` // string or "-"
-	Challenge  string `json:"challenge"`  // string or "-"
-	PongAge    string `json:"pong_age"`   // e.g. "4s" or "-"
-	Presence   string `json:"presence"`   // up, asleep, down
-	SeenAge    string `json:"seen_age"`   // e.g. "4s" or "-"
-	// Proof is the session's proof as the server has it from her daemon: pending
-	// while the push is unproven (ProofAge since the daemon started waiting), sent
-	// once the server took one on her beat (ProofAge the proof's age), none before.
-	Proof    string `json:"proof"`     // pending, sent, none
-	ProofAge string `json:"proof_age"` // e.g. "4s" or "-"
+	Friend   string `json:"friend"`
+	Agent    string `json:"agent"`    // loaded, not-loaded, none
+	PID      string `json:"pid"`      // numeric string or "-"
+	Status   string `json:"status"`   // the daemon's status file: ok, stale, none
+	Hook     string `json:"hook"`     // the hook record's state (none, armed, proven, unhooked, ...), or "-" when not read
+	Since    string `json:"since"`    // how long it has been in it, e.g. "4m", or "-"
+	Answer   string `json:"answer"`   // the age of her model's last answer to a challenge, or "-"
+	Misses   int    `json:"misses"`   // challenges in a row left unanswered
+	Presence string `json:"presence"` // up while the record proves her there, else down
+	Reason   string `json:"reason"`   // why the record reads down, or "-"
 }
 
 // HarnessFacts carries facts about the harness, deliveries and breaks: every
@@ -53,12 +48,10 @@ type HarnessFacts struct {
 	LastExit       string `json:"last_exit"`
 	FailedOfLast20 int    `json:"failed_of_last20"`
 	Deferred       int    `json:"deferred"`
-	Delivered      int    `json:"delivered"`    // deliveries in the window (JSON only)
-	Failed         int    `json:"failed"`       // of those, the ones that failed (JSON only)
-	Broken         string `json:"broken"`       // RFC3339 or "-"
-	Reason         string `json:"reason"`       // one line or "-"
-	SessionLive    string `json:"session_live"` // the conversation a mailbox harness delivers into, or "-"
-	Queued         string `json:"queued"`       // the harness's own queue not yet taken (codex), or "-"
+	Delivered      int    `json:"delivered"` // deliveries in the window (JSON only)
+	Failed         int    `json:"failed"`    // of those, the ones that failed (JSON only)
+	Broken         string `json:"broken"`    // RFC3339 or "-"
+	Reason         string `json:"reason"`    // one line or "-"
 }
 
 // BusFacts carries facts about real messages on the bus.
@@ -80,7 +73,7 @@ type WorkFacts struct {
 // VerdictFacts carries the health check verdict and explanation.
 type VerdictFacts struct {
 	Friend  string `json:"friend"`
-	Verdict string `json:"verdict"` // ok, broken, deaf, silent, down, untrue
+	Verdict string `json:"verdict"` // ok, broken, down, untrue
 	Shown   string `json:"shown"`   // state/working (e.g. "up/8") or "-"
 	Why     string `json:"why"`
 }
@@ -100,8 +93,6 @@ type CheckSummary struct {
 	Friends int `json:"friends"`
 	OK      int `json:"ok"`
 	Broken  int `json:"broken"`
-	Deaf    int `json:"deaf"`
-	Silent  int `json:"silent"`
 	Down    int `json:"down"`
 	Untrue  int `json:"untrue"`
 }
@@ -120,17 +111,16 @@ type ShownEntry struct {
 
 // CheckSeams provides external dependencies for friend check facts.
 type CheckSeams struct {
-	Now          func() time.Time
-	Home         string
-	Launchctl    Launchctl
-	ReadStatus   func(friend string) (Status, bool, error)
-	ReadPresence func(friend string) (PresenceStatus, bool, error)
-	ReadPong     func(friend string) (Pong, bool, error)
-	ReadLog      func(friend string) ([]string, error)
-	BusLog       func(ctx context.Context, friend string, since time.Time) (realCount int, lastReal time.Time, err error)
-	ReadWork     func(friend string, dir string) (inboxCount, outboxCount int, newestName string, newestAt time.Time, err error)
-	ListFriends  func() ([]string, error)
-	HarnessDir   func(friend string) (harness, dir string, err error)
+	Now         func() time.Time
+	Home        string
+	Launchctl   Launchctl
+	ReadStatus  func(friend string) (Status, bool, error)
+	ReadHook    func(friend string) (HookRecord, error) // her nova-hook record; nil reads none
+	ReadLog     func(friend string) ([]string, error)
+	BusLog      func(ctx context.Context, friend string, since time.Time) (realCount int, lastReal time.Time, err error)
+	ReadWork    func(friend string, dir string) (inboxCount, outboxCount int, newestName string, newestAt time.Time, err error)
+	ListFriends func() ([]string, error)
+	HarnessDir  func(friend string) (harness, dir string, err error)
 }
 
 // AgeString returns a formatted age string (e.g. "5s", "1m2s").
@@ -254,16 +244,12 @@ func DefaultReadWork(dir string) (inboxCount, outboxCount int, newestName string
 // The facts decide first, in this order:
 //  1. broken when the session is marked broken, or deliveries in the window
 //     are all failures (delivered > 0 and failed == delivered)
-//  2. deaf when a delivery in the window succeeded and neither a session pong
-//     nor a real message came back in the window
-//  3. silent when no delivery was due in the window and nothing came back
-//  4. down by presence
-//  5. else ok
+//  2. down when her nova-hook record does not prove her there
+//  3. else ok
 //
 // Then --shown: when it says up or working and the facts verdict is not ok,
 // the verdict stays the facts' and the why leads with "untrue:", the claim and
-// the facts' reason; when the facts verdict is ok but the friend is asleep or
-// its agent is not loaded, the verdict is untrue.
+// the facts' reason.
 func DecideVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, shown *ShownEntry, window time.Duration) VerdictFacts {
 	vf := VerdictFacts{Friend: df.Friend, Shown: "-"}
 	claimsUp := false
@@ -271,22 +257,15 @@ func DecideVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, s
 		vf.Shown = fmt.Sprintf("%s/%d", shown.State, shown.Working)
 		claimsUp = shown.State == "up" || shown.Working > 0
 	}
-	vf.Verdict, vf.Why = factsVerdict(df, hf, bf, wf, window)
-	switch {
-	case !claimsUp:
-	case vf.Verdict != VerdictOK:
+	vf.Verdict, vf.Why = factsVerdict(df, hf)
+	if claimsUp && vf.Verdict != VerdictOK {
 		vf.Why = fmt.Sprintf("untrue: shown %s, %s", vf.Shown, vf.Why)
-	case df.Presence == "asleep":
-		vf.Verdict, vf.Why = VerdictUntrue, fmt.Sprintf("shown %s, facts say asleep", vf.Shown)
-	case df.Agent != "loaded":
-		vf.Verdict, vf.Why = VerdictUntrue, fmt.Sprintf("shown %s, facts say agent %s", vf.Shown, df.Agent)
 	}
 	return vf
 }
 
-// factsVerdict is DecideVerdict's rules 1 to 5, before --shown (docs/SPEC-FRIEND.md "Check": the verdicts).
-func factsVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, window time.Duration) (verdict, why string) {
-	cameBack := bf.RealSince > 0 || pongWithin(df.PongAge, window)
+// factsVerdict is DecideVerdict's rules 1 to 3, before --shown (docs/SPEC-FRIEND.md "Check": the verdicts).
+func factsVerdict(df DaemonFacts, hf HarnessFacts) (verdict, why string) {
 	switch {
 	case hf.Broken != "-":
 		if hf.Reason != "-" && hf.Reason != "" {
@@ -294,24 +273,15 @@ func factsVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, wi
 		}
 		return VerdictBroken, "session broken since " + hf.Broken
 	case hf.Delivered > 0 && hf.Failed == hf.Delivered:
-		return VerdictBroken, fmt.Sprintf("every delivery in the window failed (%d of %d)", hf.Failed, hf.Delivered)
-	case hf.Delivered > hf.Failed && !cameBack:
-		return VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"
-	case df.Status == "stale":
-		return VerdictDown, "stale daemon status"
-	case hf.Delivered == 0 && hf.Deferred == 0 && wf.Inbox == 0 && !cameBack && df.Presence != PresenceDown:
-		return VerdictSilent, "no delivery was due and nothing came back in the window"
-	case df.Presence == PresenceDown || df.Agent == "none" || (df.Agent == "not-loaded" && df.Status == "none"):
-		return VerdictDown, "down by presence"
+		return VerdictBroken, fmt.Sprintf("every lane turn in the window failed (%d of %d)", hf.Failed, hf.Delivered)
+	case df.Presence != PresenceUp:
+		why := "hook " + df.Hook
+		if df.Reason != "-" && df.Reason != "" {
+			why += ": " + df.Reason
+		}
+		return VerdictDown, why
 	}
-	return VerdictOK, "live"
-}
-
-// pongWithin reports whether a session pong aged ageStr ("-" is none) is
-// inside the window (docs/SPEC-FRIEND.md "Check": the verdicts, deaf and silent).
-func pongWithin(ageStr string, window time.Duration) bool {
-	d, err := time.ParseDuration(ageStr)
-	return err == nil && d <= window
+	return VerdictOK, "live: hook proven"
 }
 
 // CheckFriend gathers the facts through the seams over the window and decides
@@ -325,17 +295,15 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 
 	// Daemon facts
 	df := DaemonFacts{
-		Friend:     friendName,
-		Agent:      "none",
-		PID:        "-",
-		Status:     "none",
-		Connection: "-",
-		Challenge:  "-",
-		PongAge:    "-",
-		Presence:   "down",
-		SeenAge:    "-",
-		Proof:      "none",
-		ProofAge:   "-",
+		Friend:   friendName,
+		Agent:    "none",
+		PID:      "-",
+		Status:   "none",
+		Hook:     "-",
+		Since:    "-",
+		Answer:   "-",
+		Presence: PresenceDown,
+		Reason:   "-",
 	}
 
 	if seams.Launchctl != nil {
@@ -372,70 +340,30 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		} else {
 			df.Status = "stale"
 		}
-		df.Connection = dash(st.Connection)
-		df.Challenge = dash(st.Challenge)
 		if (harness == "" || harness == "unknown") && st.Harness != "" {
 			harness = st.Harness
 		}
-		switch {
-		case st.Push == PushUnproven:
-			df.Proof = "pending"
-			if !st.PushSince.IsZero() {
-				df.ProofAge = AgeString(now.Sub(st.PushSince))
-			}
-		case !st.ProofSent.IsZero():
-			df.Proof, df.ProofAge = "sent", AgeString(now.Sub(st.ProofSent))
+	}
+
+	if seams.ReadHook != nil {
+		h, err := seams.ReadHook(friendName)
+		if err != nil {
+			h.ReadError = err.Error()
 		}
-	}
-
-	pong, pongFound, _ := seams.ReadPong(friendName)
-	if pongFound && !pong.At.IsZero() {
-		df.PongAge = AgeString(now.Sub(pong.At))
-	} else if !st.LastPong.IsZero() {
-		df.PongAge = AgeString(now.Sub(st.LastPong))
-	}
-
-	pr, prFound, _ := seams.ReadPresence(friendName)
-	if prFound {
-		if pr.Presence == PresenceUp && df.Status == "ok" {
+		df.Hook, df.Misses = dash(h.State), h.Misses
+		if h.ReadError != "" {
+			df.Hook, df.Reason = "-", oneLine(h.ReadError, 200)
+		} else if h.Down != "" {
+			df.Reason = oneLine(h.Down, 200)
+		}
+		if !h.Since.IsZero() {
+			df.Since = AgeString(now.Sub(h.Since))
+		}
+		if !h.LastAnswer.IsZero() {
+			df.Answer = AgeString(now.Sub(h.LastAnswer))
+		}
+		if h.Up() {
 			df.Presence = PresenceUp
-			if !pr.LastHeard.IsZero() {
-				df.SeenAge = AgeString(now.Sub(pr.LastHeard))
-			} else if pongFound && !pong.At.IsZero() {
-				df.SeenAge = AgeString(now.Sub(pong.At))
-			} else if !st.LastPong.IsZero() {
-				df.SeenAge = AgeString(now.Sub(st.LastPong))
-			}
-		} else {
-			if df.Status == "ok" {
-				df.Presence = "asleep"
-				if !st.LastDaemonPong.IsZero() {
-					df.SeenAge = AgeString(now.Sub(st.LastDaemonPong))
-				} else {
-					df.SeenAge = AgeString(now.Sub(st.At))
-				}
-			} else {
-				df.Presence = PresenceDown
-				if !pr.LastHeard.IsZero() {
-					df.SeenAge = AgeString(now.Sub(pr.LastHeard))
-				}
-			}
-		}
-	} else {
-		if df.Status == "ok" {
-			if !st.LastPong.IsZero() && now.Sub(st.LastPong) < AnswerBound {
-				df.Presence = PresenceUp
-				df.SeenAge = AgeString(now.Sub(st.LastPong))
-			} else {
-				df.Presence = "asleep"
-				if !st.LastDaemonPong.IsZero() {
-					df.SeenAge = AgeString(now.Sub(st.LastDaemonPong))
-				} else {
-					df.SeenAge = AgeString(now.Sub(st.At))
-				}
-			}
-		} else {
-			df.Presence = PresenceDown
 		}
 	}
 
@@ -450,18 +378,13 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 	}
 
 	hf := HarnessFacts{
-		Friend:      friendName,
-		Harness:     harness,
-		Route:       route,
-		Last:        "-",
-		LastExit:    "-",
-		Broken:      "-",
-		Reason:      "-",
-		SessionLive: dash(st.SessionLive),
-		Queued:      "-",
-	}
-	if st.QueueKnown {
-		hf.Queued = strconv.Itoa(st.Queued)
+		Friend:   friendName,
+		Harness:  harness,
+		Route:    route,
+		Last:     "-",
+		LastExit: "-",
+		Broken:   "-",
+		Reason:   "-",
 	}
 
 	if seams.ReadLog != nil {
@@ -535,10 +458,6 @@ func ComputeSummary(checks []FriendCheck) CheckSummary {
 			s.OK++
 		case VerdictBroken:
 			s.Broken++
-		case VerdictDeaf:
-			s.Deaf++
-		case VerdictSilent:
-			s.Silent++
 		case VerdictDown:
 			s.Down++
 		case VerdictUntrue:
@@ -548,11 +467,11 @@ func ComputeSummary(checks []FriendCheck) CheckSummary {
 	return s
 }
 
-// IsRealMessage reports whether a message subject is a real turn message (not ping, pong, daemon-pong or keepalive)
+// IsRealMessage reports whether a message subject is a real turn message (not a pong)
 // (docs/SPEC-FRIEND.md "Check": the facts, bus).
 func IsRealMessage(subject string) bool {
 	s := strings.TrimSpace(strings.ToLower(subject))
-	return s != "ping" && s != "pong" && s != "daemon-pong" && s != "keepalive"
+	return s != "pong"
 }
 
 // BusLogEntries reads the bus store log for real messages from friend since since
@@ -591,18 +510,14 @@ func BusLogEntries(ctx context.Context, st bus.Store, friend string, since time.
 
 // Line renders the CHECK DAEMON line.
 func (df DaemonFacts) Line() string {
-	proof, age := df.Proof, df.ProofAge
-	if proof == "" {
-		proof, age = "none", "-"
-	}
-	return fmt.Sprintf("CHECK DAEMON friend=%s agent=%s pid=%s status=%s connection=%s challenge=%s pong_age=%s presence=%s seen_age=%s proof=%s proof_age=%s",
-		df.Friend, df.Agent, df.PID, df.Status, df.Connection, df.Challenge, df.PongAge, df.Presence, df.SeenAge, proof, dash(age))
+	return fmt.Sprintf("CHECK DAEMON friend=%s agent=%s pid=%s status=%s hook=%s since=%s answer=%s misses=%d presence=%s reason=%s",
+		df.Friend, df.Agent, df.PID, df.Status, df.Hook, df.Since, df.Answer, df.Misses, df.Presence, QuoteWhy(df.Reason))
 }
 
 // Line renders the CHECK HARNESS line.
 func (hf HarnessFacts) Line() string {
-	return fmt.Sprintf("CHECK HARNESS friend=%s harness=%s route=%s last=%s last_exit=%s failed_of_last20=%d deferred=%d broken=%s reason=%s session_live=%s queued=%s",
-		hf.Friend, hf.Harness, hf.Route, hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred, hf.Broken, QuoteWhy(hf.Reason), dash(hf.SessionLive), dash(hf.Queued))
+	return fmt.Sprintf("CHECK HARNESS friend=%s harness=%s route=%s last=%s last_exit=%s failed_of_last20=%d deferred=%d broken=%s reason=%s",
+		hf.Friend, hf.Harness, hf.Route, hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred, hf.Broken, QuoteWhy(hf.Reason))
 }
 
 // Line renders the CHECK BUS line.
@@ -636,8 +551,8 @@ func (fc FriendCheck) Lines() []string {
 
 // Line renders the CHECK OK summary line.
 func (s CheckSummary) Line() string {
-	return fmt.Sprintf("CHECK OK friends=%d ok=%d broken=%d deaf=%d silent=%d down=%d untrue=%d",
-		s.Friends, s.OK, s.Broken, s.Deaf, s.Silent, s.Down, s.Untrue)
+	return fmt.Sprintf("CHECK OK friends=%d ok=%d broken=%d down=%d untrue=%d",
+		s.Friends, s.OK, s.Broken, s.Down, s.Untrue)
 }
 
 // Lines renders all output lines for the full report.

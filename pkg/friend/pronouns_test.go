@@ -199,33 +199,3 @@ func indexOf(s []string, v string) int {
 	}
 	return -1
 }
-
-// TestTheSeatIsToldOnTheBusInTheFriendsOwnPronouns runs the daemon's present with
-// each pronoun set on the daemon: the line it sends the seat says that set's
-// possessive, and the default (no pronouns held) says their.
-func TestTheSeatIsToldOnTheBusInTheFriendsOwnPronouns(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name string
-		pro  *PronounsRef
-		want string
-	}{
-		{"she/her", NewPronounsRef(SheHer), "Every older message on her stream was marked superseded unread"},
-		{"he/him", NewPronounsRef(HeHim), "Every older message on his stream was marked superseded unread"},
-		{"they/them", NewPronounsRef(TheyThem), "Every older message on their stream was marked superseded unread"},
-		{"none held", nil, "Every older message on their stream was marked superseded unread"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			r := presentRig(t)
-			r.d.Pro = tc.pro
-			r.send(t, "ada", "card old.w1 dealt: inbox/old.w1~14/BRIEF.md", "card old.w1 dealt to you\n")
-			r.ping(t, "n-old")
-			r.store.Advance(Window + time.Minute)
-			r.ping(t, "n-fresh")
-			r.send(t, "ada", "the live list", "newest note: QUEUE.json is the live list\n")
-			r.run(t, 6)
-			assert.Contains(t, strings.Join(r.adaGot(t), "\n"), tc.want)
-		})
-	}
-}

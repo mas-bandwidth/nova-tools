@@ -10,7 +10,6 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -162,8 +161,7 @@ func agDeliver(t *testing.T, a *Antigravity, texts ...string) {
 // the read, the session check and every other message held behind it, and three waits gave
 // up a message already in her mailbox). The only answer that is not a delivery is a
 // refusal (no app, no conversation, no token, a session down): a SessionRefused naming why,
-// said once, every message pending, and never a deferral; the check reads route=mailbox and
-// deferred=0.
+// said once, and never a deferral.
 func TestAntigravityDeliversIntoTheMailboxWithoutDeferring(t *testing.T) {
 	t.Parallel()
 	t.Run("the adapter answers once the message is in the mailbox", func(t *testing.T) {
@@ -182,56 +180,6 @@ func TestAntigravityDeliversIntoTheMailboxWithoutDeferring(t *testing.T) {
 		assert.Equal(t, "no antigravity language server is running: is Antigravity open?", refused.Reason)
 		assert.Equal(t, "root-new", refused.Session)
 		assert.False(t, errors.As(err, new(Deferred)), "the harness's refusal is never a deferral")
-	})
-
-	t.Run("through the daemon", func(t *testing.T) {
-		t.Parallel()
-		state := t.TempDir()
-		synctest.Test(t, func(t *testing.T) {
-			r := newRig(t)
-			h := newAgHarness(t0, "root-new")
-			a := h.adapter("", state, nil, func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.now })
-			r.d.Deliver, r.d.Mailbox, r.d.Harness, r.passive = a, a, "antigravity", true
-			r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
-			r.d.Coordinator = "ada"
-			r.send(t, "ada", "one", "x")
-			r.at[5] = func() { r.send(t, "ada", "two", "y") }
-			r.at[10] = func() { r.send(t, "ada", "three", "z") }
-			var live string
-			r.at[20] = func() {
-				live = r.last().SessionLive
-				h.mu.Lock()
-				h.closed = true // Antigravity is closed: the harness refuses
-				h.mu.Unlock()
-				r.send(t, "ada", "four", "w")
-			}
-			r.run(t, 20+3*int(RecheckEvery/BeatEvery))
-
-			assert.Equal(t, []string{"root-new", "root-new", "root-new"}, h.sentTo, "each in at once, none of them read")
-			assert.Equal(t, "root-new", live, "the status says the conversation delivered into")
-			all := strings.Join(r.records, "\n")
-			assert.Equal(t, 3, strings.Count(all, "acked=true"), all)
-			assert.NotContains(t, all, "deferred")
-			assert.Equal(t, 1, strings.Count(all, `session=broken reason="no antigravity language server is running: is Antigravity open?"`), "the refusal is said once, by name: %s", all)
-			pending, _, err := r.bus.Peek(context.Background(), "bob")
-			require.NoError(t, err)
-			require.Len(t, pending, 1, "the message the harness refused stays pending")
-			assert.Equal(t, "four", pending[0].Message().Subject)
-
-			fc := CheckFriend(context.Background(), "bob", CheckSeams{
-				Now:          func() time.Time { return r.last().At },
-				ReadStatus:   func(string) (Status, bool, error) { return r.last(), true, nil },
-				ReadPresence: func(string) (PresenceStatus, bool, error) { return PresenceStatus{}, false, nil },
-				ReadPong:     func(string) (Pong, bool, error) { return Pong{}, false, nil },
-				ReadLog:      func(string) ([]string, error) { return r.records, nil },
-				ReadWork:     func(string, string) (int, int, string, time.Time, error) { return 0, 0, "", time.Time{}, nil },
-				HarnessDir:   func(string) (string, string, error) { return "antigravity", "/w/emma", nil },
-			}, time.Hour, nil)
-			assert.Equal(t, "mailbox", fc.Harness.Route)
-			assert.Zero(t, fc.Harness.Deferred)
-			assert.Contains(t, fc.Harness.Line(), "route=mailbox ")
-			assert.Contains(t, fc.Harness.Line(), " deferred=0 ")
-		})
 	})
 }
 
@@ -291,17 +239,6 @@ func TestTheLiveConversationFollowsWhoReads(t *testing.T) {
 		restarted := h.adapter("A", state, nil, clock)
 		assert.Equal(t, "B", restarted.Live(), "the move is in the state directory: a restart keeps it")
 		assert.Equal(t, "C", h.adapter("C", state, nil, clock).Live(), "a move holds only for the session it was made from")
-
-		fc := CheckFriend(context.Background(), "emma", CheckSeams{
-			Now: func() time.Time { return t0 },
-			ReadStatus: func(string) (Status, bool, error) {
-				return Status{At: t0, Harness: "antigravity", SessionLive: a.Live()}, true, nil
-			},
-			ReadPresence: func(string) (PresenceStatus, bool, error) { return PresenceStatus{}, false, nil },
-			ReadPong:     func(string) (Pong, bool, error) { return Pong{}, false, nil },
-			HarnessDir:   func(string) (string, string, error) { return "antigravity", "/w/emma", nil },
-		}, time.Hour, nil)
-		assert.Contains(t, fc.Harness.Line(), " session_live=B queued=-")
 
 		// B stops at once: delivery never bounces back within the hold
 		now = at
@@ -401,7 +338,6 @@ func TestAnAntigravityReportIsFinishedWhileTheSessionIsBusy(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.d.Harness = "antigravity"
-	r.hold, r.releaseAt = make(chan struct{}), 1<<30 // the turn runs on for the whole run
 	row := &twinRow{}
 	r.d.Held = row.held
 	f := &finishes{}
@@ -413,15 +349,8 @@ func TestAnAntigravityReportIsFinishedWhileTheSessionIsBusy(t *testing.T) {
 	r.send(t, "ada", "a long task", "work on it")
 	r.at[3] = func() { outboxReport(t, r.d.Dir, land.Job, "Verdict: LAND\nHead: "+head+"\n\nDone while busy.\n") }
 	r.run(t, 6)
-	// Run does not join a turn: the held one ends with the run's context, and its token on the
-	// gate says its delivery was made and its result queued (without it, Run can return before
-	// the turn's goroutine has delivered at all)
-	<-r.gate
 
-	r.mu.Lock()
-	delivered := len(r.delivered)
-	r.mu.Unlock()
-	assert.Equal(t, 1, delivered, "one turn, still under way")
+	assert.Empty(t, r.delivered, "the daemon pushes nothing into her session: the report alone finishes the card")
 	got := f.got()
 	require.Len(t, got, 1, "%v", r.records)
 	assert.Equal(t, []string{"finish", "--as", "friend.bob", "emma-land.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/emma-land.w1.g1.e15", "--report", "friend bob LAND: Done while busy."}, got[0])

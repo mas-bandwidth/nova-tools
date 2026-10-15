@@ -95,9 +95,8 @@ the holder's next beat (`ReArm`).
   strictly gates `--as` on its own `bus` push before reading or writing. `send` refuses any recipient
   the hook record shows down, at once, with the reason and one deduplicated judgment to the coordinator.
   `names` reads every name's state from the hook record.
-- `nova-friend run`: acts as its friend's hook holder for `friend` (`comms` under
-  `--notifications-only`). While the gate says no, her lanes take nothing and report nothing, and her
-  reads begin nothing.
+- `nova-friend run`: acts as its friend's hook holder for `friend`. While the gate says no, her lanes
+  take nothing and report nothing, and her reads begin nothing.
 - Coordinator verbs (`nova-hook serve`, `nova-friend watch`, `nova-friend reach`) gate `--as` on the
   `bus` push and role `coordinator` or `comms` (`hook.Want.Roles`).
 - `pkg/hookgate` is the one place a `nova-tools` verb meets the gate (`Gate` and `Out`).
@@ -112,8 +111,8 @@ that open no bus store (`install`, `uninstall`, `host`, `status`, `resume`, `ref
 Every line runs as printed:
 
 - With a role known, the remedy is `nova-hook hook --as <name> --role <role>`, and a line per unproven
-  push names its holder (`com.nova.friend-<name>` or `com.nova.friend-notifications-<name>`, the
-  session's `nova-hook hook`, or `nova-sprint hook --as <name>`).
+  push names its holder (the session's `nova-hook hook` for the bus push, `com.nova.friend-<name>` for
+  a friend's work push, or `nova-sprint hook --as <name>`).
 - With no role known, the remedy is `nova-hook status --as <name>`, offering `comms`, `friend`, and
   `coordinator`.
 

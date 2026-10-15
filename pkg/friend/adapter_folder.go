@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
@@ -181,4 +182,39 @@ func folderAtomic(dir, name, text string) (retErr error) {
 		return err
 	}
 	return os.Rename(tmp.Name(), filepath.Join(dir, name))
+}
+
+// CodexPushUnavailable is the refusal for implicit Codex delivery (SPEC-FRIEND.md,
+// Codex). No flag or environment variable enables queue or exec-resume as push.
+const CodexPushUnavailable = "Codex native push is unavailable: queue creates pending Steer prompts and exec resume is a separate turn; use active-session tool notifications from nova-bus wait --as <name> --after <cursor>, then nova-bus recv --as <name>; only use --adapter folder --session <real-session> --delivery-dir <existing-watched-folder> with a session-owned receiver; neither route proves idle wake"
+
+// The kinds of pong request (PongRequest): each its own series of nonces.
+const (
+	PongCheck = "session check" // the presence's nonce (SessionCheckText)
+	PongWake  = "wake"          // the coordinator's challenge nonce (a wake turn, an idle wake, a turn's head)
+)
+
+// pongNonce finds the nonce of the pong command a delivery asks the session to run.
+var pongNonce = regexp.MustCompile(` pong --as \S+ --nonce (\S+)`)
+
+// PongRequest reads a delivery's text for the pong it asks for: its kind (PongCheck for a
+// session check, else PongWake), the nonce of its pong command, and whether it asks for
+// nothing else (a session check, a wake turn, an idle wake, which a newer request of its kind
+// supersedes). A delivery carrying a bus message is never only a request.
+func PongRequest(text string) (kind, nonce string, only bool) {
+	m := pongNonce.FindStringSubmatch(text)
+	if m == nil {
+		return "", "", false
+	}
+	nonce = m[1]
+	switch {
+	case strings.HasPrefix(text, SessionCheckPrefix):
+		return PongCheck, nonce, !strings.Contains(text, "RECV OK id=")
+	case strings.Contains(text, "RECV OK id="):
+		return PongWake, nonce, false
+	case strings.HasPrefix(text, "Run this now, exactly as written: ") && strings.Count(strings.TrimSpace(text), "\n") == 0:
+		return PongWake, nonce, true // a one-line wake turn
+	}
+	_, rest, ok := strings.Cut(text, "\nThen read on.\n\n")
+	return PongWake, nonce, ok && strings.HasPrefix(rest, "nova-friend: you hold ") // an idle wake
 }

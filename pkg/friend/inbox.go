@@ -254,12 +254,6 @@ func SyncInbox(dir string, row Row, keep map[string]bool, asked, now time.Time, 
 	return c, firstErr
 }
 
-// jobOfWrote is the job a wrote line names: inbox/<job>/BRIEF.md (card ...).
-func jobOfWrote(rest string) string {
-	p, _, _ := strings.Cut(rest, " ")
-	return path.Base(path.Dir(p))
-}
-
 // briefHead is the first line of a BRIEF.md, read no further than it needs.
 func briefHead(path string) (string, bool) {
 	f, err := os.Open(path)
@@ -345,10 +339,6 @@ func (l *loop) inboxStep(now time.Time) {
 		}
 	}
 	said := map[string]bool{}
-	byJob := map[string]HeldCard{}
-	for _, h := range row.Cards {
-		byJob[h.Job] = h
-	}
 	record := func(line string) {
 		_, key, _ := strings.Cut(line, " ") // the line without its time
 		if !strings.HasPrefix(key, "inbox: wrote ") && !strings.HasPrefix(key, "inbox: retired ") {
@@ -357,16 +347,7 @@ func (l *loop) inboxStep(now time.Time) {
 				return
 			}
 		}
-		d.Record(line)
-		if _, rest, ok := strings.Cut(line, " inbox: wrote "); ok && l.mode == ModeBatch {
-			// a batch session is told of each brief written, in a turn of its own (startDealt),
-			// once its job is staged when it is one the daemon stages (stageStep)
-			if h, ok := byJob[jobOfWrote(rest)]; ok && d.stageOwed(h) {
-				d.stageDealt[h.Job] = rest
-			} else {
-				l.dealt = append(l.dealt, rest)
-			}
-		}
+		d.Record(line) // the session hears of a brief from friend sync's bus message, through nova-hook
 	}
 	// the epoch snap: every older-epoch inbox and outbox item is retired to the folder named
 	// for its epoch before the reconcile and the outbox pass read the live folders, so the new
@@ -376,10 +357,8 @@ func (l *loop) inboxStep(now time.Time) {
 			d.Record(fmt.Sprintf("%s inbox: the epoch's retirement stopped short: %s", now.UTC().Format(time.RFC3339), oneLine(serr.Error(), 300)))
 		}
 		if d.epoch != 0 && row.Epoch > d.epoch {
-			// the same signal: the next presence check is the present, a fresh session's
-			// greeting, and the lanes open fresh sessions (freshLanes, in the lanes' step)
-			d.Record(fmt.Sprintf("%s epoch: the sprint moved to epoch %d: the present is owed", now.UTC().Format(time.RFC3339), row.Epoch))
-			l.presentDue = true
+			// the lanes open fresh sessions (freshLanes, in the lanes' step)
+			d.Record(fmt.Sprintf("%s epoch: the sprint moved to epoch %d", now.UTC().Format(time.RFC3339), row.Epoch))
 		}
 		d.epoch = row.Epoch
 	}
@@ -431,30 +410,6 @@ func (d *Daemon) nextCard(skip func(Card) bool) (Card, bool, error) {
 		return c, true, nil
 	}
 	return Card{}, false, nil
-}
-
-// startDealt is the batch session's turn naming the briefs the daemon wrote for her (the
-// message friend sync sends when it writes one; wakeFriend in nova-sprint): a passive
-// harness takes no turn, and its line is said on the record.
-func (l *loop) startDealt(now time.Time) {
-	d := l.d
-	lines := l.dealt
-	l.dealt = nil
-	if l.passive {
-		d.Record(d.sayf("%s not delivered: %s has no deliver command: %d card(s) dealt into {their} inbox", now.UTC().Format(time.RFC3339), d.Harness, len(lines)))
-		return
-	}
-	t := &turn{subjects: fmt.Sprintf("%q", fmt.Sprintf("%d card(s) dealt", len(lines)))}
-	if d.m.Challenge != Quiet && d.PongCommand != nil {
-		t.text = "Run this now, first, exactly as written: " + d.PongCommand(d.m.Nonce) + "\nThen read on.\n\n"
-	}
-	t.text += fmt.Sprintf("nova-friend: %d sprint card(s) dealt to you are in your inbox:\n", len(lines))
-	for _, line := range lines {
-		t.text += "- " + line + "\n"
-	}
-	t.text += "Read each BRIEF.md and start; its STATUS line says where to push and where to report.\n"
-	l.busy = t
-	l.startTurn(t, now, l.deliverBatch(t))
 }
 
 // heldFrom is the idle watch's cards when the server answered: what is on her row, never the

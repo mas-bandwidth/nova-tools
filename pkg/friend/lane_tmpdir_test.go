@@ -71,7 +71,6 @@ func TestAFilesystemErrorOutsideTheLaneIsAnEnvironmentFault(t *testing.T) {
 func TestALaneFastFilesystemErrorPausesTheFriendAndKeepsTheCard(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	r.d.m = Start(t0)
 	r.d.Coordinator = "ada"
 	now := t0.Add(2 * time.Minute)
 	jobDir := r.d.Dir
@@ -81,7 +80,7 @@ func TestALaneFastFilesystemErrorPausesTheFriendAndKeepsTheCard(t *testing.T) {
 	tail := &outputTail{}
 	tail.add([]byte("starting\nEEXIST: file already exists, mkdir '/tmp/claude-501'\n"))
 	turn := &turn{subjects: `"card c1"`, started: now.Add(-time.Second), tail: tail}
-	l := &loop{d: r.d, b: r.bus, ctx: context.Background(), lanes: ls, inHand: map[string]bool{}}
+	l := &loop{d: r.d, b: r.bus, ctx: context.Background(), lanes: ls}
 
 	l.laneDone(laneResult{ln: ln, turn: LaneTurn{Exit: 1}, t: turn}, now)
 

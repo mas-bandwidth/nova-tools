@@ -96,14 +96,8 @@ func (l *loop) renewLaneSession(ln *lane, t *turn, why, detail string, now time.
 	delete(l.lanes.state.Sessions, ln.n)
 	ln.session = "" // the next step opens the fresh session (laneStep)
 	l.saveLanes(now)
-	for _, e := range t.entries {
-		delete(l.inHand, e) // pending: the claim hands them in again, into the fresh session
-	}
-	if t.notice != nil {
-		l.owedAgain(t.notice, now)
-	}
-	d.Record(fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s card=kept session_renewed=%s reason=%q: a fresh session is opened, seeded from the friend's own files, and card %s continues in it",
-		now.UTC().Format(time.RFC3339), ln.n, old, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), why, oneLine(detail, 200), ln.card.ID))
+	d.Record(fmt.Sprintf("%s lane=%d session=%s subject=%s took=%s card=kept session_renewed=%s reason=%q: a fresh session is opened, seeded from the friend's own files, and card %s continues in it",
+		now.UTC().Format(time.RFC3339), ln.n, old, t.subjects, now.Sub(t.started).Round(time.Millisecond), why, oneLine(detail, 200), ln.card.ID))
 	l.tellKind(bus.KindStatus,
 		fmt.Sprintf("friend %s: session %s %s, renewed", d.Friend, old, why),
 		fmt.Sprintf("Lane %d's session %s is %s: %s. The lane started a fresh session in its place, seeded from the friend's own files, and card %s continues in it; every message the turn carried stays pending and rides with it. Nothing to do: no hand session, no restart.\n",

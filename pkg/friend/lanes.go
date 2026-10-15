@@ -393,12 +393,9 @@ func LaneSeed(friend string, n, width int, agents, memory string) string {
 // brief's text inline (a model that reads a path relative still has it), then what else
 // rides along (the pong line first, the word about the coordinator, the bus messages
 // waiting, each labelled by its sender's authority against seat).
-func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat string, msgs []bus.Message) string {
+func CardText(job LaneJob, n, width int, sendLine string) string {
 	c := job.Card
 	var b strings.Builder
-	if pong != "" {
-		b.WriteString("Run this now, first, exactly as written: " + pong + "\nThen read on.\n\n")
-	}
 	fmt.Fprintf(&b, "nova-friend: lane %d of %d: one card this turn, %s. Do exactly these three things, then stop.\n", n, width, c.ID)
 	if job.Dir != "" {
 		fmt.Fprintf(&b, "Your working directory is the card's job directory, %s. Every path here is absolute: use it exactly as written, leading slash and all.\n", job.Dir)
@@ -413,18 +410,12 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 	if job.Brief != "" {
 		fmt.Fprintf(&b, "\nTHE BRIEF (%s):\n\n%s\nEND OF THE BRIEF\n", c.Brief, strings.TrimRight(job.Brief, "\n"))
 	}
-	if notice != "" {
-		b.WriteString("\nnova-friend: " + notice + "\n")
-	}
-	if len(msgs) > 0 {
-		b.WriteString("\nAlso for you, after the card:\n\n" + BatchFor(seat, msgs, "", ""))
-	}
 	return b.String()
 }
 
 // laneStep starts what the lanes owe: a session for a lane that has none,
-// and a card's turn for a lane that is free, the waiting messages riding
-// along. A lane beyond width, or beyond the live cap a rate limit lowered,
+// and a card's turn for a lane that is free, the card alone: a message to
+// the friend reaches her through nova-hook, never with a card. A lane beyond width, or beyond the live cap a rate limit lowered,
 // takes nothing new and starts no turn; a card it holds between turns waits on
 // its lane. With server lanes the lane keeps what the server says it holds
 // (lane_take.go), since a hand-back to another lane is owed a server verb this
@@ -651,7 +642,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			l.releaseHeld(ln, now)
 			continue
 		}
-		if perCard { // the brief alone: no message, pong or notice rides with it
+		if perCard {
 			t, c, dir := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, ln.job.Card, ln.job.Dir
 			ln.t = t
 			l.startTurn(t, now, func(ctx context.Context) laneResult {
@@ -660,20 +651,12 @@ func (l *loop) laneStep(now time.Time, width int) {
 			})
 			continue
 		}
-		t := &turn{}
-		t.entries, t.msgs = l.take()
-		var subjects []string
-		for _, m := range t.msgs {
-			subjects = append(subjects, m.Subject)
-		}
-		t.subjects = fmt.Sprintf("%q", strings.Join(append([]string{"card " + ln.card.ID}, subjects...), " | "))
-		notice, pong := l.head()
-		t.notice = l.noticeTaken
+		t := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}
 		send := ""
 		if d.CardDone != nil {
 			send = d.CardDone(ln.card.ID, l.coordinator())
 		}
-		t.text = CardText(ln.job, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
+		t.text = CardText(ln.job, ln.n, width, send)
 		ln.t = t
 		dir := ln.job.Dir
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
@@ -716,14 +699,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	}
 	if ln.ended != "" {
 		// another lane finished the card: its messages go back pending, counted toward nothing
-		for _, e := range t.entries {
-			delete(l.inHand, e)
-		}
-		if t.notice != nil && l.notice == nil {
-			l.notice = t.notice
-			l.saidSilent = t.notice.Subject != "coordinator silent"
-		}
-		d.Record(fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s card=ended reason=%q", at, ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), "card finished by "+ln.ended))
+		d.Record(fmt.Sprintf("%s lane=%d session=%s subject=%s took=%s card=ended reason=%q", at, ln.n, ln.session, t.subjects, now.Sub(t.started).Round(time.Millisecond), "card finished by "+ln.ended))
 		l.setDown(ln, now)
 		return
 	}
@@ -754,7 +730,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		return
 	}
 	ok := r.err == nil && r.turn.Exit == 0 && !t.stopped && !t.capped
-	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", at, ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
+	line := fmt.Sprintf("%s lane=%d session=%s subject=%s took=%s exit=%d", at, ln.n, ln.session, t.subjects, now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
 	if r.err != nil {
 		line += fmt.Sprintf(" error=%q", r.err.Error())
 	}
@@ -920,14 +896,7 @@ func (l *loop) faultTurn(ln *lane, line, fault, first string, now time.Time) {
 // again once a person clears the pause; the messages it carried go back pending.
 func (l *loop) heldTurn(r laneResult, now time.Time) {
 	d, ln, t := l.d, r.ln, r.t
-	for _, e := range t.entries {
-		delete(l.inHand, e)
-	}
-	if t.notice != nil && l.notice == nil {
-		l.notice = t.notice
-		l.saidSilent = t.notice.Subject != "coordinator silent"
-	}
-	d.Record(fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s card=kept turn=%d/%d reason=%q", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), ln.attempts, CardTurns, "a provider failure stopped every lane"))
+	d.Record(fmt.Sprintf("%s lane=%d session=%s subject=%s took=%s card=kept turn=%d/%d reason=%q", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, now.Sub(t.started).Round(time.Millisecond), ln.attempts, CardTurns, "a provider failure stopped every lane"))
 }
 
 // limitedTurn is a lane's turn the provider rate-limited or refused out of
@@ -937,7 +906,7 @@ func (l *loop) heldTurn(r laneResult, now time.Time) {
 // backs off or holds (providerLimit).
 func (l *loop) limitedTurn(r laneResult, now time.Time) {
 	d, ln, t := l.d, r.ln, r.t
-	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
+	line := fmt.Sprintf("%s lane=%d session=%s subject=%s took=%s exit=%d", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
 	var funds OutOfFunds
 	var usage UsageLimited
 	if errors.As(r.err, &funds) {
@@ -946,12 +915,6 @@ func (l *loop) limitedTurn(r laneResult, now time.Time) {
 		line += fmt.Sprintf(" usage_limited=%q until=%s", usage.Reason, usage.Until.UTC().Format(time.RFC3339))
 	} else {
 		line += fmt.Sprintf(" rate_limited=%q", oneLine(r.err.Error(), 300))
-	}
-	for _, e := range t.entries {
-		delete(l.inHand, e) // pending: the claim hands them in again
-	}
-	if t.notice != nil {
-		l.owedAgain(t.notice, now)
 	}
 	d.Record(line + fmt.Sprintf(" card=kept turn=%d/%d", ln.attempts, CardTurns))
 	l.providerLimit(r.err, t.started, now)
