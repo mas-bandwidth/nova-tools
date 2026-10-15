@@ -1,15 +1,17 @@
 package dshdesktop
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // The DeepSeek Harness local state this package reads (Harness 0.2.0-rc.2,
@@ -158,7 +160,9 @@ func LsofHeld(locks []string) map[string]bool {
 	if len(locks) == 0 {
 		return held
 	}
-	out, _ := exec.Command("lsof", append([]string{"-Fn", "--"}, locks...)...).Output() // ignored: lsof exits 1 when no file is open
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, "lsof", append([]string{"-Fn", "--"}, locks...)...)
+	defer cancel()
+	out, _ := cmd.Output() // ignored: lsof exits 1 when no file is open; what it printed is still the answer
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "n") {
 			held[line[1:]] = true
