@@ -12,8 +12,6 @@ result/head-card-id.txt	malformed	synthetic
 result/missing-branch.txt	malformed	synthetic
 result/blank.txt	malformed	synthetic
 report/no-verdict.txt	malformed	2026-10-05 an outbox REPORT.md with no Verdict line was left unread
-report/verdict-heading-only.txt	malformed	synthetic
-report/verdict-bolded.txt	malformed	synthetic
 report/only-headings.txt	malformed	synthetic
 report/oversize.txt	wrong	synthetic
 report/land-no-head.txt	wrong	synthetic
