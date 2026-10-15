@@ -483,7 +483,9 @@ func upTo(after []hook.Status) []string {
 // challenges, the unhook and the telling the next pass would carry out, from
 // the same script, and writes nothing: no challenge reaches a stream, the
 // interval stays free for the real pass, and a name the plan unhooks is still
-// hooked until that pass.
+// hooked until that pass. A challenge is due only past QuietAfter of silence
+// and a name goes down only past the answer bound (tla/HookBeat.tla,
+// NoChallengeWhileTalking, Pass), so the test runs the clock to each.
 func TestServeDryRunPlansAPassAndWritesNothing(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -491,15 +493,25 @@ func TestServeDryRunPlansAPassAndWritesNothing(t *testing.T) {
 	r.h.Hook(t, "bob", hook.Comms)
 	cli := r.cli()
 
+	quiet := int(hook.QuietAfter/hook.BeatEvery) + 1 // passes, one interval each, until bob's silence is past QuietAfter
+	for range quiet {
+		r.step(t, []string{"ada"}, "ada")
+	}
+	asked := r.h.MR.Dump()
 	cli.Do(t, "serve", "--as", "ada", "--dry-run", "--down-after", stepDownAfter).Exit(0).
-		Out("SERVE OK", "taken=true", "dry_run=true", "SERVE CHALLENGE name=ada", "SERVE CHALLENGE name=bob").NotOut("nonce")
-	assert.Empty(t, r.stream(t, "bob"), "a dry run sends no challenge")
+		Out("SERVE OK", "taken=true", "dry_run=true", "SERVE CHALLENGE name=bob").NotOut("nonce", "SERVE CHALLENGE name=ada")
+	assert.Zero(t, r.count(t, "bob", "HOOK CHALLENGE"), "a dry run sends no challenge")
+	assert.Equal(t, asked, r.h.MR.Dump(), "the plan of a challenge writes nothing (no nonce, pending deadline or delivery mark)")
 	r.step(t, []string{"ada"}, "ada")
 	assert.Equal(t, 1, r.count(t, "bob", "HOOK CHALLENGE"), "the real pass after a dry run is taken")
-	r.step(t, []string{"ada"}, "ada")
+	for range int(hook.AnswerBound / hook.BeatEvery) { // the challenge stands unanswered past the answer bound
+		r.step(t, []string{"ada"}, "ada")
+	}
 
+	before := r.h.MR.Dump()
 	cli.Do(t, "serve", "--as", "ada", "--dry-run", "--down-after", stepDownAfter).Exit(0).
-		Out("SERVE UNHOOK name=bob misses=2", "SERVE TELL audience=coordinator down=bob back=-").NotOut("SERVE CHALLENGE name=bob")
+		Out("SERVE UNHOOK name=bob misses=1", "SERVE TELL audience=coordinator down=bob back=-").NotOut("SERVE CHALLENGE name=bob")
+	assert.Equal(t, before, r.h.MR.Dump(), "the plan of an expired challenge and an unhook writes nothing (its miss, latch and delivery marks included)")
 	require.NotEqual(t, hook.StateUnhooked, r.h.State(t, "bob").State, "the plan unhooks no one")
 	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN bob"), "the plan tells no one")
 	r.step(t, []string{"ada"}, "ada")

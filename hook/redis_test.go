@@ -449,6 +449,8 @@ func TestPlanPassIsThePassWithItsWritesOff(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)                   // the rig stops giving ada evidence: she is silent
+	r.pass(hook.QuietAfter + time.Minute) // a challenge is due only past the name's silence (tla/HookBeat.tla, NoChallengeWhileTalking)
 	ctx := context.Background()
 	before := r.mr.Dump()
 	plan, err := r.s.PlanPass(ctx, []string{"ada"}, hook.BeatEvery, hook.DownAfter, "srv")
