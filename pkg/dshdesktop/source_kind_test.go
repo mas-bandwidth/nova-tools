@@ -12,6 +12,7 @@ import (
 // kind", dsh-session-format-v3-to-v4 lib/index.js source()). A third-party
 // plugin owns "plugin:" + its complete name. Pin the shipped receiver bytes.
 func TestReceiverSourceKindIsProducerOwned(t *testing.T) {
+	t.Parallel()
 	src := string(receiverSource)
 	decl := regexp.MustCompile(`(?m)^export const sourceKind = '([^']*)';$`).FindStringSubmatch(src)
 	require.NotNil(t, decl, "receiver declares one source kind")
