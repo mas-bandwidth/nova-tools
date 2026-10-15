@@ -393,7 +393,7 @@
         enabled: "{{ item.enabled }}"
         state: >-
           {{ ('restarted' if (((loop_units.results + (loop_timers.results | default([])))
-                                | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list
+                                | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list)
                                 or item.name in loop_restart) else 'started')
              if item.enabled else 'stopped' }}
       loop: "{{ loop_records }}"
