@@ -267,3 +267,19 @@ func TestRouteWriteUnpricedCommitCanBeRepaired(t *testing.T) {
 	assert.Equal(t, history[1].ID, h.redis.revs[config.KindRoute])
 	assert.Equal(t, "1", h.redis.views[config.KindRoute]["r"]["price_input"])
 }
+
+func TestRouteWriteHelpNamesCopyEffect(t *testing.T) {
+	t.Parallel()
+	for _, op := range []string{"add", "set", "remove"} {
+		t.Run(op, func(t *testing.T) {
+			t.Parallel()
+			h := loopHarness(t)
+			code, out, errs := h.run(t, "route", op, "-h")
+			assert.Zero(t, code, errs)
+			assert.Contains(t, out, "applies the fleet Redis copy")
+			assert.Contains(t, out, "NOT-APPLIED exits 1 and preserves the write and history")
+			assert.Zero(t, h.opens)
+			assert.Zero(t, h.redis.opens)
+		})
+	}
+}
