@@ -379,14 +379,17 @@ type Packet struct {
 	Why        string   `json:"why,omitempty"`     // a rework's: how the attempt before ended
 	Notes      []string `json:"notes"`
 	Branch     string   `json:"branch,omitempty"`
-	Base       string   `json:"base,omitempty"`
-	BaseHead   string   `json:"base_head,omitempty"`
-	BaseFrom   int      `json:"base_attempt,omitempty"` // the attempt BaseHead is the head of
-	Worker     string   `json:"worker,omitempty"`
-	Head       string   `json:"head,omitempty"`
-	WorkBranch string   `json:"work_branch,omitempty"`
-	WorkBase   string   `json:"work_base,omitempty"`
-	Report     string   `json:"report,omitempty"`
+	Base       string     `json:"base,omitempty"`
+	BaseHead   string     `json:"base_head,omitempty"`
+	BaseFrom   int        `json:"base_attempt,omitempty"` // the attempt BaseHead is the head of
+	// NeedHeads is each need of the primary, its state and the full commit it landed at,
+	// empty when it has not landed (sprint.Packet; nova-sprint tla/StageNeeds.tla).
+	NeedHeads  []NeedHead `json:"need_heads,omitempty"`
+	Worker     string     `json:"worker,omitempty"`
+	Head       string     `json:"head,omitempty"`
+	WorkBranch string     `json:"work_branch,omitempty"`
+	WorkBase   string     `json:"work_base,omitempty"`
+	Report     string     `json:"report,omitempty"`
 	// A work card's route, as the deal drew it (docs/SPEC-SPRINT.md, the deal's
 	// route): the model the child runs on, its budget and deadline (seconds);
 	// empty when the store has no route, and the member's own run.
@@ -412,6 +415,15 @@ type Packet struct {
 	// (docs/SPEC-SPRINT.md section 5, the gate verdict); empty for none.
 	DecideGateFlaky       string `json:"decide_gate_flaky,omitempty"`
 	DecideGatePreexisting string `json:"decide_gate_preexisting,omitempty"`
+}
+
+// NeedHead is a need's state and recorded landed commit, as a work packet's need_heads
+// carries it (sprint.NeedHead; nova-sprint tla/StageNeeds.tla): Head is the full commit
+// the need landed at, empty when it has not landed.
+type NeedHead struct {
+	ID    string `json:"id"`
+	State string `json:"state"`
+	Head  string `json:"head,omitempty"`
 }
 
 // queueCard is one card of `nova-sprint queue --as <me> --json`. Its claim is the
