@@ -31,7 +31,7 @@ Score: 9.5/10 (53/55)
 | 1 | `nova-swarm lint` output | line grammar is key=value but no machine-readable emission | add `--json` flag emitting one JSON object per LINT line | S |
 
 ## Top 3 fixes
-1. Unify refusal wording: every refusal names the next command verbatim (missing-flag/`-file refusals omit the `run: nova-swarm help <verb>` line).
+1. Unify refusal wording: every refusal names the next command verbatim (missing-flag/`-file` refusals omit the `run: nova-swarm help <verb>` line).
 2. Make `lint --max` actually cap NOTE lines, so help's claim is true.
 3. Add `--json` to lint output for non-interactive consumers.
 
