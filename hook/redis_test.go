@@ -442,3 +442,27 @@ func TestBootstrapKeepsTheFirstClientNonce(t *testing.T) {
 	_, err = r.s.Answer(ctx, "ada", "first", "session")
 	require.NoError(t, err)
 }
+
+// TestPlanPassIsThePassWithItsWritesOff pins Store.PlanPass: the beats Pass
+// then carries out, and no write to the store before it.
+func TestPlanPassIsThePassWithItsWritesOff(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	ctx := context.Background()
+	before := r.mr.Dump()
+	plan, err := r.s.PlanPass(ctx, []string{"ada"}, hook.BeatEvery, hook.DownAfter, "srv")
+	require.NoError(t, err)
+	require.True(t, plan.Taken)
+	require.Len(t, plan.Beats, 1)
+	assert.Equal(t, hook.BeatChallenged, plan.Beats[0].Did)
+	assert.Empty(t, plan.Beats[0].Nonce, "a plan sets no challenge")
+	assert.Equal(t, before, r.mr.Dump(), "a plan writes nothing")
+
+	got, err := r.s.Pass(ctx, []string{"ada"}, hook.BeatEvery, hook.DownAfter, func() string { return "n1" }, "srv")
+	require.NoError(t, err)
+	require.True(t, got.Taken, "the plan left the interval free")
+	assert.Equal(t, plan.Beats[0].Did, got.Beats[0].Did)
+	assert.Equal(t, plan.Beats[0].Misses, got.Beats[0].Misses)
+	assert.Equal(t, plan.Beats[0].Epoch, got.Beats[0].Epoch)
+}

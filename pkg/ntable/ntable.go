@@ -708,24 +708,3 @@ func decodeRow(t Table, key string, h map[string]string) Row {
 func NewRow(t Table, key string) Row {
 	return decodeRow(t, key, nil)
 }
-
-// SameShape says two tables have the same definition and the same rows with
-// the same bindings, labels, excludes and owners (the cells' values aside):
-// what a writer compares before binding again.
-func SameShape(a, b Table) bool {
-	if !SameDefinition(a, b) || len(a.Rows) != len(b.Rows) {
-		return false
-	}
-	for i := range a.Rows {
-		ra, rb := a.Rows[i], b.Rows[i]
-		if ra.Key != rb.Key || ra.Label != rb.Label || ra.Exclude != rb.Exclude || ra.Owner != rb.Owner || len(ra.Cells) != len(rb.Cells) {
-			return false
-		}
-		for j := range ra.Cells {
-			if ra.Cells[j].Key != rb.Cells[j].Key || ra.Cells[j].Bound != rb.Cells[j].Bound {
-				return false
-			}
-		}
-	}
-	return true
-}

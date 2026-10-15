@@ -91,7 +91,7 @@ type Model struct {
 
 // Refusal is a verb's no with the command that satisfies it: Code 1 when the caller can
 // retry differently, 2 when an input could not be used at all (docs/SPEC-LOCAL.md, the
-// verbs).
+// verbs). serve reads Code: 2 is the usage refusal (exit 2); 1 and the zero value stay exit 1.
 type Refusal struct {
 	Why, Remedy string
 	Code        int

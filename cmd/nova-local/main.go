@@ -230,7 +230,9 @@ func (w world) store(ctx context.Context, a Adapter, c Client, model string) (di
 	return dir, shared, why
 }
 
-// boxFacts are the box's facts, read now, as fields of a first line.
+// boxFacts are the box's facts, read now, as fields of a first line (rule 10).
+// All five are always printed: unread memory and load are unknown, and a wired
+// cap the box does not have, or that reports none, is unset.
 func (w world) boxFacts(o *tool.Out) (load1 float64, free uint64, ok bool) {
 	free, total, memOK := uint64(0), uint64(0), false
 	if w.box.Mem != nil {
@@ -239,14 +241,16 @@ func (w world) boxFacts(o *tool.Out) (load1 float64, free uint64, ok bool) {
 	if memOK {
 		o.Fact("mem_used", total-free).Fact("mem_free", free).Fact("mem_total", total)
 	} else {
-		o.Fact("mem_free", "unknown").Fact("mem_total", "unknown")
+		o.Fact("mem_used", "unknown").Fact("mem_free", "unknown").Fact("mem_total", "unknown")
 	}
-	if mib, set := uint64(0), false; w.box.WiredCap != nil {
-		if mib, set = w.box.WiredCap(); set {
+	if w.box.WiredCap != nil {
+		if mib, set := w.box.WiredCap(); set {
 			o.Fact("wired_cap", mib<<20)
 		} else {
 			o.Fact("wired_cap", "unset")
 		}
+	} else {
+		o.Fact("wired_cap", "unset")
 	}
 	load1, loadOK := 0.0, false
 	if w.box.Load1 != nil {
@@ -287,7 +291,8 @@ func (w world) status(c *tool.Call) *tool.Out {
 		}
 		fields = append(fields, "base", cl.Base)
 		if fields[3] != "up" {
-			items = append(items, func() { o.Item("engine", fields...) })
+			fields = append(fields, "store", "unknown", "shared", "unknown")
+			items = append(items, func() { o.ItemText("engine", "the engine did not answer", fields...) })
 			continue
 		}
 		answering++
@@ -418,12 +423,23 @@ func (w world) serve(c *tool.Call) *tool.Out {
 		if err != nil {
 			return tool.Fail("the engine's models could not be read: " + err.Error())
 		}
+		found := false
 		for _, m := range ms {
-			if m.Ref == model && m.Digest != want {
+			if withTag(m.Ref) != withTag(model) {
+				continue
+			}
+			found = true
+			if m.Digest != want {
 				f := tool.Fail(fmt.Sprintf("%s has digest %s and --expect-digest asks %s", model, orNone(m.Digest), want))
 				f.Remedy = "nova-local status --engine " + a.Name() + " --list"
 				return f
 			}
+			break
+		}
+		if !found {
+			f := tool.Fail(fmt.Sprintf("%s is not listed and --expect-digest asks %s", model, want))
+			f.Remedy = "ollama pull " + model
+			return f
 		}
 	}
 	dir, shared, why := w.store(ctx, a, cl, model)
@@ -436,6 +452,9 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	var r *Refusal
 	if errors.As(err, &r) {
 		f := tool.Fail(r.Why)
+		if r.Code == 2 {
+			f = tool.Refuse(r.Why)
+		}
 		f.Remedy = r.Remedy
 		return f
 	}

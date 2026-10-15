@@ -239,20 +239,12 @@ type Expired struct {
 // alarm the coordinator's loop runs (nova-bus overdue) calls it, and any loop
 // with a Bus may: it reads the store's time, never a clock of its own.
 func (b *Bus) ExpireAsks(ctx context.Context) ([]Expired, error) {
-	friends, machines, now, err := b.Store.Members(ctx)
-	if err != nil {
-		return nil, err
-	}
-	names := slices.Compact(slices.Sorted(slices.Values(slices.Concat(friends, machines))))
-	asks, err := b.asksOf(ctx, names...)
+	due, friends, now, err := b.dueAsks(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var out []Expired
-	for _, a := range asks {
-		if a.State(now) != AskTimedOut || !a.TimedOutAt.IsZero() {
-			continue
-		}
+	for _, a := range due {
 		id, delivered, err := b.timeOut(ctx, a, now, friends)
 		if err != nil {
 			return out, err
@@ -262,6 +254,36 @@ func (b *Bus) ExpireAsks(ctx context.Context) ([]Expired, error) {
 		}
 	}
 	return out, nil
+}
+
+// DueAsks is the plan of an expiry, read and never written: every ask of
+// every known sender ExpireAsks would time out now, by the store's time
+// (nova-bus overdue --dry-run). The selection is ExpireAsks' own (dueAsks); an
+// ask another expiry times out first is still listed, as it is due.
+func (b *Bus) DueAsks(ctx context.Context) ([]Ask, error) {
+	due, _, _, err := b.dueAsks(ctx)
+	return due, err
+}
+
+// dueAsks is every ask of every known sender past its deadline with no answer
+// by it and no timeout yet, oldest first, with the friends and the store's now
+// the expiry needs.
+func (b *Bus) dueAsks(ctx context.Context) (due []Ask, friends []string, now time.Time, err error) {
+	friends, machines, now, err := b.Store.Members(ctx)
+	if err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	names := slices.Compact(slices.Sorted(slices.Values(slices.Concat(friends, machines))))
+	asks, err := b.asksOf(ctx, names...)
+	if err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	for _, a := range asks {
+		if a.State(now) == AskTimedOut && a.TimedOutAt.IsZero() {
+			due = append(due, a)
+		}
+	}
+	return due, friends, now, nil
 }
 
 // TimeoutSubject is the subject of a's timeout at now.

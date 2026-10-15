@@ -86,14 +86,6 @@ type envelope struct {
 	RequestID string `json:"requestId"`
 }
 
-// Deliver attempts exactly one follower start-turn mutation in threadID and
-// returns the desktop's accepted turn ID. fixedNotice must be BusNotice or
-// ChallengeNotice, never an external event body. Deliver does not retry. See
-// docs/SPEC-CODEX-DESKTOP-WAKE.md and CodexDesktopWake.OneMutationAttempt.
-func Deliver(ctx context.Context, socketPath, threadID, eventID, fixedNotice string) (string, error) {
-	return deliver(ctx, socketPath, threadID, eventID, fixedNotice, connectNative)
-}
-
 // deliver is the concrete transition sequence modelled by CodexDesktopWake.
 func deliver(ctx context.Context, socketPath, threadID, eventID, fixedNotice string, connect connector) (turnID string, err error) {
 	if err := validateInputs(socketPath, threadID, eventID, fixedNotice); err != nil {
