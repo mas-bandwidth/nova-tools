@@ -352,6 +352,14 @@ and this cut changes no model or TLC receipt. Providers apply before routes.
 
 local-spec-fleet-provider-per-machine: a provider row whose name begins `local-` carries the `endpoint` field (text, an http:// URL); every other provider carries none. The endpoint is the base of the local engine on the named machine and obeys docs/SPEC-LOCAL.md rule 3 (loopback or the tailnet, 100.64.0.0/10, every address a name resolves to). An endpoint whose host is a machine row holding the role coordination is refused: the coordinating machine serves no local model. A local provider is `billing=plan`, `funded=true`, with no key.
 
+### local-config-provider-endpoint
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `endpoint` | text | on a provider whose name begins `local-`; empty on every other | the deal, which stamps it on a local card | `provider:<name>` `endpoint` |
+
+A provider named `local-<host>` needs `--endpoint`, an `http` URL with a host and the path `/v1` (`http://<host>:<port>/v1`). A literal IP host is loopback or in `100.64.0.0/10`. The check resolves no name and opens no socket. A name host is `localhost` or a machine row, and a machine whose roles hold `coordination` is refused: serve the model on a bench machine; the coordinating machine runs no local model. Migration 0046 adds the column `endpoint text NOT NULL DEFAULT ''` (0045 is already friend session).
+
 `status` always prints a `PROVIDER name=<name> funded=<bool> billing=<word>
 balance_usd=<value or -> as_of=<date or ->` line for each provider, followed
 by `<tier>=<enabled in array>/<enabled total>` for every tier it serves.
@@ -814,7 +822,7 @@ name in `loops` go in one transaction, with a `config-remove` receipt in
 `cap:log`.
 
 **provider:** the hash `provider:<name>` with name, billing, funded,
-balance_usd, balance_as_of, console_url, note, rev and at; the set `providers`.
+balance_usd, balance_as_of, console_url, endpoint, note, rev and at; the set `providers`.
 Remove deletes the hash and removes the name from the set. nova-sprint's
 `ProviderSubject` uses the same word for a judgment subject, not a Redis key.
 

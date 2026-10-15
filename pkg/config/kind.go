@@ -629,6 +629,7 @@ var Kinds = []*Kind{
 			{Name: "balance_usd", Type: TypeDecimal, Help: "the last known USD balance, a non-negative decimal; empty when unknown, with --balance_as_of when set"},
 			{Name: "balance_as_of", Type: TypeText, Help: "the balance's observation date, YYYY-MM-DD; required when --balance_usd is set"},
 			{Name: "console_url", Type: TypeText, Help: "the provider's HTTPS console URL; empty when unknown"},
+			{Name: "endpoint", Type: TypeText, Help: "the engine's OpenAI-compatible base URL of a local provider, http://<host>:<port>/v1; empty on every other provider"},
 			noteField("the owner's funding facts, or migration's reminder to declare them"),
 		},
 		Check: checkProvider,
