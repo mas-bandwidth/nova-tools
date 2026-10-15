@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func realGOOS() string  { return runtime.GOOS }
+func realGOOS() string   { return runtime.GOOS }
 func realGOARCH() string { return runtime.GOARCH }
 
 func realCPUInfo() string { return "" }
@@ -32,3 +32,5 @@ func realStat(path string) bool {
 }
 
 func realProvisioned() bool { return false }
+
+func XDPNote() string { return "" }

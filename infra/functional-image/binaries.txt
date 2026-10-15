@@ -44,7 +44,7 @@ pg_ctl	apt	postgresql-16
 ps	apt	procps
 python3	apt	python3
 redis-server	source	redis-build
-rocketnet-provision	absent	only the member facts xdp probe (realProvisioned, xdpWhy) uses it on a live fleet machine under linux; the functional tier never runs the real member path and facts tests use fakes
+rocketnet-provision	absent	only the member facts xdp probe (pkg/member realProvisioned) uses it on a live fleet machine under linux; the functional tier never runs the real member path and facts tests use fakes
 sandbox-exec	absent	macOS only; the sandbox tests that need it skip on Linux by design
 setsid	base	util-linux
 sh	base	dash

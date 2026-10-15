@@ -1,10 +1,13 @@
 package member
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
 
+// FactSources are the inputs DetectFacts reads. Tests pass fakes; the member
+// start path passes RealSources (docs/SPEC-SWARM.md, the member's beat).
 type FactSources struct {
 	GOOS        string
 	GOARCH      string
@@ -16,29 +19,107 @@ type FactSources struct {
 	Provisioned func() bool
 }
 
+// factToken is the shape a gate fact may have: lowercase, no spaces.
+var factToken = regexp.MustCompile(`^[a-z0-9_.-]+$`)
+
+// cpuFact is one row of the CPU fact table. A new flag is one row.
+// X86 is the cpuinfo `flags` word (renamed where the published token differs:
+// avx512_vnni as avx512vnni, avx512_bf16 as avx512bf16, sha_ni as sha).
+// ArmBit is the bit in the kernel's uapi arch/arm64/include/uapi/asm/hwcap.h
+// (Linux 6.12); golang.org/x/sys/unix does not export those constants.
+// ArmHW2 selects HWCAP2 (AT_HWCAP2) over HWCAP. Darwin is the sysctl name;
+// a name absent or 0 is no fact. ArmBit < 0 means the row is not an arm linux fact.
+type cpuFact struct {
+	Token  string
+	X86    string
+	ArmBit int
+	ArmHW2 bool
+	Darwin string
+}
+
+// cpuFacts is the one allow-list a SIMD card may need (docs/SPEC-SWARM.md, the member).
+var cpuFacts = []cpuFact{
+	{Token: "sse4_1", X86: "sse4_1", ArmBit: -1},
+	{Token: "sse4_2", X86: "sse4_2", ArmBit: -1},
+	{Token: "avx", X86: "avx", ArmBit: -1},
+	{Token: "avx2", X86: "avx2", ArmBit: -1},
+	{Token: "fma", X86: "fma", ArmBit: -1},
+	{Token: "bmi1", X86: "bmi1", ArmBit: -1},
+	{Token: "bmi2", X86: "bmi2", ArmBit: -1},
+	{Token: "adx", X86: "adx", ArmBit: -1},
+	{Token: "avx512f", X86: "avx512f", ArmBit: -1},
+	{Token: "avx512dq", X86: "avx512dq", ArmBit: -1},
+	{Token: "avx512bw", X86: "avx512bw", ArmBit: -1},
+	{Token: "avx512vl", X86: "avx512vl", ArmBit: -1},
+	{Token: "avx512cd", X86: "avx512cd", ArmBit: -1},
+	{Token: "avx512ifma", X86: "avx512ifma", ArmBit: -1},
+	{Token: "avx512vbmi", X86: "avx512vbmi", ArmBit: -1},
+	{Token: "avx512vbmi2", X86: "avx512vbmi2", ArmBit: -1},
+	{Token: "avx512vnni", X86: "avx512_vnni", ArmBit: -1},
+	{Token: "avx512bf16", X86: "avx512_bf16", ArmBit: -1},
+	{Token: "vaes", X86: "vaes", ArmBit: -1},
+	{Token: "vpclmulqdq", X86: "vpclmulqdq", ArmBit: -1},
+	{Token: "gfni", X86: "gfni", ArmBit: -1},
+	{Token: "sha", X86: "sha_ni", ArmBit: -1},
+	// HWCAP_ASIMD (1<<1), published as neon.
+	{Token: "neon", ArmBit: 1, Darwin: "hw.optional.neon"},
+	// HWCAP_SVE (1<<22).
+	{Token: "sve", ArmBit: 22},
+	// HWCAP2_SVE2 (1<<1).
+	{Token: "sve2", ArmBit: 1, ArmHW2: true},
+	// HWCAP2_SME (1<<23); hw.optional.arm.FEAT_SME.
+	{Token: "sme", ArmBit: 23, ArmHW2: true, Darwin: "hw.optional.arm.FEAT_SME"},
+	// HWCAP2_SME2 (1<<37); hw.optional.arm.FEAT_SME2.
+	{Token: "sme2", ArmBit: 37, ArmHW2: true, Darwin: "hw.optional.arm.FEAT_SME2"},
+	// HWCAP2_I8MM (1<<13); hw.optional.arm.FEAT_I8MM.
+	{Token: "i8mm", ArmBit: 13, ArmHW2: true, Darwin: "hw.optional.arm.FEAT_I8MM"},
+	// HWCAP2_BF16 (1<<14); hw.optional.arm.FEAT_BF16.
+	{Token: "bf16", ArmBit: 14, ArmHW2: true, Darwin: "hw.optional.arm.FEAT_BF16"},
+	// HWCAP_ASIMDDP (1<<20), published as dotprod; hw.optional.arm.FEAT_DotProd.
+	{Token: "dotprod", ArmBit: 20, Darwin: "hw.optional.arm.FEAT_DotProd"},
+}
+
+// DetectFacts returns the machine's gate facts: sorted, de-duplicated, lowercase
+// tokens matching [a-z0-9_.-]+ (docs/SPEC-SWARM.md, the member's beat).
 func DetectFacts(src FactSources) []string {
 	set := map[string]bool{}
 	add := func(s string) {
-		if s != "" {
+		s = strings.ToLower(s)
+		if factToken.MatchString(s) {
 			set[s] = true
 		}
 	}
 	add(src.GOOS)
 	add(src.GOARCH)
 	if src.GOARCH == "amd64" || src.GOARCH == "386" {
-		for _, f := range x86Facts(src.CPUInfo) {
-			add(f)
+		flags := map[string]bool{}
+		for _, fl := range firstFlags(src.CPUInfo) {
+			flags[fl] = true
 		}
-	}
-	if src.GOARCH == "arm64" {
-		if src.GOOS == "linux" {
-			for _, f := range armLinuxFacts(src.HWCap, src.HWCap2) {
-				add(f)
+		for _, row := range cpuFacts {
+			if row.X86 != "" && flags[row.X86] {
+				add(row.Token)
 			}
 		}
-		if src.GOOS == "darwin" {
-			for _, f := range armDarwinFacts(src.Sysctl) {
-				add(f)
+	}
+	if src.GOARCH == "arm64" && src.GOOS == "linux" {
+		for _, row := range cpuFacts {
+			if row.ArmBit < 0 {
+				continue
+			}
+			word := src.HWCap
+			if row.ArmHW2 {
+				word = src.HWCap2
+			}
+			if bitSet(word, row.ArmBit) {
+				add(row.Token)
+			}
+		}
+	}
+	if src.GOARCH == "arm64" && src.GOOS == "darwin" {
+		for _, row := range cpuFacts {
+			if row.Darwin != "" && sysctlOn(src.Sysctl, row.Darwin) {
+				add(row.Token)
 			}
 		}
 	}
@@ -48,7 +129,7 @@ func DetectFacts(src FactSources) []string {
 	if src.Provisioned != nil && src.Provisioned() {
 		add("xdp")
 	}
-	var out []string
+	out := make([]string, 0, len(set))
 	for k := range set {
 		out = append(out, k)
 	}
@@ -56,6 +137,34 @@ func DetectFacts(src FactSources) []string {
 	return out
 }
 
+func bitSet(word uint, bit int) bool {
+	if bit < 0 || bit >= 64 {
+		return false
+	}
+	return word&(uint(1)<<uint(bit)) != 0
+}
+
+func sysctlOn(sysctl func(string) (int64, bool), name string) bool {
+	if sysctl == nil {
+		return false
+	}
+	v, ok := sysctl(name)
+	return ok && v != 0
+}
+
+func firstFlags(cpuinfo string) []string {
+	for _, line := range strings.Split(cpuinfo, "\n") {
+		name, rest, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(name) != "flags" {
+			continue
+		}
+		return strings.Fields(rest)
+	}
+	return nil
+}
+
+// RealSources reads this process's own machine. Called once at member start,
+// never per beat (docs/SPEC-SWARM.md, the member's beat).
 func RealSources() FactSources {
 	hw, hw2 := realHWCap()
 	return FactSources{
@@ -68,110 +177,4 @@ func RealSources() FactSources {
 		Stat:        realStat,
 		Provisioned: realProvisioned,
 	}
-}
-
-func x86Facts(cpuinfo string) []string {
-	allow := map[string]string{
-		"sse4_1":       "sse4_1",
-		"sse4_2":       "sse4_2",
-		"avx":          "avx",
-		"avx2":         "avx2",
-		"fma":          "fma",
-		"bmi1":         "bmi1",
-		"bmi2":         "bmi2",
-		"adx":          "adx",
-		"avx512f":      "avx512f",
-		"avx512dq":     "avx512dq",
-		"avx512bw":     "avx512bw",
-		"avx512vl":     "avx512vl",
-		"avx512cd":     "avx512cd",
-		"avx512ifma":   "avx512ifma",
-		"avx512vbmi":   "avx512vbmi",
-		"avx512vbmi2":  "avx512vbmi2",
-		"avx512_vnni":  "avx512vnni",
-		"avx512_bf16":  "avx512bf16",
-		"vaes":         "vaes",
-		"vpclmulqdq":   "vpclmulqdq",
-		"gfni":         "gfni",
-		"sha_ni":       "sha",
-	}
-	flags := firstFlags(cpuinfo)
-	var res []string
-	for _, fl := range flags {
-		if to, ok := allow[fl]; ok {
-			res = append(res, to)
-		}
-	}
-	return res
-}
-
-func firstFlags(cpuinfo string) []string {
-	lines := strings.Split(cpuinfo, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "flags") && strings.Contains(line, ":") {
-			after := strings.SplitN(line, ":", 2)[1]
-			parts := strings.Fields(after)
-			return parts
-		}
-	}
-	return nil
-}
-
-func armLinuxFacts(hwcap, hwcap2 uint) []string {
-	var res []string
-	if (hwcap & (1 << 1)) != 0 {
-		res = append(res, "neon")
-	}
-	if (hwcap & (1 << 22)) != 0 {
-		res = append(res, "sve")
-	}
-	if (hwcap2 & (1 << 1)) != 0 {
-		res = append(res, "sve2")
-	}
-	if (hwcap2 & (1 << 23)) != 0 {
-		res = append(res, "sme")
-	}
-	if (hwcap2 & (1 << 24)) != 0 {
-		res = append(res, "sme2")
-	}
-	if (hwcap & (1 << 20)) != 0 {
-		res = append(res, "dotprod")
-	}
-	if (hwcap & (1 << 29)) != 0 {
-		res = append(res, "i8mm")
-	}
-	if (hwcap2 & (1 << 5)) != 0 {
-		res = append(res, "bf16")
-	}
-	return res
-}
-
-func armDarwinFacts(sysctl func(string) (int64, bool)) []string {
-	var res []string
-	get := func(n string) bool {
-		if sysctl == nil {
-			return false
-		}
-		v, ok := sysctl(n)
-		return ok && v != 0
-	}
-	if get("hw.optional.neon") {
-		res = append(res, "neon")
-	}
-	if get("hw.optional.arm.FEAT_SME") {
-		res = append(res, "sme")
-	}
-	if get("hw.optional.arm.FEAT_SME2") {
-		res = append(res, "sme2")
-	}
-	if get("hw.optional.arm.FEAT_I8MM") {
-		res = append(res, "i8mm")
-	}
-	if get("hw.optional.arm.FEAT_BF16") {
-		res = append(res, "bf16")
-	}
-	if get("hw.optional.arm.FEAT_DotProd") {
-		res = append(res, "dotprod")
-	}
-	return res
 }

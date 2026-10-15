@@ -16,3 +16,5 @@ func realSysctl(string) (int64, bool) { return 0, false }
 func realStat(string) bool { return false }
 
 func realProvisioned() bool { return false }
+
+func XDPNote() string { return "" }
