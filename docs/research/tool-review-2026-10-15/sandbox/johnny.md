@@ -32,7 +32,7 @@ Score: 9/10 (49/55)
 |---|---|---|---|---|
 | 1 | `nova-sandbox check` | the check's `note=` field embeds a long sentence about landlock abi 4 in the facts line, which muddies parsing | move the note to a `NOTE` line on stderr, keeping `CHECK OK` facts parseable | S |
 | 2 | `nova-sandbox policy -h` | the verb prints only the ruleset; it does not state on the line whether the net is nopromise or denied when `--net-deny` is passed | include `net=` in the `POLICY OK` line as the wrap's `SANDBOX OK` line does | S |
-| 3 | `nova-sandbox help` | the `--gpu` flag appears only in the long banner and in run/probe/policy -h, not in the compact usage synopsis at the top | add `--gpu <n|m>` to the synopsis so a cold reader sees it | S |
+| 3 | `nova-sandbox help` | the `--gpu` flag appears only in the long banner and in run/probe/policy -h, not in the compact usage synopsis at the top | add `--gpu <n-or-m>` to the synopsis so a cold reader sees it | S |
 
 ## Top 3 fixes
 1. Add `--op <id>` to the stateful writes (worktree, egress plan) so a retry is idempotent; this moves criterion 5 from 2 to 5.
