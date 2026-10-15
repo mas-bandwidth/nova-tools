@@ -33,7 +33,7 @@ func TestFolderRouteRequiresRealCodexSessionAndWatchedDirectory(t *testing.T) {
 	require.NoError(t, err)
 	assert.IsType(t, &Folder{}, d)
 	defaultRoute, err := SelectDeliverer("bob", "codex", "/work", "real-thread", "", "", nil, nil)
-	require.ErrorContains(t, err, "Codex native push is unavailable")
+	require.ErrorContains(t, err, "codex native push is unavailable")
 	assert.Nil(t, defaultRoute)
 }
 
@@ -173,7 +173,7 @@ func TestFolderDeliveryFailureAndWakeDoNotImpersonatePong(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	f := &Folder{Dir: dir, Friend: "bob", Session: "real-thread", WorkDir: "/work/bob"}
-	_, err := f.Deliver(context.Background(), WakeTurnText("nova-friend pong --as bob --nonce wake1"))
+	_, err := f.Deliver(context.Background(), "Run this now, exactly as written: nova-friend pong --as bob --nonce wake1\n")
 	require.NoError(t, err)
 	assert.FileExists(t, filepath.Join(dir, "FRIEND-WAKE-wake1.md"))
 	assert.NoFileExists(t, filepath.Join(dir, "pong.json"))

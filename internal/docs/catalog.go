@@ -28,7 +28,7 @@ var DefaultCatalog = []Entry{
 	// cmd/
 	E("cmd/nova-bus", "messages between AIs over Redis streams: one stream per recipient under a consumer group, one log, pending until acked", "go test ./cmd/nova-bus", "go test ./cmd/nova-bus"),
 	E("cmd/nova-hook", "hooks an identity in: the pushes its role needs, live and proven; no bus, friend or sprint tool runs until they are", "go test ./cmd/nova-hook", "go test -tags functional ./cmd/nova-hook"),
-	E("cmd/nova-friend", "what a friend runs to be part of the team: the wake loop over nova-bus, the beat to the sprint server, and the proof of life, as one launchd daemon", "go test ./cmd/nova-friend", "go test -tags functional ./cmd/nova-friend"),
+	E("cmd/nova-friend", "what a friend runs to be part of the team: the lanes that work the friend's cards and their sprint metadata beat", "go test ./cmd/nova-friend", "go test -tags functional ./cmd/nova-friend"),
 	E("cmd/nova-cairn", "session checkpoints: a session's exact words kept as plain files, with an index and receipts", "go test ./cmd/nova-cairn", "go test ./cmd/nova-cairn"),
 	E("cmd/nova-decide", "typed decisions with probabilities through a backend, recorded and calibrated against their outcomes", "go test ./cmd/nova-decide", "go test ./cmd/nova-decide"),
 	E("cmd/nova-config", "permanent configuration store (Postgres), friends and machines, applied into Redis", "go test ./cmd/nova-config", "go test ./cmd/nova-config"),
@@ -79,7 +79,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/dogfood", "dogfood self-test gates", "go test ./pkg/dogfood", "go test ./pkg/dogfood"),
 	E("pkg/filelock", "process-exclusive file locks whose holder is named in the file", "go test ./pkg/filelock", "go test ./pkg/filelock"),
 	E("pkg/fleet", "runner fleet discovery and status", "go test ./pkg/fleet", "go test ./pkg/fleet"),
-	E("pkg/friend", "nova-friend's rules apart from the transport: the connection and challenge machine with an injected clock, the daemon loop over the bus, the deliver adapters per harness, the state files and the launchd agent", "go test ./pkg/friend", "go test ./pkg/friend"),
+	E("pkg/friend", "nova-friend's card lanes and reader slots, metadata beats, delivery-check adapters, state files and launchd agent", "go test ./pkg/friend", "go test ./pkg/friend"),
 	E("internal/friend", "the friend lane client in a friend's hook service: asks the sprint server what each lane holds, caches nothing that decides (tla/FriendLaneClient.tla)", "go test ./internal/friend", "go test ./internal/friend"),
 	E("internal/fuse", "the fuse box: read and write the lockdown and quarantine state", "go test ./internal/fuse", "go test ./internal/fuse"),
 	Page("internal/ghevent", "the GitHub event Redis stream: append and read", "go test ./internal/ghevent", "go test ./internal/ghevent"),

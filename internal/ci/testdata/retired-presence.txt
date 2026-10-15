@@ -66,3 +66,58 @@ ident PushProver the hook record (bus2:push is deleted)
 ident PushRenewEvery the hook record
 ident ProvePush the hook record
 ident PushFresh the hook record
+
+# the daemon's own session delivery, its PING answer and its harness watch (v1.3.6):
+# pkg/harness/notice (nova-hook hook --harness <h>) is the one delivery path, and
+# liveness is the nova-hook record's alone
+ident DaemonPongSubject nothing answers a PING: nova-hook serve's challenge
+ident PingPrefix nothing sends a PING: nova-hook serve's challenge
+ident daemonPong nothing answers a PING: nova-hook serve's challenge
+ident WakeTurnText nova-hook serve's challenge, delivered by pkg/harness/notice
+ident WakeText the limit lapses at its reset; nothing is pushed in to wake the session
+ident IsWake nova-hook serve's challenge
+ident WakeMark nova-hook serve's challenge
+ident ParsePing nova-hook serve's challenge
+ident IdleStep a judgment may report idle; nothing is pushed into her session
+ident BatchFor pkg/harness/notice delivers a message into her session
+ident startBatch pkg/harness/notice delivers a message into her session
+ident deliverBatch pkg/harness/notice delivers a message into her session
+ident startDealt friend sync's bus message, delivered by pkg/harness/notice
+ident startPresent pkg/harness/notice
+ident PlanPresent pkg/harness/notice
+ident PresentText pkg/harness/notice
+ident SupersededNotices pkg/harness/notice
+ident runNotifications pkg/harness/notice
+ident NotificationPolicy pkg/harness/notice
+ident NotificationsOnly pkg/harness/notice
+ident WatchHarness the nova-hook record; a process is never liveness
+ident HarnessWatch the nova-hook record; a process is never liveness
+ident HarnessSeen the nova-hook record; a process is never liveness
+ident Aliver the nova-hook record; a process is never liveness
+ident SessionTurns the nova-hook record
+ident LastDaemonPong the nova-hook record (HookRecord)
+ident VerdictDeaf the nova-hook record: down
+ident VerdictSilent the nova-hook record: down
+ident CodexQueue pkg/harness/notice (the Codex desktop shim)
+ident NewestCodexSession pkg/harness/notice (the Codex desktop shim)
+text --notifications-only pkg/harness/notice
+text --notify-kinds pkg/harness/notice
+text --notify-window pkg/harness/notice
+text com.nova.friend-notifications- pkg/harness/notice
+
+# the daemon never takes a batch of cards on behalf of a session
+ident BatchTakeArgv a lane takes only its own card (LaneTakeArgv)
+ident batchTake a lane takes only its own card (laneAsk)
+ident BatchTakeEvery no daemon batch take loop
+ident RecheckEvery nova-hook owns session delivery and retries
+ident DeferredSaidEvery nova-hook owns session delivery and retries
+
+# Retired folder session check and writer-lock presence probes.
+ident FolderCheck nova-hook owns session delivery
+ident FolderCheckLine nova-hook owns session delivery
+ident FlockHeld hook records own presence
+
+# The sprint server owns lane records; no daemon lane-state file.
+ident ReadLanes lane state is rebuilt from the sprint server
+ident WriteLanes lane state is rebuilt from the sprint server
+ident LanesFile lane state is rebuilt from the sprint server

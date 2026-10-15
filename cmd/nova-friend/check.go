@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -167,7 +168,7 @@ func (w world) healthCheckVerb(c *tool.Call) *tool.Out {
 		}
 	}
 
-	if summary.Broken+summary.Deaf+summary.Silent+summary.Down+summary.Untrue > 0 {
+	if summary.Broken+summary.Down+summary.Untrue > 0 {
 		return tool.Exit(1)
 	}
 	return tool.Exit(0)
@@ -194,21 +195,6 @@ func (w world) checkSeams(c *tool.Call, st bus.Store) friend.CheckSeams {
 		return friend.FindStateDir(w.home, dir, name)
 	}
 
-	readHook := func(name string) (hook.Status, bool, error) {
-		if w.hookStore == nil || st == nil {
-			return hook.Status{}, false, nil
-		}
-		hs, err := w.hookStore(st)
-		if err != nil {
-			return hook.Status{}, false, err
-		}
-		sts, _, err := hs.Read(c.Ctx, name)
-		if err != nil || len(sts) == 0 {
-			return hook.Status{}, false, err
-		}
-		return sts[0], sts[0].State != hook.StateNone, nil
-	}
-
 	return friend.CheckSeams{
 		Now:       w.now,
 		Home:      w.home,
@@ -216,30 +202,7 @@ func (w world) checkSeams(c *tool.Call, st bus.Store) friend.CheckSeams {
 		ReadStatus: func(name string) (friend.Status, bool, error) {
 			return friend.ReadStatus(friendStateDir(name))
 		},
-		ReadPresence: func(name string) (friend.PresenceStatus, bool, error) {
-			hst, ok, err := readHook(name)
-			if err != nil || !ok {
-				return friend.PresenceStatus{}, false, err
-			}
-			presence := friend.PresenceDown
-			if hst.State == hook.StateProven && hst.Down == "" {
-				presence = friend.PresenceUp
-			}
-			return friend.PresenceStatus{
-				Friend:    name,
-				Presence:  presence,
-				At:        hst.Armed,
-				LastHeard: hst.AnswerAt,
-				Reason:    hst.Reason,
-			}, true, nil
-		},
-		ReadPong: func(name string) (friend.Pong, bool, error) {
-			hst, ok, err := readHook(name)
-			if err != nil || !ok || hst.AnswerAt.IsZero() {
-				return friend.Pong{}, false, err
-			}
-			return friend.Pong{At: hst.AnswerAt}, true, nil
-		},
+		ReadHook: func(name string) (friend.HookRecord, error) { return w.hookRecord(c.Ctx, st, name) },
 		ReadLog: func(name string) ([]string, error) {
 			b, err := os.ReadFile(friend.LogPath(friendStateDir(name)))
 			if err != nil {
@@ -326,4 +289,33 @@ func argAfter(args []string, flag string) string {
 		}
 	}
 	return ""
+}
+
+// hookRecord is name's nova-hook record (the one truth of whether a friend is
+// there) as status and check read it; a world with no hook store, or no bus
+// store, reads none.
+func (w world) hookRecord(ctx context.Context, st bus.Store, name string) (friend.HookRecord, error) {
+	if w.hookStore == nil || st == nil {
+		return friend.HookRecord{}, errors.New("no hook store")
+	}
+	hs, err := w.hookStore(st)
+	if err != nil {
+		return friend.HookRecord{}, err
+	}
+	sts, _, err := hs.Read(ctx, name)
+	if err != nil {
+		return friend.HookRecord{}, err
+	}
+	if len(sts) == 0 {
+		return friend.HookRecord{State: hook.StateNone}, nil
+	}
+	h := sts[0]
+	r := friend.HookRecord{State: h.State, Since: h.Armed, LastAnswer: h.AnswerAt, Misses: h.Misses, Down: h.Down}
+	if !h.Unhooked.IsZero() {
+		r.Since = h.Unhooked
+		if r.Down == "" {
+			r.Down = h.Reason
+		}
+	}
+	return r, nil
 }

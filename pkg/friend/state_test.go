@@ -15,7 +15,7 @@ func TestTheStateFilesRoundTripAndTheQueueFileCounts(t *testing.T) {
 	_, found, err := ReadStatus(dir)
 	require.NoError(t, err)
 	assert.False(t, found)
-	s := Status{Friend: "bob", Harness: "opencode", At: t0, Connection: Connected, Challenge: Quiet, Width: 4}
+	s := Status{Friend: "bob", Harness: "opencode", At: t0, Seat: "ada", Width: 4}
 	require.NoError(t, WriteStatus(dir, s))
 	got, found, err := ReadStatus(dir)
 	require.NoError(t, err)

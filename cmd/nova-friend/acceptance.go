@@ -47,8 +47,8 @@ func (w world) acceptance(c *tool.Call) *tool.Out {
 		func() string { return w.getenv("CLAUDE_CONFIG_DIR") },
 		func() (string, bool) { return "", false }) // no row in an acceptance run: --profile stands
 
-	// The lane's own program: the adapter's runner, found the way pkg/friend/alive.go
-	// runnerAlive looks it up, run with its no-cost version flag so no model is called.
+	// The lane's own program: the adapter's runner, found on PATH or under the home,
+	// run with its no-cost version flag so no model is called.
 	program, versionArg := runnerProgram(harness, w.home)
 	if w.lookPath != nil {
 		if _, err := w.lookPath(program); err != nil {
@@ -88,8 +88,7 @@ func (w world) acceptance(c *tool.Call) *tool.Out {
 	return tool.Done().Note(fmt.Sprintf("friend=%s exit=0 %s", name, resultPath))
 }
 
-// runnerProgram is the program each adapter's lanes start, the one runnerAlive looks up
-// (pkg/friend/alive.go), and the no-cost version argument that runs it without a model
+// runnerProgram is the program each adapter's lanes start, and the no-cost version argument that runs it without a model
 // (docs/SPEC-FRIEND.md, the acceptance run: one version flag per adapter). An unknown
 // harness is named as its own program, the way the adapter's default does. Antigravity's
 // lane starts the harness's own agentapi under home, the path the adapter runs

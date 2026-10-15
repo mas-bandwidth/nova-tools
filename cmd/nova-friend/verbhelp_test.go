@@ -67,12 +67,12 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 		require.Contains(t, doc, line, "docs/CLI.md carries the help's line")
 	}
 	for _, text := range []string{
-		"CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>",
-		"broken when the session is marked", "deaf when a delivery in", "silent when", "down by presence", "untrue: shown",
-		"friends[] each with", "daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age}",
+		"CHECK OK friends=<n> ok=<n> broken=<n> down=<n> untrue=<n>",
+		"broken when the session is marked", "down when the hook record", "untrue: shown",
+		"friends[] each with", "daemon{friend, agent, pid, status, hook, since, answer, misses, presence, reason}",
 		"failed_of_last20, deferred, delivered, failed, broken,", "bus{friend, real_since, last_real}",
 		"work{friend, inbox, outbox, newest_outbox, newest_at}", "verdict{friend, verdict, shown, why}",
-		"summary{friends, ok, broken, deaf, silent, down, untrue}",
+		"summary{friends, ok, broken, down, untrue}",
 		"Exit 0 when every verdict is ok, 1 when any is not", "2 when it could not run",
 		"--since", "--shown", "--json", "example: nova-friend check --as ada bob",
 	} {
@@ -110,39 +110,4 @@ func TestWatchHelpAndCommandReferenceNameEveryFlagLineFieldAndExit(t *testing.T)
 	for _, word := range []string{"sprint"} {
 		require.NotContains(t, strings.ToLower(help), word, "the help says no sprint word")
 	}
-}
-
-// The status verb's help names the envelope size, its two fields and the
-// cap, and docs/CLI.md carries the same (docs/SPEC-FRIEND.md, the loop).
-func TestStatusHelpAndCommandReferenceNameTheEnvelopeSize(t *testing.T) {
-	t.Parallel()
-	help := newRig(t).cli().Do(t, "status", "-h").Exit(0).Stdout
-	raw, err := os.ReadFile("../../docs/CLI.md")
-	require.NoError(t, err)
-	for _, text := range []string{"envelope=", "envelope_bytes=", "262144 bytes unless it names its own", "the first message always goes in"} {
-		require.Contains(t, help, text)
-		require.Contains(t, string(raw), text, "docs/CLI.md carries the help's text")
-	}
-}
-
-// The run verb's help names the envelope and the deliverer's text limit, and
-// docs/CLI.md carries the same (docs/SPEC-FRIEND.md, the loop). A count cap
-// whose remainder is the next turn is the form that section forbids.
-func TestRunHelpNamesTheEnvelopeAndTheTextLimit(t *testing.T) {
-	t.Parallel()
-	help := newRig(t).cli().Do(t, "run", "-h").Exit(0).Stdout
-	raw, err := os.ReadFile("../../docs/CLI.md")
-	require.NoError(t, err)
-	for _, text := range []string{
-		"[i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>",
-		"262144 bytes unless it names its own",
-		"the first message always goes in",
-		"and <n> more: nova-bus recv",
-		"--as <me> --all",
-	} {
-		require.Contains(t, help, text)
-		require.Contains(t, string(raw), text, "docs/CLI.md carries the help's text")
-	}
-	require.Contains(t, help, "and <n> more: nova-bus recv --as <me> --all")
-	require.NotContains(t, help, "the rest is the next turn")
 }

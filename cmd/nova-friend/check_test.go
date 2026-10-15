@@ -47,26 +47,7 @@ func TestCheckSaysBrokenWhenTheTableShowsUpButNoTurnWasAnswered(t *testing.T) {
 			"CHECK BUS friend=bob real_since=0 last_real=-",
 			"CHECK WORK friend=bob inbox=0 outbox=0 newest_outbox=- newest_at=-",
 			`CHECK VERDICT friend=bob verdict=broken shown=up/1 why="untrue: shown up/1, session broken: provider quota exceeded"`,
-			"CHECK OK friends=1 ok=0 broken=1 deaf=0 silent=0 down=0 untrue=0")
-}
-
-func TestCheckSaysDeafWhenDeliveriesSucceedAndNothingComesBack(t *testing.T) {
-	t.Parallel()
-	r := newRig(t, "ada", "bob")
-	cli := r.cli()
-	state := friend.DefaultStateDir(r.home, "bob")
-	require.NoError(t, friend.WriteStatus(state, friend.Status{
-		Friend:     "bob",
-		Harness:    "opencode",
-		At:         start,
-		Connection: friend.Connected,
-	}))
-	// deliver log has exit=0 (deliveries succeed)
-	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work messages=1 took=3s exit=0 acked=true"))
-
-	cli.Do(t, "check", "--as", "ada", "bob").Exit(1).
-		Out("CHECK VERDICT friend=bob verdict=deaf shown=- why=\"deliveries succeed but no session pong or real message came back in the window\"",
-			"CHECK OK friends=1 ok=0 broken=0 deaf=1 silent=0 down=0 untrue=0")
+			"CHECK OK friends=1 ok=0 broken=1 down=0 untrue=0")
 }
 
 func TestCheckSaysOkForALiveFriend(t *testing.T) {
@@ -77,10 +58,9 @@ func TestCheckSaysOkForALiveFriend(t *testing.T) {
 	state := friend.DefaultStateDir(r.home, "bob")
 	r.launchctlOut = "12345 0 com.nova.friend-bob\n"
 	require.NoError(t, friend.WriteStatus(state, friend.Status{
-		Friend:     "bob",
-		Harness:    "opencode",
-		At:         start,
-		Connection: friend.Connected,
+		Friend:  "bob",
+		Harness: "opencode",
+		At:      start,
 	}))
 	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work messages=1 took=3s exit=0 acked=true"))
 
@@ -94,8 +74,8 @@ func TestCheckSaysOkForALiveFriend(t *testing.T) {
 	require.NoError(t, err)
 
 	cli.Do(t, "check", "--as", "ada", "bob").Exit(0).
-		Out("CHECK VERDICT friend=bob verdict=ok shown=- why=live",
-			"CHECK OK friends=1 ok=1 broken=0 deaf=0 silent=0 down=0 untrue=0")
+		Out(`CHECK VERDICT friend=bob verdict=ok shown=- why="live: hook proven"`,
+			"CHECK OK friends=1 ok=1 broken=0 down=0 untrue=0")
 }
 
 func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
@@ -114,16 +94,6 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 		r.cli().Do(t, "check", "--as", "ada", "bob").Exit(1)
 	})
 
-	// Deaf exits 1
-	t.Run("deaf exits 1", func(t *testing.T) {
-		t.Parallel()
-		r := newRig(t, "ada", "bob")
-		state := friend.DefaultStateDir(r.home, "bob")
-		require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob"}))
-		require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
-		r.cli().Do(t, "check", "--as", "ada", "bob").Exit(1)
-	})
-
 	// Down exits 1
 	t.Run("down exits 1", func(t *testing.T) {
 		t.Parallel()
@@ -132,13 +102,13 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 			Out("verdict=down")
 	})
 
-	// Untrue exits 1: shown up, the facts say asleep
+	// Untrue exits 1: shown up, the hook record says unhooked
 	t.Run("untrue exits 1", func(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
 		h, cli := checkCLIWithHook(t, r)
 		h.Hook(t, "bob", hook.Friend)
-		h.Unhook(t, "bob") // unhooked hook record with daemon ok reads as asleep
+		h.Unhook(t, "bob") // unhooked: down, whatever the daemon's status file says
 		state := friend.DefaultStateDir(r.home, "bob")
 		r.launchctlOut = "12345 0 com.nova.friend-bob\n"
 		require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", At: start}))
@@ -146,7 +116,7 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 		shownFile := filepath.Join(t.TempDir(), "shown.json")
 		require.NoError(t, os.WriteFile(shownFile, []byte(`{"bob": {"state": "up", "working": 1}}`), 0o644))
 		cli.Do(t, "check", "--as", "ada", "--shown", shownFile, "bob").Exit(1).
-			Out(`verdict=untrue shown=up/1 why="shown up/1, facts say asleep"`)
+			Out(`verdict=down shown=up/1 why="untrue: shown up/1, hook unhooked`)
 	})
 
 	// Shown up and down by presence: the verdict stays down, the why says untrue
@@ -156,7 +126,7 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 		shownFile := filepath.Join(t.TempDir(), "shown.json")
 		require.NoError(t, os.WriteFile(shownFile, []byte(`{"bob": {"state": "up", "working": 1}}`), 0o644))
 		r.cli().Do(t, "check", "--as", "ada", "--shown", shownFile, "bob").Exit(1).
-			Out(`verdict=down shown=up/1 why="untrue: shown up/1, down by presence"`)
+			Out(`verdict=down shown=up/1 why="untrue: shown up/1, hook -: no hook store"`)
 	})
 
 	// OK exits 0
@@ -185,11 +155,9 @@ func TestCheckJSONCarriesEveryFact(t *testing.T) {
 	state := friend.DefaultStateDir(r.home, "bob")
 	r.launchctlOut = "12345 0 com.nova.friend-bob\n"
 	require.NoError(t, friend.WriteStatus(state, friend.Status{
-		Friend:     "bob",
-		Harness:    "opencode",
-		At:         start,
-		Connection: friend.Connected,
-		Challenge:  friend.Quiet,
+		Friend:  "bob",
+		Harness: "opencode",
+		At:      start,
 	}))
 	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
 
@@ -215,11 +183,10 @@ func TestCheckJSONCarriesEveryFact(t *testing.T) {
 	assert.Equal(t, "loaded", fc.Daemon.Agent)
 	assert.Equal(t, "12345", fc.Daemon.PID)
 	assert.Equal(t, "ok", fc.Daemon.Status)
-	assert.Equal(t, friend.Connected, fc.Daemon.Connection)
-	assert.Equal(t, friend.Quiet, fc.Daemon.Challenge)
-	assert.NotEmpty(t, fc.Daemon.PongAge)
+	assert.Equal(t, hook.StateProven, fc.Daemon.Hook, "presence is the hook record's")
 	assert.Equal(t, friend.PresenceUp, fc.Daemon.Presence)
-	assert.NotEmpty(t, fc.Daemon.SeenAge)
+	assert.NotEqual(t, "-", fc.Daemon.Answer, "the model's last answer to a challenge")
+	assert.Equal(t, 0, fc.Daemon.Misses)
 
 	// Harness facts
 	assert.Equal(t, "bob", fc.Harness.Friend)
@@ -248,14 +215,12 @@ func TestCheckJSONCarriesEveryFact(t *testing.T) {
 	assert.Equal(t, "bob", fc.Verdict.Friend)
 	assert.Equal(t, "ok", fc.Verdict.Verdict)
 	assert.Equal(t, "-", fc.Verdict.Shown)
-	assert.Equal(t, "live", fc.Verdict.Why)
+	assert.Equal(t, "live: hook proven", fc.Verdict.Why)
 
 	// Summary
 	assert.Equal(t, 1, report.Summary.Friends)
 	assert.Equal(t, 1, report.Summary.OK)
 	assert.Equal(t, 0, report.Summary.Broken)
-	assert.Equal(t, 0, report.Summary.Deaf)
-	assert.Equal(t, 0, report.Summary.Silent)
 	assert.Equal(t, 0, report.Summary.Down)
 	assert.Equal(t, 0, report.Summary.Untrue)
 }
@@ -303,7 +268,7 @@ func TestCheckAppliesTheWindowToTheLog(t *testing.T) {
 		require.NoError(t, friend.Record(state, "2026-10-04T02:40:00Z subject=work messages=1 exit=1"))
 		require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work messages=1 exit=1"))
 		r.cli().Do(t, "check", "--as", "ada", "--since", "1h", "bob").Exit(1).
-			Out(`verdict=broken shown=- why="every delivery in the window failed (2 of 2)"`)
+			Out(`verdict=broken shown=- why="every lane turn in the window failed (2 of 2)"`)
 	})
 
 	t.Run("one failure beside a success is not broken", func(t *testing.T) {
@@ -335,5 +300,5 @@ func TestCheckHelpExampleRunsAsWritten(t *testing.T) {
 
 	cli.Do(t, strings.Fields(example)...).Exit(1).
 		Out("CHECK DAEMON friend=bob", "CHECK VERDICT friend=bob verdict=down",
-			"CHECK OK friends=1 ok=0 broken=0 deaf=0 silent=0 down=1 untrue=0")
+			"CHECK OK friends=1 ok=0 broken=0 down=1 untrue=0")
 }

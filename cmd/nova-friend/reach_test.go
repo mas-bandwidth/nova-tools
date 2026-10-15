@@ -109,7 +109,7 @@ func nonceOf(text string) string {
 
 func writeReachDaemon(t *testing.T, dir string, at time.Time) {
 	t.Helper()
-	require.NoError(t, friend.WriteStatus(dir, friend.Status{Friend: "bob", Harness: "tmux", At: at, Connection: "connected"}))
+	require.NoError(t, friend.WriteStatus(dir, friend.Status{Friend: "bob", Harness: "tmux", At: at}))
 }
 
 func reachCmd(dir string) []string {
@@ -135,9 +135,6 @@ func TestReachClimbsTheLadderOnlyUntilProof(t *testing.T) {
 		w.sleep = func(ctx context.Context, d time.Duration) {
 			base(ctx, d)
 			sleeps++
-			if sleeps == 1 {
-				reachSend(t, r.store, friend.DaemonPongSubject, "daemon-pong n1\n")
-			}
 		}
 		exec, got := reachTmux(t, r.store, "step=push")
 		w.exec = exec
@@ -201,16 +198,17 @@ func TestReachProofPastTheLogCap(t *testing.T) {
 	require.Equal(t, time.Second, clock.slept)
 }
 
-func TestReachSkipsThePushWhenTheDaemonIsDown(t *testing.T) {
+// The push step needs no daemon: with no status file at all the push still goes in
+// through the harness (the daemon's status was old liveness, retired in v1.3.6).
+func TestReachPushesWithNoDaemon(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	w, clock := reachWorld(t, r)
+	w, _ := reachWorld(t, r)
 	dir := t.TempDir()
 	exec, got := reachTmux(t, r.store, "")
 	w.exec = exec
-	reachRun(w).Do(t, reachCmd(dir)...).Exit(1).Err("daemon down", "step=window")
-	require.False(t, got.has("step=push"))
-	require.Equal(t, 10*time.Second, clock.slept)
+	reachRun(w).Do(t, reachCmd(dir)...).Exit(1).Err("step=window").NotErr("daemon down")
+	require.True(t, got.has("step=push"), "the push went in with no daemon running")
 }
 
 func TestReachWindowRefusesWithoutAccessibilityPermission(t *testing.T) {
@@ -287,7 +285,6 @@ func TestReachHelp(t *testing.T) {
 	for _, text := range []string{
 		"--as", "--to", "--step-timeout", "--from", "--harness", "--dir", "--session", "--state-dir", "--redis", "--dry-run", "--json",
 		"REACH STEP step=bus sent=<id> nonce=<n>",
-		"REACH NONE step=push waited=0s",
 		"REACH PROOF step=<s> after=<duration> by=<pong|message>",
 		"REACH OK friend=<f> step=<s>",
 		"REACH FAILED friend=<f> tried=<steps>",
@@ -320,7 +317,6 @@ func TestReachStepBudgetIncludesDelivery(t *testing.T) {
 					clock.at = clock.at.Add(4 * time.Second)
 					return "sent", nil
 				},
-				DaemonUp: func() (bool, string) { return true, "" },
 				Push: func(ctx context.Context, _ string) error {
 					bounded(ctx)
 					clock.at = clock.at.Add(4 * time.Second)
@@ -365,38 +361,6 @@ func TestReachTmuxDeliveryStopsAtTheStepBudget(t *testing.T) {
 	assert.LessOrEqual(t, captures, 24, "the pane cannot consume the adapter's one minute default")
 }
 
-func TestReachReadsDaemonStatusWhenThePushBegins(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name             string
-		initiallyRunning bool
-	}{
-		{"daemon remains healthy during bus wait", true},
-		{"daemon starts during bus wait and supplies its default harness", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			r := newRig(t, "ada", "bob")
-			w, clock := reachWorld(t, r)
-			dir := t.TempDir()
-			if tc.initiallyRunning {
-				writeReachDaemon(t, dir, clock.at)
-			}
-			base := w.sleep
-			w.sleep = func(ctx context.Context, d time.Duration) { base(ctx, d); writeReachDaemon(t, dir, clock.at) }
-			exec, got := reachTmux(t, r.store, "step=push")
-			w.exec = exec
-			args := []string{"reach", "--as", "ada", "--to", "bob", "--dir", dir, "--state-dir", dir, "--session", "friend-bob", "--step-timeout", "60s"}
-			if tc.initiallyRunning {
-				args = append(args, "--harness", "tmux")
-			}
-			reachRun(w).Do(t, args...).Exit(0).Out("REACH PROOF step=push", "REACH OK").NotOut("step=window")
-			assert.True(t, got.has("step=push"), "the current daemon remains eligible after the bus's default budget")
-			assert.Equal(t, time.Minute, clock.slept)
-		})
-	}
-}
-
 func TestReachProofRequiresFreshFriendEvidence(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -405,8 +369,6 @@ func TestReachProofRequiresFreshFriendEvidence(t *testing.T) {
 	}{
 		{"old message", "bob", "hello", "I was here", "", false},
 		{"wrong nonce", "bob", friend.PongSubject, friend.PongLine("wrong", 0, 0, 0), "", true},
-		{"daemon pong", "bob", friend.DaemonPongSubject, "daemon-pong n1", "", true},
-		{"daemon pong case", "bob", strings.ToUpper(friend.DaemonPongSubject), "daemon-pong n1", "", true},
 		{"malformed pong", "bob", friend.PongSubject, "not a pong", "", true},
 		{"other sender", "ada", "hello", "I am here", "", true},
 		{"message", "bob", "hello", "I am here", "message", true},

@@ -215,7 +215,7 @@ example: nova-hook status --as ada`,
 its epoch, otherwise a new epoch starts and every lease and proof of the old one is cleared. This process holds
 the bus push when the role carries it: it renews the lease every ` + hook.RenewEvery.String() + ` and prints each message on your bus
 stream as it lands, HOOK PUSH push=bus id= from= subject=. A push it does not hold (the sprint push, held by
-nova-sprint hook; the work push, held by the friend daemon or the member loop) is named with its holder on the
+nova-sprint run; the work push, held by the friend daemon or the member loop) is named with its holder on the
 HOOK ARMED line's notes. It prints HOOK CHALLENGE nonce=<n> at start and every ` + hook.ChallengeEvery.String() + `: run the line it carries,
 nova-hook prove --as <me> --nonce <n>, within ` + hook.AnswerBound.String() + `, and the pushes it holds are proven. HOOK STATE state= line
 each time the record changes. Run it under the session's Monitor: each line is a notification. It stops on SIGINT or
@@ -352,7 +352,7 @@ sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE 
 				Detail: `The heartbeat server (docs/SPEC-HOOK.md, the heartbeat; tla/HookBeat.tla). Every --every (default ` + hook.BeatEvery.String() + `),
 in one atomic pass by the store's TIME, each hooked name whose role a session answers in (coordinator, friend,
 comms) gets a fresh challenge as a bus message to its name, subject HOOK CHALLENGE nonce=<n>, due within the
-interval: the push it already has (its hook's HOOK PUSH line, or its friend daemon's adapter). A challenge left
+interval, delivered by nova-hook through the native route or the session's Monitor. A challenge left
 unanswered a whole interval is a miss; at ` + fmt.Sprint(hook.MissLimit) + ` in a row the name is unhooked (reason "missed ` + fmt.Sprint(hook.MissLimit) + ` challenges").
 Each real change is told once, coalesced per pass: the coordinator gets one judgment (bus kind judgment) naming
 every FRIEND DOWN and FRIEND BACK, open until answered with nova-bus send --re <id> and pushed again as OVERDUE

@@ -13,7 +13,7 @@ import (
 
 // The stages of the delivery check, in the order they are passed: the
 // adapter took the text (deliver), the session ran the pong line it carries
-// (act: the pong file holds the nonce), and the pong is on the bus (reply).
+// and the pong is on the bus (act; reply is the bus log not read).
 const (
 	StageDeliver = "deliver"
 	StageAct     = "act"
@@ -43,8 +43,7 @@ type Conformance struct {
 	Now             func() time.Time
 	Wait            func(ctx context.Context) bool // one CheckPoll; false once ctx has ended
 	Nonce           func() string
-	Text            func(nonce string) string  // the session check as the session reads it (SessionCheckText)
-	Pong            func() (Pong, bool, error) // the pong file the pong verb writes: the session ran the line
+	Text            func(nonce string) string // the session check as the session reads it (SessionCheckText)
 }
 
 // CheckResult is one run of the check: Stage empty is a pass.
@@ -92,7 +91,6 @@ func (c *Conformance) Run(ctx context.Context) CheckResult {
 	case exit != 0:
 		return fail(StageDeliver, fmt.Sprintf("%s's deliver command exited %d", c.Harness, exit))
 	}
-	acted := false
 	for {
 		es, err := c.Store.Range(ctx, bus.LogKey, "("+cursor, "+", LogBatch)
 		if err != nil {
@@ -106,25 +104,15 @@ func (c *Conformance) Run(ctx context.Context) CheckResult {
 				return r
 			}
 		}
-		if p, found, err := c.Pong(); err == nil && found && p.Nonce == nonce {
-			acted = true
-		}
 		if c.Now().Sub(start) >= c.Within {
-			if acted {
-				return fail(StageReply, fmt.Sprintf("the pong file holds %s, so the session ran the line, and no pong with it from %s reached the bus within %s", nonce, c.Friend, c.Within))
-			}
 			return fail(StageAct, fmt.Sprintf("no pong %s from %s within %s: the session did not run the line the check carried", nonce, c.Friend, c.Within))
 		}
 		if !c.Wait(ctx) {
-			stage := StageAct
-			if acted {
-				stage = StageReply
-			}
 			why := "the wait ended"
 			if cause := context.Cause(ctx); cause != nil {
 				why = cause.Error()
 			}
-			return fail(stage, "stopped before the pong: "+why)
+			return fail(StageAct, "stopped before the pong: "+why)
 		}
 	}
 }

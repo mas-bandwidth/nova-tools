@@ -308,7 +308,7 @@ func TestTheHookEndsWhenUnhookedUnderIt(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, out.all.String()+errb.String(), "ada was unhooked under this hook")
 	assert.Contains(t, out.all.String()+errb.String(), "; run: nova-hook hook --as ada --role coordinator")
-	assert.Contains(t, out.all.String(), "the sprint push is held by: nova-sprint hook --as ada")
+	assert.Contains(t, out.all.String(), "the sprint push is held by: the sprint's server (nova-sprint run), which holds it for the coordinator while it runs and reaches the bus")
 	assert.Equal(t, hook.StateUnhooked, r.h.State(t, "ada").State, "the hook wrote nothing after the unhook")
 }
 

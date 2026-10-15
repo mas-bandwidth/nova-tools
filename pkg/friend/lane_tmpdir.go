@@ -95,12 +95,19 @@ func (l *loop) environmentFault(ln *lane, line, first string, now time.Time) {
 	d, s := l.d, l.lanes
 	reason := FaultWords(HarnessFaultEnvironment, first)
 	d.Record(line + fmt.Sprintf(" card=kept turn=%d/%d reason=%q", ln.attempts, CardTurns, reason))
+	// The existing row fault hold owns the episode: concurrent lane exits
+	// cannot emit another judgment while that hold stands (FaultWatch).
+	if now.Before(s.faults.until) {
+		return
+	}
 	until := now.Add(FaultDownFor)
+	s.faults.seen, s.faults.until = nil, until
 	s.gov.PauseUntil(until, reason, now)
 	d.Record(d.sayf("%s harness environment fault: {their} lanes pause until %s: %s", now.UTC().Format(time.RFC3339), until.UTC().Format(time.RFC3339), oneLine(reason, 300)))
 	if d.FaultDown != nil {
 		d.FaultDown(until, reason)
 	}
-	subject, body := FaultDownText(d.Friend, d.Pro.Get(), reason, until)
+	subject, _ := FaultDownText(d.Friend, d.Pro.Get(), reason, until)
+	body := d.sayf("%s: a lane failed on a filesystem path outside its job: %s\n{Their} lanes pause immediately, the cards stay in hand without counting attempts, and {their} beat says down until then. Fix the environment before retrying.\n", subject, reason)
 	l.tellKind(bus.KindBlocker, subject, body, now)
 }

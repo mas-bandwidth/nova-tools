@@ -2,7 +2,7 @@
 
 ## What it is
 
-nova-friend: what a friend runs to be part of the team: the lanes that work the friend's cards, and messages into the session, as one daemon
+nova-friend: what a friend runs to be part of the team: the lanes that work the friend's cards and their sprint metadata beat
 
 ## Why use it
 

@@ -22,7 +22,7 @@ The record and its rules live in `github.com/mas-bandwidth/nova-tools/hook` (`ho
 | role | pushes | who hooks in as it |
 |---|---|---|
 | `coordinator` | `bus`, `sprint` | the seat: its session's bus stream and the sprint server's pushes |
-| `friend` | `bus`, `work` | a friend working the sprint: her bus stream and the work dealt to her |
+| `friend` | `bus` | a live friend: the session proves its bus stream; its hook service renews sprint lane leases while proven |
 | `comms` | `bus` | a friend on the bus who takes no sprint work |
 | `member` | `work` | a machine's member loop |
 | `reader` | `work` | a machine's reader loop |
@@ -32,9 +32,14 @@ A push is held by the process that receives it:
 | push | holder | its proof |
 |---|---|---|
 | `bus` of a session | `nova-hook hook --as <name> --role <role>`, under the session's Monitor | the session answers `HOOK CHALLENGE nonce=<n>` with `nova-hook prove --as <name> --nonce <n>` |
-| `bus` and `work` of a friend | her daemon, `nova-friend run` (or its notifications receiver for `comms`) | her session answers the heartbeat challenge delivered through her harness adapter (`nova-hook prove --as <name> --nonce <n>`, proving both `bus` and `work`); for a per-card harness with no interactive session, the daemon's own round trip |
-| `sprint` | `nova-sprint hook --as <name>` | its own subscription's challenge, answered |
+| optional `work` lease of a friend | the lane daemon, `nova-friend run`, when used | the daemon renews only `work`, never proves or renews `bus`; this optional lease does not decide the friend role's presence |
+| `sprint` | the sprint server, `nova-sprint run` | the server holds it for the coordinator while it runs and reaches the bus |
 | `work` of a member or reader | its loop, `nova-swarm member` | the loop's own round trip to the sprint server |
+
+The hook service's live friend lane client renews the sprint server's lane leases
+by asking what each lane holds. Those server leases are distinct from `hook:live:<name>:work`:
+the client holds only the session's `bus` push. A one-shot friend uses the member
+loop and identity prompt instead (`docs/SPEC-SWARM.md`); it has no live session presence.
 
 ## The key layout
 
@@ -95,9 +100,8 @@ the holder's next beat (`ReArm`).
   strictly gates `--as` on its own `bus` push before reading or writing. `send` refuses any recipient
   the hook record shows down, at once, with the reason and one deduplicated judgment to the coordinator.
   `names` reads every name's state from the hook record.
-- `nova-friend run`: acts as its friend's hook holder for `friend` (`comms` under
-  `--notifications-only`). While the gate says no, her lanes take nothing and report nothing, and her
-  reads begin nothing.
+- `nova-friend run`: acts as its friend's hook holder for `friend`. While the gate says no, her lanes
+  take nothing and report nothing, and her reads begin nothing.
 - Coordinator verbs (`nova-hook serve`, `nova-friend watch`, `nova-friend reach`) gate `--as` on the
   `bus` push and role `coordinator` or `comms` (`hook.Want.Roles`).
 - `pkg/hookgate` is the one place a `nova-tools` verb meets the gate (`Gate` and `Out`).
@@ -112,8 +116,8 @@ that open no bus store (`install`, `uninstall`, `host`, `status`, `resume`, `ref
 Every line runs as printed:
 
 - With a role known, the remedy is `nova-hook hook --as <name> --role <role>`, and a line per unproven
-  push names its holder (`com.nova.friend-<name>` or `com.nova.friend-notifications-<name>`, the
-  session's `nova-hook hook`, or `nova-sprint hook --as <name>`).
+  push names its holder (the session's `nova-hook hook` for the bus push, `com.nova.friend-<name>` for
+  a friend's work push, or the sprint server).
 - With no role known, the remedy is `nova-hook status --as <name>`, offering `comms`, `friend`, and
   `coordinator`.
 

@@ -372,28 +372,6 @@ func TestAStopReturnOwedSurvivesTheDaemonsRestartAndIsSentFirst(t *testing.T) {
 	})
 }
 
-// NoNudgeWhileStopped: an idle session holding cards gets no wake turn and the coordinator no
-// idle note while the machine is STOPPED; the ping and the messages still flow (their own
-// tests), and the stop lifting brings the wake back on its own clock.
-func TestNoWakeOrIdleNoteWhileStopped(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		r := newIdleRig(t, "c-old", "c-new")
-		var mu sync.Mutex
-		stopped := true
-		r.d.MachineStopped = func() bool { mu.Lock(); defer mu.Unlock(); return stopped }
-		r.at[30] = func() {
-			assert.Empty(t, r.wakes(), "no wake turn while STOPPED, however idle")
-			assert.Empty(t, r.notes(t), "no idle note while STOPPED")
-			mu.Lock()
-			stopped = false
-			mu.Unlock()
-		}
-		r.run(t, 45)
-		assert.Len(t, r.wakes(), 1, "the wake comes once the machine runs again")
-	})
-}
-
 // Regression test for Fix 3: stopReads falls back to readSet.epoch and asked queue epoch
 // when r.Epoch is unpopulated on an asked/active read.
 func TestStopReadsFallsBackToReadSetEpochWhenReadEpochUnpopulated(t *testing.T) {
