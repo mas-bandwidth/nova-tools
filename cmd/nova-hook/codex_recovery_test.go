@@ -83,25 +83,77 @@ type fixedRecoveryHistory struct {
 	entries []bus.Entry
 }
 
-func (s fixedRecoveryHistory) Range(_ context.Context, _, _, _ string, count int) ([]bus.Entry, error) {
-	if count < len(s.entries) {
-		return s.entries[:count], nil
+func (s fixedRecoveryHistory) Range(_ context.Context, _, from, to string, count int) ([]bus.Entry, error) {
+	slice := s.entries
+	if after, ok := strings.CutPrefix(from, "("); ok {
+		idx := len(slice)
+		for i, e := range slice {
+			if e.Entry == after {
+				idx = i + 1
+				break
+			}
+		}
+		slice = slice[idx:]
 	}
-	return s.entries, nil
+	if before, ok := strings.CutPrefix(to, "("); ok {
+		idx := 0
+		for i, e := range slice {
+			if e.Entry == before {
+				idx = i
+				break
+			}
+		}
+		slice = slice[:idx]
+	}
+	if count > 0 && count < len(slice) {
+		return slice[:count], nil
+	}
+	return slice, nil
 }
 
-func TestRecoveryOverflowFailsBeforeLease(t *testing.T) {
+func TestRecoveryOverflowCutsOverAndArchivesExcessBacklog(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	s := recoverySession(r)
-	entries := make([]bus.Entry, maxCodexHistory+1)
+	ctx := context.Background()
+	epoch, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "test")
+	require.NoError(t, err)
+	created, err := r.h.Store.Challenge(ctx, "ada", hook.Comms, epoch, []hook.Push{hook.Bus}, "page2-nonce")
+	require.NoError(t, err)
+	require.True(t, created)
+
+	total := maxCodexHistory + 250
+	entries := make([]bus.Entry, total)
 	for i := range entries {
-		entries[i] = bus.Entry{Entry: "1791720000000-1", Fields: bus.Message{ID: "event-1", From: "bob"}.Fields()}
+		seq := strconv.Itoa(i + 1)
+		id := "event-" + seq
+		msg := bus.Message{ID: id, From: "bob", Subject: "ordinary-" + seq, Body: "body-" + seq}
+		if i+1 == maxCodexHistory+100 {
+			msg = bus.Message{
+				ID:      "challenge-" + seq,
+				From:    "bob",
+				Subject: "HOOK CHALLENGE nonce=page2-nonce",
+				Body:    notice.ChallengeText("ada", "page2-nonce", hook.ChallengeEvery),
+			}
+		}
+		entries[i] = bus.Entry{Entry: "1791720000000-" + seq, Fields: msg.Fields()}
 	}
+	tail := entries[len(entries)-1].Entry
 	s.bus = fixedRecoveryHistory{Store: s.bus, entries: entries}
-	_, err := codexBacklog(s, "1791720000000-1", time.Time{})
-	require.ErrorContains(t, err, "recovery incomplete")
-	assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
+	plan, err := codexBacklog(s, tail, time.Time{})
+	require.NoError(t, err)
+	require.Len(t, plan.messages, maxCodexRecovery)
+	assert.Equal(t, total-maxCodexRecovery, plan.archived)
+	assert.False(t, plan.cutover.IsZero())
+	assert.Equal(t, "event-"+strconv.Itoa(total), plan.messages[len(plan.messages)-1].ID, "newest ordinary message beyond page 1 survives cutover")
+	foundChallenge := false
+	for _, m := range plan.messages {
+		if m.ID == "challenge-"+strconv.Itoa(maxCodexHistory+100) {
+			foundChallenge = true
+			break
+		}
+	}
+	assert.True(t, foundChallenge, "current challenge beyond page 1 survives cutover")
 }
 
 // The client hook runs after XINFO returned, injecting a send precisely between

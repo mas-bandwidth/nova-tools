@@ -20,6 +20,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -33,6 +34,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/units"
 )
 
 var version string
@@ -64,9 +66,11 @@ type world struct {
 	signals            func(ctx context.Context) (context.Context, context.CancelFunc)
 	nonce              func() string
 	after              func(time.Duration) <-chan time.Time             // the heartbeat server's wait between passes
+	wait               func(context.Context, time.Duration)             // the hook loop's pause or retry backoff wait
 	deliver            func(*bus.Bus, bus.Message) (bus.Message, error) // the heartbeat server's one send: Bus.Send under a call's deadline
 	holder             string                                           // who holds the pushes this process holds, as the lease shows it
 	tick               time.Duration                                    // one blocking read of the loop
+	service            serviceManager                                   // the one supervised hook service per friend
 }
 
 func realWorld() world {
@@ -114,6 +118,9 @@ func realWorld() world {
 		return st, login, closeStore, nil
 	}
 	w.fleetBus = func(ctx context.Context, addr string) (string, error) { return bus.ReadFleetBus(ctx, addr, w.getenv) }
+	if os.Getenv("NOVA_TEST_NO_HOST") == "" {
+		w.service = newOSServiceManager(runtime.GOOS, os.UserHomeDir, os.Executable, w.getenv, units.Load)
+	}
 	return w
 }
 
@@ -519,7 +526,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 			return out
 		}
 	}
-	s, refused := w.openSession(c, true)
+	s, refused := w.openHookSession(c)
 	if refused != nil {
 		return refused
 	}
@@ -548,6 +555,49 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	}
 	if (dsh != nil || claude != nil || muse != nil) && !slices.Contains(held, hook.Bus) {
 		return tool.Refuse("harness delivery wants a role with the bus push")
+	}
+	if !w.isServiceRun() {
+		hctx, hcancel := call()
+		svc, heldByService := w.heldService(hctx, s)
+		hcancel()
+		if heldByService {
+			return tool.Refuse(fmt.Sprintf("%s is already held by supervised service %s; run nova-hook unhook --as %s first", s.as, svc, s.as))
+		}
+	}
+	if w.service != nil && !c.Bool("once") && !w.isServiceRun() && (strings.TrimSpace(c.Str("harness")) != "" || native != nil || dsh != nil || claude != nil) {
+		if dsh != nil {
+			if err := dshdesktop.Install(dsh.route); err != nil {
+				return tool.Refuse("dsh harness-side setup failed: " + err.Error())
+			}
+		}
+		if grokR != nil {
+			grokR.as = s.as
+			grokR.role = role
+			if out := w.installGrok(c, grokR); out != nil {
+				return out
+			}
+		}
+		if claude != nil {
+			if out, _ := w.installClaude(c, claude, string(role)); out != nil {
+				return out
+			}
+		}
+		svc, err := w.service.Install(s.as, hookServiceArgs(c, s.as, role, s.addr))
+		if err != nil {
+			return tool.Refuse("supervised service could not be installed: " + err.Error())
+		}
+		sctx, scancel := call()
+		recErr := w.recordService(sctx, s, svc)
+		scancel()
+		if recErr != nil {
+			if rmErr := w.service.Remove(s.as); rmErr != nil {
+				return tool.Refuse("the hook record could not be written: " + recErr.Error() + " (and service rollback failed: " + rmErr.Error() + ")")
+			}
+			return tool.Refuse("the hook record could not be written: " + recErr.Error())
+		}
+		o := tool.Done().Fact("as", s.as).Fact("role", string(role)).Fact("service", svc)
+		o.Note("supervised hook service installed and started; only nova-hook unhook --as " + s.as + " stops it")
+		return o
 	}
 	var shim notice.Shim
 	locked := ""
@@ -616,6 +666,9 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		took = string(st[0].Role)
 	}
 	epoch, joined, err := s.hooks.HookAs(ctx, s.as, role, w.holder)
+	if err == nil && w.isServiceRun() {
+		err = w.recordService(ctx, s, defaultServiceName(s.as))
+	}
 	cancel()
 	if err != nil {
 		return tool.Refuse("the hook record could not be written: " + err.Error())
@@ -646,8 +699,19 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if native != nil && native.antigravity != nil && !c.Bool("once") {
 		line(c, tool.Done().As("STATE").Fact("state", "antigravity-installed").Fact("conversation", native.antigravity.conversation).Fact("port", native.antigravity.port).Fact("events_dir", native.directory))
 	}
-	if native != nil && !native.since.IsZero() {
-		line(c, tool.Done().As("STATE").Fact("state", "recovery-cutover").Fact("since", native.since.Format(time.RFC3339)).Note("earlier ordinary messages are archived history; work still needed must be resent; retain this fixed boundary across restarts"))
+	cutover := time.Time{}
+	if native != nil {
+		cutover = native.since
+		if cutover.IsZero() && !recovery.cutover.IsZero() {
+			cutover = recovery.cutover
+		}
+	}
+	if native != nil && !cutover.IsZero() {
+		cutoverLine := tool.Done().As("STATE").Fact("state", "recovery-cutover").Fact("since", cutover.Format(time.RFC3339))
+		if recovery.archived > 0 {
+			cutoverLine.Fact("archived", recovery.archived)
+		}
+		line(c, cutoverLine.Note("earlier ordinary messages are archived history; work still needed must be resent; retain this fixed boundary across restarts"))
 	}
 	if native != nil && recovery.coverageUnknown {
 		line(c, tool.Done().As("STATE").Fact("state", "recovery-coverage-unknown").Fact("oldest", recovery.oldest).Note("24h coverage before oldest retained entry is unverified; coordinator must inspect retention before cutover"))
@@ -671,8 +735,8 @@ func (w world) hook(c *tool.Call) *tool.Out {
 			// The bootstrap is the Core's first notice: held as pending like any other.
 			if native != nil {
 				r := &notice.Recovery{Messages: recovery.messages}
-				if !native.since.IsZero() {
-					r.Since = native.since.Format(time.RFC3339)
+				if !cutover.IsZero() {
+					r.Since = cutover.Format(time.RFC3339)
 				}
 				if recovery.coverageUnknown {
 					r.Coverage = "24h history before oldest retained entry " + recovery.oldest + " is unverified; stream creation and trimming are indistinguishable"
@@ -805,12 +869,10 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 	waiter, _ := s.bus.(bus.Waiter) // ignored: a store with no wait reads holds no bus push here; its loop only renews
 	nextRenew, nextChallenge := w.now().Add(hook.RenewEvery), w.now().Add(hook.ChallengeEvery)
 	lastState, unread := "", ""
+	renewAttempts := 0
 	var lk link
 	pause := func() {
-		select {
-		case <-ctx.Done():
-		case <-time.After(w.tick):
-		}
+		w.sleep(ctx, w.tick)
 	}
 	for {
 		if ctx.Err() != nil {
@@ -886,7 +948,11 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				o.Remedy = hook.HookCommand(s.as, role)
 				return o
 			} else if err != nil {
+				nextRenew = w.now().Add(w.retryBackoff(renewAttempts))
+				renewAttempts++
 				line(c, tool.Done().As("STATE").Fact("state", "unrenewed").Note("the lease could not be renewed: "+err.Error()+"; it is tried again at the next renewal, inside the lease"))
+			} else {
+				renewAttempts = 0
 			}
 		}
 		if !serverOwned && !w.now().Before(nextChallenge) {
@@ -905,18 +971,24 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 	}
 }
 
-// rearm arms the record again when it is gone (none) under the loop, and
-// renews what the loop holds: ok false when the record is there (unhooked, or
-// hooked again since), which ends the loop.
+// rearm arms the record again when it is gone (none) or unhooked by heartbeat
+// misses (Reason != "") rather than explicit nova-hook unhook (Reason == ""),
+// and renews what the loop holds.
 func (w world) rearm(s *session, role hook.Role, held []hook.Push) (int64, bool) {
 	ctx, cancel := call()
 	st, _, err := s.hooks.Read(ctx, s.as)
 	cancel()
-	if err != nil || st[0].State != hook.StateNone {
+	if err != nil {
+		return 0, false
+	}
+	if st[0].State != hook.StateNone && !(st[0].State == hook.StateUnhooked && st[0].Reason != "") {
 		return 0, false
 	}
 	ctx, cancel = call()
 	epoch, _, err := s.hooks.HookAs(ctx, s.as, role, w.holder)
+	if err == nil && w.isServiceRun() {
+		err = w.recordService(ctx, s, defaultServiceName(s.as))
+	}
 	cancel()
 	if err != nil || w.renew(s, role, held, epoch) != nil {
 		return 0, false
@@ -1016,6 +1088,14 @@ func (w world) unhook(c *tool.Call) *tool.Out {
 			return tool.Refuse("the hook record could not be read: " + err.Error())
 		}
 		return tool.Done().As("DRY-RUN").Fact("as", s.as).Fact("state", st[0].State).Fact("epoch", st[0].Epoch)
+	}
+	if w.service != nil {
+		if err := w.service.Remove(s.as); err != nil {
+			return tool.Refuse("the supervised service could not be removed: " + err.Error())
+		}
+	}
+	if err := w.clearService(ctx, s); err != nil {
+		return tool.Refuse("the hook record could not be written: " + err.Error())
 	}
 	was, err := s.hooks.Unhook(ctx, s.as)
 	if err != nil {
