@@ -67,7 +67,7 @@ the record's state, role, and epoch in the same step.
 | `RenewEvery` | 30 s | a holder renews three times inside one lease |
 | `BeatEvery` | 1 min | `nova-hook serve` challenges every hooked session-backed name |
 | `DownAfter` | 5 min | `nova-hook serve --down-after`: a name silent longer than this is unhooked at its next miss, and reads down |
-| `ChallengeEvery` | 30 min | a standalone `nova-hook hook` loop's own challenge cadence |
+| `ChallengeEvery` | 30 min | a standalone `nova-hook hook` loop's repeated challenge cadence; Codex, DeepSeek and Antigravity clients bootstrap once, then the heartbeat server challenges them |
 | `AnswerBound` | 5 min | a standalone challenge's answer window |
 | `ProofTTL` | 40 min | a standalone proof's TTL |
 

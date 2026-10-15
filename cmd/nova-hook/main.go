@@ -216,10 +216,11 @@ its epoch, otherwise a new epoch starts and every lease and proof of the old one
 the bus push when the role carries it: it renews the lease every ` + hook.RenewEvery.String() + ` and prints each message on your bus
 stream as it lands, HOOK PUSH push=bus id= from= subject=. A push it does not hold (the sprint push, held by
 nova-sprint run; the work push, held by the friend daemon or the member loop) is named with its holder on the
-HOOK ARMED line's notes. It prints HOOK CHALLENGE nonce=<n> at start and every ` + hook.ChallengeEvery.String() + `: run the line it carries,
+HOOK ARMED line's notes. The client prints a bootstrap challenge at start. A standalone hook loop repeats its own challenges every ` + hook.ChallengeEvery.String() + `: run the line it carries,
 nova-hook prove --as <me> --nonce <n>, within ` + hook.AnswerBound.String() + `, and the pushes it holds are proven. HOOK STATE state= line
 each time the record changes. Run it under the session's Monitor: each line is a notification. It stops on SIGINT or
 SIGTERM (HOOK STOP, exit 0; the leases lapse after ` + hook.LeaseTTL.String() + `), or when the record is unhooked under it (exit 1).
+Codex, DeepSeek and Antigravity clients bootstrap once; the heartbeat server challenges them every --every (default ` + hook.BeatEvery.String() + `) and marks a name down after --down-after (default ` + hook.DownAfter.String() + `) silent.
 This proof records a protocol response to the challenge; it does not establish foreground session presence or native idle-wake behavior.
 Codex desktop delivery uses --codex-socket, --codex-thread and --codex-events-dir together (or NOVA_HOOK_CODEX_SOCKET,
 NOVA_HOOK_CODEX_THREAD, NOVA_HOOK_CODEX_EVENTS_DIR). The directory must exist, be private (0700), canonical and owned
