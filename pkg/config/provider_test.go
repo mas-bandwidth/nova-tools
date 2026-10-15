@@ -195,7 +195,7 @@ func TestProviderDescriptorAndUnknownFacts(t *testing.T) {
 	require.True(t, ok)
 	assert.False(t, k.Singleton)
 	assert.Equal(t, "providers", k.Table)
-	assert.Equal(t, []string{"billing", "funded", "balance_usd", "balance_as_of", "console_url", "note"}, k.FieldNames())
+	assert.Equal(t, []string{"billing", "funded", "balance_usd", "balance_as_of", "console_url", "endpoint", "note"}, k.FieldNames())
 	names := KindNames()
 	assert.Equal(t, []string{KindProvider, KindRoute, KindTier}, names[len(names)-3:])
 	route, _ := Lookup(KindRoute)

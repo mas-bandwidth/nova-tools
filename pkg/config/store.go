@@ -152,6 +152,9 @@ func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 	if k.Name == KindTier {
 		return checkTierRoutes(ctx, st, row)
 	}
+	if k.Name == KindProvider {
+		return checkProviderEndpoint(ctx, st, row)
+	}
 	return nil
 }
 
@@ -173,6 +176,30 @@ func checkTierRoutes(ctx context.Context, st Store, row Row) error {
 		case r.Fields["tier"] != row.Name:
 			return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--routes %s names a route of tier %s, not %s", name, r.Fields["tier"], row.Name)}
 		}
+	}
+	return nil
+}
+
+// checkProviderEndpoint is the store half of a local provider's endpoint
+// (docs/SPEC-CONFIG.md, local-config-provider-endpoint). A name host is
+// localhost or a machine row. A machine whose roles hold coordination is
+// refused: the coordinating machine runs no local model. A literal IP is
+// already checked and is not looked up; no name is resolved and no socket
+// is opened.
+func checkProviderEndpoint(ctx context.Context, st Store, row Row) error {
+	host, name := endpointNameHost(row.Fields["endpoint"])
+	if !name || strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	machine, found, err := st.Get(ctx, KindMachine, host)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--endpoint host %s names no machine row", host), Remedy: fmt.Sprintf("nova-config machine add %s --user <user> --seat <seat> --slots <n> --roles bench", host)}
+	}
+	if hasWord(machine.Fields["roles"], "coordination") {
+		return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--endpoint host %s holds the role coordination", host), Remedy: "serve the model on a bench machine; the coordinating machine runs no local model"}
 	}
 	return nil
 }

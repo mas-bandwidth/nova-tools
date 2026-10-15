@@ -57,7 +57,7 @@ const (
 // LoopKey is a loop's hash: its fields, log, rev and at.
 func LoopKey(name string) string { return "loop:" + name }
 
-// ProviderKey is a provider hash: its declared funding, billing, name, rev and at.
+// ProviderKey is a provider hash: its declared funding, billing, endpoint, name, rev and at.
 func ProviderKey(name string) string { return "provider:" + name }
 
 // RouteKey is a route's hash: its fields, name, rev and at. The deal reads
