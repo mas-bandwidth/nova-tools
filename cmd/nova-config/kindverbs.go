@@ -271,7 +271,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 			o.Fact("changed", changed)
 		}
 		o.Verb, o.Notes = verb, notes
-		return emit(stdout, o)
+		return finishKindWrite(ctx, st, k.Name, actor, id, c, d, stdout, stderr, o)
 	}
 	if add {
 		fmt.Fprintf(stdout, "CONFIG ADD kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
@@ -279,7 +279,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s rev=%d changed=%s\n", k.Name, config.Value(name), id, config.Value(strings.Join(changed, ",")))
 	}
 	printNotes(stdout, notes)
-	return 0
+	return finishKindWrite(ctx, st, k.Name, actor, id, c, d, stdout, stderr, nil)
 }
 
 // invalidEnumOptions returns descriptor choices only when a supplied enum
@@ -476,13 +476,13 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 			o.Note(note)
 		}
 		o.Verb = verb
-		return emit(stdout, o)
+		return finishKindWrite(ctx, st, k.Name, actor, id, c, d, stdout, stderr, o)
 	}
 	fmt.Fprintf(stdout, "CONFIG REMOVE kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
 	if note := actorAliasNote(fs); note != "" {
 		printNotes(stdout, []string{note})
 	}
-	return 0
+	return finishKindWrite(ctx, st, k.Name, actor, id, c, d, stdout, stderr, nil)
 }
 
 // live is true for the kind whose rows have a beat to read: a machine.

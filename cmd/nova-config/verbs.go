@@ -120,6 +120,9 @@ func verbExtra(verb string) string {
 		switch words[1] {
 		case "add", "set", "remove":
 			effect = effectStoreRow
+			if words[0] == config.KindRoute {
+				effect += "; a committed route write applies the fleet Redis copy; NOT-APPLIED exits 1 and preserves the write and history"
+			}
 		default:
 			effect = effectInspect
 		}

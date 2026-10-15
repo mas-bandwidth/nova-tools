@@ -238,3 +238,4 @@ MCHarnessNoticeUnknownBrokenMove.cfg	MCHarnessNoticeUnknown.tla	invariant	ToldWh
 MCFriendNotices.cfg	MCFriendNotices.tla	pass	-	ignore-terminal	friend-notices	required	-
 MCFriendNoticesNewToken.cfg	MCFriendNotices.tla	invariant	AtMostOnce	ignore-terminal	friend-notices	required	-
 MCFriendNoticesDropLost.cfg	MCFriendNotices.tla	invariant	NoNoticeLost	ignore-terminal	friend-notices	required	-
+MCConfigApplyBrokenSilentUnapplied.cfg	MCConfigApply.tla	invariant	NoSilentUnappliedWrite	ignore-terminal	configapply	required	-
