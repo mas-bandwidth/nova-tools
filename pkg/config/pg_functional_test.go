@@ -34,6 +34,27 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// newestVersion is the newest embedded migration's number, read from the
+// files, so adding a migration never edits the tests that migrate to the top.
+func newestVersion(t *testing.T, all []Migration) int {
+	t.Helper()
+	require.NotEmpty(t, all)
+	return all[len(all)-1].Version
+}
+
+// versionsFrom lists the embedded migration numbers from first through the
+// newest, in order: what Migrate applies to a store whose ledger ends just
+// before first.
+func versionsFrom(all []Migration, first int) []int {
+	var out []int
+	for _, m := range all {
+		if m.Version >= first {
+			out = append(out, m.Version)
+		}
+	}
+	return out
+}
+
 // migrated opens a fresh database and migrates it.
 func migrated(t *testing.T) *PG {
 	t.Helper()
@@ -233,8 +254,8 @@ func TestMachineRolesMigrationPreservesExistingGroups(t *testing.T) {
 			from, to, applied, err := st.Migrate(ctx)
 			require.NoError(t, err)
 			assert.Equal(t, 41, from)
-			assert.Equal(t, 43, to)
-			assert.Equal(t, []int{42, 43}, applied)
+			assert.Equal(t, newestVersion(t, migrations), to)
+			assert.Equal(t, versionsFrom(migrations, 42), applied)
 			rows, err := st.List(ctx, KindMachine)
 			require.NoError(t, err)
 			got := make(map[string]string, len(rows))
@@ -244,8 +265,8 @@ func TestMachineRolesMigrationPreservesExistingGroups(t *testing.T) {
 			assert.Equal(t, tc.want, got, "migration uses only machine rows and fleet refs; runner count is not a role")
 			from, to, applied, err = st.Migrate(ctx)
 			require.NoError(t, err)
-			assert.Equal(t, 43, from)
-			assert.Equal(t, 43, to)
+			assert.Equal(t, newestVersion(t, migrations), from)
+			assert.Equal(t, newestVersion(t, migrations), to)
 			assert.Empty(t, applied)
 
 			_, _, err = st.Update(ctx, KindMachine, "bench-a", map[string]string{"roles": "runner"}, "operator")
@@ -588,7 +609,7 @@ func TestMigrationThirtyGivesEveryFriendTheBatchMode(t *testing.T) {
 
 // TestFriendPronounsUnstatedDropsTheConstraintAndRewritesNoRow applies every
 // migration before 0044, stores one they/them and one she/her, then lets
-// Migrate apply 0044. Both values stay. The second Migrate applies nothing.
+// Migrate apply 0044 and every migration after it. Both values stay. The second Migrate applies nothing.
 // NULL is allowed and the column default is gone. The names are made up.
 func TestFriendPronounsUnstatedDropsTheConstraintAndRewritesNoRow(t *testing.T) {
 	t.Parallel()
@@ -612,8 +633,8 @@ func TestFriendPronounsUnstatedDropsTheConstraintAndRewritesNoRow(t *testing.T) 
 	from, to, applied, err := st.Migrate(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 43, from)
-	assert.Equal(t, 44, to)
-	assert.Equal(t, []int{44}, applied)
+	assert.Equal(t, newestVersion(t, all), to)
+	assert.Equal(t, versionsFrom(all, 44), applied)
 	assert.Equal(t, map[string]string{"pat": "they/them", "quinn": "she/her"}, columnOf(t, st, "pronouns"), "0044 rewrites no row; before %+v", before)
 	var drop string
 	for _, m := range all {
@@ -627,8 +648,8 @@ func TestFriendPronounsUnstatedDropsTheConstraintAndRewritesNoRow(t *testing.T) 
 	assert.Equal(t, map[string]string{"pat": "they/them", "quinn": "she/her"}, columnOf(t, st, "pronouns"), "0044 run again rewrites no row")
 	from, to, applied, err = st.Migrate(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 44, from)
-	assert.Equal(t, 44, to)
+	assert.Equal(t, newestVersion(t, all), from)
+	assert.Equal(t, newestVersion(t, all), to)
 	assert.Empty(t, applied, "0044 applied twice applies nothing")
 	assert.Equal(t, map[string]string{"pat": "they/them", "quinn": "she/her"}, columnOf(t, st, "pronouns"))
 	var nullable string
