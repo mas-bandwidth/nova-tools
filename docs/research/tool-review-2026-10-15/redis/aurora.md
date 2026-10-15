@@ -11,7 +11,7 @@ Score: 8/10 (45/55)
 | 2 | refusals | 4 | `nova-redis spill` -> `SPILL REFUSED: --addr is required: ... --value is required ... --owner is required ... --name is required ... --ttl is required` (every problem at once, each with `run: nova-redis help`); but the missing-flag refusal names `--addr` while help's canonical flag is `--redis` |
 | 3 | output | 5 | `nova-redis spill --json --dry-run ...` -> `{"result":{"verb":"spill","status":"ok","exit":0},"facts":{...}}`; typed lines are `SPILL OK key=ada:note ttl=10m0s ... dry_run=true` |
 | 4 | dry-run | 4 | `nova-redis spill --dry-run --redis 127.0.0.1:6379 ...` -> `SPILL OK ... written=0 dry_run=true`; serve, spill, acl apply and install/uninstall store/bus have `--dry-run`, but the write verb `fn load` has none, and install's dry-run needs the full secrets stack to render |
-| 5 | idempotent | 0 | `nova-redis help | grep -- --op` -> no `--op` flag on any write verb; a retried `spill` overwrites the value instead of returning a recorded result |
+| 5 | idempotent | 0 | `nova-redis help` shows no `--op` flag on any write verb; a retried `spill` overwrites the value instead of returning a recorded result |
 | 6 | no prompts | 5 | every command, including refusals, finished and exited without waiting on input; no interactive prompt appeared |
 | 7 | exit codes | 5 | `nova-redis spill` (missing flags) -> `EXIT=2`; `nova-redis spill --redis 127.0.0.1:1 ...` -> `EXIT=2`; `nova-redis spill --dry-run ...` -> `EXIT=0`; 0 done, 2 could-not-run, as help states |
 | 8 | one word | 4 | one verb per thing (serve, spill, recall, fn load, fn check, acl render/check/apply, install store/bus, uninstall store/bus, version), but `--addr` and `--redis` are two names for the same flag |
