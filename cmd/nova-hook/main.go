@@ -54,6 +54,7 @@ type world struct {
 	codexChats         func(home string) ([]codexdesktop.Chat, error) // the desktop chats a Codex home holds
 	dshValidate        func(dshdesktop.Route) error
 	dshDeliver         func(dshdesktop.Route, string, string) (string, error)
+	dshHeld            dshdesktop.HeldFunc // which session.lock files a process holds open
 	antigravityExec    antigravityExecFunc
 	antigravityHome    func() (string, error)
 	antigravityInstall func(*antigravityRoute) error
@@ -89,6 +90,7 @@ func realWorld() world {
 		codexChats:         func(home string) ([]codexdesktop.Chat, error) { return codexdesktop.DesktopChats(os.DirFS(home)) },
 		dshValidate:        notice.ValidateDsh,
 		dshDeliver:         dshdesktop.Deliver,
+		dshHeld:            dshdesktop.LsofHeld,
 		antigravityExec:    realAntigravityExec,
 		antigravityHome:    os.UserHomeDir,
 		antigravityInstall: installAntigravityRoute,
@@ -262,9 +264,9 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID; an override: by default the route finds the friend's current desktop chat (newest in a workspace named for the friend) and follows the friend to a new one")
 					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "private directory for bounded external event JSON (default: ~/.local/state/nova-hook/<name>-codex, created 0700)")
 					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); by default the store's time at the first hook, kept in the events directory's .cutover; earlier work must be resent")
-					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "existing private directory for bounded external event JSON and the native notification queue")
-					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "absolute native Cordis include .json path; mount in the harness profile before use")
-					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "exact existing live harness session identity; never creates or resumes a session")
+					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "private directory for bounded external event JSON and the native notification queue (default ~/.local/state/nova-hook/<as>-dsh, created 0700)")
+					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "absolute native Cordis include .json path, mounted into the harness desktop profile (default ~/.dsh/<as>-hook/hooks.json)")
+					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "pin one existing harness session (default: the newest live session in the friend's workspace, followed when she starts another); never creates or resumes a session")
 					f.String("dsh-since", w.getenv("NOVA_HOOK_DSH_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); by default the store's time at the first hook, kept in the events directory's .cutover; earlier work must be resent")
 					f.String("antigravity-dir", w.getenv("NOVA_HOOK_ANTIGRAVITY_DIR"), "Antigravity workspace directory for --harness antigravity")
 					f.String("antigravity-session", w.getenv("NOVA_HOOK_ANTIGRAVITY_SESSION"), "Antigravity conversation UUID (default: newest root conversation for --antigravity-dir)")
@@ -573,8 +575,10 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		}
 	}
 	if w.service != nil && !c.Bool("once") && !w.isServiceRun() && (strings.TrimSpace(c.Str("harness")) != "" || native != nil || dsh != nil || claude != nil) {
+		dshRestart := false
 		if dsh != nil {
-			if err := dshdesktop.Install(dsh.route); err != nil {
+			var err error
+			if dshRestart, err = dshSetup(dsh); err != nil {
 				return tool.Refuse("dsh harness-side setup failed: " + err.Error())
 			}
 		}
@@ -605,6 +609,12 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		}
 		o := tool.Done().Fact("as", s.as).Fact("role", string(role)).Fact("service", svc)
 		o.Note("supervised hook service installed and started; only nova-hook unhook --as " + s.as + " stops it")
+		if dsh != nil {
+			o.Fact("dsh_session", dsh.route.SessionID)
+			if dshRestart {
+				o.Note(dshRestartNote)
+			}
+		}
 		return o
 	}
 	var shim notice.Shim
@@ -628,11 +638,16 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	}
 	switch {
 	case dsh != nil:
-		if err := dshdesktop.Install(dsh.route); err != nil {
+		restart, err := dshSetup(dsh)
+		if err != nil {
 			return tool.Refuse("dsh harness-side setup failed: " + err.Error())
 		}
-		line(c, tool.Done().As("STATE").Fact("state", "native-include-written").Fact("path", dsh.route.HooksFile).Note("mount this include in the harness profile; writing files does not mount a plugin or prove delivery"))
-		shim = &notice.Dsh{Route: dsh.route, Deliver: w.dshDeliver}
+		st := tool.Done().As("STATE").Fact("state", "native-include-mounted").Fact("path", dsh.route.HooksFile).Fact("session", dsh.route.SessionID)
+		if restart {
+			st.Note(dshRestartNote)
+		}
+		line(c, st)
+		shim = &notice.Dsh{Route: dsh.route, Deliver: w.dshDeliver, Discover: dsh.discover}
 	case grokR != nil:
 		grokR.as = s.as
 		grokR.role = role

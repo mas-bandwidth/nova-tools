@@ -2,25 +2,57 @@
 
 The recipient-owned `nova-hook hook --harness deepseek` (alias `dsh`) queues
 bounded saved-event JSON and immutable, locally authored notification records.
-A native Cordis plugin targets exactly `--dsh-session`, an existing live session.
-It uses the agent registry's `get(sessionId)`; it never creates, resumes, or
-selects another session. No gateway credentials or HTTP gateway are involved.
+A native Cordis plugin targets exactly one existing live session, the one the
+follow file names.
+It uses the agent registry's `get(sessionId)`; it never creates or resumes a
+session. No gateway credentials or HTTP gateway are involved.
 
-## Mounting and the verified native contract
+## Setup in one line
 
-Configure `--dsh-events-dir`, `--dsh-hooks-file` and `--dsh-session` together
-(or `NOVA_HOOK_DSH_EVENTS_DIR`, `NOVA_HOOK_DSH_HOOKS_FILE`,
-`NOVA_HOOK_DSH_SESSION`). The existing event directory must be canonical,
-owned by the current user and private (0700). The include path must be an
-absolute `.json` file in an existing canonical directory. `--once` is refused;
-`--dry-run` writes no include, module, saved event or notification.
+`nova-hook hook --as <name> --role comms --harness dsh` is the whole setup:
+
+- The harness home is `$DSH_HOME`, else `~/.dsh` (the harness's own
+  `resolveDshHome`). The friend's workspace is the one in
+  `storages/workspace.json` titled with her name (or whose directory is named
+  so). Its sessions less `archivedSessionIds` are the candidates; a session
+  whose `sessions/<project key>/<id>/session.lock` a process holds open (the
+  harness's single-writer `flock`, read with `lsof`, never taken) is live. The
+  newest live session wins, else the newest session.
+- The events directory defaults to `~/.local/state/nova-hook/<name>-dsh`,
+  created 0700; the include to `<dsh home>/<name>-hook/hooks.json`.
+- The include is mounted into the desktop profile's patch layer,
+  `<dsh home>/profiles/desktop/cordis.patch.yml`, as a loader insert of
+  `cordis:include` with id `nova-hook-dsh-include`; an existing mount at the
+  same path is left byte for byte, one at another path is repointed, and every
+  other entry and comment is kept.
+- When the include, its modules or the mount changed, the result prints one
+  line, `restart DeepSeek Harness once to load the nova-hook plugin`: the
+  harness reads its profile only at start.
+- The supervised service `nova-hook.client.<name>` is installed as for every
+  harness. It is given only the flags passed, so it rediscovers on start.
+
+Following a new session needs no restart. The include names no session: the
+receiver reads `<events dir>/session.json` (`{"version":1,"sessionId":...}`,
+private) on each drain and on its change. The hook client rediscovers the
+session once a `FollowEvery` and rewrites the file when it moved; a pending
+notice is pushed once into the new session (pkg/harness/notice rule 6). A move to another session drops the old
+session's ordinary hold (tla/DshNativeWake.tla `Retarget`, `HoldOnTarget`).
+
+`--dsh-events-dir`, `--dsh-hooks-file` and `--dsh-session` (or
+`NOVA_HOOK_DSH_EVENTS_DIR`, `NOVA_HOOK_DSH_HOOKS_FILE`,
+`NOVA_HOOK_DSH_SESSION`) override each default; `--dsh-session` pins one
+session and stops following. A given event directory must already be
+canonical, owned by the current user and private (0700). The include path must
+be an absolute `.json` file. `--once` is refused; `--dry-run` reads the harness
+state and writes no include, module, mount, saved event or notification.
+
+## The verified native contract
 
 Install writes the native module, receiver module and a Cordis include list:
 `[{"id":"nova-hook-dsh","name":"<absolute plugin module>","config":
-{"eventsDir":"<private directory>","sessionId":"<exact session identity>"}}]`.
-The operator must mount that include with the harness profile's
-`cordis:include` entry and restart the harness, unless profile HMR is enabled.
-Writing these files alone does not mount a plugin or establish delivery.
+{"eventsDir":"<private directory>"}}]`, and the follow file naming the
+session. An include written by an earlier version also carries `sessionId`;
+the receiver uses it only when no follow file exists.
 Codex, Muse and DeepSeek routes are mutually exclusive.
 
 The implementation contract is pinned to Harness 0.2.0-rc.2, source
