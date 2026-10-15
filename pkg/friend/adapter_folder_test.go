@@ -33,7 +33,7 @@ func TestFolderRouteRequiresRealCodexSessionAndWatchedDirectory(t *testing.T) {
 	require.NoError(t, err)
 	assert.IsType(t, &Folder{}, d)
 	defaultRoute, err := SelectDeliverer("bob", "codex", "/work", "real-thread", "", "", nil, nil)
-	require.ErrorContains(t, err, "Codex native push is unavailable")
+	require.ErrorContains(t, err, "codex native push is unavailable")
 	assert.Nil(t, defaultRoute)
 }
 

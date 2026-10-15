@@ -246,7 +246,7 @@ func TestEveryAdapterPassesDeliveryConformance(t *testing.T) {
 			t.Parallel()
 			d, err := NewDeliverer(harness, t.TempDir(), "", nil, nil)
 			if harness == "codex" {
-				require.ErrorContains(t, err, "Codex native push is unavailable")
+				require.ErrorContains(t, err, "codex native push is unavailable")
 				assert.Nil(t, d)
 				return
 			}

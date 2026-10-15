@@ -186,7 +186,7 @@ func folderAtomic(dir, name, text string) (retErr error) {
 
 // CodexPushUnavailable is the refusal for implicit Codex delivery (SPEC-FRIEND.md,
 // Codex). No flag or environment variable enables queue or exec-resume as push.
-const CodexPushUnavailable = "Codex native push is unavailable: queue creates pending Steer prompts and exec resume is a separate turn; use active-session tool notifications from nova-bus wait --as <name> --after <cursor>, then nova-bus recv --as <name>; only use --adapter folder --session <real-session> --delivery-dir <existing-watched-folder> with a session-owned receiver; neither route proves idle wake"
+const CodexPushUnavailable = "codex native push is unavailable: queue creates pending Steer prompts and exec resume is a separate turn; use active-session tool notifications from nova-bus wait --as <name> --after <cursor>, then nova-bus recv --as <name>; only use --adapter folder --session <real-session> --delivery-dir <existing-watched-folder> with a session-owned receiver; neither route proves idle wake"
 
 // The kinds of pong request (PongRequest): each its own series of nonces.
 const (

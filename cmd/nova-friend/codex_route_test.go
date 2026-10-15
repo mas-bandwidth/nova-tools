@@ -44,7 +44,7 @@ func TestCodexImplicitDeliveryRefusesBeforeAnySideEffect(t *testing.T) {
 					}
 					var out, errs strings.Builder
 					assert.Equal(t, 2, run(args, strings.NewReader(""), &out, &errs, w), errs.String())
-					assert.Contains(t, errs.String(), "Codex native push is unavailable")
+					assert.Contains(t, errs.String(), "codex native push is unavailable")
 					assert.Contains(t, errs.String(), "nova-bus wait --as <name> --after <cursor>")
 					assert.Contains(t, errs.String(), "nova-bus recv --as <name>")
 					assert.Empty(t, r.launchctl)

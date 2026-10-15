@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -84,28 +83,4 @@ func TestAReplyThatTalksOfLimitsIsNoLimit(t *testing.T) {
 			assert.Equal(t, 1, downs)
 		}
 	}
-}
-
-// harnessExec is a fake harness: its first turn is at the limit, a wake turn
-// answers its nonce, and every other turn works. It logs what it was asked.
-type harnessExec struct {
-	mu     sync.Mutex
-	asked  []string
-	limit  string
-	failed bool
-}
-
-func (h *harnessExec) run(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
-	text := args[len(args)-1]
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.asked = append(h.asked, text)
-	if !h.failed {
-		h.failed = true
-		return "working on it\n" + h.limit + "\n", 1, nil
-	}
-	if _, nonce, ok := strings.Cut(text, "nothing else: "); ok {
-		return strings.TrimSpace(nonce) + "\n", 0, nil
-	}
-	return "ran it\n", 0, nil
 }
