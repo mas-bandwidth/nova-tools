@@ -146,11 +146,12 @@ const (
 )
 
 // stamp is the value of a lease or a proof: the record's epoch it was written
-// under, the store's time in ms, and who wrote it.
+// under, the store's time in ms, who wrote it, and the build that wrote it.
 type stamp struct {
-	Epoch int64  `json:"epoch"`
-	At    int64  `json:"at"`
-	By    string `json:"by"`
+	Epoch   int64  `json:"epoch"`
+	At      int64  `json:"at"`
+	By      string `json:"by"`
+	Version string `json:"version"`
 }
 
 // parseStamp is the stamp raw holds, ok false when it holds none.
@@ -184,6 +185,7 @@ type Status struct {
 	Role     Role
 	State    string // StateNone .. StateProven
 	Epoch    int64
+	Version  string    // the build that hooked the record in, "" when it is unrecorded
 	Armed    time.Time // when the record was last hooked, zero when never
 	Unhooked time.Time // when it was unhooked, zero when it is not
 	Reason   string    // why it was unhooked, when the heartbeat did it ("missed 2 challenges")
@@ -208,6 +210,7 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 	}
 	st.Role = Role(rec["role"])
 	st.Epoch, _ = strconv.ParseInt(rec["epoch"], 10, 64) // ignored: an epoch that is no number matches no stamp, so nothing counts
+	st.Version = rec["version"]
 	st.Armed = msTime(rec["armed"])
 	st.BeatAt = msTime(rec["beat_at"])
 	st.AnswerAt = msTime(rec["answered_at"])

@@ -197,10 +197,36 @@ func TestFriendsJSONIsTheRecord(t *testing.T) {
 	ada, bob := got.Items[0].Fields, got.Items[1].Fields
 	st := r.h.State(t, "ada")
 	assert.Equal(t, map[string]any{"name": "ada", "role": "coordinator", "state": "up", "since": stamp(st.Armed), "reason": "",
-		"last_challenge_at": stamp(st.BeatAt), "last_answer_at": stamp(st.AnswerAt), "misses": float64(0)}, ada)
+		"last_challenge_at": stamp(st.BeatAt), "last_answer_at": stamp(st.AnswerAt), "misses": float64(0), "version": st.Version}, ada)
 	sb := r.h.State(t, "bob")
 	assert.Equal(t, map[string]any{"name": "bob", "role": "comms", "state": "down", "since": stamp(sb.Unhooked), "reason": "missed 2 challenges",
-		"last_challenge_at": stamp(sb.BeatAt), "last_answer_at": stamp(sb.AnswerAt), "misses": float64(2)}, bob)
+		"last_challenge_at": stamp(sb.BeatAt), "last_answer_at": stamp(sb.AnswerAt), "misses": float64(2), "version": sb.Version}, bob)
+}
+
+// TestFriendsShowsTheHookVersion pins the version a record carries into both
+// renderings: a store stamped with a build identity writes it into the record,
+// and the friends line and its JSON name the same value.
+func TestFriendsShowsTheHookVersion(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Store = hook.Store{C: r.h.Client, Version: "v9.9.9"}
+	r.h.Hook(t, "ada", hook.Comms)
+	assert.Equal(t, "v9.9.9", r.h.State(t, "ada").Version)
+
+	res := r.cli().Run("friends")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Contains(t, res.Stdout, "version=v9.9.9", res.Stdout)
+
+	res = r.cli().Run("friends", "--json")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	var got struct {
+		Items []struct {
+			Fields map[string]any `json:"fields"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &got))
+	require.Len(t, got.Items, 1)
+	assert.Equal(t, "v9.9.9", got.Items[0].Fields["version"], res.Stdout)
 }
 
 // TestStatusSaysNoChallengeWhenTheServerIsGone pins the client's timeout on

@@ -27,6 +27,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/dshdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
@@ -318,9 +319,9 @@ example: nova-hook unhook --as ada`,
 				Example: "", // the listing needs a bus store with hook records: no example line can carry it
 				Effect:  tool.Inspection,
 				Detail: `Every name's state from the hook record alone, by the store's TIME: FRIENDS OK count= up= coordinator=
-serve_alive= serve_age=, then one FRIENDS NAME line each: name, role, state (up: hooked and proven; down: not),
-since, reason, last_challenge_at, last_answer_at (the heartbeat's) and misses. No sprint state (a hold is the
-sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE line; --json carries every name.`,
+serve_alive= serve_age= serve_version=, then one FRIENDS NAME line each: name, role, state (up: hooked and proven;
+down: not), since, reason, last_challenge_at, last_answer_at (the heartbeat's), misses and version (the build
+that hooked the record in). No sprint state (a hold is the sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE line; --json carries every name.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, optional: the listing is the same for every reader")
 					store(f)
@@ -408,6 +409,7 @@ func (w world) openSession(c *tool.Call, needAs bool) (*session, *tool.Out) {
 		closeStore()
 		return nil, tool.Refuse(err.Error())
 	}
+	hs.Version = buildinfo.Version(version) // the build every record, lease, proof and server stamp this client writes carries
 	s := &session{addr: addr, bus: st, hooks: hs, close: closeStore}
 	if needAs || c.Str("as") != "" || login != "" {
 		as, refusal := bus.Identity(c.Str("as"), login)

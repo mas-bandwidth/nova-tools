@@ -104,6 +104,15 @@ harness itself, `CLAUDE_CONFIG_DIR=<dir> claude -p ok --output-format json --max
 owner's hand: `CLAUDE_CONFIG_DIR=<dir> claude login`. The check reads only the
 harness's answer and never prints, copies or moves a credential.
 
+**friends-hooked.** Dependency: every friend's hook record and the heartbeat
+server's build. Runs `nova-hook friends --json` and reads each name's `role`,
+`state` and `version` and the server's `serve_version`, and runs `nova-hook
+version` for the installed build. `fail` when a `friend` or `comms` name is not
+`up`, when a name that is up was hooked by another build, or when a running
+server's `serve_version` differs. Evidence names each friend and each build;
+fix: `nova-update apply --file <manifest> nova-hook --version <installed>`. A
+hook record that cannot be read is a `warn`.
+
 **plists.** Dependency: the launchd plists and systemd units this machine loads.
 Runs `plutil -lint` on every `com.nova.*.plist` under `~/Library/LaunchAgents`
 and `/Library/LaunchDaemons` (`systemd-analyze verify` for `nova-*.service` on

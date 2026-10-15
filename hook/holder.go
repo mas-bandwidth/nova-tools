@@ -17,7 +17,10 @@ type Holder struct {
 	Role   Role
 	Pushes []Push // the pushes this process holds: some or all of the role's
 	By     string // who holds them, as the lease shows it
-	epoch  int64
+	// Version is the build identity written into the record and every lease
+	// and proof this holder writes, empty when unrecorded.
+	Version string
+	epoch   int64
 }
 
 // Epoch is the record's epoch the holder writes under, 0 before Start.
@@ -31,6 +34,7 @@ func (h *Holder) Epoch() int64 { return h.epoch }
 // the holder's restart until someone hooks the identity in again (nova-hook
 // hook, which arms fresh).
 func (h *Holder) Start(ctx context.Context) error {
+	h.Store.Version = h.Version
 	e, _, err := h.Store.Arm(ctx, h.Name, h.Role, h.By, false)
 	if err != nil {
 		return err
@@ -74,6 +78,7 @@ func (h *Holder) Beat(ctx context.Context, proven map[Push]bool) error {
 }
 
 func (h *Holder) beat(ctx context.Context, proven map[Push]bool) error {
+	h.Store.Version = h.Version
 	for _, p := range h.Pushes {
 		if err := h.Store.Renew(ctx, h.Name, h.Role, p, h.epoch, h.By); err != nil {
 			return err

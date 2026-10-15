@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
@@ -72,7 +73,7 @@ func (w world) newDaemonHook(st bus.Store, name string, role hook.Role, busProof
 	if herr != nil {
 		host = "unknown-host" // ignored: the holder's name is a label on the lease, never a key
 	}
-	h.holder = &hook.Holder{Store: hs, Name: name, Role: role, Pushes: hook.PushesOf(role), By: fmt.Sprintf("nova-friend run %s pid %d", host, os.Getpid())}
+	h.holder = &hook.Holder{Store: hs, Name: name, Role: role, Pushes: hook.PushesOf(role), By: fmt.Sprintf("nova-friend run %s pid %d", host, os.Getpid()), Version: buildinfo.Version(version)}
 	return h
 }
 

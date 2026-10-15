@@ -23,6 +23,11 @@ type Store struct {
 	// caller's context: a long-running holder's beat makes several, and one
 	// slow call never spends the next one's time.
 	Timeout time.Duration
+	// Version is the build identity this client writes into the record and
+	// every lease, proof and server stamp it writes, empty when unrecorded.
+	// The tool sets it from its own version line, so a reader can see which
+	// build a holder is running.
+	Version string
 }
 
 // call is ctx bounded by one round trip's Timeout, when the store has one.
@@ -63,7 +68,7 @@ const (
 // restart; it arms only where there is no record at all. The identity's word
 // arms over either, and fresh always arms. To arm, the epoch moves on, every
 // lease, proof and challenge is cleared, and the record says hooked (code 0).
-// KEYS: record, names, then allKeys. ARGV: name, role, by, mode.
+// KEYS: record, names, then allKeys. ARGV: name, role, by, mode, version.
 var armLua = redis.NewScript(nowMS + `
 local st = redis.call('HGET', KEYS[1], 'state')
 local role = redis.call('HGET', KEYS[1], 'role')
@@ -76,7 +81,7 @@ if st and ARGV[4] ~= '` + armFresh + `' then
   end
 end
 local e = redis.call('HINCRBY', KEYS[1], 'epoch', 1)
-redis.call('HSET', KEYS[1], 'role', ARGV[2], 'state', 'hooked', 'armed', ms, 'by', ARGV[3])
+redis.call('HSET', KEYS[1], 'role', ARGV[2], 'state', 'hooked', 'armed', ms, 'by', ARGV[3], 'version', ARGV[5])
 redis.call('HDEL', KEYS[1], 'unhooked', 'reason', 'misses', 'beat_at')
 for i = 3, #KEYS do redis.call('DEL', KEYS[i]) end
 redis.call('SADD', KEYS[2], ARGV[1])
@@ -93,11 +98,11 @@ const held = `redis.call('HGET', KEYS[1], 'state') == 'hooked' and redis.call('H
 // stampLua writes a lease or a proof under the record's epoch and role
 // (tla/Hook.tla, Renew and ProveDaemon): refused (0) unless held, and a proof
 // (need set) refused (-1) unless the push's lease is live.
-// KEYS: record, the key to write, the lease that must stand. ARGV: epoch, role, ttl ms, by (JSON).
+// KEYS: record, the key to write, the lease that must stand. ARGV: epoch, role, ttl ms, by (JSON), version (JSON).
 var stampLua = redis.NewScript(nowMS + `
 if not (` + held + `) then return 0 end
 if KEYS[3] ~= KEYS[2] and redis.call('EXISTS', KEYS[3]) == 0 then return -1 end
-redis.call('SET', KEYS[2], '{"epoch":' .. ARGV[1] .. ',"at":' .. ms .. ',"by":' .. ARGV[4] .. '}', 'PX', ARGV[3])
+redis.call('SET', KEYS[2], '{"epoch":' .. ARGV[1] .. ',"at":' .. ms .. ',"by":' .. ARGV[4] .. ',"version":' .. ARGV[5] .. '}', 'PX', ARGV[3])
 return 1
 `)
 
@@ -129,7 +134,7 @@ return 1
 // stands, -2 another nonce, -3 the record moved since, -4 a heartbeat
 // challenge past its interval (its until).
 // KEYS: record, challenge, then per push of Pushes its lease and proof.
-// ARGV: sum, ttl ms, by (JSON), then the names of Pushes.
+// ARGV: sum, ttl ms, by (JSON), version (JSON), then the names of Pushes.
 var answerLua = redis.NewScript(nowMS + `
 local c = redis.call('HMGET', KEYS[2], 'epoch', 'sum', 'pushes')
 if not c[1] then return {-1} end
@@ -139,9 +144,9 @@ if u and tonumber(ms) > tonumber(u) then return {-4} end
 if redis.call('HGET', KEYS[1], 'state') ~= 'hooked' or redis.call('HGET', KEYS[1], 'epoch') ~= c[1] then return {-3} end
 local n = 0
 for p in string.gmatch(c[3], '[^,]+') do
-  for i = 4, #ARGV do
-    if ARGV[i] == p and redis.call('EXISTS', KEYS[2 * (i - 3) + 1]) == 1 then
-      redis.call('SET', KEYS[2 * (i - 3) + 2], '{"epoch":' .. c[1] .. ',"at":' .. ms .. ',"by":' .. ARGV[3] .. '}', 'PX', ARGV[2])
+  for i = 5, #ARGV do
+    if ARGV[i] == p and redis.call('EXISTS', KEYS[2 * (i - 4) + 1]) == 1 then
+      redis.call('SET', KEYS[2 * (i - 4) + 2], '{"epoch":' .. c[1] .. ',"at":' .. ms .. ',"by":' .. ARGV[3] .. ',"version":' .. ARGV[4] .. '}', 'PX', ARGV[2])
       n = n + 1
     end
   end
@@ -224,7 +229,7 @@ func (s Store) arm(ctx context.Context, name string, role Role, by, mode string)
 	keys := append([]string{RecordKey(name), NamesKey}, allKeys(name)...)
 	ctx, cancel := s.call(ctx)
 	defer cancel()
-	got, err := armLua.Run(ctx, s.C, keys, name, string(role), by, mode).Int64Slice()
+	got, err := armLua.Run(ctx, s.C, keys, name, string(role), by, mode, s.Version).Int64Slice()
 	if err != nil {
 		return 0, false, err
 	}
@@ -257,7 +262,7 @@ func (s Store) Prove(ctx context.Context, name string, role Role, p Push, epoch 
 func (s Store) stamp(ctx context.Context, name string, role Role, key, lease string, epoch int64, ttl time.Duration, by string) error {
 	ctx, cancel := s.call(ctx)
 	defer cancel()
-	got, err := stampLua.Run(ctx, s.C, []string{RecordKey(name), key, lease}, epoch, string(role), ttl.Milliseconds(), byJSON(by)).Int64()
+	got, err := stampLua.Run(ctx, s.C, []string{RecordKey(name), key, lease}, epoch, string(role), ttl.Milliseconds(), byJSON(by), byJSON(s.Version)).Int64()
 	switch {
 	case err != nil:
 		return err
@@ -317,7 +322,7 @@ var (
 // is live is proven for ProofTTL. It answers how many were proven.
 func (s Store) Answer(ctx context.Context, name, nonce, by string) (int, error) {
 	keys := []string{RecordKey(name), ChallengeKey(name)}
-	args := []any{Sum(nonce), ProofTTL.Milliseconds(), byJSON(by)}
+	args := []any{Sum(nonce), ProofTTL.Milliseconds(), byJSON(by), byJSON(s.Version)}
 	for _, p := range Pushes {
 		keys = append(keys, LiveKey(name, p), ProofKey(name, p))
 		args = append(args, string(p))
@@ -460,13 +465,15 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 // KEYS: events, serve, then per name its record and allKeys (8 keys; the challenge last).
 // ARGV: every ms, limit, ttl ms, by, events cap, the count of roles, a role and
 // the pushes its challenge names (comma) per role, then per name its name and
-// its nonce's sum.
+// its nonce's sum, then the client's version last.
 var beatLua = redis.NewScript(nowMS + `
 local now = tonumber(ms)
 local every, limit, ttl, by, cap = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5]
+local version = ARGV[#ARGV]
 local prev = tonumber(redis.call('HGET', KEYS[2], 'at') or '0')
 if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', '', '', '', '', '', '', '', ''} end
 redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'by', by)
+if version ~= '' then redis.call('HSET', KEYS[2], 'version', version) end
 local nroles = tonumber(ARGV[6])
 local bus = {}
 for i = 1, nroles do bus[ARGV[5 + 2 * i]] = ARGV[6 + 2 * i] end
@@ -657,6 +664,7 @@ func (s Store) Pass(ctx context.Context, names []string, every time.Duration, li
 		keys = append(append(keys, RecordKey(n)), allKeys(n)...)
 		args = append(args, n, Sum(out.Beats[i].Nonce))
 	}
+	args = append(args, s.Version)
 	ctx, cancel := s.call(ctx)
 	defer cancel()
 	got, err := beatLua.Run(ctx, s.C, keys, args...).Slice()
@@ -705,10 +713,12 @@ func (s Store) Pass(ctx context.Context, names []string, every time.Duration, li
 }
 
 // Served is the heartbeat server's stamp as the store holds it: when it last
-// passed and its interval, with the store's now; ok false when no server ever passed.
+// passed and its interval, the build that passed it, with the store's now; ok
+// false when no server ever passed.
 type Served struct {
 	At, Now time.Time
 	Every   time.Duration
+	Version string
 	OK      bool
 }
 
@@ -765,7 +775,7 @@ func servedOf(m map[string]string, now time.Time) Served {
 	if err != nil || every <= 0 {
 		return Served{Now: now} // ignored: no stamp, or one with no interval, is no server
 	}
-	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, OK: true}
+	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, Version: m["version"], OK: true}
 }
 
 // JudgmentsKey holds the heartbeat's open judgments: a hash of message id to
