@@ -93,6 +93,10 @@ CONSTANTS Names, Servers, DownAfter, Broken, CoordRole, NoCoord, Parts
 \* coordinator quiet. Other cases retain the faster scheduler as an
 \* overapproximation for old issued nonces and the delivery protocol.
 Silence == "silence" \in Parts
+\* Without Silence the ghosts of the silence rule (busy, lastActivity,
+\* challengedWhileTalking, nonceVersion, delivered) are inert: every read of
+\* them is guarded by Silence, so they stay at their Init values in every
+\* action and add no states to a case that does not turn on silence.
 QuietAfter == 2 * DownAfter
 CoordinatorEvery == 6 * DownAfter
 ActivityCap == IF Silence THEN CoordinatorEvery + 2 * DownAfter + 3 ELSE DownAfter + 1
@@ -287,7 +291,7 @@ Init ==
 \* the row ages.
 Tick ==
     /\ "renewal" \notin Parts \/ (rowAge < 2 /\ \A n \in Names : chal[n] # "open")
-    /\ lastActivity' = [n \in Names |-> IF "renewal" \in Parts THEN 0 ELSE IF lastActivity[n] < ActivityCap THEN lastActivity[n] + 1 ELSE ActivityCap]
+    /\ lastActivity' = [n \in Names |-> IF ~Silence THEN lastActivity[n] ELSE IF "renewal" \in Parts THEN 0 ELSE IF lastActivity[n] < ActivityCap THEN lastActivity[n] + 1 ELSE ActivityCap]
     /\ taken' = FALSE
     /\ passed' = {}
     /\ rowAge' = Cap3(rowAge + 1)
@@ -324,7 +328,7 @@ Pass(s) ==
           /\ misses' = IF "misses" \in Parts THEN [n \in Names |-> IF hooked[n] THEN m[n] ELSE misses[n]] ELSE misses
           /\ events' = [n \in Names |-> IF n \in gone THEN events[n] + 1 ELSE events[n]]
           /\ nonceVersion' = [n \in Names |-> IF Silence /\ n \in targets THEN ~nonceVersion[n] ELSE nonceVersion[n]]
-          /\ delivered' = [n \in Names |-> IF n \in targets THEN "delivery" \notin Parts ELSE IF n \in gone \/ (Silence /\ chal[n] = "late") THEN FALSE ELSE delivered[n]]
+          /\ delivered' = [n \in Names |-> IF n \in targets THEN Silence /\ "delivery" \notin Parts ELSE IF n \in gone \/ (Silence /\ chal[n] = "late") THEN FALSE ELSE delivered[n]]
           /\ chal' = [n \in Names |-> IF n \in targets THEN "open" ELSE IF n \in gone THEN "none" ELSE IF Silence /\ chal[n] = "late" THEN "failed" ELSE chal[n]]
           \* each challenge set joins the name's recent; an unhook clears it
           /\ issued' = IF "window" \in Parts
@@ -678,11 +682,17 @@ Next ==
 
 Spec == Init /\ [][Next]_vars
 
+\* The names whose delivery can happen at all: Deliver is enabled only in a
+\* case with Silence and "delivery", so the other cases carry no fairness
+\* conjunct for it (an SF of an action that is never enabled is vacuous, and
+\* costs the liveness check a branch).
+DeliverNames == IF Silence /\ "delivery" \in Parts THEN Names ELSE {}
+
 \* The server clock ticks, the servers pass, and the sender is fair: a send
 \* tried again and again is delivered at last, and a sent tell is marked.
 LiveSpec == Spec /\ WF_vars(Tick) /\ WF_vars(\E s \in Servers : Pass(s))
                  /\ \A s \in Servers : SF_vars(Tell(s)) /\ WF_vars(Mark(s))
-                 /\ (\A n \in Names : SF_vars(Deliver(n)))
+                 /\ (\A n \in DeliverNames : SF_vars(Deliver(n)))
                  /\ SF_vars(PushFold \/ \E n \in Names : PushSend(n)) /\ SF_vars(Show)
 
 \* Only the clock is fair: the servers may stop for good.

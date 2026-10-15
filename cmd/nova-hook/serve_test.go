@@ -97,14 +97,39 @@ func (r *rig) step(t *testing.T, servers []string, answering ...string) string {
 	return out
 }
 
-// TestServeRefusesAServerThatIsNotHooked pins that the server cannot run deaf.
-func TestServeRefusesAServerThatIsNotHooked(t *testing.T) {
+// TestServeNeedsOnlyItsStore pins that no daemon gates on another's liveness
+// or a model's proof: a serve pass runs, and the heartbeat row is written,
+// whatever the server name's own hook record is: absent, partial (armed and
+// never proven) or unhooked.
+func TestServeNeedsOnlyItsStore(t *testing.T) {
 	t.Parallel()
-	r := newRig(t)
-	res := r.cli().Run("serve", "--as", "ada", "--once")
-	assert.Equal(t, 1, res.Code)
-	assert.Contains(t, res.Stdout+res.Stderr, "the heartbeat server must itself be hooked in")
-	assert.Contains(t, res.Stdout+res.Stderr, "run: nova-hook hook --as ada --role comms")
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, r *rig)
+	}{
+		{"absent", func(t *testing.T, r *rig) {}},
+		{"partial", func(t *testing.T, r *rig) {
+			_, _, err := r.h.Store.HookAs(ctx, "ada", hook.Comms, "ada") // armed, no proof, no push live
+			require.NoError(t, err)
+		}},
+		{"unhooked", func(t *testing.T, r *rig) {
+			r.h.Hook(t, "ada", hook.Comms)
+			r.h.Unhook(t, "ada")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			tc.setup(t, r)
+			res := r.cli().Run("serve", "--as", "ada", "--once")
+			require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+			assert.NotContains(t, res.Stdout+res.Stderr, "must itself be hooked in")
+			at, err := r.h.Client.HGet(ctx, hook.ServeKey, "at").Result()
+			require.NoError(t, err)
+			assert.NotEmpty(t, at, "the pass ran and stamped the heartbeat row")
+		})
+	}
 }
 
 // TestAFriendDownIsOneJudgmentToTheCoordinator pins the coordinator's half
