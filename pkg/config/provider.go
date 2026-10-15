@@ -2,11 +2,21 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
 	"time"
 )
+
+// localProviderPrefix marks a provider that serves a local engine on one
+// machine (docs/SPEC-LOCAL.md, Fleet; docs/SPEC-CONFIG.md,
+// local-config-provider-endpoint).
+const localProviderPrefix = "local-"
+
+// localTailnet is the address range a tailnet hands its machines, the same
+// range as cmd/nova-local/host.go and pkg/bus/addr.go (docs/SPEC-LOCAL.md, rule 3).
+var localTailnet = netip.MustParsePrefix("100.64.0.0/10")
 
 func checkProvider(r Row) error {
 	var problems []string
@@ -25,10 +35,72 @@ func checkProvider(r Row) error {
 			problems = append(problems, "--console_url wants an https:// console URL without credentials, or empty")
 		}
 	}
+	problems = append(problems, providerEndpointProblems(r)...)
 	if len(problems) != 0 {
 		return fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// providerEndpointProblems is the row check of a local provider's endpoint
+// (docs/SPEC-LOCAL.md, rule 3; docs/SPEC-CONFIG.md, local-config-provider-endpoint).
+// A name is not resolved and no socket is opened: a literal IP is loopback or
+// the tailnet, and a name waits for the store check.
+func providerEndpointProblems(r Row) []string {
+	endpoint := r.Fields["endpoint"]
+	local := strings.HasPrefix(r.Name, localProviderPrefix)
+	switch {
+	case local && endpoint == "":
+		return []string{fmt.Sprintf("--endpoint is required on a provider named %s<host>; run: nova-config provider set %s --endpoint http://<host>:11434/v1", localProviderPrefix, r.Name)}
+	case !local && endpoint != "":
+		return []string{fmt.Sprintf("--endpoint is empty on every provider not named %s<host>; run: nova-config provider set %s --endpoint ''", localProviderPrefix, r.Name)}
+	case endpoint == "":
+		return nil
+	}
+	if why := endpointShapeProblem(endpoint); why != "" {
+		return []string{why + fmt.Sprintf("; run: nova-config provider set %s --endpoint http://<host>:11434/v1", r.Name)}
+	}
+	return nil
+}
+
+// endpointShapeProblem is why raw is not an engine base URL, "" when the
+// shape is accepted. A name host is accepted here; the store check names the
+// machine. A literal IP host is loopback or the tailnet, and is not looked up.
+func endpointShapeProblem(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(u.Scheme, "http") || u.Hostname() == "" || u.Path != "/v1" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Sprintf("--endpoint %q wants an http URL with a host and the path /v1, like http://<host>:11434/v1", raw)
+	}
+	host := u.Hostname()
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return ""
+	}
+	ip = ip.Unmap()
+	if ip.IsLoopback() || localTailnet.Contains(ip) {
+		return ""
+	}
+	return fmt.Sprintf("--endpoint host %s is neither loopback nor the tailnet (100.64.0.0/10)", ip)
+}
+
+// endpointNameHost is the host of an accepted endpoint when it is a name, ""
+// when the endpoint is empty or the host is a literal IP (already checked).
+func endpointNameHost(raw string) (string, bool) {
+	if raw == "" {
+		return "", false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return "", false
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return "", false
+	}
+	return host, true
 }
 
 // ProviderReport shows declared funding and coverage of enabled routes by the
