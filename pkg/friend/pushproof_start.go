@@ -12,11 +12,8 @@ import (
 // command (a Stub), with its remedy; install also runs the first SESSION
 // CHECK round trip (PushProof over Conformance) and refuses a session the
 // adapter cannot drive (Deferred with a Remedy: dsh, a session under an agent
-// preset). run never waits on the round trip: the daemon starts with its push
-// unproven and its presence's first check (SessionCheck) is the proof, nothing
-// delivered into the session until the session answers it (Daemon.Proof). The
-// model is the presence model's Ask then Answer within the bound
-// (tla/FriendPresence.tla).
+// preset). run never waits on the round trip; whether the friend is there is
+// the nova-hook record's alone (docs/SPEC-HOOK.md).
 
 // Undriven says nova-friend can push nothing into a session of harness
 // through d: a Stub, with why and the remedy (AdapterRemedy); ok is false

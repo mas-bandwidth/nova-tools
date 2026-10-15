@@ -17,12 +17,24 @@ func nonces() func() string {
 	return func() string { n++; return fmt.Sprintf("n%d", n) }
 }
 
+// testDownAfter is the down-after of these tests' passes: two intervals, so
+// a silent name goes down at the third pass, as the store's tests have always
+// read; the default (DownAfter) is pinned by TestDownAfterIsTheReadersWindow
+// and cmd/nova-hook's serve tests.
+const testDownAfter = 90 * time.Second
+
 // pass is one heartbeat pass over every name by the server named by.
 func (r *rig) beat(t *testing.T, by string, next func() string) map[string]hook.Beat {
 	t.Helper()
+	return r.beatAfter(t, by, next, testDownAfter)
+}
+
+// beatAfter is beat with the pass's down-after named.
+func (r *rig) beatAfter(t *testing.T, by string, next func() string, downAfter time.Duration) map[string]hook.Beat {
+	t.Helper()
 	names, err := r.s.Names(context.Background())
 	require.NoError(t, err)
-	got, err := r.s.Pass(context.Background(), names, hook.BeatEvery, hook.MissLimit, next, by)
+	got, err := r.s.Pass(context.Background(), names, hook.BeatEvery, downAfter, next, by)
 	require.NoError(t, err)
 	out := map[string]hook.Beat{}
 	for _, b := range got.Beats {
@@ -84,10 +96,10 @@ func TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce(t *testing.T) {
 	}, did)
 	st := r.state(t, "ada")
 	assert.Equal(t, hook.StateUnhooked, st.State)
-	assert.Equal(t, "missed 2 challenges", st.Reason)
+	assert.Equal(t, "no answer in 1m30s (2 challenges missed)", st.Reason)
 	assert.Equal(t, 1, r.events(t), "the unhook is logged once")
 	require.NotNil(t, st.Gate(hook.Want{Name: "ada"}))
-	assert.Contains(t, st.Gate(hook.Want{Name: "ada"}).Why, "by the heartbeat (missed 2 challenges)")
+	assert.Contains(t, st.Gate(hook.Want{Name: "ada"}).Why, "by the heartbeat (no answer in 1m30s (2 challenges missed))")
 
 	r.Hook(t, "ada", hook.Comms)
 	st = r.state(t, "ada")
@@ -97,60 +109,157 @@ func TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce(t *testing.T) {
 	assert.Equal(t, hook.BeatChallenged, r.beat(t, "srv-a", next)["ada"].Did, "and is challenged at once")
 }
 
-// TestOneAnswerBetweenMissesResetsTheCount pins "in a row": a miss, an
-// answer, a miss is never an unhook.
-func TestOneAnswerBetweenMissesResetsTheCount(t *testing.T) {
+// TestOneAnswerResetsTheSilence pins that the silence runs from the last
+// answer (tla/HookBeat.tla, NoDownBeforeDownAfter): under the default
+// down-after, four misses, an answer, four misses is never an unhook, the
+// answer resets the count of misses the reason carries, and the first pass
+// more than five minutes after the answer unhooks.
+func TestOneAnswerResetsTheSilence(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
 	next := nonces()
-	r.beat(t, "srv", next)
-	r.pass(hook.BeatEvery)
-	b := r.beat(t, "srv", next)["ada"]
-	require.Equal(t, 1, b.Misses)
+	var b hook.Beat
+	for range 5 {
+		b = r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+		require.Equal(t, hook.BeatChallenged, b.Did)
+		r.pass(hook.BeatEvery)
+	}
+	require.Equal(t, 4, b.Misses)
 	_, err := r.s.Answer(context.Background(), "ada", b.Nonce, "session")
 	require.NoError(t, err)
+	assert.Zero(t, r.state(t, "ada").Misses, "the answer clears the count")
+	for range 5 {
+		r.pass(hook.BeatEvery)
+		b = r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+		require.Equal(t, hook.BeatChallenged, b.Did, "the silence runs from the answer, not the hooking in")
+	}
+	assert.Equal(t, 4, b.Misses)
 	r.pass(hook.BeatEvery)
-	r.beat(t, "srv", next)
-	r.pass(hook.BeatEvery)
-	b = r.beat(t, "srv", next)["ada"]
-	assert.Equal(t, hook.BeatChallenged, b.Did)
-	assert.Equal(t, 1, b.Misses)
+	b = r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+	assert.Equal(t, hook.BeatUnhooked, b.Did, "past five minutes from the answer: down")
+	assert.Equal(t, "no answer in 5m0s (5 challenges missed)", b.Reason())
 }
 
 // TestAStaleOrWrongNonceIsRefused pins prove's refusals (tla/HookBeat.tla,
-// Answer): another nonce, the last interval's nonce, a challenge past its
-// interval, and one answered already.
+// AnswerIssued and ProofNamesIssuedInWindow): another nonce, a nonce older
+// than the down-after window (the refusal names it), another name's nonce,
+// one of an earlier epoch, the current nonce past its window, and one
+// answered already.
 func TestAStaleOrWrongNonceIsRefused(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.Hook(t, "bob", hook.Comms)
 	next := nonces()
-	old := r.beat(t, "srv", next)["ada"].Nonce
+	first := r.beatAfter(t, "srv", next, hook.DownAfter)
+	for range 6 { // both answer every challenge after the first: up, and the first leaves the window
+		r.pass(hook.BeatEvery)
+		for n, b := range r.beatAfter(t, "srv", next, hook.DownAfter) {
+			_, err := r.s.Answer(ctx, n, b.Nonce, "session")
+			require.NoError(t, err)
+		}
+	}
 	r.pass(hook.BeatEvery)
-	cur := r.beat(t, "srv", next)["ada"].Nonce
+	cur := r.beatAfter(t, "srv", next, hook.DownAfter)
 	rows := []struct {
 		name  string
+		as    string
 		nonce string
-		pass  time.Duration
 		want  error
+		says  string
 	}{
-		{"another nonce", "nope", 0, hook.ErrWrongNonce},
-		{"the last interval's nonce", old, 0, hook.ErrWrongNonce},
-		{"the current nonce past its interval", cur, hook.BeatEvery + time.Second, hook.ErrExpired},
+		{"another nonce", "ada", "nope", hook.ErrWrongNonce, "(the window: 5m0s)"},
+		{"older than the window", "ada", first["ada"].Nonce, hook.ErrWrongNonce, "(the window: 5m0s)"},
+		{"another name's nonce", "ada", cur["bob"].Nonce, hook.ErrWrongNonce, "within its down-after window"},
 	}
 	for _, row := range rows {
-		r.pass(row.pass)
-		_, err := r.s.Answer(ctx, "ada", row.nonce, "session")
+		_, err := r.s.Answer(ctx, row.as, row.nonce, "session")
 		assert.ErrorIs(t, err, row.want, row.name)
+		assert.ErrorContains(t, err, row.says, row.name)
 	}
+	r.pass(hook.DownAfter + time.Second)
+	_, err := r.s.Answer(ctx, "ada", cur["ada"].Nonce, "session")
+	assert.ErrorIs(t, err, hook.ErrExpired, "the current nonce past its window")
+
+	_, _, err = r.s.Arm(ctx, "bob", hook.Comms, "test", true)
+	require.NoError(t, err)
 	r.Hook(t, "bob", hook.Comms)
-	fresh := r.beat(t, "srv", next)["bob"].Nonce
-	_, err := r.s.Answer(ctx, "bob", fresh, "session")
+	fresh := r.beatAfter(t, "srv", next, hook.DownAfter)["bob"].Nonce
+	_, err = r.s.Answer(ctx, "bob", cur["bob"].Nonce, "session")
+	assert.ErrorIs(t, err, hook.ErrWrongNonce, "a nonce of an earlier epoch")
+	_, err = r.s.Answer(ctx, "bob", fresh, "session")
 	require.NoError(t, err)
 	_, err = r.s.Answer(ctx, "bob", fresh, "session")
 	assert.ErrorIs(t, err, hook.ErrNoChallenge, "an answered challenge is spent")
+}
+
+// TestALateDeliveredNonceProves pins the proof window (tla/HookBeat.tla,
+// AnswerIssued; WitnessProveOlder): a nonce issued an interval ago answers
+// after a newer challenge was issued, says which challenge it matched and
+// when it was issued, counts as an answer now (misses cleared, answered_at
+// now), leaves the newer challenge standing for its own answer, and is
+// spent: the same nonce again is refused.
+func TestALateDeliveredNonceProves(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	next := nonces()
+	old := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+	_, at, err := r.s.Read(ctx, "ada")
+	require.NoError(t, err)
+	r.pass(hook.BeatEvery)
+	cur := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+	require.Equal(t, 1, cur.Misses)
+	r.pass(50 * time.Second)
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, cur.Epoch, "hook"), "its holder's renewal")
+
+	p, err := r.s.AnswerProof(ctx, "ada", old.Nonce, "session")
+	require.NoError(t, err, "a nonce issued one interval ago answers after a newer one was issued")
+	assert.Equal(t, hook.Proof{Proven: 1, Back: 1, Issued: at}, p)
+	st, now, err := r.s.Read(ctx, "ada")
+	require.NoError(t, err)
+	assert.Equal(t, now, st[0].AnswerAt, "the answer counts at the time of the proof")
+	assert.Zero(t, st[0].Misses)
+
+	_, err = r.s.Answer(ctx, "ada", old.Nonce, "session")
+	assert.ErrorIs(t, err, hook.ErrWrongNonce, "a nonce answered once is spent")
+	p, err = r.s.AnswerProof(ctx, "ada", cur.Nonce, "session")
+	require.NoError(t, err, "the newer challenge still stands")
+	assert.Equal(t, 0, p.Back)
+}
+
+// TestAFriendProvingOneIntervalLateStaysUp pins the bug the window fixes: a
+// harness that hands every challenge to the model 50 s late, after the server
+// issued the next one, proves each nonce it was handed; under the default
+// down-after the name is never unhooked and never reads down. Before the
+// window every such proof was refused, and the name went down.
+func TestAFriendProvingOneIntervalLateStaysUp(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	next := nonces()
+	handed := ""
+	for i := range 12 {
+		b := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+		require.Equal(t, hook.BeatChallenged, b.Did, "interval %d", i)
+		r.pass(50 * time.Second)
+		if handed != "" {
+			p, err := r.s.AnswerProof(ctx, "ada", handed, "session")
+			require.NoError(t, err, "interval %d", i)
+			assert.Equal(t, 1, p.Back, "interval %d: the challenge before the newest", i)
+		}
+		handed = b.Nonce
+		r.pass(10 * time.Second)
+		require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, b.Epoch, "hook"), "its holder's renewal")
+		st := r.state(t, "ada")
+		require.Equal(t, hook.StateProven, st.State, "interval %d", i)
+		require.Empty(t, st.Down, "interval %d", i)
+	}
+	assert.Zero(t, r.events(t), "never unhooked")
 }
 
 // TestARoleWithNoBusPushIsNeverChallenged pins who the heartbeat asks: a
@@ -189,7 +298,7 @@ func (r *rig) passAll(t *testing.T, by string, next func() string) hook.Passed {
 	t.Helper()
 	names, err := r.s.Names(context.Background())
 	require.NoError(t, err)
-	got, err := r.s.Pass(context.Background(), names, hook.BeatEvery, hook.MissLimit, next, by)
+	got, err := r.s.Pass(context.Background(), names, hook.BeatEvery, testDownAfter, next, by)
 	require.NoError(t, err)
 	return got
 }
@@ -334,8 +443,8 @@ func TestNoServerOrNoAnswerIsNoEvidence(t *testing.T) {
 
 // TestAStaleAnswerIsDownWithAFreshServer pins the answer's own window
 // (tla/HookBeat.tla; the model's BadUpAfterOutage): with the server passing
-// every interval, a name whose last answer is older than two intervals by the
-// store's TIME reads down, though it is still hooked.
+// every interval, a name whose last answer is older than the server's
+// down-after by the store's TIME reads down, though it is still hooked.
 func TestAStaleAnswerIsDownWithAFreshServer(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -343,19 +452,46 @@ func TestAStaleAnswerIsDownWithAFreshServer(t *testing.T) {
 	r.Hook(t, "ada", hook.Comms)
 	want := hook.Want{Name: "ada", Need: []hook.Push{hook.Bus}}
 	next := nonces()
-	b := r.beat(t, "srv", next)["ada"]
+	b := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
 	_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
 	require.NoError(t, err)
 	r.pass(hook.BeatEvery)
-	r.beat(t, "srv", next) // answered nothing since
+	r.beatAfter(t, "srv", next, hook.DownAfter) // answered nothing since
 	r.pass(hook.BeatEvery)
-	r.beat(t, "srv", next)
+	r.beatAfter(t, "srv", next, hook.DownAfter)
 	r.Hook(t, "ada", hook.Comms) // its holder's renewal only
-	require.NoError(t, r.Client.HSet(ctx, hook.RecordKey("ada"), "answered_at", r.state(t, "ada").BeatAt.Add(-2*hook.BeatEvery).UnixMilli()).Err())
-	require.NoError(t, r.s.Gate(ctx, want), "two intervals exactly: up")
+	require.NoError(t, r.Client.HSet(ctx, hook.RecordKey("ada"), "answered_at", r.state(t, "ada").BeatAt.Add(-hook.DownAfter).UnixMilli()).Err())
+	require.NoError(t, r.s.Gate(ctx, want), "the down-after exactly: up")
 	r.pass(time.Second)
 	var refusal *hook.Refusal
 	require.ErrorAs(t, r.s.Gate(ctx, want), &refusal)
 	assert.Contains(t, refusal.Why, hook.NoAnswerReason)
 	assert.Equal(t, hook.StateProven, r.state(t, "ada").State, "hooked and proven all the same: only the evidence is old")
+}
+
+// TestDownAfterIsTheReadersWindow pins that the readers' up (Served.Down)
+// uses the server's down-after, written on its row by every pass, and two
+// intervals for a row an older server wrote without one: a name the server
+// keeps hooked does not read down in between.
+func TestDownAfterIsTheReadersWindow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	names, err := r.s.Names(ctx)
+	require.NoError(t, err)
+	_, err = r.s.Pass(ctx, names, hook.BeatEvery, hook.DownAfter, nonces(), "srv")
+	require.NoError(t, err)
+	sv, err := r.s.Serve(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, hook.DownAfter, sv.DownAfter)
+	assert.Equal(t, hook.DownAfter, sv.Window())
+	st := hook.Status{Name: "ada", Role: hook.Comms, AnswerAt: sv.Now.Add(-4 * time.Minute)}
+	assert.Empty(t, sv.Down(st), "answered four minutes ago, under a five-minute down-after: up")
+	st.AnswerAt = sv.Now.Add(-hook.DownAfter - time.Second)
+	assert.Equal(t, hook.NoAnswerReason, sv.Down(st))
+	require.NoError(t, r.Client.HDel(ctx, hook.ServeKey, "down_after").Err())
+	sv, err = r.s.Serve(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2*hook.BeatEvery, sv.Window(), "an older server's row: its own two intervals")
 }

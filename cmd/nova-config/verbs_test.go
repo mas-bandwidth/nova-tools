@@ -39,8 +39,9 @@ func words(line string) []string {
 }
 
 // Every kind's worked examples, the ones each verb's -h prints, run as
-// printed and in order on one --file store, each exiting 0; the rows another
-// row names are let go first, as a reader would.
+// printed and in order on one --file store. Route writes commit but exit 1
+// with NOT-APPLIED because this offline example has no fleet copy endpoint;
+// the other verbs exit 0. Referenced rows are let go first.
 func TestEveryKindsExamplesRunInOrder(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
@@ -50,8 +51,14 @@ func TestEveryKindsExamplesRunInOrder(t *testing.T) {
 		args := words(line)
 		require.Equal(t, "nova-config", args[0], line)
 		code, out, errs := h.run(t, args[1:]...)
-		assert.Equal(t, 0, code, "%s\nstdout: %s\nstderr: %s", line, out, errs)
-		assert.Empty(t, errs, line)
+		if args[1] == "route" && (args[2] == "add" || args[2] == "set" || args[2] == "remove") {
+			assert.Equal(t, 1, code, "%s\nstdout: %s\nstderr: %s", line, out, errs)
+			assert.Contains(t, errs, "CONFIG NOT-APPLIED kind=route")
+			assert.Contains(t, errs, "run: nova-config apply --kind route --actor a1 --file try.json")
+		} else {
+			assert.Zero(t, code, "%s\nstdout: %s\nstderr: %s", line, out, errs)
+			assert.Empty(t, errs, line)
+		}
 	}
 	step(toolExamples["migrate"])
 	clear := []string{

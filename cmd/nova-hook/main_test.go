@@ -28,6 +28,7 @@ type rig struct {
 	clock  time.Time
 	cancel context.CancelFunc
 	nonces int
+	home   string // HOME as the tool reads it: a test's own directory
 	// failTells makes every judgment and told message fail to send, as a bus
 	// that does not answer would; challenges still go out.
 	failTells atomic.Bool
@@ -40,7 +41,7 @@ func newRig(t *testing.T) *rig {
 	t.Helper()
 	h := hooktest.New(t)
 	require.NoError(t, h.Client.SAdd(context.Background(), "friends", "ada", "bob").Err())
-	return &rig{h: h, clock: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
+	return &rig{h: h, home: t.TempDir(), clock: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
 }
 
 // TestHookHelpClarifiesEnforcementScope pins the distinction between a strict
@@ -84,6 +85,9 @@ func (r *rig) world() world {
 		getenv: func(k string) string {
 			if k == bus.RedisEnv {
 				return "127.0.0.1:6379"
+			}
+			if k == "HOME" {
+				return r.home
 			}
 			return ""
 		},
@@ -250,6 +254,44 @@ func (s *streamOut) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// TestProveSaysWhichChallengeItMatched pins prove's reply under the proof
+// window (tla/HookBeat.tla, AnswerIssued): a nonce handed late, after the
+// heartbeat issued a newer one, proves and says matched=1-back with its issue
+// time; one older than the window is FAILED naming the window.
+func TestProveSaysWhichChallengeItMatched(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Comms)
+	ctx := context.Background()
+	n := 0
+	nonce := func() string { n++; return "nonce" + strings.Repeat("x", n) }
+	pass := func() string {
+		p, err := r.h.Store.Pass(ctx, []string{"ada"}, hook.BeatEvery, hook.DownAfter, nonce, "test")
+		require.NoError(t, err)
+		require.Len(t, p.Beats, 1)
+		return p.Beats[0].Nonce
+	}
+	ancient := pass()
+	for range 6 {
+		r.h.Pass(hook.BeatEvery)
+		r.h.Hook(t, "ada", hook.Comms)
+		pass()
+	}
+	r.h.Pass(hook.BeatEvery)
+	r.h.Hook(t, "ada", hook.Comms)
+	handed := pass()
+	r.h.Pass(hook.BeatEvery)
+	r.h.Hook(t, "ada", hook.Comms)
+	pass()
+	r.h.Pass(50 * time.Second)
+	cli := r.cli()
+	cli.Do(t, "prove", "--as", "ada", "--nonce", handed).Exit(0).Out("PROVE OK proven=1 state=proven role=comms matched=1-back issued=2026-10-11T12:07:00Z")
+	res := cli.Run("prove", "--as", "ada", "--nonce", ancient)
+	assert.Equal(t, 1, res.Code)
+	assert.Contains(t, res.Stdout+res.Stderr, "PROVE FAILED: the nonce is not the one the challenge asked")
+	assert.Contains(t, res.Stdout+res.Stderr, "(the window: 5m0s)")
+}
+
 // TestTheHookStreamsPushesUntilASignal pins the loop: it prints the challenge,
 // the session answers it from the stream, a message to the name is printed as
 // a push, and a signal stops it at exit 0 with the record proven.
@@ -304,7 +346,7 @@ func TestTheHookEndsWhenUnhookedUnderIt(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, out.all.String()+errb.String(), "ada was unhooked under this hook")
 	assert.Contains(t, out.all.String()+errb.String(), "; run: nova-hook hook --as ada --role coordinator")
-	assert.Contains(t, out.all.String(), "the sprint push is held by: nova-sprint hook --as ada")
+	assert.Contains(t, out.all.String(), "the sprint push is held by: the sprint's server (nova-sprint run), which holds it for the coordinator while it runs and reaches the bus")
 	assert.Equal(t, hook.StateUnhooked, r.h.State(t, "ada").State, "the hook wrote nothing after the unhook")
 }
 

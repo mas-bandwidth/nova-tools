@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
@@ -48,11 +49,29 @@ func TestMuseHarnessInstallsApprovesAndArms(t *testing.T) {
 	assert.Equal(t, 1, res.Code, res.Stdout+res.Stderr) // armed and live, not proven: the model still proves
 	out := res.Stdout + res.Stderr
 	assert.Contains(t, out, "HOOK STATE state=muse-installed plugin=nova-hook capability=nova-hook:hook:pending-challenges")
-	assert.Contains(t, out, "wake_delay_ms=0 on each Monitor call")
+	assert.Contains(t, out, `Monitor(command="nova-hook hook --as ada --role comms --harness Muse", wake_delay_ms=0)`)
+	assert.Contains(t, out, `Monitor(command="nova-bus recv --as ada --forever --exec '<deliver-into-session>'", wake_delay_ms=0)`)
+	assert.Contains(t, out, "wake_delay_ms has no persistent store in Muse, so nothing is stored")
 	calls, err := os.ReadFile(logPath)
 	require.NoError(t, err)
 	assert.Equal(t, "plugins install "+bundle+"\nplugins approve nova-hook:hook:pending-challenges\n", string(calls))
 	assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State)
+}
+
+// TestMuseWakeNoteAndBundleReadmeSpellBothMonitors pins that the wake
+// instruction is identical in shape in code and in the bundle README: both
+// Monitor commands, each with wake_delay_ms=0, and no vague per-Monitor note.
+func TestMuseWakeNoteAndBundleReadmeSpellBothMonitors(t *testing.T) {
+	t.Parallel()
+	note := museWakeNote("ada", "comms")
+	assert.Contains(t, note, `Monitor(command="nova-hook hook --as ada --role comms --harness Muse", wake_delay_ms=0)`)
+	assert.Contains(t, note, `Monitor(command="nova-bus recv --as ada --forever --exec '<deliver-into-session>'", wake_delay_ms=0)`)
+	assert.Equal(t, 2, strings.Count(note, "Monitor(command="))
+	readme, err := os.ReadFile(filepath.Join(museBundleDir(t), "README.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(readme), `Monitor(command="nova-hook hook --as <name> --role <role> --harness Muse", wake_delay_ms=0)`)
+	assert.Contains(t, string(readme), `Monitor(command="nova-bus recv --as <name> --forever --exec '<deliver-into-session>'", wake_delay_ms=0)`)
+	assert.NotContains(t, string(readme), "pass `wake_delay_ms=0` on each Monitor call")
 }
 
 // TestMuseInstallFailureRefusesBeforeArming pins that a Muse CLI refusal
@@ -85,25 +104,21 @@ func TestMuseHarnessRefusals(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "no Muse CLI call before validation passes")
 }
 
-// TestPendingPrintsChallengesAndAlwaysExitsZero runs the pending verb
-// against a fake nova-bus: pending challenge lines print one per line,
-// stdin is discarded, and a missing bus still exits 0 with no output.
-func TestPendingPrintsChallengesAndAlwaysExitsZero(t *testing.T) {
+// TestPendingPrintsTheOnePendingNoticeAndAlwaysExitsZero runs the pending
+// verb: the one line the hook left prints once, stdin is discarded, and no
+// notice prints nothing at exit 0.
+func TestPendingPrintsTheOnePendingNoticeAndAlwaysExitsZero(t *testing.T) {
 	t.Parallel()
-	binDir := t.TempDir()
-	busPath := filepath.Join(binDir, "nova-bus")
-	busScript := "#!/bin/sh\n" +
-		"printf '%s\\n' 'PEEK OK pending=1 new=1' 'PEEK MESSAGE state=pending id=1-0 from=bob subject=\"HOOK CHALLENGE nonce=abc123\"' 'PEEK MESSAGE state=new id=2-0 from=bob subject=\"hello\"'\n"
-	require.NoError(t, os.WriteFile(busPath, []byte(busScript), 0o755))
-
-	cli := newRig(t).cli()
-	res := cli.RunIn(`{"tool":"x"}`, "pending", "--bus", busPath, "--as", "ada")
-	assert.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
-	assert.Contains(t, res.Stdout, "PEEK MESSAGE state=pending id=1-0 from=bob subject=\"HOOK CHALLENGE nonce=abc123\"")
-	assert.Contains(t, res.Stdout, "PEEK MESSAGE state=new id=2-0 from=bob subject=\"hello\"")
-	assert.NotContains(t, res.Stdout, "PEEK OK")
-
-	res = cli.RunIn(`{"tool":"x"}`, "pending", "--bus", filepath.Join(binDir, "missing-bus"), "--as", "ada")
+	r := newRig(t)
+	cli := r.cli()
+	res := cli.RunIn(`{"tool":"x"}`, "pending", "--as", "ada")
 	assert.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
 	assert.Empty(t, res.Stdout)
+
+	dir := museNotices(r.home, "ada")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pending"), []byte("nova-hook notice: read /x/n1.json\n"), 0o600))
+	res = cli.RunIn(`{"tool":"x"}`, "pending", "--as", "ada")
+	assert.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Equal(t, "nova-hook notice: read /x/n1.json\n", res.Stdout)
 }

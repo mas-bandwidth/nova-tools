@@ -29,8 +29,8 @@ type CardRunner interface {
 
 // RunsCards says harness runs each card as a process of its own (a
 // CardRunner) when its row is one-shot: it has no session to push a turn
-// into, so install and run owe it no deliver-command refusal; its session
-// check goes in by the folder (FolderCheck) for a live session to answer.
+// into, so install and run owe it no deliver-command refusal. The session's
+// nova-hook owns delivery and proof independently of these lane processes.
 // NewDeliverer answers its batch adapter, the wake file (ClaudeWake);
 // NewClaude is the one that runs cards.
 func RunsCards(harness string) bool { return harness == "claude" }

@@ -15,15 +15,15 @@ import (
 
 // A step applies every ended result already waiting: one select took at most one, so
 // k lanes that ended together were seen over k beats (and their lanes held that long).
-// The step now drains the batch, lane and read channels, and the outbox finishes, until
+// The step now drains the lane and read channels, and the outbox finishes, until
 // none has a value, capped by maxStepResults, so the daemon's state stays single-writer.
 func TestAStepAppliesEveryEndedLaneResultWaitingOnTheChannels(t *testing.T) {
 	t.Parallel()
 	d := &Daemon{Friend: "bob", SaveLanes: func(LaneState) error { return nil }, Record: func(string) {}}
 	l := &loop{d: d, ctx: context.Background(),
-		results: make(chan result, 1), outboxRes: make(chan outboxResult, 8),
-		lanes: &laneSet{results: make(chan laneResult, 8), state: LaneState{Sessions: map[int]string{}}},
-		reads: newReadSet()}
+		outboxRes: make(chan outboxResult, 8),
+		lanes:     &laneSet{results: make(chan laneResult, 8), state: LaneState{Sessions: map[int]string{}}},
+		reads:     newReadSet()}
 	for n := 1; n <= 4; n++ {
 		l.lanes.results <- laneResult{ln: &lane{n: n}, open: true, session: fmt.Sprintf("ses_%d", n)}
 	}

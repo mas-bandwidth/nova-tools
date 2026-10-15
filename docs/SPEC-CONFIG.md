@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `roles`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `pronouns` |
+| friend (decided for her) | `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `pronouns`, `session` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -239,6 +239,7 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `streams` | text, comma-separated glob patterns; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose stream matches one of these patterns, and `add` and `brief` refuse a card naming her whose stream matches none; an empty list is any stream. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` streams |
 | `kinds` | list of card KIND values; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose `KIND:` is one of these, and `add` and `brief` refuse a card naming her whose `KIND:` is none of them; an empty list is any kind. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` kinds |
 | `pronouns` | enum: she/her, he/him, they/them. A stated value is the stored word and list/show prints it bare (`pronouns=she/her`). An empty value (SQL NULL) is unstated: it reads they/them and list/show prints `pronouns=they/them(unstated)`. A stored they/them stays stated and prints bare. Add without `--pronouns` stores empty, which is unstated. A set that names other fields leaves the stored value | | nova-friend run and install (`--pronouns`, written into the agent) and the beat's `row_pronouns=`: the pronouns every text the daemon writes about the friend says, rendered through one helper (`Pronouns.Say` in pkg/friend). Pronouns are read, never inferred: an unstated row goes by they/them, and no text calls a friend "it". Migration 0038 adds the column NOT NULL DEFAULT they/them. Migration 0044 drops NOT NULL and the default and rewrites no row, so every row from before 0044 keeps the value it holds | `friend:<f>:desired` pronouns |
+| `session` | enum: live, one-shot; live by default | | nova-sprint friend sync, onto her friends row, and nova-bus. live is a friend with a session between cards, on the psychic link, worked by her friend lane. one-shot is a friend with none (the owner, 2026-10-14: "one shots are really just... exactly the same as fleet machines running cards, with the extra prompt"): she runs as an ordinary fleet member lane on her row, `nova-swarm member --as friend.<name> --prompt <identity file>` (docs/SPEC-SWARM.md, member), her status is that member's beat by the fleet's rule, her finishes are credited to her row by the server's claim, and no daemon, hook, lease or presence record is hers: the sprint refuses `friend beat` and a lane's take for her, and nova-bus refuses a send naming her (`one_shot`, docs/SPEC-BUS.md). Not `mode`: mode is how a lane hands a card, session is whether she has a session. Migration 0045 adds the column NOT NULL DEFAULT live, so every row stored before reads live | `friend:<f>:desired` session |
 
 A friend row may restrict the work the sprint deals her: `streams` is a
 comma-separated list of glob patterns over stream names, and `kinds` is a
@@ -623,6 +624,25 @@ global ids, so they rise across kinds and never repeat.
 `HISTORY` line each, with what changed.
 
 ## Apply
+
+Route `add`, `set` and `remove` commit the permanent write and its history,
+then apply the route kind in the same command through `config.Apply`. The
+copy endpoint comes from the fleet row's `store` and `redis_port`, regardless
+of an ambient Redis address. A route-only `apply --kind route` likewise
+uses the fleet endpoint unless `--redis` explicitly overrides it; a missing
+fleet endpoint refuses without falling back to an environment address. A successful copy prints `CONFIG APPLY` with
+its revision. A failure leaves the write and history committed, prints
+`CONFIG NOT-APPLIED kind=route rev=<n> applied=<m>` and the exact
+`nova-config apply --kind route ...` command with the actor, store selection
+and resolved Redis endpoint, and exits 1. `applied=-1` means the copy's
+revision could not be read; it never claims zero for an unreachable copy.
+The reason retains any prerequisite repair, such as pricing an enabled
+route or declaring the fleet endpoint. JSON carries the same outcome,
+revision and remedy in the write's single result. `--dry-run` opens no copy
+and writes nothing. Other kinds and `route prices --refresh` retain their
+explicit-apply behavior. The command-completion rule is
+`tla/ConfigApply.tla: NoSilentUnappliedWrite`; existing apply invariants still
+hold.
 
 `nova-config apply [--kind <k>] [--check]` runs per kind, in kind order
 (`KindNames`): machines (the ceilings), the fleet row (a friend with no beat

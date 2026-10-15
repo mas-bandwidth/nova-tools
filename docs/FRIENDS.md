@@ -26,20 +26,23 @@ without `REPORT.md`, and done once `REPORT.md` exists.
 A friend is up or down from her hook record in the bus Redis (`hook:rec:<name>`,
 docs/SPEC-HOOK.md), never from a daemon beat, a process check, or a ping script:
 
-- Her daemon (`nova-friend run --as <name>`) holds her `bus` and `work` leases
-  (`comms` under `--notifications-only`).
+- Her session's `nova-hook hook --as <name> --role friend --harness <h>` holds
+  her `bus` push; her daemon (`nova-friend run --as <name>`), while it runs her
+  lanes, holds her `work` lease.
 - `nova-hook serve` challenges every hooked friend once a minute with a bus
-  message (`HOOK CHALLENGE nonce=<n>`), delivered into her session through her
-  harness adapter.
+  message (`HOOK CHALLENGE nonce=<n>`), delivered into her session by her
+  session's `nova-hook hook` (pkg/harness/notice, the one delivery path).
 - Her session answers from inside its own turn with
   `nova-hook prove --as <name> --nonce <n>`, proving both `bus` and `work`.
-- Two missed challenges in a row unhook her (`missed 2 challenges`) and send one
+- No answer for more than five minutes (`nova-hook serve --down-after`) unhooks her at her next missed
+  challenge (`no answer in 5m0s (<n> challenges missed)`) and send one
   coalesced judgment (`FRIEND DOWN <name>: <reason>`) to the coordinator. While
   down or unhooked, `nova-bus send` refuses deliveries to her and her lanes take
   no work.
 - `nova-hook friends [--json]` and `nova-hook status --as <name>` read presence
-  directly from the hook record. The per-friend beat loops, `nova-friend ping` /
-  `pong`, and `SESSION CHECK` files are retired with no replacement.
+  directly from the hook record. The per-friend beat loops, the coordinator's
+  ping verbs and keepalive loop, and the daemon's `SESSION CHECK` presence are
+  retired with no replacement (internal/ci/testdata/retired-presence.txt).
 
 ## Her harness's settings: `nova-friend install` writes them
 

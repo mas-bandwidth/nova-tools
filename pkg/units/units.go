@@ -18,7 +18,8 @@ import (
 	"time"
 )
 
-// The labels seat install and friend sync install already write. They live here so the
+// The labels of the seat's retired push loop (seat uninstall removes its unit where an
+// older build installed it; v1.3.6) and of friend sync install. They live here so the
 // kind table and those verbs name one file, and so this package does not import
 // internal/sprint (a worker's binary may import this package, and internal/sprint
 // reaches the store).
@@ -73,7 +74,8 @@ type UnitKind struct {
 
 // UnitKinds is every unit a running sprint needs on its coordinator's machine, in the
 // order a machine is brought up: the store and the bus, the server, its member, the
-// seat's loops, then the machine's upkeep.
+// seat's loops, then the machine's upkeep. (The seat's push loop is retired, v1.3.6: the
+// server sends the coordinator's judgments to its name on the bus.)
 var UnitKinds = []UnitKind{
 	{Kind: "store", Label: "nova-redis.store", Service: "nova-redis-store.service", Tool: "nova-redis", Verb: []string{"serve"},
 		Install: "nova-redis install store", What: "the sprint's store, a Redis server (nova-redis serve)"},
@@ -83,8 +85,6 @@ var UnitKinds = []UnitKind{
 		Install: "nova-sprint install server", What: "the sprint's server and its loop (nova-sprint run --listen)"},
 	{Kind: "member", Label: "nova-sprint.member", Service: "nova-sprint-member.service", Tool: "nova-swarm", Verb: []string{"member"},
 		Install: "nova-sprint install member", What: "this machine's fleet member (nova-swarm member)"},
-	{Kind: "seat-push", Label: SeatLabel, Service: SeatService, Tool: "nova-sprint", Verb: []string{"inbox", "--wait", "--push", "seat"},
-		Install: "nova-sprint install seat-push", What: "the seat's push loop (nova-sprint inbox --wait --push seat)"},
 	{Kind: "friend-sync", Label: FriendSyncLabel, Service: FriendSyncService, Tool: "nova-sprint", Verb: []string{"friend", "sync", "--every"},
 		Install: "nova-sprint install friend-sync", What: "the friend sync loop (nova-sprint friend sync --every)"},
 	{Kind: "table", Label: "nova-sprint.table", Service: "nova-sprint-table.service", Tool: "nova-sprint", Verb: []string{"where", "--watch"},
@@ -353,7 +353,7 @@ func (in Installer) Remove(path string) (Result, error) {
 }
 
 // InstallUnit writes the unit into the installer's directory unless the file there is
-// already this text, and loads it either way, as Install does the push loop's.
+// already this text, and loads it either way.
 func (in Installer) Install(u ServiceUnit) (Result, error) {
 	text, err := u.Text()
 	if err != nil {

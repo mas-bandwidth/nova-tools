@@ -56,9 +56,9 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 	coord := bustest.NewFake(now, "coord", "bob")
 	clock := &limitClock{t: now}
 	var downs, judged, ups []string
-	l := &Limits{Now: clock.now, Harness: "claude", Rest: time.Hour, Nonce: func() string { return "w4k3up" },
+	l := &Limits{Now: clock.now, Harness: "claude", Rest: time.Hour,
 		Down: func(until time.Time, reason string) { downs = append(downs, until.UTC().Format(time.RFC3339)) },
-		Up:   func(string) { ups = append(ups, "up") },
+		Up:   func() { ups = append(ups, "up") },
 		Unread: func(text string) {
 			judged = append(judged, text)
 			subject, body := LimitUnreadText("bob", DefaultPronouns, time.Hour, text)
@@ -67,8 +67,8 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 		},
 	}
 	se := &scriptExec{
-		outs:  []string{"You've hit your weekly limit · resets Oct 10 at 5am (America/New_York)\n", "w4k3up\n", "done\n"},
-		exits: []int{1, 0, 0},
+		outs:  []string{"You've hit your weekly limit · resets Oct 10 at 5am (America/New_York)\n", "done\n"},
+		exits: []int{1, 0},
 	}
 	d := l.Gate(&OpenCode{Dir: "/w/bob", Session: "s1", Run: l.Watch(se.run)})
 	_, err = d.Deliver(context.Background(), "card")
@@ -84,15 +84,15 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 
 	clock.t = time.Date(2026, 10, 10, 5, 0, 1, 0, ny).UTC()
 	_, err = d.Deliver(context.Background(), "card")
-	require.NoError(t, err, "back at the reset by herself: the wake, then the card")
+	require.NoError(t, err, "back at the reset by herself: the card goes in, no wake turn")
 	assert.Equal(t, []string{"up"}, ups)
-	require.Len(t, se.texts, 3)
-	assert.Equal(t, "card", se.texts[2])
+	require.Len(t, se.texts, 2)
+	assert.Equal(t, "card", se.texts[1])
 
 	// a message with no readable reset: held for the rest, one judgment naming the text,
-	// not said again while the wakes keep meeting the same wall
+	// not said again while the turns after each rest keep meeting the same wall
 	unread := "You've hit your weekly limit · resets whenever\n"
-	se2 := &scriptExec{outs: []string{unread, unread, unread, "w4k3up\n", "done\n"}, exits: []int{1, 1, 1, 0, 0}}
+	se2 := &scriptExec{outs: []string{unread, unread, unread, "done\n"}, exits: []int{1, 1, 1, 0}}
 	d = l.Gate(&OpenCode{Dir: "/w/bob", Session: "s1", Run: l.Watch(se2.run)})
 	start := clock.t
 	_, err = d.Deliver(context.Background(), "card")
@@ -103,7 +103,7 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		clock.t = start.Add(time.Duration(i)*time.Hour + time.Second)
 		_, err = d.Deliver(context.Background(), "card")
-		require.ErrorAs(t, err, &deferred, "the wake meets the same wall")
+		require.ErrorAs(t, err, &deferred, "the turn after the rest meets the same wall")
 	}
 	require.Equal(t, []string{"You've hit your weekly limit · resets whenever"}, judged, "one judgment, naming the text")
 	pending, fresh, err := (&bus.Bus{Store: coord}).Peek(context.Background(), "coord")
@@ -115,7 +115,7 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 
 	clock.t = start.Add(3*time.Hour + time.Second)
 	_, err = d.Deliver(context.Background(), "card")
-	require.NoError(t, err, "a wake answered ends the hold")
+	require.NoError(t, err, "a turn that runs clean ends the hold")
 	_, _, limited = l.Limited()
 	assert.False(t, limited)
 
@@ -124,4 +124,89 @@ func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
 	_, err = d.Deliver(context.Background(), "card")
 	require.ErrorAs(t, err, &deferred)
 	assert.Len(t, judged, 2, "a new hold after she was up is a new judgment")
+}
+
+// A limit's reset diagnostic belongs to the same episode notice. A funds
+// refusal delegates to the spend cap, which emits its own single judgment.
+func TestALimitEpisodeEmitsOneComposedNotice(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, text string
+		funds      bool
+		unread     bool
+	}{
+		{"known reset", "You've hit your weekly limit · resets Oct 10 at 5am (America/New_York)", false, false},
+		{"unknown reset", "You've hit your weekly limit · resets whenever", false, true},
+		{"funds", "Credit balance is too low", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			notices, funds := 0, 0
+			now := t0
+			l := &Limits{Now: func() time.Time { return now }, Harness: "claude"}
+			l.Notice = func(_ time.Time, _ string, unread bool) { notices++; assert.Equal(t, tc.unread, unread) }
+			l.Funds = func(string) { funds++ }
+			l.see(tc.text, true)
+			now = now.Add(time.Second)
+			l.see(tc.text, true)
+			assert.Equal(t, 1, notices+funds, "one message for the episode, even with unread reset evidence")
+			assert.Equal(t, tc.funds, funds == 1)
+			now = l.until.Add(time.Second)
+			l.Limited()
+			l.see("done", false)
+			l.see(tc.text, true)
+			assert.Equal(t, 2, notices+funds, "a later hold after recovery starts a new episode")
+		})
+	}
+}
+
+// In-flight lanes can learn a later reset during a hold. State and down beats
+// extend immediately, while the coordinator still receives one episode notice.
+func TestLimitHoldExtendsWithoutASecondNotice(t *testing.T) {
+	t.Parallel()
+	now := t0
+	notices, downs := 0, 0
+	l := &Limits{Now: func() time.Time { return now }, Harness: "claude",
+		Notice: func(time.Time, string, bool) { notices++ },
+		Down:   func(time.Time, string) { downs++ },
+	}
+	l.see("You've hit your usage limit. Try again in 1 hour.", true)
+	first, _, held := l.Limited()
+	require.True(t, held)
+	now = now.Add(time.Second)
+	l.see("You've hit your usage limit. Try again in 3 hours.", true)
+	later, _, held := l.Limited()
+	assert.True(t, held)
+	assert.True(t, later.After(first))
+	assert.Equal(t, 1, notices)
+	assert.Equal(t, 2, downs, "the down state refreshes even though the notice is deduplicated")
+}
+
+func TestLimitFundsEscalationStillHaltsAndNotifiesOnce(t *testing.T) {
+	t.Parallel()
+	for _, initial := range []string{
+		"You've hit your usage limit. Try again in 1 hour.",
+		"Insufficient AI Credits. Your credits will refresh in 10 minutes.",
+	} {
+		t.Run(initial, func(t *testing.T) {
+			t.Parallel()
+			now := t0
+			notices, funds := 0, 0
+			l := &Limits{Now: func() time.Time { return now }, Harness: "claude",
+				Notice: func(time.Time, string, bool) { notices++ },
+				Funds:  func(string) { funds++ },
+			}
+			l.see(initial, true)
+			require.Equal(t, 1, notices)
+			for range 2 {
+				now = now.Add(time.Second)
+				l.see("Credit balance is too low", true)
+			}
+			assert.Equal(t, 1, notices)
+			assert.Equal(t, 1, funds, "funds hold callback both halts spend and emits its distinct judgment")
+			assert.Equal(t, KindCredits, l.Kind())
+			l.see("You've hit your usage limit. Try again in 1 hour.", true)
+			assert.Equal(t, KindCredits, l.Kind(), "an in-flight timed refusal cannot downgrade credit exhaustion")
+		})
+	}
 }

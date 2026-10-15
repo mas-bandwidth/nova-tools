@@ -46,7 +46,6 @@ func ReachText(step, nonce, friendName, coordinator string) string {
 type reachFX struct {
 	coordinator string
 	Send        func(ctx context.Context, nonce, body string) (id string, err error)
-	DaemonUp    func() (up bool, why string)
 	Push        func(ctx context.Context, body string) error
 	Window      func(ctx context.Context, body string) error
 	Arm         func(ctx context.Context) error
@@ -67,9 +66,9 @@ func (w world) reachVerb() tool.Verb {
 		Effect:    tool.Delivery + ": a bus message, then a push into the session, then the friend's window, stopping at the first proof",
 		DryRun:    true,
 		ExitTable: "0 a proof, 1 no proof, 2 could not run.",
-		Detail: `The ladder that gets a silent friend's attention, stopping at the first proof. The friend is --to, the same shape as ping: a verb other than the default takes no bare word. This verb is reach. see also: nova-friend ping --wake is the coordinator's periodic wake check; reach is this escalation ladder. Each step has one --step-timeout budget (default 60s), including delivery and waiting for a proof: a pong for the nonce the step carries, or any other message from the friend. A daemon-pong is the daemon's own and is not a proof. A pong for another nonce, or a malformed pong, is not an ordinary-message proof.
+		Detail: `The ladder that gets a silent friend's attention, stopping at the first proof. The friend is --to: a verb other than the default takes no bare word. This verb is reach. see also: nova-hook serve's per-minute challenge is the periodic liveness check (nova-hook friends --json reads it); reach is this escalation ladder. Each step has one --step-timeout budget (default 60s), including delivery and waiting for a proof: a pong for the nonce the step carries, or any other message from the friend. A pong for another nonce, or a malformed pong, is not an ordinary-message proof.
 1. bus: a bus message to the friend carrying the nonce and the exact pong line (REACH STEP step=bus sent=<id> nonce=<n>).
-2. push: the daemon pushes a real message into the session as a turn, never a PING. The daemon must be up (its status file read at this step and newer than the stale bound), else the step is skipped (REACH NONE step=push waited=0s: daemon down: <reason>).
+2. push: the harness's deliver command pushes the step's text into the session as a turn (REACH NONE step=push waited=<d>: <why> when the push fails).
 3. window: a tmux-hosted session is typed with send-keys only while the pane is idle. A GUI harness is the app's window, found by its bundle, the message typed into the composer and submitted. That needs the accessibility permission a person grants to this binary. When it is absent the step is refused and the tool does not ask: ` + friend.AccessibilityRemedy + `.
 A proof ends the ladder: REACH PROOF step=<s> after=<duration> by=<pong|message> and REACH OK friend=<f> step=<s>. Exit 0 on that proof. No proof: REACH NONE step=<s> waited=<d> and the ladder climbs. No proof after the steps from --from: REACH FAILED friend=<f> tried=<steps>, Exit 1, and one note of that line on the coordinator's own stream. Exit 2 when it could not run (a flag, a store that did not answer, or the window step without the accessibility permission). --from bus|push|window starts partway up. --dry-run prints REACH DRY-RUN and one REACH STEP per planned step, and sends, pushes and types nothing. --json: facts friend, step (on OK), tried (on FAILED), from and step_timeout (on a dry run), dry_run; items STEP (step, sent, nonce), PROOF (step, after, by), NONE (step, waited, text when skipped). The result line is first, then one line per step in the order it happened.
 example: nova-friend reach --as ada --to bob --dry-run`,
@@ -125,7 +124,7 @@ func (w world) reach(c *tool.Call) *tool.Out {
 		return o // not hooked in: nothing is sent or read (docs/SPEC-HOOK.md)
 	}
 	state := w.reachState(c, to)
-	status, found, _ := friend.ReadStatus(state) // ignored: DaemonUp reads and reports the current status at the push
+	status, found, _ := friend.ReadStatus(state) // ignored: no status names no harness, and --harness is asked for
 	harness := c.Str("harness")
 	if harness == "" && found {
 		harness = status.Harness
@@ -139,24 +138,6 @@ func (w world) reach(c *tool.Call) *tool.Out {
 				return "", err
 			}
 			return m.ID, nil
-		},
-		DaemonUp: func() (bool, string) {
-			// SPEC-FRIEND Reach: bus can consume more than DaemonStale; readiness
-			// belongs to the current push step, not the preflight snapshot.
-			status, found, statusErr := friend.ReadStatus(state)
-			if c.Str("harness") == "" && found {
-				harness = status.Harness
-			}
-			if statusErr != nil {
-				return false, statusErr.Error()
-			}
-			if !found {
-				return false, "no daemon has run (no status file)"
-			}
-			if w.now().Sub(status.At) >= friend.DaemonStale {
-				return false, "the status file is older than " + friend.DaemonStale.String()
-			}
-			return true, ""
 		},
 		Push:   func(ctx context.Context, body string) error { return w.reachPush(ctx, c, harness, to, state, body) },
 		Window: func(ctx context.Context, body string) error { return w.reachWindow(ctx, c, harness, state, to, body) },
@@ -311,12 +292,6 @@ func climb(ctx context.Context, fx reachFX, friendName string, timeout time.Dura
 			}
 			acc.Item("STEP", "step", step, "sent", id, "nonce", nonce)
 		case reachPush:
-			up, why := fx.DaemonUp()
-			if !up {
-				tried = append(tried, step)
-				acc.ItemText("NONE", "daemon down: "+why, "step", step, "waited", "0s")
-				continue
-			}
 			acc.Item("STEP", "step", step, "nonce", nonce)
 			if err := fx.Push(stepCtx, body); err != nil {
 				tried = append(tried, step)
@@ -392,7 +367,7 @@ func reachWith(res, acc *tool.Out) *tool.Out {
 }
 
 // reachProof is a proof from the friend since Arm: a pong for nonce, or any
-// other message. A daemon-pong, a ping, and a pong for another nonce are none.
+// other message. A pong for another nonce is none.
 // cursor is the log tail Arm captured; each poll reads forward from it and
 // advances it, so a log longer than the oldest-window cap still yields a
 // fresh pong.
@@ -409,9 +384,6 @@ func reachProof(ctx context.Context, b *bus.Bus, cursor *string, friendName, non
 				continue
 			}
 			subject := strings.ToLower(strings.TrimSpace(m.Subject))
-			if subject == strings.ToLower(friend.DaemonPongSubject) || strings.HasPrefix(subject, strings.ToLower(friend.PingPrefix)) || strings.HasPrefix(subject, "ping") {
-				continue
-			}
 			if n, _, _, _, ok := friend.ParsePong(strings.TrimSpace(m.Body)); ok {
 				if n == nonce {
 					return "pong", true, nil

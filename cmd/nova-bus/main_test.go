@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,9 @@ type rig struct {
 	// hooked in with its pushes proven (hook_test.go runs the real one).
 	gate  func(ctx context.Context, st bus.Store, want hook.Want) error
 	hooks func(ctx context.Context, st bus.Store, names ...string) ([]hook.Status, time.Time, error)
+	// oneShot are the one-shot friends the applied rows name (nova-config friend
+	// --session one-shot); none by default.
+	oneShot []string
 }
 
 func newRig(names ...string) *rig {
@@ -110,6 +114,15 @@ func (r *rig) world() world {
 				out[i] = hook.Status{Name: n, Role: hook.Friend, State: hook.StateProven}
 			}
 			return out, r.clock, nil
+		},
+		oneShots: func(_ context.Context, _ bus.Store, names ...string) ([]string, error) {
+			var out []string
+			for _, n := range names {
+				if slices.Contains(r.oneShot, n) {
+					out = append(out, n)
+				}
+			}
+			return out, nil
 		},
 		wakeArm: func(_ string, token string) (wakeCursor, error) {
 			if token != "" {

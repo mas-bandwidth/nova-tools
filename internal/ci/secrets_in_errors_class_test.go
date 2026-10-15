@@ -125,14 +125,12 @@ var secretOpeners = map[string]any{
 	"pkg/fleet.ParseWorkload":                     fleet.ParseWorkload,
 	"pkg/friend.NewClaude":                        friend.NewClaude,
 	"pkg/friend.NewDeliverer":                     friend.NewDeliverer,
-	"pkg/friend.NewestCodexSession":               friend.NewestCodexSession,
 	"pkg/friend.NewestConversation":               friend.NewestConversation,
 	"pkg/friend.NewestDSHSession":                 friend.NewestDSHSession,
 	"pkg/friend.ParseHeld":                        friend.ParseHeld,
 	"pkg/friend.ParseJob":                         friend.ParseJob,
 	"pkg/friend.ParseLaneCaps":                    friend.ParseLaneCaps,
 	"pkg/friend.ParseLimit":                       friend.ParseLimit,
-	"pkg/friend.ParsePing":                        friend.ParsePing,
 	"pkg/friend.ParsePong":                        friend.ParsePong,
 	"pkg/friend.ParsePronouns":                    friend.ParsePronouns,
 	"pkg/friend.ParseProfile":                     friend.ParseProfile,
@@ -189,7 +187,6 @@ var secretExempt = map[string]string{
 	"pkg/hostload.ParseLsof":              "built on darwin only, so a test binary on another platform cannot name it",
 	"internal/cairn.Open":                 "writes a session record under the store directory its first string names; driving it would write into the working tree",
 	"pkg/nsprint/testutil.NewLocalRemote": "takes a *testing.T and builds a git remote on disk; it is a test fixture, not an opener of a secret",
-	"pkg/friend.DialCodexAppServer":       "takes the Codex home, a directory path, never a secret; it dials the app-server socket under it",
 	"pkg/bus.OpenRedis":                   "takes the bus store's host:port, never a secret, and dials it: driven, it would open a socket; the login's password is read from the environment by pkg/redisconn, never from the line",
 }
 
@@ -211,7 +208,6 @@ pkg/dogfood.ParseAuthors wraps the os.ReadFile error, which names the path argum
 pkg/dogfood.ParseCLI wraps the os.ReadFile error, which names the path argument (pkg/dogfood/cli.go:97)
 pkg/fleet.ParseWorkload echoes its source argument (pkg/fleet/certify.go:184)
 pkg/friend.NewDeliverer echoes an unknown harness with %q (pkg/friend/adapter.go:253)
-pkg/friend.NewestCodexSession wraps the lstat error, which names the dir argument (pkg/friend/codex_session.go:21)
 pkg/friend.NewestDSHSession echoes its dir argument (pkg/friend/adapter_dsh.go:65)
 pkg/ntable.ParseColumn echoes the rejected column name with %q (pkg/ntable/ntable.go:405)
 pkg/ntable.ParseColumns echoes the rejected column name with %q (pkg/ntable/ntable.go:405)

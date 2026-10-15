@@ -171,7 +171,6 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 		}
 	}
 	exit, err = refused("(new)", out, exit, err)
-	o.turns.saw("(new)", exit, err)
 	if err != nil {
 		return "", err
 	}
@@ -234,12 +233,10 @@ func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, er
 	}
 	if err == nil {
 		if limit := laneLimit(id, out); limit != nil {
-			o.turns.saw(id, exit, limit)
 			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, limit
 		}
 	}
 	exit, err = refused(id, out, exit, err)
-	o.turns.saw(id, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, err
 }
 

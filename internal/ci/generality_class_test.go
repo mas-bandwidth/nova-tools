@@ -107,7 +107,8 @@ var reAccount = regexp.MustCompile(`(?i)mas-bandwidth`)
 // it, never a bare article, so `bench=space`, `the space row` and `space` as a name
 // still count. A token used as a word in another phrase is a row here.
 var englishPhrases = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\b(?:leave|leaves|leaving|left|disk|free|enough|more|no|blank|white|trailing|leading|single|double|extra|some|much|little|of)\s+(space)\b`),
+	regexp.MustCompile(`(?i)\b(?:leave|leaves|leaving|left|disk|free|frees|freeing|freed|enough|more|no|blank|white|trailing|leading|single|double|extra|some|much|little|of)\s+(space)\b`),
+	regexp.MustCompile(`(?i)\buntil\s+(space)\s+exists\b`),
 	regexp.MustCompile(`(?i)\b(space)(?:\s+(?:for|between|left|after|before|around|bar|character|characters|than|on\s+disk|to\s+spare)\b|-separated|-delimited)`),
 }
 
@@ -567,6 +568,10 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 		{"bench=space", []string{"space"}},
 		{"the space row is down", []string{"space"}},
 		{"leave space for the footer", nil},
+		{"delivery frees space or shutdown cancels the wait", nil},
+		{"a full queue waits until space exists", nil},
+		{"delivery frees space on host space", []string{"space"}},
+		{"wait until host space exists", []string{"space"}},
 		{"// no disk space left; a space-separated list; one space between words", nil},
 		{"\"Leave space for the footer\"", nil},
 		{"mas-bandwidth/nova-tools", []string{"mas-bandwidth"}},

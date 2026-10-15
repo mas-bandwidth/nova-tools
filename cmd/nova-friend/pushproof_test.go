@@ -15,8 +15,8 @@ import (
 
 // install and run refuse at the start, each with its remedy, a harness whose
 // adapter has no deliver command; install also refuses a session the adapter cannot
-// drive (dsh, a session under an agent preset). run starts without SessionCheck or
-// PushProver and delivers without holding on a SessionCheck pong.
+// drive (dsh, a session under an agent preset). run starts with no session-check
+// presence and delivers without waiting on a pong.
 func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 	t.Parallel()
 	t.Run("no deliver command", func(t *testing.T) {
@@ -51,7 +51,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		assert.NoFileExists(t, filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
 		assert.Contains(t, strings.Join(r.launchctl, "\n"), "bootout gui/501/com.nova.friend-bob")
 	})
-	t.Run("delivery is not held on a session check pong", func(t *testing.T) {
+	t.Run("the daemon pushes no message into the session", func(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
 		r.deaf = true // the session never runs nova-friend pong
@@ -72,8 +72,13 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 				return `[{"id":"ses_1","directory":"` + dir + `","updated":1}]`, 0, nil
 			}
 			delivered = append(delivered, args[len(args)-1])
-			cancel()
 			return "ok\n", 0, nil
+		}
+		steps := 0
+		w.sleep = func(context.Context, time.Duration) {
+			if steps++; steps == 5 {
+				cancel()
+			}
 		}
 		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
@@ -81,9 +86,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		var out, errb strings.Builder
 		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir(), "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
-		require.Len(t, delivered, 1)
-		assert.Contains(t, delivered[0], "hello")
-		assert.NotContains(t, delivered[0], friend.SessionCheckPrefix)
+		assert.Empty(t, delivered, "a message to her reaches her session through nova-hook, never through the daemon")
 	})
 }
 
@@ -109,5 +112,5 @@ func TestAClaudeDaemonsCheckGoesInByTheFolderAndItsBeatCarriesThePong(t *testing
 	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
 	assert.Len(t, said, 3)
-	assert.NoFileExists(t, friend.SessionCheckFile(dir, "r4nd0m"))
+	assert.NoFileExists(t, filepath.Join(dir, "inbox", "SESSION-CHECK-r4nd0m"))
 }

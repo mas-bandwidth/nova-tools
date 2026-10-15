@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,12 @@ func (r *rig) challenge(t *testing.T, name string) string {
 	return ""
 }
 
+// stepDownAfter is the --down-after of step's servers: an interval and a
+// half, so the telling tests see a name silent since its hooking in go down
+// at the third pass (the first whose silence is older), as they always have;
+// the default (hook.DownAfter) has its own tests below.
+const stepDownAfter = "90s"
+
 // step is one interval: each server in turn runs one pass (the first takes
 // it), each name in answering proves its challenge, the store's clock moves
 // an interval on, and the answering names' holders renew.
@@ -64,7 +71,7 @@ func (r *rig) step(t *testing.T, servers []string, answering ...string) string {
 	cli := r.cli()
 	var out string
 	for _, sv := range servers {
-		res := cli.Run("serve", "--as", sv, "--once")
+		res := cli.Run("serve", "--as", sv, "--once", "--down-after", stepDownAfter)
 		require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
 		out += res.Stdout
 	}
@@ -109,8 +116,8 @@ func TestAFriendDownIsOneJudgmentToTheCoordinator(t *testing.T) {
 	assert.NotContains(t, out, "nonce", "the server never prints a nonce")
 	assert.Equal(t, 3, strings.Count(out, "event=skip"), "the second server's pass shares the first's interval, every step")
 	require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
-	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: missed 2 challenges"))
-	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob: missed 2 challenges"))
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: no answer in 1m30s (2 challenges missed)"))
+	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob: no answer in 1m30s (2 challenges missed)"))
 	var judgment msg
 	for _, m := range r.stream(t, "ada") {
 		if strings.HasPrefix(m.subject, "FRIEND DOWN") {
@@ -148,7 +155,7 @@ func TestAFriendDownIsOneJudgmentToTheCoordinator(t *testing.T) {
 }
 
 // TestACoordinatorDownIsOneJudgmentToEveryFriend pins who takes over: the
-// coordinator missing two makes one COORDINATOR DOWN judgment for every
+// coordinator silent past --down-after makes one COORDINATOR DOWN judgment for every
 // other live name, with two servers, never repeated.
 func TestACoordinatorDownIsOneJudgmentToEveryFriend(t *testing.T) {
 	t.Parallel()
@@ -199,7 +206,7 @@ func TestFriendsJSONIsTheRecord(t *testing.T) {
 	assert.Equal(t, map[string]any{"name": "ada", "role": "coordinator", "state": "up", "since": stamp(st.Armed), "reason": "",
 		"last_challenge_at": stamp(st.BeatAt), "last_answer_at": stamp(st.AnswerAt), "misses": float64(0)}, ada)
 	sb := r.h.State(t, "bob")
-	assert.Equal(t, map[string]any{"name": "bob", "role": "comms", "state": "down", "since": stamp(sb.Unhooked), "reason": "missed 2 challenges",
+	assert.Equal(t, map[string]any{"name": "bob", "role": "comms", "state": "down", "since": stamp(sb.Unhooked), "reason": "no answer in 1m30s (2 challenges missed)",
 		"last_challenge_at": stamp(sb.BeatAt), "last_answer_at": stamp(sb.AnswerAt), "misses": float64(2)}, bob)
 }
 
@@ -358,4 +365,105 @@ func TestALostAnswerIsNeverToldTwice(t *testing.T) {
 	}
 	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob"))
 	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob"))
+}
+
+// renew is a name's holder renewing its bus lease at the record's epoch, as
+// its hook loop does every RenewEvery, with no answer: the answer is the
+// model's alone (nova-hook prove).
+func (r *rig) renew(t *testing.T, name string) {
+	t.Helper()
+	st := r.h.State(t, name)
+	require.NoError(t, r.h.Store.Renew(context.Background(), name, st.Role, hook.Bus, st.Epoch, "test"))
+}
+
+// beats runs n intervals of one server, ada, which answers every one; bob
+// proves his challenge at the intervals answer says, and is renewed by his
+// holder throughout. It answers bob's status after each interval's pass, and
+// whether he read down (hook.Served.Down) just before it.
+func (r *rig) beats(t *testing.T, n int, answer func(i int) bool, serve ...string) (after []hook.Status, downs []string) {
+	t.Helper()
+	cli := r.cli()
+	for i := range n {
+		downs = append(downs, r.h.State(t, "bob").Down)
+		cli.Do(t, append([]string{"serve", "--as", "ada", "--once"}, serve...)...).Exit(0)
+		st := r.h.State(t, "bob")
+		after = append(after, st)
+		cli.Do(t, "prove", "--as", "ada", "--nonce", r.challenge(t, "ada")).Exit(0)
+		if st.State != hook.StateUnhooked && answer(i) {
+			cli.Do(t, "prove", "--as", "bob", "--nonce", r.challenge(t, "bob")).Exit(0)
+		}
+		r.h.Pass(hook.BeatEvery)
+		r.h.Hook(t, "ada", hook.Coordinator)
+		if st.State != hook.StateUnhooked {
+			r.renew(t, "bob")
+		}
+	}
+	return after, downs
+}
+
+// TestAFriendAnsweringEveryFourMinutesStaysUp pins the down-after rule of
+// 2026-10-14 (tla/HookBeat.tla, NoDownBeforeDownAfter): a harness that cannot
+// answer mid-turn answers between turns, every four minutes here; under the
+// default --down-after (5m) it is challenged every minute, misses three in a
+// row each time, and is never unhooked, never told down, and never reads down.
+func TestAFriendAnsweringEveryFourMinutesStaysUp(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	after, downs := r.beats(t, 13, func(i int) bool { return i%4 == 3 })
+	most := 0
+	for i, st := range after {
+		assert.NotEqual(t, hook.StateUnhooked, st.State, "interval %d", i)
+		most = max(most, st.Misses)
+	}
+	for i, d := range downs {
+		assert.Empty(t, d, "interval %d: bob read down", i)
+	}
+	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN"))
+	assert.Equal(t, 3, most, "challenged every minute: three missed in a row before each answer")
+}
+
+// TestASilentFriendGoesDownPastFiveMinutesNotBefore pins the default: a
+// friend silent from the moment it hooked in stays hooked through the pass
+// five minutes in (not older than 5m) and is unhooked at the next, with the reason.
+func TestASilentFriendGoesDownPastFiveMinutesNotBefore(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	after, _ := r.beats(t, 8, func(int) bool { return false })
+	assert.Equal(t, []string{"0m", "1m", "2m", "3m", "4m", "5m"}, upTo(after), "hooked at every pass through five minutes")
+	assert.Equal(t, hook.StateUnhooked, after[6].State, "unhooked at the first pass past five minutes")
+	st := r.h.State(t, "bob")
+	assert.Equal(t, "no answer in 5m0s (6 challenges missed)", st.Reason)
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: no answer in 5m0s (6 challenges missed)"))
+}
+
+// TestDownAfterIsHonoured pins --down-after: at 3m a silent friend is unhooked
+// at the first pass past three minutes, not at two; one under --every is refused.
+func TestDownAfterIsHonoured(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	after, _ := r.beats(t, 5, func(int) bool { return false }, "--down-after", "3m")
+	assert.Equal(t, []string{"0m", "1m", "2m", "3m"}, upTo(after))
+	assert.Equal(t, hook.StateUnhooked, after[4].State)
+	assert.Equal(t, "no answer in 3m0s (4 challenges missed)", r.h.State(t, "bob").Reason)
+	res := r.cli().Run("serve", "--as", "ada", "--once", "--down-after", "30s")
+	assert.Equal(t, 2, res.Code, res.Stdout+res.Stderr)
+	assert.Contains(t, res.Stdout+res.Stderr, "--down-after 30s is under --every 1m0s")
+}
+
+// upTo is the minute of each pass before the first that unhooked, as "<i>m".
+func upTo(after []hook.Status) []string {
+	var out []string
+	for i, st := range after {
+		if st.State == hook.StateUnhooked {
+			break
+		}
+		out = append(out, fmt.Sprintf("%dm", i))
+	}
+	return out
 }

@@ -51,9 +51,6 @@ const TakeRetry = 5 * time.Second
 // LaneIdleAsk is how long a lane the server gave nothing waits before it asks again.
 const LaneIdleAsk = 15 * time.Second
 
-// BatchTakeEvery is how often a batch-mode daemon asks the server to take her ready cards.
-const BatchTakeEvery = 15 * time.Second
-
 // neverAgain is how long a lane that got an Unparseable LANE line waits before it asks again:
 // past any daemon's life, so it asks again only when the daemon restarts.
 const neverAgain = 100 * 365 * 24 * time.Hour
@@ -154,15 +151,6 @@ func ParseLaneHold(member string, n int, out string) (LaneHold, error) {
 	}
 	// a fixed sentence, never the answer: what the server printed is the record's, not the error's
 	return LaneHold{}, &Refused{Why: "the server answered with no LANE line, so the lane holds nothing it can name"}
-}
-
-// BatchTakeArgv is a batch-mode daemon's take of up to n of her ready cards: `take --as
-// friend.<name> --max <n> --epoch <e>`, the server choosing which, in its order, cut to her
-// room. The server refuses every worker's verb sent to it that names no epoch ("a worker's
-// verb sent to the server names the epoch its worker holds"), so the take names the epoch her
-// ready cards were handed at, the newest one her row last said.
-func BatchTakeArgv(friend string, n int, epoch uint64) []string {
-	return []string{"take", "--as", "friend." + friend, "--max", strconv.Itoa(max(n, 1)), "--epoch", strconv.FormatUint(epoch, 10)}
 }
 
 // laneAsk is a free lane asking the server what it holds: the card the answer names, when the
@@ -368,44 +356,4 @@ func (l *loop) laneCheck(now time.Time) {
 			l.laneDrop(ln, fmt.Sprintf("the server says lane %d holds it", h.Lane), now)
 		}
 	}
-}
-
-// batchTake is a batch-mode daemon's take of her ready cards, once a BatchTakeEvery while the
-// server says any is ready on her row and the machine runs; a refusal is said once while it
-// stands, and asked again at the next.
-func (l *loop) batchTake(now time.Time) {
-	d := l.d
-	if d.Take == nil || l.mode != ModeBatch || d.machineStopped() || now.Before(d.batchTakeAt) {
-		return
-	}
-	ready, epoch := 0, uint64(0)
-	for _, h := range d.heldCards {
-		if h.Col == "ready" && h.Kind != "read" {
-			ready++
-			epoch = max(epoch, h.Epoch) // the newest: a card of an older epoch is another sprint's
-		}
-	}
-	if ready == 0 {
-		return
-	}
-	d.batchTakeAt = now.Add(BatchTakeEvery)
-	at := now.UTC().Format(time.RFC3339)
-	if epoch == 0 { // the server refuses a take that names no epoch: none is sent, never a guessed 0
-		if why := d.say("no ready card on {their} row carries an epoch"); why != d.batchTakeSaid {
-			d.batchTakeSaid = why
-			d.Record(d.sayf("%s take: {their} %d ready card(s) not taken: %s; asked again in %s", at, ready, why, BatchTakeEvery))
-		}
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TakeWait)
-	_, err := d.Take(ctx, BatchTakeArgv(d.Friend, ready, epoch))
-	cancel()
-	if err != nil {
-		if why := oneLine(err.Error(), 300); why != d.batchTakeSaid {
-			d.batchTakeSaid = why
-			d.Record(d.sayf("%s take: {their} %d ready card(s) not taken: %s; asked again in %s", at, ready, why, BatchTakeEvery))
-		}
-		return
-	}
-	d.batchTakeSaid = ""
 }

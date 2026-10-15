@@ -240,6 +240,34 @@ func FriendMode(r Row) string {
 	return FriendModeOneShot
 }
 
+// FriendSessionWords are whether a friend has a live session between cards
+// (docs/SPEC-CONFIG.md, friend; the owner, 2026-10-14: "just make one shot friends,
+// exactly the same code that already works in the fleet, just with an extra prompt at
+// the front"). A live friend (the default) has a session, is on the psychic link
+// and is worked by her friend lane. A one-shot friend has none: she runs as an
+// ordinary fleet member lane on her row (nova-swarm member --as friend.<name>
+// --prompt <file>, the identity prompt prepended to each card brief), has no daemon,
+// hook, lease or presence record, and a bus send naming her is refused at once with
+// the remedy to put it in her next card's brief. Not the mode field: mode is how a
+// lane hands a card (one-shot for every friend), session is whether she has one.
+var FriendSessionWords = []string{FriendSessionLive, FriendSessionOneShot}
+
+// The session words and the default a row without one has.
+const (
+	FriendSessionLive    = "live"
+	FriendSessionOneShot = "one-shot"
+	DefaultFriendSession = FriendSessionLive
+)
+
+// FriendSession is a friend row's session: its session field, live when it names
+// none.
+func FriendSession(r Row) string {
+	if s := r.Fields["session"]; s != "" {
+		return s
+	}
+	return DefaultFriendSession
+}
+
 // FriendPronounSets are the pronoun sets a friend row may name, in the order they
 // are listed: she/her, he/him and they/them. Pronouns are read, never inferred:
 // a row that names none goes by they/them (DefaultFriendPronouns), and no text
@@ -523,7 +551,7 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: the friend's width, the jobs the friend works at once and the friend's one capacity number (no slots, no ceiling), which tiers the friend can do, the friend's roles, the delivery mode, the config directory the claude lanes run with, the per-card token cap the one-shot lanes hold a card at, the pronouns the friend goes by (a stated value, or unstated, which reads they/them), and the optional streams and kinds restrictions on the work the friend may be dealt",
+		Doc:   "an AI friend: the friend's width, the jobs the friend works at once and the friend's one capacity number (no slots, no ceiling), which tiers the friend can do, the friend's roles, the delivery mode, whether the friend has a live session or runs one-shot as a member lane, the config directory the claude lanes run with, the per-card token cap the one-shot lanes hold a card at, the pronouns the friend goes by (a stated value, or unstated, which reads they/them), and the optional streams and kinds restrictions on the work the friend may be dealt",
 		Fields: []Field{
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers the friend can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
@@ -534,6 +562,7 @@ var Kinds = []*Kind{
 			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns over stream names this friend may be dealt work on; empty means any stream"},
 			{Name: "kinds", Type: TypeNames, Help: "optional comma-separated card KIND values this friend may be dealt; empty means any kind"},
 			{Name: "pronouns", Type: TypeEnum, Enum: FriendPronounSets, Default: DefaultFriendPronouns, Nullable: true, Help: "the pronouns the friend goes by, one of " + strings.Join(FriendPronounSets, ", ") + "; an empty value is unstated and reads and prints as they/them(unstated); a stated value prints as itself; a set that names other fields leaves the stored value; never \"it\": the daemon's texts about the friend say them"},
+			{Name: "session", Type: TypeEnum, Enum: FriendSessionWords, Default: DefaultFriendSession, Help: "whether the friend has a live session between cards: live (the default: on the psychic link, worked by the friend lane) or one-shot (no session: a fleet member lane runs the friend row, nova-swarm member --as friend.<name> --prompt <identity file>, never on the link, and a bus send naming the friend is refused with the remedy to put it in the next card's brief)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {

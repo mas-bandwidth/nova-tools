@@ -23,9 +23,9 @@ func TestCodexRefusedInstallPreservesSettingsAndInspectionNamesDrift(t *testing.
 			`CHECK DRIFT harness=codex file=`+config+` name=sandbox_workspace_write.writable_roots want="/w/bob" have="[]"`,
 			"settings repair requires an already watched folder", "--adapter folder --session <real-session> --delivery-dir <existing-watched-folder>")
 	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob", "--dry-run").Exit(2).
-		Err("Codex native push is unavailable")
+		Err("codex native push is unavailable")
 	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob").Exit(2).
-		Err("Codex native push is unavailable")
+		Err("codex native push is unavailable")
 	_, err := r.fs.ReadFile(config)
 	require.ErrorIs(t, err, os.ErrNotExist, "a refused install writes no harness settings")
 	assert.Empty(t, r.launchctl)

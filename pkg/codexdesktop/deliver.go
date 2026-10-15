@@ -60,7 +60,26 @@ type response struct {
 	Version           *int            `json:"version,omitempty"`
 	HandledByClientID string          `json:"handledByClientId"`
 	Result            json.RawMessage `json:"result"`
+	Error             string          `json:"error"`
 }
+
+// certainRefusals are the desktop IPC router's and client's error codes that
+// are written before any handler runs, so no turn was started. The desktop's
+// error responses carry no method: {type, requestId, resultType: "error",
+// error}. Every other error (a handler that threw, request-timeout,
+// client-disconnected, server-closed) may follow a started turn and is
+// uncertain. Source: ChatGPT.app 26.1007.30912 Resources/app.asar,
+// .vite/build/src-BJv5Mk7n.js (IPC router and IpcClient.handleRequest).
+var certainRefusals = map[string]bool{
+	"no-client-found":              true,
+	"client-not-found":             true,
+	"client-cannot-handle-request": true,
+	"request-version-mismatch":     true,
+	"no-handler-for-request":       true,
+}
+
+// maxErrorEcho bounds the native error text copied into a local message.
+const maxErrorEcho = 160
 
 type envelope struct {
 	Type      string `json:"type"`
@@ -249,8 +268,23 @@ func call(ctx context.Context, wire transport, sourceClientID, targetClientID st
 		if err := json.Unmarshal(frame, &reply); err != nil {
 			return response{}, true, fmt.Errorf("decode %s response: %w", method, err)
 		}
-		if reply.Type != "response" || reply.Method != method {
-			return response{}, true, fmt.Errorf("%s response type or method does not match", method)
+		if reply.Type != "response" {
+			return response{}, true, fmt.Errorf("%s response type does not match", method)
+		}
+		if reply.ResultType == "error" {
+			// The desktop's error responses carry no method; the matched
+			// request ID is the whole match.
+			code := reply.Error
+			if len(code) > maxErrorEcho {
+				code = code[:maxErrorEcho]
+			}
+			if certainRefusals[reply.Error] {
+				return response{}, true, fmt.Errorf("%w: native app rejected %s: %q", ErrRejected, method, code)
+			}
+			return response{}, true, fmt.Errorf("%s native error after the request was handed on: %q", method, code)
+		}
+		if reply.Method != method {
+			return response{}, true, fmt.Errorf("%s response method does not match", method)
 		}
 		if reply.Version != nil && *reply.Version != version {
 			return response{}, true, fmt.Errorf("%s response version does not match", method)
@@ -258,14 +292,10 @@ func call(ctx context.Context, wire transport, sourceClientID, targetClientID st
 		if targetClientID != "" && reply.HandledByClientID != targetClientID {
 			return response{}, true, fmt.Errorf("%s response owner does not match target", method)
 		}
-		switch reply.ResultType {
-		case "success":
-			return reply, true, nil
-		case "error":
-			return response{}, true, fmt.Errorf("%w: native app rejected %s", ErrRejected, method)
-		default:
+		if reply.ResultType != "success" {
 			return response{}, true, fmt.Errorf("%s response result type is missing or unknown", method)
 		}
+		return reply, true, nil
 	}
 }
 

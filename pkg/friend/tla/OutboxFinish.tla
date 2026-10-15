@@ -22,7 +22,7 @@
    brief only when none is there (NoReplace), so either may write it, and
    either may finish a working card with a verdict, the server taking the first.
    With SyncSame it writes the daemon's form (the fix first) and holds an
-   unaddressed LAND by the daemon's check (friend.UnaddressedLand); SyncSame =
+   unaddressed LAND by the daemon's check (rework.go unaddressed); SyncSame =
    FALSE is the reversed witness, friend sync before the-fix-is-the-first-line-
    of-the-next-brief.w2, which wrote the server's form and landed such a report
    whenever it got there before the daemon. *)

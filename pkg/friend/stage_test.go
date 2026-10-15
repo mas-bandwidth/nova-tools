@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
@@ -155,14 +154,6 @@ func TestEveryWrittenJobIsStagedWithItsCheckoutAndJobFile(t *testing.T) {
 		skip = func(x Card) bool { return x.ID == c.ID || prev(x) }
 	}
 	assert.Equal(t, []string{"taken.w1", "dealt.w2", "plain.w1", "frontier.r1"}, handed)
-
-	// the batch session hears of the staged cards' briefs once they are staged, never of a card
-	// with no checkout
-	delivered := func() string { r.mu.Lock(); defer r.mu.Unlock(); return strings.Join(r.delivered, "\n") }
-	require.Eventually(t, func() bool { return strings.Contains(delivered(), "inbox/taken.w1~15/BRIEF.md") }, 10*time.Second, time.Millisecond)
-	assert.Contains(t, delivered(), "inbox/dealt.w2~15/BRIEF.md")
-	assert.Contains(t, delivered(), "inbox/plain.w1~15/BRIEF.md")
-	assert.NotContains(t, delivered(), "inbox/private.w1~15/BRIEF.md")
 
 	// later loops stage nothing again and say the judgment no more: the unreachable jobs wait
 	// StageRetryEvery before they are tried again

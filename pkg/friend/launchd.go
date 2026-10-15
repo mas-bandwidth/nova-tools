@@ -2,7 +2,6 @@ package friend
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -51,23 +50,15 @@ type Agent struct {
 	// when set.
 	WallReads string
 	// Command, when set, is what the agent runs in place of the daemon: this tool's
-	// own verb and flags, after Binary (the wake ping loop, nova-friend ping-install).
+	// own verb and flags, after Binary.
 	Command []string
 	// Sleep is how Install waits between two looks at the old service after the
 	// bootout (ReleasePoll); nil is time.Sleep. A test passes its own clock.
 	Sleep func(time.Duration)
-	// NotificationsOnly has its own agent label and carries its policy through install
-	// (SPEC-FRIEND.md, notifications); it never replaces the native scheduler.
-	NotificationsOnly bool
-	NotifyKinds       string
-	NotifyWindow      time.Duration
 }
 
 // Label is the agent's launchd label.
 func (a Agent) Label() string {
-	if a.NotificationsOnly {
-		return "com.nova.friend-notifications-" + a.Friend
-	}
 	return "com.nova.friend-" + a.Friend
 }
 
@@ -93,15 +84,6 @@ func (a Agent) Args() []string {
 		args = append(args, "--")
 	}
 	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server)
-	if a.NotificationsOnly {
-		args = append(args, "--notifications-only")
-		if a.NotifyKinds != "" {
-			args = append(args, "--notify-kinds", a.NotifyKinds)
-		}
-		if a.NotifyWindow > 0 {
-			args = append(args, "--notify-window", a.NotifyWindow.String())
-		}
-	}
 	if a.Session != "" {
 		args = append(args, "--session", a.Session)
 	}
@@ -358,15 +340,7 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 		}
 	}
 	a.Binary = placed
-	if a.NotificationsOnly {
-		verified, _, err := a.BinaryPlan()
-		if err != nil {
-			return "", nil, err
-		}
-		if verified != placed {
-			return "", nil, fmt.Errorf("notification binary changed during copy; preserve the previous service and install the reviewed binary again")
-		}
-	}
+
 	path = a.PlistPath()
 	if err := os.MkdirAll(filepath.Dir(a.LaunchdLog), 0o755); err != nil {
 		return path, nil, err
@@ -503,36 +477,8 @@ func (a Agent) Said() string {
 	return wrap + " -- " + said
 }
 
-// BinaryPlan isolates notification executables by content hash (SPEC-FRIEND.md,
-// notifications), so installing or rolling one back never overwrites the native binary.
+// BinaryPlan is where the agent's binary is placed, and whether it is copied there
+// (PlanBinary).
 func (a Agent) BinaryPlan() (path string, copy bool, err error) {
-	if !a.NotificationsOnly {
-		return PlanBinary(a.Binary, a.Home)
-	}
-	home := slashClean(a.Home)
-	if home == "" || home == "." || home == "/" || onRemovableVolume(home) {
-		return "", false, fmt.Errorf("notification binary wants a home off /Volumes")
-	}
-	in, err := os.Open(a.Binary)
-	if err != nil {
-		return "", false, err
-	}
-	st, err := in.Stat()
-	if err != nil {
-		return "", false, closeWith(in, err)
-	}
-	if !st.Mode().IsRegular() {
-		return "", false, closeWith(in, fmt.Errorf("notification binary %s is not a regular file; install a reviewed executable", a.Binary))
-	}
-	hash := sha256.New()
-	_, copyErr := io.Copy(hash, in)
-	closeErr := in.Close()
-	if copyErr != nil {
-		return "", false, copyErr
-	}
-	if closeErr != nil {
-		return "", false, closeErr
-	}
-	path = filepath.Join(home, ".nova-friend", "notifications", "bin", fmt.Sprintf("%x", hash.Sum(nil)), "nova-friend")
-	return path, slashClean(a.Binary) != slashClean(path), nil
+	return PlanBinary(a.Binary, a.Home)
 }

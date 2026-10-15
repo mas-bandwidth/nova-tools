@@ -101,9 +101,14 @@ const (
 	// every hooked name whose role carries the bus push once an interval, and
 	// the answer is due within the same interval (tla/HookBeat.tla).
 	BeatEvery = time.Minute
-	// MissLimit is how many challenges in a row a name may leave unanswered:
-	// at the MissLimit-th, serve unhooks it.
-	MissLimit = 2
+	// DownAfter is the heartbeat's default silence before a name goes down:
+	// nova-hook serve unhooks a name only once its last answer (or its
+	// hooking in, whichever is later) is older than DownAfter by the store's TIME
+	// and the challenge of the last pass still stands unanswered; challenges
+	// still go out every interval (2026-10-14: a harness that cannot
+	// answer mid-turn needs more than two one-minute intervals). The readers'
+	// up (Served.Down) uses the same window (tla/HookBeat.tla, DownAfter).
+	DownAfter = 5 * time.Minute
 )
 
 // The keys (docs/SPEC-HOOK.md, the key layout), all in the bus Redis.
@@ -186,7 +191,7 @@ type Status struct {
 	Epoch    int64
 	Armed    time.Time // when the record was last hooked, zero when never
 	Unhooked time.Time // when it was unhooked, zero when it is not
-	Reason   string    // why it was unhooked, when the heartbeat did it ("missed 2 challenges")
+	Reason   string    // why it was unhooked, when the heartbeat did it ("no answer in 5m0s (5 challenges missed)")
 	BeatAt   time.Time // when the heartbeat server last challenged it, zero when never
 	AnswerAt time.Time // when the session last answered a challenge, zero when never
 	// Down is why the record reads down at this read whatever its state says
@@ -409,18 +414,9 @@ func HookCommand(name string, r Role) string {
 	return "nova-hook hook --as " + name + " --role " + string(r)
 }
 
-// SprintHookPR is where the sprint push's holder, nova-sprint hook, ships:
-// until it does, a coordinator cannot be proven, and the seat hooks in as
-// comms (the bus alone).
-const SprintHookPR = "nova-sprint PR #93"
-
-// AgentLabel is the service that holds a friend's pushes for role: her daemon
-// (com.nova.friend-<name>) as a friend, her notifications receiver
-// (com.nova.friend-notifications-<name>) as comms.
+// AgentLabel is the service that runs a friend's lanes: her daemon
+// (com.nova.friend-<name>).
 func AgentLabel(name string, r Role) string {
-	if r == Comms {
-		return "com.nova.friend-notifications-" + name
-	}
 	return "com.nova.friend-" + name
 }
 
@@ -439,12 +435,9 @@ func RestartCommand(goos, label string) string {
 func HeldBy(name string, r Role, p Push) string {
 	switch {
 	case p == Sprint:
-		return "nova-sprint hook --as " + name + " under its own Monitor (nova-sprint hook ships with " + SprintHookPR + "; until then: --role comms, " + HookCommand(name, Comms) + ")"
-	case p == Bus && (r == Friend || r == Comms):
-		label := AgentLabel(name, r)
-		return "the friend daemon's service " + label + ", which hooks in at its start; restart it: " + RestartCommand(runtime.GOOS, label) + "; or a session's own " + HookCommand(name, r) + " under a Monitor"
+		return "the sprint's server (nova-sprint run), which holds it for the coordinator while it runs and reaches the bus"
 	case p == Bus:
-		return HookCommand(name, r) + " under the session's Monitor (each line it prints is a push; it prints HOOK CHALLENGE, answered with nova-hook prove --as " + name + " --nonce <nonce>)"
+		return HookCommand(name, r) + " under the session's Monitor (each line it prints is a push; it prints HOOK CHALLENGE, answered with nova-hook prove --as " + name + " --nonce <nonce>); supervised service label: nova-hook.client." + name
 	case r == Friend:
 		label := AgentLabel(name, r)
 		return "the friend daemon's lanes, its service " + label + ", which hooks in at its start; restart it: " + RestartCommand(runtime.GOOS, label)

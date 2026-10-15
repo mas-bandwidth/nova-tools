@@ -31,7 +31,7 @@ import (
 // test's own, and the home directory and uid are the test's, so the plist
 // path reads as the document writes it; bob's directory is made there first,
 // since install refuses a --dir that is not a real directory. The run-owned values are the
-// message ids, their at, and how long the wait took.
+// message ids and their at.
 
 func firstRunStore(t *testing.T) string {
 	t.Helper()
@@ -53,9 +53,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		"nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run",
 		"nova-friend uninstall --as bob --dry-run",
 		"nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider",
-		"nova-friend ping --as ada --to bob --nonce abc123",
 		"nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
-		"nova-friend wait-pong --from bob --nonce abc123 --timeout 2s",
 		"nova-friend status --as bob --dir ./bob",
 		"nova-friend lanes --as bob --clear-faults",
 	}
@@ -97,7 +95,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		code := run(args, strings.NewReader(""), &out, &errb, w)
 		got = append(got, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()})
 	}
-	volatile := []onboarding.Field{{Name: "tmpdir", Doc: ".", Run: dir}, {Name: "id"}, {Name: "at"}, {Name: "took"}}
+	volatile := []onboarding.Field{{Name: "tmpdir", Doc: ".", Run: dir}, {Name: "id"}, {Name: "at"}}
 	for _, p := range onboarding.CompareTranscript(steps, got, volatile) {
 		assert.Failf(t, "documented transcript differs", "docs/TESTS.md: %s", p)
 	}

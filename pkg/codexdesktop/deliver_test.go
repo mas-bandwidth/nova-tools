@@ -25,8 +25,16 @@ type fakeTransport struct {
 	startResultType string
 	omitResultType  bool
 	startVersion    *int
+	startError      string // answer start-turn with the desktop's error frame
 	closeErr        error
 }
+
+// desktopErrorFrame is the error response the Codex desktop writes, byte for
+// byte in shape: ChatGPT.app 26.1007.30912 Resources/app.asar,
+// .vite/build/src-BJv5Mk7n.js line 1105, IpcClient.handleRequest's catch and
+// the router's timeout, both {type:"response",requestId,resultType:"error",error}.
+// It carries no method, no version and no handledByClientId.
+const desktopErrorFrame = `{"type":"response","requestId":%q,"resultType":"error","error":%q}`
 
 func (fake *fakeTransport) send(_ context.Context, value any) error {
 	req, ok := value.(request)
@@ -53,6 +61,10 @@ func (fake *fakeTransport) send(_ context.Context, value any) error {
 			"result":            map[string]bool{"supportsUntrustedAppInput": true},
 		}
 	case "thread-follower-start-turn":
+		if fake.startError != "" {
+			fake.replies = append(fake.replies, []byte(fmt.Sprintf(desktopErrorFrame, req.RequestID, fake.startError)))
+			return nil
+		}
 		resultType := fake.startResultType
 		if resultType == "" {
 			resultType = "success"
@@ -141,8 +153,28 @@ func TestDeliverClassifiesFailureBoundary(t *testing.T) {
 			want: ErrOutcomeUnknown, notWant: ErrPreSend, wantWrites: 3,
 		},
 		{
-			name: "matched rejection is certain", fake: &fakeTransport{startResultType: "error"},
+			name: "router refusal before any handler is certain", fake: &fakeTransport{startError: "no-client-found"},
 			want: ErrRejected, notWant: ErrOutcomeUnknown, wantWrites: 3,
+		},
+		{
+			name: "version refusal is certain", fake: &fakeTransport{startError: "request-version-mismatch"},
+			want: ErrRejected, notWant: ErrOutcomeUnknown, wantWrites: 3,
+		},
+		{
+			name: "router timeout is uncertain", fake: &fakeTransport{startError: "request-timeout"},
+			want: ErrOutcomeUnknown, notWant: ErrRejected, wantWrites: 3,
+		},
+		{
+			name: "owner disconnect is uncertain", fake: &fakeTransport{startError: "client-disconnected"},
+			want: ErrOutcomeUnknown, notWant: ErrRejected, wantWrites: 3,
+		},
+		{
+			name: "a thrown start turn is uncertain", fake: &fakeTransport{startError: "turn/start failed"},
+			want: ErrOutcomeUnknown, notWant: ErrRejected, wantWrites: 3,
+		},
+		{
+			name: "error with no code is uncertain", fake: &fakeTransport{startResultType: "error"},
+			want: ErrOutcomeUnknown, notWant: ErrRejected, wantWrites: 3,
 		},
 		{
 			name: "wrong responding owner is uncertain", fake: &fakeTransport{startOwner: "other-owner"},
@@ -236,4 +268,17 @@ func TestDeliverKeepsAcceptedTurnWhenCloseFails(t *testing.T) {
 		ChallengeNotice, fakeConnector(fake))
 	assert.Equal(t, "turn-1", turnID)
 	assert.NoError(t, err)
+}
+
+// TestDesktopErrorFrameIsNotAMethodMismatch is the 2026-10-14 regression: the
+// desktop's error frame has no method, and was misread as a method mismatch,
+// which hid the native error code.
+func TestDesktopErrorFrameIsNotAMethodMismatch(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeTransport{startError: "request-timeout"}
+	_, err := deliver(context.Background(), "/owned/ipc.sock", testThread, testEvent, BusNotice, fakeConnector(fake))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "does not match")
+	assert.Contains(t, err.Error(), `"request-timeout"`)
 }
