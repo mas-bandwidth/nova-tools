@@ -73,11 +73,11 @@ func answerRun(stageCode, execCode, removeCode int) func(context.Context, string
 	return func(ctx context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
 		switch {
 		case line == MakeLine(DefaultRoot):
-			io.WriteString(stdout, testRunDir+"\n")
+			_, _ = io.WriteString(stdout, testRunDir+"\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 			return 0, nil
 		case strings.HasPrefix(line, "rm -rf "):
 			if removeCode != 0 {
-				io.WriteString(stderr, "boom\n")
+				_, _ = io.WriteString(stderr, "boom\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 			}
 			return removeCode, nil
 		case strings.Contains(line, "nice -n "):
@@ -154,7 +154,7 @@ func TestRunRemovesTheRunDirectoryWhenTheContextIsCancelledMidRun(t *testing.T) 
 	ft := &fakeTransport{shell: func(c context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
 		switch {
 		case line == MakeLine(DefaultRoot):
-			io.WriteString(stdout, testRunDir+"\n")
+			_, _ = io.WriteString(stdout, testRunDir+"\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 			return 0, nil
 		case strings.Contains(line, "nice -n "):
 			cancel()
@@ -184,7 +184,7 @@ func TestRunRemovesTheRunDirectoryWhenTheExecTransportErrors(t *testing.T) {
 	ft := &fakeTransport{shell: func(c context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
 		switch {
 		case line == MakeLine(DefaultRoot):
-			io.WriteString(stdout, testRunDir+"\n")
+			_, _ = io.WriteString(stdout, testRunDir+"\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 			return 0, nil
 		case strings.Contains(line, "nice -n "):
 			return -1, errors.New("ssh could not start")
@@ -215,7 +215,7 @@ func TestRunFallsBackWhenAHostDoesNotAnswer(t *testing.T) {
 		case line == MakeLine(DefaultRoot) && host == "dead":
 			return NoAnswer, nil
 		case line == MakeLine(DefaultRoot):
-			io.WriteString(stdout, testRunDir+"\n")
+			_, _ = io.WriteString(stdout, testRunDir+"\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 			return 0, nil
 		default:
 			return 0, nil
@@ -236,7 +236,7 @@ func TestRunDoesNotFallBackWhenAHostAnswersAndRefuses(t *testing.T) {
 	t.Parallel()
 	ft := &fakeTransport{shell: func(c context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
 		if line == MakeLine(DefaultRoot) {
-			io.WriteString(stderr, "mkdir: permission denied\n")
+			_, _ = io.WriteString(stderr, "mkdir: permission denied\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 			return 1, nil
 		}
 		return 0, nil
@@ -339,7 +339,7 @@ func TestCheckPathRefusesAPathTheRemoteShellWouldReadDifferently(t *testing.T) {
 func TestMakeRunDirAcceptsAFreshRunDirectoryUnderTheRoot(t *testing.T) {
 	t.Parallel()
 	ft := &fakeTransport{shell: func(c context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
-		io.WriteString(stdout, testRunDir+"\n")
+		_, _ = io.WriteString(stdout, testRunDir+"\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 		return 0, nil
 	}}
 	dir, answered, err := makeRunDir(context.Background(), ft, "bench1", DefaultRoot)
@@ -352,7 +352,7 @@ func TestMakeRunDirAcceptsAFreshRunDirectoryUnderTheRoot(t *testing.T) {
 func TestMakeRunDirTreatsANoAnswerAsNotAnswered(t *testing.T) {
 	t.Parallel()
 	ft := &fakeTransport{shell: func(c context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
-		io.WriteString(stderr, "ssh: connect to host bench1 port 22: Connection refused\n")
+		_, _ = io.WriteString(stderr, "ssh: connect to host bench1 port 22: Connection refused\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 		return NoAnswer, nil
 	}}
 	dir, answered, err := makeRunDir(context.Background(), ft, "bench1", DefaultRoot)
@@ -366,7 +366,7 @@ func TestMakeRunDirTreatsANoAnswerAsNotAnswered(t *testing.T) {
 func TestMakeRunDirReportsARefusedMakeStepAsAnswered(t *testing.T) {
 	t.Parallel()
 	ft := &fakeTransport{shell: func(c context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
-		io.WriteString(stderr, "mkdir: cannot create directory: Permission denied\n")
+		_, _ = io.WriteString(stderr, "mkdir: cannot create directory: Permission denied\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 		return 1, nil
 	}}
 	_, answered, err := makeRunDir(context.Background(), ft, "bench1", DefaultRoot)
@@ -382,7 +382,7 @@ func TestMakeRunDirRefusesOutputThatIsNotARunDirectory(t *testing.T) {
 		t.Run(out, func(t *testing.T) {
 			t.Parallel()
 			ft := &fakeTransport{shell: func(c context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
-				io.WriteString(stdout, out+"\n")
+				_, _ = io.WriteString(stdout, out+"\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 				return 0, nil
 			}}
 			dir, answered, err := makeRunDir(context.Background(), ft, "bench1", DefaultRoot)
@@ -513,7 +513,7 @@ func TestRunReportsARemoveTransportError(t *testing.T) {
 	ft := &fakeTransport{shell: func(c context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
 		switch {
 		case line == MakeLine(DefaultRoot):
-			io.WriteString(stdout, testRunDir+"\n")
+			_, _ = io.WriteString(stdout, testRunDir+"\n") // ignored: the run reads its shell output into a bytes.Buffer, whose Write never fails
 			return 0, nil
 		case strings.HasPrefix(line, "rm -rf "):
 			return -1, errors.New("ssh could not start for the remove")
