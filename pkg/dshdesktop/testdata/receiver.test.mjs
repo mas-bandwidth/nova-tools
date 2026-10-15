@@ -37,7 +37,8 @@ test('busy pending ordinary does not hide fresh current challenge; notice alone 
  f.publish('challenge-current',true,'newest-nonce');f.receiver.drain();
  assert.equal(f.messages.length,2,'fresh native input reaches the active loop despite pending ordinary input');
  const message=f.messages[1];
- assert.deepEqual(message.source,{kind:'plugin',plugin:'nova-hook'});
+ assert.deepEqual(message.source,{kind:'plugin:nova-hook'},'DSH v4 refuses kind plugin; the producer owns plugin:<name>');
+ assert.notEqual(message.source.kind,'plugin');
  assert.equal(message.role,'user');
  assert.match(message.id,/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
  assert.ok(Object.isFrozen(message)&&Object.isFrozen(message.content[0])&&Object.isFrozen(message.source));
