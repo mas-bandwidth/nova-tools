@@ -39,9 +39,14 @@ its local native setup before arming any hook record or lease:
    HOOK STATE state=antigravity-installed conversation=<uuid> port=<port> events_dir=<dir>
    ```
 
-If any installation or probe step fails, `nova-hook` refuses before writing a
-hook record or lease. `--once` is refused; `--dry-run` validates flags and paths
-without contacting the local language server or writing saved event files.
+Invalid flags or local directory permissions are refused before writing a hook
+record or lease. If the startup probe (`ps`, `lsof`, `sqlite3`, or `agentapi
+get-conversation-metadata`) fails or times out, `nova-hook` emits
+`HOOK STATE state=probe-retry` and retries with bounded exponential backoff
+inside the client until the probe answers or a signal stops the process (never
+exiting with a refusal under the never-unhooked rule). `--once` is refused;
+`--dry-run` validates flags and paths without contacting the local language
+server or writing saved event files.
 
 ## Saved Event Envelope and Delivery
 
