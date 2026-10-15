@@ -1,7 +1,7 @@
 # nova-fuse AI-usability review, 2026-10-15
 
 Reviewer: x-ai/grok-build-0.1
-Build: f6c35d67aaa1
+Build: 15302296f439
 Score: 8.5 (48/55)
 
 ## Rubric
@@ -23,12 +23,10 @@ Score: 8.5 (48/55)
 | # | where | what an AI meets | fix | size |
 |---|---|---|---|---|
 | 1 | `nova-fuse status --box ./no.json --max abc --foo bar` | `nova-fuse status REFUSED: unknown flag --foo; the flags of status are --box, --json, --max; run: nova-fuse help status` (only first; --max and --box not reported) | report every flag/value problem in one refusal | S |
-| 2 | `nova-fuse status --box forum.json` (after `nova-fuse quarantine --box forum.json 'a b' r`) | shows `STATUS OK quarantine=a\x20b ...`; `nova-fuse check --box forum.json a\x20b` exits 0 (ax20b) while "a b" is quarantined | print stored surface literally (or shell-safe) in STATUS lines; state paste from remedy | S |
-| 3 | `nova-fuse check --box real1.json > out.txt` (real1 has lockdown) | stdout empty, `FUSE FAILED` only on stderr | emit the result line to stdout too (keep exit 1); document streams in help check | S |
-| 4 | `nova-fuse lockdown --dry-run --box ./already.json "x"` (box already blown) | `LOCKDOWN OK already=blown since=... (standing record kept...)` (no dry_run=true) | put dry_run=true and "nothing written" on already= lines | S |
-| 5 | `ls` after any write | `box.json.lock` 0-byte sidecar appears; never named in `help`, CLI or banner | document `<box>.lock` in help for writes; say it is safe to ignore | S |
-| 6 | `nova-fuse check -h` and `nova-fuse status -h` | no mention of normalization/folding or recommended spelling | state folding and "use spelling from FUSE FAILED/LIFT remedy" in check/status help | S |
-| 7 | `nova-fuse help lift lockdown` | no `usage:` block (unlike every other) | emit consistent usage line | S |
+| 2 | `nova-fuse check --box real1.json > out.txt` (real1 has lockdown) | stdout empty, `FUSE FAILED` only on stderr | emit the result line to stdout too (keep exit 1); document streams in help check | S |
+| 3 | `nova-fuse lockdown --dry-run --box ./already.json "x"` (box already blown) | `LOCKDOWN OK already=blown since=... (standing record kept...)` (no dry_run=true) | put dry_run=true and "nothing written" on already= lines | S |
+| 4 | `ls` after any write | `box.json.lock` 0-byte sidecar appears; never named in `help`, CLI or banner | document `<box>.lock` in help for writes; say it is safe to ignore | S |
+| 5 | `nova-fuse check -h` and `nova-fuse status -h` | no mention of normalization/folding or recommended spelling | state folding and "use spelling from FUSE FAILED/LIFT remedy" in check/status help | S |
 
 ## Nice-to-haves
 | # | where | what | fix | size |
