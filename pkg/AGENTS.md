@@ -16,14 +16,16 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `cardlimits/` | a card brief's refusal bound and the lint's size advice: two constants, no dependencies | `go test ./pkg/cardlimits` | `go test ./pkg/cardlimits` |
 | `cardtree/` | a card as a tree of steps: the step grammar, its lint, the script step the member runs with no model, the verdict per step and the remainder of a failed step | `go test ./pkg/cardtree` | `go test ./pkg/cardtree` |
 | `ci/` | class tests and CI budget invariants | `go test ./pkg/ci/...` | `go test ./pkg/ci/...` |
+| `codexdesktop/` | bounded native IPC delivery to an existing Codex desktop chat, with fixed external-event notices and inherited thread settings | `go test ./pkg/codexdesktop` | `go test ./pkg/codexdesktop` |
 | `config/` | nova-config library: kind descriptors, the Postgres store and history, apply into Redis, the Ansible inventory of the applied state | `go test ./pkg/config` | `go test ./pkg/config` |
 | `decide/` | nova-decide's decision system: schemas (read, attempt, grade), backends (Jev, fixed), the record and calibration | `go test ./pkg/decide` | `go test ./pkg/decide` |
 | `delayproxy/` | a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay | `go test ./pkg/delayproxy` | `go test ./pkg/delayproxy` |
 | `diffcheck/` | the lander's mechanical checks of a card's diff: files outside PATHS, stranded fragments | `go test ./pkg/diffcheck` | `go test ./pkg/diffcheck` |
 | `dogfood/` | dogfood self-test gates | `go test ./pkg/dogfood` | `go test ./pkg/dogfood` |
+| `dshdesktop/` | delivers a closed notice into a DeepSeek Harness desktop session through its hook bridge, with fixed notices and coalescing | `go test ./pkg/dshdesktop` | `go test ./pkg/dshdesktop` |
 | `filelock/` | process-exclusive file locks whose holder is named in the file | `go test ./pkg/filelock` | `go test ./pkg/filelock` |
 | `fleet/` | runner fleet discovery and status | `go test ./pkg/fleet` | `go test ./pkg/fleet` |
-| `friend/` | nova-friend's rules apart from the transport: the connection and challenge machine with an injected clock, the daemon loop over the bus, the deliver adapters per harness, the state files and the launchd agent | `go test ./pkg/friend` | `go test ./pkg/friend` |
+| `friend/` | nova-friend's card lanes and reader slots, metadata beats, delivery-check adapters, state files and launchd agent | `go test ./pkg/friend` | `go test ./pkg/friend` |
 | `gitrun/` | the one runner for a one-shot git child: a deadline, WaitDelay and the caller's environment choice | `go test ./pkg/gitrun` | `go test ./pkg/gitrun` |
 | `gocache/` | Go build cache held under a size, least recently used first | `go test ./pkg/gocache` | `go test ./pkg/gocache` |
 | `goenv/` | Go environment scrubber for child processes | `go test ./pkg/goenv` | `go test ./pkg/goenv` |

@@ -206,15 +206,3 @@ func TestHostStateNamesTheSessionAndPromptForRunAndInstall(t *testing.T) {
 	require.NoError(t, TmuxFor(d, "bob", dir))
 	assert.True(t, d.(*Tmux).Prompt.MatchString("aider> "))
 }
-
-func TestTmuxAliveIsTheHostedSession(t *testing.T) {
-	t.Parallel()
-	f := newFakeTmux()
-	assert.True(t, f.tmux().Alive(context.Background()).Running)
-	f.exists = false
-	l := f.tmux().Alive(context.Background())
-	assert.True(t, l.Known)
-	assert.False(t, l.Running)
-	_, ok := Deliverer(f.tmux()).(Aliver)
-	assert.True(t, ok)
-}

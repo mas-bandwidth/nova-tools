@@ -31,9 +31,7 @@ func TestSnapshotAcceptsAToolThatSaysOneMoreTrueThing(t *testing.T) {
 	specStub(t, bin, "nova-sandbox", "nova-sandbox "+stamp+" darwin/arm64 go1.27.1 backend=sandbox-exec platform=darwin")
 	out := filepath.Join(t.TempDir(), "snapshot.tsv")
 	code, stdout, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out)
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "snapshot refused a bin holding a tool with extras: exit %d\n%s", code, stderr)
-	}
+	require.EqualValuesf(t, 0, code, "snapshot refused a bin holding a tool with extras: exit %d\n%s", code, stderr)
 	need(t, stdout, "SNAPSHOT OK", "tools=3", "stamp="+field(stamp))
 	body := string(readFileOrFail(t, out))
 	for _, want := range []string{
@@ -41,16 +39,12 @@ func TestSnapshotAcceptsAToolThatSaysOneMoreTrueThing(t *testing.T) {
 		"nova-merge\t" + stamp + "\td576bf6bbabb\tdarwin/arm64",
 		"nova-sandbox\t" + stamp + "\td576bf6bbabb\tdarwin/arm64",
 	} {
-		if !strings.Contains(body, want) {
-			assert.Containsf(t, body, want, "snapshot did not record %q:\n%s", want, body)
-		}
+		assert.Containsf(t, body, want, "snapshot did not record %q:\n%s", want, body)
 	}
 	// The extras are metadata about one tool, not a column of the set: the
 	// stamp every row carries is the same, so the mixed-set gate still reads
 	// field two and nothing else.
-	if strings.Contains(body, "build=") || strings.Contains(body, "backend=") {
-		assert.Failf(t, "", "an extra leaked into the snapshot's own columns:\n%s", body)
-	}
+	assert.Falsef(t, strings.Contains(body, "build=") || strings.Contains(body, "backend="), "an extra leaked into the snapshot's own columns:\n%s", body)
 }
 
 // TestSnapshotStillRefusesALineThatIsNotAVersionLine keeps the repair from
@@ -64,13 +58,10 @@ func TestSnapshotStillRefusesALineThatIsNotAVersionLine(t *testing.T) {
 	specStub(t, bin, "nova-broken", "nova-broken: no verb given; run: nova-broken help")
 	out := filepath.Join(t.TempDir(), "snapshot.tsv")
 	code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out)
-	if code != 2 {
-		require.EqualValuesf(t, 2, code, "exit %d, want 2; stderr=%s", code, stderr)
-	}
+	require.EqualValuesf(t, 2, code, "exit %d, want 2; stderr=%s", code, stderr)
 	need(t, stderr, "SNAPSHOT REFUSED", "nova-broken", "go build ./cmd/nova-broken")
-	if _, err := os.Stat(out); err == nil {
-		assert.Error(t, err, "a refused snapshot wrote its --out")
-	}
+	_, err := os.Stat(out)
+	assert.Error(t, err, "a refused snapshot wrote its --out")
 }
 
 // TestReportAsksOurOwnToolsTheVerbTheyAnswer is #1264.
@@ -120,13 +111,9 @@ esac`)
 		"known=3",
 		"unknown=0",
 	} {
-		if !strings.Contains(stdout, want) {
-			assert.Containsf(t, stdout, want, "missing %q in:\n%s\n%s", want, stdout, stderr)
-		}
+		assert.Containsf(t, stdout, want, "missing %q in:\n%s\n%s", want, stdout, stderr)
 	}
-	if code != 0 {
-		assert.EqualValuesf(t, 0, code, "exit %d, want 0; stderr=%s", code, stderr)
-	}
+	assert.EqualValuesf(t, 0, code, "exit %d, want 0; stderr=%s", code, stderr)
 }
 
 // TestReportStillRefusesAToolThatAnswersNothing: the ladder tries three
@@ -142,9 +129,7 @@ func TestReportStillRefusesAToolThatAnswersNothing(t *testing.T) {
 	code, _, stderr := specRun(t, Environment{}, "report", "--file", file)
 	// A report that ran and failed prints on stderr, where a FAILED belongs.
 	need(t, stderr, "REPORT UNKNOWN name=nova-mute", "unknown=1")
-	if code != 1 {
-		assert.EqualValuesf(t, 1, code, "exit %d, want 1 (the check ran and failed)", code)
-	}
+	assert.EqualValuesf(t, 1, code, "exit %d, want 1 (the check ran and failed)", code)
 }
 
 // TestReportRunsAnExplicitArgvExactlyAsWritten: a manifest that names its own
@@ -165,17 +150,13 @@ printf '%s\n' 'strict 4.5.6'`)
 	// explicit argv", which would be a false and very confusing red.
 	seen(t, strict)
 	code, stdout, stderr := specRun(t, Environment{}, "report", "--file", file)
-	if code != 0 || strings.Contains(stdout, "UNKNOWN") {
-		require.Failf(t, "", "the ladder rewrote an explicit argv: exit %d\n%s\n%s", code, stdout, stderr)
-	}
+	require.Falsef(t, code != 0 || strings.Contains(stdout, "UNKNOWN"), "the ladder rewrote an explicit argv: exit %d\n%s\n%s", code, stdout, stderr)
 	need(t, stdout, "version=4.5.6")
 }
 
 func readFileOrFail(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	return b
 }

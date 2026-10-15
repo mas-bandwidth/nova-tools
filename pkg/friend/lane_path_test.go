@@ -49,7 +49,7 @@ func TestARelativeBriefPathBecomesAbsoluteInTheCommandAndThePrompt(t *testing.T)
 	require.NoError(t, err)
 	job.Brief = string(raw)
 
-	text := CardText(job, 1, 2, "nova-bus send ...", "", "", "", nil)
+	text := CardText(job, 1, 2, "nova-bus send ...")
 	assert.Contains(t, text, "Its brief is "+brief+", and its whole text is below")
 	assert.Contains(t, text, "2. Write "+outbox+"/REPORT.md and "+outbox+"/RESULT.md")
 	assert.Contains(t, text, "Your working directory is the card's job directory, "+jobDir+".")

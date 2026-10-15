@@ -112,9 +112,7 @@ cmd/nova-hook/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nov
 cmd/nova-hook/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-hook unhook --as m1
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend uninstall --as bob --dry-run
-cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend ping --as ada --to bob --nonce abc123
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
-cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend status --as bob --dir ./bob
 cmd/nova-friend/main_test.go:TestHostHelpExampleIsWhatTheToolPrints example: nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
 cmd/nova-friend/lanes_test.go:TestTheLanesHelpExampleIsWhatTheToolPrints example: nova-friend lanes --as bob --clear-faults

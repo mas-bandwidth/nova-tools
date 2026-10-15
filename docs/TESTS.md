@@ -84,9 +84,7 @@ The ledger ratchet (`TestClassRuleLedgersOnlyShrinkAgainstMergeBase`, `internal/
 
 Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
-rows), each with a proven inbox push on `bus2:push` (what each one's friend
-daemon writes when its session answers the SESSION CHECK; without it every send
-and recv carries a `push=none` NOTE and lands all the same), its address in `NOVA_BUS_REDIS`, so the lines
+rows), each hooked in with its bus push proven on the hook record, its address in `NOVA_BUS_REDIS`, so the lines
 read as a reader types them.
 The sitting is the loop: bob first waits on his own empty stream and, nothing
 coming within the second he gave it, is told `WAIT NONE` at exit 1 (the wait
@@ -126,8 +124,8 @@ LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-0
 
 $ nova-bus names --as bob
 NAMES OK count=2 proven=2
-NAMES NAME name=ada push=proven age=0s harness=claude
-NAMES NAME name=bob push=proven age=0s harness=claude
+NAMES NAME name=ada state=proven role=comms reason=-
+NAMES NAME name=bob state=proven role=comms reason=-
 ```
 
 ## nova-hook
@@ -168,22 +166,12 @@ rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types
 them. The sitting is the canary by hand, with no daemon running: a dry-run
 install prints the plan for bob's agent, OpenCode's project config first; a
 dry-run uninstall the plan to undo it; a dry-run host the tmux line that would
-host bob's terminal harness; ada, as the coordinator, pings bob with a nonce; bob's session answers
-with `pong` (one note to ada, and the pong file under the home directory,
-`./home/.nova-friend/bob`); `wait-pong` finds it on the log from bob's own
-stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, with bob's directory `./bob` made in it
+host bob's terminal harness; bob's session answers a reach step's nonce with `pong` (one note to ada on
+the bus, from bob's own stream); `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, with bob's directory `./bob` made in it
 first (install, `--dry-run` too, refuses a `--dir` that is not a real
 directory and never makes one), and so are the
 home directory and the uid the plan names. The run-owned values are the
-message `id=` (a ULID from the store's time), `at=`, and `took=`.
-
-`serve`, the coordinator's ping loop, is not a step of this sitting: it runs
-until a signal, so the banner has no example of it to run here. What it prints
-is pinned in `cmd/nova-friend/serve_test.go` on the in-memory store with an
-injected clock: `SERVE OK friends= every= down_after=` once (with `dry_run=true`
-and nothing sent under `--dry-run`), then one `SERVE UP` or `SERVE DOWN` line
-per state change, and `SERVE STOP interrupted` at a signal (docs/CLI.md, "The
-coordinator's ping loop").
+message `id=` (a ULID from the store's time) and `at=`.
 
 `watch`, the coordinator's wake, is not a step either: it waits for a message
 or a wake line that arrives after it starts, or for `--timeout`, so the banner
@@ -204,18 +192,7 @@ and no live session launches no turn),
 `TestSpendCapStopsWhenTheLimitGateReadsAFundsRefusal` (the real gate chain —
 the limit gate under the spend cap — reads the incident's wording and a 402
 from a harness turn, hands the funds refusal to the spend cap, and stops with
-the one judgment before the limit's Rest retry). The daemon's wiring (the
-`--spend-cap` flag, the harness's usage report as `Spent`, the judgment to the
-seat) is pinned by `TestTheDaemonStopsTurnsPastTheCapAndRaisesOneJudgment` and
-`TestTheDaemonLaunchesNothingWhenIdle` (`pkg/friend/spendcap_daemon_test.go`):
-a fake harness reports usage past the cap over the daemon's in-process bus
-store, the daemon's own loop drives it, and the gate stops the turn and raises
-one judgment; with the cap reading idle no turn launches and the message stays
-pending. `TestTheDaemonOnAPrivateServerStopsTurnsPastTheCapAndRaisesOneJudgment`
-(`pkg/friend/spendcap_redis_functional_test.go`, the functional tier) runs that
-loop over its own throwaway redis-server (loopback only, nothing kept) with a
-fake harness that reports its usage and no provider secret in the environment,
-so the cap is measured from the harness's own report on the real store.
+the one judgment before the limit's Rest retry). The daemon delivers nothing into a session (v1.3.6), so the cap stands in front of the lanes alone.
 
 ### First run
 
@@ -237,15 +214,8 @@ UNINSTALL PLAN command="rm ./home/Library/LaunchAgents/com.nova.friend-bob.plist
 $ nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
 HOST DRY-RUN session=friend-bob dir=./bob dry_run=true command="tmux new-session -d -s friend-bob -c ./bob -- aider"
 
-$ nova-friend ping --as ada --to bob --nonce abc123
-PING OK nonce=abc123 id=01M42EJZ1D4JEFR6ESF1YJ3YJA to=bob at=2026-10-04T03:40:12Z
-PING NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123
-
 $ nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 PONG OK nonce=abc123 to=ada id=01M42EJZ1F8FXB5T0F6EXJCRS1 at=2026-10-04T03:40:12Z
-
-$ nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
-WAIT-PONG OK nonce=abc123 from=bob at=2026-10-04T03:40:12Z took=1ms queue=2 working=1 width=4 daemon=false
 
 $ nova-friend status --as bob --dir ./bob
 ! STATUS NONE: no daemon has run as bob (no status file in ./home/.nova-friend/bob); run: nova-friend install --as bob --harness <h> --dir ./bob
@@ -822,7 +792,7 @@ source are pinned by `cmd/nova-config/seat_login_redis_test.go`
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=44 applied=44
+CONFIG MIGRATE file=try.json from=0 to=45 applied=45
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -1171,7 +1141,7 @@ $ nova-doctor run --check harness --json
 {"exit":0,"results":[{"check":"harness","dependency":"the friend harnesses","status":"ok","evidence":"no friend rows at /home/you/.nova/friends"}]}
 
 $ nova-doctor run --check nosuch
-! RUN REFUSED: no check named "nosuch"; the checks are dashboard, friend-live, friend-login, friend-row, friend-seat, friend-wall, gosdk, harness, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
+! RUN REFUSED: no check named "nosuch"; the checks are dashboard, friend-login, friend-row, friend-seat, friend-wall, gosdk, harness, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
 ```
 
 ## One-shot lanes at parity (pkg/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)

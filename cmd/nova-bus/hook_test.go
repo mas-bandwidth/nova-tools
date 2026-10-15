@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/hook/hooktest"
@@ -13,13 +14,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// hookedRig is the rig whose gate is the real hook record, on a hooktest
-// store beside the bus's fake: nothing is hooked until a test hooks it.
+// hookedRig is the rig whose gate and names reader are the real hook record, on
+// a hooktest store beside the bus's fake: nothing is hooked until a test hooks it.
 func hookedRig(t *testing.T) (*rig, *hooktest.Rig) {
 	t.Helper()
 	r := newRig("ada", "bob")
 	h := hooktest.New(t)
 	r.gate = func(ctx context.Context, _ bus.Store, want hook.Want) error { return h.Store.Gate(ctx, want) }
+	r.hooks = func(ctx context.Context, _ bus.Store, names ...string) ([]hook.Status, time.Time, error) {
+		return h.Store.Read(ctx, names...)
+	}
 	return r, h
 }
 
@@ -62,6 +66,7 @@ func TestEveryVerbRefusesUntilHooked(t *testing.T) {
 			assert.Empty(t, r.execIn)
 
 			h.Hook(t, "ada", hook.Comms)
+			h.Hook(t, "bob", hook.Comms)
 			res = r.cli().Run(c.args...)
 			assert.NotContains(t, res.Stdout+res.Stderr, "unhooked", "hooked in, the verb runs")
 			assert.NotEqual(t, 2, res.Code, res.Stdout+res.Stderr)
@@ -79,6 +84,7 @@ func TestEveryVerbRefusesUntilHooked(t *testing.T) {
 func TestASendUnhookedWritesNothing(t *testing.T) {
 	t.Parallel()
 	r, h := hookedRig(t)
+	h.Hook(t, "bob", hook.Friend)
 	send := []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "b"}
 	res := r.cli().Run(send...)
 	require.Equal(t, 1, res.Code)
@@ -105,7 +111,7 @@ func TestAHalfHookedCoordinatorIsRefused(t *testing.T) {
 	assert.Equal(t, 1, res.Code)
 	out := res.Stdout + res.Stderr
 	assert.Contains(t, out, "partial as coordinator (bus=proven sprint=down)")
-	assert.Contains(t, out, "the sprint push of a coordinator is held by: nova-sprint hook --as ada")
+	assert.Contains(t, out, "the sprint push of a coordinator is held by: the sprint's server (nova-sprint run), which holds it for the coordinator while it runs and reaches the bus")
 }
 
 // TestTheGateFailsClosed pins that a hook record that cannot be read refuses
@@ -120,4 +126,84 @@ func TestTheGateFailsClosed(t *testing.T) {
 	got, err := (&bus.Bus{Store: r.store}).Log(context.Background(), "-")
 	require.NoError(t, err)
 	assert.Empty(t, got)
+}
+
+// TestNamesReadsTheHookRecord pins that nova-bus names reads each known name's
+// presence from the hook record: proven when hooked with its pushes proven and
+// heartbeat evidence fresh, none when never hooked, unhooked with the heartbeat's
+// reason when unhooked, and down when the holders are proven and the heartbeat
+// evidence is not.
+func TestNamesReadsTheHookRecord(t *testing.T) {
+	t.Parallel()
+	r, h := hookedRig(t)
+	cli := r.cli()
+	h.Hook(t, "ada", hook.Friend)
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out(
+		"NAMES OK count=2 proven=1",
+		"NAMES NAME name=ada state=proven role=friend reason=-",
+		"NAMES NAME name=bob state=none role=- reason=-",
+	)
+
+	h.Hook(t, "bob", hook.Comms)
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out(
+		"NAMES OK count=2 proven=2",
+		"NAMES NAME name=ada state=proven role=friend reason=-",
+		"NAMES NAME name=bob state=proven role=comms reason=-",
+	)
+
+	h.Unhook(t, "bob")
+	require.NoError(t, h.Client.HSet(context.Background(), hook.RecordKey("bob"), "reason", "missed 2 challenges").Err())
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out(
+		"NAMES OK count=2 proven=1",
+		`NAMES NAME name=bob state=unhooked role=comms reason="missed 2 challenges"`,
+	)
+
+	// bob hooks in again with holders proven, then loses its challenge answer
+	h.Hook(t, "bob", hook.Comms)
+	require.NoError(t, h.Client.HDel(context.Background(), hook.RecordKey("bob"), "answered_at").Err())
+	cli.Do(t, "names", "--as", "ada").Exit(0).Out(
+		"NAMES OK count=2 proven=1",
+		`NAMES NAME name=bob state=down role=comms reason="no answer to a heartbeat challenge within the window"`,
+	)
+}
+
+// TestSendRefusesADownRecipientAndJudgesOnce pins that nova-bus send refuses a
+// recipient the hook record shows down, at once, with the reason and one
+// deduplicated judgment to the coordinator.
+func TestSendRefusesADownRecipientAndJudgesOnce(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob", "coord")
+	h := hooktest.New(t)
+	r.gate = func(ctx context.Context, _ bus.Store, want hook.Want) error { return h.Store.Gate(ctx, want) }
+	r.hooks = func(ctx context.Context, _ bus.Store, names ...string) ([]hook.Status, time.Time, error) {
+		return h.Store.Read(ctx, names...)
+	}
+	cli := r.cli()
+	h.Hook(t, "coord", hook.Coordinator)
+	h.Hook(t, "ada", hook.Friend)
+	h.Hook(t, "bob", hook.Friend)
+	h.Unhook(t, "bob")
+	require.NoError(t, h.Client.HSet(context.Background(), hook.RecordKey("bob"), "reason", "missed 2 challenges").Err())
+
+	send := []string{"send", "--as", "ada", "--to", "bob", "--subject", "work", "--body", "hello"}
+	cli.Do(t, append(send, "--dry-run")...).Exit(1).Err("SEND FAILED reason=unhooked: bob is down (missed 2 challenges); run: nova-hook status --as bob")
+	assert.Zero(t, r.store.Len(bus.StreamOf("coord")), "--dry-run writes no judgment")
+
+	cli.Do(t, send...).Exit(1).Err("SEND FAILED reason=unhooked: bob is down (missed 2 challenges); run: nova-hook status --as bob")
+	assert.Zero(t, r.store.Len(bus.StreamOf("bob")), "nothing delivered to down recipient")
+	assert.Equal(t, 1, r.store.Len(bus.StreamOf("coord")), "one judgment sent to the coordinator")
+
+	cli.Do(t, send...).Exit(1).Err("SEND FAILED reason=unhooked: bob is down (missed 2 challenges)")
+	assert.Equal(t, 1, r.store.Len(bus.StreamOf("coord")), "deduplicated: no second judgment for the same down state")
+
+	b := &bus.Bus{Store: r.store}
+	e, ok, err := b.Recv(context.Background(), "coord", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, bus.KindJudgment, e.Message().Kind)
+	assert.Equal(t, "FRIEND DOWN bob: missed 2 challenges", e.Message().Subject)
+
+	h.Hook(t, "bob", hook.Friend)
+	cli.Do(t, send...).Exit(0).Out("SEND OK id=")
+	assert.Equal(t, 1, r.store.Len(bus.StreamOf("bob")))
 }

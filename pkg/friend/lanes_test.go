@@ -210,8 +210,9 @@ func TestALimitDetectorFaultFeedsTheLaneFaultRecord(t *testing.T) {
 // handed one card per turn: a card whose turn writes its RESULT.md is done and
 // the lane takes the next; a card without one is handed again once, then set
 // aside and reported to the coordinator with the reason (here the permission
-// the harness refused). A bus message rides in the first card's turn and is
-// acked with it; no turn is ever started without a card.
+// the harness refused). A card goes in alone: the daemon takes nothing off the
+// friend's bus stream (a message reaches her through nova-hook), and no turn is
+// ever started without a card.
 func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -219,9 +220,7 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 			[]string{"c0", "c1", "c2", "cd", "c3"}, []string{"cd"})
 		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true, "c3": true}, reject: map[string]string{"c2": "Permission to read /elsewhere was auto-rejected"}, active: map[string]int{}}
 		r, state := laneRig(t, h, 2)
-		hello := r.send(t, "ada", "hello", "for whichever lane is next")
-		r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
-		r.at[20] = func() { r.send(t, "ada", "later", "after every card") }
+		r.send(t, "ada", "hello", "for whichever lane is next")
 		r.run(t, 30)
 
 		turns, texts, seeds := h.got()
@@ -255,27 +254,19 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		assert.Contains(t, first, "Its brief is "+filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"))
 		assert.Contains(t, first, "2. Write "+filepath.Join(dir, "outbox", "c1~15")+"/REPORT.md and "+filepath.Join(dir, "outbox", "c1~15")+"/RESULT.md")
 		assert.Contains(t, first, "3. Send one bus line: nova-bus send --as bob --to ada --subject 'card c1 done'")
-		assert.Contains(t, first, Text(hello), "the waiting message rides with the first card")
-		for i, text := range texts {
-			if i != at {
-				assert.NotContains(t, text, "for whichever lane is next", "and only with it")
-			}
-		}
-		assert.NotContains(t, strings.Join(texts, "\n"), "after every card", "a message with no card to ride with waits")
-		pending, fresh := r.pending(t)
-		assert.Len(t, pending, 1, "the late message waits in hand, pending")
-		assert.Equal(t, "later", pending[0].Message().Subject)
-		assert.Empty(t, fresh)
+		assert.NotContains(t, strings.Join(texts, "\n"), "for whichever lane is next", "no message rides with a card")
+		_, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Len(t, fresh, 1, "the message is never taken off her stream by the daemon: it stays for nova-hook")
 
 		got := r.adaGot(t)
-		require.Len(t, got, 2)
-		assert.Equal(t, "daemon-pong: daemon-pong n1", got[0])
-		assert.True(t, strings.HasPrefix(got[1], "friend bob: card c2 not finished after 2 turns (lane "+c2Lane+"): the harness refused a permission: Permission to read /elsewhere was auto-rejected"), got[1])
+		require.Len(t, got, 1)
+		assert.True(t, strings.HasPrefix(got[0], "friend bob: card c2 not finished after 2 turns (lane "+c2Lane+"): the harness refused a permission: Permission to read /elsewhere was auto-rejected"), got[0])
 		assert.Equal(t, map[int]string{1: "ses_1", 2: "ses_2"}, state.Sessions, "each lane keeps its session")
 		assert.Equal(t, []string{"c2~15"}, state.GivenUp)
 		records := strings.Join(r.records, "\n")
 		assert.Equal(t, 2, strings.Count(records, " card=done"), records)
-		assert.Contains(t, records, "lane="+c2Lane+" session=ses_"+c2Lane+` subject="card c2" messages=0`)
+		assert.Contains(t, records, "lane="+c2Lane+" session=ses_"+c2Lane+` subject="card c2" took=`)
 		assert.Contains(t, records, `card=again turn=1/2 reason="the harness refused a permission: Permission to read /elsewhere was auto-rejected"`)
 		assert.Contains(t, records, "card=set_aside turn=2/2")
 		s := r.last()
@@ -349,16 +340,16 @@ func TestAStoredBatchRowIsDealtAndRunPerLane(t *testing.T) {
 	})
 }
 
-// A harness that cannot open a session per lane delivers in batch whatever
-// the row says, and says why once.
-func TestOneShotOnAHarnessWithoutSessionsDeliversInBatch(t *testing.T) {
+// A harness that cannot open a session per lane runs no lane whatever the row
+// says, and says why once; nothing is pushed into its session instead.
+func TestOneShotOnAHarnessWithoutSessionsRunsNoLane(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.d.Row = func() (string, int) { return ModeOneShot, 3 }
 	r.send(t, "ada", "hello", "x")
 	r.run(t, 4)
-	require.Len(t, r.delivered, 1, "the batch turn")
-	assert.Equal(t, 1, strings.Count(strings.Join(r.records, "\n"), "cannot open a session per lane; delivering in batch"))
+	assert.Empty(t, r.delivered, "no batch turn: a message reaches her through nova-hook")
+	assert.Equal(t, 1, strings.Count(strings.Join(r.records, "\n"), "cannot open a session per lane; no lane runs"))
 	assert.Equal(t, ModeBatch, r.last().Mode)
 	assert.Equal(t, 3, r.last().Width, "the row's width all the same")
 }
