@@ -24,7 +24,7 @@ import (
 const DashboardAskCheck = "dashboard-asked-for"
 
 // DashboardAskRemedy is what the check wants.
-const DashboardAskRemedy = "a card that changes the dashboard page (adds, removes, hides or filters anything on it) carries the owner's ask on its SOURCE: line, `SOURCE: the owner, <YYYY-MM-DD>: \"<his exact words asking for this change>\"`; with no such ask, take the page's files and the code that draws it out of PATHS:, or ask the owner first"
+const DashboardAskRemedy = "a card that changes the dashboard page (adds, removes, hides or filters anything on it) carries the owner's ask on its SOURCE: line, `SOURCE: the owner, <YYYY-MM-DD>: \"<the exact words asking for this change>\"`; with no such ask, take the page's files and the code that draws it out of PATHS:, or ask the owner first"
 
 // DashboardPageDir is the page's files' directory.
 const DashboardPageDir = "internal/sprintdash/page"
