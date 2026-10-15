@@ -352,7 +352,7 @@ sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE 
 				Detail: `The heartbeat server (docs/SPEC-HOOK.md, the heartbeat; tla/HookBeat.tla). Every --every (default ` + hook.BeatEvery.String() + `),
 in one atomic pass by the store's TIME, each hooked name whose role a session answers in (coordinator, friend,
 comms) gets a fresh challenge as a bus message to its name, subject HOOK CHALLENGE nonce=<n>, due within the
-interval: the push it already has (its hook's HOOK PUSH line, or its friend daemon's adapter). A challenge left
+interval, delivered by nova-hook through the native route or the session's Monitor. A challenge left
 unanswered a whole interval is a miss; at ` + fmt.Sprint(hook.MissLimit) + ` in a row the name is unhooked (reason "missed ` + fmt.Sprint(hook.MissLimit) + ` challenges").
 Each real change is told once, coalesced per pass: the coordinator gets one judgment (bus kind judgment) naming
 every FRIEND DOWN and FRIEND BACK, open until answered with nova-bus send --re <id> and pushed again as OVERDUE

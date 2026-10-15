@@ -432,7 +432,7 @@ func HeldBy(name string, r Role, p Push) string {
 	case p == Sprint:
 		return "the sprint's server (nova-sprint run), which holds it for the coordinator while it runs and reaches the bus"
 	case p == Bus:
-		return HookCommand(name, r) + " under the session's Monitor (each line it prints is a push; it prints HOOK CHALLENGE, answered with nova-hook prove --as " + name + " --nonce <nonce>)"
+		return HookCommand(name, r) + " under the session's Monitor (each line it prints is a push; it prints HOOK CHALLENGE, answered with nova-hook prove --as " + name + " --nonce <nonce>); supervised service label: nova-hook.client." + name
 	case r == Friend:
 		label := AgentLabel(name, r)
 		return "the friend daemon's lanes, its service " + label + ", which hooks in at its start; restart it: " + RestartCommand(runtime.GOOS, label)

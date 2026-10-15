@@ -147,15 +147,18 @@ func TestABreadcrumbWithNoRoleNeverGuesses(t *testing.T) {
 }
 
 // TestEveryHolderLineRunsAsPrinted pins that no breadcrumb line carries an
-// elision a reader would have to fill in: each names the service and the line
-// that restarts it on this machine, and the sprint push's line says where its
-// holder ships and what to run until it does.
+// elision a reader would have to fill in: Bus names the hook command and its
+// supervised service label, Work names its lane holder, and Sprint names its
+// running server.
 func TestEveryHolderLineRunsAsPrinted(t *testing.T) {
 	t.Parallel()
 	for _, r := range Roles {
 		for _, p := range PushesOf(r) {
 			line := HeldBy("bob", r, p)
 			assert.NotContains(t, line, "...", "%s %s: %s", r, p, line)
+			if p == Bus {
+				assert.Contains(t, line, "supervised service label: nova-hook.client.bob")
+			}
 		}
 	}
 	assert.Contains(t, HeldBy("bob", Friend, Bus), HookCommand("bob", Friend)+" under the session's Monitor", "the bus push is the session's own hook")
