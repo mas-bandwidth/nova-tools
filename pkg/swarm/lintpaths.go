@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/pkg/hygiene"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // THE BRIEF CHECKS: WHAT NOVA-SPRINT ADD HOLDS A CARD BRIEF TO AT ITS BASE TIP.
@@ -54,6 +55,8 @@ import (
 // they are their own table and `nova-swarm lint --rules` does not count them as its checks.
 // paths-at-base and donewhen-test-name answer from CardBaseRemedies.
 var BriefBaseRemedies = map[string]string{
+	"paths-read-marker":     PathsReadRemedy,
+	"pr-carry":              "a card that finishes an open pull request starts from the PR's own head, never from its base: add `CARRY: head=<the PR's full head sha> branch=<the PR branch>` to the brief's header (the CARRY: line brief --widen writes, less the attempt), so the slot is staged from the PR head and the worker merges the base itself; add the brief again",
 	"paths-cover-named":     "every repository path START: and THE TASK name as a file to change is in PATHS: (or NEW:); mark a START entry the card only reads `(read)`; apply the corrected PATHS: line add printed",
 	"paths-cover-test":      "PATHS: covers the TEST package's `_test` files (`<pkg>/*_test.go`, or the new test file by name), since the card lands with the test it names; apply the corrected PATHS: line add printed",
 	"paths-cover-testdata":  "a `<dir>/*.go` entry does not reach `<dir>/testdata`; when the package has testdata, PATHS: names `<dir>/testdata/**` too; apply the corrected PATHS: line add printed",
@@ -65,6 +68,21 @@ var BriefBaseRemedies = map[string]string{
 	// tla-is-frontier is the old token, kept as an alias for one release, naming the same remedy.
 	"tla-is-frontier": "a card whose PATHS: covers tla/ changes a TLA+ model, and a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or take tla/ out of PATHS: and give the model to its own card",
 	"who-serves-tier": "the friend WHO: names serves the card's tier (the friend's row's tiers, else the friend's class), or for `WHO: friend` some friend does; name a friend who serves it, raise the tier to one the friend serves, or drop the WHO: line so the fleet deals it",
+}
+
+// PathsReadRemedy is the correction for read-only metadata written in PATHS.
+const PathsReadRemedy = "move the read-only file to START with (read) and keep only files the card writes in PATHS"
+
+// PathsReadRefusal names the first PATHS entry carrying START's (read) marker
+// (docs/SPEC-CARD-CONTRACT.md, the write allowlist). It validates the value,
+// without changing the path lists the overlap and TLA gates read.
+func PathsReadRefusal(value string) string {
+	for _, entry := range strings.Split(value, ",") {
+		if strings.Contains(entry, "(read)") {
+			return fmt.Sprintf("PATHS entry %q uses (read), which is START metadata; %s", strings.TrimSpace(entry), PathsReadRemedy)
+		}
+	}
+	return ""
 }
 
 // LedgerKind is the KIND: of a ledger card, the card nova-card generate cuts from a
@@ -111,13 +129,32 @@ type BriefFix []string
 // findings in one step.
 func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 	h, _ := cardHeaderBlock(raw)
-	pathsF := h["PATHS"]
-	if !pathsF.found {
-		return nil, nil
-	}
 	var out []CardHeaderFinding
 	add := func(check string, line int, excerpt string) {
 		out = append(out, CardHeaderFinding{Check: check, Line: max(line, 1), Excerpt: excerpt})
+	}
+	// 0. pr-carry: a card that finishes an open pull request stages from the PR's own head,
+	// not from its base. The head rides the brief's CARRY: line (the one brief --widen
+	// writes, `CARRY: <card> attempt <n> head=<sha>`, or a finish-PR card's
+	// `CARRY: head=<sha> branch=<pr branch>`); a brief that names a PR and carries none is
+	// refused here, before a worker spends an attempt on the base and comes back one commit
+	// off it. This holds a brief with no PATHS: too: it is the card's whole staging.
+	if namesAFinishPR(raw, h) {
+		if _, ok := member.CarryOf(string(raw)); !ok {
+			line := 1
+			if f := h[PRHeaderKey]; f.found {
+				line = f.line
+			}
+			add("pr-carry", line, "this card finishes an open pull request and its brief carries no CARRY: line, so its slot stages from the base and not from the PR's head; add `CARRY: head=<the PR's full head sha> branch=<the PR branch>` to the brief's header (the line brief --widen writes, less the attempt), then add the brief again")
+		}
+	}
+	pathsF := h["PATHS"]
+	if !pathsF.found {
+		return out, nil
+	}
+	if why := PathsReadRefusal(pathsF.value); why != "" {
+		add("paths-read-marker", pathsF.line, why)
+		return out, nil
 	}
 	paths := headerList(pathsF.value)
 	news := headerList(h["NEW"].value)
@@ -566,6 +603,32 @@ func taskParagraph(raw []byte) (int, string) {
 		return i + 1, b.String()
 	}
 	return 0, ""
+}
+
+// PRHeaderKey is the header line a card that finishes an open pull request carries:
+// `PR: <owner>/<repo>#<n>`. Add and brief read it (with THE TASK's prose below) only to
+// refuse a brief that names a PR and carries no CARRY: line, so the slot stages from the
+// PR's head (docs/SPEC-SPRINT.md, the brief checks).
+const PRHeaderKey = "PR"
+
+// NamesAFinishPR says the brief is a card that finishes an open pull request: its header
+// carries a PR: line, or THE TASK names the PR's branch it starts from. The prose the first
+// finish-PR cards were staged with is what the lint catches, so the generator's CARRY: line
+// is required whether or not it writes a PR: line. add reads it to hold such a brief even
+// with no PATHS: line (the PR carry is the card's whole staging), and LintBrief runs the
+// pr-carry check on every brief it is handed.
+func NamesAFinishPR(raw []byte) bool {
+	h, _ := cardHeaderBlock(raw)
+	return namesAFinishPR(raw, h)
+}
+
+// namesAFinishPR is NamesAFinishPR with the block already read.
+func namesAFinishPR(raw []byte, h map[string]headerField) bool {
+	if f := h[PRHeaderKey]; f.found {
+		return true
+	}
+	_, task := taskParagraph(raw)
+	return strings.Contains(strings.ToLower(task), "start from the pr's branch")
 }
 
 // taskPathRE is a path-shaped word in prose; readMarkRE is `(read)` right after one.

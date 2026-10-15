@@ -113,13 +113,30 @@
 (*   NoFollow    the width given at start and never read again (the       *)
 (*               retired --width flag and Config.Width override): a       *)
 (*               width raised from 0 is never taken up: WidthIsFilled.    *)
+(*                                                                         *)
+(* The one-shot friend (v1.5; docs/spec/v1.3/40-friend-lane-client.md     *)
+(* guarantee 12; the owner, 2026-10-14: "just make one shot friends,      *)
+(* exactly the same code that already works in the fleet, just with an    *)
+(* extra prompt at the front"). A friend with no live session between     *)
+(* cards runs as a member (OneShot with Member: nova-swarm member --as    *)
+(* friend.<name> --prompt <file>): the same lanes, verbs and invariants,  *)
+(* with an identity label. It never has a psychic link (Linked is FALSE), *)
+(* so its take waits on none; each finish is credited to the identity    *)
+(* the server's claim names, its row (Holder), never the run's own.       *)
+(*   CreditedToTheClaim  every card done is credited to Holder.           *)
+(* Reversed witnesses (MCFriendLaneOneShotBroken*.cfg):                   *)
+(*   NeedsLink   the one-shot gated on a link as a live friend is: it is  *)
+(*               never dealt a card it can take, AllDone fails.           *)
+(*   CreditFromRunner  a finish credited to the run's identity:           *)
+(*               CreditedToTheClaim fails.                                 *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Cards, Lanes, Reads, Steady, MaxClears, MaxCrashes, MaxGones, MaxReturns,
           RunOnNone, LocalEpoch, KeepOnRefusal, CardOnly, NoGone, KeepOnMismatch,
           Widths, Member, SlotGate, FloorOne, KillOnLower, NoFollow,
-          Garbled, AskAgain, StickyPark
+          Garbled, AskAgain, StickyPark,
+          OneShot, NeedsLink, CreditFromRunner
 
 None == "none"
 Nobody == [card |-> None, ep |-> 0]
@@ -140,14 +157,32 @@ VARIABLES
     unanswered, \* ghost: a lane started while cw = 0
     parked,    \* the lane: refused an unparseable LANE line, it asks no more until restarted
     refusals,  \* ghost: lane -> asks answered with a line it cannot read, since its daemon started (capped at 2)
-    askedAfter \* ghost: a lane sent an ask after it was refused an unparseable line, same daemon life
+    askedAfter, \* ghost: a lane sent an ask after it was refused an unparseable line, same daemon life
+    credit     \* the server: card -> the identity its finish is recorded under ("nobody" until one is)
 
 wvars == <<W, cw, pastWidth, unanswered>>
 pvars == <<parked, refusals, askedAfter>>
 vars == <<epoch, col, srv, alive, lc, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered,
-          parked, refusals, askedAfter>>
+          parked, refusals, askedAfter, credit>>
 
 Idle == [st |-> "idle", card |-> None, ep |-> 0]
+
+\* The one-shot friend (docs/spec/v1.3/40-friend-lane-client.md guarantee 12; the owner,
+\* 2026-10-14). A one-shot is a member with an identity label: Holder is the identity the
+\* server's claim on these lanes' row names (the friend's row, friend.<name>, for a one-shot;
+\* the machine's for a fleet member), and a finish is credited to it from the claim, never
+\* from the run. Linked is whether the row's owner holds a psychic link: a one-shot never
+\* does (no hook, lease or presence record exists for it), so nothing about its lanes may
+\* wait on one. The runner is whatever identity the harness run carries.
+Nobody2 == "nobody"
+Holder == IF OneShot THEN "friend" ELSE "member"
+Runner == "runner"
+Linked == ~OneShot
+\* NeedsLink, the reversed witness: the one-shot gated as a live friend is, on a link it
+\* never has: nothing is ever taken, AllDone fails. CreditFromRunner, the other: a finish
+\* credited to the run's own identity instead of the server's claim: CreditedToTheClaim fails.
+LinkGate == NeedsLink => Linked
+Credited(c) == credit' = [credit EXCEPT ![c] = IF CreditFromRunner THEN Runner ELSE Holder]
 
 Init ==
     /\ W \in Widths
@@ -166,6 +201,7 @@ Init ==
     /\ parked = [l \in Lanes |-> FALSE]
     /\ refusals = [l \in Lanes |-> 0]
     /\ askedAfter = FALSE
+    /\ credit = [c \in Cards |-> Nobody2]
 
 Holding(l) == lc[l].st \in {"taken", "running"}
 LaneSays(l) == IF Holding(l) THEN <<lc[l].card, lc[l].ep>> ELSE <<None, 0>>
@@ -212,8 +248,8 @@ Exchanged(l) == stale' = [stale EXCEPT ![l] = FALSE]
 \* take --lane l: the lane names itself only; the server picks.
 \* The width gate stands before the ask (laneStep: the live check, then laneAsk).
 \* A parked lane does not ask (laneAsk: now.Before(ln.askAt), askAt = now + neverAgain).
-TakeAsk(l) == alive[l] /\ lc[l].st = "idle" /\ ~parked[l] /\ WidthGate(l)
-TakeRest == UNCHANGED <<epoch, alive, staleStep, clears, crashes, gones, returns>>
+TakeAsk(l) == alive[l] /\ lc[l].st = "idle" /\ ~parked[l] /\ WidthGate(l) /\ LinkGate
+TakeRest == UNCHANGED <<epoch, alive, staleStep, clears, crashes, gones, returns, credit>>
 
 \* The ghost of an ask: a lane that was refused an unparseable line since its daemon started.
 Asked(l) == askedAfter' = (askedAfter \/ refusals[l] >= 1)
@@ -289,7 +325,7 @@ Held(l) ==
        ELSE /\ lc' = [lc EXCEPT ![l] = Idle]
             /\ UNCHANGED <<granted, parked, refusals>>
     /\ Asked(l) /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, col, srv, alive, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered>>
+    /\ UNCHANGED <<epoch, col, srv, alive, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, credit>>
 
 \* A refused verb: the lane drops the job (KeepOnRefusal: it runs on regardless).
 Drop(l) == lc' = [lc EXCEPT ![l] = IF KeepOnRefusal THEN lc[l] ELSE Idle]
@@ -307,14 +343,14 @@ Begin(l) ==
             /\ UNCHANGED staleStep
        ELSE /\ Drop(l) /\ UNCHANGED staleStep
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, col, srv, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
+    /\ UNCHANGED <<epoch, col, srv, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter, credit>>
 
 \* A work card's start: taken to running with no request (lane_take.go laneAsk runs exactly
 \* what the take's answer named; no begin is sent).
 Run(l) ==
     /\ alive[l] /\ lc[l].st = "taken" /\ lc[l].card \notin Reads
     /\ lc' = [lc EXCEPT ![l].st = "running"]
-    /\ UNCHANGED <<epoch, col, srv, alive, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
+    /\ UNCHANGED <<epoch, col, srv, alive, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter, credit>>
 
 Progress(l) ==
     /\ alive[l] /\ lc[l].st = "running"
@@ -322,7 +358,7 @@ Progress(l) ==
        THEN UNCHANGED lc
        ELSE Drop(l)
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, col, srv, alive, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
+    /\ UNCHANGED <<epoch, col, srv, alive, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter, credit>>
 
 Finish(l) ==
     /\ alive[l] /\ lc[l].st = "running"
@@ -332,7 +368,8 @@ Finish(l) ==
             /\ srv' = [k \in Lanes |-> IF srv[k].card = c THEN Nobody ELSE srv[k]]
             /\ lc' = [lc EXCEPT ![l] = Idle]
             /\ Applied(l, lc[l].ep)
-       ELSE /\ Drop(l) /\ UNCHANGED <<col, srv, staleStep>>
+            /\ Credited(c)
+       ELSE /\ Drop(l) /\ UNCHANGED <<col, srv, staleStep, credit>>
     /\ Exchanged(l)
     /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
@@ -346,7 +383,8 @@ TakenFinish(l) ==
             /\ srv' = [k \in Lanes |-> IF srv[k].card = c THEN Nobody ELSE srv[k]]
             /\ lc' = [lc EXCEPT ![l] = Idle]
             /\ Applied(l, lc[l].ep)
-       ELSE /\ Drop(l) /\ UNCHANGED <<col, srv, staleStep>>
+            /\ Credited(c)
+       ELSE /\ Drop(l) /\ UNCHANGED <<col, srv, staleStep, credit>>
     /\ Exchanged(l)
     /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
 
@@ -363,7 +401,7 @@ Return(l) ==
        ELSE UNCHANGED <<col, srv, staleStep>>
     /\ lc' = [lc EXCEPT ![l] = Idle]
     /\ Exchanged(l)
-    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
+    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, W, cw, pastWidth, unanswered, parked, refusals, askedAfter, credit>>
 
 \* A row read that disagrees with the lane (the card left her row, is not working there, or
 \* another lane holds it: lane_take.go laneCheck) revokes the grant and the lane drops the
@@ -376,7 +414,7 @@ RowDrop(l) ==
     /\ IF KeepOnMismatch
        THEN UNCHANGED lc
        ELSE lc' = [lc EXCEPT ![l] = Idle]
-    /\ UNCHANGED <<epoch, col, srv, alive, stale, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
+    /\ UNCHANGED <<epoch, col, srv, alive, stale, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter, credit>>
 
 -----------------------------------------------------------------------------
 \* The lane's process dies (a crash, the daemon stopped); what it held is the server's.
@@ -387,7 +425,7 @@ Crash(l) ==
     /\ lc' = [lc EXCEPT ![l] = [st |-> "down", card |-> None, ep |-> 0]]
     /\ stale' = [stale EXCEPT ![l] = TRUE]
     /\ crashes' = crashes + 1
-    /\ UNCHANGED <<epoch, col, srv, granted, staleStep, clears, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
+    /\ UNCHANGED <<epoch, col, srv, granted, staleStep, clears, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter, credit>>
 
 \* It comes back with nothing: its first word is Held. A daemon start makes each lane anew
 \* (lanes.go: &lane{n, session}, askAt zero): a parked lane is unparked, its count of refusals 0.
@@ -400,7 +438,7 @@ Restart(l) ==
        THEN UNCHANGED <<parked, refusals>>
        ELSE /\ parked' = [parked EXCEPT ![l] = FALSE]
             /\ refusals' = [refusals EXCEPT ![l] = 0]
-    /\ UNCHANGED <<epoch, col, srv, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, askedAfter>>
+    /\ UNCHANGED <<epoch, col, srv, stale, granted, staleStep, clears, crashes, gones, returns, W, cw, pastWidth, unanswered, askedAfter, credit>>
 
 \* The server: a lane that has not asked within the bound is gone; its card bounces back.
 \* A dead lane never asks, nor does a parked one; a live one may be slow past the bound too
@@ -415,7 +453,7 @@ Gone(l) ==
     /\ srv' = [srv EXCEPT ![l] = Nobody]
     /\ stale' = [stale EXCEPT ![l] = TRUE]
     /\ gones' = IF alive[l] /\ ~parked[l] THEN gones + 1 ELSE gones
-    /\ UNCHANGED <<epoch, alive, lc, granted, staleStep, clears, crashes, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
+    /\ UNCHANGED <<epoch, alive, lc, granted, staleStep, clears, crashes, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter, credit>>
 
 \* clear: tabula rasa, a new epoch and a new deal; every record of the old epoch dropped.
 Clear ==
@@ -425,7 +463,7 @@ Clear ==
     /\ srv' = [l \in Lanes |-> Nobody]
     /\ stale' = [l \in Lanes |-> TRUE]
     /\ clears' = clears + 1
-    /\ UNCHANGED <<alive, lc, granted, staleStep, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter>>
+    /\ UNCHANGED <<alive, lc, granted, staleStep, crashes, gones, returns, W, cw, pastWidth, unanswered, parked, refusals, askedAfter, credit>>
 
 -----------------------------------------------------------------------------
 \* The width. The server's changes on its own (nova-config friend/machine set --width, an
@@ -433,7 +471,7 @@ Clear ==
 ChangeWidth ==
     /\ \E w \in Widths \ {W} : W' = w
     /\ UNCHANGED <<epoch, col, srv, alive, lc, stale, granted, staleStep, clears, crashes, gones, returns,
-                   cw, pastWidth, unanswered, parked, refusals, askedAfter>>
+                   cw, pastWidth, unanswered, parked, refusals, askedAfter, credit>>
 
 \* The client's read (RowWidth): the beat answer's row_width every daemon step (row), the
 \* queue answer's Width every member pass (Tick); no answer naming one is 0 (max(w, 0)).
@@ -446,7 +484,7 @@ RowWidth ==
        THEN lc' = [l \in Lanes |-> IF Holding(l) /\ l > W THEN Idle ELSE lc[l]]
        ELSE UNCHANGED lc
     /\ UNCHANGED <<epoch, col, srv, alive, stale, granted, staleStep, clears, crashes, gones, returns,
-                   W, pastWidth, unanswered, parked, refusals, askedAfter>>
+                   W, pastWidth, unanswered, parked, refusals, askedAfter, credit>>
 
 Next ==
     \/ \E l \in Lanes :
@@ -479,6 +517,7 @@ TypeOK ==
     /\ parked \in [Lanes -> BOOLEAN]
     /\ refusals \in [Lanes -> 0..2]
     /\ askedAfter \in BOOLEAN
+    /\ credit \in [Cards -> {Nobody2, Holder, Runner}]
 
 \* A card is working only on the server's say-so: a lane holds only what an answer gave
 \* it, and every working card is held by one lane's record.
@@ -541,4 +580,8 @@ ParkedRecordIsGone ==
 \* unless it goes down again first.
 ResumesAfterRestart ==
     \A l \in Lanes : (alive[l] /\ lc[l].st = "restart") ~> (~alive[l] \/ lc[l].st # "restart")
+
+\* The one-shot friend. Every card done is credited to the identity the server's claim names
+\* (the friend's row for a one-shot), so a one-shot friend's history stays theirs.
+CreditedToTheClaim == \A c \in Cards : col[c] = "done" => credit[c] = Holder
 =============================================================================

@@ -46,9 +46,9 @@ import (
 // Format is the one format string the roadmap form carries.
 const Format = "v1"
 
-// Limits bounds a roadmap read: a file of at most 512 KiB, the shape's depth with
+// Limits bounds a roadmap read: a file of at most 10 MiB (owner 2026-10-15: no practical limit wanted; schema's roadmap passed 1 MiB; still bounded against a hostile file), the shape's depth with
 // room to spare, and at most one atom per byte, so the byte bound is the one that binds.
-var Limits = sexp.Limits{MaxBytes: 512 << 10, MaxDepth: 8, MaxNodes: 512 << 10}
+var Limits = sexp.Limits{MaxBytes: 10 << 20, MaxDepth: 8, MaxNodes: 10 << 20}
 
 // Doc is a decoded roadmap.
 type Doc struct {

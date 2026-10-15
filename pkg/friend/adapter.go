@@ -21,46 +21,20 @@ import (
 // their reason.
 var Harnesses = append([]string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini", "grok", "tmux"}, RefusedHarnesses...)
 
-// Deliverer pushes one text into the friend's running session as a turn
-// and normally blocks until the turn ends. Codex queue instead confirms
-// enqueue acceptance; the app runs it after the active turn ends. Exit 0
-// acks the bus message (SPEC-FRIEND.md, the deliver command and Codex).
+// Deliverer pushes one text through a harness for delivery checks and reach.
+// LaneHarness and CardRunner extend it for the daemon's card turns.
 type Deliverer interface {
 	Deliver(ctx context.Context, text string) (exit int, err error)
 }
 
-// TextLimit is the most bytes of text d takes as one turn: its own
-// TextLimit() when it has one above zero, else BatchBytes. The daemon's
-// envelope is cut to it (Envelope).
-func TextLimit(d Deliverer) int {
-	if l, ok := d.(interface{ TextLimit() int }); ok && l.TextLimit() > 0 {
-		return l.TextLimit()
-	}
-	return BatchBytes
-}
-
-// Deferred is a Deliverer's answer when the session cannot take a turn now
-// and nothing has failed (for example, neither Codex queue nor resume can
-// accept it). The daemon keeps the message in hand, tries again
-// after RecheckEvery, counts nothing toward MaxDeliveries and acks nothing,
-// so a chat open all day loses no message. Remedy is set when no retry
-// can succeed, because the adapter cannot drive the session at all (dsh: a
-// session under an agent preset): what the friend does instead, which
-// nova-friend install and run refuse with (PushProof).
+// Deferred means the harness cannot take this turn now. Remedy names what
+// must change when retry alone cannot succeed (PushProof).
 type Deferred struct{ Reason, Remedy string }
 
 func (d Deferred) Error() string { return "deferred: " + d.Reason }
 
-// SessionRefused is a Deliverer's answer when the turn's output says the
-// session cannot take a turn at all, whatever the exit code (dsh: a session
-// under an agent preset, a missing provider key; DSHRefusal): a failed
-// delivery, never a delivered one. Reason is one line naming the session and
-// why, what the status and the friend's row say; Detail what to do; Remedy as
-// in Deferred. The daemon marks the session broken with Reason on the first
-// such turn, keeps every message pending and tries again every RecheckEvery,
-// and a turn that succeeds clears it (docs/SPEC-FRIEND.md, "A turn the
-// session cannot take"). As a Deferred it is the same message kept, so a
-// reader of Deferred (PushProof, the check) still sees its remedy.
+// SessionRefused means the harness cannot take the turn, whatever its exit
+// code. The delivery check and reach surface its reason and remedy.
 type SessionRefused struct{ Session, Reason, Detail, Remedy string }
 
 func (s SessionRefused) Error() string {
@@ -275,8 +249,6 @@ type OpenCode struct {
 	// run in this process, with this environment. CheckRun sets it when the
 	// installed run lists the flag, so an older opencode is never handed it.
 	Standalone bool
-
-	turns SessionTurns // the session's last turns, its liveness (alive.go)
 }
 
 // runVerb is the run verb as this opencode takes it: `run`, and --standalone
@@ -389,7 +361,6 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	exit, err = refused(id, out, exit, err)
-	o.turns.saw(id, exit, err)
 	return exit, err
 }
 

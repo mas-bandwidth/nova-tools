@@ -100,12 +100,9 @@ func fakeBusPath(t *testing.T) busRig {
 		name += ".exe"
 	}
 	raw, e := os.Executable()
-	if e != nil {
-		require.NoError(t, e, e)
-	}
-	if e = testbin.Place(raw, filepath.Join(dir, name)); e != nil {
-		require.NoError(t, e, e)
-	}
+	require.NoError(t, e, e)
+	e = testbin.Place(raw, filepath.Join(dir, name))
+	require.NoError(t, e, e)
 	return busRig{dir: dir, log: filepath.Join(dir, "calls")}
 }
 
@@ -120,9 +117,7 @@ func (b busRig) with(env Environment, kv ...string) Environment {
 func calls(t *testing.T, p string) int {
 	t.Helper()
 	b, e := os.ReadFile(p)
-	if e != nil {
-		require.NoError(t, e, e)
-	}
+	require.NoError(t, e, e)
 	s := string(b)
 	return strings.Count(s, "send\n")
 }
@@ -140,14 +135,11 @@ func TestAnUnconfirmedSendRecordsNothingAndTheNextSendSends(t *testing.T) {
 	s, _ := readSnapshot(sp)
 	require.Empty(t, s.Delivered)
 	_ = os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600) // ignored: test setup
-	if c, _, _ := run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE=uncertain"), args...); c != 1 {
-		require.EqualValues(t, 1, c, c)
-	}
+	c, _, _ := run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE=uncertain"), args...)
+	require.EqualValues(t, 1, c, c)
 	require.Equal(t, 2, calls(t, log))
 	c, o, e := run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE=ok"), args...)
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
-	}
+	require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	require.Equal(t, 3, calls(t, log))
 	s, _ = readSnapshot(sp)
 	require.Len(t, s.Delivered, 1)
@@ -163,14 +155,10 @@ func TestDeliveryScopeIsTheSenderTheRecipientsAndTheBench(t *testing.T) {
 	o := options{as: "a", to: "c,b", host: "studio"}
 	same := o
 	same.to = "b,c"
-	if snapshotScope(o) != snapshotScope(same) {
-		require.Fail(t, fmt.Sprintln("recipient order changed scope"))
-	}
+	require.True(t, snapshotScope(o) == snapshotScope(same), fmt.Sprintln("recipient order changed scope"))
 	other := o
 	other.host = "air"
-	if snapshotScope(o) == snapshotScope(other) {
-		require.Fail(t, fmt.Sprintln("bench silently shared delivery state"))
-	}
+	require.False(t, snapshotScope(o) == snapshotScope(other), fmt.Sprintln("bench silently shared delivery state"))
 }
 
 // A second value for one field of a snapshot is an ambiguous identity. The
@@ -182,19 +170,13 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 	secret := "tell-nobody"
 	dir := t.TempDir()
 	dup := filepath.Join(dir, "dup.json")
-	if e := os.WriteFile(dup, []byte(`{"observed":{},"observed":{"x":{"raw":"`+secret+`","status":"tool","at":"t"}},"delivered":{}}`), 0600); e != nil {
-		require.NoError(t, e, e)
-	}
+	e := os.WriteFile(dup, []byte(`{"observed":{},"observed":{"x":{"raw":"`+secret+`","status":"tool","at":"t"}},"delivered":{}}`), 0600)
+	require.NoError(t, e, e)
 	s, err := readSnapshot(dup)
-	if err == nil {
-		require.Errorf(t, err, "ambiguous snapshot accepted: %v", s)
-	}
-	if strings.Contains(err.Error(), secret) {
-		require.Failf(t, "", "snapshot diagnostic echoed content: %v", err)
-	}
-	if b, _ := os.ReadFile(dup); !strings.Contains(string(b), secret) {
-		require.Fail(t, fmt.Sprintln("refusal did not preserve the snapshot byte for byte"))
-	}
+	require.Errorf(t, err, "ambiguous snapshot accepted: %v", s)
+	require.Falsef(t, strings.Contains(err.Error(), secret), "snapshot diagnostic echoed content: %v", err)
+	b, _ := os.ReadFile(dup)
+	require.True(t, strings.Contains(string(b), secret), fmt.Sprintln("refusal did not preserve the snapshot byte for byte"))
 }
 
 // A failed delivery used to say "exit 1" and nothing else. The bus's own first
@@ -202,20 +184,16 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 // on PATH can turn one event into two.
 func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 	t.Parallel()
-	if got := busSaid(ProcessResult{Stderr: "SEND FAIL one\nSEND FAIL two\n"}); got != "SEND FAIL one" {
-		require.EqualValuesf(t, "SEND FAIL one", got, "%q", got)
-	}
+	got := busSaid(ProcessResult{Stderr: "SEND FAIL one\nSEND FAIL two\n"})
+	require.EqualValuesf(t, "SEND FAIL one", got, "%q", got)
 	// Stdout is the fallback when the bus said nothing on stderr: a SEND OK for
 	// some other id is the bus's grammar and worth relaying.
-	if got := busSaid(ProcessResult{Stdout: "SEND OK id=other\nmore"}); got != "SEND OK id=other" {
-		require.EqualValuesf(t, "SEND OK id=other", got, "%q", got)
-	}
-	if got := busSaid(ProcessResult{}); got != "nothing" {
-		require.EqualValuesf(t, "nothing", got, "%q", got)
-	}
-	if got := busSaid(ProcessResult{Stderr: "SEND FAIL " + strings.Repeat("x", 500)}); len(got) != 203 || !strings.HasSuffix(got, "...") {
-		require.Failf(t, "", "unbounded: %d bytes: %q", len(got), got)
-	}
+	got = busSaid(ProcessResult{Stdout: "SEND OK id=other\nmore"})
+	require.EqualValuesf(t, "SEND OK id=other", got, "%q", got)
+	got = busSaid(ProcessResult{})
+	require.EqualValuesf(t, "nothing", got, "%q", got)
+	got = busSaid(ProcessResult{Stderr: "SEND FAIL " + strings.Repeat("x", 500)})
+	require.Falsef(t, len(got) != 203 || !strings.HasSuffix(got, "..."), "unbounded: %d bytes: %q", len(got), got)
 	for _, mode := range []string{"send-fail", "send-shouty"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
@@ -223,16 +201,12 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 			c, _, errout := run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE="+mode), "report", "--file", p, "--send", "--snapshot",
 				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator")
-			if c != 1 {
-				require.EqualValues(t, 1, c, c)
-			}
+			require.EqualValues(t, 1, c, c)
 			need(t, errout, "the bus said: SEND FAIL")
 			note := ""
 			for _, line := range strings.Split(errout, "\n") {
 				if strings.HasPrefix(line, "REPORT NOTE") {
-					if note != "" {
-						require.EqualValuesf(t, "", note, "one refusal became two lines:\n%s", errout)
-					}
+					require.EqualValuesf(t, "", note, "one refusal became two lines:\n%s", errout)
 					note = line
 				}
 			}
@@ -260,16 +234,11 @@ func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
 		"delivered and DELIVERED": `{"observed":{},"delivered":{},"DELIVERED":{}}`,
 	} {
 		p := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".json")
-		if err := os.WriteFile(p, []byte(body), 0600); err != nil {
-			require.NoError(t, err, err)
-		}
+		err := os.WriteFile(p, []byte(body), 0600)
+		require.NoError(t, err, err)
 		s, err := readSnapshot(p)
-		if err == nil {
-			assert.Errorf(t, err, "%s accepted: %+v", name, s)
-		}
-		if err != nil && strings.Contains(err.Error(), "tell-nobody") {
-			assert.Failf(t, "", "%s echoed content: %v", name, err)
-		}
+		assert.Errorf(t, err, "%s accepted: %+v", name, s)
+		assert.Falsef(t, err != nil && strings.Contains(err.Error(), "tell-nobody"), "%s echoed content: %v", name, err)
 	}
 }
 
@@ -284,13 +253,9 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, out, errs := run(t, rig.with(Environment{}), "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator", "--budget", "60s")
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
-	}
+	require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
 	b, err := os.ReadFile(log)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	sendArgv := ""
 	for _, line := range strings.Split(string(b), "\n") {
 		if strings.HasPrefix(line, "argv send ") {
@@ -312,24 +277,19 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 // must not get to write on the caller's event line.
 func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
 	t.Parallel()
-	if got := busSaid(ProcessResult{Stderr: "SEND FAIL from-x/n.md: a named reason"}); got != "SEND FAIL from-x/n.md: a named reason" {
-		require.EqualValuesf(t, "SEND FAIL from-x/n.md: a named reason", got, "the bus's own grammar was not relayed: %q", got)
-	}
+	got := busSaid(ProcessResult{Stderr: "SEND FAIL from-x/n.md: a named reason"})
+	require.EqualValuesf(t, "SEND FAIL from-x/n.md: a named reason", got, "the bus's own grammar was not relayed: %q", got)
 	// Leading whitespace is normalised away before the grammar is checked, so the
 	// cases below are lines whose CONTENT is in no grammar this tool knows.
 	for _, alien := range []string{"gobbledegook tell-nobody-this", "bash: nova-bus: command not found", "Traceback (most recent call last):", "sendfail", "the bus says SEND FAIL later on"} {
 		got := busSaid(ProcessResult{Stderr: alien})
-		if strings.Contains(got, "tell-nobody-this") || got != "a line outside the bus's refusal grammar, not relayed" {
-			assert.Failf(t, "", "%q was relayed as %q", alien, got)
-		}
+		assert.Falsef(t, strings.Contains(got, "tell-nobody-this") || got != "a line outside the bus's refusal grammar, not relayed", "%q was relayed as %q", alien, got)
 	}
 	rig := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, out, errs := run(t, rig.with(Environment{}, "NOVA_UPDATE_BUS_MODE=send-alien"), "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator")
-	if c != 1 {
-		require.EqualValues(t, 1, c, c)
-	}
+	require.EqualValues(t, 1, c, c)
 	if strings.Contains(out+errs, "tell-nobody-this") {
 		require.NotContainsf(t, out+errs, "tell-nobody-this", "an alien binary's words reached the event line:\n%s%s", out, errs)
 	}

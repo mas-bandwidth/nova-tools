@@ -30,9 +30,7 @@ func TestLoadReportsEveryProblemOfTheManifest(t *testing.T) {
 	}, "\n") + "\n"
 	_, err := Load(strings.NewReader(manifest))
 	var me *ManifestError
-	if !errors.As(err, &me) {
-		require.Failf(t, "", "Load returned %v, want a *ManifestError", err)
-	}
+	require.Truef(t, errors.As(err, &me), "Load returned %v, want a *ManifestError", err)
 	for _, want := range []string{
 		"line 3: unknown kind gadget",
 		"line 4: unknown source nowhere",
@@ -42,31 +40,20 @@ func TestLoadReportsEveryProblemOfTheManifest(t *testing.T) {
 		"line 8: pin requires local source",
 		"line 9: installed: argv requires single spaces",
 	} {
-		if !strings.Contains(err.Error(), want) {
-			assert.Failf(t, "", "the refusal does not carry %q:\n%s", want, err)
-		}
+		assert.Truef(t, strings.Contains(err.Error(), want), "the refusal does not carry %q:\n%s", want, err)
 	}
-	if len(me.Problems) != 7 || me.More != 0 {
-		assert.Failf(t, "", "%d problems (+%d more), want 7: %q", len(me.Problems), me.More, me.Problems)
-	}
+	assert.Falsef(t, len(me.Problems) != 7 || me.More != 0, "%d problems (+%d more), want 7: %q", len(me.Problems), me.More, me.Problems)
 	// the last line is fine and is not named
-	if strings.Contains(err.Error(), "line 10") {
-		assert.Failf(t, "", "a good line is named: %s", err)
-	}
+	assert.Falsef(t, strings.Contains(err.Error(), "line 10"), "a good line is named: %s", err)
 	// a wrong header is one problem among the others, not the only one reported
 	_, err = Load(strings.NewReader("name,kind\nx\ttool\tgo version\tlocal:go version\tnone\tme\ny\ttool\n"))
-	if err == nil || !strings.Contains(err.Error(), "line 1: invalid header") || !strings.Contains(err.Error(), "line 3: 2 fields") {
-		assert.Failf(t, "", "a bad header with a bad line: %v", err)
-	}
+	assert.Falsef(t, err == nil || !strings.Contains(err.Error(), "line 1: invalid header") || !strings.Contains(err.Error(), "line 3: 2 fields"), "a bad header with a bad line: %v", err)
 	// one line with two bad fields names both
 	_, err = Load(strings.NewReader(Header + "\nx\tgadget\tgo  version\tlocal:go version\tnone\tme\n"))
-	if err == nil || !strings.Contains(err.Error(), "unknown kind gadget") || !strings.Contains(err.Error(), "installed: argv requires single spaces") {
-		assert.Failf(t, "", "a line with two bad fields: %v", err)
-	}
+	assert.Falsef(t, err == nil || !strings.Contains(err.Error(), "unknown kind gadget") || !strings.Contains(err.Error(), "installed: argv requires single spaces"), "a line with two bad fields: %v", err)
 	// a good manifest loads
-	if es, err := Load(strings.NewReader(Header + "\ngo\ttool\tgo version\tlocal:go version\tnone\tme\n")); err != nil || len(es) != 1 {
-		assert.Failf(t, "", "a good manifest: %v %v", es, err)
-	}
+	es, err := Load(strings.NewReader(Header + "\ngo\ttool\tgo version\tlocal:go version\tnone\tme\n"))
+	assert.Falsef(t, err != nil || len(es) != 1, "a good manifest: %v %v", es, err)
 }
 
 // Problems past the cap are counted, never silently dropped.
@@ -79,33 +66,23 @@ func TestLoadCountsProblemsPastTheCap(t *testing.T) {
 	}
 	_, err := Load(strings.NewReader(b.String()))
 	var me *ManifestError
-	if !errors.As(err, &me) || len(me.Problems) != manifestProblemCap || me.More == 0 {
-		require.Failf(t, "", "got %v", err)
-	}
-	if !strings.Contains(err.Error(), "and ") || !strings.Contains(err.Error(), " more (fix these and run again)") {
-		assert.Failf(t, "", "the refusal does not count what it left out: %s", err)
-	}
+	require.Falsef(t, !errors.As(err, &me) || len(me.Problems) != manifestProblemCap || me.More == 0, "got %v", err)
+	assert.Falsef(t, !strings.Contains(err.Error(), "and ") || !strings.Contains(err.Error(), " more (fix these and run again)"), "the refusal does not count what it left out: %s", err)
 }
 
 // Through the verb: a run over a manifest with two bad lines refuses once, naming both.
 func TestReportRefusesAManifestNamingEveryProblem(t *testing.T) {
 	t.Parallel()
 	path := t.TempDir() + "/m.tsv"
-	if err := os.WriteFile(path, []byte(Header+"\na\tgadget\tgo version\tlocal:go version\tnone\tme\nb\ttool\tgo version\tnowhere:x\tnone\tme\n"), 0o600); err != nil {
-		require.NoError(t, err, err)
-	}
+	err := os.WriteFile(path, []byte(Header+"\na\tgadget\tgo version\tlocal:go version\tnone\tme\nb\ttool\tgo version\tnowhere:x\tnone\tme\n"), 0o600)
+	require.NoError(t, err, err)
 	var out, errs bytes.Buffer
-	if rc := Main("nova-version", []string{"report", "--file", path}, "v0", &out, &errs); rc != 2 {
-		require.EqualValuesf(t, 2, rc, "exit %d, want 2: %s", rc, errs.String())
-	}
+	rc := Main("nova-version", []string{"report", "--file", path}, "v0", &out, &errs)
+	require.EqualValuesf(t, 2, rc, "exit %d, want 2: %s", rc, errs.String())
 	for _, want := range []string{"REPORT REFUSED", "line 2: unknown kind gadget", "line 3: unknown source nowhere"} {
-		if !strings.Contains(errs.String(), want) {
-			assert.Failf(t, "", "stderr has no %q: %s", want, errs.String())
-		}
+		assert.Truef(t, strings.Contains(errs.String(), want), "stderr has no %q: %s", want, errs.String())
 	}
-	if strings.Count(errs.String(), "\n") != 1 {
-		assert.Failf(t, "", "the refusal is not one line: %q", errs.String())
-	}
+	assert.Truef(t, strings.Count(errs.String(), "\n") == 1, "the refusal is not one line: %q", errs.String())
 }
 
 // The two tools say, each in its own banner, that they are two binaries sharing the
@@ -116,9 +93,8 @@ func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"nova-update", "nova-version"} {
 		var out, errs bytes.Buffer
-		if rc := Main(name, []string{"help"}, "v0", &out, &errs); rc != 0 {
-			require.EqualValuesf(t, 0, rc, "%s help: exit %d", name, rc)
-		}
+		rc := Main(name, []string{"help"}, "v0", &out, &errs)
+		require.EqualValuesf(t, 0, rc, "%s help: exit %d", name, rc)
 		help := out.String()
 		for _, want := range []string{"two binaries", "THE MANIFEST is the file --file names"} {
 			assert.Contains(t, help, want, name)
@@ -131,14 +107,11 @@ func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 		if name == "nova-version" {
 			other = "nova-update"
 		}
-		if !strings.Contains(help, other+"'s") {
-			assert.Containsf(t, help, other+"'s", "%s help does not say which verbs are %s's", name, other)
-		}
+		assert.Containsf(t, help, other+"'s", "%s help does not say which verbs are %s's", name, other)
 		out.Reset()
 		errs.Reset()
-		if rc := Main(name, []string{"report", "-h"}, "v0", &out, &errs); rc != 0 {
-			require.EqualValuesf(t, 0, rc, "%s report -h: exit %d", name, rc)
-		}
+		rc = Main(name, []string{"report", "-h"}, "v0", &out, &errs)
+		require.EqualValuesf(t, 0, rc, "%s report -h: exit %d", name, rc)
 		h := out.String()
 		numbered := 0
 		for _, l := range strings.Split(h, "\n") {
@@ -146,21 +119,15 @@ func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 				numbered++
 			}
 		}
-		if numbered != 6 {
-			assert.EqualValuesf(t, 6, numbered, "%s report -h carries %d manifest lines, want six:\n%s", name, numbered, h)
-		}
+		assert.EqualValuesf(t, 6, numbered, "%s report -h carries %d manifest lines, want six:\n%s", name, numbered, h)
 		for _, want := range []string{"name<TAB>kind<TAB>installed<TAB>latest<TAB>apply<TAB>owner", "github:<owner>/<repo>", "harness, engine, model, tool or pin", "EVERY problem"} {
-			if !strings.Contains(h, want) {
-				assert.Containsf(t, h, want, "%s report -h does not carry %q", name, want)
-			}
+			assert.Containsf(t, h, want, "%s report -h does not carry %q", name, want)
 		}
 	}
 	// nova-version's exit codes name no verb it does not have
 	var out, errs bytes.Buffer
 	Main("nova-version", []string{"help"}, "v0", &out, &errs)
 	for _, l := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(l, "exit codes:") && strings.Contains(l, "apply") {
-			assert.Failf(t, "", "nova-version's exit codes name apply, which it does not have: %s", l)
-		}
+		assert.Falsef(t, strings.HasPrefix(l, "exit codes:") && strings.Contains(l, "apply"), "nova-version's exit codes name apply, which it does not have: %s", l)
 	}
 }

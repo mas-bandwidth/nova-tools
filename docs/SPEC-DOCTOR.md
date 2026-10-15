@@ -90,13 +90,6 @@ its `roles` lack `builder` while the daemon runs cards (`--harness` given), or
 when its `width` differs from the daemon's `--width`. Fix: `nova-config friend set <name> --mode one-shot --roles builder,reader --width <n>`, then
 `nova-sprint friend sync`.
 
-**friend-live.** Dependency: each daemon's status. Runs `nova-friend status --as <name> --json`; `fail` when `beat_error` or `inbox_error` contain `refused` (the
-hook gate; the evidence quotes the refusal) or when the last beat is older than
-15 s while the agent is loaded (`launchctl print gui/<uid>/<label>`, or
-`systemctl --user is-active`). Fix: read `~/Library/Logs/nova-friend-<name>.log`,
-`launchctl kickstart -k` the label, and for a hook refusal hook the seat with
-`nova-sprint hook`.
-
 **friend-wall.** Dependency: each daemon's `--dir` against the lane wall's
 deny-self. The deny-self is the daemon's `--deny-self`, else
 `NOVA_FRIEND_DENY_SELF`, else `<home>/ai/<coordinator>/working`; `fail` when `--dir`

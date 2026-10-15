@@ -140,12 +140,11 @@ with the raw numbers and the kernel settings it was measured under.
 A friend's working directory, how her jobs arrive and are reported, and how
 their clones are removed once done, is docs/FRIENDS.md. The friends are
 nova-config's friend rows: `nova-sprint friend sync --actor ada`
-copies their names into the sprint's friends table, and each friend says it is
-there only by evidence from her own session: a wake ping her session answered
-within 10 minutes, or a card of hers finished within 30 (`where` shows `up` on
-it, `down` without it, with working 0, and `held` while `nova-sprint friend
-down <friend>` holds it; docs/SPEC-FRIEND.md, "Presence is her session's
-evidence"). Her daemon's beat, every second (`sprint.FriendBeatEvery`), is
+copies their names into the sprint's friends table, and whether each friend
+is there is the nova-hook record's alone: `nova-hook serve` challenges her once
+a minute and only her model's `nova-hook prove` answers (`where` shows `up` while
+she is hooked in, `down` without it, and `held` while `nova-sprint friend down
+<friend>` holds it; docs/SPEC-HOOK.md). Her daemon's beat, every second (`sprint.FriendBeatEvery`), is
 recorded and never makes her up. The same sync
 reads each friend's working directory, `<root>/ai/<friend>/working` (`--root
 <dir>`, else `HOME`, so it runs on the machine that holds them), and writes her

@@ -16,13 +16,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// pruneBase is the fixed modification time the oldest test directory gets.
+// prune reads no clock, only the entries' times against one another, and it is
+// in the past, so a release a test installs (stamped now by the filesystem) is
+// always the newest.
+var pruneBase = time.Date(2026, 9, 17, 9, 0, 0, 0, time.UTC)
+
 // versionDirs makes one directory per name under root, the first the OLDEST:
 // each is given a modification time a minute after the one before, so "newest"
-// in the rule is decided by the clock the test set rather than by how fast the
+// in the rule is decided by the times the test set rather than by how fast the
 // loop ran.
 func versionDirs(t *testing.T, root string, names ...string) {
 	t.Helper()
-	base := time.Now().Add(-24 * time.Hour)
+	base := pruneBase
 	for i, name := range names {
 		dir := filepath.Join(root, name)
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "linux-amd64"), 0o755))
@@ -162,7 +168,7 @@ func TestInstallPruneKeepsTheDirectoryContainingItsBin(t *testing.T) {
 				require.NoError(t, os.Mkdir(bin, 0o755))
 			}
 			// Adding bin changes the parent's mtime: restore it as the oldest.
-			old := time.Now().Add(-48 * time.Hour)
+			old := pruneBase.Add(-24 * time.Hour)
 			require.NoError(t, os.Chtimes(oldest, old, old))
 			switch name {
 			case "symlink-target":

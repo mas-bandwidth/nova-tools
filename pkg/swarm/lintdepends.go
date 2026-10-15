@@ -140,6 +140,8 @@ func cardOwnID(line string) string {
 	return fields[0]
 }
 
+// firstLine is a text's first line, without its line ending: the contract line the
+// card's own id and base are read from.
 func firstLine(raw []byte) string {
 	line, _, _ := bytes.Cut(raw, []byte("\n"))
 	return strings.TrimRight(string(line), "\r")

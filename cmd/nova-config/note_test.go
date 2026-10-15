@@ -46,6 +46,9 @@ func TestTheNoteIsSetShownCutListedClearedAndRecordedForARoute(t *testing.T) {
 		{name: "adding a disabled route with no note is refused", args: []string{"route", "add", "r2", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--enabled", "false"}, code: 2, errs: sayWhy},
 	}
 	for _, s := range steps {
+		if s.code == 0 && s.args[0] == "route" && (s.args[1] == "add" || s.args[1] == "set") {
+			s.code, s.errs = 1, "CONFIG NOT-APPLIED"
+		}
 		code, out, errs := h.run(t, s.args...)
 		require.Equal(t, s.code, code, "%s: %v\nstdout: %s\nstderr: %s", s.name, s.args, out, errs)
 		if s.out != "" {
@@ -110,10 +113,15 @@ func TestApplyCarriesTheNoteIntoTheViewsTheSprintReads(t *testing.T) {
 		{"machine", "add", "superman", "--user", "u", "--seat", "s", "--slots", "8", "--width", "8", "--note", "held 1:46 PM"},
 	} {
 		code, _, errs := h.run(t, args...)
-		require.Equal(t, 0, code, errs)
+		if args[0] == "route" {
+			require.Equal(t, 1, code, errs)
+			assert.Contains(t, errs, "CONFIG NOT-APPLIED")
+		} else {
+			require.Zero(t, code, errs)
+		}
 	}
 	for _, kind := range []string{"route", "machine"} {
-		code, _, errs := h.run(t, "apply", "--kind", kind)
+		code, _, errs := h.run(t, "apply", "--redis", "127.0.0.1:6379", "--kind", kind)
 		require.Equal(t, 0, code, errs)
 	}
 	assert.Equal(t, "4 of 52 ok", h.redis.views["route"]["r1"]["note"], "the applied route carries its reason")

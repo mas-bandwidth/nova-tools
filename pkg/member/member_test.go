@@ -627,7 +627,10 @@ func TestARefusedTakeIsPrintedAndTheTickContinues(t *testing.T) {
 // member's running over its width.
 func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ running, width int }{{0, 4}, {1, 3}, {2, 2}} {
+	for _, tc := range []struct {
+		running, width int
+		live           string
+	}{{0, 4, "-"}, {1, 3, "c0@1"}, {2, 2, "c0@1,c1@1"}} {
 		t.Run(fmt.Sprintf("%dof%d", tc.running, tc.width), func(t *testing.T) {
 			t.Parallel()
 			g := newWidthRig(tc.width, Config{As: "m"})
@@ -642,7 +645,7 @@ func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 			require.Equal(t, tc.running, g.m.Running())
 			g.s.reset()
 			require.NoError(t, g.m.Beat())
-			require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, g.s.lines("beat"))
+			require.Equal(t, []string{"fleet beat m --stop-returns 0 --live " + tc.live + " --load 0.0"}, g.s.lines("beat"))
 		})
 	}
 }

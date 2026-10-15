@@ -34,7 +34,7 @@ func TestOutIsTheGatesNoAsAResult(t *testing.T) {
 	o.Verb = "send"
 	o.Render(&text, false)
 	assert.Contains(t, text.String(), "SEND FAILED reason=unhooked: ada is not hooked in: no hook record")
-	assert.Contains(t, text.String(), "SEND NOTE the bus push of a comms is held by: the friend daemon")
+	assert.Contains(t, text.String(), "SEND NOTE the bus push of a comms is held by: nova-hook hook --as ada --role comms")
 
 	o = Out(errors.New("LOADING the store is loading"))
 	assert.Equal(t, 2, o.Exit)

@@ -262,6 +262,17 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 	if !ok {
 		return Result{}, fmt.Errorf("unknown kind %q; the kinds are %s", kind, strings.Join(KindNames(), ", "))
 	}
+	// Route commands apply after their own write commits. Read the revision
+	// before the rows, so a concurrent write after List cannot be stamped
+	// without being copied (ConfigApply.tla NoSilentUnappliedWrite).
+	var rev int64
+	var err error
+	if kind == KindRoute {
+		rev, err = st.Rev(ctx, kind)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	rows, err := st.List(ctx, kind)
 	if err != nil {
 		return Result{}, err
@@ -290,9 +301,11 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 			return Result{}, err
 		}
 	}
-	rev, err := st.Rev(ctx, kind)
-	if err != nil {
-		return Result{}, err
+	if kind != KindRoute {
+		rev, err = st.Rev(ctx, kind)
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	views, redisRev, err := ap.Read(ctx, kind)
 	if err != nil {

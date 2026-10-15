@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
@@ -25,6 +26,10 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	every := c.Dur("every")
 	if every < time.Second {
 		return tool.Refuse(fmt.Sprintf("--every %s is under a second; it wants the interval between passes, such as %s", every, hook.BeatEvery))
+	}
+	downAfter := c.Dur("down-after")
+	if downAfter < every {
+		return tool.Refuse(fmt.Sprintf("--down-after %s is under --every %s; it wants the silence before a name goes down, at least one interval, such as %s", downAfter, every, hook.DownAfter))
 	}
 	within := c.Dur("judge-within")
 	// the server's own gate, with the evidence it exists to give set aside: no
@@ -45,13 +50,13 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	}
 	b := &bus.Bus{Store: s.bus}
 	if c.Bool("once") {
-		w.pass(c, s, b, every, within)
-		return tool.Done().Fact("as", s.as).Fact("every", every.String())
+		w.pass(c, s, b, every, downAfter, within)
+		return tool.Done().Fact("as", s.as).Fact("every", every.String()).Fact("down_after", downAfter.String())
 	}
 	sig, stop := w.signals(context.Background())
 	defer stop()
 	for {
-		w.pass(c, s, b, every, within)
+		w.pass(c, s, b, every, downAfter, within)
 		select {
 		case <-sig.Done():
 			return tool.Done().Fact("as", s.as).Fact("stopped", true)
@@ -78,7 +83,7 @@ func serveLine(c *tool.Call, event, text string, kv ...any) {
 // what changed told once (tell), the open judgments looked after (judgments)
 // and the asks' expiry. Every call is bounded by its own deadline (call); each
 // fault is said and passed over.
-func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, within time.Duration) {
+func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, downAfter, within time.Duration) {
 	ctx, cancel := call()
 	names, err := s.hooks.Names(ctx)
 	cancel()
@@ -87,7 +92,7 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, within time.Dur
 		return
 	}
 	ctx, cancel = call()
-	p, err := s.hooks.Pass(ctx, names, every, hook.MissLimit, w.nonce, w.holder)
+	p, err := s.hooks.Pass(ctx, names, every, downAfter, w.nonce, w.holder)
 	cancel()
 	if err != nil {
 		fault(c, "pass", err)
@@ -102,7 +107,7 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, within time.Dur
 			continue
 		}
 		// the nonce goes only to the name's own stream: never on this server's lines
-		if err := w.send(b, bus.Message{From: s.as, To: []string{bt.Name}, Subject: "HOOK CHALLENGE nonce=" + bt.Nonce, Body: challengeText(bt.Name, bt.Nonce, every)}); err != nil {
+		if err := w.send(b, bus.Message{From: s.as, To: []string{bt.Name}, Subject: "HOOK CHALLENGE nonce=" + bt.Nonce, Body: notice.ChallengeText(bt.Name, bt.Nonce, every)}); err != nil {
 			fault(c, "challenge "+bt.Name, err)
 			continue
 		}
@@ -298,9 +303,4 @@ func (w world) judgments(c *tool.Call, s *session, b *bus.Bus) {
 func (w world) send(b *bus.Bus, m bus.Message) error {
 	_, err := w.deliver(b, m)
 	return err
-}
-
-// challengeText is the heartbeat challenge as the session reads it.
-func challengeText(name, nonce string, every time.Duration) string {
-	return fmt.Sprintf("HOOK CHALLENGE nonce=%s\nThe hook's heartbeat asks whether the model is here. Answer from inside this turn, before anything else, within %s, with: nova-hook prove --as %s --nonce %s\nOnly the model answers: no daemon, loop or script may. %d unanswered in a row unhook %s.\n", nonce, every, name, nonce, hook.MissLimit, name)
 }

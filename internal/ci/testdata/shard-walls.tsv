@@ -69,6 +69,8 @@ pkg/ci/shrinkonly	0.0	@run37517528825	self-hosted
 internal/ci/slowtests	0.0	@run37411066588	self-hosted
 internal/ci/timing	0.2	@run37411066588	self-hosted
 internal/cireceipt	0.0	@run37411066588	self-hosted
+pkg/codexdesktop	0.004	@b2	-
+pkg/dshdesktop	0.2	@local	-
 pkg/config	0.7	@run37518625834	self-hosted
 internal/converge	0.0	@run37411066588	self-hosted
 pkg/decide	0.3	@run37518625834	self-hosted
@@ -79,6 +81,7 @@ internal/doctor	0.0	@run37518625834	self-hosted
 pkg/dogfood	0.2	@run37518625834	self-hosted
 pkg/filelock	0.5	@run37411066588	self-hosted
 pkg/fleet	0.0	@run37411066588	self-hosted
+internal/friend	0.3	@local	-
 pkg/friend	2.6	@run37518625834	self-hosted
 internal/fuse	0.0	@run37411066588	self-hosted
 internal/ghevent	0.0	@run37411066588	self-hosted
@@ -87,6 +90,7 @@ pkg/gitrun	0.4	@local	-
 pkg/gocache	0.3	@local	-
 pkg/goenv	0.0	@run37411066588	self-hosted
 pkg/harness	0.1	@local	-
+pkg/harness/notice	0.6	@local	-
 pkg/hookgate	0.0	@local	-
 pkg/hostload	1.1	@local	-
 pkg/hygiene	0.5	@run37411066588	self-hosted
@@ -135,7 +139,6 @@ pkg/testguard	0.0	@run37411066588	self-hosted
 pkg/testkit	0.5	@local	-
 pkg/testredis	0.0	@run37411066588	self-hosted
 internal/testverbhelp	0.0	@run37411066588	self-hosted
-internal/textbody	0.0	@run37411066588	self-hosted
 pkg/tlc	0.4	@run37517528825	self-hosted
 internal/tokens	0.2	@run37411066588	self-hosted
 pkg/tool	0.2	@local	-

@@ -13,7 +13,8 @@ import (
 func TestDecideVerdictPure(t *testing.T) {
 	t.Parallel()
 	const window = 24 * time.Hour
-	up := DaemonFacts{Friend: "bob", Presence: "up", Agent: "loaded", Status: "ok", PongAge: "-"}
+	up := DaemonFacts{Friend: "bob", Presence: PresenceUp, Agent: "loaded", Status: "ok", Hook: HookProven, Reason: "-"}
+	unhooked := DaemonFacts{Friend: "bob", Presence: PresenceDown, Agent: "none", Status: "none", Hook: "unhooked", Reason: "missed 2 challenges"}
 	hf := func(delivered, failed int) HarnessFacts {
 		return HarnessFacts{Friend: "bob", Broken: "-", Reason: "-", Delivered: delivered, Failed: failed}
 	}
@@ -25,81 +26,66 @@ func TestDecideVerdictPure(t *testing.T) {
 		name    string
 		df      DaemonFacts
 		hf      HarnessFacts
-		bf      BusFacts
 		shown   *ShownEntry
 		verdict string
 		why     string
 	}{
-		{"broken session", up, HarnessFacts{Friend: "bob", Broken: "2026-10-05T10:00:00Z", Reason: "rate limit exceeded"}, bob, nil, VerdictBroken, "session broken: rate limit exceeded"},
-		{"every delivery in the window failed", up, hf(3, 3), bob, nil, VerdictBroken, "every delivery in the window failed (3 of 3)"},
-		{"one failure among successes is not broken", up, hf(3, 1), BusFacts{RealSince: 1}, nil, VerdictOK, "live"},
-		{"deaf: deliveries succeed, nothing came back", up, hf(2, 0), bob, nil, VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"},
-		{"deaf: a failure beside a success is still deaf", up, hf(2, 1), bob, nil, VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"},
-		{"a pong outside the window does not answer", withPong(up, "25h0m0s"), hf(1, 0), bob, nil, VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"},
-		{"a pong in the window answers", withPong(up, "4s"), hf(1, 0), bob, nil, VerdictOK, "live"},
-		{"silent: no delivery was due", up, hf(0, 0), bob, nil, VerdictSilent, "no delivery was due and nothing came back in the window"},
-		{"down by presence", DaemonFacts{Friend: "bob", Presence: "down", Agent: "loaded", Status: "ok", PongAge: "-"}, hf(1, 0), BusFacts{RealSince: 2}, nil, VerdictDown, "down by presence"},
-		{"stale status cannot be live despite fresh presence", DaemonFacts{Friend: "bob", Presence: "up", Agent: "loaded", Status: "stale", PongAge: "4s"}, hf(1, 0), BusFacts{RealSince: 1}, nil, VerdictDown, "stale daemon status"},
-		{"shown up, broken: why leads with untrue", up, HarnessFacts{Friend: "bob", Broken: "2026-10-05T10:00:00Z", Reason: "quota"}, bob, claim, VerdictBroken, "untrue: shown up/2, session broken: quota"},
-		{"shown up, deaf: why leads with untrue", up, hf(2, 0), bob, claim, VerdictDeaf, "untrue: shown up/2, deliveries succeed but no session pong or real message came back in the window"},
-		{"shown up, silent: why leads with untrue", up, hf(0, 0), bob, claim, VerdictSilent, "untrue: shown up/2, no delivery was due and nothing came back in the window"},
-		{"shown up, down: why leads with untrue", DaemonFacts{Friend: "bob", Presence: "down", Agent: "none", PongAge: "-"}, hf(0, 0), bob, claim, VerdictDown, "untrue: shown up/2, down by presence"},
-		{"shown working, asleep: untrue", DaemonFacts{Friend: "bob", Presence: "asleep", Agent: "loaded", Status: "ok", PongAge: "4s"}, hf(1, 0), bob, &ShownEntry{State: "asleep", Working: 1}, VerdictUntrue, "shown asleep/1, facts say asleep"},
-		{"shown up, agent not loaded: untrue", DaemonFacts{Friend: "bob", Presence: "up", Agent: "not-loaded", Status: "ok", PongAge: "4s"}, hf(1, 0), bob, claim, VerdictUntrue, "shown up/2, facts say agent not-loaded"},
-		{"shown up and live: ok", withPong(up, "3s"), hf(1, 0), BusFacts{RealSince: 1}, &ShownEntry{State: "up"}, VerdictOK, "live"},
-		{"shown asleep, nothing working: no claim", up, hf(0, 0), bob, &ShownEntry{State: "asleep"}, VerdictSilent, "no delivery was due and nothing came back in the window"},
+		{"broken session", up, HarnessFacts{Friend: "bob", Broken: "2026-10-05T10:00:00Z", Reason: "rate limit exceeded"}, nil, VerdictBroken, "session broken: rate limit exceeded"},
+		{"every lane turn in the window failed", up, hf(3, 3), nil, VerdictBroken, "every lane turn in the window failed (3 of 3)"},
+		{"one failure among successes is not broken", up, hf(3, 1), nil, VerdictOK, "live: hook proven"},
+		{"a proven record is live with no daemon at all", DaemonFacts{Friend: "bob", Presence: PresenceUp, Agent: "none", Status: "none", Hook: HookProven, Reason: "-"}, hf(0, 0), nil, VerdictOK, "live: hook proven"},
+		{"an unhooked record is down with its reason", unhooked, hf(0, 0), nil, VerdictDown, "hook unhooked: missed 2 challenges"},
+		{"a record not read is down", DaemonFacts{Friend: "bob", Presence: PresenceDown, Hook: "-", Reason: "connection refused"}, hf(0, 0), nil, VerdictDown, "hook -: connection refused"},
+		{"shown up, broken: why leads with untrue", up, HarnessFacts{Friend: "bob", Broken: "2026-10-05T10:00:00Z", Reason: "quota"}, claim, VerdictBroken, "untrue: shown up/2, session broken: quota"},
+		{"shown up, down: why leads with untrue", unhooked, hf(0, 0), claim, VerdictDown, "untrue: shown up/2, hook unhooked: missed 2 challenges"},
+		{"shown up and live: ok", up, hf(1, 0), &ShownEntry{State: "up"}, VerdictOK, "live: hook proven"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			vf := DecideVerdict(c.df, c.hf, c.bf, wk, c.shown, window)
+			vf := DecideVerdict(c.df, c.hf, bob, wk, c.shown, window)
 			assert.Equal(t, c.verdict, vf.Verdict)
 			assert.Equal(t, c.why, vf.Why)
 		})
 	}
 }
 
-func TestCheckFriendDaemonFreshnessMatchesStatusBoundary(t *testing.T) {
+// The daemon's status file says only that its loop runs; presence is the hook
+// record's, read through the ReadHook seam, whatever the file's age.
+func TestCheckFriendReadsPresenceFromTheHookRecord(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 8, 23, 0, 0, 0, time.UTC)
 	for _, row := range []struct {
 		name     string
 		age      time.Duration
+		hook     HookRecord
 		status   string
 		presence string
 		verdict  string
 	}{
-		{"before boundary", DaemonStale - time.Nanosecond, "ok", PresenceUp, VerdictOK},
-		{"at boundary", DaemonStale, "stale", PresenceDown, VerdictDown},
-		{"after boundary", DaemonStale + time.Nanosecond, "stale", PresenceDown, VerdictDown},
-		{"old status with recent session presence", time.Minute, "stale", PresenceDown, VerdictDown},
+		{"fresh daemon, proven record", time.Second, HookRecord{State: HookProven, Since: now.Add(-time.Hour), LastAnswer: now.Add(-time.Second)}, "ok", PresenceUp, VerdictOK},
+		{"stale daemon, proven record", time.Minute, HookRecord{State: HookProven, Since: now.Add(-time.Hour), LastAnswer: now.Add(-time.Second)}, "stale", PresenceUp, VerdictOK},
+		{"fresh daemon, unhooked record", time.Second, HookRecord{State: "unhooked", Since: now.Add(-time.Minute), Misses: 2, Down: "missed 2 challenges"}, "ok", PresenceDown, VerdictDown},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			st := Status{Friend: "bob", At: now.Add(-row.age)}
-			pr := PresenceStatus{Friend: "bob", Presence: PresenceUp, LastHeard: now.Add(-time.Second)}
 			fc := CheckFriend(context.Background(), "bob", CheckSeams{
-				Now:          func() time.Time { return now },
-				Launchctl:    func(context.Context, ...string) (string, error) { return "123 0 com.nova.friend-bob", nil },
-				ReadStatus:   func(string) (Status, bool, error) { return st, true, nil },
-				ReadPresence: func(string) (PresenceStatus, bool, error) { return pr, true, nil },
-				ReadPong:     func(string) (Pong, bool, error) { return Pong{At: now.Add(-time.Second)}, true, nil },
-				HarnessDir:   func(string) (string, string, error) { return "opencode", "", nil },
-			}, time.Hour, &ShownEntry{State: PresenceUp, Working: 2})
+				Now:        func() time.Time { return now },
+				Launchctl:  func(context.Context, ...string) (string, error) { return "123 0 com.nova.friend-bob", nil },
+				ReadStatus: func(string) (Status, bool, error) { return st, true, nil },
+				ReadHook:   func(string) (HookRecord, error) { return row.hook, nil },
+				HarnessDir: func(string) (string, string, error) { return "opencode", "", nil },
+			}, time.Hour, nil)
 			assert.Equal(t, row.status, fc.Daemon.Status)
 			assert.Equal(t, row.presence, fc.Daemon.Presence)
-			assert.Equal(t, "1s", fc.Daemon.SeenAge, "recent session evidence is still shown")
 			assert.Equal(t, row.verdict, fc.Verdict.Verdict)
-			if row.status == "stale" {
-				assert.Contains(t, fc.Verdict.Why, "untrue: shown up/2, stale daemon status")
+			assert.Equal(t, row.hook.Misses, fc.Daemon.Misses)
+			if !row.hook.LastAnswer.IsZero() {
+				assert.Equal(t, "1s", fc.Daemon.Answer, "the model's last answer to a challenge")
 			}
 		})
 	}
-}
-
-func withPong(df DaemonFacts, age string) DaemonFacts {
-	df.PongAge = age
-	return df
 }
 
 func TestParseLogCountsOnlyTheWindow(t *testing.T) {
@@ -162,10 +148,8 @@ func TestParseShown(t *testing.T) {
 
 func TestIsRealMessage(t *testing.T) {
 	t.Parallel()
-	assert.False(t, IsRealMessage("ping"))
 	assert.False(t, IsRealMessage("pong"))
-	assert.False(t, IsRealMessage("daemon-pong"))
-	assert.False(t, IsRealMessage("keepalive"))
+	assert.False(t, IsRealMessage(" Pong "))
 	assert.True(t, IsRealMessage("work"))
 	assert.True(t, IsRealMessage("turn"))
 	assert.True(t, IsRealMessage("card 123"))
@@ -175,19 +159,16 @@ func TestLineFormatting(t *testing.T) {
 	t.Parallel()
 	df := DaemonFacts{
 		Friend: "bob", Agent: "loaded", PID: "123", Status: "ok",
-		Connection: "connected", Challenge: "quiet", PongAge: "5s",
-		Presence: "up", SeenAge: "2s",
+		Hook: HookProven, Since: "1h0m0s", Answer: "5s", Misses: 0, Presence: "up", Reason: "-",
 	}
-	assert.Equal(t, "CHECK DAEMON friend=bob agent=loaded pid=123 status=ok connection=connected challenge=quiet pong_age=5s presence=up seen_age=2s proof=none proof_age=-", df.Line())
-	df.Proof, df.ProofAge = "pending", "4m0s"
-	assert.Contains(t, df.Line(), " proof=pending proof_age=4m0s", "a daemon waiting for its push proof says so")
+	assert.Equal(t, "CHECK DAEMON friend=bob agent=loaded pid=123 status=ok hook=proven since=1h0m0s answer=5s misses=0 presence=up reason=-", df.Line())
 
 	hf := HarnessFacts{
 		Friend: "bob", Harness: "opencode", Route: "push",
 		Last: "2026-10-05T10:00:00Z", LastExit: "0", FailedOfLast20: 0,
 		Deferred: 0, Broken: "-", Reason: "-",
 	}
-	assert.Equal(t, "CHECK HARNESS friend=bob harness=opencode route=push last=2026-10-05T10:00:00Z last_exit=0 failed_of_last20=0 deferred=0 broken=- reason=- session_live=- queued=-", hf.Line())
+	assert.Equal(t, "CHECK HARNESS friend=bob harness=opencode route=push last=2026-10-05T10:00:00Z last_exit=0 failed_of_last20=0 deferred=0 broken=- reason=-", hf.Line())
 
 	bf := BusFacts{Friend: "bob", RealSince: 4, LastReal: "2026-10-05T10:05:00Z"}
 	assert.Equal(t, "CHECK BUS friend=bob real_since=4 last_real=2026-10-05T10:05:00Z", bf.Line())
@@ -199,5 +180,5 @@ func TestLineFormatting(t *testing.T) {
 	assert.Equal(t, "CHECK VERDICT friend=bob verdict=ok shown=up/0 why=live", vf.Line())
 
 	summary := CheckSummary{Friends: 1, OK: 1}
-	assert.Equal(t, "CHECK OK friends=1 ok=1 broken=0 deaf=0 silent=0 down=0 untrue=0", summary.Line())
+	assert.Equal(t, "CHECK OK friends=1 ok=1 broken=0 down=0 untrue=0", summary.Line())
 }

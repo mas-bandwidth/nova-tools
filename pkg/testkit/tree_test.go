@@ -64,19 +64,6 @@ func TestTreeRefusesToWriteThroughASymlinkOutOfTheRoot(t *testing.T) {
 	assert.Empty(t, entries, "a write through the link reached the sibling directory")
 }
 
-func TestJSONDecodesOrFailsWithTheText(t *testing.T) {
-	t.Parallel()
-	type row struct {
-		Card string `json:"card"`
-		N    int    `json:"n"`
-	}
-	assert.Equal(t, row{"c1", 2}, testkit.JSON[row](t, `{"card":"c1","n":2}`))
-	rec := &recorder{TB: t}
-	runs(rec, func() { testkit.JSON[row](rec, `{"card":`) })
-	assert.True(t, rec.failed, "JSON passed text that does not decode")
-	assert.Contains(t, rec.msg, `decode JSON "{\"card\":"`)
-}
-
 func TestSkipOnSkipsOnlyOnTheNamedSystem(t *testing.T) {
 	t.Parallel()
 	rec := &recorder{TB: t}

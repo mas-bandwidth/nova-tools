@@ -116,8 +116,6 @@ func foreignInstall(kind string) (string, bool) {
 		return "nova-sprint install server", true
 	case "member":
 		return "nova-sprint install member", true
-	case "seat-push":
-		return "nova-sprint install seat-push", true
 	case "friend-sync":
 		return "nova-sprint install friend-sync", true
 	case "table":

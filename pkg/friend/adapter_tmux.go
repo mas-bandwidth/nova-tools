@@ -291,21 +291,3 @@ func Host(ctx context.Context, run Exec, s HostSpec) (HostResult, error) {
 	}
 	return res, nil
 }
-
-// Alive: the hosted tmux session exists (`tmux has-session`); the TUI inside
-// it may still be at any state, which the session check alone answers.
-func (t *Tmux) Alive(ctx context.Context) Liveness {
-	if t.Run == nil {
-		return cannotTell("tmux: no runner")
-	}
-	out, exit, err := t.Run(ctx, t.Dir, "tmux", []string{"has-session", "-t", t.Session}, "")
-	switch {
-	case err != nil:
-		return cannotTell("tmux has-session: " + err.Error())
-	case exit == 0:
-		return running("the tmux session " + t.Session + " runs")
-	case strings.Contains(strings.ToLower(out), "can't find") || strings.Contains(strings.ToLower(out), "no server"):
-		return notRunning("the tmux session " + t.Session + " is not running")
-	}
-	return cannotTell(fmt.Sprintf("tmux has-session exited %d", exit))
-}

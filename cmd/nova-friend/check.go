@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -166,7 +168,7 @@ func (w world) healthCheckVerb(c *tool.Call) *tool.Out {
 		}
 	}
 
-	if summary.Broken+summary.Deaf+summary.Silent+summary.Down+summary.Untrue > 0 {
+	if summary.Broken+summary.Down+summary.Untrue > 0 {
 		return tool.Exit(1)
 	}
 	return tool.Exit(0)
@@ -200,12 +202,7 @@ func (w world) checkSeams(c *tool.Call, st bus.Store) friend.CheckSeams {
 		ReadStatus: func(name string) (friend.Status, bool, error) {
 			return friend.ReadStatus(friendStateDir(name))
 		},
-		ReadPresence: func(name string) (friend.PresenceStatus, bool, error) {
-			return friend.ReadPresence(friendStateDir(name))
-		},
-		ReadPong: func(name string) (friend.Pong, bool, error) {
-			return friend.ReadPong(friendStateDir(name))
-		},
+		ReadHook: func(name string) (friend.HookRecord, error) { return w.hookRecord(c.Ctx, st, name) },
 		ReadLog: func(name string) ([]string, error) {
 			b, err := os.ReadFile(friend.LogPath(friendStateDir(name)))
 			if err != nil {
@@ -292,4 +289,33 @@ func argAfter(args []string, flag string) string {
 		}
 	}
 	return ""
+}
+
+// hookRecord is name's nova-hook record (the one truth of whether a friend is
+// there) as status and check read it; a world with no hook store, or no bus
+// store, reads none.
+func (w world) hookRecord(ctx context.Context, st bus.Store, name string) (friend.HookRecord, error) {
+	if w.hookStore == nil || st == nil {
+		return friend.HookRecord{}, errors.New("no hook store")
+	}
+	hs, err := w.hookStore(st)
+	if err != nil {
+		return friend.HookRecord{}, err
+	}
+	sts, _, err := hs.Read(ctx, name)
+	if err != nil {
+		return friend.HookRecord{}, err
+	}
+	if len(sts) == 0 {
+		return friend.HookRecord{State: hook.StateNone}, nil
+	}
+	h := sts[0]
+	r := friend.HookRecord{State: h.State, Since: h.Armed, LastAnswer: h.AnswerAt, Misses: h.Misses, Down: h.Down}
+	if !h.Unhooked.IsZero() {
+		r.Since = h.Unhooked
+		if r.Down == "" {
+			r.Down = h.Reason
+		}
+	}
+	return r, nil
 }

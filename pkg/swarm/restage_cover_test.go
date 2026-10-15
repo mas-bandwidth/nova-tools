@@ -81,7 +81,7 @@ func TestRestageCoverBaseThatNeverMoves(t *testing.T) {
 			t.Parallel()
 			var calls []string
 			c, what, out, err := restageAtTip(context.Background(), restageCoverGit("nova-swarm-no-such-git", &calls), t.TempDir(),
-				"sprint/c1.g2.e1", tc.base, Rework{Prev: restageCoverSha, From: 1}, new(time.Duration), new(time.Duration))
+				"sprint/c1.g2.e1", tc.base, Rework{Prev: restageCoverSha, From: 1}, nil, new(time.Duration), new(time.Duration))
 			require.NoError(t, err, "%s: a base that never moves stages without error", tc.name)
 			assert.Nil(t, c, "%s: the carry is nil, the checkout staying where the stage put it", tc.name)
 			assert.Empty(t, what, "%s: no step failed, so no step is named", tc.name)
@@ -101,7 +101,7 @@ func TestRestageCoverFetchFailureIsTheStagesFailure(t *testing.T) {
 
 	var calls []string
 	c, what, out, err := restageAtTip(context.Background(), restageCoverGit("nova-swarm-no-such-git", &calls), t.TempDir(),
-		"sprint/c1.g2.e1", "main", Rework{Prev: restageCoverSha, From: 1}, new(time.Duration), new(time.Duration))
+		"sprint/c1.g2.e1", "main", Rework{Prev: restageCoverSha, From: 1}, nil, new(time.Duration), new(time.Duration))
 	assert.Nil(t, c, "a fetch that fails stages no carry")
 	assert.Nil(t, out, "a failed fetch answers no git output of its own")
 	var lookup *exec.Error

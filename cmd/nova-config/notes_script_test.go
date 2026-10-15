@@ -128,11 +128,17 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 		{"route", "add", "flash-mimo26-openrouter", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--pg", dsn},
 	} {
 		code, _, errs := h.run(t, args...)
-		require.Equal(t, 0, code, errs)
+		if args[0] == "route" {
+			require.Equal(t, 1, code, errs)
+			assert.Contains(t, errs, "CONFIG NOT-APPLIED")
+		} else {
+			require.Zero(t, code, errs)
+		}
 	}
 	for _, name := range disabled {
 		code, _, errs := h.run(t, "route", "add", name, "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--enabled", "false", "--note", "by hand", "--pg", dsn)
-		require.Equal(t, 0, code, errs)
+		require.Equal(t, 1, code, errs)
+		assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 	}
 
 	// a dry run: the same calls, each carrying --dry-run, and the store unchanged
@@ -142,7 +148,7 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 	for _, c := range writes(calls) {
 		assert.Contains(t, c, "--dry-run")
 		code, plan, errs := h.run(t, c...)
-		require.Equal(t, 0, code, "%v: %s", c, errs)
+		require.Zero(t, code, errs)
 		assert.Contains(t, plan, "CONFIG DRY-RUN op=set kind=")
 	}
 	code, shown, errs := h.run(t, "route", "show", "flash-luna6-opencode", "--pg", dsn)
@@ -162,7 +168,12 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 		assert.NotContains(t, c, "--enabled", "the script enables and disables nothing: %v", c)
 		assert.Equal(t, []string{"--as", "a1", "--pg", dsn}, c[5:], "the actor and the store flags ride every call: %v", c)
 		code, wrote, errs := h.run(t, c...)
-		require.Equal(t, 0, code, "%v: %s", c, errs)
+		if c[0] == "route" {
+			require.Equal(t, 1, code, errs)
+			assert.Contains(t, errs, "CONFIG NOT-APPLIED")
+		} else {
+			require.Zero(t, code, errs)
+		}
 		assert.Contains(t, wrote, "changed=note\n", "%v", c)
 	}
 	for name, want := range map[string][]string{
