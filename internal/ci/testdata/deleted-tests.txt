@@ -2331,6 +2331,8 @@ cmd/nova-bus/pushproof_test.go nova-bus send, recv and names read the hook recor
 cmd/nova-friend/pong_defaults_test.go pong.json deleted as a record in v1.3 (E2c); nova-friend pong reads queue and width from QUEUE.json and status.json directly and sends on the bus
 pkg/bus/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record
 pkg/friend/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record
+tools/ci/lisptest_test.go the Lisp acceptance tier is retired: nova-work kernel moved to nova-work-old; named 2026-10-14 dead-code pass2 retirement removes lisp-test verb
+internal/ci/workflow_recovery_test.go lisp-changes path-filter job is retired with the Lisp acceptance tier after nova-work kernel moved to nova-work-old
 internal/textbody/textbody_test.go StripQuotedAndCode is unreachable from every shipped main (go tool deadcode v0.50.0); no caller outside its own tests in nova-tools or current nova-sprint; package removed in dead-code pass2
 cmd/nova-friend/serve_test.go nova-friend serve, the coordinator's one-second PING keepalive loop, is retired (v1.3.5): liveness is the nova-hook server's per-minute challenge (cmd/nova-hook serve, tla/Hook.tla), whose tests cover it
 cmd/nova-friend/wakeping_test.go nova-friend ping --wake --to-friends, ping-install and ping-uninstall are retired (v1.3.5): the nova-hook challenge is the wake, and nova-friend reach is the escalation ladder with its own tests

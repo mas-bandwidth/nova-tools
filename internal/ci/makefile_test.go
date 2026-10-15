@@ -30,11 +30,11 @@ import (
 
 // buildTestLintRe matches a build, test or lint COMMAND at the start of a shell
 // statement: `go build`, `go vet`, `go test`, `gofmt`, or one of CI's own test
-// verbs (`go run ./tools/ci lisp-test`, `go run ./tools/ci functional-run`).
+// verb (`go run ./tools/ci functional-run`).
 // `go version`, `go list` and `go env` are setup and are
 // deliberately not matched. The command may follow a shell separator — `;`,
 // `&&`, `||`, `|` or `$(` — so a command substitution is caught too.
-var buildTestLintRe = regexp.MustCompile(`(^|[;&|($])\s*(go\s+(build|vet|test)\b|gofmt\b|go\s+run\s+\./tools/ci\s+(lisp-test|functional-run)\b)`)
+var buildTestLintRe = regexp.MustCompile(`(^|[;&|($])\s*(go\s+(build|vet|test)\b|gofmt\b|go\s+run\s+\./tools/ci\s+functional-run\b)`)
 
 // commandAllowlist names the setup and shard-loop lines that are allowed not to
 // be a make invocation. They run no test and check no formatting: they discover
@@ -140,13 +140,9 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 	for _, d := range mk.deps["check"] {
 		checkDeps[d] = true
 	}
-	// The lisp gate is test-lisp, CI's own lisp verb (tools/ci lisp-test), which
-	// prints "nothing to test" while lisp/ holds no system.
-	for _, want := range []string{"build", "lint", "test", "test-e2e", "test-lisp"} {
-		assert.True(t, checkDeps[want], "Makefile check does not run %q; the contract is build, lint, test, test-e2e and test-lisp", want)
+	for _, want := range []string{"build", "lint", "test", "test-e2e"} {
+		assert.True(t, checkDeps[want], "Makefile check does not run %q; the contract is build, lint, test and test-e2e", want)
 	}
-	got := strings.TrimSpace(strings.Join(mk.recipeFor("test-lisp"), "\n"))
-	assert.Equal(t, "go run ./tools/ci lisp-test", got, "Makefile test-lisp is %q, want CI's lisp verb go run ./tools/ci lisp-test (CI's lisp job and the merge gate's lisp step both run it)", got)
 
 	// And the gates themselves: every command `make check` would run, gathered
 	// from check and the transitive closure of its prerequisites, with the
@@ -159,7 +155,6 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 		"go vet ./...",
 		"go test -count=1 $PKGS",
 		"go test -count=1 -run TestFriendSequence ./cmd/...",
-		"go run ./tools/ci lisp-test",
 	} {
 		assert.Contains(t, recipes, gate, "`make check` does not reach %q; the recipes it runs are:\n%s", gate, recipes)
 	}
