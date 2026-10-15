@@ -8,8 +8,15 @@
 \* serve.go; docs/SPEC-HOOK.md, the heartbeat). The server clock is intervals:
 \* Tick ends one (Redis TIME). Every server passes at most once an interval and
 \* the pass is taken once between them (the server row's at is the once-key);
-\* a pass challenges each hooked name, counts a challenge still standing as a
-\* miss, and at Limit misses in a row unhooks the name, logging it once. Only
+\* a pass challenges each hooked name and counts a challenge still standing as a
+\* miss; a miss when the name's last answer (or its hooking in) is DownAfter
+\* intervals old unhooks the name, logging it once (2026-10-14: down
+\* only after a friend has not talked to us for five minutes, not two missed
+\* one-minute challenges; nova-hook serve --down-after). The interval is the
+\* model's unit, so Every = 1 and DownAfter counts intervals. The code fires on
+\* answered_at older than down-after by TIME, which is at qtime DownAfter or
+\* DownAfter + 1 (an answer late in its interval); the model fires at the
+\* first, and NoDownBeforeDownAfter holds for both. Only
 \* the live model answers (nova-hook prove inside its turn), inside the
 \* interval of its challenge; a model may go silent, come back and hook in.
 \*
@@ -27,8 +34,9 @@
 \*
 \* Down is derived from deadlines in server time, so it holds however the
 \* servers run: the dashboard shows a friend down when its record is
-\* unhooked, or its last answer (answered_at) is older than UpBound
-\* intervals, and every friend down when the server row is older than two
+\* unhooked, or its last answer (answered_at) is older than DownAfter
+\* intervals (the server row's down_after: the same window the server unhooks
+\* on), and every friend down when the server row is older than two
 \* intervals (no server, no liveness).
 \*
 \* Server stamps and deadlines are Redis TIME. A client cannot read Redis TIME
@@ -44,12 +52,17 @@
 \* are checked under fairness of the tick, the pass and the sender.
 EXTENDS Naturals, FiniteSets, Sequences
 
-CONSTANTS Names, Servers, Limit, Broken, CoordRole, NoCoord, Parts, UpBound
+CONSTANTS Names, Servers, DownAfter, Broken, CoordRole, NoCoord, Parts
 
-QCap == UpBound + 1
+QCap == DownAfter + 1
+\* quiet's cap: past the most passes an up name can have gone unanswered.
+QuietCap == DownAfter + 2
 
 \* Parts: what a case turns on, to keep each instance small:
-\*   "tell" (the tell and its sends), "judge", "hold", "client", "ask", "bootstrap".
+\*   "tell" (the tell and its sends), "judge", "hold", "client", "ask", "bootstrap",
+\*   "quiet" (the ghost quiet is counted; else it stays 0), "misses" (misses are
+\*   counted, for the old rule and its witness; else they stay 0). Neither decides
+\*   a down now, so the cases that do not read them leave them out.
 \* Broken (reversed witnesses, each must fail):
 \*   "noonce"      no once-key: every server's pass is taken
 \*   "heldfirst"   BadHeldWhileDown: the dashboard reads the hold before the hook
@@ -61,7 +74,9 @@ QCap == UpBound + 1
 \*   "nostale"     BadUpWithServerGone: the dashboard ignores the server row's age
 \*   "nodeadline"  BadUpAfterOutage: the dashboard ignores the answer's age
 \*   "bootstrapoverwrite" client DEL/HSET replaces a delivered server nonce
-\* BadUnhookAtThree is Limit = 3.
+\*   "twomisses"   BadDownEarly: the old rule, down at two missed challenges in a
+\*                 row whatever the time since the last answer (NoDownBeforeDownAfter)
+\* BadUnhookAtThree (Limit = 3) is retired with Limit: the down rule is time.
 
 None == <<>>
 
@@ -69,7 +84,7 @@ VARIABLES
     hooked,    \* [Names -> BOOLEAN]: the hook record's state is hooked
     chal,      \* challenge kind: none, server open/late, bootstrap, or server nonce clobbered
     beatOwned, \* [Names -> BOOLEAN]: beat_at stands in this epoch, even after Answer
-    misses,    \* [Names -> Nat]: challenges in a row left standing
+    misses,    \* [Names -> 0..2]: challenges in a row left standing (the reason's count), counted to two
     events,    \* [Names -> Nat]: heartbeat unhooks logged on hook:events
     hooks,     \* [Names -> Nat]: times the name hooked in (its word)
     taken,     \* the pass of this interval is taken (the once-key)
@@ -86,7 +101,7 @@ VARIABLES
     jto,       \* its recipients
     jresent,   \* OVERDUE pushes of the current judgment
     alive,     \* [Names -> BOOLEAN]: the model is there and answers (the world, not a record)
-    quiet,     \* [Names -> 0..3]: passes since the model itself last answered or hooked in (ghost)
+    quiet,     \* [Names -> 0..QuietCap]: passes since the model itself last answered or hooked in (ghost)
     qtime,     \* [Names -> 0..QCap]: the hook record's answered_at, as its age in intervals of server time
     elapsed,   \* [Names -> 0..2]: the client's local monotonic intervals since its last valid contact
     alarm,     \* [Names -> BOOLEAN]: the client's own alarm: the server is lost
@@ -102,6 +117,9 @@ vars == <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge,
           jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries>>
 
 Cap3(x) == IF x < 3 THEN x ELSE 3
+CapQ(x) == IF x < QuietCap THEN x ELSE QuietCap
+\* misses decide nothing now but the old rule's witness: counted to two.
+CapM(x) == IF x < 2 THEN x ELSE 2
 
 \* What the friends are to hear, of a hook state h.
 UnhookedOf(h) == {n \in Names : ~h[n]}
@@ -114,7 +132,7 @@ States == (SUBSET Names) \X (Names \cup {NoCoord})
 Stale == rowAge > 2 /\ "nostale" \notin Broken
 
 \* nova-hook's up: hooked, answered by its deadline in server time.
-HookUp(n) == hooked[n] /\ (qtime[n] <= UpBound \/ "nodeadline" \in Broken)
+HookUp(n) == hooked[n] /\ (qtime[n] <= DownAfter \/ "nodeadline" \in Broken)
 
 \* The dashboard's friend row (BLANK-SLATE.md's table), under a live server row.
 Table == [h \in BOOLEAN |-> [d \in BOOLEAN |-> IF ~h THEN "down" ELSE IF d THEN "held" ELSE "up"]]
@@ -176,17 +194,20 @@ Pass(s) ==
     /\ beatOwned' = [n \in Names |-> beatOwned[n] \/ hooked[n]]
     /\ taken' = TRUE
     /\ rowAge' = 0
-    /\ LET m == [n \in Names |-> IF hooked[n] /\ beatOwned[n] /\ chal[n] # "none" THEN misses[n] + 1 ELSE misses[n]]
-           gone == {n \in Names : hooked[n] /\ m[n] >= Limit}
+    /\ LET miss == {n \in Names : hooked[n] /\ beatOwned[n] /\ chal[n] # "none"}
+           m == [n \in Names |-> IF n \in miss THEN CapM(misses[n] + 1) ELSE misses[n]]
+           \* down: a miss, and no answer (nor hooking in) for DownAfter intervals;
+           \* under "twomisses", the old rule: two misses in a row, whatever the time
+           gone == {n \in Names : n \in miss /\ IF "twomisses" \in Broken THEN m[n] >= 2 ELSE qtime[n] >= DownAfter}
            h2 == [n \in Names |-> hooked[n] /\ n \notin gone]
            now == StateOf(h2)
        IN /\ hooked' = h2
-          /\ misses' = [n \in Names |-> IF hooked[n] THEN m[n] ELSE misses[n]]
+          /\ misses' = IF "misses" \in Parts THEN [n \in Names |-> IF hooked[n] THEN m[n] ELSE misses[n]] ELSE misses
           /\ events' = [n \in Names |-> IF n \in gone THEN events[n] + 1 ELSE events[n]]
           /\ chal' = [n \in Names |-> IF h2[n] THEN "open" ELSE IF n \in gone THEN "none" ELSE chal[n]]
           /\ elapsed' = [n \in Names |-> IF h2[n] THEN 0 ELSE elapsed[n]]
           /\ alarm' = [n \in Names |-> IF h2[n] THEN FALSE ELSE alarm[n]]
-          /\ quiet' = [n \in Names |-> IF hooked[n] THEN Cap3(quiet[n] + 1) ELSE quiet[n]]
+          /\ quiet' = IF "quiet" \in Parts THEN [n \in Names |-> IF hooked[n] THEN CapQ(quiet[n] + 1) ELSE quiet[n]] ELSE quiet
           /\ IF now # told /\ "tell" \in Parts
                 THEN /\ out' = [out EXCEPT ![s] = [v |-> tv, to |-> now, sent |-> FALSE]]
                      /\ IF "markfirst" \in Broken
@@ -389,8 +410,8 @@ TypeOK ==
     /\ hooked \in [Names -> BOOLEAN]
     /\ beatOwned \in [Names -> BOOLEAN]
     /\ chal \in [Names -> {"none", "open", "late", "bootstrap", "clobbered"}]
-    /\ misses \in [Names -> 0..Limit]
-    /\ quiet \in [Names -> 0..3]
+    /\ misses \in [Names -> 0..2]
+    /\ quiet \in [Names -> 0..QuietCap]
     /\ elapsed \in [Names -> 0..2]
     /\ alarm \in [Names -> BOOLEAN]
     /\ held \in [Names -> BOOLEAN]
@@ -401,7 +422,7 @@ TypeOK ==
 \* The dashboard row is the table applied to the hook record (its state and
 \* answered_at) and the hold, under a live server row, and nothing else.
 ShownIsFunctionOfTwoRecords ==
-    \A n \in Names : Shown(n) = IF rowAge > 2 THEN "down" ELSE Table[hooked[n] /\ qtime[n] <= UpBound][held[n]]
+    \A n \in Names : Shown(n) = IF rowAge > 2 THEN "down" ELSE Table[hooked[n] /\ qtime[n] <= DownAfter][held[n]]
 
 \* Down trumps held: an unhooked friend is shown down whatever the hold.
 DownTrumpsHeld == \A n \in Names : ~hooked[n] => Shown(n) = "down"
@@ -410,15 +431,16 @@ DownTrumpsHeld == \A n \in Names : ~hooked[n] => Shown(n) = "down"
 StaleServerMeansDown == rowAge > 2 => \A n \in Names : Shown(n) = "down"
 
 \* Shown up (or held, which is up) means the model itself answered a challenge,
-\* or hooked in, within the last two intervals of the server clock.
-UpMeansAnsweredRecently == \A n \in Names : Shown(n) \in {"up", "held"} => quiet[n] <= 2
+\* or hooked in, within the last DownAfter intervals of the server clock: at
+\* most one pass an interval, and one in the interval of the answer itself.
+UpMeansAnsweredRecently == \A n \in Names : Shown(n) \in {"up", "held"} => quiet[n] <= DownAfter + 1
 
 \* The same in server time, whether or not any server passes (an outage, a
-\* server coming back): shown up means the model answered within UpBound
+\* server coming back): shown up means the model answered within DownAfter
 \* intervals by the clock.
-UpMeansAnsweredInServerTime == \A n \in Names : Shown(n) \in {"up", "held"} => qtime[n] <= UpBound
+UpMeansAnsweredInServerTime == \A n \in Names : Shown(n) \in {"up", "held"} => qtime[n] <= DownAfter
 
-\* A friend whose model stops answering is down within two intervals plus one tick.
+\* A friend whose model stops answering is down at last (within DownAfter intervals and a pass).
 SilentFriendGoesDown == \A n \in Names : (hooked[n] /\ ~alive[n]) ~> (~hooked[n] \/ alive[n])
 
 \* With every server stopped (only the clock is fair), a silent friend is
@@ -448,8 +470,17 @@ ShownIgnoresClientClock == [][\A n \in Names : UNCHANGED <<hooked[n], qtime[n], 
 \* An ask's timeout is delivered once.
 AskExpiresOnce == \A n \in Names : expiries[n] <= 1 /\ (expiries[n] = 1 <=> ask[n] = "timedout")
 
-\* A hooked name has missed fewer than Limit in a row.
-UnderLimit == \A n \in Names : hooked[n] => misses[n] < Limit
+\* The down-after rule (2026-10-14): a name goes down only once it has not answered
+\* (nor hooked in) for DownAfter intervals, however many challenges it missed
+\* meanwhile. Under "twomisses" (the old rule) it fails: two misses come at
+\* qtime 2, under DownAfter = 3.
+NoDownBeforeDownAfter ==
+    [][\A n \in Names : (hooked[n] /\ ~hooked'[n]) => qtime[n] >= DownAfter]_vars
+
+\* A hooked name that answers often enough misses challenges and is never
+\* unhooked for it: the reversed witness that the new rule lets misses run
+\* past the old limit (reached: misses of 2 on a hooked name).
+WitnessMissesPastTwo == \A n \in Names : hooked[n] => misses[n] < 2
 
 \* One pass an interval, however many servers pass (Broken "noonce" breaks it).
 OnePassPerInterval == Cardinality(passed) <= 1

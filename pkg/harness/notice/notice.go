@@ -54,10 +54,16 @@ const MaxSaved = 64 << 10
 // challengePrefix is the subject of every heartbeat challenge.
 const challengePrefix = "HOOK CHALLENGE nonce="
 
+// wireMisses is the count the challenge body has always named. The body is a
+// wire contract: every deployed receiver (Canonical) holds a challenge to it
+// byte for byte, so it stays as it is until every receiver reads a new form,
+// although the server now unhooks on silence (hook.DownAfter), not on a count.
+const wireMisses = 2
+
 // ChallengeText is the canonical body of a heartbeat challenge: the server
 // writes it, and Canonical holds a received challenge to it byte for byte.
 func ChallengeText(name, nonce string, every time.Duration) string {
-	return fmt.Sprintf("HOOK CHALLENGE nonce=%s\nThe hook's heartbeat asks whether the model is here. Answer from inside this turn, before anything else, within %s, with: nova-hook prove --as %s --nonce %s\nOnly the model answers: no daemon, loop or script may. %d unanswered in a row unhook %s.\n", nonce, every, name, nonce, hook.MissLimit, name)
+	return fmt.Sprintf("HOOK CHALLENGE nonce=%s\nThe hook's heartbeat asks whether the model is here. Answer from inside this turn, before anything else, within %s, with: nova-hook prove --as %s --nonce %s\nOnly the model answers: no daemon, loop or script may. %d unanswered in a row unhook %s.\n", nonce, every, name, nonce, wireMisses, name)
 }
 
 // Canonical is the nonce of m when m has the server's whole challenge shape

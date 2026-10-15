@@ -206,10 +206,11 @@ MCHookBeatBrokenNoOnce.cfg	MCHookBeat.tla	invariant	OnePassPerInterval	ignore-te
 MCHookBeatBrokenHeldWhileDown.cfg	MCHookBeat.tla	invariant	DownTrumpsHeld	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenDaemonAnswers.cfg	MCHookBeat.tla	invariant	UpMeansAnsweredRecently	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenDaemonNeverDown.cfg	MCHookBeat.tla	temporal	SilentFriendGoesDown	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenUnhookAtThree.cfg	MCHookBeat.tla	invariant	UpMeansAnsweredRecently	ignore-terminal	hookbeat	required	-
+MCHookBeatBrokenDownEarly.cfg	MCHookBeat.tla	action	NoDownBeforeDownAfter	ignore-terminal	hookbeat	required	-
+MCHookBeatWitnessMissesPastTwo.cfg	MCHookBeat.tla	invariant	WitnessMissesPastTwo	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenTwoServersDoubleAnnounce.cfg	MCHookBeat.tla	invariant	NeverToldTwice	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenShownReadsClientClock.cfg	MCHookBeat.tla	action	ShownIgnoresClientClock	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenMarkBeforeSend.cfg	MCHookBeat.tla	temporal	EveryTransitionToldAtLeastOnce	ignore-terminal	hookbeat	required	-
+MCHookBeatBrokenMarkBeforeSend.cfg	MCHookBeatMarkAfterSend.tla	temporal	EveryTransitionToldAtLeastOnce	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenMarkAfterSend.cfg	MCHookBeatMarkAfterSend.tla	temporal	EveryTransitionToldAtLeastOnce	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenUpWithServerGone.cfg	MCHookBeat.tla	invariant	StaleServerMeansDown	ignore-terminal	hookbeat	required	-
 MCHookBeatBootstrap.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-

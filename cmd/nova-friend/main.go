@@ -827,9 +827,9 @@ daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` o
 queue counts are the queue file's (<dir>/inbox/QUEUE.json). status is the friend's, decided from evidence in order
 (docs/SPEC-FRIEND.md): at a limit (the state directory's ` + friend.LimitFile + `) is down until the reset; a nova-hook record
 that does not prove the friend there (nova-hook serve challenges every hooked name once a minute, only the model answers,
-two misses unhook; read from the bus store --redis names) is down; a store that does not answer is down; otherwise up. The
-daemon's beat never makes it up. why is the rule that decided it, as a person reads it ("hook unhooked since 12m ago: missed
-2 challenges", "limit until Mon 1:00 PM"); evidence is every piece, "; "-separated: the hook record, the limit, the messages
+over 5m silent unhooks; read from the bus store --redis names) is down; a store that does not answer is down; otherwise up.
+The daemon's beat never makes it up. why is the rule that decided it, as a person reads it ("hook unhooked since 12m ago: no
+answer in 5m0s (6 challenges missed)", "limit until Mon 1:00 PM"); evidence is every piece, "; "-separated: the hook record, the limit, the messages
 waiting on the stream, the last turn's end and exit from the log. route=push when a tail of a .wake file runs under the open
 window's pid; route=defer, with a NOTE of ` + friend.GrokMonitorLine("") + `, when none does. STATUS NONE at exit 1 when no
 daemon ever ran as --as (no status file in the state directory).`,

@@ -446,10 +446,12 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 // nothing and answers {0} (the once-key is the server row's at). Otherwise,
 // for each name: a record that is not hooked, or hooked as a role with no bus
 // push, is left as it is (code 0); a challenge still standing from the last
-// pass is a miss; at the limit the name is unhooked as unhookLua does, with
-// the reason, and the event logged once (code 2); else a fresh challenge is
-// set, due within the interval, naming the pushes of the role a session
-// receives (code 1). The server's row is stamped. Last, the pass reads the
+// pass is a miss (counted in misses, for the reason); a miss when the name's
+// last answer, or its hooking in if later (armed), is older than down-after
+// unhooks the name as unhookLua does, with the reason, and the event logged
+// once (code 2); else a fresh challenge is set, due within the interval,
+// naming the pushes of the role a session receives (code 1). The server's row
+// is stamped, with the down-after the readers' up uses (Served.Down). Last, the pass reads the
 // unhooked set, the coordinator (the first hooked name of that role) and the
 // live names (hooked, of a challenged role), and what each audience was last
 // told: the answer is {1, {code, misses, epoch} per name, the set, the
@@ -458,20 +460,20 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 // audience told only after its message went out (Store.Told), so a send that
 // fails is told again by the next pass.
 // KEYS: events, serve, then per name its record and allKeys (8 keys; the challenge last).
-// ARGV: every ms, limit, ttl ms, by, events cap, the count of roles, a role and
-// the pushes its challenge names (comma) per role, then per name its name and
-// its nonce's sum.
+// ARGV: every ms, down-after ms, ttl ms, by, events cap, the down-after as
+// the reason says it, the count of roles, a role and the pushes its challenge
+// names (comma) per role, then per name its name and its nonce's sum.
 var beatLua = redis.NewScript(nowMS + `
 local now = tonumber(ms)
-local every, limit, ttl, by, cap = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5]
+local every, after, ttl, by, cap, label = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5], ARGV[6]
 local prev = tonumber(redis.call('HGET', KEYS[2], 'at') or '0')
 if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', '', '', '', '', '', '', '', ''} end
-redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'by', by)
-local nroles = tonumber(ARGV[6])
+redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'down_after', ARGV[2], 'by', by)
+local nroles = tonumber(ARGV[7])
 local bus = {}
-for i = 1, nroles do bus[ARGV[5 + 2 * i]] = ARGV[6 + 2 * i] end
+for i = 1, nroles do bus[ARGV[6 + 2 * i]] = ARGV[7 + 2 * i] end
 local out, gone, live, coord = {}, {}, {}, ''
-local k, a = 3, 7 + 2 * nroles
+local k, a = 3, 8 + 2 * nroles
 while k <= #KEYS do
   local rec, chal, name, sum = KEYS[k], KEYS[k + 7], ARGV[a], ARGV[a + 1]
   local did, misses, e = 0, 0, 0
@@ -479,10 +481,12 @@ while k <= #KEYS do
   if redis.call('HGET', rec, 'state') == 'hooked' and bus[role] then
     local last = tonumber(redis.call('HGET', rec, 'beat_at') or '0')
     misses = tonumber(redis.call('HGET', rec, 'misses') or '0')
-    if last > 0 and redis.call('EXISTS', chal) == 1 then misses = misses + 1 end
-    if misses >= limit then
+    local miss = last > 0 and redis.call('EXISTS', chal) == 1
+    if miss then misses = misses + 1 end
+    local heard = math.max(tonumber(redis.call('HGET', rec, 'answered_at') or '0'), tonumber(redis.call('HGET', rec, 'armed') or '0'))
+    if miss and now - heard > after then
       e = redis.call('HINCRBY', rec, 'epoch', 1)
-      local why = 'missed ' .. misses .. ' challenges'
+      local why = 'no answer in ' .. label .. ' (' .. misses .. ' challenges missed)'
       redis.call('HSET', rec, 'state', 'unhooked', 'unhooked', ms, 'reason', why, 'misses', misses)
       for i = k + 1, k + 7 do redis.call('DEL', KEYS[i]) end
       redis.call('XADD', KEYS[1], 'MAXLEN', '~', cap, '*', 'name', name, 'event', 'unhooked', 'reason', why, 'role', role, 'epoch', e, 'at', ms, 'by', by)
@@ -514,7 +518,7 @@ return {1, out, set, coord, table.concat(live, ','), f[1] or '', f[2] or '', f[3
 const (
 	BeatLeft       = 0 // not hooked, no bus push, or challenged already this interval
 	BeatChallenged = 1 // a fresh challenge is set: deliver its nonce
-	BeatUnhooked   = 2 // missed the limit in a row: unhooked
+	BeatUnhooked   = 2 // a miss with no answer for down-after: unhooked
 )
 
 // Beat is one name's outcome of a heartbeat pass.
@@ -524,10 +528,18 @@ type Beat struct {
 	Nonce  string // the challenge's nonce, when challenged: the store keeps only its sum
 	Misses int
 	Epoch  int64
+	// DownAfter is the pass's down-after: the silence that unhooks.
+	DownAfter time.Duration
 }
 
 // Reason is why an unhooked beat unhooked its name, as the record and the event say it.
-func (b Beat) Reason() string { return fmt.Sprintf("missed %d challenges", b.Misses) }
+func (b Beat) Reason() string { return DownReason(b.DownAfter, b.Misses) }
+
+// DownReason is the reason a heartbeat unhook records: no answer for
+// downAfter, and the challenges missed in a row by then.
+func DownReason(downAfter time.Duration, misses int) string {
+	return fmt.Sprintf("no answer in %s (%d challenges missed)", downAfter, misses)
+}
 
 // The audiences a pass tells, each marked told on its own (Store.Told): the
 // coordinator, who gets the judgment, and the rest of the live names.
@@ -636,12 +648,12 @@ var Challenged = map[Role][]Push{Coordinator: {Bus}, Friend: {Bus}, Comms: {Bus}
 // Pass is one heartbeat pass over names (sorted), in one round trip and one
 // atomic step (beatLua): taken once an interval however many servers pass; in
 // it each hooked name of a role in Challenged is challenged, a challenge left
-// standing a whole interval is a miss, and at limit misses in a row the name
-// is unhooked, once; and the set of unhooked names is told once per change
-// (tla/HookBeat.tla).
-func (s Store) Pass(ctx context.Context, names []string, every time.Duration, limit int, nonce func() string, by string) (Passed, error) {
+// standing a whole interval is a miss, and a miss when the name has not
+// answered (nor hooked in) for more than downAfter unhooks it, once; and the set of
+// unhooked names is told once per change (tla/HookBeat.tla, DownAfter).
+func (s Store) Pass(ctx context.Context, names []string, every, downAfter time.Duration, nonce func() string, by string) (Passed, error) {
 	keys := []string{EventsKey, ServeKey}
-	args := []any{every.Milliseconds(), limit, (2*every + AnswerBound).Milliseconds(), by, EventsMax, len(Challenged)}
+	args := []any{every.Milliseconds(), downAfter.Milliseconds(), (2*every + AnswerBound).Milliseconds(), by, EventsMax, downAfter.String(), len(Challenged)}
 	for _, r := range Roles {
 		if ps, ok := Challenged[r]; ok {
 			var w []string
@@ -653,7 +665,7 @@ func (s Store) Pass(ctx context.Context, names []string, every time.Duration, li
 	}
 	out := Passed{Beats: make([]Beat, len(names))}
 	for i, n := range names {
-		out.Beats[i] = Beat{Name: n, Nonce: nonce()}
+		out.Beats[i] = Beat{Name: n, Nonce: nonce(), DownAfter: downAfter}
 		keys = append(append(keys, RecordKey(n)), allKeys(n)...)
 		args = append(args, n, Sum(out.Beats[i].Nonce))
 	}
@@ -709,7 +721,11 @@ func (s Store) Pass(ctx context.Context, names []string, every time.Duration, li
 type Served struct {
 	At, Now time.Time
 	Every   time.Duration
-	OK      bool
+	// DownAfter is the server's down-after (nova-hook serve --down-after):
+	// the window a name's last answer must fall in to read up. A row from a
+	// server that writes none reads as two intervals, that server's own rule.
+	DownAfter time.Duration
+	OK        bool
 }
 
 // Why a hooked record reads down although its state says otherwise: up needs
@@ -727,8 +743,10 @@ func (sv Served) Stale() bool { return !sv.OK || sv.Now.Sub(sv.At) > 2*sv.Every 
 // Down is why st reads down at this read whatever its state says, "" when the
 // evidence stands (tla/HookBeat.tla, the findings of the model run): no server
 // row, or one older than two intervals, puts every name down; and a name of a
-// challenged role is up only when it answered a challenge within the last two
-// intervals, by the store's TIME, however fresh the server row is. A role the heartbeat never challenges (a member's
+// challenged role is up only when it answered a challenge within the server's
+// down-after (Window), by the store's TIME, however fresh the server row is:
+// the window the server unhooks on, so a name the server keeps hooked does not
+// read down meanwhile. A role the heartbeat never challenges (a member's
 // or reader's loop: no session) needs only the server. The one rule every
 // reader uses: Store.Read sets Status.Down from it, and the gate refuses on it.
 func (sv Served) Down(st Status) string {
@@ -738,10 +756,19 @@ func (sv Served) Down(st Status) string {
 	case sv.Stale():
 		return StaleReason
 	}
-	if _, ok := Challenged[st.Role]; ok && (st.AnswerAt.IsZero() || sv.Now.Sub(st.AnswerAt) > 2*sv.Every) {
+	if _, ok := Challenged[st.Role]; ok && (st.AnswerAt.IsZero() || sv.Now.Sub(st.AnswerAt) > sv.Window()) {
 		return NoAnswerReason
 	}
 	return ""
+}
+
+// Window is how old a name's last answer may be and the name read up: the
+// server's down-after, or two intervals for a row that carries none.
+func (sv Served) Window() time.Duration {
+	if sv.DownAfter > 0 {
+		return sv.DownAfter
+	}
+	return 2 * sv.Every
 }
 
 // Serve reads the heartbeat server's stamp and the store's TIME, in one round trip.
@@ -765,7 +792,11 @@ func servedOf(m map[string]string, now time.Time) Served {
 	if err != nil || every <= 0 {
 		return Served{Now: now} // ignored: no stamp, or one with no interval, is no server
 	}
-	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, OK: true}
+	after, err := strconv.ParseInt(m["down_after"], 10, 64)
+	if err != nil || after <= 0 {
+		after = 0 // ignored: a row with no down-after is an older server's: Window reads two intervals
+	}
+	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, DownAfter: time.Duration(after) * time.Millisecond, OK: true}
 }
 
 // JudgmentsKey holds the heartbeat's open judgments: a hash of message id to
