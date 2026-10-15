@@ -634,7 +634,7 @@ type nativeFlags struct {
 	budgetAs        *string
 	budgetHolder    *string
 	budgetSlots     *bool
-	localBase        *string
+	localBase       *string
 	repos           []string
 	recipients      []string
 }
