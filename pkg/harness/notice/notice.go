@@ -15,6 +15,10 @@
 //  3. A new push happens only after the previous notice is consumed, and each
 //     is consumed exactly once. Consumption is the shim's own turn boundary or
 //     the model's own act on the bus (a proof, an answer, a read).
+//     3a. Liveness: when a newer valid challenge is held than the pending notice
+//     showed, and the pending notice has gone one challenge interval (store
+//     clock) without consumption, the Core re-pushes that same notice (same
+//     id and file, rewritten in place). There is never a second pending one.
 //  4. Only the model proves. The Core never runs prove and never writes a proof.
 package notice
 
@@ -50,26 +54,32 @@ func ChallengeText(name, nonce string, every time.Duration) string {
 // for recipient: the subject, a safe nonce and the body byte for byte. It
 // never grants a proof; only the record's active sum makes it current.
 func Canonical(m bus.Message, recipient string) (string, bool) {
+	nonce, _, ok := canonical(m, recipient)
+	return nonce, ok
+}
+
+// canonical is Canonical and the challenge interval the body names.
+func canonical(m bus.Message, recipient string) (string, time.Duration, bool) {
 	nonce, ok := strings.CutPrefix(m.Subject, challengePrefix)
 	if !ok {
-		return "", false
+		return "", 0, false
 	}
 	if _, err := codexdesktop.SavedPath("/validated", nonce); err != nil {
-		return "", false
+		return "", 0, false
 	}
 	_, rest, ok := strings.Cut(m.Body, ", before anything else, within ")
 	if !ok {
-		return "", false
+		return "", 0, false
 	}
 	interval, _, ok := strings.Cut(rest, ", with: ")
 	if !ok {
-		return "", false
+		return "", 0, false
 	}
 	every, err := time.ParseDuration(interval)
 	if err != nil || every < time.Second || m.Body != ChallengeText(recipient, nonce, every) {
-		return "", false
+		return "", 0, false
 	}
-	return nonce, true
+	return nonce, every, true
 }
 
 // Activity is the model's own acts on the bus, read in one round trip. It
@@ -165,10 +175,11 @@ type Core struct {
 	NewID func() string
 	Say   func(*tool.Out) // one PUSH line per push; the Monitor harnesses take it as their mechanism
 
-	held  Notice   // everything since the last consumption
-	out   *Notice  // pushed and not consumed
-	shown string   // the nonce the pushed notice held when it was pushed
-	mark  Activity // the model's bus activity when it was pushed
+	held   Notice    // everything since the last consumption
+	out    *Notice   // pushed and not consumed
+	shown  string    // the nonce the pending notice held when it was last pushed
+	mark   Activity  // the model's bus activity when it was pushed
+	pushed time.Time // the store clock at the pending notice's last push
 }
 
 // Pending is the pushed notice not yet consumed, if any.
@@ -248,20 +259,18 @@ func (c *Core) Offer(ctx context.Context, ms []bus.Message) error {
 }
 
 // Step observes consumption, clears what no longer stands, and pushes the
-// held notice when none is pending. A push error stops the route: it is
-// never retried here.
+// held notice when none is pending, or re-pushes the pending one when a newer
+// challenge has waited behind it for one interval (rule 3a). A push error
+// stops the route: it is never retried here.
 func (c *Core) Step(ctx context.Context) error {
-	if err := c.settle(ctx); err != nil || c.out != nil {
+	if err := c.settle(ctx); err != nil {
 		return err
 	}
-	if c.held.Challenge != nil {
-		sum, epoch, err := c.Store.Active(ctx, c.As)
-		if err != nil {
-			return fmt.Errorf("read the active challenge: %w", err)
-		}
-		if sum == "" || sum != hook.Sum(c.held.Nonce) || epoch != c.Epoch {
-			c.held.Challenge, c.held.Nonce = nil, ""
-		}
+	if c.out != nil {
+		return c.repush(ctx)
+	}
+	if err := c.current(ctx); err != nil {
+		return err
 	}
 	if c.held.Empty() {
 		return nil
@@ -280,19 +289,78 @@ func (c *Core) Step(ctx context.Context) error {
 	if err := c.save(ctx, n, false); err != nil {
 		return err
 	}
+	at, err := c.Store.Now(ctx)
+	if err != nil {
+		return fmt.Errorf("read the store clock: %w", err)
+	}
 	receipt, err := c.Shim.Push(ctx, n)
 	if err != nil {
 		return err
 	}
-	c.out, c.shown, c.mark = &n, n.Nonce, mark
-	if c.Say != nil {
-		o := tool.Done().As("PUSH").Fact("push", c.Shim.Name()).Fact("id", n.ID).Fact("receipt", receipt).Fact("messages", n.Count)
-		if n.Nonce != "" {
-			o.Fact("nonce", n.Nonce)
-		}
-		c.Say(o.Fact("notice", tool.Text(n.Text())).Note("one notice; only the model proves"))
+	c.out, c.shown, c.mark, c.pushed = &n, n.Nonce, mark, at
+	c.say(n, receipt, false)
+	return nil
+}
+
+// current clears a held challenge the record no longer holds as active.
+func (c *Core) current(ctx context.Context) error {
+	if c.held.Challenge == nil {
+		return nil
+	}
+	sum, epoch, err := c.Store.Active(ctx, c.As)
+	if err != nil {
+		return fmt.Errorf("read the active challenge: %w", err)
+	}
+	if sum == "" || sum != hook.Sum(c.held.Nonce) || epoch != c.Epoch {
+		c.held.Challenge, c.held.Nonce = nil, ""
 	}
 	return nil
+}
+
+// repush is rule 3a: the pending notice, unconsumed for one challenge
+// interval, is pushed again when it now holds a newer valid challenge than
+// its last push showed. Its file was rewritten in place by Offer; the id and
+// path stay, so there is still one pending notice.
+func (c *Core) repush(ctx context.Context) error {
+	if c.held.Challenge == nil || c.held.Nonce == c.shown {
+		return nil
+	}
+	_, every, ok := canonical(*c.held.Challenge, c.As)
+	if !ok {
+		return nil
+	}
+	now, err := c.Store.Now(ctx)
+	if err != nil {
+		return fmt.Errorf("read the store clock: %w", err)
+	}
+	if now.Sub(c.pushed) < every {
+		return nil
+	}
+	if err := c.current(ctx); err != nil || c.held.Challenge == nil {
+		return err
+	}
+	receipt, err := c.Shim.Push(ctx, *c.out)
+	if err != nil {
+		return err
+	}
+	c.shown, c.pushed = c.held.Nonce, now
+	c.say(*c.out, receipt, true)
+	return nil
+}
+
+// say is the one PUSH line a push prints.
+func (c *Core) say(n Notice, receipt string, again bool) {
+	if c.Say == nil {
+		return
+	}
+	o := tool.Done().As("PUSH").Fact("push", c.Shim.Name()).Fact("id", n.ID).Fact("receipt", receipt).Fact("messages", n.Count)
+	if n.Nonce != "" {
+		o.Fact("nonce", n.Nonce)
+	}
+	if again {
+		o.Fact("repush", true)
+	}
+	c.Say(o.Fact("notice", tool.Text(n.Text())).Note("one notice; only the model proves"))
 }
 
 // settle observes whether the pending notice was consumed and, once it is,
