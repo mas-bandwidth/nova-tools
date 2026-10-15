@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 )
 
 // TestSprintHunksArePorted pins every behaviour nova-sprint's copy of pkg/swarm held that
@@ -80,7 +82,7 @@ func spikeFindings(t *testing.T, raw string) []CardHeaderFinding {
 	return out
 }
 
-// The spike-paths-research rule (Glenn's tracer-bullet rule: a tracer is never the product):
+// The spike-paths-research rule (the owner's tracer-bullet rule: a tracer is never the product):
 // a KIND: spike or tracer brief names in PATHS and NEW only paths under the research roots.
 // Replayed from sprint 21: the two schema-tracer briefs, which landed or nearly landed
 // production code, are refused naming each path outside the roots, with the remedy naming
@@ -155,10 +157,7 @@ func registryTree(t *testing.T, files map[string]string) (dir, sha string) {
 	git := func(args ...string) string {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		cmd.Env = testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
 		return strings.TrimSpace(string(out))

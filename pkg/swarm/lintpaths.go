@@ -73,7 +73,7 @@ var BriefBaseRemedies = map[string]string{
 	"tla-is-heavy-or-above": "a card whose PATHS: covers tla/ changes a TLA+ model, and a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or take tla/ out of PATHS: and give the model to its own card",
 	// tla-is-frontier is the old token, kept as an alias for one release, naming the same remedy.
 	"tla-is-frontier":      "a card whose PATHS: covers tla/ changes a TLA+ model, and a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or take tla/ out of PATHS: and give the model to its own card",
-	"spike-paths-research": "a spike or tracer is never the product: what it keeps is what it taught, not its code, so its KIND: spike or tracer brief names in PATHS: and NEW: only paths under docs/research/, rnd/, perf/, benchmark/experiments/ or benchmark/findings/; deliver the code as a patch file (NEW: perf/experiments/<id>/experiment.patch beside perf/findings/<id>.md and perf/experiments/<id>/raw.txt) and edit no source file, or cut the production change as its own card with another KIND",
+	"spike-paths-research": "a spike or tracer is never the product: what it keeps is what it taught, not its code, so its KIND: spike or tracer brief names in PATHS: and NEW: only paths under a research root (ResearchRoots: the research docs directory, rnd/, perf/, benchmark/experiments/ or benchmark/findings/); deliver the code as a patch file (NEW: perf/experiments/<id>/experiment.patch beside perf/findings/<id>.md and perf/experiments/<id>/raw.txt) and edit no source file, or cut the production change as its own card with another KIND",
 	"paths-cover-registry": "a C or C++ suite builds and runs only the test sources its registry names (a Makefile listing them, test/main.c running each suite, a CMakeLists.txt adding each file), so a card adding a test source changes the registry too: name each registry the finding names on PATHS:; apply the corrected PATHS: line add printed",
 	"who-serves-tier":      "the friend WHO: names serves the card's tier (the friend's row's tiers, else the friend's class), or for `WHO: friend` some friend does; name a friend who serves it, raise the tier to one the friend serves, or drop the WHO: line so the fleet deals it",
 }
@@ -489,7 +489,7 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 }
 
 // ResearchRoots are the directories a KIND: spike or tracer brief may name in PATHS: and NEW:
-// (spike-paths-research). Glenn's tracer-bullet rule: a tracer is never the product; what is
+// (spike-paths-research). The owner's tracer-bullet rule: a tracer is never the product; what is
 // kept is what it taught, not its code. In sprint 21 two schema tracers named production
 // packages and one landed; the fixed3d spikes named only perf/ and shipped their code as an
 // experiment.patch.
