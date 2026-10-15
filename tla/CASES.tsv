@@ -239,3 +239,10 @@ MCFriendNotices.cfg	MCFriendNotices.tla	pass	-	ignore-terminal	friend-notices	re
 MCFriendNoticesNewToken.cfg	MCFriendNotices.tla	invariant	AtMostOnce	ignore-terminal	friend-notices	required	-
 MCFriendNoticesDropLost.cfg	MCFriendNotices.tla	invariant	NoNoticeLost	ignore-terminal	friend-notices	required	-
 MCConfigApplyBrokenSilentUnapplied.cfg	MCConfigApply.tla	invariant	NoSilentUnappliedWrite	ignore-terminal	configapply	required	-
+MCTypedFrames.cfg	MCTypedFrames.tla	pass	-	ignore-terminal	typed-frames	required	-
+MCTypedFramesBrokenRefusedBeforeTransition.cfg	MCTypedFrames.tla	invariant	FrameRefusedBeforeTransition	ignore-terminal	typed-frames	required	-
+MCTypedFramesBrokenDualReadLoss.cfg	MCTypedFrames.tla	invariant	DualReadNoLoss	ignore-terminal	typed-frames	required	-
+MCTypedFramesBrokenWritersFirst.cfg	MCTypedFrames.tla	invariant	ReadersBeforeWriters	ignore-terminal	typed-frames	required	-
+MCTypedFramesBrokenClampAccepted.cfg	MCTypedFrames.tla	invariant	NoClampAccepted	ignore-terminal	typed-frames	required	-
+MCTypedFramesBrokenAbsentIsZero.cfg	MCTypedFrames.tla	invariant	AbsentIsNotZero	ignore-terminal	typed-frames	required	-
+MCTypedFramesBrokenWriterLooser.cfg	MCTypedFrames.tla	invariant	WriterRefusesWhatReaderRefuses	ignore-terminal	typed-frames	required	-
