@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
-	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/dshdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
