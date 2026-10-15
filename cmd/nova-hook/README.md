@@ -2,7 +2,7 @@
 
 ## What it is
 
-nova-hook: hooks an acting identity to the live, proven pushes its role needs; some bus mailbox checks are advisory
+nova-hook: hooks an identity in: the pushes its role needs, live and proven, without which no bus, friend or sprint tool runs
 
 ## Why use it
 

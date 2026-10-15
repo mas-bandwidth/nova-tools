@@ -172,7 +172,7 @@ func hookTool(w world) *tool.Tool {
 	}
 	return &tool.Tool{
 		Name:  "nova-hook",
-		What:  "hooks an acting identity to its role's live, proven pushes; some bus mailbox checks are advisory",
+		What:  "hooks an identity in: the pushes its role needs, live and proven, without which no bus, friend or sprint tool runs",
 		Stamp: version,
 		How: `roles: coordinator bus+sprint; friend bus+work; comms bus; member/reader work.
 strict gates require the acting name's role push to be live and proven.
