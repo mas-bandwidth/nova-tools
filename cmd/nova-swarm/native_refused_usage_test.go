@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // hetzner1NativeLog is the native log of a metered work launch native refused before the
@@ -71,4 +72,41 @@ func TestALaunchWhoseHarnessRanStillRefusesAMissingReceipt(t *testing.T) {
 	r := refusedLaunch(t, cardcost.BillingMetered, true).Result()
 	assert.Contains(t, r.Usage, "raw_usage=INVALID")
 	assert.Error(t, cardcost.ValidateUsage(r.Usage))
+}
+
+// A Muse launch native refused before the harness started carries raw_usage provenance as
+// well: the sprint takes a Muse receipt of contract 2 only with it (nova-sprint's
+// receiptBillingRefusal, "Muse receipt contract 2 requires raw_usage provenance"). The
+// record is this member's, with no counters: absent, never zero.
+func TestAMuseLaunchRefusedBeforeTheHarnessCarriesRawProvenanceWithNoCounters(t *testing.T) {
+	t.Parallel()
+	for _, billing := range cardcost.Billings {
+		t.Run(billing, func(t *testing.T) {
+			t.Parallel()
+			c := refusedLaunch(t, billing, false)
+			c.muse = true
+			r := c.Result()
+			assert.Contains(t, r.Usage, "usage_source_error=no-launch")
+			assert.NotContains(t, r.Usage, "raw_usage=INVALID")
+			u, err := cardcost.ParseUsageChecked(r.Usage)
+			require.NoError(t, err, "the receipt contract's parser takes the finish's usage: %s", r.Usage)
+			require.NotNil(t, u.Raw, "the sprint refuses a Muse receipt of contract 2 with no raw_usage")
+			require.Len(t, u.Raw.Records, 1)
+			rec := u.Raw.Records[0]
+			assert.Equal(t, "muse", rec.Harness)
+			assert.Equal(t, billing, rec.Billing)
+			assert.Empty(t, rec.Tokens, "no counters: a Muse that never started read none")
+			assert.Equal(t, cardcost.None(), u.Tokens)
+		})
+	}
+}
+
+// runsMuse names Muse by the route's harness, else by the member's own --harness.
+func TestRunsMuseByTheRouteElseTheMembersHarness(t *testing.T) {
+	t.Parallel()
+	r := &nativeRunner{harness: "/home/nova/nova-bench/harness-v1.18.20/opencode"}
+	assert.False(t, r.runsMuse(member.Packet{}))
+	assert.True(t, r.runsMuse(member.Packet{Harness: "muse"}))
+	r.harness = "/home/nova/.local/bin/muse"
+	assert.True(t, r.runsMuse(member.Packet{}))
 }

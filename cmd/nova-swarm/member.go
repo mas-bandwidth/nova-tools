@@ -23,6 +23,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
 	"github.com/mas-bandwidth/nova-tools/pkg/binstamp"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
@@ -720,7 +721,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		if why != nil {
 			return nil, why
 		}
-		c := &nativeChild{billing: launchBilling, card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", adopted: true, started: started, mark: slot}
+		c := &nativeChild{billing: launchBilling, muse: r.runsMuse(p), card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", adopted: true, started: started, mark: slot}
 		r.addLane(name, c)
 		go func() {
 			defer proc.Release() // ignored: the adopted process handle, after its final observation
@@ -845,7 +846,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{billing: p.Billing, card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read", started: swarm.LaneStartStamp(cmd.Process.Pid), mark: slot}
+	c := &nativeChild{billing: p.Billing, muse: harness.KindOf(bin) == harness.Muse, card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read", started: swarm.LaneStartStamp(cmd.Process.Pid), mark: slot}
 	r.addLane(name, c)
 	go func() {
 		c.err = cmd.Wait()
@@ -943,6 +944,15 @@ func (r *nativeRunner) harnessFor(p member.Packet) (string, error) {
 	return bin, nil
 }
 
+// runsMuse is whether a packet runs under Muse on this member: its route names Muse, or it
+// names no headless harness and the member's own --harness is Muse (harnessFor).
+func (r *nativeRunner) runsMuse(p member.Packet) bool {
+	if harness.IsHeadless(p.Harness) {
+		return p.Harness == harness.Muse
+	}
+	return harness.KindOf(r.harness) == harness.Muse
+}
+
 // launchName is the name of one launch: the card at its generation (a read:
 // its attempt) in its epoch; a card dealt again is another launch.
 func launchName(p member.Packet) string {
@@ -983,6 +993,9 @@ func processAlive(pid int) bool {
 type nativeChild struct {
 	billing                     string // immutable launch declaration, restored from the generation slot on adoption
 	card, logPath, results, job string
+	// muse is whether the launch runs under Muse (the route's harness, or the member's own):
+	// the sprint takes a Muse receipt of contract 2 only with its raw_usage provenance.
+	muse bool
 	// read is whether this launch is a READ (member.Packet.Kind): a wall refusal on a read
 	// is the reader's own environment, never the work's (member.EndEnvironment).
 	read   bool
@@ -1423,6 +1436,12 @@ func (c *nativeChild) Result() member.Result {
 					// native refused before its start a receipt-contract refusal, and the
 					// member ran the card again at once (hetzner1, 2026-10-15).
 					u.Extra = []string{"usage_source_error=no-launch"}
+					if c.muse {
+						// the sprint takes a Muse receipt only with raw_usage provenance: one
+						// record of this member's build with no counters (absent, never zero),
+						// the original usage of a Muse that never started
+						u.Raw = &cardcost.RawUsage{Version: cardcost.RawVersion, Records: []cardcost.RawRecord{{Harness: harness.Muse, Execution: "fleet", SourceSchema: "muse-jsonl-v1", ProducerVersion: buildinfo.Version(version), Billing: c.billing, Tokens: map[string]int64{}}}}
+					}
 				}
 				usage = u.String()
 			} else {

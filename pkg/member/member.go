@@ -2249,8 +2249,9 @@ func (m *Member) rememberFinish(id string, gen int, head string, args []string, 
 }
 
 // retryFinishes sends each remembered refused finish that is due again, byte for byte the same
-// arguments, once a pass where the reports are made. Exit 0 drops the memory; exit 2 changes
-// nothing and it is due again next pass; any other exit is another refusal: the same text adds
+// arguments, once a pass where the reports are made. Exit 0 drops the memory; no answer (exit 2
+// classed sprintwire.Unknown) changes nothing and it is due again next pass; any other exit,
+// a refusal answered with exit 2 included, is another refusal: the same text adds
 // to the count (handing the card back at FinishRefusedMax), a different text starts it again at
 // 1 (member.go, the launch.push rule; docs/SPEC-CARD-CONTRACT.md, the member's finish).
 func (m *Member) retryFinishes(now time.Time) (acted int) {
@@ -2259,7 +2260,7 @@ func (m *Member) retryFinishes(now time.Time) (acted int) {
 		if now.Before(rf.due) {
 			continue
 		}
-		code, out := m.run(rf.args...)
+		code, out, answer := m.runAnswer(rf.args...)
 		switch {
 		case code == 0:
 			// the store took it: the generation's finish is reported and the memory goes. The
@@ -2269,8 +2270,12 @@ func (m *Member) retryFinishes(now time.Time) (acted int) {
 			m.handedBack[id] = rf.gen
 			fmt.Fprintf(m.out, "NOTE finish %s taken on retry: generation %d %s\n", id, rf.gen, pushedWords(rf.head))
 			acted++
-		case code == 2:
-			// the store did not answer: nothing changes and it is due again next pass
+		case code == 2 && answer == sprintwire.Unknown:
+			// the store did not answer: nothing changes and it is due again next pass. A
+			// refusal the store answered with exit 2 (refuse(): the receipt contract, the
+			// epoch, the server's own) is a refusal, below, never no answer, exactly as
+			// applyReport reads it: read as no answer, a refusal that is the same every
+			// time was sent again every pass and never handed back.
 		default:
 			text := oneLine(strings.TrimSpace(string(out)))
 			fmt.Fprintf(m.out, "NOTE finish %s refused: %s\n", id, text)
