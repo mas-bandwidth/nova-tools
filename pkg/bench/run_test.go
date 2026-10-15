@@ -160,6 +160,13 @@ func TestRunRemovesTheRunDirectoryWhenTheContextIsCancelledMidRun(t *testing.T) 
 			cancel()
 			<-c.Done()
 			return -1, c.Err()
+		case strings.HasPrefix(line, "rm -rf "):
+			// the remove runs on a context the cancel does not reach, as a real
+			// ssh would not start on a cancelled one
+			if err := c.Err(); err != nil {
+				return -1, err
+			}
+			return 0, nil
 		default:
 			return 0, nil
 		}
