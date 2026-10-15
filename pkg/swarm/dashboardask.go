@@ -86,4 +86,5 @@ func LintDashboardAsk(raw []byte) []CardHeaderFinding {
 	}
 	return []CardHeaderFinding{{Check: DashboardAskCheck, Line: max(pathsF.line, 1), Excerpt: fmt.Sprintf(
 		"PATHS reaches the dashboard page (%s) and %s for this visible change: the page gains, loses, hides or filters nothing the owner did not ask for (the owner, 2026-10-11: \"NEVER REMOVE THINGS FROM THE DASHBOARD UNLESS I ASK\")",
-		strings.Join(hit, ", "), why)}}}
+		strings.Join(hit, ", "), why)}}
+}
