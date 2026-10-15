@@ -1,7 +1,7 @@
 # nova-config AI-usability review, 2026-10-15
 
 Reviewer: mercury-3-preview-1002
-Build: d7e47f037ea8
+Build: 91430ba693f0
 Score: 8.5/10 (47/55)
 
 ## Rubric
@@ -34,7 +34,7 @@ Score: 8.5/10 (47/55)
 | 1 | `nova-config version` | the version line does not open with the verb name and status word (`VERSION OK`), unlike other verbs | prefix with `VERSION OK` | S |
 | 2 | `nova-config <kind> <verb> -h` footer | every verb help repeats `migrate --dry-run: ready=no` and `machine self: 2 not a row, 3 unreadable` clauses unrelated to that verb | scope the exit-code clauses to the verbs they describe | S |
 | 3 | `nova-config friend list --max notanint --file try.json` | `invalid value "notanint" for flag -max: parse error` spells the flag `-max` with a single dash | spell `--max` in parse errors | S |
-| 4 | `nova-config friend list` with no store | the refusal prints absolute home paths (`/Users/.../.config/nova-config/login.json`) on the caller's machine | shorten to `nova-config login` without the path | S |
+| 4 | `nova-config friend list` with no store | the refusal prints absolute home paths (a full `~/.config/nova-config/login.json`-style path) on the caller's machine | shorten to `nova-config login` without the path | S |
 | 5 | `nova-config frobnicate` | the unknown-verb refusal's `want` list omits `help` and `version` | name every verb | S |
 
 ## Top 3 fixes
