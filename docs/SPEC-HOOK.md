@@ -235,10 +235,12 @@ A friend's supervised hook service (`nova-hook hook --role friend` under `nova-h
 
 - `nova-hook hook --as <name> --role <role> [--once] [--dry-run]`: arms or joins the record, renews the
   `bus` lease, prints stream arrivals as `HOOK PUSH`, challenges as `HOOK CHALLENGE nonce=<n>`, and
-  state transitions as `HOOK STATE`.
+  state transitions as `HOOK STATE`. Harness notice directories keep at most `MaxResolvedNotices` (`16`,
+  `pkg/dshdesktop.MaxResolvedNotices`) resolved `notice-*.json` files plus the active pending notice.
 - `nova-hook prove --as <name> --nonce <n> [--dry-run]`: answers the current challenge, or any
   heartbeat challenge issued to the name inside the down-after window (the proof window above), from
-  inside the model's turn.
+  inside the model's turn, and prunes resolved `notice-*.json` files in the name's notice directory to
+  `MaxResolvedNotices` (`16`) while retaining any active pending notice.
 - `nova-hook unhook --as <name> [--dry-run]`: advances the epoch and clears leases, proofs, and
   challenges.
 - `nova-hook status [--as <name>]`: checks one record (0 proven, 1 not with breadcrumb) or lists all.
