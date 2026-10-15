@@ -562,7 +562,7 @@ var Kinds = []*Kind{
 			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns over stream names this friend may be dealt work on; empty means any stream"},
 			{Name: "kinds", Type: TypeNames, Help: "optional comma-separated card KIND values this friend may be dealt; empty means any kind"},
 			{Name: "pronouns", Type: TypeEnum, Enum: FriendPronounSets, Default: DefaultFriendPronouns, Nullable: true, Help: "the pronouns the friend goes by, one of " + strings.Join(FriendPronounSets, ", ") + "; an empty value is unstated and reads and prints as they/them(unstated); a stated value prints as itself; a set that names other fields leaves the stored value; never \"it\": the daemon's texts about the friend say them"},
-			{Name: "session", Type: TypeEnum, Enum: FriendSessionWords, Default: DefaultFriendSession, Help: "whether the friend has a live session between cards: live (the default: on the psychic link, worked by her friend lane) or one-shot (no session: she runs as a fleet member lane, nova-swarm member --as friend.<name> --prompt <identity file>, never on the link, and a bus send naming her is refused with the remedy to put it in her next card's brief)"},
+			{Name: "session", Type: TypeEnum, Enum: FriendSessionWords, Default: DefaultFriendSession, Help: "whether the friend has a live session between cards: live (the default: on the psychic link, worked by the friend lane) or one-shot (no session: a fleet member lane runs the friend row, nova-swarm member --as friend.<name> --prompt <identity file>, never on the link, and a bus send naming the friend is refused with the remedy to put it in the next card's brief)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
