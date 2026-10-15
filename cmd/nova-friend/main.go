@@ -452,12 +452,13 @@ func friendTool(w world) *tool.Tool {
 	return &tool.Tool{
 		Name:    "nova-friend",
 		Default: "check",
-		What:    "what a friend runs to be part of the team: the lanes that work her cards, and her messages into her session, as one daemon",
+		What:    "what a friend runs to be part of the team: the lanes that work the friend's cards, and messages into the session, as one daemon",
 		Stamp:   version,
 		How: `one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
 nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
-harness's deliver command), and beats to the sprint server, whose answer carries the friend's row; liveness is
-the nova-hook record's alone (nova-hook serve's challenge, answered by the model's nova-hook prove), never this daemon's.
+harness's deliver command), and beats to the sprint server, whose answer carries the friend's
+row; liveness is the nova-hook record's alone (nova-hook serve's challenge, answered by the
+model's nova-hook prove), never this daemon's.
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},

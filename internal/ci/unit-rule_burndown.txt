@@ -24,7 +24,6 @@ pkg/config/redis_cover_test.go:socket 1 allowed until moved, v1.3 (2026-10-12): 
 pkg/delayproxy/rig_test.go:deadline 4 allowed until moved, v1.3 (2026-10-12): c.SetDeadline(time.Now()...); c.SetReadDeadline(time.Now()...); client.SetDeadline(time.Now()...); watch.SetReadDeadline(time.Now()...)
 pkg/friend/inbox_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12): require.Eventually
 pkg/friend/lane_wall_test.go:socket 1 allowed until moved, v1.3 (2026-10-12): net.Dialer{}
-pkg/friend/presence_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12): require.Eventually
 pkg/friend/stage_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12): require.Eventually
 pkg/member/meter_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): require.Eventually
 pkg/nsprint/testutil/github_test.go:http 1 allowed until moved, v1.3 (2026-10-12): http.Get

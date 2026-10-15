@@ -2,11 +2,11 @@
 
 ## What it is
 
-nova-friend: what a friend runs to be part of the team: the lanes that work her cards, and her messages into her session, as one daemon
+nova-friend: what a friend runs to be part of the team: the lanes that work the friend's cards, and messages into the session, as one daemon
 
 ## Why use it
 
-Work as a friend: her cards run in lanes and her messages reach her session. Liveness is not this tool's: it is the nova-hook record's (`nova-hook hook`, `nova-hook prove`).
+Work as a friend: the friend's cards run in lanes and messages reach the session. Liveness is not this tool's: it is the nova-hook record's (`nova-hook hook`, `nova-hook prove`).
 
 ## Install
 

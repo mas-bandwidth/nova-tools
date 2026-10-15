@@ -2401,7 +2401,7 @@ the nova-hook record and its per-minute challenge, which only the model answers
 coordinator's one-second keepalive loop, the coordinator's ping, the wake ping
 loop and its agent, the pong wait, the hand beat, the daemon's session-check
 presence and its push proof) kept being used from the tool, rebuilt by new
-code and taught by docs after it was superseded (Glenn, 2026-10-14: "remove
+code and taught by docs after it was superseded (the owner, 2026-10-14: "remove
 the old stuff, so they don't come back, or get used when using the tool, or
 building new code").
 **The test.** `TestNoRetiredPresenceNameReturns`, with its control

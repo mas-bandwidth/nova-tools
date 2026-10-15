@@ -2,7 +2,7 @@
 # are retired and must not come back (the class rule in
 # internal/ci/retired_presence_class_test.go, TestNoRetiredPresenceNameReturns).
 #
-# Glenn, 2026-10-14: "continue to remove the old stuff, so they don't come back,
+# The owner, 2026-10-14: "continue to remove the old stuff, so they don't come back,
 # or get used when using the tool, or building new code" (v1.3.5). The one truth
 # for friend liveness is the nova-hook record and its per-minute challenge, only
 # the model proves (cmd/nova-hook, docs/SPEC-HOOK.md, tla/Hook.tla); delivery is

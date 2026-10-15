@@ -15,7 +15,7 @@ import (
 
 // THE CLASS RULE: THE OLD FRIEND PRESENCE DOES NOT COME BACK (v1.3.5).
 //
-// Glenn, 2026-10-14: "continue to remove the old stuff, so they don't come
+// The owner, 2026-10-14: "continue to remove the old stuff, so they don't come
 // back, or get used when using the tool, or building new code". v1.3 has one
 // truth for whether a friend is there: the nova-hook record and its
 // per-minute challenge, which only the model answers (cmd/nova-hook,
