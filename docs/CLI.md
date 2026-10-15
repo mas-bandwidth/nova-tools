@@ -3715,6 +3715,10 @@ wrong:
 
 - No daemon: `status` exits 1 with `run: ollama serve`, the one command that
   starts it; `serve` names `ollama pull <ref>` for a model the engine lacks.
+- `--expect-digest` that differs from the listed digest is exit 1 naming both,
+  and a reference the engine does not list is exit 1 naming the reference and
+  the digest asked (`ollama pull <ref>`); nothing is served. A reference with
+  no tag is the engine's `:latest` listing.
 - No `--num-ctx`: refused, because ollama's own default silently truncates a
   long prompt; it is a multiple of 1024, since the tag's name carries it.
 - A tag that exists with another parent, context, temperature or seed: exit 1

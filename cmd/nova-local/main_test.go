@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
@@ -339,4 +341,87 @@ func TestTheThreeVerbsOfTheSpec(t *testing.T) {
 
 	r = run.OK(t, "serve", "--stop", "--engine", "ollama", "--model", "gemma4-32k")
 	assert.Contains(t, r.Stdout, "SERVE OK stopped=yes engine=ollama model=gemma4-32k\n")
+}
+
+// --expect-digest is never skipped: a tagless reference is the engine's :latest
+// listing, a differing digest is exit 1 naming both, and a reference the engine
+// does not list is exit 1 naming the reference and the digest asked. A refusal
+// serves nothing (rule 4).
+func TestServeExpectDigestNeverSkipsSilently(t *testing.T) {
+	t.Parallel()
+	const listed = "sha256:c0e0c3e5b4a1"
+	const asked = "sha256:0000"
+	latest := func() *fakeOllama {
+		f := newFake("/ai/shared/models/ollama")
+		f.tags = []fakeTag{{Name: "gemma4:latest", Size: 8_149_190_253, Digest: "c0e0c3e5b4a1"}}
+		return f
+	}
+	t.Run("tagless differing", func(t *testing.T) {
+		t.Parallel()
+		f := latest()
+		r := rig(f, "/ai").Run(args("serve --engine ollama --model gemma4 --num-ctx 4096 --expect-digest " + asked)...)
+		assert.Equal(t, 1, r.Code, r.Stderr)
+		assert.Contains(t, r.Stderr, "gemma4 has digest "+listed)
+		assert.Contains(t, r.Stderr, "--expect-digest asks "+asked)
+		assert.Empty(t, f.creates)
+		assert.Empty(t, f.generates)
+	})
+	t.Run("tagless matching", func(t *testing.T) {
+		t.Parallel()
+		f := latest()
+		r := rig(f, "/ai").OK(t, args("serve --engine ollama --model gemma4 --num-ctx 4096 --expect-digest "+listed)...)
+		assert.Contains(t, r.Stdout, "serve_as=gemma4-4k ")
+		assert.Contains(t, r.Stdout, "digest="+listed)
+	})
+	t.Run("not listed", func(t *testing.T) {
+		t.Parallel()
+		f := latest()
+		r := rig(f, "/ai").Run(args("serve --engine ollama --model nosuch --num-ctx 4096 --expect-digest " + asked)...)
+		assert.Equal(t, 1, r.Code, r.Stderr)
+		assert.Contains(t, r.Stderr, "nosuch")
+		assert.Contains(t, r.Stderr, asked)
+		assert.Contains(t, r.Stderr, "run: ollama pull nosuch")
+		assert.Empty(t, f.creates)
+		assert.Empty(t, f.generates)
+	})
+}
+
+// codeAdapter is an engine whose only answer is a Refusal of a chosen code.
+type codeAdapter struct{ code int }
+
+func (codeAdapter) Name() string                                { return "ollama" }
+func (codeAdapter) DefaultBase() string                         { return "http://127.0.0.1:" + OllamaPort + "/v1" }
+func (codeAdapter) Provider() string                            { return "ollama" }
+func (codeAdapter) Health(context.Context, Client) (int, error) { return 200, nil }
+func (codeAdapter) Models(context.Context, Client) ([]Model, error) {
+	return nil, nil
+}
+func (a codeAdapter) Serve(context.Context, Client, ServeRequest, func() time.Time) (Served, error) {
+	return Served{}, &Refusal{Code: a.code, Why: "the input cannot be used", Remedy: "nova-local serve -h"}
+}
+func (codeAdapter) Stop(context.Context, Client, string) (bool, error) { return true, nil }
+func (codeAdapter) Store(context.Context, Client, string) (string, string) {
+	return "", ""
+}
+
+// A Refusal is exit 2 when its code is 2 (the usage refusal) and exit 1 when its code is 1.
+func TestServeRefusalExitsByItsCode(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		code int
+		word string
+	}{
+		{2, "SERVE REFUSED"},
+		{1, "SERVE FAILED"},
+	} {
+		t.Run(fmt.Sprintf("code %d", c.code), func(t *testing.T) {
+			t.Parallel()
+			f := newFake("/ai/shared/models/ollama")
+			w := world{do: f.do, box: fakeBox(), now: f.now, lookup: fakeLookup,
+				getenv: func(string) string { return "/ai" }, stat: os.Stat, adapters: []Adapter{codeAdapter{c.code}}}
+			r := testkit.Main(localTool(w).Run).Run("serve", "--engine", "ollama", "--model", "gemma4:12b", "--num-ctx", "4096")
+			assert.Equal(t, c.code, r.Code, r.Stderr)
+			assert.Contains(t, r.Stderr, c.word)
+		})
+	}
 }
