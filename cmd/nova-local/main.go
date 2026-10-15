@@ -419,12 +419,23 @@ func (w world) serve(c *tool.Call) *tool.Out {
 		if err != nil {
 			return tool.Fail("the engine's models could not be read: " + err.Error())
 		}
+		found := false
 		for _, m := range ms {
-			if m.Ref == model && m.Digest != want {
+			if withTag(m.Ref) != withTag(model) {
+				continue
+			}
+			found = true
+			if m.Digest != want {
 				f := tool.Fail(fmt.Sprintf("%s has digest %s and --expect-digest asks %s", model, orNone(m.Digest), want))
 				f.Remedy = "nova-local status --engine " + a.Name() + " --list"
 				return f
 			}
+			break
+		}
+		if !found {
+			f := tool.Fail(fmt.Sprintf("%s is not listed and --expect-digest asks %s", model, want))
+			f.Remedy = "ollama pull " + model
+			return f
 		}
 	}
 	dir, shared, why := w.store(ctx, a, cl, model)
@@ -437,6 +448,9 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	var r *Refusal
 	if errors.As(err, &r) {
 		f := tool.Fail(r.Why)
+		if r.Code == 2 {
+			f = tool.Refuse(r.Why)
+		}
 		f.Remedy = r.Remedy
 		return f
 	}

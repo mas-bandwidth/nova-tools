@@ -130,7 +130,8 @@ func ContextProblem(numCtx int) string {
 	return ""
 }
 
-// withTag is a reference with :latest when it names no tag, the spelling ollama reports.
+// withTag is a reference with :latest when it names no tag, the spelling ollama
+// reports and the one serve's --expect-digest comparison uses (rule 4).
 func withTag(ref string) string {
 	if strings.Contains(ref[strings.LastIndex(ref, "/")+1:], ":") {
 		return ref

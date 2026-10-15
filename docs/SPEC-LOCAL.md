@@ -59,7 +59,10 @@ Every rule is normative and has a test (**Tests**, below).
 
 4. **A model is named by `(engine, reference, digest)`, and the digest is printed, never
    ruled on.** `--expect-digest` is optional and, differing, is exit 1 naming both and
-   serving nothing; an engine reporting none prints `digest=none`. No lockfile, no
+   serving nothing. A reference with no tag is that engine's `:latest` listing (the
+   spelling ollama reports); with `--expect-digest` given, a reference that matches no
+   listing is exit 1 naming the reference and the digest asked, remedy `ollama pull <ref>`,
+   and nothing is served. An engine reporting none prints `digest=none`. No lockfile, no
    quarantine, no trust state: those belong with an evaluation tool.
 
 5. **`--num-ctx` has no default.** ollama's own is small and silently truncates a long
@@ -200,16 +203,19 @@ tag's four compared parameters, and the store; its own clock across the warm-up.
 SERVE OK engine=<e> model=<ref> serve_as=<tag> digest=<...> num_ctx=<n> keep_alive=<d> temperature=<0|unset> seed=<n|unset> created=<yes|no> load=<t> mem_used=<n> mem_free=<n> mem_total=<n> wired_cap=<...> load1=<f> engines=<n> store=<dir|unknown> shared=<yes|no|unknown>
 SERVE OK stopped=yes engine=<e> model=<tag>
 SERVE FAILED: <reason>; run: <command>
+SERVE REFUSED: <reason>; run: <command>
 ```
 
 Refuses at exit 1, each with its remedy: a parent the engine does not have (`ollama pull
-<ref>`); an `--expect-digest` that differs, naming both (`nova-local status --list`); an
-existing derived tag differing in parent, `num_ctx`, `temperature` or `seed`, naming
-both values (`ollama rm <tag>`); a load or free memory past a `--max-load` or
-`--min-free` the caller gave, naming measured and asked; a store outside the shared
-store, only under `--require-shared-store`. A missing `--num-ctx`, one with a remainder,
-and a `--base` outside rule 3 are exit 2. `--dry-run` reads all of it and creates and
-loads nothing.
+<ref>`); an `--expect-digest` that differs, naming both (`nova-local status --list`); a
+reference `--expect-digest` was given for that matches no listing, naming the reference
+and the digest asked (`ollama pull <ref>`); an existing derived tag differing in parent,
+`num_ctx`, `temperature` or `seed`, naming both values (`ollama rm <tag>`); a load or
+free memory past a `--max-load` or `--min-free` the caller gave, naming measured and
+asked; a store outside the shared store, only under `--require-shared-store`. A missing
+`--num-ctx`, one with a remainder, and a `--base` outside rule 3 are exit 2. An adapter
+refusal of code 2 is exit 2 through the usage refusal; code 1, and an unset code, stay
+exit 1. `--dry-run` reads all of it and creates and loads nothing.
 
 ### `worker`
 
@@ -301,7 +307,7 @@ Each runs against a fake engine through the injected transport (`cmd/nova-local`
 | all | `TestTheThreeVerbsOfTheSpec`: each verb against the fake engine, and the `--dry-run` of serve and worker creating, loading and writing nothing |
 | 2 | `TestOnlyThreeVerbs` (the tool's shape); the adapter set is `Adapters` |
 | 3 | `TestBaseIsLoopbackOrTheTailnet`, `TestTheServingHostRule` |
-| 4 | `TestServeRefusesOnlyPastTheCallersValues`, `TestStatusPrintsTheEngineAndTheBox` |
+| 4 | `TestServeRefusesOnlyPastTheCallersValues`, `TestStatusPrintsTheEngineAndTheBox`, `TestServeExpectDigestNeverSkipsSilently` |
 | 5 | `TestServeRefusesToGuessTheContext`, `TestDerivedTag` |
 | 6 | `TestServeMakesTheDerivedTagOnce` |
 | 7, 12 | `TestServeTimesOneWarmUpAndStops` |
@@ -309,6 +315,7 @@ Each runs against a fake engine through the injected transport (`cmd/nova-local`
 | 9, 11, 14 | `TestWorkerWritesADescriptionNovaSwarmAccepts` (decoded by `swarm.LoadWorker` with zero problems; one file written; the key file at mode 0000) |
 | 10 | `TestStatusReadsTheMemoryEachCall` |
 | 13 | `TestStatusListingIsBounded`, `TestStatusWithNothingAnsweringIsOneRemedyLine` |
+| serve exit | `TestServeRefusalExitsByItsCode` (an adapter refusal of code 2 exits 2, of code 1 exits 1) |
 | 14 | `TestWorkerRefusesEveryProblemAtOnce` |
 | 15 | `TestTheSharedStore`, `TestSharedAndResolve` |
 | Fleet | `TestALocalRouteNamesItsEndpointAndConcurrency` (config), `TestALocalRouteTakesItsConcurrencyOfCardsAndRecordsItsUsageAtNoCost` and `TestARouteAtItsConcurrencyDrawsTheNextRoute` (the sprint's twin), `TestRoutesAndWhereShowALocalRoute`, `TestAMemberLaunchesALocalRoutesCardAtItsEndpoint`, `TestNativeTakesALocalBaseOnlyWithALocalModel`, `TestAJobOnALocalRouteDeclaresTheProviderAtItsEndpoint`, `TestDeclareLocalProviderPointsTheHarnessAtTheEndpoint`, `TestServeOverTheTailnetNamesTheFleetRoute`: owed with the Fleet's build |
