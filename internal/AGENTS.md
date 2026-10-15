@@ -48,6 +48,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `redisfn/` | build, load and check a Redis function library from embedded Lua source | `go test ./internal/redisfn` | `go test ./internal/redisfn` |
 | `redisq/` | Redis transport queue | `go test ./internal/redisq` | `go test ./internal/redisq` |
 | `release/` | release packaging and manifest gates | `go test ./internal/release` | `go test ./internal/release` |
+| `roadmapdoc/` | roadmap.sexp decoder and ROADMAP.md renderer | `go test ./internal/roadmapdoc` | `make roadmap` |
 | `safepath/` | path sanitization and sandboxing | `go test ./internal/safepath` | `go test ./internal/safepath` |
 | `sandbox/` | OS isolation primitives (seatbelt/landlock) | `go test ./internal/sandbox` | `go test ./internal/sandbox` |
 | `scaffold/` | scaffolding engine for class rules and CLI verbs | `go test ./internal/scaffold` | `go test ./internal/scaffold` |

@@ -6,9 +6,7 @@ The roadmap is data: one `(roadmap "v1" ...)` form read through internal/worklan
 problem named, when a record is not exactly the shape below. tools/roadmap writes
 the rendered page; TestRoadmapIsGeneratedFromTheSexp holds the committed ROADMAP.md
 to what Render makes of the committed sexp, so the page is never written by hand.
-It is nova-tools' internal/roadmap (nova-tools#5533), carried here at v1.2.3 under
-its own name because this repository's internal/roadmap is nova-work's roadmap
-editor.
+It is carried here from nova-sprint's package of the same name.
 
 The shape:
 
@@ -23,11 +21,11 @@ The shape:
 	          [:origin "<where it came from: issue #n, PR #n, a card>"] [:release "<target release>"]
 	          [:kept (:<key> "<value>" ...)]) ...))
 
-:kept holds the fields a move between docs/roadmap.sexp and docs/fixes.sexp
+:kept holds the fields a move between the roadmap and the fixes file
 carried that have no meaning where the record now is (an item's :why on a fix,
 a fix's :status on an item), each under a key naming where it came from
 (item-why, fix-status), so a move never drops one and a move back restores it.
-It is data for nova-work roadmap (internal/roadmap) and is not rendered.
+It is data for nova-work roadmap and is not rendered.
 
 Text values may be wrapped across lines in the file; Render joins every run of
 whitespace into one blank, so the page reads the same however the file is wrapped.
@@ -396,4 +394,18 @@ var anchorDrop = regexp.MustCompile(`[^a-z0-9 -]`)
 // blanks to hyphens.
 func anchor(title string) string {
 	return strings.ReplaceAll(anchorDrop.ReplaceAllString(strings.ToLower(flat(title)), ""), " ", "-")
+}
+
+// readTop reads the one top form under Limits, rewording a refusal of the data language into the
+// roadmap's own words, and returns the decoder that collects the problems.
+func readTop(file string, data []byte, kind, substitute string) (worklang.Form, *decoder, error) {
+	top, err := worklang.Read(file, data, Limits)
+	if err != nil {
+		var r *worklang.Refusal
+		if errors.As(err, &r) {
+			return worklang.Form{}, nil, fmt.Errorf("%s: file=%s: %s", kind, file, strings.ReplaceAll(r.Reason, "a plan is data", substitute))
+		}
+		return worklang.Form{}, nil, err
+	}
+	return top, &decoder{file: file}, nil
 }

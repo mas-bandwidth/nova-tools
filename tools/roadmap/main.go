@@ -1,9 +1,7 @@
-// roadmap writes ROADMAP.md from docs/roadmap.sexp (and, with --kind fixes,
-// FIXES.md from docs/fixes.sexp), so neither page is ever written by hand: the
-// sexp is the data, internal/roadmapdoc decodes it through internal/worklang
-// (nothing is evaluated) and renders the page, and
-// internal/roadmapdoc's TestRoadmapIsGeneratedFromTheSexp and
-// TestFixesIsGeneratedFromTheSexp hold the committed pages to what this writes.
+// roadmap writes docs/ROADMAP.md from docs/roadmap.sexp, so the page is never written by hand:
+// the sexp is the data, internal/roadmapdoc decodes it through internal/worklang (nothing is
+// evaluated) and renders the page, and internal/roadmapdoc's TestRoadmapIsGeneratedFromTheSexp
+// holds the committed page to what this writes.
 package main
 
 import (
@@ -16,7 +14,6 @@ import (
 )
 
 func main() {
-	kind := flag.String("kind", "roadmap", "what the file holds: roadmap (docs/roadmap.sexp) or fixes (docs/fixes.sexp)")
 	file := flag.String("file", "docs/roadmap.sexp", "the data to read")
 	out := flag.String("out", "docs/ROADMAP.md", "where to write the rendered page")
 	flag.Parse()
@@ -27,28 +24,15 @@ func main() {
 	if err != nil {
 		refuse(fmt.Sprintf("reading %s: %v", *file, err))
 	}
-	var page string
-	var items int
-	switch *kind {
-	case "roadmap":
-		doc, err := roadmapdoc.Decode(*file, raw)
-		if err != nil {
-			refuse(oneLine(err.Error()))
-		}
-		page, items = roadmapdoc.Render(doc, *file), len(doc.Items)
-	case "fixes":
-		fx, err := roadmapdoc.DecodeFixes(*file, raw)
-		if err != nil {
-			refuse(oneLine(err.Error()))
-		}
-		page, items = roadmapdoc.RenderFixes(fx, *file), len(fx.Items)
-	default:
-		refuse(fmt.Sprintf("--kind %q is not roadmap or fixes", *kind))
+	doc, err := roadmapdoc.Decode(*file, raw)
+	if err != nil {
+		refuse(oneLine(err.Error()))
 	}
+	page, items := roadmapdoc.Render(doc, *file), len(doc.Items)
 	if err := os.WriteFile(*out, []byte(page), 0o644); err != nil {
 		refuse(fmt.Sprintf("writing %s: %v", *out, err))
 	}
-	fmt.Printf("%s OK items=%d file=%s\n", *kind, items, *out)
+	fmt.Printf("roadmap OK items=%d file=%s\n", items, *out)
 }
 
 // refuse prints one line naming what was wrong and what to do, and exits 2.
