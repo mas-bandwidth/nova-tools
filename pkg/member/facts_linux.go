@@ -81,6 +81,7 @@ func XDPNote() string {
 }
 
 func checkProvision() {
+	// ignored: LookPath's error is the presence answer the probe wants, carried as provisionWhy on the member's one start line
 	if _, err := exec.LookPath("rocketnet-provision"); err != nil {
 		provisionWhy = "not on PATH"
 		return
