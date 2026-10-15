@@ -64,7 +64,9 @@ Deliver ==
  /\ phase = "selected" /\ phase' = "stopped" /\ attempts' = attempts + 1
  /\ UNCHANGED <<events,answers,window,boundary,cursor,selected,live,lease,
                  challenge,process,explicitRecovery>>
-\* An unknown native call ends this process; it is never retried in place.
+\* A certain native failure ends this process. An unknown outcome leaves the
+\* notice pending in the Core (HarnessNoticeUnknown, rule 5): the route runs on
+\* and only rule 3a pushes it again. Neither is retried blindly in place.
 Restart ==
  /\ phase = "stopped" /\ process = 1
  /\ phase' = "new" /\ lease' = FALSE /\ attempts' = 0

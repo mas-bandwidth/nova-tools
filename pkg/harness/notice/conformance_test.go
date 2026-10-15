@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/dshdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 	"github.com/stretchr/testify/assert"
@@ -314,6 +315,27 @@ func TestEveryShimConforms(t *testing.T) {
 			_, pending := r.core.Pending()
 			assert.False(t, pending)
 		}},
+		{"an unknown push keeps the notice pending and the route standing; only rule 3a pushes it again", func(t *testing.T, r *rig) {
+			u := &unknownShim{Shim: r.h.shim}
+			r.core.Shim = u
+			r.arrive(r.store.challenge("first"))
+			assert.Equal(t, 1, u.calls)
+			assert.Zero(t, r.store.unproved, "an unknown outcome never drops the route proof")
+			n, pending := r.core.Pending()
+			require.True(t, pending, "the unknown notice may have landed: it is pending")
+			r.arrive(ordinary(1))
+			assert.Equal(t, 1, u.calls, "never pushed again blindly")
+			r.store.clock += hook.ChallengeEvery / 2
+			r.arrive(r.store.challenge("second"))
+			assert.Equal(t, 1, u.calls, "no re-push inside one interval")
+			r.store.clock += hook.ChallengeEvery / 2
+			require.NoError(t, r.core.Step(context.Background()))
+			assert.Equal(t, 2, u.calls, "rule 3a re-pushes the same notice once a newer challenge waited one interval")
+			again, _ := r.core.Pending()
+			assert.Equal(t, n.ID, again.ID, "still one pending notice")
+			assert.Equal(t, "second", r.act(), "the model proves the newest from the one notice")
+			assert.Equal(t, int64(1), r.core.Epoch, "the hook epoch is untouched")
+		}},
 		{"the model answers once, then is busy: the next two challenges each reach it", func(t *testing.T, r *rig) {
 			r.arrive(r.store.challenge("first"))
 			assert.Equal(t, "first", r.act(), "the model answers the first")
@@ -357,6 +379,17 @@ func TestEveryShimConforms(t *testing.T) {
 
 // failing is a harness whose mechanism refuses every push.
 type failing struct{ Shim }
+
+// unknownShim is a native harness whose every push ends with an unknown outcome.
+type unknownShim struct {
+	Shim
+	calls int
+}
+
+func (u *unknownShim) Push(context.Context, Notice) (string, error) {
+	u.calls++
+	return "", fmt.Errorf("%w: start turn: thread-follower-start-turn native error after the request was handed on: \"request-timeout\"", codexdesktop.ErrOutcomeUnknown)
+}
 
 func (failing) Push(context.Context, Notice) (string, error) {
 	return "", errors.New("harness refused")

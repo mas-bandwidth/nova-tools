@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -227,7 +229,7 @@ func TestRecoveryWindowUsesRedisTime(t *testing.T) {
 
 func TestOneExplicitStartupRecoveryAttemptStopsOnLocalOutcome(t *testing.T) {
 	t.Parallel()
-	for _, outcome := range []error{codexdesktop.ErrOutcomeUnknown, codexdesktop.ErrPreSend, codexdesktop.ErrRejected} {
+	for _, outcome := range []error{codexdesktop.ErrPreSend, codexdesktop.ErrRejected} {
 		r := newRig(t)
 		w := fakeCodexWorld(r)
 		m := recoveryMessage(t, r, "unanswered prior event")
@@ -246,6 +248,36 @@ func TestOneExplicitStartupRecoveryAttemptStopsOnLocalOutcome(t *testing.T) {
 		assert.Equal(t, 1, attempts)
 		assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State, "local delivery failure removes route proof, not identity")
 	}
+}
+
+// TestUnknownStartupOutcomeKeepsTheHook is the 2026-10-14 regression: an
+// unknown native outcome stopped the route, the heartbeat then missed its
+// challenges and unhooked the name (a new epoch). Unknown keeps the route
+// running, the notice pending, the record and its epoch as they were, and
+// makes no second native call.
+func TestUnknownStartupOutcomeKeepsTheHook(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	w := fakeCodexWorld(r)
+	recoveryMessage(t, r, "unanswered prior event")
+	attempts := 0
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+	w.codexDeliver = func(context.Context, string, string, string, string) (string, error) {
+		attempts++
+		cancel() // the route is past its first push: stop the loop at its next check
+		return "", fmt.Errorf("%w: start turn: request-timeout", codexdesktop.ErrOutcomeUnknown)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(codexArgs, strings.NewReader(""), &stdout, &stderr, w)
+	assert.Zero(t, code, "an unknown outcome is not a failed route: "+stderr.String())
+	assert.Equal(t, 1, attempts, "never retried blindly")
+	assert.Contains(t, stdout.String(), "native=unknown")
+	assert.NotContains(t, stderr.String(), "HOOK FAILED")
+	st := r.h.State(t, "ada")
+	assert.NotEqual(t, hook.StateUnhooked, st.State)
+	assert.NotEqual(t, hook.StateNone, st.State)
 }
 
 func TestHistoricalSavedEvidenceCannotBlockNewHookEpoch(t *testing.T) {

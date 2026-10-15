@@ -18,9 +18,17 @@ keeps its settings.
 The exchange is initialize version 0, owner discovery version 1, then one
 follower start-turn request version 2 addressed to the discovered owner. A
 successful result is accepted only when its request ID and method match, the
-reported owner matches the target, and `result.result.turn.id` is nonempty. Only
-the protocol's exact `resultType: "error"` is a certain rejection; a missing or
-unknown result type is malformed and therefore uncertain after the follower
+reported owner matches the target, and `result.result.turn.id` is nonempty. The
+desktop's error responses carry no method, version or owner:
+`{"type":"response","requestId":…,"resultType":"error","error":"<code>"}`
+(ChatGPT.app 26.1007.30912, `Resources/app.asar`, `.vite/build/src-BJv5Mk7n.js`:
+the IPC router and `IpcClient.handleRequest`), so an error is matched by request
+ID alone and its code is kept in the returned error. Only the codes written
+before any handler runs (`no-client-found`, `client-not-found`,
+`client-cannot-handle-request`, `request-version-mismatch`,
+`no-handler-for-request`) are a certain rejection. A handler that threw,
+`request-timeout`, `client-disconnected`, `server-closed`, an error with no
+code, and a missing or unknown result type are uncertain after the follower
 write.
 The returned ID proves only that the desktop accepted that turn.
 
@@ -34,7 +42,10 @@ traffic adds calls, not retained state.
 
 `ErrPreSend` means the follower mutation frame was definitely not written.
 `ErrOutcomeUnknown` means its write began but a matched response was not
-obtained; the caller must not blindly retry. A matched native rejection is
+obtained; the caller must not blindly retry. In nova-hook the notice Core keeps
+such a notice pending as if accepted and keeps the route and the hook record as
+they are; only its rule 3a pushes the same notice again
+(`tla/HarnessNoticeUnknown.tla`). A matched native rejection is
 certain and is returned separately from both classes. Durable delivery and
 model-level acknowledgment remain the caller's responsibility. The bus is event
 truth; the desktop turn ID is native turn truth. Once that ID is matched, a
