@@ -210,7 +210,7 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"run bad harness", []string{"run", "--as", "bob", "--harness", "vim", "--dir", "d"}, []string{`--harness "vim" is no harness`, "opencode, codex, claude, antigravity, dsh"}},
 		{"install nothing given", []string{"install"}, []string{"--as is required", "--harness is required", "--dir is required"}},
 		{"pong nothing given", []string{"pong"}, []string{"--as is required", "--nonce is required"}},
-		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--state-dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
+		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--state-dir", t.TempDir()}, []string{"--to is required", "the sprint server has not named a seat"}},
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
 		{"check delivery nothing given", []string{"check", "--harness", "opencode"}, []string{"--as is required", "--dir is required"}},
 		{"check bad harness and window", []string{"check", "--as", "bob", "--harness", "vim", "--dir", "d", "--within", "0s"}, []string{`--harness "vim" is no harness`, "--within wants a positive duration"}},

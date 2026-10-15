@@ -218,6 +218,10 @@ type Limits struct {
 	Now  func() time.Time
 	Down func(until time.Time, reason string)
 	Up   func()
+	// Notice is the single coordinator message for a detected limit episode.
+	// unread asks it to include the unread-reset judgment in that message.
+	// A funds refusal delegates its notification to Funds when configured.
+	Notice func(until time.Time, reason string, unread bool)
 	// Unread is the judgment when a limit's text names no reset this reads: the
 	// friend is held for Rest and the text goes to the coordinator, once until
 	// a turn runs clean, so the reset is set by a person (friend down --until)
@@ -245,15 +249,16 @@ type Limits struct {
 	// (pacing.go).
 	Pacing func() float64
 
-	mu       sync.Mutex
-	beatMu   sync.Mutex // a down beat's look and its send, against the reset ending the limit (BeatOrDown)
-	pace     Pacer
-	limited  bool
-	until    time.Time
-	reason   string
-	kind     string // KindLimit or KindCredits while limited; empty when the text gave none
-	episodes int    // limits seen, so a turn knows it hit one
-	judged   bool   // Unread said for this hold; cleared when a turn runs clean
+	mu        sync.Mutex
+	beatMu    sync.Mutex // a down beat's look and its send, against the reset ending the limit (BeatOrDown)
+	pace      Pacer
+	limited   bool
+	until     time.Time
+	reason    string
+	kind      string // KindLimit or KindCredits while limited; empty when the text gave none
+	episodes  int    // limits seen, so a turn knows it hit one
+	fundsHeld bool   // terminal funds refusal, distinct from timed credits
+	judged    bool   // Unread said for this hold; cleared when a turn runs clean
 }
 
 // Limited is the limit now: until when and why, and whether there is one. A
@@ -326,25 +331,39 @@ func (l *Limits) see(out string, failed bool) {
 	if !failed && (!found || !lim.Limited) {
 		l.judged = false // a turn that runs clean: a later hold with no readable reset is a new judgment
 	}
-	if !found || !lim.Limited || (l.limited && l.until.Equal(lim.Until)) {
+	if !found || !lim.Limited {
 		l.mu.Unlock()
 		return
 	}
+	active := l.limited && now.Before(l.until)
+	newFunds := funds && (!active || !l.fundsHeld)
+	if active && l.fundsHeld && !funds {
+		kind, lim.Reason = l.kind, l.reason // an older timed refusal cannot undo a funds hold
+	}
+	if active && l.until.After(lim.Until) {
+		lim.Until = l.until
+	}
+	l.fundsHeld = funds || (active && l.fundsHeld)
+	changed := !active || !l.until.Equal(lim.Until) || l.reason != lim.Reason || l.kind != kind
 	l.limited, l.until, l.reason, l.kind = true, lim.Until, lim.Reason, kind
-	l.episodes++
+	if !active {
+		l.episodes++
+	}
 	judge := !named && !l.judged
 	if judge {
 		l.judged = true
 	}
 	l.mu.Unlock()
-	if l.Down != nil {
+	if changed && l.Down != nil {
 		l.Down(lim.Until, lim.Reason)
 	}
 	if judge && l.Unread != nil {
 		l.Unread(lim.Reason)
 	}
-	if funds && l.Funds != nil {
+	if funds && l.Funds != nil && (!active || newFunds) {
 		l.Funds(lim.Reason)
+	} else if !active && l.Notice != nil {
+		l.Notice(lim.Until, lim.Reason, judge)
 	}
 }
 
@@ -479,7 +498,7 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 // Deferred without running it; a turn that hits a limit is Deferred too. A passive
 // d is d. A LaneHarness stays one (gatedLanes): its batch Deliver is held,
 // and its lanes are not.
-// tla/Friend.tla NoTurnWhileLimited
+// docs/SPEC-FRIEND.md, silent-turn stop and refusals
 func (l *Limits) Gate(d Deliverer) Deliverer {
 	if _, passive := d.(interface{ Passive() }); passive {
 		return d

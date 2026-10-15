@@ -409,11 +409,6 @@ func HookCommand(name string, r Role) string {
 	return "nova-hook hook --as " + name + " --role " + string(r)
 }
 
-// SprintHookPR is where the sprint push's holder, nova-sprint hook, ships:
-// until it does, a coordinator cannot be proven, and the seat hooks in as
-// comms (the bus alone).
-const SprintHookPR = "nova-sprint PR #93"
-
 // AgentLabel is the service that runs a friend's lanes: her daemon
 // (com.nova.friend-<name>).
 func AgentLabel(name string, r Role) string {
@@ -435,7 +430,7 @@ func RestartCommand(goos, label string) string {
 func HeldBy(name string, r Role, p Push) string {
 	switch {
 	case p == Sprint:
-		return "nova-sprint hook --as " + name + " under its own Monitor (nova-sprint hook ships with " + SprintHookPR + "; until then: --role comms, " + HookCommand(name, Comms) + ")"
+		return "the sprint's server (nova-sprint run), which holds it for the coordinator while it runs and reaches the bus"
 	case p == Bus:
 		return HookCommand(name, r) + " under the session's Monitor (each line it prints is a push; it prints HOOK CHALLENGE, answered with nova-hook prove --as " + name + " --nonce <nonce>)"
 	case r == Friend:

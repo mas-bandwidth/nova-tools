@@ -67,12 +67,12 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 		require.Contains(t, doc, line, "docs/CLI.md carries the help's line")
 	}
 	for _, text := range []string{
-		"CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>",
-		"broken when the session is marked", "deaf when a delivery in", "silent when", "down by presence", "untrue: shown",
-		"friends[] each with", "daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age}",
+		"CHECK OK friends=<n> ok=<n> broken=<n> down=<n> untrue=<n>",
+		"broken when the session is marked", "down when the hook record", "untrue: shown",
+		"friends[] each with", "daemon{friend, agent, pid, status, hook, since, answer, misses, presence, reason}",
 		"failed_of_last20, deferred, delivered, failed, broken,", "bus{friend, real_since, last_real}",
 		"work{friend, inbox, outbox, newest_outbox, newest_at}", "verdict{friend, verdict, shown, why}",
-		"summary{friends, ok, broken, deaf, silent, down, untrue}",
+		"summary{friends, ok, broken, down, untrue}",
 		"Exit 0 when every verdict is ok, 1 when any is not", "2 when it could not run",
 		"--since", "--shown", "--json", "example: nova-friend check --as ada bob",
 	} {

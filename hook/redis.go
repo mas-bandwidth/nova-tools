@@ -629,7 +629,7 @@ func (s Store) Sent(ctx context.Context, once string) (bool, error) {
 
 // Challenged is the pushes a heartbeat challenge names for each role a session
 // answers in: the bus push. The sprint push is the seat hook's own
-// (nova-sprint hook), and a member's or reader's loop has no session: neither
+// (nova-sprint run), and a member's or reader's loop has no session: neither
 // is challenged.
 var Challenged = map[Role][]Push{Coordinator: {Bus}, Friend: {Bus}, Comms: {Bus}}
 

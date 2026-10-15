@@ -1489,12 +1489,11 @@ pkg/harness/notice), the one delivery path (v1.3.6).
 `nova-friend help`:
 
 ```
-nova-friend: what a friend runs to be part of the team: the lanes that work the friend's cards, and messages into the session, as one daemon
+nova-friend: what a friend runs to be part of the team: the lanes that work the friend's cards and their sprint metadata beat
 
-how it works: one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
-nova-bus stream, pushes every waiting message in as one turn when the session is free, and
-beats to the sprint server, whose answer carries the friend's row; liveness is the nova-hook
-record's alone (nova-hook serve's challenge, answered by the model's nova-hook prove).
+how it works: one launchd agent per friend (install) runs the lanes and reader slots (run), and
+beats to the sprint server, whose answer carries the friend's row. The session's
+nova-hook delivers bus messages; liveness is its record alone, proved by the model.
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.
 
 usage:
@@ -1552,7 +1551,7 @@ flags:
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  the friend's config directory, writable inside the lane's wall and its HOME there, and a claude one-shot lane's CLAUDE_CONFIG_DIR, an absolute path (default: the row's config_dir, read from each beat as row_config_dir=, else CLAUDE_CONFIG_DIR)
-  --coordinator <string>  who is told of a broken session when no ping has named the seat
+  --coordinator <string>  who is told of a broken session when the sprint server names no seat
   --db <string>  opencode's own database, where a card's tokens are read
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/ai/<seat>/working, the seat being --coordinator, else the sprint server's seat holder)
@@ -1596,7 +1595,7 @@ flags:
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
-  --coordinator <string>  who is told of a broken session when no ping has named the seat
+  --coordinator <string>  who is told of a broken session when the sprint server names no seat
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/ai/<seat>/working, the seat being --coordinator, else the sprint server's seat holder)
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
@@ -1810,7 +1809,7 @@ flags:
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
-  --coordinator <string>  who is told of a broken session when no ping has named the seat
+  --coordinator <string>  who is told of a broken session when the sprint server names no seat
   --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; install writes it into the agent (default: NOVA_FRIEND_DENY_SELF, else the seat's working root <home>/ai/<seat>/working, the seat being --coordinator, else the sprint server's seat holder)
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
@@ -2063,26 +2062,26 @@ The help of `nova-friend check -h` says, and this is the same text:
 ```
 The health check: is each friend's row true. The friends are the arguments, else every friend with a
 state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
-window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
-this order:
-CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<pending|sent|none> proof_age=<age|->
-CHECK HARNESS friend=<f> harness=<h> route=<push|mailbox|queue|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|-> session_live=<conversation|-> queued=<n|->
-CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
+window (default 24h): the lane turns in the daemon's log, real messages, and the friend's nova-hook record (the
+one truth of whether the friend is there). Per friend, five lines in this order:
+CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> hook=<state|-> since=<age|-> answer=<age|-> misses=<n> presence=<up|down> reason=<line|->
+CHECK HARNESS friend=<f> harness=<h> route=<push|mailbox|queue|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
+CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: anything but a pong)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
-CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
-then one summary line: CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>.
-The verdict is a function of those facts, the first rule that holds: broken when the session is marked
-broken or every delivery in the window failed (at least one, and all of them); deaf when a delivery in
-the window succeeded and neither a session pong nor a real message came back in the window; silent when
-no delivery was due in the window and nothing came back; down by presence; else ok. --shown is what a
-consumer shows of each friend, JSON {"<friend>":{"state":"up|asleep|down","working":<n>}} from a file or
-- for stdin; when it says up or working and the verdict is not ok, the verdict stays and the why leads
-with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or its agent
-is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
-friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age},
+CHECK VERDICT friend=<f> verdict=<ok|broken|down|untrue> shown=<state/working|-> why=<one line>
+then one summary line: CHECK OK friends=<n> ok=<n> broken=<n> down=<n> untrue=<n>.
+hook is the nova-hook record's state, since how long it has held, answer the age of the model's last answer
+to a challenge, misses the challenges missed in a row; presence is up while the record proves the friend there, the
+daemon's status file deciding nothing. The verdict is a function of those facts, the first rule that holds:
+broken when the session is marked broken or every lane turn in the window failed (at least one, and all of
+them); down when the hook record does not prove the friend there; else ok. --shown is what a consumer shows of each
+friend, JSON {"<friend>":{"state":"up|down|held","working":<n>}} from a file or - for stdin; when it says up
+or working and the verdict is not ok, the verdict stays and the why leads with "untrue: shown
+<state>/<working>, ". --json prints one object instead of the lines: friends[] each with friend and
+daemon{friend, agent, pid, status, hook, since, answer, misses, presence, reason},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
-reason, session_live, queued}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
-verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
+reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
+verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, down, untrue}.
 Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
 (a refused flag, an unreadable --shown).
 ```

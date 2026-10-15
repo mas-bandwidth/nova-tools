@@ -204,7 +204,23 @@ printing up to five `WATCH MESSAGE`, `WATCH EVENT`, or `WATCH WAKE` lines and
 ## Reach (`cmd/nova-friend/reach.go`, `tla/Reach.tla`)
 
 `nova-friend reach --as <coordinator> --to <friend> [--from bus|push|window] [--step-timeout <d>] [--dry-run] [--json]`
-climbs the escalation ladder (`bus` message, `push` turn via the daemon, `window`
+climbs the escalation ladder (`bus` message, `push` turn via the harness, `window`
 keystrokes via tmux or macOS Accessibility `AXIsProcessTrusted`) and stops at the
 first proof from the friend (`REACH PROOF` and `REACH OK`, exit 0; `REACH FAILED`
 after all steps, exit 1).
+
+## Coordinator notice retries
+
+Each daemon fault detector emits one message on its episode transition. The
+bounded sender (`pkg/friend/notices.go`, `tla/FriendNotices.tla`) retains up to
+256 pending messages and retries with the same bus token until a receipt arrives.
+A lost reply cannot duplicate a committed message (`tla/BusSendOnce.tla`).
+A missing coordinator delays delivery; each retry reads the current seat directly
+with a bounded lookup, independently of lane-loop status. The first selected recipient remains
+fixed across retries. A full queue reports the wait and holds the caller's next notice until delivery
+frees space. It retries once per second without holding the queue mutex while
+waiting; the independent metadata beat continues. At capacity the daemon may
+pause lane-result processing during an outage. Cancellation releases the caller
+and explicitly reports the unadmitted subject.
+The queue is volatile. Shutdown reports its unsent count; a restart cannot
+recover those pending messages from the daemon's memory.

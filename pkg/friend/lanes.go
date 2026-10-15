@@ -390,9 +390,8 @@ func LaneSeed(friend string, n, width int, agents, memory string) string {
 }
 
 // CardText is one lane turn: the card and its three steps, every path absolute, the
-// brief's text inline (a model that reads a path relative still has it), then what else
-// rides along (the pong line first, the word about the coordinator, the bus messages
-// waiting, each labelled by its sender's authority against seat).
+// brief's text inline (a model that reads a path relative still has it).
+// No session bus message rides with the card.
 func CardText(job LaneJob, n, width int, sendLine string) string {
 	c := job.Card
 	var b strings.Builder
@@ -592,7 +591,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 					return
 				}
 				if !found {
-					continue // messages wait: they ride only with a card
+					continue // no card is available for this lane
 				}
 				holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)
 				if err != nil {
@@ -698,7 +697,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		return
 	}
 	if ln.ended != "" {
-		// another lane finished the card: its messages go back pending, counted toward nothing
+		// another lane finished the card: this lane releases it without a second finish
 		d.Record(fmt.Sprintf("%s lane=%d session=%s subject=%s took=%s card=ended reason=%q", at, ln.n, ln.session, t.subjects, now.Sub(t.started).Round(time.Millisecond), "card finished by "+ln.ended))
 		l.setDown(ln, now)
 		return
@@ -893,7 +892,7 @@ func (l *loop) faultTurn(ln *lane, line, fault, first string, now time.Time) {
 
 // heldTurn is a lane's turn a provider failure stopped (stopEvery) before its card had a
 // report: the card stays in the lane's hand, counted toward nothing, never set aside, and runs
-// again once a person clears the pause; the messages it carried go back pending.
+// again once a person clears the pause.
 func (l *loop) heldTurn(r laneResult, now time.Time) {
 	d, ln, t := l.d, r.ln, r.t
 	d.Record(fmt.Sprintf("%s lane=%d session=%s subject=%s took=%s card=kept turn=%d/%d reason=%q", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, now.Sub(t.started).Round(time.Millisecond), ln.attempts, CardTurns, "a provider failure stopped every lane"))

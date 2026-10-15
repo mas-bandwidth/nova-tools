@@ -8,7 +8,7 @@ retired	untiered	no tier
 retired	git bus	the Redis bus
 
 allow	.github/workflows/ci.yml	git bus	1
-allow	docs/CLI.md	asleep	4
+allow	docs/CLI.md	asleep	1
 allow	docs/CLI.md	git bus	1
 allow	docs/SPEC-BUS.md	git bus	2
 allow	docs/SPEC-UPDATE.md	git bus	2

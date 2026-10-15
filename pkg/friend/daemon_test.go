@@ -249,3 +249,42 @@ func TestARefusedVerbIsRaisedOnTheThirdAndClearedWhenItAnswers(t *testing.T) {
 	}
 	assert.GreaterOrEqual(t, recoveredLines, 1, "one recovery line")
 }
+
+// The lane daemon leaves the session stream to nova-hook, including fresh
+// and pending messages. Its metadata beat continues without a session turn.
+func TestTheDaemonNeverConsumesTheSessionBus(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.send(t, "ada", "pending", "first")
+	_, ok, err := r.bus.Recv(context.Background(), "bob", 0)
+	require.True(t, ok)
+	require.NoError(t, err)
+	r.send(t, "ada", "fresh", "second")
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	r.run(t, 10)
+	afterPending, afterFresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Equal(t, pending, afterPending)
+	assert.Equal(t, fresh, afterFresh)
+	assert.Empty(t, r.delivered)
+	assert.Equal(t, 10, r.beats)
+}
+
+// Inbox staging does not start manual-session cards. Only the session's take
+// or a lane's laneAsk changes the server's ready work (SPEC-FRIEND, lanes).
+func TestInboxSyncNeverTakesManualSessionCards(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.passive = true
+	r.d.Row = func() (string, int) { return ModeBatch, 2 }
+	r.d.Held = func(context.Context) (Row, error) {
+		return Row{Cards: []HeldCard{{Card: "c1", Job: "c1~15", Col: "ready", Kind: "work", Epoch: 15, Brief: "STATUS: nova-sprint card\n"}}, Reads: true, From: FromCards}, nil
+	}
+	takes := 0
+	r.d.Take = func(context.Context, []string) (string, error) { takes++; return "TAKE OK", nil }
+	r.run(t, 40)
+	assert.Zero(t, takes)
+	assert.Equal(t, []string{"c1"}, r.d.heldIDs, "the card remains visible for the session")
+	assert.Empty(t, r.delivered)
+}

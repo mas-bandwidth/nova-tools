@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/stretchr/testify/assert"
@@ -130,7 +131,7 @@ func TestRunSaysThereIsNoSeatOrCoordinatorToTellOfALimit(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		said, _ := laneLimitRun(t, "working\nInsufficient AI Credits. Your credits will refresh in 10 minutes.\n", laneBeat, nil)
-		assert.Contains(t, said, "limit: no seat or coordinator to tell: friend bob down: their harness is at its limit until", said)
+		assert.Contains(t, said, "no coordinator to tell: friend bob down: their harness is at its limit until", said)
 	})
 }
 
@@ -185,7 +186,7 @@ func TestRunSendsTheDownVerbAndNotesItsRefusal(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		said, r := laneLimitRun(t, "Error 402\n", laneBeat, func(context.Context, string, []string) error { return errors.New("refused") }, "--coordinator", "ada")
 		assert.Contains(t, said, "credit refusal: friend down: refused", said)
-		assert.Equal(t, 1, strings.Count(adaGot(t, r), "friend bob: the down verb was refused"), "one bus message to the seat names the down verb's refusal")
+		assert.Equal(t, 1, strings.Count(adaGot(t, r), "The down verb was refused"), "one bus message to the seat names the down verb's refusal")
 	})
 }
 
@@ -233,4 +234,44 @@ func TestRunRefuseGoWithABrokenShimBuildsNoLane(t *testing.T) {
 		assert.Zero(t, laneRuns, "no lane ran: %s", out.String())
 		assert.Contains(t, out.String(), "the go refusal shims cannot be made, so no lane runs", out.String())
 	})
+}
+
+// Receipt retries must learn a newly present coordinator even when the daemon
+// loop is held at queue capacity and never calls Status again.
+func TestNoticeRetryFindsANewCoordinatorWithoutAStatusStep(t *testing.T) {
+	t.Parallel()
+	f := bustest.NewFake(start, "ada", "bob")
+	var ready atomic.Bool
+	w := world{seatHolder: func(ctx context.Context, _ string) (string, error) {
+		_, bounded := ctx.Deadline()
+		assert.True(t, bounded, "recipient lookup shares the bounded bus attempt")
+		if ready.Load() {
+			return "ada", nil
+		}
+		return "", nil
+	}}
+	waiting, resume := make(chan struct{}), make(chan struct{})
+	n := &friend.Notices{Bus: &bus.Bus{Store: f}, To: w.noticeTarget("fake-server", ""), Record: func(string) {}}
+	n.Wait = func(ctx context.Context) bool {
+		close(waiting)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-resume:
+			return true
+		}
+	}
+	for range friend.NoticeLimit {
+		require.True(t, n.Send(t.Context(), bus.Message{From: "bob", Subject: "held", Body: "lanes held"}))
+	}
+	done := make(chan bool, 1)
+	go func() {
+		done <- n.Send(t.Context(), bus.Message{From: "bob", Subject: "later fault", Body: "another episode"})
+	}()
+	<-waiting
+	ready.Store(true)
+	close(resume)
+	require.True(t, <-done)
+	assert.Zero(t, n.Unsent())
+	assert.Equal(t, friend.NoticeLimit+1, f.Len(bus.StreamOf("ada")))
 }

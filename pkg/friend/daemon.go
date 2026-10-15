@@ -14,25 +14,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 )
 
-// BeatEvery is how often the daemon beats to the sprint server while its
-// loop runs: the sprint's own number (internal/sprint FriendBeatEvery, one
-// second; a friend is down after fifteen without one). It is also the
-// loop's read block: one read of the stream per beat.
+// BeatEvery is the cadence of the daemon's sprint metadata beat and lane
+// loop. It carries lane configuration and activity, never session liveness.
 const BeatEvery = time.Second
 
-// RecheckEvery is how long the daemon waits before trying a deferred
-// delivery again (Deferred: the session cannot take a turn now and nothing
-// is wrong). The message stays in the daemon's hand meanwhile: it is never
-// put back on the bus, never counted toward MaxDeliveries, never acked.
-const RecheckEvery = 10 * time.Second
-
-// StatusErrorEvery bounds how often a status file that cannot be written
-// is said in the record: the loop goes on beating and delivering without it.
-// DeferredSaidEvery bounds how often a deferral still in hand is said.
-const (
-	StatusErrorEvery  = time.Minute
-	DeferredSaidEvery = time.Minute
-)
+// StatusErrorEvery bounds reports of an unwritable daemon status file.
+const StatusErrorEvery = time.Minute
 
 // DefaultSilentStop is how long a turn may print nothing before the daemon
 // stops it (--silent-stop): a turn that prints keeps running however long
@@ -54,16 +41,6 @@ const (
 	RefusalDownFor = 15 * time.Minute
 )
 
-// MaxBatch bounds the messages a one-shot lane takes with its card; batch
-// delivery reads every pending message before Envelope applies TextLimit.
-// BatchBytes bounds how much text: the rest waits for the next turn, oldest first. A turn's text
-// travels as one argument to some harnesses (opencode run), under the
-// platform's argument limit.
-const (
-	MaxBatch   = 32
-	BatchBytes = 256 << 10
-)
-
 // SeatCacheFor is how long the daemon keeps the seat holder it read from the
 // sprint server: the authority of a message is never older than this
 // (docs/SPEC-FRIEND.md, bus-authority-labels.w3).
@@ -79,8 +56,8 @@ const (
 	SessionBroken = "broken"
 )
 
-// Daemon is one friend's loop: the recv loop over the friend's stream with
-// the deliver adapter, the beat, and the Machine stepped by what arrives.
+// Daemon runs one friend's lanes, reader slots, and sprint metadata beat.
+// Session messages belong to nova-hook, which owns the bus delivery lease.
 // Everything it reaches outside itself is a field, so a test runs it over
 // bus's Fake, a fake harness and its own clock.
 type Daemon struct {
@@ -88,6 +65,7 @@ type Daemon struct {
 	// Pro holds the friend's pronouns (the row's pronouns setting): every text the daemon
 	// writes about the friend says them through d.say. Nil is they/them.
 	Pro              *PronounsRef
+	Notices          *Notices
 	Store            bus.Store
 	Deliver          Deliverer
 	Beat             func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
@@ -97,9 +75,7 @@ type Daemon struct {
 	// each beat; nil knows no write.
 	Activity func() time.Time
 	Now      func() time.Time
-	// Pause waits d when the store did not: after a read that answered at
-	// once (blocked false: an error, or a store that does not block), and
-	// while a delivery runs and the loop only peeks.
+	// Pause waits between lane steps while the independent beat continues.
 	Pause  func(ctx context.Context, d time.Duration)
 	Record func(line string) // one line per delivery, to the daemon's log
 	// MachineStopped says the machine's word, as the owner last read it off the beat's
@@ -122,7 +98,7 @@ type Daemon struct {
 	// stopped (DefaultSilentStop when zero); BrokenAfter how many turns in a
 	// row the provider refuses the same way before the session is broken
 	// (DefaultBrokenAfter when zero); Coordinator who is told of a broken
-	// session when no ping has named the seat.
+	// session when the sprint server names no seat.
 	SilentStop  time.Duration
 	BrokenAfter int
 	Coordinator string
@@ -156,13 +132,10 @@ type Daemon struct {
 	// REPORT.md says a verdict, whoever wrote its brief (OutboxFinishArgv, outbox.go). Nil,
 	// or a finish not answered, leaves it to friend sync, which reads the same REPORT.md.
 	Finish func(ctx context.Context, argv []string) error
-	// Take sends one take to the sprint server (LaneTakeArgv, BatchTakeArgv), its refusal an
+	// Take sends one take to the sprint server (LaneTakeArgv), its refusal an
 	// error: a lane starts a card only once the server has it working on her row (lane_take.go).
 	// Nil (a test's world) takes nothing, and a lane runs any card on her row as before.
 	Take func(ctx context.Context, argv []string) (string, error)
-	// batchTakeAt and batchTakeSaid pace and say a batch-mode daemon's take (batchTake).
-	batchTakeAt   time.Time
-	batchTakeSaid string
 	// The lanes' parity with the runner scripts they replace (lane_parity.go); Rules nil
 	// turns every one off. Rules is her row's lane rules as her beat last answered them,
 	// Load the machine's one-minute load (nil: no load rule), Tokens a session's tokens
@@ -269,14 +242,6 @@ type Daemon struct {
 	pruneSaid   string // the prune failure last said, said once while it stands
 }
 
-// Mailbox is a harness whose session queues what is delivered: Follow reads who read
-// the deliveries and moves delivery to the conversation that reads, sending again what the
-// old one left unread; Live is the conversation deliveries go to.
-type Mailbox interface {
-	Follow(ctx context.Context, now time.Time)
-	Live() string
-}
-
 // turn is one lane turn: a card handed to a lane's session, or a per-card run.
 // The daemon delivers nothing else into a session: a message to the friend
 // reaches her through nova-hook (pkg/harness/notice), never through here.
@@ -313,8 +278,7 @@ func oneLine(s string, n int) string {
 	return s
 }
 
-// loop is one run of the daemon: what Run keeps between steps, shared by the
-// batch turn and the one-shot lanes.
+// loop is one run of the daemon: what Run keeps between lane and reader steps.
 type loop struct {
 	d            *Daemon
 	ctx          context.Context
@@ -413,6 +377,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
 		outboxRes: make(chan outboxResult, 64), outboxFly: map[string]bool{},
 		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}
+	l.notices()
+	defer func() {
+		if count := d.Notices.Unsent(); count > 0 {
+			d.Record(fmt.Sprintf("daemon stopped with %d unsent coordinator notices; inspect the pending notice errors before restarting", count))
+		}
+	}()
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	l.b.OnStampError = func(err error) { d.Record(l.now.UTC().Format(time.RFC3339) + " " + oneLine(err.Error(), 300)) }
 	if l.silentStop <= 0 {
@@ -441,6 +411,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	for ctx.Err() == nil {
 		now := d.Now()
 		l.now = now
+		d.Notices.Flush(ctx)
 		mode, width := l.row(now)
 		l.harnessProof(now)
 		d.status.Seat = l.seat(now)
@@ -583,11 +554,8 @@ func (l *loop) drainResults(now time.Time) {
 	}
 }
 
-// Idle reports whether the last step found the friend with no dealt work and
-// no live session: nothing in hand, no dealt brief, no turn, no wake or
-// present owed, no lane or read running, and no live mailbox conversation
-// (docs/SPEC-FRIEND.md, idle). cmd/nova-friend wires it to the spend cap's
-// idle seam, so a daemon with nothing dealt launches no turn at all.
+// Idle reports whether the last step has no running lane or read. The spend
+// cap uses it to avoid launching work while there is nothing to run.
 func (d *Daemon) Idle() bool { return d.idleNow.Load() }
 
 // row is the mode and width the daemon delivers by: the friend's row when
@@ -662,6 +630,22 @@ func (l *loop) coordinator() string {
 	return l.d.Coordinator
 }
 
+// notices is the sender shared by fault callbacks and the daemon retry step.
+func (l *loop) notices() *Notices {
+	if l.d.Notices == nil {
+		l.d.Notices = &Notices{Bus: l.b, To: func(ctx context.Context) (string, error) {
+			if l.d.Seat != nil {
+				to, err := l.d.Seat(ctx)
+				if err != nil || to != "" {
+					return to, err
+				}
+			}
+			return l.d.Coordinator, nil
+		}, Record: l.d.Record}
+	}
+	return l.d.Notices
+}
+
 // tell sends the coordinator one message, said on the record when there is
 // no one to tell or the send fails.
 func (l *loop) tell(subject, body string, now time.Time) {
@@ -670,14 +654,7 @@ func (l *loop) tell(subject, body string, now time.Time) {
 
 // tellKind is tell with the message's kind ("" is status).
 func (l *loop) tellKind(kind, subject, body string, now time.Time) {
-	to := l.coordinator()
-	if to == "" {
-		l.d.Record(now.UTC().Format(time.RFC3339) + " no coordinator to tell: " + subject)
-		return
-	}
-	if _, err := l.d.send(l.ctx, l.b, bus.Message{From: l.d.Friend, To: []string{to}, Kind: kind, Subject: subject, Body: subject + "\n" + body}); err != nil {
-		l.d.Record(now.UTC().Format(time.RFC3339) + " telling " + to + " failed: " + err.Error() + ": " + subject)
-	}
+	l.notices().Send(l.ctx, bus.Message{From: l.d.Friend, Kind: kind, Subject: subject, Body: subject + "\n" + body})
 }
 
 // seat is the seat holder for a delivery at now: read from the sprint server
@@ -696,12 +673,6 @@ func (l *loop) seat(now time.Time) string {
 	}
 	l.seatHolder, l.seatRead = strings.TrimSpace(holder), now
 	return l.seatHolder
-}
-
-// send is a message the daemon sends as the friend: a word to the coordinator,
-// never one into her session.
-func (d *Daemon) send(ctx context.Context, b *bus.Bus, m bus.Message) (bus.Message, error) {
-	return b.Send(ctx, m)
 }
 
 // startTurn runs deliver for t in its own goroutine, its context carrying the
@@ -973,23 +944,10 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	return line
 }
 
-// tellBroken sends to (the coordinator) one message that the daemon is broken —
-// a broken session, or a server that refused a verb. subject names what is
-// broken; why says how to read it. It answers whether the word went out, or
-// there was no one to tell (said on the record); a send that fails is tried
-// again the next step.
+// tellBroken queues one fault episode for the coordinator. Delivery failures
+// retain the same token and are retried by the next daemon step.
 func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, to, subject, why string) bool {
-	if to == "" {
-		d.Record("broken, and no coordinator to tell: the sprint server names no seat and --coordinator is not set")
-		return true
-	}
-	body := subject + "\n" + why + "\n"
-	if _, err := d.send(ctx, b, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
-		d.status.StoreError = "telling " + to + " it is broken: " + err.Error()
-		return false
-	}
-	d.status.StoreError = ""
-	return true
+	return d.Notices.Send(ctx, bus.Message{From: d.Friend, Subject: subject, Body: subject + "\n" + why + "\n"})
 }
 
 // refused observes one refusal of a server verb at now: counted per verb on
@@ -1077,15 +1035,8 @@ func (l *loop) harnessProof(now time.Time) bool {
 	}
 	if !l.proofTold {
 		l.proofTold = true
-		to := l.coordinator()
-		if to == "" {
-			d.Record(now.UTC().Format(time.RFC3339) + " harness proof: no coordinator to tell: " + oneLine(reason, 300))
-		} else {
-			subject := fmt.Sprintf("friend %s: %s", d.Friend, oneLine(reason, 200))
-			if _, err := d.send(l.ctx, l.b, bus.Message{From: d.Friend, To: []string{to}, Kind: bus.KindBlocker, Subject: subject, Body: subject + "\n"}); err != nil {
-				d.Record(now.UTC().Format(time.RFC3339) + " harness proof: telling " + to + " failed: " + err.Error())
-			}
-		}
+		subject := fmt.Sprintf("friend %s: %s", d.Friend, oneLine(reason, 200))
+		l.proofTold = l.notices().Send(l.ctx, bus.Message{From: d.Friend, Kind: bus.KindBlocker, Subject: subject, Body: subject + "\n"})
 	}
 	return false
 }

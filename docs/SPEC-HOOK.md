@@ -32,8 +32,8 @@ A push is held by the process that receives it:
 | push | holder | its proof |
 |---|---|---|
 | `bus` of a session | `nova-hook hook --as <name> --role <role>`, under the session's Monitor | the session answers `HOOK CHALLENGE nonce=<n>` with `nova-hook prove --as <name> --nonce <n>` |
-| `bus` and `work` of a friend | her daemon, `nova-friend run` (or its notifications receiver for `comms`) | her session answers the heartbeat challenge delivered through her harness adapter (`nova-hook prove --as <name> --nonce <n>`, proving both `bus` and `work`); for a per-card harness with no interactive session, the daemon's own round trip |
-| `sprint` | `nova-sprint hook --as <name>` | its own subscription's challenge, answered |
+| `work` of a friend | her lane daemon, `nova-friend run`; the session owns `bus` separately | her session answers the heartbeat challenge (`nova-hook prove --as <name> --nonce <n>`, proving both `bus` and `work`); the daemon renews only `work` and never proves or renews `bus` |
+| `sprint` | the sprint server, `nova-sprint run` | the server holds it for the coordinator while it runs and reaches the bus |
 | `work` of a member or reader | its loop, `nova-swarm member` | the loop's own round trip to the sprint server |
 
 ## The key layout
@@ -112,7 +112,7 @@ Every line runs as printed:
 
 - With a role known, the remedy is `nova-hook hook --as <name> --role <role>`, and a line per unproven
   push names its holder (the session's `nova-hook hook` for the bus push, `com.nova.friend-<name>` for
-  a friend's work push, or `nova-sprint hook --as <name>`).
+  a friend's work push, or the sprint server).
 - With no role known, the remedy is `nova-hook status --as <name>`, offering `comms`, `friend`, and
   `coordinator`.
 

@@ -112,5 +112,5 @@ func TestAClaudeDaemonsCheckGoesInByTheFolderAndItsBeatCarriesThePong(t *testing
 	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
 	assert.Len(t, said, 3)
-	assert.NoFileExists(t, friend.SessionCheckFile(dir, "r4nd0m"))
+	assert.NoFileExists(t, filepath.Join(dir, "inbox", "SESSION-CHECK-r4nd0m"))
 }

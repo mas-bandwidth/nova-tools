@@ -104,3 +104,15 @@ text --notifications-only pkg/harness/notice
 text --notify-kinds pkg/harness/notice
 text --notify-window pkg/harness/notice
 text com.nova.friend-notifications- pkg/harness/notice
+
+# the daemon never takes a batch of cards on behalf of a session
+ident BatchTakeArgv a lane takes only its own card (LaneTakeArgv)
+ident batchTake a lane takes only its own card (laneAsk)
+ident BatchTakeEvery no daemon batch take loop
+ident RecheckEvery nova-hook owns session delivery and retries
+ident DeferredSaidEvery nova-hook owns session delivery and retries
+
+# Retired folder session check and writer-lock presence probes.
+ident FolderCheck nova-hook owns session delivery
+ident FolderCheckLine nova-hook owns session delivery
+ident FlockHeld hook records own presence

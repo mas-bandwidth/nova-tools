@@ -149,3 +149,25 @@ func TestALaneHarnessWritesItsOwnTmpdirAndNothingOutsideIt(t *testing.T) {
 	}
 	assert.NotEqual(t, tmps[0], tmps[1], "two lanes, two directories")
 }
+
+// Concurrent lane completions belong to one row fault hold; expiry permits a
+// later incident to be reported, without counting any card attempt.
+func TestConcurrentEnvironmentFaultsShareOneHoldNotice(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Coordinator = "ada"
+	now := t0
+	downs := 0
+	r.d.FaultDown = func(time.Time, string) { downs++ }
+	l := &loop{d: r.d, b: r.bus, ctx: t.Context(), lanes: &laneSet{}, now: now}
+	for i := 0; i < 2; i++ {
+		l.environmentFault(&lane{n: i + 1}, "lane ended", "EEXIST /tmp/harness", now.Add(time.Duration(i)*time.Second))
+	}
+	assert.Equal(t, 1, downs)
+	assert.Len(t, r.adaGot(t), 1, "simultaneously running lanes share the row's pause episode")
+	now = now.Add(FaultDownFor + time.Second)
+	l.now = now
+	l.environmentFault(&lane{n: 3}, "lane ended", "EEXIST /tmp/harness", now)
+	assert.Equal(t, 2, downs)
+	assert.Len(t, r.adaGot(t), 2, "a fault after the hold expires starts a new episode")
+}
