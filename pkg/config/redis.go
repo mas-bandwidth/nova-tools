@@ -82,7 +82,7 @@ func SprintKey(field string) string { return "sprint:" + field }
 func FriendBeatKey(f string) string { return "friend:" + f + ":beat" }
 
 // FriendDesiredKey is the hash apply writes a friend row's desired fields to; its
-// session field (FriendSessions) is what nova-bus reads to refuse a send to a
+// session field (FriendSessionWords) is what nova-bus reads to refuse a send to a
 // one-shot friend.
 func FriendDesiredKey(f string) string { return "friend:" + f + ":desired" }
 

@@ -17,5 +17,5 @@ func TestTheBusReadsTheSessionApplyWrites(t *testing.T) {
 	assert.Equal(t, FriendDesiredKey("fay"), bus.FriendDesiredKey("fay"))
 	assert.Equal(t, FriendSessionOneShot, bus.SessionOneShot)
 	assert.Equal(t, "session", bus.SessionField)
-	assert.Contains(t, FriendSessions, bus.SessionOneShot)
+	assert.Contains(t, FriendSessionWords, bus.SessionOneShot)
 }

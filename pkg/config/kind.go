@@ -240,7 +240,7 @@ func FriendMode(r Row) string {
 	return FriendModeOneShot
 }
 
-// FriendSessions are whether a friend has a live session between cards
+// FriendSessionWords are whether a friend has a live session between cards
 // (docs/SPEC-CONFIG.md, friend; the owner, 2026-10-14: "just make one shot friends,
 // exactly the same code that already works in the fleet, just with an extra prompt at
 // the front"). A live friend (the default) has a session, is on the psychic link
@@ -250,7 +250,7 @@ func FriendMode(r Row) string {
 // hook, lease or presence record, and a bus send naming her is refused at once with
 // the remedy to put it in her next card's brief. Not the mode field: mode is how a
 // lane hands a card (one-shot for every friend), session is whether she has one.
-var FriendSessions = []string{FriendSessionLive, FriendSessionOneShot}
+var FriendSessionWords = []string{FriendSessionLive, FriendSessionOneShot}
 
 // The session words and the default a row without one has.
 const (
@@ -562,7 +562,7 @@ var Kinds = []*Kind{
 			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns over stream names this friend may be dealt work on; empty means any stream"},
 			{Name: "kinds", Type: TypeNames, Help: "optional comma-separated card KIND values this friend may be dealt; empty means any kind"},
 			{Name: "pronouns", Type: TypeEnum, Enum: FriendPronounSets, Default: DefaultFriendPronouns, Nullable: true, Help: "the pronouns the friend goes by, one of " + strings.Join(FriendPronounSets, ", ") + "; an empty value is unstated and reads and prints as they/them(unstated); a stated value prints as itself; a set that names other fields leaves the stored value; never \"it\": the daemon's texts about the friend say them"},
-			{Name: "session", Type: TypeEnum, Enum: FriendSessions, Default: DefaultFriendSession, Help: "whether the friend has a live session between cards: live (the default: on the psychic link, worked by her friend lane) or one-shot (no session: she runs as a fleet member lane, nova-swarm member --as friend.<name> --prompt <identity file>, never on the link, and a bus send naming her is refused with the remedy to put it in her next card's brief)"},
+			{Name: "session", Type: TypeEnum, Enum: FriendSessionWords, Default: DefaultFriendSession, Help: "whether the friend has a live session between cards: live (the default: on the psychic link, worked by her friend lane) or one-shot (no session: she runs as a fleet member lane, nova-swarm member --as friend.<name> --prompt <identity file>, never on the link, and a bus send naming her is refused with the remedy to put it in her next card's brief)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
