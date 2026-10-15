@@ -9,7 +9,7 @@ Score: 8.5/10 (47/55)
 |---|---|---|---|
 | 1 | cold | 4 | `nova-self-talk example ./pages` -> `EXAMPLE OK dir=./pages wrote=RULES.md,journal.md kept=-; run: nova-self-talk pages/journal.md`; usable from help alone, but the 94-line banner and per-verb help that drop required args add friction |
 | 2 | refusals | 3 | `nova-self-talk --bogus t.md` -> `nova-self-talk REFUSED: unknown flag -bogus; the flags are --skip, --rule-doc, --max, --json; run: nova-self-talk help`; but `nova-self-talk help frobnicate` prints the whole banner at exit 0 and names nothing |
-| 3 | output | 5 | `nova-self-talk --json ./t.md` -> `{"result":{"verb":"scan","status":"failed","exit":1},"facts":{"files":1,"claims":1,"standing":1,...}}`; one typed value, line and JSON agree, `SELFTALK OK|FAIL` lines are stable |
+| 3 | output | 5 | `nova-self-talk --json ./t.md` -> `{"result":{"verb":"scan","status":"failed","exit":1},"facts":{"files":1,"claims":1,"standing":1,...}}`; one typed value, line and JSON agree, `SELFTALK OK or FAIL` lines are stable |
 | 4 | dry-run | 4 | `nova-self-talk example --dry-run ./ep` -> `EXAMPLE OK dir=./ep would-write=RULES.md,journal.md kept=-` and wrote nothing; but `nova-self-talk example --dry-run /proc/nope` reports `EXAMPLE OK` exit 0 where the real run cannot write |
 | 5 | idempotent | 3 | `nova-self-talk example ./pages` twice -> second run `EXAMPLE OK dir=./pages wrote=- kept=RULES.md,journal.md`, so nothing changes, but no write verb takes `--op` |
 | 6 | no prompts | 5 | `n/a: every verb ran to completion with no interactive wait` |
