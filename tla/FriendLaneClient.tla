@@ -25,8 +25,13 @@
 (* live client whose model stopped proving: either way the lease runs out  *)
 (* and the server returns the card ready at its next generation.           *)
 (*                                                                         *)
-(* Time is abstract: a renewing client renews within the bound, so a lease *)
-(* ages only while nobody renews (Age).                                    *)
+(* Time: a lease is Bound ticks; a renewing client renews at least every   *)
+(* RenewTicks ticks (code: cmd/nova-hook LaneEvery plus one round's bound,  *)
+(* against nova-sprint LaneGoneAfter). Age runs while nobody renews, and    *)
+(* while a client renews only until RenewTicks ticks have passed since its *)
+(* last renewal. The assumption RenewTicks < Bound is checked, not assumed: *)
+(* LiveHoldNeverExpires fails without it (witness SlowRenew), and the Go    *)
+(* test TestLaneRenewalIsWellInsideTheLease holds the code to it.           *)
 (*                                                                         *)
 (* Reversed witnesses (MCFriendLaneClientBroken*.cfg):                     *)
 (*   TrustCache     the daemon before: lanes.json survives the restart and *)
@@ -35,6 +40,10 @@
 (*   RenewUnproven  the client renews whether or not the model proves (a   *)
 (*                  service that keeps the lease for a dead session):      *)
 (*                  DeadModelReleases fails.                               *)
+(*   SlowRenew      RenewTicks = Bound: a live, proving client renews no    *)
+(*                  sooner than the lease runs (nova-tools#5798 at         *)
+(*                  23aec479: renewal every 30m against a 10m lease):      *)
+(*                  LiveHoldNeverExpires fails.                            *)
 (*   TickUnstarts   the tick puts a card the friend took back ready while  *)
 (*                  its lease is live (2026-10-14 20:30:21 EDT: a friend   *)
 (*                  took a card; the tick's friendUnstartedWorking moved it*)
@@ -43,12 +52,12 @@
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Cards, Lanes, Bound, MaxRestarts, MaxDeaths,
+CONSTANTS Cards, Lanes, Bound, RenewTicks, MaxRestarts, MaxDeaths,
           TrustCache, RenewUnproven, TickUnstarts
 
 None == "none"
 NoHold == <<None, 0>>  \* a cache entry naming no card
-ASSUME None \notin Cards /\ Bound > 0
+ASSUME None \notin Cards /\ Bound > 0 /\ RenewTicks \in 1..Bound
 ASSUME TrustCache \in BOOLEAN /\ RenewUnproven \in BOOLEAN /\ TickUnstarts \in BOOLEAN
 
 VARIABLES srv,       \* server: the card each lane holds, or None
@@ -61,10 +70,11 @@ VARIABLES srv,       \* server: the card each lane holds, or None
           told,      \* the model: the <<card, gen, lane>> one notice has told it
           finished,  \* ghost: finishes the server applied, per card
           returned,  \* ghost: a hold ended with its lease live, by neither finish nor expiry
+          lostLive,  \* ghost: a lease ran out while its client was renewing it
           restarts,  \* client crashes so far
           deaths     \* model deaths so far
 
-vars == <<srv, col, gen, lease, up, proven, cache, told, finished, returned, restarts, deaths>>
+vars == <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths>>
 
 MaxGen == 2 + MaxRestarts + MaxDeaths
 Gens == 1..MaxGen
@@ -79,7 +89,7 @@ TypeOK ==
   /\ cache \in [Lanes -> Hold \cup {NoHold}]
   /\ told \subseteq (Cards \X Gens \X Lanes)
   /\ finished \in [Cards -> 0..2]
-  /\ returned \in BOOLEAN
+  /\ returned \in BOOLEAN /\ lostLive \in BOOLEAN
   /\ restarts \in 0..MaxRestarts /\ deaths \in 0..MaxDeaths
 
 Init ==
@@ -91,7 +101,7 @@ Init ==
   /\ cache = [l \in Lanes |-> NoHold]
   /\ told = {}
   /\ finished = [c \in Cards |-> 0]
-  /\ returned = FALSE
+  /\ returned = FALSE /\ lostLive = FALSE
   /\ restarts = 0 /\ deaths = 0
 
 \* the client renews (asks) only while the model proves; the witness renews regardless
@@ -115,7 +125,7 @@ Ask(l) ==
                      /\ cache' = [cache EXCEPT ![l] = <<c, gen[c]>>]
               ELSE /\ cache' = [cache EXCEPT ![l] = NoHold]
                    /\ UNCHANGED <<srv, col, lease>>
-  /\ UNCHANGED <<gen, up, proven, told, finished, returned, restarts, deaths>>
+  /\ UNCHANGED <<gen, up, proven, told, finished, returned, lostLive, restarts, deaths>>
 
 \* Notify: the one notice ("N cards taken; briefs at ...") tells the model every hold the
 \* client's cache names. A restarted client tells again what the server says it holds.
@@ -123,7 +133,7 @@ Notify ==
   /\ up /\ proven
   /\ \E l \in Lanes : cache[l] # NoHold /\ <<cache[l][1], cache[l][2], l>> \notin told
   /\ told' = told \cup {<<cache[l][1], cache[l][2], l>> : l \in {k \in Lanes : cache[k] # NoHold}}
-  /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, finished, returned, restarts, deaths>>
+  /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, finished, returned, lostLive, restarts, deaths>>
 
 \* the server's record for lane l holds card c at generation g
 ServerSays(c, g, l) == srv[l] = c /\ gen[c] = g
@@ -140,7 +150,7 @@ Finish(c, g, l) ==
   /\ lease' = [k \in Lanes |-> IF srv[k] = c THEN 0 ELSE lease[k]]
   /\ finished' = [finished EXCEPT ![c] = IF @ < 2 THEN @ + 1 ELSE 2]
   /\ cache' = [cache EXCEPT ![l] = NoHold]
-  /\ UNCHANGED <<gen, up, proven, told, returned, restarts, deaths>>
+  /\ UNCHANGED <<gen, up, proven, told, returned, lostLive, restarts, deaths>>
 
 \* Progress: the model says the run is alive; applied only on the server's record
 Progress(c, g, l) ==
@@ -148,12 +158,15 @@ Progress(c, g, l) ==
   /\ <<c, g, l>> \in told
   /\ ServerSays(c, g, l)
   /\ lease' = [lease EXCEPT ![l] = Bound]
-  /\ UNCHANGED <<srv, col, gen, up, proven, cache, told, finished, returned, restarts, deaths>>
+  /\ UNCHANGED <<srv, col, gen, up, proven, cache, told, finished, returned, lostLive, restarts, deaths>>
 
-\* Age(l): time passes for a lease nobody renews
+\* Age(l): time passes. A lease nobody renews runs down to 0; a renewing client renews
+\* within RenewTicks ticks, so its lease runs down no further than Bound - RenewTicks.
 Age(l) ==
-  /\ srv[l] # None /\ lease[l] > 0 /\ ~Renewing
+  /\ srv[l] # None /\ lease[l] > 0
+  /\ (~Renewing \/ lease[l] > Bound - RenewTicks)
   /\ lease' = [lease EXCEPT ![l] = @ - 1]
+  /\ lostLive' = (lostLive \/ (Renewing /\ lease[l] = 1))
   /\ UNCHANGED <<srv, col, gen, up, proven, cache, told, finished, returned, restarts, deaths>>
 
 \* Expire(l): the tick returns a card whose lease ran out, ready at its next generation
@@ -163,7 +176,7 @@ Expire(l) ==
   /\ col' = [col EXCEPT ![srv[l]] = "ready"]
   /\ gen' = [gen EXCEPT ![srv[l]] = @ + 1]
   /\ srv' = [srv EXCEPT ![l] = None]
-  /\ UNCHANGED <<lease, up, proven, cache, told, finished, returned, restarts, deaths>>
+  /\ UNCHANGED <<lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths>>
 
 \* TickUnstart(l), the witness only: the tick puts a taken card back ready while its lease
 \* is live (friendUnstartedWorking before the fix: a take that was no "start")
@@ -174,29 +187,29 @@ TickUnstart(l) ==
   /\ srv' = [srv EXCEPT ![l] = None]
   /\ lease' = [lease EXCEPT ![l] = 0]
   /\ returned' = TRUE
-  /\ UNCHANGED <<gen, up, proven, cache, told, finished, restarts, deaths>>
+  /\ UNCHANGED <<gen, up, proven, cache, told, finished, lostLive, restarts, deaths>>
 
 \* Crash: the client process dies. Restart: it starts again in an empty working directory,
 \* holding nothing; the witness TrustCache keeps its lanes.json.
 Crash ==
   /\ up /\ restarts < MaxRestarts
   /\ up' = FALSE /\ restarts' = restarts + 1
-  /\ UNCHANGED <<srv, col, gen, lease, proven, cache, told, finished, returned, deaths>>
+  /\ UNCHANGED <<srv, col, gen, lease, proven, cache, told, finished, returned, lostLive, deaths>>
 Restart ==
   /\ ~up
   /\ up' = TRUE
   /\ cache' = IF TrustCache THEN cache ELSE [l \in Lanes |-> NoHold]
-  /\ UNCHANGED <<srv, col, gen, lease, proven, told, finished, returned, restarts, deaths>>
+  /\ UNCHANGED <<srv, col, gen, lease, proven, told, finished, returned, lostLive, restarts, deaths>>
 
 \* the model stops proving (its session gone), and comes back
 Die ==
   /\ proven /\ deaths < MaxDeaths
   /\ proven' = FALSE /\ deaths' = deaths + 1
-  /\ UNCHANGED <<srv, col, gen, lease, up, cache, told, finished, returned, restarts>>
+  /\ UNCHANGED <<srv, col, gen, lease, up, cache, told, finished, returned, lostLive, restarts>>
 Revive ==
   /\ ~proven
   /\ proven' = TRUE
-  /\ UNCHANGED <<srv, col, gen, lease, up, cache, told, finished, returned, restarts, deaths>>
+  /\ UNCHANGED <<srv, col, gen, lease, up, cache, told, finished, returned, lostLive, restarts, deaths>>
 
 Next ==
   \/ \E l \in Lanes : Ask(l) \/ Age(l) \/ Expire(l) \/ TickUnstart(l)
@@ -223,6 +236,12 @@ FinishedOnce == \A c \in Cards : finished[c] <= 1
 
 \* A hold ends only by a finish or by its lease running out.
 TakenStaysTaken == ~returned
+
+\* A live client that proves never lets a lease run out under it: its renewal interval is
+\* inside the lease (the timing assumption RenewTicks < Bound, checked here). A lease that
+\* ran out while the client was down may still be returned after it restarts: that is the
+\* lease doing its work (DeadClientReleases), not a live hold lost.
+LiveHoldNeverExpires == ~lostLive
 
 \* A restarted client never loses a card: whatever the server holds for a lane, a renewing
 \* client learns it again from the server alone and the model is told it, or the hold ends.

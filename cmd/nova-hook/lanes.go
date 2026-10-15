@@ -19,10 +19,10 @@ import (
 
 // The friend lane client in the supervised hook service (internal/friend; the card
 // the-friend-lane-is-a-client-with-no-local-state). A friend's service (nova-hook hook
-// --role friend under nova-hook.client.<name>) asks the sprint server once a challenge
-// interval what each of her lanes holds, taking a ready card into each free lane, the
-// fleet's own lane protocol. While her model proves, the asks renew the leases; when it
-// stops, the asks stop, and the server's lease returns her cards
+// --role friend under nova-hook.client.<name>) asks the sprint server every LaneEvery
+// (a third of the server's lane lease) what each of the friend's lanes holds, taking a
+// ready card into each free lane, the fleet's own lane protocol. While the model proves,
+// the asks renew the leases; when it stops, the asks stop, and the server's lease returns her cards
 // (tla/FriendLaneClient.tla). New holds make ONE bus message to her own name, which the
 // hook loop folds into the one pending notice like any other (pkg/harness/notice): "N
 // cards taken; briefs at <paths>; work each in a child agent to width". The model works
@@ -33,11 +33,19 @@ const (
 	// sprintServerEnv names the sprint server, host:port; DefaultSprintServer when unset.
 	sprintServerEnv     = "NOVA_SPRINT_SERVER"
 	DefaultSprintServer = "127.0.0.1:6390"
-	// LaneEvery is how often the lane client asks: once a challenge interval, well inside
-	// the server's lease (nova-sprint LaneGoneAfter, 10m).
-	LaneEvery = hook.ChallengeEvery
-	// laneAskWait bounds one ask of the sprint server.
-	laneAskWait = 10 * time.Second
+	// ServerLaneLease is the sprint server's lane lease: a lane unheard this long is gone and
+	// its card returned ready (nova-sprint internal/sprint/lane_hold.go LaneGoneAfter). The
+	// client's renewal is paced against it, never against the hook's challenge cadence.
+	ServerLaneLease = 10 * time.Minute
+	// LaneEvery is how often the lane client asks, and so renews: a third of the lease, so a
+	// round late or failed twice still renews inside it (tla/FriendLaneClient.tla RenewTicks <
+	// Bound, LiveHoldNeverExpires; nova-tools#5798 at 23aec479 paced it at the 30m challenge
+	// interval against the 10m lease, and live cards would have been returned mid-work).
+	LaneEvery = ServerLaneLease / 3
+	// laneAskWait bounds one ask of the sprint server, and laneRoundWait one whole round, so
+	// a hung sprint server never holds the hook loop past its own lease renewal (hook.RenewEvery).
+	laneAskWait   = 5 * time.Second
+	laneRoundWait = hook.RenewEvery / 2
 )
 
 // sprintAsk is one verb sent to the sprint server: what it printed, or its refusal.

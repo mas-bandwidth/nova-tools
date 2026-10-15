@@ -77,3 +77,16 @@ func stateFact(o *tool.Out) any {
 	}
 	return nil
 }
+
+// The lane client renews well inside the server's lane lease: a round every LaneEvery, each
+// bounded by laneRoundWait, even late by one whole round, lands before the lease runs out
+// (tla/FriendLaneClient.tla: RenewTicks < Bound, LiveHoldNeverExpires; witness
+// MCFriendLaneClientBrokenSlowRenew.cfg). It fails if the renewal is ever paced at or past
+// the lease again (nova-tools#5798 at 23aec479: the 30m challenge cadence against 10m).
+func TestLaneRenewalIsWellInsideTheLease(t *testing.T) {
+	t.Parallel()
+	assert.Less(t, LaneEvery+laneRoundWait, ServerLaneLease, "a round's renewal lands inside the lease")
+	assert.Less(t, 2*(LaneEvery+laneRoundWait), ServerLaneLease, "one late or failed round still renews inside the lease")
+	assert.Less(t, laneRoundWait, hook.RenewEvery, "a round never holds the hook loop past its own lease renewal")
+	assert.LessOrEqual(t, laneAskWait, laneRoundWait)
+}

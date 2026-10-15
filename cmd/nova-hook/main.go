@@ -986,7 +986,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			// the lane client's round: asks (and so renews) only while the model proves
 			// (tla/FriendLaneClient.tla DeadModelReleases)
 			nextLanes = w.now().Add(LaneEvery)
-			lctx, lcancel := context.WithTimeout(ctx, time.Duration(lanes.Width+1)*laneAskWait)
+			lctx, lcancel := context.WithTimeout(ctx, laneRoundWait)
 			for _, o := range lanePass(lctx, lanes, proven(st[0]), sendSelf(s, w)) {
 				line(c, o)
 			}
