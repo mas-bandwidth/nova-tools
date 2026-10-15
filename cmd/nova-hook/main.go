@@ -10,6 +10,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime"
 	"slices"
@@ -58,6 +60,8 @@ type world struct {
 	antigravityInstall func(*antigravityRoute) error
 	antigravityDeliver func(context.Context, *antigravityRoute, string, string) (string, error)
 	claudeInstall      func(bin, as, role, state, settings string) error // the Claude Code Stop hook
+	opencodeAPI        func(bin string) notice.OpenCodeAPI               // one request to the running opencode server
+	lookPath           func(string) (string, error)                      // finds a harness CLI on PATH
 	files              notice.Files                                      // the saved notice files
 	getenv             func(string) string
 	open               func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
@@ -91,6 +95,8 @@ func realWorld() world {
 		antigravityInstall: installAntigravityRoute,
 		antigravityDeliver: deliverAntigravitySaved,
 		claudeInstall:      notice.InstallClaude,
+		opencodeAPI:        notice.CLIForOpenCode,
+		lookPath:           exec.LookPath,
 		files:              notice.Disk{},
 		getenv:             os.Getenv,
 		now:                time.Now,
@@ -239,6 +245,10 @@ directory), discovers the live Antigravity language_server and conversation, sav
 and delivers via agentapi send-message --title=nova-hook.
 Claude Code clients use --harness claude with --claude-state and --claude-settings (existing directories): before arming
 it installs a Stop hook that advances the generation file; the session's Monitor on this process's stdout is the delivery.
+opencode clients use --harness opencode (docs/SPEC-OPENCODE-HOOK.md), run from inside the friend's opencode session, whose
+shell names it (OPENCODE_SESSION_ID); --opencode-session or --opencode-dir name it otherwise. No plugin is installed: each
+notice is one session.synthetic request (steer into a running turn, resume an idle session) sent through opencode api,
+which holds the server's credentials; a finished turn after the notice entered it is the boundary.
 Every harness keeps one pending notice (pkg/harness/notice): a saved file rewritten in place with the newest valid
 challenge and the message count; a new push waits until the model consumed the last one; only the model proves.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
@@ -249,7 +259,7 @@ example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Required("role", "the role you hook in as, one of "+roleNames())
-					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "install a harness adapter before arming: grok, muse, claude, deepseek (alias dsh), antigravity, or codex (the Codex desktop route: the friend's current chat, followed to a new one; the --codex-* flags override its defaults)")
+					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "install a harness adapter before arming: grok, muse, claude, opencode, deepseek (alias dsh), antigravity, or codex (the Codex desktop route: the friend's current chat, followed to a new one; the --codex-* flags override its defaults)")
 					f.String("grok-home", w.getenv("GROK_HOME"), "absolute grok config directory the adapter installs into; empty uses GROK_HOME, else the grok directory under the user home")
 					f.String("muse-bundle", w.getenv("NOVA_HOOK_MUSE_BUNDLE"), "the Muse plugin bundle to install (default: muse-bundle beside the nova-hook binary)")
 					f.String("muse-bin", w.getenv("NOVA_HOOK_MUSE_BIN"), "the Muse CLI to run (default: muse on PATH)")
@@ -269,6 +279,9 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("antigravity-since", w.getenv("NOVA_HOOK_ANTIGRAVITY_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds) for Antigravity recovery")
 					f.String("claude-state", w.getenv("NOVA_HOOK_CLAUDE_STATE"), "existing directory whose generation file marks a Claude Code turn boundary")
 					f.String("claude-settings", w.getenv("NOVA_HOOK_CLAUDE_SETTINGS"), "existing directory where the Claude Code Stop hook is installed")
+					f.String("opencode-session", w.getenv("NOVA_HOOK_OPENCODE_SESSION"), "opencode session id (ses_...) for --harness opencode; default: the session whose shell runs this ("+openCodeSessionEnv+")")
+					f.String("opencode-dir", w.getenv("NOVA_HOOK_OPENCODE_DIR"), "absolute workspace directory: follow the friend to the newest root opencode session there (default: the session stays pinned)")
+					f.String("opencode-bin", w.getenv("NOVA_HOOK_OPENCODE_BIN"), "the opencode CLI (default: opencode on PATH, saved as an absolute path for the supervised service)")
 					f.Bool("claude-boundary", false, "advance the Claude Code generation file and exit; the installed Stop hook runs this")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
 					store(f)
@@ -474,6 +487,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	var muse *museRoute
 	var grokR *grokRoute
 	var claude *claudeRoute
+	var oc *opencodeRoute
 	switch strings.ToLower(c.Str("harness")) {
 	case "muse":
 		var err error
@@ -503,6 +517,12 @@ func (w world) hook(c *tool.Call) *tool.Out {
 			}
 			return tool.Done().As("STATE").Fact("state", "boundary").Fact("generation", n)
 		}
+	case hookHarnessOpenCode:
+		var err error
+		oc, err = w.opencodeConfig(c, native)
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
 	case "", "deepseek", "dsh":
 		var err error
 		dsh, err = w.dshConfig(c)
@@ -511,7 +531,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		}
 	case "antigravity", "codex":
 	default:
-		return tool.Refuse("--harness wants muse or antigravity (or grok, claude, deepseek, dsh); the Codex desktop route uses --codex-* flags")
+		return tool.Refuse("--harness wants muse or antigravity (or grok, claude, opencode, deepseek, dsh); the Codex desktop route uses --codex-* flags")
 	}
 
 	if (muse != nil || grokR != nil || claude != nil) && (c.Str("dsh-events-dir") != "" || c.Str("dsh-hooks-file") != "" || c.Str("dsh-since") != "" || c.Str("dsh-session") != "") {
@@ -549,13 +569,16 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		if grokR != nil && o.Status == tool.OK {
 			o.Note("would install the grok harness into " + grokR.home + " and write nothing")
 		}
+		if oc != nil && o.Status == tool.OK {
+			o.Note("would deliver into the opencode session " + cmp.Or(oc.session, "named by "+openCodeSessionEnv) + " through " + oc.bin + " and write nothing")
+		}
 		return o
 	}
 	held := holds(role)
 	if native != nil && !slices.Contains(held, hook.Bus) {
 		return tool.Refuse(native.label() + " delivery wants a role with the bus push")
 	}
-	if (dsh != nil || claude != nil || muse != nil) && !slices.Contains(held, hook.Bus) {
+	if (dsh != nil || claude != nil || muse != nil || oc != nil) && !slices.Contains(held, hook.Bus) {
 		return tool.Refuse("harness delivery wants a role with the bus push")
 	}
 	if !w.isServiceRun() {
@@ -584,7 +607,14 @@ func (w world) hook(c *tool.Call) *tool.Out {
 				return out
 			}
 		}
-		svc, err := w.service.Install(s.as, hookServiceArgs(c, s.as, role, s.addr))
+		args := hookServiceArgs(c, s.as, role, s.addr)
+		if oc != nil {
+			if out := w.installOpenCode(c, oc); out != nil {
+				return out
+			}
+			args = oc.serviceArgs(args)
+		}
+		svc, err := w.service.Install(s.as, args)
 		if err != nil {
 			return tool.Refuse("supervised service could not be installed: " + err.Error())
 		}
@@ -642,6 +672,11 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		shim = sh
 	case muse != nil:
 		shim = &notice.Muse{Notices: muse.notices}
+	case oc != nil:
+		if out := w.installOpenCode(c, oc); out != nil {
+			return out
+		}
+		shim = w.opencodeShim(oc)
 	case native != nil:
 		shim = w.nativeShim(native)
 	}

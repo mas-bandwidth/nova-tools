@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -43,9 +44,12 @@ func hookServiceFile(goos, as string) string {
 	return hookServiceName(goos, as)
 }
 
-func hookServiceText(goos, as, exe string, args []string, logPath string) string {
+func hookServiceText(goos, as, exe string, args []string, logPath, path string) string {
 	cmdArgs := append([]string{exe, "hook"}, args...)
 	env := [][2]string{{serviceRunEnv, "1"}}
+	if path != "" {
+		env = append(env, [2]string{"PATH", path})
+	}
 	if goos == "darwin" {
 		return units.LaunchdPlist(hookServiceName(goos, as), cmdArgs, env, logPath, 1)
 	}
@@ -111,7 +115,7 @@ func (m *osServiceManager) Install(as string, args []string) (string, error) {
 		}
 		logPath = filepath.Join(logDir, as+".log")
 	}
-	text := hookServiceText(m.goos, as, exe, args, logPath)
+	text := hookServiceText(m.goos, as, exe, args, logPath, servicePath(m.getenv("PATH"), exe, args))
 	inst := units.Installer{
 		Dir:    filepath.Dir(path),
 		Load:   func(p string) error { return m.load(m.goos, "load", p) },
@@ -206,12 +210,47 @@ func hookServiceArgs(c *tool.Call, as string, role hook.Role, addr string) []str
 		"antigravity-since",
 		"claude-state",
 		"claude-settings",
+		"opencode-session",
+		"opencode-dir",
+		"opencode-bin",
 	} {
 		if v := strings.TrimSpace(c.Str(flag)); v != "" {
 			args = append(args, "--"+flag, v)
 		}
 	}
 	return args
+}
+
+// serviceSystemPath is where a harness CLI lives when the installing shell's
+// PATH is not known: Homebrew on Apple silicon and Intel, then the system.
+var serviceSystemPath = []string{"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}
+
+// servicePath is the PATH a supervised service runs with. launchd gives a
+// service only the system directories, so a harness CLI the route runs by name
+// (muse, opencode) would not be found: the directories of the harness CLIs
+// named in args and of nova-hook itself come first, then the installing
+// shell's PATH, then the system directories. Only absolute directories are
+// kept, each once.
+func servicePath(shell, exe string, args []string) string {
+	var dirs []string
+	for i := 0; i+1 < len(args); i++ {
+		if (args[i] == "--opencode-bin" || args[i] == "--muse-bin") && filepath.IsAbs(args[i+1]) {
+			dirs = append(dirs, filepath.Dir(args[i+1]))
+		}
+	}
+	if filepath.IsAbs(exe) {
+		dirs = append(dirs, filepath.Dir(exe))
+	}
+	dirs = append(dirs, filepath.SplitList(shell)...)
+	dirs = append(dirs, serviceSystemPath...)
+	var out []string
+	for _, d := range dirs {
+		if d == "" || !filepath.IsAbs(d) || slices.Contains(out, filepath.Clean(d)) {
+			continue
+		}
+		out = append(out, filepath.Clean(d))
+	}
+	return strings.Join(out, string(filepath.ListSeparator))
 }
 
 func (w world) retryBackoff(attempt int) time.Duration {

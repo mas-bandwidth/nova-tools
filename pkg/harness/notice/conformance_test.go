@@ -145,6 +145,11 @@ func shims(t *testing.T) map[string]func(t *testing.T) *harness {
 			}
 			return &harness{shim: &Grok{Home: home, Wake: wake, Notices: "/private/events"}, busy: run("busy"), idle: run("idle")}
 		},
+		"opencode": func(t *testing.T) *harness {
+			f := newFakeOpenCode()
+			return &harness{shim: &OpenCode{Session: f.session, Notices: "/private/events", API: f.api},
+				busy: func(*testing.T) { f.busy() }, idle: func(*testing.T) { f.finish() }}
+		},
 		"claude": func(t *testing.T) *harness {
 			state := t.TempDir()
 			gen := 0
