@@ -350,6 +350,8 @@ and apply-order pattern already represented by machine and friend in
 `tla/ConfigApply.tla`; route to provider introduces no new state or action
 and this cut changes no model or TLC receipt. Providers apply before routes.
 
+local-spec-fleet-provider-per-machine: a provider row whose name begins `local-` carries the `endpoint` field (text, an http:// URL); every other provider carries none. The endpoint is the base of the local engine on the named machine and obeys docs/SPEC-LOCAL.md rule 3 (loopback or the tailnet, 100.64.0.0/10, every address a name resolves to). An endpoint whose host is a machine row holding the role coordination is refused: the coordinating machine serves no local model. A local provider is `billing=plan`, `funded=true`, with no key.
+
 `status` always prints a `PROVIDER name=<name> funded=<bool> billing=<word>
 balance_usd=<value or -> as_of=<date or ->` line for each provider, followed
 by `<tier>=<enabled in array>/<enabled total>` for every tier it serves.
