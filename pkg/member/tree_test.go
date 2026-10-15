@@ -39,7 +39,7 @@ var (
 func treeRig(t *testing.T, pu Pusher, r Result) *rig {
 	t.Helper()
 	s, rn, out := newScript(), newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "m"}, rowWidth(s, 2), rn, pu, out), s: s, r: rn, out: out}
+	g := &rig{m: New(Config{As: "m", ScopeCollect: fixtureFinishScope}, rowWidth(s, 2), rn, pu, out), s: s, r: rn, out: out}
 	p := pk("c1")
 	p.Brief = treeBrief
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
@@ -81,7 +81,7 @@ func TestAFailedStepTwoOfThreeLandsStepOneAndWritesTheRemainder(t *testing.T) {
 	_, err := g.tick(t)
 	require.NoError(t, err)
 	assert.Equal(t, []string{step1Sha}, pu.heads, "the member pushes the last ok step's commit, never the child's head")
-	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + step1Sha + " to work/c1: remainder=c1-r3 step 3 broken: TestTwo is red at b.go:12 --head " + step1Sha + " --branch work/c1 --epoch 7"},
+	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + step1Sha + " to work/c1: remainder=c1-r3 step 3 broken: TestTwo is red at b.go:12 --head " + step1Sha + " --branch work/c1" + fixtureScopeArg(pk("c1"), step1Sha) + " --epoch 7"},
 		g.s.lines("finish"), "an ok finish at step 1's commit, so it is read and lands; the report names the remainder card")
 }
 
@@ -114,7 +114,7 @@ func TestANineHexStepShaFinishesAtTheFullSha(t *testing.T) {
 	_, err := g.tick(t)
 	require.NoError(t, err)
 	assert.Equal(t, []string{landSha}, pu.heads, "the push is asked for the full sha, not the child's head and not the nine hex")
-	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + landSha + " to work/c1: remainder=c1-r3 step 3 broken: red --head " + landSha + " --branch work/c1 --epoch 7"},
+	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + landSha + " to work/c1: remainder=c1-r3 step 3 broken: red --head " + landSha + " --branch work/c1" + fixtureScopeArg(pk("c1"), landSha) + " --epoch 7"},
 		g.s.lines("finish"))
 
 	amb := "bbbbbbbbb"

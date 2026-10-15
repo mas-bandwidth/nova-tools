@@ -40,7 +40,7 @@ func (h *heldRunner) Start(p Packet) (Child, error) {
 func TestReviewABackgroundStartHeldWhileItsCardLeavesTheQueueIsNeitherForgottenNorOrphaned(t *testing.T) {
 	t.Parallel()
 	s, hr := newScript(), newHeldRunner()
-	m := New(Config{As: "m", Background: true}, rowWidth(s, 1), hr, &fakePusher{}, &bytes.Buffer{})
+	m := New(Config{As: "m", Background: true, ScopeCollect: fixtureFinishScope}, rowWidth(s, 1), hr, &fakePusher{}, &bytes.Buffer{})
 	p := pk("c1")
 	s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	acted, err := m.Tick(time.Unix(0, 0))
@@ -77,7 +77,7 @@ func TestReviewABackgroundStartHeldWhileItsCardLeavesTheQueueIsNeitherForgottenN
 func TestReviewAPostKeyedByCardGoesToTheLaunchItWasMadeForAcrossARedeal(t *testing.T) {
 	t.Parallel()
 	s, hr := newScript(), newHeldRunner()
-	m := New(Config{As: "m", Background: true}, rowWidth(s, 2), hr, &fakePusher{}, &bytes.Buffer{})
+	m := New(Config{As: "m", Background: true, ScopeCollect: fixtureFinishScope}, rowWidth(s, 2), hr, &fakePusher{}, &bytes.Buffer{})
 	p1 := pk("c1")
 	s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1)))
 	_, err := m.Tick(time.Unix(0, 0))
@@ -268,7 +268,7 @@ func TestReviewABackgroundMemberRunsEveryCardOnceWithinItsWidth(t *testing.T) {
 	}
 	r := newRunner()
 	pu := &fakePusher{def: Push{Sha: fullSha}, yield: 50}
-	m := New(Config{As: "m", Background: true}, rowWidth(s, 4), r, pu, &bytes.Buffer{})
+	m := New(Config{As: "m", Background: true, ScopeCollect: fixtureFinishScope}, rowWidth(s, 4), r, pu, &bytes.Buffer{})
 	most := 0
 	for i := 0; i < 200_000; i++ {
 		_, err := m.Tick(time.Unix(0, 0))

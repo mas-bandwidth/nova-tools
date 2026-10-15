@@ -129,10 +129,10 @@ EXTENDS Integers, FiniteSets
 CONSTANTS Cards, Broken
 
 VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends
+          prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends, scope
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends>>
+          prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends, scope>>
 
 Init ==
   /\ att \in [Cards -> {1, 2, 3}]
@@ -156,6 +156,7 @@ Init ==
   /\ headDescends = [c \in Cards |-> FALSE]
   /\ originUpdated = [c \in Cards |-> FALSE]
   /\ originDescends = [c \in Cards |-> FALSE]
+  /\ scope = [c \in Cards |-> "none"]
 
 MaxOf(S) == CHOOSE m \in S : \A n \in S : n <= m
 
@@ -182,7 +183,7 @@ Stage(c) ==
   /\ \E f \in StageFroms(c) : from' = [from EXCEPT ![c] = f]
   /\ stageAnchor' = [stageAnchor EXCEPT ![c] = TRUE]
   /\ headDescends' = [headDescends EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer, originUpdated, originDescends>>
+  /\ UNCHANGED <<att, earlier, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer, originUpdated, originDescends, scope>>
 
 \* The member's machine refuses the launch at staging (native's STAGE
 \* FAIL): nothing is staged and no child runs, so there is no commit and no result.
@@ -190,7 +191,7 @@ StageRefused(c) ==
   /\ ph[c] = "new"
   /\ ph' = [ph EXCEPT ![c] = "ended"]
   /\ stg' = [stg EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, lf, answer, stageAnchor, headDescends, originUpdated, originDescends>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, lf, answer, stageAnchor, headDescends, originUpdated, originDescends, scope>>
 
 \* The child ends: any commit, any result, any verdict, and the run's end class:
 \* a provider failure with a reason (prov), a no-result end (nr), or a
@@ -215,7 +216,7 @@ ChildEnds(c) ==
        /\ n => (~s \/ (v = "notdone" /\ ~k))
        /\ u => ~s
        /\ l => ~s
-  /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, answer, stageAnchor, originUpdated, originDescends>>
+  /\ UNCHANGED <<att, earlier, from, push, claim, fin, rep, answer, stageAnchor, originUpdated, originDescends, scope>>
 
 \* update-ref bypasses the launch's command shim: it can move the checkout's head
 \* to work that does not descend from the immutable stage record. The member checks
@@ -224,7 +225,7 @@ ChildEnds(c) ==
 RewriteBelowStage(c) ==
   /\ ph[c] = "ended" /\ commit[c] /\ stageAnchor[c] /\ headDescends[c]
   /\ headDescends' = [headDescends EXCEPT ![c] = FALSE]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer, stageAnchor, originUpdated, originDescends>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer, stageAnchor, originUpdated, originDescends, scope>>
 
 \* The member's push (gitPusher.Push): a commit is pushed or
 \* refused; no commit is nothing to push.
@@ -239,6 +240,8 @@ Push(c) ==
   /\ ph' = [ph EXCEPT ![c] = "pushed"]
   /\ \E p \in PushOutcomes(c) :
        /\ push' = [push EXCEPT ![c] = p]
+       /\ \E evidence \in (IF p = "ok" THEN {"collected", "error"} ELSE {"none"}) :
+            scope' = [scope EXCEPT ![c] = evidence]
        /\ IF p = "ok"
             THEN /\ originUpdated' = [originUpdated EXCEPT ![c] = TRUE]
                  /\ originDescends' = [originDescends EXCEPT ![c] = headDescends[c]]
@@ -271,6 +274,7 @@ OkOf(c) ==
 JudgeOf(c) ==
   IF lf[c] THEN (IF Broken = "lengthnoresult" THEN "provider" ELSE "staging")
   ELSE IF stg[c] /\ Broken # "stagingfailed" THEN "staging"
+  ELSE IF scope[c] = "error" /\ Broken # "okwithoutscope" THEN "failed"
   ELSE IF push[c] = "refused" THEN
          IF Broken = "pushignored" /\ shape[c] /\ verdict[c] = "ok" /\ commit[c]
            THEN "ok"
@@ -298,7 +302,7 @@ JudgeOf(c) ==
 SendReport(c) ==
   /\ ph[c] = "pushed" /\ claim[c] = "held"
   /\ ph' = [ph EXCEPT ![c] = "reported"]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep, prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends, scope>>
 
 \* What a collected report comes to: applied (the judgment, said to the
 \* sprint) when the claim is still held, or when the store accepted it; else
@@ -321,13 +325,13 @@ CollectReport(c) ==
           ELSE /\ fin' = [fin EXCEPT ![c] = "reaped"]
                /\ rep' = [rep EXCEPT ![c] = "none"]
   /\ ph' = [ph EXCEPT ![c] = "done"]
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, lf, stageAnchor, headDescends, originUpdated, originDescends>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, lf, stageAnchor, headDescends, originUpdated, originDescends, scope>>
 
 \* The claim moves under the launch at any time before its report is collected.
 Move(c) ==
   /\ claim[c] = "held" /\ ph[c] \in {"running", "ended", "pushed", "reported"}
   /\ claim' = [claim EXCEPT ![c] = "moved"]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, fin, rep, prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends, scope>>
 
 \* REAPED is its own finish (pkg/member/member.go, FinishReaped): the child has
 \* ended, its claim is gone, and nothing is reported.
@@ -336,7 +340,7 @@ Reap(c) ==
   /\ ph' = [ph EXCEPT ![c] = "done"]
   /\ fin' = [fin EXCEPT ![c] = "reaped"]
   /\ rep' = IF Broken = "reapreported" THEN [rep EXCEPT ![c] = "failed"] ELSE rep
-  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends>>
+  /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, prov, nr, stg, lf, answer, stageAnchor, headDescends, originUpdated, originDescends, scope>>
 
 Next == \E c \in Cards : Stage(c) \/ ChildEnds(c) \/ RewriteBelowStage(c) \/ Push(c) \/ RetryRefusedPush(c) \/ SendReport(c) \/ CollectReport(c) \/ Move(c) \/ Reap(c)
                           \/ StageRefused(c)
@@ -358,9 +362,22 @@ TypeOK ==
   /\ headDescends \in [Cards -> BOOLEAN]
   /\ originUpdated \in [Cards -> BOOLEAN]
   /\ originDescends \in [Cards -> BOOLEAN]
+  /\ scope \in [Cards -> {"none", "collected", "error"}]
 
 \* Ok => PushedHead /\ Shape: an ok finish is a commit the child made, on
 \* origin by the member's push, with the result's shape and verdict ok.
+\* Scope is collected after push and before judgment on both member end paths.
+OkCarriesScope == \A c \in Cards :
+  (fin[c] = "ok" \/ (ph[c] = "reported" /\ JudgeOf(c) = "ok"))
+    => push[c] = "ok" /\ scope[c] = "collected"
+
+ScopeErrorFailsClosed == \A c \in Cards :
+  (scope[c] = "error" /\ ~stg[c] /\ ~lf[c]) =>
+    /\ (ph[c] = "reported" => JudgeOf(c) = "failed")
+    /\ ((ph[c] = "done" /\ fin[c] # "reaped") => fin[c] = "failed")
+
+ScopeBoundToPush == \A c \in Cards : (scope[c] # "none") <=> (push[c] = "ok")
+
 OkIsPushedWork ==
   \A c \in Cards : fin[c] = "ok" => commit[c] /\ push[c] = "ok" /\ shape[c] /\ verdict[c] = "ok"
 
@@ -393,13 +410,15 @@ ReworkStagedAtTheTip == \A c \in Cards :
 
 \* A provider failure never opens a failed-work judgment: a run the provider failed
 \* that left no result, its push not refused, is never finished `failed`.
+\* Collection failure has the same failed-work precedence as a refused push.
+\* Successful collection retains the existing provider/no-result protection.
 ProviderIsNotFailedWork ==
-  \A c \in Cards : fin[c] = "failed" => ~(prov[c] /\ ~shape[c] /\ push[c] # "refused")
+  \A c \in Cards : fin[c] = "failed" => ~(prov[c] /\ ~shape[c] /\ push[c] # "refused" /\ scope[c] # "error")
 
 \* A no-result end never opens a failed-work judgment: a run the child ended by
 \* itself with no result, its push not refused, is never finished `failed`.
 NoResultIsNotFailedWork ==
-  \A c \in Cards : fin[c] = "failed" => ~(nr[c] /\ push[c] # "refused")
+  \A c \in Cards : fin[c] = "failed" => ~(nr[c] /\ push[c] # "refused" /\ scope[c] # "error")
 
 \* A staging refusal never opens a failed-work judgment: a launch refused at staging ran no
 \* child, and is never finished `failed`.

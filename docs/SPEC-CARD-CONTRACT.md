@@ -284,11 +284,26 @@ itself (default 128000, `--output-token-max` selects a positive per-turn
 limit including reasoning), and emits `NATIVE HARNESS-FAULT` with output and
 reasoning counts. A published result keeps its existing judgment.
 
+After a successful push, both machine-member end paths collect scope evidence from the
+protected slot's staged commit to the exact pushed commit. The evidence binds card,
+generation, epoch, base, head, compact diff metadata (including catalog hunks), and the
+base's tracked paths. An ok finish sends it as `--scope`; the server owns the PATHS
+judgment. Collection errors fail closed with the literal prefix `finish scope evidence: `,
+even for provider, no-result, budget, or deadline ends. Staging and unshaped unverifiable
+ends retain their higher priority; readers bypass collection. Legacy/manual/friend
+finishes may omit evidence and remain lander-checked. Deploy the accepting sprint
+server before these members; there is no compatibility bypass.
+
+`CardContract` checks `OkCarriesScope`, `ScopeErrorFailsClosed`, and `ScopeBoundToPush`.
+Provider/no-result protections exclude explicit collection errors because those are
+now failed work; collected and no-commit paths retain the protections. Staging and
+length protections are unchanged. The ignoring-scope mutant reverses the new rule.
+
 A work card's finish is judged in one place, `member.Judge`, cited from the model's `Finish`:
 
 - **ok** only when the result has the shape, its verdict is `ok`, its head has a commit the
   staged commit does not (the child committed), and the member's push of it to the card's
-  branch succeeded;
+  branch succeeded and bound scope evidence was collected;
 - **no result**, a failed finish of its own kind, when the child ended by itself, within its
   budget and its deadline, having written no result at all and its push was not refused; its
   reason is `no result: no RESULT.md shape`, and the sprint treats it as an ended take

@@ -26,6 +26,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -36,6 +37,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
+	"github.com/mas-bandwidth/nova-tools/pkg/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -138,11 +140,13 @@ type Pusher interface {
 // Push is how a push ended: exactly one of Sha, None and Refused is set. A push that
 // landed may also have opened the card's pull request (PR) or said why not (PRNote).
 type Push struct {
-	Sha     string // pushed: the full sha origin's branch now holds
-	None    string // not pushed: why (the child committed nothing); the finish is failed, no commit
-	Refused string // the push failed: git's own line; the finish is a failure
-	PR      string // the pull request the member opened for the pushed head, "" when none
-	PRNote  string // why a pull request the result asked for was not opened, "" when none was asked or it opened
+	Scope      string // bound git evidence, collected after the push
+	ScopeError string // collection failed: never report an ok finish
+	Sha        string // pushed: the full sha origin's branch now holds
+	None       string // not pushed: why (the child committed nothing); the finish is failed, no commit
+	Refused    string // the push failed: git's own line; the finish is a failure
+	PR         string // the pull request the member opened for the pushed head, "" when none
+	PRNote     string // why a pull request the result asked for was not opened, "" when none was asked or it opened
 }
 
 // ReadStageRetry is how long a read whose stage failed waits before it is run again once by the
@@ -288,7 +292,7 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// a budget or a deadline names how the run ended first; the provider's kind is
 		// the provider case's own (below), never a prefix on another reason, and nor is
 		// the staging kind (the stage's own case, and the usage source's)
-		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging && !strings.HasPrefix(why, EndStaging) {
+		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging && !strings.HasPrefix(why, EndStaging) && !strings.HasPrefix(why, "finish scope evidence: ") {
 			end := r.End
 			if end == EndUnverifiable {
 				end = EndBudget // the budget's words say which: "budget: unverifiable: ..."
@@ -312,6 +316,8 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// and opens no judgment on it (StageRefused); a result with the shape is judged
 		// below as any budget end's is
 		return FinishFailed, EndStaging + ": budget " + cmp.Or(r.Budget, "unverifiable: the usage source stopped answering")
+	case pu.ScopeError != "":
+		return FinishFailed, "finish scope evidence: " + pu.ScopeError
 	case pu.Refused != "":
 		return FinishFailed, "push refused: " + pu.Refused
 	case r.End == EndProvider && r.Provider != "" && !r.Shaped:
@@ -499,6 +505,8 @@ type Config struct {
 	// StepClone is the checkout whose branch holds the card's step commits.
 	// nil discovers it from the process arguments (the member verb).
 	StepClone func(p Packet) string
+	// ScopeCollect substitutes local git evidence collection in deterministic tests.
+	ScopeCollect func(p Packet, head string) (string, error)
 	// ScriptVerify makes this reader a script reader (docs/SPEC-SPRINT.md, the script read):
 	// a read of a script card (CLASS: script) is first asked of it, with the card's program
 	// and deadline; ok is an ok read, whose finding is the one line why, counted as all the
@@ -1508,6 +1516,9 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet) 
 		}
 		if fin != FinishOK {
 			args = append(args, "--failed")
+		}
+		if pu.Scope != "" && fin == FinishOK {
+			args = append(args, "--scope", pu.Scope)
 		}
 		args = append(args, usageArgs(r)...)
 		args = append(args, exitArgs(r, m.noExitArgs.Load())...)
@@ -2634,6 +2645,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 					pu.Refused = "the pusher said nothing"
 				}
 			}
+			m.collectFinishScope(p, &pu)
 			m.post(id, post{res: &r, push: &pu, decided: m.attempt(p, r, pu, branch)})
 		}()
 	}
@@ -2683,6 +2695,7 @@ func (m *Member) endEndedLocal() {
 					pu.Refused = "the pusher said nothing"
 				}
 			}
+			m.collectFinishScope(p, &pu)
 			m.post(id, post{res: &r, push: &pu, decided: m.attempt(p, r, pu, branch)})
 		}()
 	}
@@ -3339,4 +3352,114 @@ func IsReadCardID(id string) bool {
 	}
 	n, err := strconv.Atoi(strings.TrimPrefix(parts[1], "r"))
 	return strings.HasPrefix(parts[1], "r") && err == nil && n >= 1
+}
+
+// FinishScopeEvidence binds a machine member's local diff to the pushed head and take.
+// The member lists git facts only; the server owns every PATHS judgment.
+type FinishScopeEvidence struct {
+	Card    string   `json:"card"`
+	Gen     int      `json:"gen"`
+	Epoch   uint64   `json:"epoch"`
+	Base    string   `json:"base"`
+	Head    string   `json:"head"`
+	Diff    string   `json:"diff"`
+	Tracked []string `json:"tracked"`
+}
+
+// CardContract.tla: Push, OkCarriesScope, and ScopeErrorFailsClosed bind
+// collection to a successful push before Judge and the attempt decision.
+func (m *Member) collectFinishScope(p Packet, pu *Push) {
+	if pu.Sha == "" {
+		return
+	}
+	var err error
+	if m.cfg.ScopeCollect != nil {
+		pu.Scope, err = m.cfg.ScopeCollect(p, pu.Sha)
+	} else {
+		dir := ""
+		if m.cfg.StepClone != nil {
+			dir = m.cfg.StepClone(p)
+		} else {
+			dir = cloneDir(p, os.Args)
+		}
+		// The protected slot marker is outside the child-writable jobs/<card>/repo.
+		marker := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(dir))), "staged")
+		var base []byte
+		if dir == "" {
+			err = fmt.Errorf("no staged checkout")
+		} else {
+			base, err = os.ReadFile(marker)
+		}
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			pu.Scope, err = collectScope(ctx, p, dir, strings.TrimSpace(string(base)), pu.Sha, runGit)
+			cancel()
+		}
+	}
+	if err != nil {
+		pu.Scope = ""
+		pu.ScopeError = err.Error()
+	} else if pu.Scope == "" {
+		pu.ScopeError = "collector returned no evidence"
+	}
+}
+
+func collectScope(ctx context.Context, p Packet, dir, base, head string, run gitCall) (string, error) {
+	if len(base) != 40 || !isStepHex(base) || len(head) != 40 || !isStepHex(head) {
+		return "", fmt.Errorf("staged base and pushed head must be full commit IDs")
+	}
+	g := func(args ...string) (string, error) {
+		out, stderr, err := run(ctx, dir, gitPlain(args...)...)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w: %s", args[0], err, strings.TrimSpace(stderr))
+		}
+		return out, nil
+	}
+	// Neither a moving branch nor the child's checkout HEAD defines the evidence.
+	if _, err := g("merge-base", "--is-ancestor", base, head); err != nil {
+		return "", err
+	}
+	diff, err := g("diff", "--no-ext-diff", "--no-textconv", "-M", "--no-color", base, head, "--")
+	if err != nil {
+		return "", err
+	}
+	diff, err = scopeFileDiff(diff)
+	if err != nil {
+		return "", err
+	}
+	tracked, err := g("ls-tree", "-r", "--name-only", base)
+	if err != nil {
+		return "", err
+	}
+	files := []string{}
+	if strings.TrimSpace(tracked) != "" {
+		files = strings.Split(strings.TrimSuffix(tracked, "\n"), "\n")
+	}
+	out, err := json.Marshal(FinishScopeEvidence{Card: p.Card, Gen: p.Gen, Epoch: p.Epoch, Base: base, Head: head, Diff: diff, Tracked: files})
+	return string(out), err
+}
+
+// Keep file metadata rather than source bodies in argv. The catalog's hunks are the
+// only contents Outside examines. Preserve them so finish and landing agree.
+func scopeFileDiff(diff string) (string, error) {
+	var out strings.Builder
+	for _, f := range diffcheck.Parse(diff) {
+		if f.Old == "" || f.New == "" || strings.ContainsAny(f.Old+f.New, "\n\r\x00") {
+			return "", fmt.Errorf("unrepresentable git scope path")
+		}
+		fmt.Fprintf(&out, "diff --git a/%s b/%s\nrename from %s\nrename to %s\n", f.Old, f.New, f.Old, f.New)
+		if f.New == diffcheck.CatalogFile {
+			for _, h := range f.Hunks {
+				fmt.Fprintf(&out, "@@ -0,0 +%d,0 @@\n", h.NewStart)
+				for _, line := range h.Lines {
+					out.WriteString(line)
+					out.WriteByte('\n')
+				}
+			}
+		}
+	}
+	if diff != "" && out.Len() == 0 {
+		return "", fmt.Errorf("git diff has no parseable file records")
+	}
+	return out.String(), nil
 }

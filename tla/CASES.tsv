@@ -246,3 +246,4 @@ MCTypedFramesBrokenWritersFirst.cfg	MCTypedFrames.tla	invariant	ReadersBeforeWri
 MCTypedFramesBrokenClampAccepted.cfg	MCTypedFrames.tla	invariant	NoClampAccepted	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenAbsentIsZero.cfg	MCTypedFrames.tla	invariant	AbsentIsNotZero	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenWriterLooser.cfg	MCTypedFrames.tla	invariant	WriterRefusesWhatReaderRefuses	ignore-terminal	typed-frames	required	-
+MCCardContractBrokenOkWithoutScope.cfg	MCCardContract.tla	invariant	OkCarriesScope	ignore-terminal	cardcontract	required	-

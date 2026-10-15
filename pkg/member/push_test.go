@@ -73,7 +73,7 @@ func (f *fakePusher) cards() []string {
 func pushRig(t *testing.T, pu Pusher, r Result) (*rig, Packet) {
 	t.Helper()
 	s, rn, out := newScript(), newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "m"}, rowWidth(s, 2), rn, pu, out), s: s, r: rn, out: out}
+	g := &rig{m: New(Config{As: "m", ScopeCollect: fixtureFinishScope}, rowWidth(s, 2), rn, pu, out), s: s, r: rn, out: out}
 	p := pk("c1")
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	_, err := g.tick(t)
@@ -98,7 +98,7 @@ func TestAnEndedCardIsPushedBeforeItIsFinished(t *testing.T) {
 	assert.Equal(t, []string{"c1"}, pu.cards())
 	assert.Equal(t, []string{"0123456"}, pu.heads, "the pusher is handed the head the child named")
 	assert.Equal(t, "work/c1", pu.asked[0].Branch, "the pusher is handed the launch's packet")
-	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + fullSha + " to work/c1: landed the thing --head " + fullSha + " --branch work/c1 --epoch 7"}, g.s.lines("finish"))
+	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + fullSha + " to work/c1: landed the thing --head " + fullSha + " --branch work/c1" + fixtureScopeArg(pk("c1"), fullSha) + " --epoch 7"}, g.s.lines("finish"))
 	assert.Contains(t, g.out.String(), "push c1 pushed="+fullSha+" branch=work/c1\n")
 }
 
@@ -193,7 +193,7 @@ func TestCardsThatEndTogetherArePushedSideBySide(t *testing.T) {
 	}
 	pu := &fakePusher{def: Push{Sha: fullSha}, yield: 2000}
 	s, rn, out := newScript(), newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "m"}, rowWidth(s, len(ids)), rn, pu, out), s: s, r: rn, out: out}
+	g := &rig{m: New(Config{As: "m", ScopeCollect: fixtureFinishScope}, rowWidth(s, len(ids)), rn, pu, out), s: s, r: rn, out: out}
 	var cards []queueCard
 	for _, id := range ids {
 		p := pk(id)
@@ -342,7 +342,7 @@ func TestThePullRequestRidesOnTheFinish(t *testing.T) {
 	g, _ := pushRig(t, &fakePusher{def: Push{Sha: fullSha, PR: "https://example.com/o/n/pull/7"}}, r)
 	_, err := g.tick(t)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + fullSha + " to work/c1 pr=https://example.com/o/n/pull/7: r --head " + fullSha + " --branch work/c1 --epoch 7"}, g.s.lines("finish"))
+	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + fullSha + " to work/c1 pr=https://example.com/o/n/pull/7: r --head " + fullSha + " --branch work/c1" + fixtureScopeArg(pk("c1"), fullSha) + " --epoch 7"}, g.s.lines("finish"))
 	g, _ = pushRig(t, &fakePusher{def: Push{Sha: fullSha, PRNote: "no gh"}}, r)
 	_, err = g.tick(t)
 	require.NoError(t, err)
@@ -359,7 +359,7 @@ func TestAReworksFinishSaysWhereItWasStaged(t *testing.T) {
 	g, _ := pushRig(t, &fakePusher{def: Push{Sha: fullSha}}, Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "landed the thing", Carry: carry})
 	_, err := g.tick(t)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + fullSha + " to work/c1: stage: " + carry + "; landed the thing --head " + fullSha + " --branch work/c1 --epoch 7"}, g.s.lines("finish"))
+	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + fullSha + " to work/c1: stage: " + carry + "; landed the thing --head " + fullSha + " --branch work/c1" + fixtureScopeArg(pk("c1"), fullSha) + " --epoch 7"}, g.s.lines("finish"))
 
 	g, _ = pushRig(t, &fakePusher{def: Push{None: "the child committed nothing"}}, Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "checked", Carry: carry})
 	_, err = g.tick(t)

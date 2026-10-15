@@ -202,6 +202,10 @@ type rig struct {
 }
 
 func newRig(cfg Config) *rig {
+	// This rig uses a fake pusher, so bind its successful pushes to explicit fixture evidence.
+	if cfg.ScopeCollect == nil {
+		cfg.ScopeCollect = fixtureFinishScope
+	}
 	s, r, out := newScript(), newRunner(), &bytes.Buffer{}
 	return &rig{m: New(cfg, s, r, &fakePusher{}, out), s: s, r: r, out: out}
 }
@@ -256,7 +260,7 @@ func TestEndedOkCardIsFinishedWithItsHeadBranchAndEpoch(t *testing.T) {
 	g.s.reset()
 	acted, err := g.tick(t)
 	require.NoError(t, err)
-	want := "finish --as m c1@3 --report pushed=" + fullSha + " to work/c1: landed the thing --head " + fullSha + " --branch work/c1 --epoch 7"
+	want := "finish --as m c1@3 --report pushed=" + fullSha + " to work/c1: landed the thing --head " + fullSha + " --branch work/c1" + fixtureScopeArg(p, fullSha) + " --epoch 7"
 	require.Equal(t, []string{want}, g.s.lines("finish"), "finish lines, want %q", want)
 	require.Equal(t, 1, acted, "acted=%d running=%d, want 1 and 0", acted, g.m.Running())
 	require.Equal(t, 0, g.m.Running(), "acted=%d running=%d, want 1 and 0", acted, g.m.Running())
