@@ -287,7 +287,8 @@ func (w world) status(c *tool.Call) *tool.Out {
 		}
 		fields = append(fields, "base", cl.Base)
 		if fields[3] != "up" {
-			items = append(items, func() { o.Item("engine", fields...) })
+			fields = append(fields, "store", "unknown", "shared", "unknown")
+			items = append(items, func() { o.ItemText("engine", "the engine did not answer", fields...) })
 			continue
 		}
 		answering++
