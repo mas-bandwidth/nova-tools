@@ -1,0 +1,4 @@
+Verdict: LAND
+Head: abc
+
+The card is done.

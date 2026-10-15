@@ -1,0 +1,5 @@
+from: ada
+to: bob
+subject: odd
+body: x
+at: not-a-stamp
