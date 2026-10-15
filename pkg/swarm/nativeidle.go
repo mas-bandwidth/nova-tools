@@ -88,7 +88,16 @@ type IdleEnd struct {
 	Kind    string
 	Path    string
 	Refused bool
+	// Cause names why a card with no refusal went still, when the run can tell: today only
+	// IdleCauseNeverStarted. "" is a card that worked and then went still, whose end is
+	// the plain idle reaping.
+	Cause string
 }
+
+// IdleCauseNeverStarted is the cause of a card the idle watch ended whose harness never
+// started work: no harness store, nothing printed and no tokens spent. It is the harness
+// (or the provider behind it) that failed the card, not the card going still after work.
+const IdleCauseNeverStarted = "harness-never-started"
 
 // WallRefusal is this end's refusal as a wall death, and whether it is one: it is one
 // only when the refusal NAMES a path (docs/roadmap.sexp, swarm-idle-reap-verdict). A
@@ -106,14 +115,18 @@ func (e IdleEnd) WallRefusal() (WallRefusal, bool) {
 // CardIdleLine is the typed line a card ended for idleness is reported on when NO refusal
 // stopped it -- a provider turn that never answered, a tool call that never returned:
 //
-//	CARD IDLE task=<id> step=<n> idle=<n>s
+//	CARD IDLE task=<id> step=<n> idle=<n>s[ cause=<c>]
 //
 // It is deliberately not a WALL line. `js-under-20-bytes` died in a provider stall and was
 // reported `WALL task=... path=/var/db/xcode_select_link`, and a shift went looking at the
 // wall for it.
 func CardIdleLine(task string, e IdleEnd) string {
-	return fmt.Sprintf("CARD IDLE task=%s step=%s idle=%.0fs",
+	line := fmt.Sprintf("CARD IDLE task=%s step=%s idle=%.0fs",
 		oneline.Field(task), oneline.Field(dashOr(e.Step)), e.Idle.Seconds())
+	if e.Cause != "" {
+		line += " cause=" + oneline.Field(e.Cause)
+	}
+	return line
 }
 
 // IdleWatch is one card's watch: the file its own output lands in, its job directory, the

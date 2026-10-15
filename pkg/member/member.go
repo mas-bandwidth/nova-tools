@@ -175,6 +175,13 @@ type Result struct {
 	// reported with the finish onto the attempt's record.
 	End   string
 	Usage string
+	// EndCause names why End is EndIdleReap when native could tell: the NATIVE line's
+	// `cause=` beside `reason=idle-reap` (swarm.IdleCauseNeverStarted, a harness that
+	// never started work). Judge says it after the end, so a finish never reads as the
+	// bare `idle-reap: no RESULT.md shape`, which the sprint counts as the card's own
+	// harness fault. "" for a card that worked and then went still, and for every
+	// other end.
+	EndCause string
 	// Provider is why End is EndProvider, as native read it from the harness's own log
 	// or transcript: the cause, `provider: class=<c> status=<n|-> msg=<words>`
 	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, THE REASON PREFIXES).
@@ -330,6 +337,10 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// deals the card again on another route (cardhdr.EndNoResult). A run its budget or
 		// its deadline ended is the card's to be judged (below: the end is said first)
 		return FinishFailed, EndNoResult + ": no RESULT.md shape"
+	case !r.Shaped && r.End == EndIdleReap && r.EndCause != "":
+		// the idle watch ended a run whose harness never started work: the cause is
+		// the finish's reason, never only that the child left no shape
+		return FinishFailed, r.EndCause + ": no RESULT.md shape"
 	case !r.Shaped:
 		return FinishFailed, "no RESULT.md shape"
 	case r.Step != "":

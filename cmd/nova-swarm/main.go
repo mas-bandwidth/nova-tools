@@ -966,6 +966,15 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// fields still reads them all.
 	// The request may have been accepted and the response was lost. That is
 	// not a delivered card and not an ordinary failure the coordinator may retry.
+	return printNativeResult(stdout, stderr, cfg, res, code, *sweepNow)
+}
+
+// printNativeResult is the lines a native run that started prints once it has ended: the
+// NATIVE line, its notes and the typed end the watch gave the card. It returns the
+// process exit. It is a function of its inputs and writes only to the two writers (and,
+// with sweep, removes the job once its results are published), so a test hands it a
+// result and reads the lines.
+func printNativeResult(stdout, stderr io.Writer, cfg nativeRunConfig, res nativeRunResult, code int, sweep bool) int {
 	verdict, why := nativeVerdictWhy(res)
 	// harness=<ok|silent> is ALWAYS present: the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
@@ -981,7 +990,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
-		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped), idleSuffix(res.idled))
+		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped), idleSuffix(res.idled, res.idleEnd.Cause))
 	if res.survivors != "" {
 		// what the harness left in its group, ended before this line (nativeEndLeftovers)
 		fmt.Fprintf(stdout, " survivors=%s", oneline.Field(res.survivors))
@@ -1047,7 +1056,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// is the control: it deletes the job directory the way the bench sweep does,
 	// and only when publishNativeResults named the directory it landed in. A
 	// publish that did not land leaves the job, which is then the only copy.
-	if *sweepNow {
+	if sweep {
 		if res.resultsDir == "" {
 			fmt.Fprintf(stderr, "NATIVE NOTE: --sweep-now left %s in place: its results were not published\n", oneline.Field(res.job))
 		} else if err := sweepNativeJob(res.root, res.job); err != nil {
@@ -1198,11 +1207,19 @@ func termSuffix(terminated bool) string {
 // the log tells a card the watch reaped from a card the deadline killed -- both are
 // rc=-1 -- so the finish states idle reaping and never a deadline that never fired
 // (docs/roadmap.sexp, swarm-idle-reap-verdict).
-func idleSuffix(idled bool) string {
-	if idled {
-		return " reason=" + oneline.Field("idle-reap")
+//
+// A reap whose harness never started work carries its cause beside it
+// (` reason=idle-reap cause=harness-never-started`, swarm.IdleCauseNeverStarted), so the
+// member's finish and the sprint tell it from a card that worked and then went still.
+func idleSuffix(idled bool, cause string) string {
+	if !idled {
+		return ""
 	}
-	return ""
+	mark := " reason=" + oneline.Field("idle-reap")
+	if cause != "" {
+		mark += " cause=" + oneline.Field(cause)
+	}
+	return mark
 }
 
 // usageSuffix renders the usage status the NATIVE OK line carries: the empty string when a
