@@ -295,7 +295,7 @@ func TestReachHelp(t *testing.T) {
 		"Exit 0", "Exit 1", "Exit 2",
 		friend.AccessibilityRemedy,
 		"nova-friend reach --as ada --to bob --dry-run",
-		"see also: nova-friend ping --wake is the coordinator's periodic wake check; reach is this escalation ladder",
+		"see also: nova-hook serve's per-minute challenge is the periodic liveness check (nova-hook friends --json reads it); reach is this escalation ladder",
 	} {
 		require.Contains(t, help, text)
 		require.Contains(t, doc, text, "docs/CLI.md carries the help's text")

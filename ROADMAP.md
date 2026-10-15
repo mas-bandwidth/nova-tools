@@ -23,7 +23,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (25)
+- [Friends](#friends) (24)
 - [Setup, release and operations](#setup-release-and-operations) (97)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
@@ -209,14 +209,6 @@ Every one-shot friend lane counts tokens and stops at a per-card cap. Briefs cit
 Target: after v1.4
 
 From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
-
-### Show and alarm friend daemon state, and ping every friend each second
-
-A test pins the installed service definition, and a view shows which binary each friend daemon runs and alarms when one died or was not reinstalled. A nova-friend verb replaces the hand ping loop and marks a friend down after ten seconds without a pong.
-
-Target: v1.5
-
-From: card moved out of the sprint (work record, 2026-10-04)
 
 ### Run every friend lane inside a wall profile taken from its friend row
 

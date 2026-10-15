@@ -2386,6 +2386,41 @@ rest; a wrapper around any other nova tool (`nova-tokens`, `nova-redis serve`)
 is not flagged until that tool takes `--seat`; and only
 `docs/` Markdown is read, so a README elsewhere is not.
 
+### `retiredpresence` — the old friend presence does not come back
+
+**The rule.** No name in `internal/ci/testdata/retired-presence.txt` appears in
+the tree: an `ident` row as a whole-word Go identifier in any `.go` file, a
+`verb` row as a `Name: "<verb>"` literal in `cmd/nova-friend`, and a `text` row
+(a command, flag or launchd label) in any text file a person or an AI reads
+(`.go`, `.md`, `.sh`, `.sexp`, `.txt`, `.tsv`, `.yml`, `.json`, `.plist`,
+`.tla`, `.cfg`), not followed by a letter, digit or underscore. Each row names
+what replaced it.
+**The mistake it prevents.** v1.3's one truth for whether a friend is there is
+the nova-hook record and its per-minute challenge, which only the model answers
+(docs/SPEC-HOOK.md). The machinery before it that did the same job (the
+coordinator's one-second keepalive loop, the coordinator's ping, the wake ping
+loop and its agent, the pong wait, the hand beat, the daemon's session-check
+presence and its push proof) kept being used from the tool, rebuilt by new
+code and taught by docs after it was superseded (Glenn, 2026-10-14: "remove
+the old stuff, so they don't come back, or get used when using the tool, or
+building new code").
+**The test.** `TestNoRetiredPresenceNameReturns`, with its control
+`TestRetiredPresenceRuleCatchesEachForm`
+(`internal/ci/retired_presence_class_test.go`), which pins a whole-word
+identifier, a nova-friend verb literal, a command and a longer word that is not
+it, and history as unscanned.
+**Its allowlist.** None: the table is the list of names, and history is not
+scanned (CHANGELOG.md, FIXES.md, RESOLUTIONS.md, docs/fixes.sexp,
+docs/RELEASE-NOTES-*, docs/dogfood/, docs/stranger/, the deleted-tests log).
+**Its remedy line.** Use the replacement the finding names; a name that must
+come back is the owner's decision, and its row is deleted in that change with
+the reason.
+**Its narrowings.** Names are matched as written: a retired thing spelled
+another way (a new name for the same loop) is not seen, which is why the table
+names what replaced each one; the daemon's own answer to a `PING` and its
+advisory harness process check are not in the table, since they still run
+until the daemon's delivery is retired.
+
 ### `seatredis` — no verb of a live tool that selects a seat refuses an empty `--redis`
 
 **The rule.** Every `--redis` flag of a live package that selects a seat (a

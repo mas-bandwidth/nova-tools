@@ -1,14 +1,14 @@
 // nova-friend is what a friend runs to be part of the team (docs/SPEC-FRIEND.md;
 // the model is tla/Friend.tla): one launchd agent per friend that parks on the
 // friend's nova-bus stream and pushes each message into the running session
-// as a turn, beats to the sprint server while it does, answers the
-// coordinator's pings at once and pushes them in so the session answers as
-// its own turn, and tells the session when the coordinator goes silent; and,
-// on the coordinator's side, the ping loop that pings every friend each
-// second. The verbs are run, beat, install, uninstall, check, status, pong,
-// ping, wait-pong, watch, host, serve and reach; the
-// dispatch, the banner, the help, the refusals and the output envelope are
-// pkg/tool's, and the rules are pkg/friend's.
+// as a turn, runs the one-shot lanes that work her sprint cards, and beats to
+// the sprint server, whose answer carries her row. Liveness is the nova-hook
+// record's alone (cmd/nova-hook); the coordinator's ping verbs and keepalive
+// loop are retired (v1.3.5, internal/ci retired_presence_class_test.go). The
+// verbs are run, install, uninstall, check, status, pong, watch, host, reach,
+// lanes, resume and acceptance; the dispatch, the banner, the help, the
+// refusals and the output envelope are pkg/tool's, and the rules are
+// pkg/friend's.
 package main
 
 import (
@@ -56,9 +56,6 @@ const (
 	DefaultServer = "127.0.0.1:6390"
 )
 
-// WaitPongEvery is how often wait-pong reads the log.
-const WaitPongEvery = time.Second
-
 // OpenRetryMax caps the wait between two tries of the daemon to open a store
 // that does not answer.
 const OpenRetryMax = 30 * time.Second
@@ -78,7 +75,7 @@ type world struct {
 	down           func(ctx context.Context, server string, argv []string) error                                                          // one down verb to the sprint server (DownArgv: a credit refusal's friend down --reason --until); nil names none (a test's)
 	sqlite         friend.Exec                                                                                                            // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
 	cards          func(ctx context.Context, server string, argv []string) (string, error)                                                // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
-	friends        func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                               // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
+	seatHolder     func(ctx context.Context, server string) (seat string, err error)                                                      // the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
 	holders        func(ctx context.Context, server string) (map[string]string, error)                                                    // current card holders from GET /api/view/cards; nil in a world that reads none
 	view           func(ctx context.Context, server, friend string) (string, error)                                                       // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
 	stage          func(dir string) *friend.Stager                                                                                        // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
@@ -268,20 +265,20 @@ func realWorld() world {
 			_, err := sprintBeat(ctx, server, append(args, proofArgs(proof)...))
 			return err
 		},
-		progress:  sprintVerb,
-		finish:    sprintVerb,
-		hookStore: hookgate.Store,
-		gate:      hookgate.Gate,
-		down:      sprintVerb,
-		cards:     sprintAsk,
-		view:      sprintView,
-		friends:   coordinatorFriends,
-		holders:   sprintHolders,
-		stage:     func(dir string) *friend.Stager { return &friend.Stager{Dir: dir} },
-		tip:       (&friend.Stager{}).Tip,
-		lookPath:  exec.LookPath,
-		copy:      friend.CopyExecutable,
-		settings:  friend.OSFS{},
+		progress:   sprintVerb,
+		finish:     sprintVerb,
+		hookStore:  hookgate.Store,
+		gate:       hookgate.Gate,
+		down:       sprintVerb,
+		cards:      sprintAsk,
+		view:       sprintView,
+		seatHolder: coordinatorSeat,
+		holders:    sprintHolders,
+		stage:      func(dir string) *friend.Stager { return &friend.Stager{Dir: dir} },
+		tip:        (&friend.Stager{}).Tip,
+		lookPath:   exec.LookPath,
+		copy:       friend.CopyExecutable,
+		settings:   friend.OSFS{},
 		binary: func() (string, error) {
 			p, err := os.Executable()
 			if err != nil {
@@ -455,14 +452,14 @@ func friendTool(w world) *tool.Tool {
 	return &tool.Tool{
 		Name:    "nova-friend",
 		Default: "check",
-		What:    "what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon",
+		What:    "what a friend runs to be part of the team: the lanes that work her cards, and her messages into her session, as one daemon",
 		Stamp:   version,
 		How: `one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
 nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
-harness's deliver command), beats to the sprint server while the session answers, answers the
-coordinator PING at once (daemon-pong); presence is the session's word on the bus, never a process.
+harness's deliver command), and beats to the sprint server, whose answer carries the friend's row; liveness is
+the nova-hook record's alone (nova-hook serve's challenge, answered by the model's nova-hook prove), never this daemon's.
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
-		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
+		ExitTable: "0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
 			{
@@ -482,19 +479,9 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
 				Detail: `The loop launchd runs (install writes it). A harness with no deliver command (the surveyed ones) is
-refused at once, exit 2, the adapter card its remedy. Otherwise the daemon starts with its push unproven
-(status push=unproven, check proof=pending): its first SESSION CHECK goes in through the harness at once,
-and it delivers nothing into the session until the session answers it (or writes on the bus), then turns
-live without a restart; unanswered within ` + friend.SessionBound.String() + `, one "push proof: unproven" line names the check's nonce, and
-the check is asked again with the same nonce, every ` + friend.SessionQuiet.String() + ` once the session has read the last, else after
-` + friend.ReaskAfter.String() + ` (a check the last run queued and never saw answered keeps its nonce). A session the adapter
-cannot drive is one "presence: REFUSED" line with the remedy (a dsh session under an agent preset: start a
-session in <dir> with no agent preset and name it with --session <id>). The beat after a check goes in
-says it (--check <nonce> --run <run>), and the beat after the session answers names it (--pong <nonce>
---run <run>): the sprint server counts only an answer to a check this run asked, once, as the friend's session's
-evidence while the friend's beats go on, so a check goes in every ` + friend.ProveEvery.String() + ` while the friend is up; a per-card harness
-(claude) says neither. While the session is down the beat says so (--until, --reason: the push unproven,
-or no session answer, with the check's nonce). The present comes first, the backlog never does: on the
+refused at once, exit 2, the adapter card its remedy. Liveness is never this daemon's: it is the nova-hook record's alone (nova-hook serve challenges each
+hooked friend once a minute and only the model's nova-hook prove answers; docs/SPEC-HOOK.md), and the
+daemon's lanes take work only while its friend is hooked in. The present comes first, the backlog never does: on the
 daemon's start (once the first beat says the friend's row's mode), after ` + friend.StaleAfter.String() + ` with no turn taken, and when the friend
 sends a message to the friend's own stream with the subject present, the next turn is one PRESENT turn (the friend's live queue from the friend's
 row or inbox/QUEUE.json, each card's column and BRIEF.md, the seat, the newest coordinator note, and one line
@@ -506,19 +493,9 @@ message is read off the stream and pushed in as ONE turn, one envelope, oldest f
 [i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>, capped at the harness's text limit
 (` + fmt.Sprint(friend.BatchBytes) + ` bytes unless it names its own; the first message always goes in) with the rest named under
 and <n> more: nova-bus recv --as <me> --all; exit 0 acks every message the envelope carried, a failure acks none. A turn that fails leaves them pending, handed in
-again when their claims open, and the third failure acks a message, given_up=true on the record. A
-PING is answered at once with a daemon-pong and acked, never a turn; while a challenge is open the
-pong line rides at the head of the next turn. No ping for ` + friend.Window.String() + `: "coordinator silent", and
-"coordinator back" when pings resume, collapsed to the latest and said only inside a turn that
-carries messages. Presence is the session's, never the daemon's: ` + friend.ProveEvery.String() + ` after the last check went in
-(the session's own bus messages keep the friend up meanwhile; the daemon's never count), a SESSION CHECK <nonce> goes in through the harness
-as a turn of its own, once no turn is under way (on the friend's own stream for a harness with no
-deliver command), and only the session's pong carrying that nonce answers it; none within ` + friend.SessionBound.String() + `
-and the friend is down, "no session answer", the friend's beat saying down until the next answer brings it up; it
-starts down until the first answer. The check waits while a turn is at the gate (from before the limit
-gate's wait to its end) or, on a headless harness (dsh, gemini: a one-shot process per turn), while the
-adapter's own record says a turn runs, and a check owed ` + friend.SessionQuiet.String() + ` that has not
-gone in is one "presence: REFUSED" line naming why. A turn runs as long as it prints; one
+again when their claims open, and the third failure acks a message, given_up=true on the record. A PING on
+the stream (nothing sends one since the coordinator's ping verbs were retired) is answered with a
+daemon-pong and acked, never a turn. A turn runs as long as it prints; one
 silent past --silent-stop is stopped with its process group, the reason on the record. The same provider refusal (an invalid_request_error)
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
@@ -596,27 +573,6 @@ go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and
 					f.Prints()
 				},
 				Run: w.run,
-			},
-			{
-				Name:    "beat",
-				Usage:   "beat --as <me> [--server <addr>] [--redis <addr>]",
-				Example: "", // the daemon's own act; the example block's first run has no beat line
-				Effect:  tool.Delivery + ": one beat to the sprint server, the same beat the daemon's loop sends while its session is alive; --dry-run sends nothing",
-				Detail: `The daemon's beat on its own (docs/SPEC-FRIEND.md, the loop): one "friend beat <me>" to
-the sprint server, what keeps the friend up in the sprint's friends table. The agent install writes
-runs the daemon, and the daemon beats already while its session is alive, so the beat needs no
-agent of its own and no hand plist: this verb is the canary, run by hand. Like every verb that acts
-as a friend it is gated (docs/SPEC-HOOK.md): unless --as is hooked in as a friend it sends nothing and
-is FAILED at exit 1 with the breadcrumb. A server that does not answer is exit 2. --dry-run says the
-beat it would send, and to which server, and opens nothing.
-example: nova-friend beat --as bob --server 127.0.0.1:6390`,
-				DryRun: true,
-				Flags: func(f *tool.Flags) {
-					f.Required("as", "your name, a nova-config friend row")
-					f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
-					redis(f)
-				},
-				Run: w.beatVerb,
 			},
 			{
 				Name:    "install",
@@ -832,74 +788,6 @@ command, no prompt pattern for the harness, tmux missing or failing).`,
 			},
 			w.reachVerb(),
 			{
-				Name:    "ping",
-				Usage:   "ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]",
-				Example: "ping --as ada --to bob --nonce abc123",
-				Effect:  tool.Delivery + ": one PING on the friend's stream, as the coordinator",
-				DryRun:  true,
-				Detail: `Sends "PING <nonce>" with the seat line (seat=<me> since=<RFC3339>) and the pong command the
-session runs; the nonce is six random characters unless --nonce names one. Prints PING OK
-nonce= id= to=. The daemon answers daemon-pong at once and acks it; the session answers pong at the head of its next turn.
---wake makes it a wake check (a wake=1 line in the body): the daemon still answers at once, and, the session being free,
-pushes the pong line in as its own turn, so an idle session is asked too; only the session's pong ends it (wait-pong).
---dry-run checks the PING as send checks it and sends nothing.
-
---wake --to-friends is the wake loop (docs/SPEC-FRIEND.md, "The wake ping loop"): it reads the friends table from the sprint
-server (--server) and sends a wake PING to every friend whose status is up, never one held or down, never --as, never one in
---never-wake; waits up to --within for each session's pong (a daemon-pong never counts); and sends the coordinator (the seat's
-holder, else --as) one blocker note naming the friends whose session did not answer, "wake: deaf: <f,...>", once per change
-of that set. With --every <d> it does this each d until interrupted, one line per pass (WAKE OK pass= pinged= answered=
-deaf=) and one WAKE DEAF friends= at= per change; without it, one pass. ping-install runs that loop as a launchd agent.`,
-				Flags: func(f *tool.Flags) {
-					f.Required("as", "your name, the coordinator")
-					f.String("to", "", "the friend to ping (required without --to-friends)")
-					f.Bool("to-friends", false, "ping every friend the friends table holds up: wake pings, with --wake")
-					f.Duration("every", 0, "with --to-friends: pass again each d until interrupted (default: one pass)")
-					f.Duration("within", friend.Window, "with --to-friends: how long each pass waits for the sessions' pongs")
-					f.String("never-wake", "", "with --to-friends: friends never wake-pinged, comma-separated")
-					f.String("server", w.server(), "with --to-friends: the sprint server, host:port, whose coordinator view holds the friends table (default: "+ServerEnv+", else "+DefaultServer+")")
-					f.Check(func(c *tool.Call) { wakeFlagProblems(c) })
-					f.String("nonce", "", "the nonce to carry (default: six random characters)")
-					f.String("since", "", "since when you hold the seat, RFC3339 (default: now)")
-					f.Bool("wake", false, "a wake check: the session is pushed the pong line as its own turn when it is free")
-					redis(f)
-				},
-				Run: w.ping,
-			},
-			{
-				Name:    "ping-install",
-				Usage:   "ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]",
-				Example: "", // writes a launchd agent: the example block has no line a test may run for real
-				Effect:  tool.Delivery + ": a launchd agent that runs ping --wake --to-friends --every, started at login and restarted when it dies",
-				DryRun:  true,
-				Detail: `Writes the agent com.nova.friend-wake-ping-<as> under ~/Library/LaunchAgents and loads it, so running it again replaces
-the agent with the same result; the agent runs: nova-friend ping --as <as> --wake --to-friends --every <d> --within <d> with
-the other flags as given. --dry-run prints the plist path and the commands and writes nothing. ping-uninstall boots it out and
-removes its plist.`,
-				Flags: func(f *tool.Flags) {
-					f.Required("as", "your name, the coordinator")
-					f.Duration("every", 10*time.Minute, "how often a pass runs")
-					f.Duration("within", friend.Window, "how long each pass waits for the sessions' pongs")
-					f.String("never-wake", "", "friends never wake-pinged, comma-separated")
-					f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
-					f.String("launchd-log", "", "launchd's own log (default: ~/Library/Logs/nova-friend-wake-ping-<as>.log)")
-					redis(f)
-				},
-				Run: w.pingInstall,
-			},
-			{
-				Name:    "ping-uninstall",
-				Usage:   "ping-uninstall --as <coordinator> [--dry-run]",
-				Example: "", // removes a launchd agent: no example line
-				Effect:  tool.Delivery + ": boots the wake ping agent out and removes its plist",
-				DryRun:  true,
-				Detail:  `Removes what ping-install wrote; an agent that is not there is fine.`,
-				Flags: func(f *tool.Flags) {
-					f.Required("as", "your name, the coordinator")
-				},
-				Run: w.pingUninstall,
-			},
-			{
 				Name:    "pong",
 				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
 				Example: "pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
@@ -924,25 +812,6 @@ the line it would send; nothing is sent and no pong file is written.`,
 					redis(f)
 				},
 				Run: w.pong,
-			},
-			{
-				Name:    "wait-pong",
-				Usage:   "wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]",
-				Example: "wait-pong --from bob --nonce abc123 --timeout 2s",
-				Effect:  tool.Inspection,
-				Detail: `Reads the bus log every second until a pong for the nonce from that friend's own stream (the
-message's from, never its body) is there, or --timeout (default ` + friend.Window.String() + `) runs out. The log is read
-from --timeout before the wait began (the store's clock), so a pong older than the wait is not
-looked for and a long log is never read from its start. Prints WAIT-PONG OK
-nonce= from= at= queue= working= width= daemon=<true|false> (whether the daemon-pong came too),
-or WAIT-PONG NONE at exit 1.`,
-				Flags: func(f *tool.Flags) {
-					f.Required("from", "the friend whose pong to wait for")
-					f.Required("nonce", "the nonce the ping carried")
-					f.Duration("timeout", friend.Window, "how long to wait")
-					redis(f)
-				},
-				Run: w.waitPong,
 			},
 			{
 				Name:    "watch",
@@ -1069,29 +938,6 @@ A friend a person held with nova-sprint friend down stays held until nova-sprint
 					stateDir(f)
 				},
 				Run: w.resume,
-			},
-			{
-				Name:    "serve",
-				Usage:   "serve --as <coordinator> [--redis <addr>] [--dry-run]",
-				Example: "", // a loop: the example block has no line that runs for ever
-				Effect:  tool.Delivery + ": the coordinator's ping loop; a PING to every friend each second, until a signal",
-				DryRun:  true,
-				Detail: `The coordinator's side of the connection, run as a nova-config loop row. Each ` + friend.PingEvery.String() + `: the pongs on
-the coordinator's own stream are read (a daemon-pong or a session pong, the sender the message's from,
-never its body; only a nonce sent to that friend in the last ` + friend.DownAfter.String() + ` answers, once), each friend whose
-state changed is said, and every friend row but --as gets a PING with a fresh nonce. A friend is up on
-a pong and down after ` + friend.DownAfter.String() + ` without one (from the start for a friend never answered). The friend rows
-are nova-config's as the bus store holds them (the set friends), read at the start and again each
-` + friend.RowsEvery.String() + `: a row added is pinged, a row removed is forgotten. Prints SERVE OK friends= every= down_after= once, then one line per state change, never one
-per ping: SERVE UP friend= at=, SERVE DOWN friend= at= last_pong=<RFC3339|never> reason=; a store or rows
-read that fails is one SERVE NOTE until it changes or clears. Stops on SIGINT or SIGTERM: SERVE STOP.
---dry-run reads the friend rows and prints SERVE OK friends= every= down_after=: nothing is sent.`,
-				Flags: func(f *tool.Flags) {
-					f.Required("as", "your name, the coordinator: the pings come from it and the pongs come to it")
-					redis(f)
-					f.Prints()
-				},
-				Run: w.serve,
 			},
 			{
 				Name:   "acceptance",
@@ -1883,32 +1729,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 	return tool.Exit(0)
 }
 
-// beatVerb is the daemon's beat on its own: one "friend beat <me>" to the
-// sprint server, the same call world.beat makes for the daemon's loop each
-// time round (docs/SPEC-FRIEND.md, the loop). The agent install writes
-// runs the daemon, and the daemon beats already while its session is alive,
-// so no agent of the beat's own is written (the hand plists are retired);
-// the verb is the canary, gated on --as as a friend (docs/SPEC-HOOK.md), and a
-// server that does not answer is exit 2.
-func (w world) beatVerb(c *tool.Call) *tool.Out {
-	name, server := c.Str("as"), c.Str("server")
-	if c.DryRun() {
-		return tool.Done().Fact("as", name).Fact("server", server).Fact("dry_run", true).Note("dry run: no beat sent; it would send friend beat " + name + " to " + server)
-	}
-	b, closeStore, refused := w.bus(c)
-	if refused != nil {
-		return refused
-	}
-	defer closeStore()
-	if o := w.gateVerb(b.Store, name, hook.Friend, hook.Bus); o != nil {
-		return o // not hooked in as a friend: no beat is sent (docs/SPEC-HOOK.md)
-	}
-	if _, err := w.beat(context.Background(), server, name, time.Time{}, friend.BeatWords{}); err != nil {
-		return tool.Refuse("the beat was not taken: " + err.Error())
-	}
-	return tool.Done().Fact("as", name).Fact("server", server)
-}
-
 // load1 is the machine's one-minute load, read at most every 5 seconds: /proc/loadavg, else
 // sysctl vm.loadavg; 0 (no load rule can fire) when neither answers.
 func (w world) load1() func() float64 {
@@ -1981,16 +1801,13 @@ func (w world) held(name, server string) func(context.Context) (friend.Row, erro
 }
 
 // seat is the daemon's Seat: the coordinator seat holder as the sprint server's coordinator
-// view says it (coordinatorFriends); nil in a world that reads none (a test's), which leaves
+// view says it (coordinatorSeat); nil in a world that reads none (a test's), which leaves
 // the seat unknown, so every message is delivered quoted.
 func (w world) seat(server string) func(context.Context) (string, error) {
-	if w.friends == nil {
+	if w.seatHolder == nil {
 		return nil
 	}
-	return func(ctx context.Context) (string, error) {
-		_, seat, err := w.friends(ctx, server)
-		return seat, err
-	}
+	return func(ctx context.Context) (string, error) { return w.seatHolder(ctx, server) }
 }
 
 // stager is the daemon's one Stager: every held work card's job staged under her working
@@ -2581,95 +2398,6 @@ func (w world) pong(c *tool.Call) *tool.Out {
 		return answer(err)
 	}
 	return tool.Done().Fact("nonce", nonce).Fact("to", to).Fact("id", m.ID).Fact("at", m.At.Format(time.RFC3339))
-}
-
-func (w world) ping(c *tool.Call) *tool.Out {
-	if c.Bool("to-friends") {
-		return w.wakeFriends(c)
-	}
-	nonce := c.Str("nonce")
-	if nonce == "" {
-		nonce = w.random()
-	}
-	since := w.now()
-	if s := c.Str("since"); s != "" {
-		t, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			return tool.Refuse("--since wants an RFC3339 instant: " + err.Error())
-		}
-		since = t
-	}
-	b, closeStore, refused := w.bus(c)
-	if refused != nil {
-		return refused
-	}
-	defer closeStore()
-	me, to := c.Str("as"), c.Str("to")
-	if o := w.gateVerb(b.Store, c.Str("as"), hook.Coordinator, hook.Bus); o != nil {
-		return o // not hooked in: nothing is sent or read (docs/SPEC-HOOK.md)
-	}
-	body := friend.PingText(me, since, nonce)
-	if c.Bool("wake") { // a wake check: answered by the session, never by the daemon (docs/SPEC-FRIEND.md, session-pong.w1)
-		body = friend.WakePingText(me, since, nonce)
-	}
-	ping := bus.Message{From: me, To: []string{to}, Subject: friend.PingPrefix + nonce, Body: body + "\n"}
-	if c.DryRun() {
-		// the PING checked as send checks it; nothing sent
-		if _, err := b.Check(context.Background(), ping); err != nil {
-			return answer(err)
-		}
-		return tool.Done().Fact("nonce", nonce).Fact("to", to)
-	}
-	m, err := b.Send(context.Background(), ping)
-	if err != nil {
-		return answer(err)
-	}
-	return tool.Done().Fact("nonce", nonce).Fact("id", m.ID).Fact("to", to).Fact("at", m.At.Format(time.RFC3339)).
-		Note("wait for it: nova-friend wait-pong --from " + to + " --nonce " + nonce)
-}
-
-func (w world) waitPong(c *tool.Call) *tool.Out {
-	b, closeStore, refused := w.bus(c)
-	if refused != nil {
-		return refused
-	}
-	defer closeStore()
-	from, nonce, timeout := c.Str("from"), c.Str("nonce"), c.Dur("timeout")
-	ctx := context.Background()
-	start := w.now()
-	_, storeNow, err := b.Store.Roster(ctx)
-	if err != nil {
-		return answer(err)
-	}
-	floor := bus.IDAt(storeNow.Add(-timeout)) // the log from the wait's own window back, never from its start
-	for {
-		got, err := b.Log(ctx, floor)
-		if err != nil {
-			return answer(err)
-		}
-		daemon := false
-		for _, e := range got {
-			m := e.Message()
-			if m.From != from { // the friend's own stream, never the body
-				continue
-			}
-			if m.Subject == friend.DaemonPongSubject && strings.TrimSpace(m.Body) == "daemon-pong "+nonce {
-				daemon = true
-			}
-			if n, q, wk, wd, ok := friend.ParsePong(strings.TrimSpace(m.Body)); ok && n == nonce {
-				return tool.Done().Fact("nonce", nonce).Fact("from", from).Fact("at", m.At.Format(time.RFC3339)).Fact("took", w.now().Sub(start).Round(time.Millisecond).String()).
-					Fact("queue", q).Fact("working", wk).Fact("width", wd).Fact("daemon", daemon)
-			}
-		}
-		if w.now().Sub(start) >= timeout {
-			o := tool.Fail("no pong "+nonce+" from "+from+" within "+timeout.String()).As("NONE").Fact("daemon", daemon)
-			if daemon {
-				return o.Note("the daemon answered and the session did not: deaf")
-			}
-			return o
-		}
-		w.sleep(ctx, WaitPongEvery)
-	}
 }
 
 // secretNameRe is a secret's name: an environment variable's.

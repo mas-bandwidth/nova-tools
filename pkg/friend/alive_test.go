@@ -38,7 +38,7 @@ func (p *processTable) run(_ context.Context, _, name string, _ []string, _ stri
 // advisory (the finding of 2026-10-05). A grok window that closes and opens
 // again is said on the record each time and kept on the status
 // (HarnessSeen); every beat goes out the whole time, since presence is the
-// session's, decided in front of the beat (SessionCheck), never here.
+// nova-hook record's, never here.
 func TestAClosedHarnessIsSaidAndNeverHoldsTheBeat(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -84,18 +84,6 @@ func TestAnAdapterThatCannotTellLeavesTheSessionCheckAlone(t *testing.T) {
 	assert.Equal(t, 40, r.beats, "every beat goes out")
 	assert.Equal(t, HarnessUnknown, watchSeen(w))
 	assert.Contains(t, strings.Join(r.records, "\n"), "harness check: cannot tell: claude has no adapter")
-}
-
-func TestTheWatchReadsTheBareAdapterNotTheGateInFrontOfIt(t *testing.T) {
-	t.Parallel()
-	r := newRig(t)
-	adapter := &OpenCode{Dir: r.d.Dir}
-	sc := &SessionCheck{}
-	r.d.Deliver = sc.Gate(adapter)
-	_, gateAnswers := r.d.Deliver.(Aliver)
-	require.False(t, gateAnswers, "a gate forwards no Alive, so the daemon's Deliver cannot be asked")
-	assert.Nil(t, WatchHarness(r.d, nil).Alive, "the gated Deliver: no check")
-	assert.Equal(t, Aliver(adapter), WatchHarness(r.d, adapter).Alive, "the bare adapter: its check")
 }
 
 func TestEveryAdapterAnswersTheHarnessCheck(t *testing.T) {

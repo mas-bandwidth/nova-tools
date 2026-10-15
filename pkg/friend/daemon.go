@@ -293,7 +293,7 @@ type Daemon struct {
 	// unknown no message is delivered as an instruction (BatchFor).
 	Seat func(ctx context.Context) (string, error)
 	// Proof is whether the push is proved this run and, while it is not, the nonce
-	// its session check carries (SessionCheck.Proof); nil is proved (a harness that
+	// its session check carries; nil is proved (a harness that
 	// runs each card as a process of its own has no session to prove). Until it is
 	// proved the daemon delivers nothing into the session: no batch turn, no dealt
 	// brief, no wake, no idle wake, no lane, no read; it beats, answers pings and

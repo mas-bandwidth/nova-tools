@@ -15,8 +15,8 @@ import (
 
 // install and run refuse at the start, each with its remedy, a harness whose
 // adapter has no deliver command; install also refuses a session the adapter cannot
-// drive (dsh, a session under an agent preset). run starts without SessionCheck or
-// PushProver and delivers without holding on a SessionCheck pong.
+// drive (dsh, a session under an agent preset). run starts with no session-check
+// presence and delivers without waiting on a pong.
 func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 	t.Parallel()
 	t.Run("no deliver command", func(t *testing.T) {
