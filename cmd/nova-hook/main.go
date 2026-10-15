@@ -299,9 +299,13 @@ example: nova-hook hook --as ada --role coordinator`,
 				Detail: `Answers the challenge the hook printed (HOOK CHALLENGE nonce=<n>), or the heartbeat's (a bus message with the
 subject HOOK CHALLENGE nonce=<n>): with that nonce, under the record's epoch, every push the challenge named whose
 lease is live is proven for ` + hook.ProofTTL.String() + `, the challenge is spent and the heartbeat's misses are cleared.
-Only the model answers, from inside its own turn: no daemon, loop or script may call prove, since an answer is
-the proof that the model itself read the push. Prints PROVE OK proven=<n> and the record's state. A nonce that is
-not the one asked, a heartbeat challenge past its interval, a challenge answered or lapsed, or a record unhooked
+A heartbeat nonce answers while it is inside the server's down-after window (serve --down-after), even after
+newer challenges were issued: a harness that hands the model a challenge late still proves it, and the answer
+counts at the time of the proof. Only the model answers, from inside its own turn: no daemon, loop or script may
+call prove, since an answer is the proof that the model itself read the push. Prints PROVE OK proven=<n>, the
+record's state, matched=newest or matched=<k>-back (the challenge the nonce answered, k before the newest) and
+issued=<time> for a heartbeat challenge. A nonce the heartbeat never issued to this name, one from another epoch
+or older than the window (the refusal names the window), a challenge answered or lapsed, or a record unhooked
 since is FAILED at exit 1, with the reason.
 --dry-run reads the record and prints what it would prove (the state, the role and how many live pushes a
 proof would cover) and writes nothing.
@@ -1056,7 +1060,7 @@ func (w world) prove(c *tool.Call) *tool.Out {
 	if c.DryRun() {
 		return w.provePlan(ctx, s)
 	}
-	n, err := s.hooks.Answer(ctx, s.as, c.Str("nonce"), "session")
+	pr, err := s.hooks.AnswerProof(ctx, s.as, c.Str("nonce"), "session")
 	switch {
 	case errors.Is(err, hook.ErrNoChallenge), errors.Is(err, hook.ErrWrongNonce), errors.Is(err, hook.ErrExpired):
 		o := tool.Fail(err.Error())
@@ -1073,7 +1077,21 @@ func (w world) prove(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse("the hook record could not be read: " + err.Error())
 	}
-	return tool.Done().Fact("proven", n).Fact("state", st[0].State).Fact("role", string(st[0].Role))
+	o := tool.Done().Fact("proven", pr.Proven).Fact("state", st[0].State).Fact("role", string(st[0].Role)).Fact("matched", matched(pr.Back))
+	if !pr.Issued.IsZero() {
+		o.Fact("issued", pr.Issued.Format(time.RFC3339))
+	}
+	return o
+}
+
+// matched is which challenge a proof answered, as prove's reply says it:
+// "newest", or "<k>-back" for one k challenges before the newest (the proof
+// window, tla/HookBeat.tla AnswerIssued).
+func matched(back int) string {
+	if back == 0 {
+		return "newest"
+	}
+	return fmt.Sprintf("%d-back", back)
 }
 
 // provePlan is prove --dry-run's result: it reads the record and prints what

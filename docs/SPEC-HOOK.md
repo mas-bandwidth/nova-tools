@@ -47,7 +47,7 @@ All keys live in the bus Redis (`--redis`, else `NOVA_BUS_REDIS`, else the fleet
 
 | key | type | holds |
 |---|---|---|
-| `hook:rec:<name>` | hash | `role`, `state` (`hooked` or `unhooked`), `epoch`, `armed` and `unhooked` (ms of the store's clock), `by`, `misses`, `reason`, `beat_at` |
+| `hook:rec:<name>` | hash | `role`, `state` (`hooked` or `unhooked`), `epoch`, `armed` and `unhooked` (ms of the store's clock), `by`, `misses`, `reason`, `beat_at`, `answered_at`, `recent` (the heartbeat challenges a proof may answer: newest first, each `<epoch>:<sum>:<issued ms>:<deadline ms>:<pushes>`, at most `RecentMax`; an arm or an unhook clears it) |
 | `hook:live:<name>:<push>` | string, TTL `LeaseTTL` | the lease: `{"epoch":<n>,"at":<ms>,"by":"<holder>"}` |
 | `hook:proof:<name>:<push>` | string, TTL `ProofTTL` | the proof, the same shape |
 | `hook:chal:<name>` | hash, TTL `AnswerBound` | `epoch`, `sum` (SHA-256 of the nonce, never the nonce), `pushes`, `until` |
@@ -133,6 +133,22 @@ Every line runs as printed:
   a fresh challenge in `hook:chal:<name>` (`until` = now + every) and a bus message with subject
   `HOOK CHALLENGE nonce=<n>`. A friend's challenge names both `bus` and `work`; her session's
   `nova-hook prove --as <name> --nonce <n>` proves both and clears `misses`.
+- **A proof window, not only the newest nonce.** A harness may hand a challenge to the model's turn
+  late, after the server issued a newer one. Each challenge a pass sets also joins the record's `recent`
+  with its deadline, its issue time plus `--down-after` by the store's `TIME`; a pass keeps as many as
+  the window holds at one pass per nine tenths of an interval (`floor(down_after / (0.9 every)) + 1`,
+  at most `RecentMax`, 64). `nova-hook prove` answers any nonce in `recent` of the record's epoch whose
+  deadline has not passed and which is not yet spent: it proves the pushes that challenge named, spends
+  it (and the standing challenge too when it is the one answered), and counts as an answer at the time
+  of the proof (`misses` 0, `answered_at` now). A newer challenge still standing stays standing for its
+  own answer. The reply names the challenge matched: `matched=newest`, or `matched=<k>-back` for one `k`
+  challenges before the newest, with `issued=<time>`. A nonce the heartbeat never issued to that name,
+  one of another epoch, or one past its deadline is refused (`the nonce is not the one the challenge
+  asked ...`), the refusal naming the server's window (`hook:serve` `down_after`). Only the model
+  proves: the nonce is the proof it read the message delivered to it. The model is `tla/HookBeat.tla`
+  (`AnswerIssued`, `ProofNamesIssuedInWindow`, `ProofRefreshesAnswer`; the reversed witnesses
+  `MCHookBeatBrokenProveOldNonce` and `MCHookBeatBrokenProveOtherName`, and `MCHookBeatWitnessProveOlder`,
+  a proof of a challenge older than one still issued).
 - **Down after silence, not after a count.** A challenge still unanswered at the next pass is a miss
   and increments `misses`. The pass unhooks the name only at a miss when its last answer
   (`answered_at`, or `armed` if later) is older than `--down-after` (`DownAfter`, 5 min) by the store's
@@ -162,8 +178,9 @@ A friend's supervised hook service (`nova-hook hook --role friend` under `nova-h
 - `nova-hook hook --as <name> --role <role> [--once] [--dry-run]`: arms or joins the record, renews the
   `bus` lease, prints stream arrivals as `HOOK PUSH`, challenges as `HOOK CHALLENGE nonce=<n>`, and
   state transitions as `HOOK STATE`.
-- `nova-hook prove --as <name> --nonce <n> [--dry-run]`: answers the current challenge from inside the
-  model's turn.
+- `nova-hook prove --as <name> --nonce <n> [--dry-run]`: answers the current challenge, or any
+  heartbeat challenge issued to the name inside the down-after window (the proof window above), from
+  inside the model's turn.
 - `nova-hook unhook --as <name> [--dry-run]`: advances the epoch and clears leases, proofs, and
   challenges.
 - `nova-hook status [--as <name>]`: checks one record (0 proven, 1 not with breadcrumb) or lists all.
