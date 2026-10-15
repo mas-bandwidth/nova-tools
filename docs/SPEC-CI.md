@@ -581,10 +581,10 @@ assertion on elapsed time; it polls for the event up to `NOVA_TEST_WAIT`
 **The mistake it prevents.** A wait cut to fit the two-minute gate makes a test
 flaky under load, and a flaky test drops innocent PRs from the queue.
 **The test.** `TestNoFixedWaitsOnTheCIPath` (`internal/ci/ci_waits_test.go`),
-with its six red tests — `TestWaitsRefusesFixedSleep`, `TestWaitsRefusesShortBound`,
-`TestWaitsRefusesElapsedAssertion`, `TestWaitsAllowsThePoll`,
-`TestWaitsAllowsFakeBenchAndClock`, `TestWaitsAllowlistGrowsRefused` — and
-`TestWaitsAllowlistSurvivesShiftedLines` for the file-and-kind match.
+with its six red cases under `TestCIScanRules/waits` — `RefusesFixedSleep`,
+`RefusesShortBound`, `RefusesElapsedAssertion`, `AllowsThePoll`,
+`AllowsFakeBenchAndClock`, `AllowlistGrowsRefused` — and
+`AllowlistSurvivesShiftedLines` for the file-and-kind match.
 **Its allowlist.** `internal/ci/testdata/fixed-waits-allowlist.txt`, the waits
 that predate the checker, one `file:line kind date reason` per row; shrink-only.
 **Its remedy lines.** `remedy="poll for the event up to NOVA_TEST_WAIT, not a
@@ -610,11 +610,11 @@ for a test whose subject is that the file is NOT the same binary.
 fixtures queues behind the macOS policy scanner past the thirty seconds a test
 waits; hard-linking the one fixture passes in less than half the time.
 **The test.** `TestNoCopiedTestBinariesOnTheCIPath`
-(`internal/ci/ci_testbins_test.go`), with `TestTestbinsRefusesACopiedBinary`,
-`TestTestbinsRefusesAMapHeldCopy`, `TestTestbinsAllowsAShellScript`,
-`TestTestbinsAllowsThePlacedHelper`, `TestTestbinsAllowlistGrowsRefused`,
-`TestTestbinsOutputMatchesTheSpec`, `TestTestbinsVerbLineMatchesTheSpec` and
-`TestTestbinsAllowlistSurvivesShiftedLines` for the file-and-kind match.
+(`internal/ci/ci_testbins_test.go`), with the cases under
+`TestCIScanRules/testbins` — `RefusesACopiedBinary`, `RefusesAMapHeldCopy`,
+`AllowsAShellScript`, `AllowsThePlacedHelper`, `AllowlistGrowsRefused`,
+`OutputMatchesTheSpec`, `VerbLineMatchesTheSpec` and
+`AllowlistSurvivesShiftedLines` for the file-and-kind match.
 **Its allowlist.** `internal/ci/testdata/fixed-testbins-allowlist.txt` — empty,
 because every site places by link through `testbin.Place`; shrink-only.
 **Its remedy lines.** `remedy="place built binaries with testbin.Place: link,
@@ -636,10 +636,10 @@ wrapped in `strconv.Quote` (or `oneline.Quote`); a raw `filepath.Join(...)` or a
 into a JSON worker description puts `C:\…\key` in a literal whose grammar has no
 such escape, so the parse fails on Windows where Linux and darwin never look.
 **The test.** `TestNoUnquotedPathsInTemplateLiterals`
-(`internal/ci/ci_templates_test.go`), with `TestTemplatesRefusesRawFilepathJoin`,
-`TestTemplatesRefusesUnquotedOSPathLiteral`, `TestTemplatesRefusesUnquotedPathInTemplate`,
-`TestTemplatesAllowsStrconvQuote`, `TestTemplatesAllowsOnelineQuote` and
-`TestTemplatesAllowlistGrowsRefused`.
+(`internal/ci/ci_templates_test.go`), with the cases under
+`TestCIScanRules/templates` — `RefusesRawFilepathJoin`,
+`RefusesUnquotedOSPathLiteral`, `RefusesUnquotedPathInTemplate`,
+`AllowsStrconvQuote`, `AllowsOnelineQuote` and `AllowlistGrowsRefused`.
 **Its allowlist.** `internal/ci/testdata/template-paths-allowlist.txt`, four
 `ToSlash(Join(...))` rows in `pkg/swarm/inputlimit_test.go` that predate the
 checker; shrink-only.
@@ -663,10 +663,10 @@ fails on the network, not on its logic. A fixture carrying an
 honest fix is to generalize the code to any origin host and retarget the
 fixture — splitting the literal to hide it from the class is an evasion.
 **The test.** `TestNoRealNetworkHostsOnTheCIPath` (`internal/ci/ci_net_test.go`),
-with `TestNetRefusesRealURLHost`, `TestNetAllowsLocalAndReservedHosts`,
-`TestNetAllowsNightlyBuildTag`, `TestNetAllowsSoakBuildTag`,
-`TestNetRefusesBareHostPort`, `TestNetAllowsLocalHostPort`,
-`TestNetAllowlistGrowsRefused` and `TestNetAllowlistSurvivesShiftedLines`.
+with the cases under `TestCIScanRules/net` — `RefusesRealURLHost`,
+`AllowsLocalAndReservedHosts`, `AllowsNightlyBuildTag`, `AllowsSoakBuildTag`,
+`RefusesBareHostPort`, `AllowsLocalHostPort`, `AllowlistGrowsRefused` and
+`AllowlistSurvivesShiftedLines`.
 **Its allowlist.** `internal/ci/testdata/net-allowlist.txt`, matched by file and
 kind; shrink-only.
 **Its remedy lines.** `remedy="mock the endpoint with httptest or a local fake"`,
@@ -3013,7 +3013,7 @@ the original failed measurement.
 
 **The rule.** No living Go file under `cmd/`, `internal/` or `tools/` (outside `testdata/`, `vendor/`, and `_test.go` files) carries a reference to our fleet machines, hostnames, tailnet nodes, friend or person names, or GitHub accounts (Rule 1: everything must be general; concepts like machine, bench, coordinator, friend, seat, store, route, pool, card, stream, repo, issue, entry are what code knows; fleet specifics belong in configuration or receipts, not in code, contracts, defaults or refusals).
 **The mistake it prevents.** Code written with hardcoded machine names, friend identities or private accounts cannot be reused or operated as a general platform, leaks private infrastructure details into public source, and prevents running the tool suite against different fleets or configurations.
-**The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestGeneralityMachineNameHasNoSyntaxException` for a machine name counted in every syntax position, `TestGeneralityCommonWordMachineWitness` (`internal/ci/generality_machine_hosts_test.go`) for a machine name that is also a common word refused in every host position (`<name>.local`, `@<name>`, `ssh <name>`, `<name>:` as host:path or host:port, `--machine <name>`, a hostname column, `/Users/<name>`, `/home/<name>`, `~<name>`) and passing in an English phrase, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestGeneralityAllowlistUpdate` for proving allowlist update refuses growth and cleanly writes on shrinking.
+**The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestGeneralityMachineNameHasNoSyntaxException` for a machine name counted in every syntax position, `TestGeneralityCommonWordMachineWitness` (`internal/ci/generality_machine_hosts_test.go`) for a machine name that is also a common word refused in every host position (`<name>.local`, `@<name>`, `ssh <name>`, `<name>:` as host:path or host:port, `--machine <name>`, a hostname column, `/Users/<name>`, `/home/<name>`, `~<name>`) and passing in an English phrase, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestPackagesUpdateTable` (`internal/ci/allowlist/package_test.go`) for proving allowlist update refuses growth and cleanly writes on shrinking.
 **Its allowlist.** the `generality` package ledger, existing occurrences across the living tree, formatted as `path/to/file.go:token count`; sorted, shrink-only with ceiling.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/`, `internal/` and `tools/` only, skipping `testdata/`, `vendor/`, and `_test.go` files. It excludes Go package `import` statements and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched. A machine name counts wherever it appears in Go syntax: identifiers, struct tags, comments and string literals.
@@ -3076,7 +3076,7 @@ the original failed measurement.
 
 **The rule.** Production reachability is analyzed by `deadcode` from the `cmd/` mains (`./cmd/...`) and the `tools/` packages with a `main` executable as roots, without `-test` (code reached only by tests is the next contraction's target). The analysis runs across three operating systems (GOOS `linux`, `darwin`, `windows`) and holds the union of dead functions to a per-package shrink-only ledger.
 **The mistake it prevents.** Unused, unreachable functions and methods accumulating across the codebase; maintainer directive 2026-09-30 contraction phase ("dead code to zero with a class test holding it").
-**The test.** `TestDeadCode` (`internal/ci/dead_code_class_test.go`), with its allowlist mechanics witness `TestDeadCodeWitness`. `TestDeadCodeIncludesToolMains` verifies that a function called only by a `tools/` executable stays live, an unused function remains dead, and a `tools/` library is not a root; `TestDeadcodeRootsReportsGoListStderr` verifies that a failed `go list` of the tool mains reports the go command's stderr. Runs in the functional tier behind `//go:build functional`.
+**The test.** `TestDeadCode` (`internal/ci/dead_code_class_test.go`), with its allowlist mechanics covered by `TestCountedListHoldsSitesNotJustKeys` and `TestCountedUpdateLowersCountsAndNeverRaisesThem` (`internal/ci/allowlist/allowlist_test.go`). `TestDeadCodeIncludesToolMains` verifies that a function called only by a `tools/` executable stays live, an unused function remains dead, and a `tools/` library is not a root; `TestDeadcodeRootsReportsGoListStderr` verifies that a failed `go list` of the tool mains reports the go command's stderr. Runs in the functional tier behind `//go:build functional`.
 **Its allowlist.** `internal/ci/testdata/dead_code_allowlist.txt`, the shrink-only per-package ledger (`<package> <count>`); `NOVA_CI_UPDATE=1 go test -tags functional -run '^TestDeadCode$' ./internal/ci/` lowers counts and drops zero-count rows (the rule is functional-tier only, so `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` never reaches it, and the functional container mounts the source read-only). The list refuses to grow or raise any count.
 **Its remedy line.** `remedy="delete the unreachable function(s) or wire them into a production main; the dead code ledger only shrinks and refuses to raise counts or add rows"`.
 **Its narrowings.** Analyzes static reachability from main executables in `cmd/...` and `tools/...` without `-test` flags using `golang.org/x/tools/cmd/deadcode` across `linux`, `darwin`, and `windows`; libraries and fixtures under `tools/...` are not roots. `pkg/` packages are not counted (`deadCodeCounted`, witnessed by `TestDeadCodeCountsEverythingButPkg`): `pkg/` is a public library whose callers live in other modules (mas-bandwidth/nova-sprint since the split), and the roots are this module's mains only, so a `pkg/` function another module calls would read as dead here; dead code inside `pkg/` is not caught by this rule.
