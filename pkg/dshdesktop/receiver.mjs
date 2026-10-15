@@ -22,14 +22,30 @@ export function nativeMessage(input) {
   return freeze(structuredClone({...input, role:'user', id:randomUUID()}));
 }
 export function applyReceiver(ctx, config, createUserMessage = nativeMessage) {
-  const { eventsDir, sessionId } = config;
-  if (!safeID(sessionId) || typeof eventsDir !== 'string' || !path.isAbsolute(eventsDir) || path.normalize(eventsDir) !== eventsDir || !/^[A-Za-z0-9/._ -]{1,1024}$/.test(eventsDir)) throw Error('nova-hook wants a pinned session and canonical private event directory');
+  const { eventsDir } = config;
+  if ((config.sessionId !== undefined && !safeID(config.sessionId)) || typeof eventsDir !== 'string' || !path.isAbsolute(eventsDir) || path.normalize(eventsDir) !== eventsDir || !/^[A-Za-z0-9/._ -]{1,1024}$/.test(eventsDir)) throw Error('nova-hook wants a canonical private event directory and a valid session');
   const stat = fs.statSync(eventsDir);
   if (fs.realpathSync(eventsDir) !== eventsDir || stat.uid !== process.getuid() || (stat.mode & 0o077)) throw Error('nova-hook event directory wants current-user ownership and mode 0700');
   const queueDir = path.join(eventsDir, '.notices');
   try { fs.mkdirSync(queueDir, {mode:0o700}); } catch(error) { if(error.code !== 'EEXIST') throw error; }
   const queueStat = fs.lstatSync(queueDir);
   if (!queueStat.isDirectory() || queueStat.uid !== process.getuid() || (queueStat.mode & 0o077)) throw Error('unsafe notification queue');
+  // The producer names the target session in session.json (the friend's newest
+  // live session, rewritten when she starts another); read on every drain so a
+  // new session needs no restart. config.sessionId is the older pinned form.
+  const targetFile = path.join(eventsDir, 'session.json');
+  function target() {
+    try {
+      const stat = fs.lstatSync(targetFile);
+      if (!stat.isFile() || stat.size > 1024 || stat.uid !== process.getuid() || (stat.mode & 0o077)) throw Error('unsafe session target');
+      const value = JSON.parse(fs.readFileSync(targetFile, 'utf8'));
+      if (value.version === 1 && safeID(value.sessionId)) return value.sessionId;
+      throw Error('invalid session target');
+    } catch (error) {
+      if (error.code !== 'ENOENT') report(error);
+      return config.sessionId;
+    }
+  }
   const lock = path.join(eventsDir, '.native-receiver');
   fs.mkdirSync(lock, { mode: 0o700 }); // never steal a possibly live receiver
   let closed = false, scheduled = false, ordinaryPending = null, attached = null;
@@ -43,6 +59,9 @@ export function applyReceiver(ctx, config, createUserMessage = nativeMessage) {
   function attach(agent) {
     if (attached === agent) return;
     releaseStep?.();
+    // A new target agent never inherits the old one's ordinary hold
+    // (tla/DshNativeWake.tla Retarget, HoldOnTarget).
+    if (attached) ordinaryPending = null;
     attached = agent;
     // The loop removes claimed inbox input before pre-step, even on reject or
     // middleware replacement. Release that inbox hold in every outcome; this
@@ -54,8 +73,9 @@ export function applyReceiver(ctx, config, createUserMessage = nativeMessage) {
     });
   }
   function drain() {
-    const agent = ctx.agents.get(sessionId);
-    if (!agent) { report('pinned session is not live; queued notices retained'); return; }
+    const sessionId = target();
+    const agent = sessionId ? ctx.agents.get(sessionId) : undefined;
+    if (!agent) { report('target session is not live; queued notices retained'); return; }
     attach(agent);
     const records = fs.readdirSync(queueDir).filter(file => /^notice-[A-Za-z0-9_-]{1,128}\.json$/.test(file)).sort().map(file => {
       const full = path.join(queueDir, file);
@@ -73,7 +93,7 @@ export function applyReceiver(ctx, config, createUserMessage = nativeMessage) {
     if (ordinary.length && !ordinaryPending) send(agent, ordinary, false);
   }
   function send(agent, records, challenge) {
-    if (ctx.agents.get(sessionId) !== agent) { report('pinned agent disposed before admission; notices retained'); return; }
+    if (attached !== agent || ctx.agents.get(target()) !== agent) { report('target agent disposed before admission; notices retained'); return; }
     const saved = records.map(record => path.join(eventsDir, `${record.eventID}.json`));
     for (const file of saved) {
       const stat = fs.lstatSync(file);
@@ -95,9 +115,10 @@ export function applyReceiver(ctx, config, createUserMessage = nativeMessage) {
     for (const file of claimed) fs.unlinkSync(file);
   }
   const watcher = fs.watch(queueDir, schedule);
+  const targetWatcher = fs.watch(eventsDir, (_, file) => { if (file === 'session.json') schedule(); });
   const releaseCreated = ctx.on('agent/created', schedule);
-  const releaseDisposed = ctx.on('agent/disposed', () => { if (!ctx.agents.get(sessionId)) { ordinaryPending = null; attached = null; releaseStep?.(); releaseStep = null; } });
-  const dispose = () => { if (closed) return; closed = true; watcher.close(); releaseCreated(); releaseDisposed(); releaseStep?.(); fs.rmdirSync(lock); };
+  const releaseDisposed = ctx.on('agent/disposed', () => { const id = target(); if (!id || !ctx.agents.get(id)) { ordinaryPending = null; attached = null; releaseStep?.(); releaseStep = null; } });
+  const dispose = () => { if (closed) return; closed = true; watcher.close(); targetWatcher.close(); releaseCreated(); releaseDisposed(); releaseStep?.(); fs.rmdirSync(lock); };
   schedule();
   // Exposed only as a deterministic executor seam; the mounted plugin uses watch.
   return { drain, dispose };

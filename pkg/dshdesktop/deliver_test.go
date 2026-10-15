@@ -22,7 +22,9 @@ func route(t *testing.T) Route {
 func TestNativeInstallCanWakeAnAlreadyIdleSession(t *testing.T) {
 	t.Parallel()
 	r := route(t)
-	require.NoError(t, Install(r))
+	restart, err := Install(r)
+	require.NoError(t, err)
+	assert.True(t, restart, "a first install is new to a running harness")
 	raw, err := os.ReadFile(r.HooksFile)
 	require.NoError(t, err)
 	var cfg []struct {
@@ -31,7 +33,16 @@ func TestNativeInstallCanWakeAnAlreadyIdleSession(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(raw, &cfg), "a command hook cannot run when the session is already idle; native receiver required")
 	require.Len(t, cfg, 1)
-	assert.Equal(t, "session-1", cfg[0].Config["sessionId"])
+	assert.Empty(t, cfg[0].Config["sessionId"], "the include names no session, so a new session never needs a restart")
+	assert.Equal(t, "session-1", ReadTarget(r.EventsDir), "the receiver follows session.json")
+	restart, err = Install(r)
+	require.NoError(t, err)
+	assert.False(t, restart, "an unchanged install needs no restart")
+	r.SessionID = "session-2"
+	restart, err = Install(r)
+	require.NoError(t, err)
+	assert.False(t, restart, "following a new session needs no restart")
+	assert.Equal(t, "session-2", ReadTarget(r.EventsDir))
 	source, err := os.ReadFile(cfg[0].Name)
 	require.NoError(t, err)
 	assert.NotContains(t, string(source), "@deepseek-ai/dsh-llm", "a loose module cannot resolve bundled app packages")
