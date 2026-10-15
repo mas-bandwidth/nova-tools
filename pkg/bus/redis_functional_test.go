@@ -335,6 +335,19 @@ func TestRedisFriendACLSetsOnlyItsOwnTokenRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, forged, "nothing was written to bob's answers")
 
+	// an explicit model send stamps the sender's own hook record in the send's
+	// script (activityLua, tla/HookBeat.tla, BusSend): the line must let her do
+	// that to her own record and to no other
+	require.NoError(t, admin.HSet(ctx, "hook:rec:ada", "state", "hooked").Err())
+	require.NoError(t, admin.HSet(ctx, "hook:rec:bob", "state", "hooked").Err())
+	_, err = b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "model", Body: "x\n", ModelActivity: true})
+	require.NoError(t, err, "a model send is not refused on the sender's hook record")
+	stamp, err := admin.HGet(ctx, "hook:rec:ada", "bus_sent_at").Result()
+	require.NoError(t, err)
+	assert.NotEmpty(t, stamp, "the send stamped her own record")
+	assert.ErrorContains(t, ada.HSet(ctx, "hook:rec:bob", "bus_sent_at", "1").Err(), "NOPERM", "another friend's hook record")
+	assert.ErrorContains(t, ada.Get(ctx, "hook:chal:ada").Err(), "NOPERM", "her challenge key")
+
 	wide := apply("wide", strings.Replace(line, " (~bus2:sent:ada:* +get +set)", " +get +set", 1))
 	require.NoError(t, wide.Set(ctx, LogKey, "x", 0).Err(), "reversed: +set on the root overwrites the log")
 	for _, key := range []string{friendsKey, machinesKey} {

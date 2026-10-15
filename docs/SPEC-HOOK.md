@@ -47,7 +47,7 @@ All keys live in the bus Redis (`--redis`, else `NOVA_BUS_REDIS`, else the fleet
 
 | key | type | holds |
 |---|---|---|
-| `hook:rec:<name>` | hash | `role`, `state` (`hooked` or `unhooked`), `epoch`, `armed` and `unhooked` (ms of the store's clock), `by`, `misses`, `reason`, `beat_at`, `answered_at`, `recent` (the heartbeat challenges a proof may answer: newest first, each `<epoch>:<sum>:<issued ms>:<deadline ms>:<pushes>`, at most `RecentMax`; an arm or an unhook clears it) |
+| `hook:rec:<name>` | hash | `role`, `state` (`hooked` or `unhooked`), `epoch`, `armed` and `unhooked` (ms of the store's clock), `by`, `misses`, `reason`, `beat_at`, `answered_at`, `bus_sent_at`, `quiet_after`, `pending_until`, `pending_missed`, `recent` (the heartbeat challenges a proof may answer: newest first, each `<epoch>:<sum>:<issued ms>:<deadline ms>:<pushes>`, at most `RecentMax`; an arm or an unhook clears it) |
 | `hook:live:<name>:<push>` | string, TTL `LeaseTTL` | the lease: `{"epoch":<n>,"at":<ms>,"by":"<holder>"}` |
 | `hook:proof:<name>:<push>` | string, TTL `ProofTTL` | the proof, the same shape |
 | `hook:chal:<name>` | hash, TTL `AnswerBound` | `epoch`, `sum` (SHA-256 of the nonce, never the nonce), `pushes`, `until` |
@@ -65,11 +65,14 @@ the record's state, role, and epoch in the same step.
 |---|---|---|
 | `LeaseTTL` | 90 s | a push stays live this long after its holder last renewed it |
 | `RenewEvery` | 30 s | a holder renews three times inside one lease |
-| `BeatEvery` | 1 min | `nova-hook serve` challenges every hooked session-backed name |
-| `DownAfter` | 5 min | `nova-hook serve --down-after`: a name silent longer than this is unhooked at its next miss, and reads down |
-| `ChallengeEvery` | 30 min | a standalone `nova-hook hook` loop's repeated challenge cadence; Codex, DeepSeek and Antigravity clients bootstrap once, then the heartbeat server challenges them |
-| `AnswerBound` | 5 min | a standalone challenge's answer window |
-| `ProofTTL` | 40 min | a standalone proof's TTL |
+| `BeatEvery` | 1 min | server pass interval; every hooked bus-role name is checked |
+| `BusyQuietAfter` | 5 min | quiet threshold for a friend holding ready or working sprint cards |
+| `QuietAfter` | 10 min | quiet threshold for an idle friend or comms name |
+| `CoordinatorEvery` | 30 min | coordinator quiet threshold |
+| `DownAfter` | 5 min | silence required in addition to an outstanding challenge past `AnswerBound` before down |
+| `ChallengeEvery` | 30 min | standalone loop cadence; Codex, DeepSeek and Antigravity bootstrap once and receive server challenges; the server checks every hooked bus-role name |
+| `AnswerBound` | 5 min | every challenge's answer window |
+| `ProofTTL` | 40 min | nonce proof TTL; activity never extends it |
 
 A holder that dies stops renewing, and its lease expires on its own: the gate refuses within `LeaseTTL`.
 
@@ -78,11 +81,18 @@ A holder that dies stops renewing, and its lease expires on its own: the gate re
 A push is `down` (no lease of the record's epoch), `armed` (a lease and no proof), or `proven` (both).
 The record is `none` (never hooked), `unhooked`, `expired` (hooked, no push of its role live), `partial`
 (some live), `live` (every push live, not every one proven), or `proven` (every push live and proven).
-Furthermore, `Served.Down` (`Status.Down`) reads any session-backed name `down` when `hook:serve` has
-never run, is more than two intervals old by the store's `TIME`, or when the name's last answer is older
-than the server's down-after (`hook:serve` `down_after`, written by every pass; two intervals for a row
-without one) (`tla/HookBeat.tla`, `DownAfter`). The gate's one yes is `proven` and not `Down`, with a role
-that carries every push the act needs (`hook.Status.Gate`; `tla/Hook.tla`, `GateMeansHooked`).
+Furthermore, `Served.Down` refuses evidence when the server never ran or its last pass is more than
+two intervals old by store `TIME`. A session must have answered a nonce at least once. Without a
+pending challenge, crossing the quiet window only schedules the next challenge; it does not read
+down. A delivered challenge past its `AnswerBound` with activity older than `DownAfter` reads down.
+An independent reader backstop also reads down once activity is older than
+`quiet + AnswerBound + DownAfter + 2*every`, even when no challenge reaches the bus. A successful
+explicit model send stamps `bus_sent_at` in the same Redis script as the message; a duplicate token or
+once-key does not refresh it. Only the explicit `nova-bus send` call site opts into `ModelActivity` for
+every allowed kind and subject, including status without `--re`.
+Library and daemon sends default false. This is operational call-site attribution, not model attestation:
+a script can imitate the CLI. The nonce proof remains the only proof, and its TTL is never extended by
+activity. The gate's yes remains `proven` and not `Down`, with the required role and pushes.
 
 ## The epoch and the clear rule
 
@@ -129,10 +139,15 @@ Every line runs as printed:
 
 - **One pass an interval.** `hook:serve` is the once-key: a pass less than nine tenths of an interval
   after the last is skipped, so multiple servers make one pass between them.
-- **A challenge to each session-backed name.** Each hooked `coordinator`, `friend`, or `comms` name gets
-  a fresh challenge in `hook:chal:<name>` (`until` = now + every) and a bus message with subject
-  `HOOK CHALLENGE nonce=<n>`. A friend's challenge names both `bus` and `work`; her session's
-  `nova-hook prove --as <name> --nonce <n>` proves both and clears `misses`.
+- **A challenge only when due.** Every hooked coordinator, friend or comms name uses the latest
+  proof or explicit model send, with initial arming as the lower boundary. A friend holding ready or
+  working cards has a 5m quiet window, an idle friend or comms name 10m, and a coordinator 30m. The
+  server batches authoritative `friend cards <name> --json` reads through `--sprint-server`; an unknown
+  row uses 5m and prints a fault. The selected policy is recorded as `quiet_after`, not a copied work
+  counter. A proof reaches renewal at `ProofTTL - AnswerBound - 2*BeatEvery` (33m after proof
+  with current constants), reserving a full answer window for any pass gap within the fresh-server limit, and triggers a challenge, even while the name talks. One outstanding nonce is retained through its
+  deadline. The challenge names `bus`, is delivered through the name's existing push, and is answered
+  only by the model with `nova-hook prove`.
 - **A proof window, not only the newest nonce.** A harness may hand a challenge to the model's turn
   late, after the server issued a newer one. Each challenge a pass sets also joins the record's `recent`
   with its deadline, its issue time plus `--down-after` by the store's `TIME`; a pass keeps as many as
@@ -149,14 +164,28 @@ Every line runs as printed:
   (`AnswerIssued`, `ProofNamesIssuedInWindow`, `ProofRefreshesAnswer`; the reversed witnesses
   `MCHookBeatBrokenProveOldNonce` and `MCHookBeatBrokenProveOtherName`, and `MCHookBeatWitnessProveOlder`,
   a proof of a challenge older than one still issued).
-- **Down after silence, not after a count.** A challenge still unanswered at the next pass is a miss
-  and increments `misses`. The pass unhooks the name only at a miss when its last answer
-  (`answered_at`, or `armed` if later) is older than `--down-after` (`DownAfter`, 5 min) by the store's
-  `TIME`, with `reason` `"no answer in 5m0s (<n> challenges missed)"`, and logs to `hook:events`.
-  Challenges still go out every `--every`: a harness that cannot answer mid-turn (Antigravity) answers
-  between turns and stays up (2026-10-14: one minute is too fast unless every harness can be
-  injected into mid-turn). The model is `tla/HookBeat.tla` (`DownAfter`, `NoDownBeforeDownAfter`; the reversed
-  witness `MCHookBeatBrokenDownEarly` is the old two-miss rule).
+- **Durable challenge delivery.** A private `hook:delivery:<name>` outbox keeps the nonce, epoch and
+  bus once-key. Failed or unknown sends retry that nonce without moving its deadline. A committed
+  bus once-key recovers a crash before delivery acknowledgement. Expiry invalidates the old nonce
+  and recent entry. Failed renewal is latched: continued traffic cannot trigger another proof-expiry
+  challenge until the name is quiet or the model proves a fresh nonce. Activity never renews nonce or proof.
+- **Notice rollout.** Receivers accept both canonical body versions; the server emits the truthful
+  silence wording. Returning older binaries update through the existing adopt/back-up flow. Their
+  byte-for-byte parser does not understand the new body until updated.
+- **Down after an unanswered challenge.** A delivered challenge past `AnswerBound` counts once as a miss.
+  When its last activity is also older than `--down-after`, the pass unhooks the name and logs the
+  event once. `pending_until` retains that obligation even if the transient challenge key expires.
+  With uninterrupted minute passes and successful challenge delivery, silence is detected after
+  the quiet window plus the 5m answer
+  bound, rounded to the next pass at each strict boundary: at most 12m for a busy friend, 17m for
+  an idle friend/comms name, and 37m for a coordinator (`quiet + AnswerBound + 2*BeatEvery`). A server outage adds its duration; stale-server detection remains
+  two pass intervals. Independently of delivery, the reader backstop is 17m / 22m / 42m for busy friend /
+  idle friend or comms / coordinator at the defaults. This reader decision does not fabricate a delivered
+  challenge or an unhook event. The model checks all prior invariants and liveness, role quiet and detection
+  bounds, daemon non-activity, and proof renewal. Legacy short-cadence configurations overapproximate
+  old issued-nonce compatibility and the delivery protocol; silence configurations check current
+  scheduling. Each new hazard has a broken witness. Quiet policy cases explore one name per role;
+  cross-name quiet interactions are not explored. Existing multi-name race and tell cases remain.
 - **Coalesced telling, one write per audience.** Changes in the unhooked set or coordinator are sent
   once per audience (`hook:told:<audience>:<gen>`): one `judgment` to the coordinator (`FRIEND DOWN
   <name>: <reason>`, `FRIEND BACK <name>`) and one message (or `COORDINATOR DOWN` judgment) to the
@@ -187,9 +216,18 @@ Every line runs as printed:
   overwrites a heartbeat challenge or an epoch the heartbeat already owns. A session's `nova-hook hook`
   loop emits `HOOK STATE state=not-connected` when `hook:serve` has not moved for two intervals on the
   client's clock, and `state=connected` when it resumes. `nova-hook status --as <name>` fails with
-  `NO CHALLENGE FOR <age>` (exit 1) when no challenge arrived for two intervals.
+  a stale-server refusal (exit 1) when the server stopped passing for two intervals, never merely because
+  no challenge was due.
 
 ## The friend lane client
+
+For a model that answers immediately, aligned minute passes ask a silent busy friend roughly
+10 times/hour, an idle friend/comms name 5.5 times/hour, and a coordinator 1.9 times/hour, instead of
+60 each. Continuous explicit model traffic suppresses quiet challenges, but proof renewal still
+asks roughly 1.8 times/hour at the default 33m threshold. Delayed answers reduce that frequency.
+These are scheduling estimates; the deterministic tests pin 30 talking passes with zero challenges,
+role thresholds, renewal and deadline behavior. The full proof-renewal lead assumes pass gaps remain
+inside the fresh-server bound; arbitrary outages do not provide that guarantee.
 
 A friend's supervised hook service (`nova-hook hook --role friend` under `nova-hook.client.<name>`) is also her lane client (`internal/friend`, `cmd/nova-hook/lanes.go`; the card the-friend-lane-is-a-client-with-no-local-state). The sprint server owns every lane's record: the card it holds, its generation, its lease and the finish. Every `LaneEvery` (a third of the server's 10m lane lease, `ServerLaneLease`, never the challenge cadence), and at once on start, the client asks for each lane 1..`--lanes` (default 8; the server's width for her row bounds what is taken; `--lanes 0` asks nothing) with the fleet's lane take, `take --as friend.<name> --lane <n> --json`, at `--sprint-server` (`NOVA_SPRINT_SERVER`, else `127.0.0.1:6390`). An ask renews that lane's lease; one round is bounded to half the hook's own renewal (`hook.RenewEvery`) so a hung sprint server never stalls the hook. The client asks only while the friend's record reads proven: a model that stops answering its challenges stops the asks, and the server returns its cards when the lease runs out. New holds make one bus message to her own name, subject `SPRINT CARDS n=<N> as=friend.<name>`, which the loop folds into the one pending notice like any other: "N cards taken; briefs at <paths>; work each in a child agent to width", with the server's finish and progress verbs for every card she holds. The briefs are cached under `~/.local/state/nova-hook/<name>/briefs/<job>/BRIEF.md`, a cache rebuilt from the server's answers: a client started in an empty directory resumes from the server alone and tells the model again what she holds. The model is `tla/FriendLaneClient.tla`.
 

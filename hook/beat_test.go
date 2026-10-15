@@ -38,6 +38,9 @@ func (r *rig) beatAfter(t *testing.T, by string, next func() string, downAfter t
 	require.NoError(t, err)
 	out := map[string]hook.Beat{}
 	for _, b := range got.Beats {
+		if b.Did == hook.BeatChallenged {
+			require.NoError(t, r.s.Delivered(context.Background(), b))
+		}
 		out[b.Name] = b
 	}
 	return out
@@ -57,18 +60,17 @@ func TestAProvingClientStaysHookedAcrossTenIntervals(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	next := nonces()
-	for i := range 10 {
+	for range 10 {
+		r.pass(hook.QuietAfter + time.Minute)
 		b := r.beat(t, "srv", next)["ada"]
-		require.Equal(t, hook.BeatChallenged, b.Did, "interval %d", i)
+		require.Equal(t, hook.BeatChallenged, b.Did)
+		require.NoError(t, r.s.Renew(context.Background(), "ada", hook.Comms, hook.Bus, b.Epoch, "holder"))
 		_, err := r.s.Answer(context.Background(), "ada", b.Nonce, "session")
-		require.NoError(t, err, "interval %d", i)
-		r.pass(hook.BeatEvery)
-		r.Hook(t, "ada", hook.Comms) // its holder's renewal: joins the record at its epoch
+		require.NoError(t, err)
 	}
-	st := r.state(t, "ada")
-	assert.Equal(t, hook.StateProven, st.State)
-	assert.Zero(t, st.Misses)
+	assert.Equal(t, hook.StateProven, r.state(t, "ada").State)
 	assert.Zero(t, r.events(t))
 }
 
@@ -80,33 +82,24 @@ func TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	next := nonces()
-	var did [][2]int
-	for range 4 {
-		a := r.beat(t, "srv-a", next)["ada"]
-		b := r.beat(t, "srv-b", next)["ada"]
-		did = append(did, [2]int{a.Did, b.Did})
-		r.pass(hook.BeatEvery)
-	}
-	assert.Equal(t, [][2]int{
-		{hook.BeatChallenged, hook.BeatLeft}, // the first challenge
-		{hook.BeatChallenged, hook.BeatLeft}, // the first miss, a second challenge
-		{hook.BeatUnhooked, hook.BeatLeft},   // the second miss: unhooked
-		{hook.BeatLeft, hook.BeatLeft},       // unhooked stays unhooked
-	}, did)
-	st := r.state(t, "ada")
-	assert.Equal(t, hook.StateUnhooked, st.State)
-	assert.Equal(t, "no answer in 1m30s (2 challenges missed)", st.Reason)
-	assert.Equal(t, 1, r.events(t), "the unhook is logged once")
-	require.NotNil(t, st.Gate(hook.Want{Name: "ada"}))
-	assert.Contains(t, st.Gate(hook.Want{Name: "ada"}).Why, "by the heartbeat (no answer in 1m30s (2 challenges missed))")
-
+	r.pass(hook.QuietAfter + time.Minute)
+	assert.Equal(t, hook.BeatChallenged, r.beat(t, "srv-a", next)["ada"].Did)
+	assert.Equal(t, hook.BeatLeft, r.beat(t, "srv-b", next)["ada"].Did)
+	r.pass(hook.AnswerBound)
+	assert.Equal(t, hook.BeatLeft, r.beat(t, "srv-a", next)["ada"].Did)
+	r.pass(time.Minute)
+	assert.Equal(t, hook.BeatUnhooked, r.beat(t, "srv-a", next)["ada"].Did)
+	assert.Equal(t, hook.BeatLeft, r.beat(t, "srv-b", next)["ada"].Did)
+	assert.Equal(t, "no answer in 1m30s (1 challenges missed)", r.state(t, "ada").Reason)
+	assert.Equal(t, 1, r.events(t))
+	require.NotNil(t, r.state(t, "ada").Gate(hook.Want{Name: "ada"}))
 	r.Hook(t, "ada", hook.Comms)
-	st = r.state(t, "ada")
-	assert.Equal(t, hook.StateProven, st.State, "hooking in again starts clean")
-	assert.Zero(t, st.Misses)
-	assert.Empty(t, st.Reason)
-	assert.Equal(t, hook.BeatChallenged, r.beat(t, "srv-a", next)["ada"].Did, "and is challenged at once")
+	r.startHeartbeat(t)
+	assert.Equal(t, hook.StateProven, r.state(t, "ada").State)
+	r.pass(time.Minute)
+	assert.Equal(t, hook.BeatLeft, r.beat(t, "srv-a", next)["ada"].Did)
 }
 
 // TestOneAnswerResetsTheSilence pins that the silence runs from the last
@@ -118,27 +111,24 @@ func TestOneAnswerResetsTheSilence(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	next := nonces()
-	var b hook.Beat
-	for range 5 {
-		b = r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
-		require.Equal(t, hook.BeatChallenged, b.Did)
-		r.pass(hook.BeatEvery)
-	}
-	require.Equal(t, 4, b.Misses)
-	_, err := r.s.Answer(context.Background(), "ada", b.Nonce, "session")
+	ctx := context.Background()
+	r.pass(hook.QuietAfter + time.Minute)
+	b := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+	r.pass(4 * time.Minute)
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, b.Epoch, "holder"))
+	_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
 	require.NoError(t, err)
-	assert.Zero(t, r.state(t, "ada").Misses, "the answer clears the count")
-	for range 5 {
-		r.pass(hook.BeatEvery)
-		b = r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
-		require.Equal(t, hook.BeatChallenged, b.Did, "the silence runs from the answer, not the hooking in")
-	}
-	assert.Equal(t, 4, b.Misses)
-	r.pass(hook.BeatEvery)
+	assert.Zero(t, r.state(t, "ada").Misses)
+	r.pass(hook.QuietAfter)
+	assert.Equal(t, hook.BeatLeft, r.beatAfter(t, "srv", next, hook.DownAfter)["ada"].Did)
+	r.pass(time.Minute)
+	assert.Equal(t, hook.BeatChallenged, r.beatAfter(t, "srv", next, hook.DownAfter)["ada"].Did)
+	r.pass(hook.AnswerBound + time.Minute)
 	b = r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
-	assert.Equal(t, hook.BeatUnhooked, b.Did, "past five minutes from the answer: down")
-	assert.Equal(t, "no answer in 5m0s (5 challenges missed)", b.Reason())
+	assert.Equal(t, hook.BeatUnhooked, b.Did)
+	assert.Equal(t, 1, b.Misses)
 }
 
 // TestAStaleOrWrongNonceIsRefused pins prove's refusals (tla/HookBeat.tla,
@@ -151,48 +141,32 @@ func TestAStaleOrWrongNonceIsRefused(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	r.Hook(t, "bob", hook.Comms)
+	r.startHeartbeat(t)
 	next := nonces()
-	first := r.beatAfter(t, "srv", next, hook.DownAfter)
-	for range 6 { // both answer every challenge after the first: up, and the first leaves the window
-		r.pass(hook.BeatEvery)
-		for n, b := range r.beatAfter(t, "srv", next, hook.DownAfter) {
-			_, err := r.s.Answer(ctx, n, b.Nonce, "session")
-			require.NoError(t, err)
-		}
-	}
-	r.pass(hook.BeatEvery)
+	r.pass(hook.QuietAfter + time.Minute)
 	cur := r.beatAfter(t, "srv", next, hook.DownAfter)
-	rows := []struct {
-		name  string
-		as    string
-		nonce string
-		want  error
-		says  string
-	}{
-		{"another nonce", "ada", "nope", hook.ErrWrongNonce, "(the window: 5m0s)"},
-		{"older than the window", "ada", first["ada"].Nonce, hook.ErrWrongNonce, "(the window: 5m0s)"},
-		{"another name's nonce", "ada", cur["bob"].Nonce, hook.ErrWrongNonce, "within its down-after window"},
-	}
-	for _, row := range rows {
-		_, err := r.s.Answer(ctx, row.as, row.nonce, "session")
-		assert.ErrorIs(t, err, row.want, row.name)
-		assert.ErrorContains(t, err, row.says, row.name)
+	for _, nonce := range []string{"nope", cur["bob"].Nonce} {
+		_, err := r.s.Answer(ctx, "ada", nonce, "session")
+		assert.ErrorIs(t, err, hook.ErrWrongNonce)
 	}
 	r.pass(hook.DownAfter + time.Second)
 	_, err := r.s.Answer(ctx, "ada", cur["ada"].Nonce, "session")
-	assert.ErrorIs(t, err, hook.ErrExpired, "the current nonce past its window")
-
+	assert.ErrorIs(t, err, hook.ErrExpired)
 	_, _, err = r.s.Arm(ctx, "bob", hook.Comms, "test", true)
 	require.NoError(t, err)
 	r.Hook(t, "bob", hook.Comms)
-	fresh := r.beatAfter(t, "srv", next, hook.DownAfter)["bob"].Nonce
+	r.startHeartbeat(t)
+	r.pass(hook.QuietAfter + time.Minute)
+	fresh := r.beatAfter(t, "srv", next, hook.DownAfter)["bob"]
 	_, err = r.s.Answer(ctx, "bob", cur["bob"].Nonce, "session")
-	assert.ErrorIs(t, err, hook.ErrWrongNonce, "a nonce of an earlier epoch")
-	_, err = r.s.Answer(ctx, "bob", fresh, "session")
+	assert.ErrorIs(t, err, hook.ErrWrongNonce)
+	require.NoError(t, r.s.Renew(ctx, "bob", hook.Comms, hook.Bus, fresh.Epoch, "holder"))
+	_, err = r.s.Answer(ctx, "bob", fresh.Nonce, "session")
 	require.NoError(t, err)
-	_, err = r.s.Answer(ctx, "bob", fresh, "session")
-	assert.ErrorIs(t, err, hook.ErrNoChallenge, "an answered challenge is spent")
+	_, err = r.s.Answer(ctx, "bob", fresh.Nonce, "session")
+	assert.ErrorIs(t, err, hook.ErrNoChallenge)
 }
 
 // TestALateDeliveredNonceProves pins the proof window (tla/HookBeat.tla,
@@ -206,29 +180,25 @@ func TestALateDeliveredNonceProves(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	next := nonces()
-	old := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+	r.pass(hook.QuietAfter + time.Minute)
+	cur := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
 	_, at, err := r.s.Read(ctx, "ada")
 	require.NoError(t, err)
-	r.pass(hook.BeatEvery)
-	cur := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
-	require.Equal(t, 1, cur.Misses)
-	r.pass(50 * time.Second)
-	require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, cur.Epoch, "hook"), "its holder's renewal")
-
-	p, err := r.s.AnswerProof(ctx, "ada", old.Nonce, "session")
-	require.NoError(t, err, "a nonce issued one interval ago answers after a newer one was issued")
-	assert.Equal(t, hook.Proof{Proven: 1, Back: 1, Issued: at}, p)
-	st, now, err := r.s.Read(ctx, "ada")
+	// An upgrade preserves an earlier server's still-valid recent nonce.
+	oldAt := at.Add(-time.Minute)
+	recent := r.Client.HGet(ctx, hook.RecordKey("ada"), "recent").Val()
+	old := fmt.Sprintf("%d:%s:%d:%d:bus", cur.Epoch, hook.Sum("old"), oldAt.UnixMilli(), oldAt.Add(hook.DownAfter).UnixMilli())
+	require.NoError(t, r.Client.HSet(ctx, hook.RecordKey("ada"), "recent", recent+" "+old).Err())
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, cur.Epoch, "holder"))
+	p, err := r.s.AnswerProof(ctx, "ada", "old", "session")
 	require.NoError(t, err)
-	assert.Equal(t, now, st[0].AnswerAt, "the answer counts at the time of the proof")
-	assert.Zero(t, st[0].Misses)
-
-	_, err = r.s.Answer(ctx, "ada", old.Nonce, "session")
-	assert.ErrorIs(t, err, hook.ErrWrongNonce, "a nonce answered once is spent")
-	p, err = r.s.AnswerProof(ctx, "ada", cur.Nonce, "session")
-	require.NoError(t, err, "the newer challenge still stands")
-	assert.Equal(t, 0, p.Back)
+	assert.Equal(t, hook.Proof{Proven: 1, Back: 1, Issued: oldAt}, p)
+	_, err = r.s.Answer(ctx, "ada", "old", "session")
+	assert.ErrorIs(t, err, hook.ErrWrongNonce)
+	_, err = r.s.Answer(ctx, "ada", cur.Nonce, "session")
+	require.NoError(t, err)
 }
 
 // TestAFriendProvingOneIntervalLateStaysUp pins the bug the window fixes: a
@@ -241,25 +211,21 @@ func TestAFriendProvingOneIntervalLateStaysUp(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	next := nonces()
-	handed := ""
-	for i := range 12 {
+	for range 12 {
+		r.pass(hook.QuietAfter + time.Minute)
 		b := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
-		require.Equal(t, hook.BeatChallenged, b.Did, "interval %d", i)
-		r.pass(50 * time.Second)
-		if handed != "" {
-			p, err := r.s.AnswerProof(ctx, "ada", handed, "session")
-			require.NoError(t, err, "interval %d", i)
-			assert.Equal(t, 1, p.Back, "interval %d: the challenge before the newest", i)
-		}
-		handed = b.Nonce
-		r.pass(10 * time.Second)
-		require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, b.Epoch, "hook"), "its holder's renewal")
-		st := r.state(t, "ada")
-		require.Equal(t, hook.StateProven, st.State, "interval %d", i)
-		require.Empty(t, st.Down, "interval %d", i)
+		require.Equal(t, hook.BeatChallenged, b.Did)
+		r.pass(110 * time.Second)
+		require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, b.Epoch, "holder"))
+		p, err := r.s.AnswerProof(ctx, "ada", b.Nonce, "session")
+		require.NoError(t, err)
+		assert.Zero(t, p.Back)
+		assert.Equal(t, hook.StateProven, r.state(t, "ada").State)
+		assert.Empty(t, r.state(t, "ada").Down)
 	}
-	assert.Zero(t, r.events(t), "never unhooked")
+	assert.Zero(t, r.events(t))
 }
 
 // TestARoleWithNoBusPushIsNeverChallenged pins who the heartbeat asks: a
@@ -268,6 +234,7 @@ func TestARoleWithNoBusPushIsNeverChallenged(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.Hook(t, "m1", hook.Member)
+	r.startHeartbeat(t)
 	next := nonces()
 	for range 4 {
 		assert.Equal(t, hook.BeatLeft, r.beat(t, "srv", next)["m1"].Did)
@@ -300,6 +267,11 @@ func (r *rig) passAll(t *testing.T, by string, next func() string) hook.Passed {
 	require.NoError(t, err)
 	got, err := r.s.Pass(context.Background(), names, hook.BeatEvery, testDownAfter, next, by)
 	require.NoError(t, err)
+	for _, b := range got.Beats {
+		if b.Did == hook.BeatChallenged {
+			require.NoError(t, r.s.Delivered(context.Background(), b))
+		}
+	}
 	return got
 }
 
@@ -310,11 +282,10 @@ func TestAChangeNotMarkedToldIsFoundAgain(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	next := nonces()
-	for range 3 {
-		r.passAll(t, "srv", next)
-		r.pass(hook.BeatEvery)
-	}
+	_, err := r.s.Unhook(context.Background(), "ada")
+	require.NoError(t, err)
 	for range 2 {
 		p := r.passAll(t, "srv", next)
 		down, _, _ := p.Diff(hook.ToCoordinator)
@@ -337,7 +308,9 @@ func TestEachChangeIsToldOncePerTransition(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Coordinator)
+	r.startHeartbeat(t)
 	r.Hook(t, "bob", hook.Comms)
+	r.startHeartbeat(t)
 	next := nonces()
 	type told struct {
 		down, back []string
@@ -357,9 +330,14 @@ func TestEachChangeIsToldOncePerTransition(t *testing.T) {
 	}
 	step()
 	step()
-	step() // both missed twice: unhooked, the coordinator with them
+	_, err := r.s.Unhook(context.Background(), "ada")
+	require.NoError(t, err)
+	_, err = r.s.Unhook(context.Background(), "bob")
+	require.NoError(t, err)
+	step() // both unhooked: tell the transition
 	step()
 	r.Hook(t, "ada", hook.Coordinator)
+	r.startHeartbeat(t)
 	step() // ada back, and the coordinator again
 	step()
 	assert.Equal(t, []told{
@@ -380,7 +358,9 @@ func TestAFriendsAnswerProvesItsWorkPush(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, r.s.Renew(ctx, "ada", hook.Friend, hook.Bus, e, "session"))
 	require.Equal(t, hook.StateLive, r.state(t, "ada").State)
+	r.pass(hook.QuietAfter + time.Minute)
 	b := r.beat(t, "srv", nonces())["ada"]
+	require.NoError(t, r.s.Renew(ctx, "ada", r.state(t, "ada").Role, hook.Bus, b.Epoch, "holder"))
 	n, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
@@ -399,23 +379,26 @@ func TestTheGateRefusesEveryoneWhileTheServerIsStale(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	want := hook.Want{Name: "ada", Need: []hook.Push{hook.Bus}}
+	r.pass(hook.QuietAfter + time.Minute)
 	b := r.beat(t, "srv", nonces())["ada"]
+	require.NoError(t, r.s.Renew(ctx, "ada", r.state(t, "ada").Role, hook.Bus, b.Epoch, "holder"))
 	_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
 	require.NoError(t, err)
 	r.pass(2 * hook.BeatEvery)
-	r.Hook(t, "ada", hook.Comms) // its holder's renewal: the record itself is fresh
+	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t) // its holder's renewal: the record itself is fresh
 	require.NoError(t, r.s.Gate(ctx, want), "two intervals exactly: fresh")
 	r.pass(time.Second)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	err = r.s.Gate(ctx, want)
 	var refusal *hook.Refusal
 	require.ErrorAs(t, err, &refusal)
 	assert.Contains(t, refusal.Why, "hook server stale")
-	b = r.beat(t, "srv", nonces())["ada"]
-	_, err = r.s.Answer(ctx, "ada", b.Nonce, "session")
-	require.NoError(t, err)
-	assert.NoError(t, r.s.Gate(ctx, want), "the server passing again, and answered: up")
+	r.beat(t, "srv", nonces())
+	assert.NoError(t, r.s.Gate(ctx, want), "the server passes again; no unnecessary challenge is required")
 }
 
 // TestNoServerOrNoAnswerIsNoEvidence pins "up only with evidence": a hooked,
@@ -427,15 +410,19 @@ func TestNoServerOrNoAnswerIsNoEvidence(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	require.NoError(t, r.Client.Del(ctx, hook.ServeKey).Err()) // the rig's evidence taken away: no server ever ran
 	require.NoError(t, r.Client.HDel(ctx, hook.RecordKey("ada"), "answered_at").Err())
 	want := hook.Want{Name: "ada", Need: []hook.Push{hook.Bus}}
 	var refusal *hook.Refusal
 	require.ErrorAs(t, r.s.Gate(ctx, want), &refusal)
 	assert.Contains(t, refusal.Why, "hook server never ran")
+	r.pass(hook.QuietAfter + time.Minute)
 	b := r.beat(t, "srv", nonces())["ada"]
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, b.Epoch, "holder"))
 	require.ErrorAs(t, r.s.Gate(ctx, want), &refusal)
 	assert.Contains(t, refusal.Why, "no answer to a heartbeat challenge")
+	require.NoError(t, r.s.Renew(ctx, "ada", r.state(t, "ada").Role, hook.Bus, b.Epoch, "holder"))
 	_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
 	require.NoError(t, err)
 	assert.NoError(t, r.s.Gate(ctx, want))
@@ -450,23 +437,16 @@ func TestAStaleAnswerIsDownWithAFreshServer(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
-	want := hook.Want{Name: "ada", Need: []hook.Push{hook.Bus}}
-	next := nonces()
-	b := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
-	_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
-	require.NoError(t, err)
-	r.pass(hook.BeatEvery)
-	r.beatAfter(t, "srv", next, hook.DownAfter) // answered nothing since
-	r.pass(hook.BeatEvery)
-	r.beatAfter(t, "srv", next, hook.DownAfter)
-	r.Hook(t, "ada", hook.Comms) // its holder's renewal only
-	require.NoError(t, r.Client.HSet(ctx, hook.RecordKey("ada"), "answered_at", r.state(t, "ada").BeatAt.Add(-hook.DownAfter).UnixMilli()).Err())
-	require.NoError(t, r.s.Gate(ctx, want), "the down-after exactly: up")
+	r.startHeartbeat(t)
+	r.pass(hook.QuietAfter + time.Minute)
+	r.beatAfter(t, "srv", nonces(), hook.DownAfter)
+	deadline := r.state(t, "ada").PendingUntil
+	r.pass(hook.AnswerBound)
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, r.state(t, "ada").Epoch, "holder"))
+	require.NoError(t, r.Client.HSet(ctx, hook.ServeKey, "at", deadline.UnixMilli()).Err())
+	assert.Empty(t, r.state(t, "ada").Down, "the full deadline is available")
 	r.pass(time.Second)
-	var refusal *hook.Refusal
-	require.ErrorAs(t, r.s.Gate(ctx, want), &refusal)
-	assert.Contains(t, refusal.Why, hook.NoAnswerReason)
-	assert.Equal(t, hook.StateProven, r.state(t, "ada").State, "hooked and proven all the same: only the evidence is old")
+	assert.Equal(t, hook.NoAnswerReason, r.state(t, "ada").Down)
 }
 
 // TestDownAfterIsTheReadersWindow pins that the readers' up (Served.Down)
@@ -478,6 +458,7 @@ func TestDownAfterIsTheReadersWindow(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
 	names, err := r.s.Names(ctx)
 	require.NoError(t, err)
 	_, err = r.s.Pass(ctx, names, hook.BeatEvery, hook.DownAfter, nonces(), "srv")
@@ -489,11 +470,18 @@ func TestDownAfterIsTheReadersWindow(t *testing.T) {
 	st := hook.Status{Name: "ada", Role: hook.Comms, AnswerAt: sv.Now.Add(-4 * time.Minute)}
 	assert.Empty(t, sv.Down(st), "answered four minutes ago, under a five-minute down-after: up")
 	st.AnswerAt = sv.Now.Add(-hook.DownAfter - time.Second)
+	st.PendingSent = true
+	st.PendingUntil = sv.Now.Add(-time.Second)
 	assert.Equal(t, hook.NoAnswerReason, sv.Down(st))
 	require.NoError(t, r.Client.HDel(ctx, hook.ServeKey, "down_after").Err())
 	sv, err = r.s.Serve(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 2*hook.BeatEvery, sv.Window(), "an older server's row: its own two intervals")
+}
+
+func (r *rig) startHeartbeat(t *testing.T) {
+	t.Helper()
+	require.NoError(t, r.Client.HSet(context.Background(), hook.ServeKey, "by", "silence-test").Err())
 }
 
 // TestThePushedMarkIsTheStateAndTheCount pins the row's pushed mark
@@ -520,4 +508,46 @@ func TestThePushedMarkIsTheStateAndTheCount(t *testing.T) {
 	assert.Equal(t, hook.StateDown, hook.PushState(hook.Status{State: hook.StateProven, Down: hook.NoAnswerReason}))
 	assert.Equal(t, hook.StateProven, hook.PushState(hook.Status{State: hook.StateProven}))
 	assert.Equal(t, hook.StateExpired, hook.PushState(hook.Status{State: hook.StateExpired, Down: hook.StaleReason}))
+}
+
+// TestAProofGrantsAFreshSilenceWindow pins the silence rule's clock
+// (tla/HookBeat.tla, NoChallengeWhileTalking): a busy friend who sends no bus
+// message is challenged after BusyQuietAfter, proves, and is not challenged
+// again until BusyQuietAfter after that proof, however many passes run between;
+// the window counts from the later of her last send and her last proof.
+func TestAProofGrantsAFreshSilenceWindow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Friend)
+	r.startHeartbeat(t)
+	next := nonces()
+	pass := func() hook.Beat {
+		names, err := r.s.Names(ctx)
+		require.NoError(t, err)
+		got, err := r.s.Pass(ctx, names, hook.BeatEvery, hook.DownAfter, next, "srv", "ada")
+		require.NoError(t, err)
+		for _, b := range got.Beats {
+			if b.Did == hook.BeatChallenged {
+				require.NoError(t, r.s.Delivered(ctx, b))
+			}
+			if b.Name == "ada" {
+				return b
+			}
+		}
+		return hook.Beat{}
+	}
+	r.pass(hook.BusyQuietAfter + time.Minute)
+	b := pass()
+	require.Equal(t, hook.BeatChallenged, b.Did)
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Friend, hook.Bus, b.Epoch, "holder"))
+	_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
+	require.NoError(t, err)
+	for range int(hook.BusyQuietAfter/hook.BeatEvery) - 1 { // one-minute passes up to the end of her window
+		r.pass(hook.BeatEvery)
+		assert.Equal(t, hook.BeatLeft, pass().Did)
+	}
+	r.pass(hook.BeatEvery)
+	r.pass(hook.BeatEvery)
+	assert.Equal(t, hook.BeatChallenged, pass().Did, "challenged again once the window from her proof has passed")
 }

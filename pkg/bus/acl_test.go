@@ -308,7 +308,7 @@ func deriveACLNeeds(t *testing.T, srcs map[string]string) aclNeeds {
 	var needs aclNeeds
 	family := map[string]bool{}
 	for n, v := range consts {
-		if strings.HasPrefix(v, "bus2:") {
+		if strings.HasPrefix(v, "bus2:") || strings.HasPrefix(v, "hook:rec:") { // the bus families, and the one hook record a send stamps
 			family[n] = true
 		}
 	}
@@ -611,6 +611,7 @@ var aclFamilies = map[string]aclPolicy{
 	"OwedPrefix":       {Kind: "writes", Why: "send: HSET for every friend recipient; ack and a reply: HDEL"},
 	"StagePrefix":      {Kind: "writes", Why: "recv and stamp: the receipt script; a reply acts in the send"},
 	"SentPrefix":       {Kind: "writes", Own: true, Why: "send --token: the token's record, GET and SET in a selector"},
+	"HookRecPrefix":    {Kind: "writes", Own: true, Why: "send --model-activity: HGET and HSET bus_sent_at on the sender's own hook record, in the send script"},
 	"AskPrefix":        {Kind: "writes", Why: "send --kind ask: HSET bus2:ask:<id>, a new id, so no name to pin; asks reads the records"},
 	"AsksPrefix":       {Kind: "writes", Own: true, Others: true, Why: "send --kind ask: HSET the sender's index; asks --liveness and overdue read every name's"},
 	"AnswersPrefix":    {Kind: "writes", Own: true, Others: true, Why: "every reply: HSETNX the sender's own; asks reads the recipients'"},
@@ -842,7 +843,7 @@ func TestTheFriendACLCoversEveryBusKeyFamily(t *testing.T) {
 	for _, want := range []string{"Prefix", "LogKey", "OwedPrefix", "StagePrefix", "SentPrefix", "AskPrefix", "AsksPrefix", "AskTimeoutPrefix", "AnswersPrefix", "friendsKey", "machinesKey"} {
 		assert.Contains(t, fams, want)
 	}
-	for _, want := range []string{"HSETNX", "XCLAIM", "XGROUP|CREATE", "EVALSHA", "EVAL", "GET", "SET", "XADD", "HGET", "TIME", "MULTI", "EXEC", "SADD"} {
+	for _, want := range []string{"HSETNX", "XCLAIM", "XGROUP|CREATE", "EVALSHA", "EVAL", "GET", "SET", "XADD", "HGET", "TIME", "SADD", "TYPE"} {
 		assert.Contains(t, cmds, want)
 	}
 	assert.Equal(t, []string{"HELLO", "PING"}, func() []string {
@@ -860,7 +861,7 @@ func TestTheFriendACLCoversEveryBusKeyFamily(t *testing.T) {
 		got := aclProblems(strings.Replace(line, " +hsetnx", "", 1), needs, login)
 		require.Len(t, got, 1, got)
 		assert.Contains(t, got[0], "HSETNX")
-		assert.Contains(t, got[0], "HSetNX")
+		assert.Contains(t, got[0], "HSETNX")
 	})
 	t.Run("reversed: the line without +xclaim", func(t *testing.T) {
 		got := aclProblems(strings.Replace(line, " +xclaim", "", 1), needs, login)

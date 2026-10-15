@@ -34,6 +34,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 	"github.com/mas-bandwidth/nova-tools/pkg/units"
 )
@@ -68,14 +69,15 @@ type world struct {
 	now                func() time.Time
 	signals            func(ctx context.Context) (context.Context, context.CancelFunc)
 	nonce              func() string
-	after              func(time.Duration) <-chan time.Time                                  // the heartbeat server's wait between passes
-	wait               func(context.Context, time.Duration)                                  // the hook loop's pause or retry backoff wait
-	deliver            func(*bus.Bus, bus.Message) (bus.Message, error)                      // the heartbeat server's one send: Bus.Send under a call's deadline
-	holder             string                                                                // who holds the pushes this process holds, as the lease shows it
-	tick               time.Duration                                                         // one blocking read of the loop
-	service            serviceManager                                                        // the one supervised hook service per friend
-	sprint             func(ctx context.Context, addr string, argv []string) (string, error) // one verb to the sprint server (the lane client's ask)
-	home               func() (string, error)                                                // the user's home, where the lane client caches briefs
+	after              func(time.Duration) <-chan time.Time                                    // the heartbeat server's wait between passes
+	wait               func(context.Context, time.Duration)                                    // the hook loop's pause or retry backoff wait
+	deliver            func(*bus.Bus, bus.Message) (bus.Message, error)                        // the heartbeat server's one send: Bus.Send under a call's deadline
+	holder             string                                                                  // who holds the pushes this process holds, as the lease shows it
+	tick               time.Duration                                                           // one blocking read of the loop
+	service            serviceManager                                                          // the one supervised hook service per friend
+	sprintBatch        func(context.Context, string, ...[]string) ([]sprintwire.Result, error) // one authoritative batch of friend rows
+	sprint             func(ctx context.Context, addr string, argv []string) (string, error)   // one verb to the sprint server (the lane client's ask)
+	home               func() (string, error)                                                  // the user's home, where the lane client caches briefs
 }
 
 func realWorld() world {
@@ -103,8 +105,11 @@ func realWorld() world {
 		after:              time.After,
 		deliver:            deliver,
 		sprint:             sprintAsk,
-		home:               userHome,
-		holder:             fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
+		sprintBatch: func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error) {
+			return (sprintwire.Client{Addr: addr}).Do(ctx, verbs...)
+		},
+		home:   userHome,
+		holder: fmt.Sprintf("nova-hook %s pid %d", host, os.Getpid()),
 		lookup: func(ctx context.Context, h string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
 		},
@@ -178,7 +183,7 @@ func hookTool(w world) *tool.Tool {
 strict gates require the acting name's role push to be live and proven.
 nova-bus send/recv note unproven mailboxes unless --require-push or NOVA_BUS_REQUIRE_PUSH=1.
 a hook proof is a protocol response only, not foreground presence or native idle-wake evidence.
-the record is in bus Redis; serve challenges each hooked name every minute; over 5m silent unhooks.`,
+the record is in bus Redis; serve checks every ` + hook.BeatEvery.String() + `; silence windows are ` + hook.BusyQuietAfter.String() + `/` + hook.QuietAfter.String() + `/` + hook.CoordinatorEvery.String() + `.`,
 		ExitTable: "0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"ARMED", "CHALLENGE", "PUSH", "STATE", "STOP", "DRY-RUN"},
 		UsageNote: "only the model answers a challenge, with nova-hook prove from inside its own turn; no daemon, loop or script may call prove.",
@@ -193,10 +198,10 @@ live and the command that hooks it in (exit 1). Without it, every name that ever
 proven=<n>, then one STATUS NAME name= state= role= epoch= <push>=<down|armed|proven> line each, at exit 0.
 The states: none, unhooked, expired (no push live), partial, live (every push live, not every one proven), proven;
 and down for a proven name with no evidence: no heartbeat server ever ran, none passed for two of its intervals
-(hook server stale), or the name has not answered a challenge within the server's --down-after.
-Once a heartbeat server (nova-hook serve) has passed, --as is also the client's timeout: a hooked name the server
-challenges that has had no challenge for two of the server's intervals is STATUS FAILED NO CHALLENGE FOR <age>
-(exit 1): the server is down, so nothing is checking the link. Without --as the first line carries serve_age=.
+(hook server stale), or its activity and any outstanding challenge are past their deadlines.
+Activity is an explicit model bus send or a nonce proof; quiet windows are role-specific and a pending challenge
+has its full answer bound. Intentional silence between challenges is healthy while the server passes.
+Without --as the first line carries serve_age=.
 example: nova-hook status --as ada`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "the name whose record to read (default: every name that ever hooked in)")
@@ -219,11 +224,14 @@ this session sent itself with nova-bus send) except what the heartbeat server se
 coordinator's does: each FRIEND STATE line, every FRIEND DOWN / FRIEND BACK / COORDINATOR DOWN judgment and its OVERDUE
 push-again, and the challenges, each its own HOOK PUSH line. A push it does not hold (the sprint push, held by
 nova-sprint run; the work push, held by the friend daemon or the member loop) is named with its holder on the
-HOOK ARMED line's notes. The client prints a bootstrap challenge at start. A standalone hook loop repeats its own challenges every ` + hook.ChallengeEvery.String() + `: run the line it carries,
+HOOK ARMED line's notes. A standalone loop asks at start and every ` + hook.ChallengeEvery.String() + `.
+Codex, DeepSeek and Antigravity clients bootstrap once. The heartbeat server checks every hooked name whose
+role carries the bus push every ` + hook.BeatEvery.String() + `; it challenges after ` + hook.BusyQuietAfter.String() + ` of silence for a friend
+holding ready or working sprint cards, ` + hook.QuietAfter.String() + ` for an idle friend or comms name, and ` + hook.CoordinatorEvery.String() + ` for a coordinator.
+Proof renewal starts ` + (hook.ProofTTL - hook.AnswerBound - 2*hook.BeatEvery).String() + ` after the last proof, reserving the answer bound and two pass intervals. Run the line it carries,
 nova-hook prove --as <me> --nonce <n>, within ` + hook.AnswerBound.String() + `, and the pushes it holds are proven. HOOK STATE state= line
 each time the record changes. Run it under the session's Monitor: each line is a notification. It stops on SIGINT or
 SIGTERM (HOOK STOP, exit 0; the leases lapse after ` + hook.LeaseTTL.String() + `), or when the record is unhooked under it (exit 1).
-Codex, DeepSeek and Antigravity clients bootstrap once; the heartbeat server challenges them every --every (default ` + hook.BeatEvery.String() + `) and marks a name down after --down-after (default ` + hook.DownAfter.String() + `) silent.
 This proof records a protocol response to the challenge; it does not establish foreground session presence or native idle-wake behavior.
 Codex desktop delivery uses --codex-socket, --codex-thread and --codex-events-dir together (or NOVA_HOOK_CODEX_SOCKET,
 NOVA_HOOK_CODEX_THREAD, NOVA_HOOK_CODEX_EVENTS_DIR). The directory must exist, be private (0700), canonical and owned
@@ -359,13 +367,17 @@ sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE 
 				Effect:  tool.Delivery + ": challenges every hooked name on its bus, unhooks a name silent for --down-after, and expires overdue asks",
 				DryRun:  true,
 				Detail: `The heartbeat server (docs/SPEC-HOOK.md, the heartbeat; tla/HookBeat.tla). Every --every (default ` + hook.BeatEvery.String() + `),
-in one atomic pass by the store's TIME, each hooked name whose role a session answers in (coordinator, friend,
-comms) gets a fresh challenge as a bus message to its name, subject HOOK CHALLENGE nonce=<n>, due within the
-interval, delivered by nova-hook through the native route or the session's Monitor. A challenge left
-unanswered a whole interval is a miss. A name goes down only at a miss when its last answer (or its hooking in,
-if later) is older than --down-after (default ` + hook.DownAfter.String() + `) by the store's TIME: it is unhooked with reason
-"no answer in <down-after> (<n> challenges missed)". Challenges still go out every --every; a harness that
-cannot answer mid-turn answers between turns and stays up. Readers show a name down past the same window.
+in one atomic pass by the store's TIME, it checks every hooked coordinator, friend and comms name.
+A friend holding ready or working sprint cards is challenged after ` + hook.BusyQuietAfter.String() + ` of silence;
+an idle friend or comms name after ` + hook.QuietAfter.String() + `; a coordinator after ` + hook.CoordinatorEvery.String() + `.
+The sprint server's friend cards answers choose busy or idle; an unavailable answer uses the shorter window
+and prints a fault. Last activity is the latest nonce proof or explicit model bus send, with arming as the
+initial boundary. Daemon traffic never counts. Proof renewal starts at proof TTL minus the answer bound and two pass intervals (default ` + (hook.ProofTTL - hook.AnswerBound - 2*hook.BeatEvery).String() + ` after proof).
+Only one challenge stands, delivered to the name's bus stream with subject HOOK CHALLENGE nonce=<n>.
+Its answer is due within ` + hook.AnswerBound.String() + `. Past that deadline, a name whose activity is older than
+--down-after (default ` + hook.DownAfter.String() + `) is unhooked. Passes never replace a valid outstanding nonce. An expired unanswered renewal waits for silence or a fresh model proof before retrying.
+Readers also mark a name down after silence exceeds its quiet window plus the answer bound, --down-after and two pass intervals, even if challenge delivery is lost.
+A bus send does not create or extend a proof; only the model answers with nova-hook prove.
 Each real change is told once, coalesced per pass: the coordinator gets one judgment (bus kind judgment) naming
 every FRIEND DOWN and FRIEND BACK, open until answered with nova-bus send --re <id> and pushed again as OVERDUE
 once past --judge-within; and apart from it, never folded into it, every change of a friend's state (the record's:
@@ -385,8 +397,9 @@ pass would do; taken=false when another server's pass holds this interval. No ch
 example: nova-hook serve --as ada --once`,
 				Flags: func(f *tool.Flags) {
 					as(f)
-					f.Duration("every", hook.BeatEvery, "the interval between passes, and each challenge's deadline")
-					f.Duration("down-after", hook.DownAfter, "how long a name may go without answering before a missed challenge unhooks it; at least --every")
+					f.Duration("every", hook.BeatEvery, "the interval between server passes; challenges use role silence and proof expiry")
+					f.String("sprint-server", orDefault(w.getenv(sprintServerEnv), DefaultSprintServer), "the authoritative sprint server for ready and working friend cards, host:port")
+					f.Duration("down-after", hook.DownAfter, "how old model activity must be before a challenge past its answer bound unhooks the name; at least --every")
 					f.Duration("judge-within", 2*time.Minute, "how long a judgment waits for its answer before it is pushed again, once, as OVERDUE")
 					f.Bool("once", false, "run one pass and exit 0; no loop")
 					store(f)
@@ -1258,9 +1271,8 @@ func (w world) status(c *tool.Call) *tool.Out {
 	return o
 }
 
-// noChallenge is the client's timeout (tla/HookBeat.tla, ClientTimeout): a
-// hooked name of a challenged role with no challenge for two of the server's
-// intervals, timed from its last challenge or its arming, whichever is later.
+// noChallenge detects a stale server row (tla/HookBeat.tla, StaleServerMeansDown).
+// Intentional silence between challenges never implies a lost server.
 // No server ever passed: no timeout (nothing was lost).
 func noChallenge(st hook.Status, sv hook.Served) (time.Duration, bool) {
 	if !sv.OK || st.State == hook.StateNone || st.State == hook.StateUnhooked {
@@ -1269,12 +1281,8 @@ func noChallenge(st hook.Status, sv hook.Served) (time.Duration, bool) {
 	if _, ok := hook.Challenged[st.Role]; !ok {
 		return 0, false
 	}
-	last := st.BeatAt
-	if st.Armed.After(last) {
-		last = st.Armed
-	}
-	age := sv.Now.Sub(last).Round(time.Second)
-	return age, age > 2*sv.Every
+	age := sv.Now.Sub(sv.At).Round(time.Second)
+	return age, sv.Stale()
 }
 
 // statusFacts is a record's facts: name, state, role, epoch and each push.

@@ -58,11 +58,25 @@ func TestEveryFriendTransitionIsPushedToTheCoordinator(t *testing.T) {
 			pass("ada", "bob", "carl")
 			pass("ada", "bob", "carl")
 			assert.Empty(t, r.stateLines(t))
-			pass("ada")
-			pass("ada")
-			at := pass("ada") // both silent friends go down in this one pass
-			expect("bob", "proven", "unhooked", at)
-			expect("carl", "proven", "unhooked", at)
+			// silent friends are challenged only past their quiet window (tla/HookBeat.tla,
+			// NoChallengeWhileTalking): their leases lapse first, then the unanswered challenge unhooks them
+			var expired, down string
+			for i := 0; i < 25 && down == ""; i++ {
+				at := pass("ada")
+				switch len(r.stateLines(t)) {
+				case 2:
+					if expired == "" {
+						expired = at
+					}
+				case 4:
+					down = at
+				}
+			}
+			require.NotEmpty(t, down, "both silent friends go down")
+			expect("bob", "proven", "expired", expired)
+			expect("carl", "proven", "expired", expired)
+			expect("bob", "expired", "unhooked", down)
+			expect("carl", "expired", "unhooked", down)
 		},
 		func() { // a send that fails is not sent, and is sent at the next pass, once
 			require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
@@ -72,7 +86,7 @@ func TestEveryFriendTransitionIsPushedToTheCoordinator(t *testing.T) {
 			require.Equal(t, hook.StateLive, r.h.State(t, "bob").State)
 			r.failTells.Store(true)
 			pass("ada")
-			assert.Len(t, r.stateLines(t), 2, "the failed send put nothing on the stream")
+			assert.Len(t, r.stateLines(t), 4, "the failed send put nothing on the stream")
 			r.failTells.Store(false)
 			// each pass here is a new server process (serve --once), which holds no transition over: the retry
 			// finds bob's change again against the last pushed mark, and stamps it with its own pass's time
