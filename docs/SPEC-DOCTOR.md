@@ -104,14 +104,22 @@ harness itself, `CLAUDE_CONFIG_DIR=<dir> claude -p ok --output-format json --max
 owner's hand: `CLAUDE_CONFIG_DIR=<dir> claude login`. The check reads only the
 harness's answer and never prints, copies or moves a credential.
 
-**friends-hooked.** Dependency: every friend's hook record and the heartbeat
-server's build. Runs `nova-hook friends --json` and reads each name's `role`,
-`state` and `version` and the server's `serve_version`, and runs `nova-hook
-version` for the installed build. `fail` when a `friend` or `comms` name is not
-`up`, when a name that is up was hooked by another build, or when a running
-server's `serve_version` differs. Evidence names each friend and each build;
-fix: `nova-update apply --file <manifest> nova-hook --version <installed>`. A
-hook record that cannot be read is a `warn`.
+**friends-hooked.** Dependency: the friend roster, every friend's hook record
+and hook service, and the heartbeat server's build. The roster is `nova-config
+friend list --json`, the one source of friend names; a name hooked but not
+rostered is not judged. Runs `nova-hook friends --json` for each name's `role`,
+`state` and `version` and the server's `serve_version`, and `nova-hook version`
+for the installed build. Every rostered friend is checked whatever its role
+(the role is named in the evidence). `fail` when the roster is empty, when a
+rostered friend has no hook record, is not `up`, or was hooked by another
+build, when its supervised hook service (launchd `nova-hook.client.<name>`,
+read with `launchctl list`; systemd `nova-hook-<name>.service`, read with
+`systemctl --user show`) is not loaded, not running, or its binary's `version`
+line names another build, or when a running server's `serve_version` differs.
+Any input that cannot be read (a command that fails, a document that does not
+parse or carries no `items`) is a `fail`, never a pass. Evidence names each
+friend and each build; fix: `nova-update apply --file <manifest> nova-hook
+--version <installed>`, then `nova-hook hook --as <name>`.
 
 **plists.** Dependency: the launchd plists and systemd units this machine loads.
 Runs `plutil -lint` on every `com.nova.*.plist` under `~/Library/LaunchAgents`
