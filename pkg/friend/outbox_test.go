@@ -99,7 +99,7 @@ func TestReportVerdictReadsTheFriendsWords(t *testing.T) {
 		"no verdict here\nHead: abc\n":      {"", "abc"},
 		"Head: `abc`, pushed\nVerdict: L\n": {"L", "abc"},
 	} {
-		v, h := reportVerdict(report)
+		v, h := ReportVerdict(report)
 		assert.Equal(t, want, [2]string{v, h}, report)
 	}
 }
@@ -164,6 +164,76 @@ func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "a run stopped at its usage limit is run again, never dead")
 	said := strings.Join(r.records, "\n")
 	assert.Contains(t, said, "outbox: left outbox/off.w1~15/REPORT.md: Head "+head+" is not origin's tip of sprint/off.w1.g1.e15, "+other)
+}
+
+// TestTheSprintReportReadersAreExported pins the readers nova-sprint's collect and friend
+// sync would import here: ReportVerdict, ReportPara and UnaddressedLand answer as nova-sprint's
+// CollectVerdict, collectPara and UnaddressedLand do (its collect_test.go and rework cases).
+func TestTheSprintReportReadersAreExported(t *testing.T) {
+	t.Parallel()
+	const head = "0123456789abcdef0123456789abcdef01234567"
+	for _, tc := range []struct {
+		name    string
+		report  string
+		brief   string
+		verdict string
+		head    string
+		para    string
+		held    string
+	}{
+		{
+			name:    "markdown verdict with a backtick head",
+			report:  "**Verdict:** land.\nHead: `" + head + "`\n\nmixed case and markdown trim.\n",
+			verdict: "LAND",
+			head:    head,
+			para:    "mixed case and markdown trim.",
+		},
+		{
+			name:    "hold with a heading before its paragraph",
+			report:  "# hold\n\nVerdict: HOLD\nHead: " + head + "\n\nno push\n",
+			verdict: "HOLD",
+			head:    head,
+			para:    "no push",
+		},
+		{
+			name:   "no verdict line",
+			report: "I am still writing it.\n",
+			para:   "I am still writing it.",
+		},
+		{
+			name:    "fix the report does not address",
+			report:  "Verdict: LAND\nHead: " + head + "\n\nThe change is pushed.\n",
+			brief:   "STATUS: nova-sprint card s1-1.w2, epoch 0, attempt 2; push your work to sprint/s1-1.w2.g1.e0\nTHE ONE THING LEFT: assert the queue bound under shuffle\n",
+			verdict: "LAND",
+			head:    head,
+			para:    "The change is pushed.",
+			held:    "held by friend sync: the report says LAND and does not address THE ONE THING LEFT (assert the queue bound under shuffle); the key words it does not name: assert, queue, bound, under, shuffle.",
+		},
+		{
+			name:    "fix the report addresses",
+			report:  "Verdict: LAND\nHead: " + head + "\n\nThe queue bound is asserted under -shuffle=on.\n",
+			brief:   "STATUS: nova-sprint card s1-1.w2, epoch 0, attempt 2; push your work to sprint/s1-1.w2.g1.e0\nTHE ONE THING LEFT: assert the queue bound under shuffle\n",
+			verdict: "LAND",
+			head:    head,
+			para:    "The queue bound is asserted under -shuffle=on.",
+		},
+		{
+			name:    "no fix the brief asks",
+			report:  "Verdict: LAND\nHead: " + head + "\n\nDone.\n",
+			brief:   "STATUS: nova-sprint card s1-1.w2, epoch 0, attempt 2; push your work to sprint/s1-1.w2.g1.e0\n",
+			verdict: "LAND",
+			head:    head,
+			para:    "Done.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, h := ReportVerdict(tc.report)
+			assert.Equal(t, tc.verdict, v, "verdict")
+			assert.Equal(t, tc.head, h, "head")
+			assert.Equal(t, tc.para, ReportPara(tc.report), "paragraph")
+			assert.Equal(t, tc.held, UnaddressedLand("friend sync", tc.report, tc.brief), "held")
+		})
+	}
 }
 
 func TestRunnerEndedReadsTheJobsLastEventAsCollectDoes(t *testing.T) {
