@@ -17,6 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -255,10 +256,10 @@ func TestBigBacklogCutsOverAndCarriesOnWithoutRefusing(t *testing.T) {
 		cancel()
 		return ctx, cancel
 	}
-	var saved savedCodexEvent
-	w.codexSave = func(_ string, _ string, data []byte) error {
+	var saved notice.Envelope
+	w.files = filesFunc(func(_ string, data []byte, _ bool) error {
 		return json.Unmarshal(data, &saved)
-	}
+	})
 
 	var out, errb bytes.Buffer
 	code := run(codexArgs, strings.NewReader(""), &out, &errb, w)
@@ -438,4 +439,3 @@ func TestMidLoopLeaseRenewalErrorRetriesWithBackoff(t *testing.T) {
 	assert.Contains(t, out.all.String(), "state=read")
 	assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State)
 }
-

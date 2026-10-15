@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
@@ -102,7 +103,7 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, within time.Dur
 			continue
 		}
 		// the nonce goes only to the name's own stream: never on this server's lines
-		if err := w.send(b, bus.Message{From: s.as, To: []string{bt.Name}, Subject: "HOOK CHALLENGE nonce=" + bt.Nonce, Body: challengeText(bt.Name, bt.Nonce, every)}); err != nil {
+		if err := w.send(b, bus.Message{From: s.as, To: []string{bt.Name}, Subject: "HOOK CHALLENGE nonce=" + bt.Nonce, Body: notice.ChallengeText(bt.Name, bt.Nonce, every)}); err != nil {
 			fault(c, "challenge "+bt.Name, err)
 			continue
 		}
@@ -298,9 +299,4 @@ func (w world) judgments(c *tool.Call, s *session, b *bus.Bus) {
 func (w world) send(b *bus.Bus, m bus.Message) error {
 	_, err := w.deliver(b, m)
 	return err
-}
-
-// challengeText is the heartbeat challenge as the session reads it.
-func challengeText(name, nonce string, every time.Duration) string {
-	return fmt.Sprintf("HOOK CHALLENGE nonce=%s\nThe hook's heartbeat asks whether the model is here. Answer from inside this turn, before anything else, within %s, with: nova-hook prove --as %s --nonce %s\nOnly the model answers: no daemon, loop or script may. %d unanswered in a row unhook %s.\n", nonce, every, name, nonce, hook.MissLimit, name)
 }

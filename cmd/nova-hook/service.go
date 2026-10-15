@@ -204,6 +204,8 @@ func hookServiceArgs(c *tool.Call, as string, role hook.Role, addr string) []str
 		"antigravity-server",
 		"antigravity-events-dir",
 		"antigravity-since",
+		"claude-state",
+		"claude-settings",
 	} {
 		if v := strings.TrimSpace(c.Str(flag)); v != "" {
 			args = append(args, "--"+flag, v)

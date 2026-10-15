@@ -10,34 +10,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 )
 
-// ValidateDirectory checks the pathname grammar used in the closed saved-event
-// notice. Filesystem ownership is checked by the saving client, as it is for
-// the sibling Codex receiver.
-func ValidateDirectory(directory string) error {
-	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || len(directory) > 1024 {
-		return fmt.Errorf("event directory wants a clean absolute path of at most 1024 bytes")
-	}
-	for _, c := range directory {
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '/' || c == '-' || c == '_' || c == '.' || c == ' ' {
-			continue
-		}
-		return fmt.Errorf("event directory wants only letters, digits, spaces, slash, dot, underscore and hyphen")
-	}
-	return nil
-}
-
-// SavedPath is the only local file a saved-event notice may name. No message
-// content, subject, nonce, or caller-authored instruction enters native text.
-func SavedPath(directory, eventID string) (string, error) {
-	if err := ValidateDirectory(directory); err != nil {
-		return "", err
-	}
-	if !safeID(eventID) {
-		return "", fmt.Errorf("event id is invalid")
-	}
-	return filepath.Join(directory, eventID+".json"), nil
-}
-
 //go:embed receiver.mjs
 var receiverSource []byte
 

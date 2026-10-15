@@ -19,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
@@ -90,7 +91,7 @@ func (w world) antigravityConfig(c *tool.Call) (*codexRoute, error) {
 	if c.Bool("once") {
 		return nil, errors.New("antigravity delivery wants a running hook client; omit --once")
 	}
-	if w.codexLock == nil || w.codexSave == nil || w.antigravityInstall == nil || w.antigravityDeliver == nil {
+	if w.codexLock == nil || w.files == nil || w.antigravityInstall == nil || w.antigravityDeliver == nil {
 		return nil, errors.New("antigravity delivery wants a configured local native receiver")
 	}
 	homeFn := w.antigravityHome
@@ -202,7 +203,7 @@ func ensureAntigravityEventsDir(dir string) error {
 			return fmt.Errorf("chmod antigravity event directory: %w", err)
 		}
 	}
-	return privateCodexDirectory(dir)
+	return notice.PrivateDir(dir)
 }
 
 func discoverAntigravityServer(ctx context.Context, ag *antigravityRoute) (int, string, []int, string, error) {
@@ -392,11 +393,13 @@ func parseAntigravityListenPorts(lsofOut string) []int {
 
 func ensureAntigravityAgentAPI(home, serverBin string) (string, error) {
 	wrapper := friend.AntigravityRunner(home)
-	if _, err := os.Stat(wrapper); errors.Is(err, os.ErrNotExist) && serverBin != "" {
+	script := fmt.Sprintf("#!/bin/sh\nexec %q agentapi \"$@\"\n", serverBin)
+	// Rewritten whenever its target differs: a moved language_server never
+	// leaves a stale wrapper behind.
+	if was, err := os.ReadFile(wrapper); serverBin != "" && (errors.Is(err, os.ErrNotExist) || (err == nil && string(was) != script)) {
 		if err := os.MkdirAll(filepath.Dir(wrapper), 0755); err != nil {
 			return "", fmt.Errorf("create agentapi wrapper directory: %w", err)
 		}
-		script := fmt.Sprintf("#!/bin/sh\nexec %q agentapi \"$@\"\n", serverBin)
 		if err := atomicfile.Write(wrapper, []byte(script), 0755); err != nil {
 			return "", fmt.Errorf("install agentapi wrapper: %w", err)
 		}
@@ -624,36 +627,6 @@ func antigravityMailboxDir(home, conversation string) string {
 	return filepath.Join(home, ".gemini", "antigravity", "brain", conversation, ".system_generated", "messages")
 }
 
-func snapshotAntigravityMailbox(msgDir string) map[string]bool {
-	before := map[string]bool{}
-	entries, err := os.ReadDir(msgDir)
-	if err != nil {
-		return before
-	}
-	for _, e := range entries {
-		before[e.Name()] = true
-	}
-	return before
-}
-
-func newAntigravityMailboxFile(msgDir string, before map[string]bool) string {
-	entries, err := os.ReadDir(msgDir)
-	if err != nil {
-		return ""
-	}
-	var added []string
-	for _, e := range entries {
-		if !before[e.Name()] {
-			added = append(added, e.Name())
-		}
-	}
-	if len(added) == 0 {
-		return ""
-	}
-	sort.Strings(added)
-	return added[len(added)-1]
-}
-
 // deliverAntigravitySaved delivers a saved external event file into the target
 // Antigravity conversation via `agentapi send-message --title=nova-hook`.
 // Only the validated event ID and canonical path enter the notice text.
@@ -672,14 +645,14 @@ func deliverAntigravitySaved(ctx context.Context, ag *antigravityRoute, id, dire
 	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxCodexEvent {
 		return "", fmt.Errorf("%w: saved event must be a non-empty regular file at most %d bytes", codexdesktop.ErrPreSend, maxCodexEvent)
 	}
-	notice := fmt.Sprintf("nova-hook saved event %s in %s. Read that JSON file and follow local_receiver.", id, savedPath)
+	text := fmt.Sprintf("nova-hook saved event %s in %s. Read that JSON file and follow local_receiver.", id, savedPath)
 	msgDir := antigravityMailboxDir(ag.homeDir, ag.conversation)
-	before := snapshotAntigravityMailbox(msgDir)
+	before := notice.MailboxSnapshot(msgDir)
 
 	sendOnPort := func(token string, port int) ([]byte, error, bool) {
 		sendCtx, cancel := context.WithTimeout(ctx, antigravityCmdTimeout)
 		defer cancel()
-		out, sendErr := ag.exec(sendCtx, ag.workspaceDir, antigravityEnv(token, port), ag.agentAPI, "send-message", "--title=nova-hook", ag.conversation, notice)
+		out, sendErr := ag.exec(sendCtx, ag.workspaceDir, antigravityEnv(token, port), ag.agentAPI, "send-message", "--title=nova-hook", ag.conversation, text)
 		timedOut := errors.Is(sendErr, context.DeadlineExceeded) || errors.Is(sendErr, context.Canceled) ||
 			errors.Is(sendCtx.Err(), context.DeadlineExceeded) || errors.Is(sendCtx.Err(), context.Canceled)
 		if !timedOut {
@@ -694,13 +667,13 @@ func deliverAntigravitySaved(ctx context.Context, ag *antigravityRoute, id, dire
 	if ag.port > 0 && ag.csrfToken != "" {
 		out, sendErr, timedOut = sendOnPort(ag.csrfToken, ag.port)
 		if sendErr == nil {
-			turn := newAntigravityMailboxFile(msgDir, before)
+			turn := notice.MailboxConfirm(msgDir, before, id)
 			if turn == "" {
 				turn = "antigravity-" + id
 			}
 			return turn, nil
 		}
-		if turn := newAntigravityMailboxFile(msgDir, before); turn != "" {
+		if turn := notice.MailboxConfirm(msgDir, before, id); turn != "" {
 			return turn, nil
 		}
 		if timedOut {
@@ -734,13 +707,13 @@ func deliverAntigravitySaved(ctx context.Context, ag *antigravityRoute, id, dire
 
 	out, sendErr, timedOut = sendOnPort(ag.csrfToken, ag.port)
 	if sendErr == nil {
-		turn := newAntigravityMailboxFile(msgDir, before)
+		turn := notice.MailboxConfirm(msgDir, before, id)
 		if turn == "" {
 			turn = "antigravity-" + id
 		}
 		return turn, nil
 	}
-	if turn := newAntigravityMailboxFile(msgDir, before); turn != "" {
+	if turn := notice.MailboxConfirm(msgDir, before, id); turn != "" {
 		return turn, nil
 	}
 	if timedOut {
