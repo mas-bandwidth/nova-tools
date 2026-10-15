@@ -211,7 +211,7 @@ func TestRedisStoreSendsOnceUnderAToken(t *testing.T) {
 // under a token goes and its retry answers the original, while SET and GET on
 // the roster, the log, a stream and another sender's record are refused. The
 // reversed witness is the same line with +get +set on the root, which lets
-// SET friends through.
+// SET bus2:log through while the roster stays read-only.
 func TestRedisFriendACLSetsOnlyItsOwnTokenRecords(t *testing.T) {
 	t.Parallel()
 	_, admin, ctx := live(t)
@@ -336,7 +336,11 @@ func TestRedisFriendACLSetsOnlyItsOwnTokenRecords(t *testing.T) {
 	assert.Empty(t, forged, "nothing was written to bob's answers")
 
 	wide := apply("wide", strings.Replace(line, " (~bus2:sent:ada:* +get +set)", " +get +set", 1))
-	require.NoError(t, wide.Set(ctx, "machines", "x", 0).Err(), "reversed: +set on the root overwrites a roster key")
+	require.NoError(t, wide.Set(ctx, LogKey, "x", 0).Err(), "reversed: +set on the root overwrites the log")
+	for _, key := range []string{friendsKey, machinesKey} {
+		assert.ErrorContains(t, wide.Set(ctx, key, "x", 0).Err(), "NOPERM", "the roster remains read-only under root SET")
+		assert.ErrorContains(t, ada.HSet(ctx, key, "forged", "1").Err(), "NOPERM", "hash writes cannot overwrite a roster key")
+	}
 }
 
 // The receipts on a real store: recv stamps delivered at the server's time,

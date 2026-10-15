@@ -74,7 +74,7 @@ func aclBreaches(line string) []string {
 	root, selectors := aclRules(line)
 	var keys []string
 	for _, r := range root {
-		if strings.HasPrefix(r, "~") {
+		if strings.HasPrefix(r, "~") || strings.HasPrefix(r, "%") {
 			keys = append(keys, r)
 		}
 	}
@@ -164,7 +164,7 @@ var goRedisCommands = map[string][]string{
 	"XInfoStream": {"XINFO|STREAM"}, "XRange": {"XRANGE"}, "XRangeN": {"XRANGE"},
 	"TxPipeline": {"MULTI", "EXEC"}, // EXEC runs the transaction; MULTI opens it
 	"Pipeline":   nil, "Options": nil, "Exec": nil,
-	"Do": nil, // the command is the first string of the []any{...} it is given
+	"Do": nil, // derive the command from this call's actual argument
 }
 
 var luaCall = regexp.MustCompile(`redis\.p?call\(\s*['"]([A-Za-z]+)['"]`)
@@ -318,13 +318,6 @@ func deriveACLNeeds(t *testing.T, srcs map[string]string) aclNeeds {
 	for _, fn := range sortedFiles(files) {
 		ast.Inspect(files[fn], func(n ast.Node) bool {
 			switch n := n.(type) {
-			case *ast.CompositeLit:
-				// []any{"XCLAIM", ...}: the arguments of a Do
-				if at, ok := n.Type.(*ast.ArrayType); ok && types.ExprString(at.Elt) == "any" && len(n.Elts) > 0 {
-					if s, ok := stringLit(n.Elts[0]); ok && regexp.MustCompile(`^[A-Z]+$`).MatchString(s) {
-						add(s, "Do", n)
-					}
-				}
 			case *ast.CallExpr:
 				sel, ok := n.Fun.(*ast.SelectorExpr)
 				if !ok {
@@ -348,6 +341,13 @@ func deriveACLNeeds(t *testing.T, srcs map[string]string) aclNeeds {
 				if !known {
 					needs.Unmapped = append(needs.Unmapped, sel.Sel.Name+" at "+where(n))
 					return true
+				}
+				if sel.Sel.Name == "Do" {
+					if command, ok := doCommand(n, consts); ok {
+						add(command, "Do", n)
+					} else {
+						needs.Unmapped = append(needs.Unmapped, "Do command unresolved at "+where(n))
+					}
 				}
 				for _, c := range cmds {
 					add(c, sel.Sel.Name, n)
@@ -408,6 +408,40 @@ func deriveACLNeeds(t *testing.T, srcs map[string]string) aclNeeds {
 	})
 	sort.Strings(needs.Unmapped)
 	return needs
+}
+
+// doCommand follows a Do call's literal command or its slice initializer.
+// A dynamic command fails closed; unrelated slices are not Redis calls.
+func doCommand(call *ast.CallExpr, consts map[string]string) (string, bool) {
+	if len(call.Args) < 2 {
+		return "", false
+	}
+	e := call.Args[1]
+	if call.Ellipsis.IsValid() {
+		if id, ok := e.(*ast.Ident); ok && id.Obj != nil {
+			switch decl := id.Obj.Decl.(type) {
+			case *ast.AssignStmt:
+				for i, lhs := range decl.Lhs {
+					if types.ExprString(lhs) == id.Name && i < len(decl.Rhs) {
+						e = decl.Rhs[i]
+					}
+				}
+			case *ast.ValueSpec:
+				for i, name := range decl.Names {
+					if name.Name == id.Name && i < len(decl.Values) {
+						e = decl.Values[i]
+					}
+				}
+			}
+		}
+		list, ok := e.(*ast.CompositeLit)
+		if !ok || len(list.Elts) == 0 {
+			return "", false
+		}
+		e = list.Elts[0]
+	}
+	command, ok := constText(e, consts, nil)
+	return strings.ToUpper(command), ok && command != ""
 }
 
 func mentions(e ast.Expr, name string) bool {
@@ -489,13 +523,15 @@ var aclServerOnlyCommands = map[string]string{
 
 type aclPattern struct {
 	Rule, Pattern string
-	Write         bool
+	Read, Write   bool
+	Scope         int
 }
 
 type aclLine struct {
 	Patterns []aclPattern
-	Grants   []string // "+hset", "+xgroup|create"
-	Other    []string // a rule that is neither a key pattern nor a command grant
+	Grants   []string   // "+hset", "+xgroup|create"
+	Other    []string   // a rule that is neither a key pattern nor a command grant
+	Scopes   [][]string // root first, then independent selectors
 }
 
 // parseACLLine reads the rules of the line: the root's and every selector's
@@ -503,17 +539,18 @@ type aclLine struct {
 func parseACLLine(line string) aclLine {
 	var out aclLine
 	root, selectors := aclRules(strings.TrimPrefix(line, "ACL SETUSER <f> "))
-	for _, rules := range append([][]string{root}, selectors...) {
+	out.Scopes = append([][]string{root}, selectors...)
+	for scope, rules := range out.Scopes {
 		for _, r := range rules {
 			switch {
 			case strings.HasPrefix(r, "~"):
-				out.Patterns = append(out.Patterns, aclPattern{r, strings.ReplaceAll(strings.TrimPrefix(r, "~"), "<f>", "ada"), true})
+				out.Patterns = append(out.Patterns, aclPattern{r, strings.ReplaceAll(strings.TrimPrefix(r, "~"), "<f>", "ada"), true, true, scope})
 			case strings.HasPrefix(r, "%R~"):
-				out.Patterns = append(out.Patterns, aclPattern{r, strings.ReplaceAll(strings.TrimPrefix(r, "%R~"), "<f>", "ada"), false})
+				out.Patterns = append(out.Patterns, aclPattern{r, strings.ReplaceAll(strings.TrimPrefix(r, "%R~"), "<f>", "ada"), true, false, scope})
 			case strings.HasPrefix(r, "%W~"), strings.HasPrefix(r, "%RW~"):
-				out.Patterns = append(out.Patterns, aclPattern{r, strings.ReplaceAll(r[strings.Index(r, "~")+1:], "<f>", "ada"), true})
+				out.Patterns = append(out.Patterns, aclPattern{r, strings.ReplaceAll(r[strings.Index(r, "~")+1:], "<f>", "ada"), strings.HasPrefix(r, "%RW~"), true, scope})
 			case r == "allkeys":
-				out.Patterns = append(out.Patterns, aclPattern{r, "*", true})
+				out.Patterns = append(out.Patterns, aclPattern{r, "*", true, true, scope})
 			case strings.HasPrefix(r, "+"):
 				out.Grants = append(out.Grants, strings.ToLower(r))
 			case r == "on", r == "resetchannels", strings.HasPrefix(r, ">"):
@@ -534,8 +571,15 @@ func globMatch(pattern, key string) bool {
 }
 
 func (l aclLine) matches(key string, writing bool) (string, bool) {
+	return l.matchesScope(key, writing, -1)
+}
+
+func (l aclLine) matchesScope(key string, writing bool, scope int) (string, bool) {
 	for _, p := range l.Patterns {
-		if (!writing || p.Write) && globMatch(p.Pattern, key) {
+		if scope >= 0 && p.Scope != scope {
+			continue
+		}
+		if ((writing && p.Write) || (!writing && p.Read)) && globMatch(p.Pattern, key) {
 			return p.Rule, true
 		}
 	}
@@ -565,19 +609,25 @@ func aclProblems(line string, needs aclNeeds, login []aclCommand) []string {
 			continue
 		}
 		if p.Kind == "server" {
-			if rule, hit := l.matches(f.Sample, false); hit {
+			readRule, read := l.matches(f.Sample, false)
+			writeRule, write := l.matches(f.Sample, true)
+			if rule, hit := readRule+writeRule, read || write; hit {
 				out = append(out, fmt.Sprintf("key family %s (%s) is server-only (%s) but the line grants it with %s", f.Const, f.Sample, p.Why, rule))
 			}
 			continue
 		}
 		usable = append(usable, f)
-		_, readable := l.matches(f.Sample, false)
-		_, writable := l.matches(f.Sample, true)
+		_, readable := l.matchesScope(f.Sample, false, 0)
+		_, writable := l.matchesScope(f.Sample, true, 0)
 		switch {
 		case !readable:
 			out = append(out, fmt.Sprintf("key family %s = %q (%s): no key pattern on the line matches %s", f.Const, f.Value, f.Where, f.Sample))
 		case p.Kind == "writes" && !writable:
 			out = append(out, fmt.Sprintf("key family %s = %q (%s): a friend's verb writes it (%s) and no read-write pattern on the line matches %s", f.Const, f.Value, f.Where, p.Why, f.Sample))
+		}
+		_, anyWrite := l.matches(f.Sample, true)
+		if p.Kind == "reads" && anyWrite {
+			out = append(out, fmt.Sprintf("key family %s is read-only (%s), but the line grants write access", f.Const, p.Why))
 		}
 		other := strings.Replace(f.Sample, "ada", "bob", 1)
 		if p.Own {
@@ -586,7 +636,7 @@ func aclProblems(line string, needs aclNeeds, login []aclCommand) []string {
 			}
 		}
 		if p.Others {
-			if _, hit := l.matches(other, false); !hit {
+			if _, hit := l.matchesScope(other, false, 0); !hit {
 				out = append(out, fmt.Sprintf("key family %s: a friend's verb reads other names' keys (%s) and no pattern on the line lets her read %s", f.Const, p.Why, other))
 			}
 		}
@@ -630,9 +680,23 @@ func aclProblems(line string, needs aclNeeds, login []aclCommand) []string {
 			continue
 		}
 		used[g] = true
-		if !granted[g] && !reported[g] {
+		covered := slices.Contains(l.Scopes[0], g)
+		if c.Name == "GET" || c.Name == "SET" {
+			covered = false
+			for scope, rules := range l.Scopes {
+				if !slices.Contains(rules, g) {
+					continue
+				}
+				for _, pattern := range l.Patterns {
+					if pattern.Scope == scope && pattern.Read && (c.Name != "SET" || pattern.Write) && globMatch(pattern.Pattern, "bus2:sent:ada:t") {
+						covered = true
+					}
+				}
+			}
+		}
+		if !covered && !reported[g] {
 			reported[g] = true
-			out = append(out, fmt.Sprintf("command %s (%s) is granted by no %s on the line", c.Name, strings.Join(slices.Compact(sites[c.Name]), "; "), g))
+			out = append(out, fmt.Sprintf("command %s (%s) is granted by no usable %s in its required scope on the line", c.Name, strings.Join(slices.Compact(sites[c.Name]), "; "), g))
 		}
 	}
 	for name := range aclServerOnlyCommands {
@@ -753,11 +817,46 @@ func TestTheFriendACLCoversEveryBusKeyFamily(t *testing.T) {
 		assert.Contains(t, got[0], "+flushall")
 	})
 	t.Run("reversed: the line with a key nothing builds", func(t *testing.T) {
-		got := aclProblems(strings.Replace(line, " ~friends", " ~friends ~bus2:push", 1), needs, login)
+		got := aclProblems(strings.Replace(line, " %R~friends", " %R~friends ~bus2:push", 1), needs, login)
 		require.Len(t, got, 1, got)
 		assert.Contains(t, got[0], "surplus")
 		assert.Contains(t, got[0], "~bus2:push")
 	})
+	for _, row := range []struct{ name, from, to, want string }{
+		{"write-only roster", "%R~friends", "%W~friends", "friendsKey"},
+		{"writable roster", "%R~machines", "~machines", "read-only"},
+		{"command on unrelated selector", " +hsetnx", "", "HSETNX"},
+		{"key on unrelated selector", " ~bus2:answers:<f>", "", "AnswersPrefix"},
+	} {
+		t.Run("reversed: "+row.name, func(t *testing.T) {
+			mutant := strings.Replace(line, row.from, row.to, 1)
+			if row.name == "command on unrelated selector" {
+				mutant += " (~bus2:sent:<f>:* +hsetnx)"
+			}
+			if row.name == "key on unrelated selector" {
+				mutant += " (~bus2:answers:<f> +get)"
+			}
+			got := aclProblems(mutant, needs, login)
+			assert.Contains(t, strings.Join(got, "\n"), row.want)
+		})
+	}
+	for _, row := range []struct{ name, source, want string }{
+		{"direct Do", `func (r Redis) probe(ctx any) { r.C.Do(ctx, "FLUSHALL") }`, "FLUSHALL"},
+		{"slice Do", `func (r Redis) probe(ctx any) { args := []any{"FLUSHALL"}; r.C.Do(ctx, args...) }`, "FLUSHALL"},
+		{"dynamic Do", `func (r Redis) probe(ctx any, command string) { r.C.Do(ctx, command) }`, "Do command unresolved"},
+	} {
+		t.Run("reversed: "+row.name, func(t *testing.T) {
+			more := cloneSrcs(srcs)
+			more["probe.go"] = "package bus\n" + row.source
+			assert.Contains(t, strings.Join(aclProblems(line, deriveACLNeeds(t, more), login), "\n"), row.want)
+		})
+	}
+	t.Run("unrelated slice is no command", func(t *testing.T) {
+		more := cloneSrcs(srcs)
+		more["probe.go"] = `package bus; var unused = []any{"FLUSHALL"}`
+		assert.Empty(t, aclProblems(line, deriveACLNeeds(t, more), login))
+	})
+
 	t.Run("reversed: a stale classification", func(t *testing.T) {
 		more := cloneSrcs(srcs)
 		delete(more, "ask.go")

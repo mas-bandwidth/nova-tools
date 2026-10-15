@@ -524,7 +524,7 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:sent:<f>:* ~bus2:ask:* ~bus2:asks:<f> %R~bus2:asks:* ~bus2:answers:<f> %R~bus2:answers:* ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:sent:<f>:* ~bus2:ask:* ~bus2:asks:<f> %R~bus2:asks:* ~bus2:answers:<f> %R~bus2:answers:* %R~friends %R~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
   +xautoclaim +xclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hsetnx +hdel +hget +hgetall
   +eval +evalsha (~bus2:sent:<f>:* +get +set)
@@ -542,10 +542,12 @@ because `asks` reads the recipients' answers and `--liveness` every name's
 index. `+hsetnx` is a root command, and adds no reach to `+hset`: every key
 the line makes writable to a hash command can already be `HSET`.
 
+The roster patterns `%R~friends` and `%R~machines` grant reads only.
+Even a root `+set` cannot overwrite them.
+
 The selector in parentheses is there because a root `+set` would reach every
-key the user has (a friend could `SET friends x` and wipe the roster, or
-`SET bus2:log x` and destroy the log), and the token's record is the only key
-a send ever gets or sets: Redis 7 checks each command a script runs, so the
+writable key the user has (`SET bus2:log x` destroys the log), and the token's
+record is the only key a send ever gets or sets: Redis 7 checks each command a script runs, so the
 script's `GET` and `SET` pass on the selector, on the sender's own records
 only, while `EVAL`'s declared keys pass on the root.
 
@@ -556,7 +558,10 @@ families (every `bus2:` constant and every constant passed as a key) and
 the commands (every go-redis call by its command name, every `redis.call` in a
 script, the `Do` arguments, and `pkg/redisconn`'s `HELLO` and `PING`), and
 fails when a family or command has no grant or a named server-only reason, and
-when the line grants a key pattern or a command nothing uses. The functional
+when the line grants a key pattern or a command nothing uses. The unit
+check preserves independent selectors and read/write permissions. It pins the
+current layout: bus commands on the root, with `GET` and `SET` on the token
+selector; it does not accept arbitrary rearrangements of the ACL. The functional
 tier applies the same line to a real Redis user
 (`TestRedisFriendACLSetsOnlyItsOwnTokenRecords`).
 
