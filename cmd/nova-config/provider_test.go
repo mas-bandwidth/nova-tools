@@ -34,7 +34,8 @@ func TestStatusWarnsOnAFundedRouteOutsideEveryArray(t *testing.T) {
 			tier, provider = "heavy", "openrouter"
 		}
 		code, _, errs = h.run(t, "route", "add", name, "--tier", tier, "--provider", provider, "--model", "m", "--deadline", "60", "--file", "case.json")
-		require.Zero(t, code, errs)
+		require.Equal(t, 1, code, errs)
+		assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 	}
 	for _, args := range [][]string{{"tier", "set", "pro", "--routes", "pro-a"}, {"tier", "set", "heavy", "--routes", "heavy-a"}} {
 		code, _, errs = h.run(t, append(args, "--file", "case.json")...)
@@ -100,7 +101,8 @@ func TestMissingProviderRemedyRunsOnTheSameFile(t *testing.T) {
 					code, _, errs = h.run(t, "provider", "add", "existing", "--billing", "metered", "--funded", "false", "--file", "case.json")
 					require.Zero(t, code, errs)
 					code, _, errs = h.run(t, "route", "add", "r", "--tier", "pro", "--provider", "existing", "--model", "m", "--deadline", "60", "--file", "case.json")
-					require.Zero(t, code, errs)
+					require.Equal(t, 1, code, errs)
+					assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 				}
 				args := []string{"route", verb, "r", "--provider", "nope", "--file", "case.json"}
 				if verb == "add" {
@@ -118,7 +120,12 @@ func TestMissingProviderRemedyRunsOnTheSameFile(t *testing.T) {
 				code, _, errs = h.run(t, command[1:]...)
 				require.Zero(t, code, errs, "the exact suggested remedy runs")
 				code, _, errs = h.run(t, args...)
-				require.Zero(t, code, errs)
+				if dry {
+					require.Zero(t, code, errs)
+				} else {
+					require.Equal(t, 1, code, errs)
+					assert.Contains(t, errs, "CONFIG NOT-APPLIED")
+				}
 			})
 		}
 	}
@@ -137,7 +144,8 @@ func TestSetRepairsTheUnchangedMissingProvider(t *testing.T) {
 			code, _, errs = h.run(t, "provider", "add", "nope", "--billing", "metered", "--funded", "false", "--file", "case.json")
 			require.Zero(t, code, errs)
 			code, _, errs = h.run(t, "route", "add", "r", "--tier", "pro", "--provider", "nope", "--model", "m", "--deadline", "60", "--file", "case.json")
-			require.Zero(t, code, errs)
+			require.Equal(t, 1, code, errs)
+			assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 			// A current file deliberately made inconsistent: set must name the
 			// unchanged missing reference from the typed store error, not its args.
 			path := filepath.Join(h.dir, "case.json")
@@ -161,7 +169,12 @@ func TestSetRepairsTheUnchangedMissingProvider(t *testing.T) {
 			code, _, errs = h.run(t, command[1:]...)
 			require.Zero(t, code, errs)
 			code, _, errs = h.run(t, args...)
-			require.Zero(t, code, errs)
+			if dry {
+				require.Zero(t, code, errs)
+			} else {
+				require.Equal(t, 1, code, errs)
+				assert.Contains(t, errs, "CONFIG NOT-APPLIED")
+			}
 		})
 	}
 }
@@ -236,7 +249,12 @@ func TestStatusWarningRemediesUseTheChosenStore(t *testing.T) {
 			commands := [][]string{{"provider", "add", "p", "--billing", "metered", "--funded", "true"}, {"route", "add", "a", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"route", "add", "b", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"tier", "set", "pro", "--routes", "a"}}
 			for _, command := range commands {
 				code, _, errs := h.run(t, append(command, flags...)...)
-				require.Zero(t, code, errs)
+				if command[0] == "route" {
+					require.Equal(t, 1, code, errs)
+					assert.Contains(t, errs, "CONFIG NOT-APPLIED")
+				} else {
+					require.Zero(t, code, errs)
+				}
 			}
 			code, out, errs := h.run(t, append([]string{"status"}, flags...)...)
 			require.Zero(t, code, errs)
