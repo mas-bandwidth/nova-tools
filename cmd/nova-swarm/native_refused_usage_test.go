@@ -14,8 +14,10 @@ import (
 // hetzner1NativeLog is the native log of a metered work launch native refused before the
 // harness started, as hetzner1 wrote it on 2026-10-15 for tr15-up-r4.w2 on the
 // pro-mercury3-pro route (the slot's native.log, its pool identity.tsv gone): staged and
-// framed, then refused, with no rc= line and no harness output, so no harness ran.
-const hetzner1NativeLog = `STAGE OK bench=hetzner1 repo=https://github.com/mas-bandwidth/nova-tools.git base=34ea5c0c secs=6 clone=3.7 fetch=1.4 checkout=1.2
+// framed, then refused, with no rc= line and no harness output, so no harness ran. The
+// STAGE OK repo= word names the bench mirror in place of its origin URL (no real host in a
+// unit test); every other byte is hetzner1's.
+const hetzner1NativeLog = `STAGE OK bench=hetzner1 repo=/home/nova/nova-bench/mirror/nova-tools.git base=34ea5c0c secs=6 clone=3.7 fetch=1.4 checkout=1.2
 STAGE CARRY staged=34ea5c0cb662 tip=34ea5c0cb662 of v1.3/comms carry=none
 FRAME OK secs=0.1
 NATIVE REFUSED: pool /home/nova/rowan-working/tmp has no identity row in identity.tsv: open /home/nova/rowan-working/tmp/identity.tsv: no such file or directory; refusing to launch under nobody's name; remedy: make -C fleet converge (the repository) writes the pool identity.tsv; or give the loop --identity <owner>,<name>,<email> in its nova-config argv
