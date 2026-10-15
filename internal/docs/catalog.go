@@ -12,17 +12,18 @@ package docs
 // DefaultCatalog is the master catalog for nova-tools.
 var DefaultCatalog = []Entry{
 	E(".github", "CI workflows", "go test ./internal/ci", "make test"),
-	E("assets", "static assets and schemas", "none", "none"),
-	E("fleet", "fleet loop units and bench templates", "none", "none"),
+	E("assets", "images", "none", "none"),
+	E("fleet", "loop units, bench templates", "none", "none"),
 	Page("cmd", "17 nova command-line tools", "nova-ci local", "make build"),
 	Page("docs", "specs, guides, and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("infra", "runner images and scripts", "none", "none"),
 	Page("pkg", "public packages", "nova-ci local", "make test"),
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
-	E("tla", "the TLA+ models and their runners", "go test ./pkg/tlc", "make tlc-test"),
-	E("profiles", "pkg/sandbox's darwin profile and its check", "go test ./pkg/sandbox", "go test ./pkg/sandbox"),
+	E("tla", "TLA+ models, TLC records", "go test ./pkg/tlc", "make tlc-test"),
+	E("profiles", "the sandbox's darwin profile", "go test ./pkg/sandbox", "make test"),
 	E("hook", "the hook package", "go test ./hook/...", "make test"),
-	E("testdata", "shared test fixtures", "go test ./internal/ci", "make test"),
+	E("testdata", "shared fixtures", "go test ./internal/ci", "make test"),
+	E("schemas", "wire schemas", "make schemawire-check", "go generate"),
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 
 	// cmd/

@@ -80,7 +80,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint mod-tidy preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp check clean darwin-timeout map new-rule new-verb clidoc roadmap
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint mod-tidy preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp check clean darwin-timeout map new-rule new-verb clidoc roadmap schemawire-check
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -118,9 +118,35 @@ help:
 	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
 	@echo "make clidoc      regenerate CLI.md reference blocks from tool help"
 	@echo "make roadmap     regenerate ROADMAP.md and FIXES.md from their sexp"
+	@echo "make schemawire-check go generate every pkg/*wire package, then git diff --exit-code -- pkg schemas (schemas/README.md)"
 
 map:
 	$(GO) run ./tools/agentsmap
+
+# schemawire-check is the one check of the generated wire packages
+# (schemas/README.md): a definition in schemas/<area>/ generates pkg/<area>wire/,
+# whose hand-written generate.go pins the schema compiler by its go:generate
+# line. A generated package is a pkg/*wire directory holding a generate.go; a
+# hand-written package whose name ends in wire (pkg/sprintwire) holds none and
+# is not one. The check regenerates every generated package, then refuses any
+# difference from what is committed under pkg/ and schemas/, and any generated
+# file left uncommitted. It is the generated files' only check: internal/ci's
+# line linters skip a file with Go's generated header. With no generated package
+# it says so and passes. A cold module cache fetches the pinned compiler once.
+schemawire-check:
+	@set -e; found=; \
+	for g in pkg/*wire/generate.go; do \
+		test -f "$$g" || continue; \
+		found=1; \
+		d=$${g%/generate.go}; \
+		echo "go generate ./$$d"; \
+		$(GO) generate "./$$d"; \
+	done; \
+	if [ -z "$$found" ]; then echo "schemawire-check: no generated pkg/*wire package yet (none holds a generate.go); nothing to regenerate"; exit 0; fi; \
+	git diff --exit-code -- pkg schemas || { echo "schemawire-check: the generated files differ from the committed ones; commit the output of go generate, never a hand edit (schemas/README.md)" >&2; exit 1; }; \
+	untracked=$$(git ls-files --others --exclude-standard -- pkg schemas); \
+	if [ -n "$$untracked" ]; then echo "schemawire-check: generated files are not committed: $$untracked; commit them (schemas/README.md)" >&2; exit 1; fi; \
+	echo "schemawire-check: OK"
 
 # TLC runs on Linux benches with an explicit installed jar and owned output path.
 TLC_JAR ?=

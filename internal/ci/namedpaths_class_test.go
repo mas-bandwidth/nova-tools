@@ -353,6 +353,11 @@ func namedPathSources(tree *repoTreeIndex) []*treeFile {
 		}
 		switch {
 		case f.Go && !f.Test:
+			// A generated file names the compiler's own tree; make
+			// schemawire-check holds it (generated_skip_test.go).
+			if isGeneratedGo(f.Src) {
+				continue
+			}
 			files = append(files, f)
 		case strings.HasSuffix(f.Rel, ".md") && f.InDir("docs"):
 			files = append(files, f)

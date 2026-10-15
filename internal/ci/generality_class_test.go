@@ -47,6 +47,11 @@ import (
 //   space for", "disk space"), is the word; bare, or beside a bare article, it is the name.
 // - Go package import declarations (including "github.com/mas-bandwidth/nova-tools/...")
 //   are identified via real AST import specs and excluded as language-level imports.
+//   The module path of a `//go:generate go run <module>@<version>` pin is excluded
+//   the same way: it names the module the directive runs.
+// - A generated file (Go's `// Code generated ... DO NOT EDIT.` header before the
+//   package clause) is skipped: its lines are the compiler's, and `make
+//   schemawire-check` holds them (generated_skip_test.go).
 // - Explicitly marked documentation examples in real AST comments (e.g. lines with "e.g.",
 //   "example:", "for example", "example.com") are excluded; code contracts, defaults,
 //   and refusals are always scanned.
@@ -99,6 +104,10 @@ var ignoredCompoundWords = map[string]bool{
 
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)
 var reAccount = regexp.MustCompile(`(?i)mas-bandwidth`)
+
+// reGoGenerateRun is a `//go:generate go run <module>@<version>` directive at the
+// start of a line; group 1 is the module path, exempt as an import path is.
+var reGoGenerateRun = regexp.MustCompile(`(?m)^//go:generate go run ([^\s@]+)@\S+`)
 
 // englishPhrases are the English phrases in which a token that is also an ordinary word
 // is that word and no host: group 1 is the word, blanked before the scan. The machine
@@ -224,7 +233,15 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 		}
 	}
 
-	// 2. Blank out real AST comments containing marked documentation examples
+	// 2. Blank out the module path of a go:generate pin, which names the module
+	// it runs the way an import spec names the package it reads.
+	for _, m := range reGoGenerateRun.FindAllSubmatchIndex(src, -1) {
+		for i := m[2]; i < m[3]; i++ {
+			clean[i] = ' '
+		}
+	}
+
+	// 3. Blank out real AST comments containing marked documentation examples
 	if hasDocExample {
 		for _, cg := range file.Comments {
 			for _, c := range cg.List {
@@ -368,6 +385,11 @@ func scanGenerality(files []GeneralitySourceFile) []generalityHit {
 	var hits []generalityHit
 	for _, f := range files {
 		if !fileMayContainGenerality(f.Src) {
+			continue
+		}
+		// A generated file's lines are the compiler's; make schemawire-check
+		// holds them (generated_skip_test.go).
+		if isGeneratedGo(f.Src) {
 			continue
 		}
 		cleanSrc := cleanSourceForGenerality(f.Rel, f.Src)

@@ -155,15 +155,16 @@ After a site is fixed, `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` lowers it
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
 | `.github/` | CI workflows | `go test ./internal/ci` | `make test` |
-| `assets/` | static assets and schemas | none | none |
+| `assets/` | images | none | none |
 | [cmd/](cmd/AGENTS.md) | 17 nova command-line tools | `nova-ci local` | `make build` |
 | [docs/](docs/AGENTS.md) | specs, guides, and proposals | `go test ./internal/docs` | `go test ./internal/docs` |
-| `fleet/` | fleet loop units and bench templates | none | none |
+| `fleet/` | loop units, bench templates | none | none |
 | `hook/` | the hook package | `go test ./hook/...` | `make test` |
 | `infra/` | runner images and scripts | none | none |
 | [internal/](internal/AGENTS.md) | packages and libraries | `nova-ci local` | `make test` |
 | [pkg/](pkg/AGENTS.md) | public packages | `nova-ci local` | `make test` |
-| `profiles/` | pkg/sandbox's darwin profile and its check | `go test ./pkg/sandbox` | `go test ./pkg/sandbox` |
-| `testdata/` | shared test fixtures | `go test ./internal/ci` | `make test` |
-| `tla/` | the TLA+ models and their runners | `go test ./pkg/tlc` | `make tlc-test` |
+| `profiles/` | the sandbox's darwin profile | `go test ./pkg/sandbox` | `make test` |
+| `schemas/` | wire schemas | `make schemawire-check` | `go generate` |
+| `testdata/` | shared fixtures | `go test ./internal/ci` | `make test` |
+| `tla/` | TLA+ models, TLC records | `go test ./pkg/tlc` | `make tlc-test` |
 | [tools/](tools/AGENTS.md) | developer and bench tools | `nova-ci local` | `make map` |
