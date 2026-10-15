@@ -1,23 +1,23 @@
 # nova-doctor AI-usability review, 2026-10-15
 
-Reviewer: mercury-3-preview-1002
-Build: cc2f2f8c8148
-Score: 10/10 (55/55)
+Reviewer: grok-4.7
+Build: 09339b539c97
+Score: 9.5/10 (53/55)
 
 ## Rubric
 | # | criterion | score | evidence |
 |---|---|---|---|
-| 1 | cold | 5 | `nova-doctor run` -> `DOCTOR friend-login ok no friend daemons here` |
+| 1 | cold | 5 | `nova-doctor run --check plists` -> `DOCTOR plists ok 5 nova launch agents lint clean` |
 | 2 | refusals | 5 | `nova-doctor run --bogus` -> `RUN REFUSED: unknown flag --bogus; the flags of run are --check, --dir, --json, --local, --strict; run: nova-doctor run -h` |
-| 3 | output | 5 | `nova-doctor run --json` -> `{"exit":2,"results":[{"check":"dashboard",...` |
+| 3 | output | 5 | `nova-doctor run --check plists --json` -> `{"exit":0,"results":[{"check":"plists","dependency":"the com.nova launchd plists and nova systemd units this machine loads","status":"ok","evidence":"5 nova launch agents lint clean"}]}` |
 | 4 | dry-run | 5 | `n/a: nova-doctor is read-only; help states "effect: inspection: reads, writes nothing"` |
 | 5 | idempotent | 5 | `n/a: no write verb exists; every verb is inspection with no state` |
-| 6 | no prompts | 5 | `nova-doctor run` -> completed immediately with no interactive wait |
-| 7 | exit codes | 5 | `nova-doctor run` -> `EXIT=2` (fail); `nova-doctor version` -> `EXIT=0` |
-| 8 | one word | 5 | `nova-doctor help` -> `the verbs are run, version`, single-word verbs, no duplicates |
+| 6 | no prompts | 5 | `nova-doctor run --check plists` -> `DOCTOR plists ok 5 nova launch agents lint clean` |
+| 7 | exit codes | 5 | `nova-doctor run --check gosdk` -> `DOCTOR gosdk fail no go.mod here: the bench's toolchain is not named fix: run nova-doctor run in a checkout of this repository, whose go.mod names the bench's toolchain (docs/SETUP.md, dep-go-sdk-b.w2)` (`$?` -> 2); `nova-doctor version` -> `nova-doctor v1.2.26-0.20261015162535-09339b539c97 darwin/amd64 go1.26.6` (`$?` -> 0) |
+| 8 | one word | 5 | `nova-doctor help` -> `nova-doctor [run] [--check <name>]... [--dir <path>] [--local] [--strict] [--json]` |
 | 9 | push | 5 | `n/a: doctor is a pure probe; it waits on no state` |
-| 10 | no leaks | 5 | `nova-doctor run` -> fix lines quote commands and paths, never secrets |
-| 11 | true help | 5 | `nova-doctor run --local` -> `DOCTOR local skipped=dashboard,providers,secrets,ssh,tailnet ...`, matching help's `--local ... says which` |
+| 10 | no leaks | 5 | `nova-doctor run --check gosdk` -> `DOCTOR gosdk fail no go.mod here: the bench's toolchain is not named fix: run nova-doctor run in a checkout of this repository, whose go.mod names the bench's toolchain (docs/SETUP.md, dep-go-sdk-b.w2)` |
+| 11 | true help | 3 | `nova-doctor help` -> `Every verb but run takes --json` (false when run: `nova-doctor run --check plists --json` prints one JSON object, exit 0). Other run claims held (`--local` skip list, exit 2 on fail). |
 
 ## 10/10 blockers
 | # | where | what an AI meets | fix | size |
@@ -37,9 +37,9 @@ Score: 10/10 (55/55)
 
 ## Good, keep
 - Every refusal names the cause, lists every valid option at once (flags or checks), and gives the exact next command; exit code 2 on usage is consistent.
-- `--local` genuinely says which checks it skipped (`DOCTOR local skipped=...`), and each check line has a stable grammar with an actionable `fix:` line.
-- The tool is fully read-only, runs every check even when one fails, and offers `--json` as a single parseable object.
+- `--local` genuinely says which checks it skipped (`DOCTOR local skipped=dashboard,providers,secrets,ssh,tailnet (checks only a fleet needs; run without --local to include them)`), and each check line has a stable grammar with an actionable `fix:` line.
+- The tool is fully read-only, runs every check even when one fails, and offers `--json` as a single parseable object. docs/ratings has no nova-doctor file, so no earlier defect from that set remains to carry.
 
 ## What could not be tried
-- A fully green run (exit 0 with all checks ok) could not be produced: this checkout has no seat env (`NOVA_SECRETS_*`, `~/nova/seat.env`), so `providers`, `secrets`, `ssh`, and `tailnet` necessarily report fail; their behavior under a healthy seat is trusted from the fix lines and `--local` skip list.
-- `--strict` (exit 1 on warn) was not exercised to completion: a warn exists (`gosdk`) but fails are also present, so exit 2 dominates; the warn-only exit code path was not isolated.
+- A fully green run (exit 0 with all checks ok) could not be produced: this checkout has no seat env, so the fleet checks (`providers`, `secrets`, `ssh`, `tailnet`) were not run to a healthy seat; their skip list is what `--local` prints.
+- `--strict` (exit 1 on warn) was not exercised to completion: a warn exists (`gosdk`, exit 0 without `--strict`) but a fail is also present on a full local run, so exit 2 dominates; the warn-only exit code path was not isolated.
