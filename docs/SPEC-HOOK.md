@@ -113,8 +113,10 @@ the holder's next beat (`ReArm`).
   `names` reads every name's state from the hook record.
 - `nova-friend run`: acts as its friend's hook holder for `friend`. While the gate says no, her lanes
   take nothing and report nothing, and her reads begin nothing.
-- Coordinator verbs (`nova-hook serve`, `nova-friend watch`, `nova-friend reach`) gate `--as` on the
-  `bus` push and role `coordinator` or `comms` (`hook.Want.Roles`).
+- Coordinator verbs (`nova-friend watch`, `nova-friend reach`) gate `--as` on the
+  `bus` push and role `coordinator` or `comms` (`hook.Want.Roles`). `nova-hook serve` does not: the
+  heartbeat server depends only on its store, never on its own name's hook record (no daemon gates on
+  another daemon's liveness or on a model's proof).
 - `pkg/hookgate` is the one place a `nova-tools` verb meets the gate (`Gate` and `Out`).
 
 A gate refusal is `FAILED` at exit 1 with `reason=unhooked` and the runnable breadcrumb lines on `NOTE`.
@@ -134,13 +136,16 @@ Every line runs as printed:
 
 ## The heartbeat
 
-`nova-hook serve --as <name>`, hooked in as `coordinator` or `comms`, makes one atomic pass every
+`nova-hook serve --as <name>` (the name it sends under; it needs no hook record of its own, only a reachable store) makes one atomic pass every
 `--every` (`BeatEvery`, 1 min) by the store's `TIME` (`tla/HookBeat.tla`):
 
 - **One pass an interval.** `hook:serve` is the once-key: a pass less than nine tenths of an interval
   after the last is skipped, so multiple servers make one pass between them.
-- **A challenge only when due.** Every hooked coordinator, friend or comms name uses the latest
-  proof or explicit model send, with initial arming as the lower boundary. A friend holding ready or
+- **A challenge at arming, then only when due.** A name with no proof since its current arming is
+  challenged at the very next pass: arming is not activity, so a name that re-arms is never left down for
+  a silence window (a challenge that lapsed unanswered falls back to the silence window, not a new one each
+  pass). Once she has proved, every hooked coordinator, friend or comms name uses the latest
+  proof or explicit model send, with the arming as the lower boundary. A friend holding ready or
   working cards has a 5m quiet window, an idle friend or comms name 10m, and a coordinator 30m. The
   server batches authoritative `friend cards <name> --json` reads through `--sprint-server`; an unknown
   row uses 5m and prints a fault. The selected policy is recorded as `quiet_after`, not a copied work
