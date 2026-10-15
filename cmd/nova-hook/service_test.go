@@ -394,6 +394,13 @@ func TestRecordServiceFailureRemovesInstalledService(t *testing.T) {
 	assert.False(t, held, "compensating Remove must clean up installed service on recordService failure")
 }
 
+// TestMidLoopLeaseRenewalErrorRetriesWithBackoff pins the hook loop's renewal
+// retry: a renewal that fails is tried again after retryBackoff(attempt)
+// (tick, then 2 ticks), and a renewal that succeeds clears the fault. Time is
+// the rig's clock, moved only by the loop's own waits (w.wait): no real sleep.
+// The first wait after the fault jumps the clock to the renewal deadline
+// (hook.RenewEvery), so the loop does not walk 30s of 1ms ticks against the
+// store to get there.
 func TestMidLoopLeaseRenewalErrorRetriesWithBackoff(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -403,9 +410,15 @@ func TestMidLoopLeaseRenewalErrorRetriesWithBackoff(t *testing.T) {
 	defer cancel()
 	w.signals = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
 
+	faulted := false
 	unrenewedLines := 0
+	var unrenewedAt []time.Time
 	waitsAfterSecond := 0
 	w.wait = func(_ context.Context, d time.Duration) {
+		if faulted && unrenewedLines == 0 {
+			r.advance(hook.RenewEvery) // the loop's next renewal falls due inside this wait
+			return
+		}
 		r.advance(d)
 		if unrenewedLines >= 2 {
 			waitsAfterSecond++
@@ -418,11 +431,12 @@ func TestMidLoopLeaseRenewalErrorRetriesWithBackoff(t *testing.T) {
 	out := &streamOut{
 		each: func(l string) {
 			if strings.HasPrefix(l, "HOOK CHALLENGE") {
-				r.advance(hook.RenewEvery)
+				faulted = true
 				r.h.MR.SetError("ERR transient redis renewal fault")
 			}
 			if strings.Contains(l, "state=unrenewed") {
 				unrenewedLines++
+				unrenewedAt = append(unrenewedAt, r.now())
 			}
 			if strings.Contains(l, "state=read") {
 				cancel()
@@ -434,6 +448,9 @@ func TestMidLoopLeaseRenewalErrorRetriesWithBackoff(t *testing.T) {
 	r.h.MR.SetError("")
 	require.Zero(t, code, out.all.String())
 	assert.Equal(t, 2, unrenewedLines)
+	require.Len(t, unrenewedAt, 2)
+	assert.Equal(t, w.retryBackoff(0), unrenewedAt[1].Sub(unrenewedAt[0]), "the first retry came one backoff (1 tick) after the first failure")
+	assert.Equal(t, 2*w.tick, w.retryBackoff(1), "the second backoff is 2 ticks (exponential)")
 	assert.Equal(t, 2, waitsAfterSecond, "second retry waited 2 ticks (exponential backoff)")
 	assert.Contains(t, out.all.String(), "state=unrenewed")
 	assert.Contains(t, out.all.String(), "state=read")
