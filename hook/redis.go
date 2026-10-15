@@ -524,7 +524,8 @@ local now = tonumber(ms)
 local every, after, ttl, by, cap, label = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5], ARGV[6]
 local dry = ARGV[#ARGV] == '1'
 local prev = tonumber(redis.call('HGET', KEYS[2], 'at') or '0')
-if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', '', '', '', '', '', '', '', ''} end
+local prev_every = tonumber(redis.call('HGET', KEYS[2], 'every') or '0')
+if prev > 0 and prev_every == every and now - prev < every * 9 / 10 then return {0, {}, '', '', '', '', '', '', '', '', ''} end
 if not dry then redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'down_after', ARGV[2], 'by', by) end
 local nroles = tonumber(ARGV[7])
 local keep = math.min(math.floor(after * 10 / (9 * every)) + 1, ` + strconv.Itoa(RecentMax) + `)

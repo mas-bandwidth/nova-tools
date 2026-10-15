@@ -138,7 +138,7 @@ Every line runs as printed:
 `--every` (`BeatEvery`, 1 min) by the store's `TIME` (`tla/HookBeat.tla`):
 
 - **One pass an interval.** `hook:serve` is the once-key: a pass less than nine tenths of an interval
-  after the last is skipped, so multiple servers make one pass between them.
+  after the last is skipped when the server's `every` matches the row's `every` (`prev > 0 and prev_every == every and now - prev < every * 9 / 10`), so multiple servers with the same interval make one pass between them while a restart with a changed `--every` takes its pass at once and writes the new `every`.
 - **A challenge only when due.** Every hooked coordinator, friend or comms name uses the latest
   proof or explicit model send, with initial arming as the lower boundary. A friend holding ready or
   working cards has a 5m quiet window, an idle friend or comms name 10m, and a coordinator 30m. The

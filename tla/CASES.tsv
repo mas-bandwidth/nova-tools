@@ -226,6 +226,7 @@ MCHookBeatWitnessProveOlder.cfg	MCHookBeat.tla	invariant	WitnessProveOlder	ignor
 MCHookBeatTransitionPush.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenSelfFiltered.cfg	MCHookBeat.tla	temporal	TransitionPushedToCoordinator	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenFolded.cfg	MCHookBeat.tla	invariant	NoFold	ignore-terminal	hookbeat	required	-
+MCHookBeatBrokenEveryChangeNotTaken.cfg	MCHookBeat.tla	invariant	StoredEveryMatchesLastPass	ignore-terminal	hookbeat	required	-
 MCCodexDesktopWake.cfg	MCCodexDesktopWake.tla	pass	-	ignore-terminal	codexdesktopwake	required	-
 MCCodexDesktopWakeBrokenExternalBody.cfg	MCCodexDesktopWake.tla	invariant	ExternalBodyIsNeverPrompt	ignore-terminal	codexdesktopwake	required	-
 MCCodexDesktopWakeBrokenRetry.cfg	MCCodexDesktopWake.tla	invariant	OneMutationAttempt	ignore-terminal	codexdesktopwake	required	-

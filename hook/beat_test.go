@@ -551,3 +551,83 @@ func TestAProofGrantsAFreshSilenceWindow(t *testing.T) {
 	r.pass(hook.BeatEvery)
 	assert.Equal(t, hook.BeatChallenged, pass().Did, "challenged again once the window from her proof has passed")
 }
+
+// TestARestartWithALongerEveryTakesThePassAndWritesIt pins the every-change
+// rule on hook:serve (tla/HookBeat.tla, EveryChangedTaken,
+// EveryMatchesLastTakenServer, StaleReadsEveryWritten): a pass at every=1m,
+// then 10s later a restart at every=5m takes the pass at once (and PlanPass
+// reports Taken true without writing), writes every=5m on hook:serve, and
+// Served.Down stays false at 2m (stale only past 2*5m = 10m).
+func TestARestartWithALongerEveryTakesThePassAndWritesIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Friend)
+	next := nonces()
+
+	got1, err := r.s.Pass(ctx, []string{"ada"}, time.Minute, hook.DownAfter, next, "srv-1m")
+	require.NoError(t, err)
+	require.True(t, got1.Taken)
+
+	r.pass(10 * time.Second)
+
+	plan, err := r.s.PlanPass(ctx, []string{"ada"}, 5*time.Minute, hook.DownAfter, next, "srv-5m")
+	require.NoError(t, err)
+	assert.True(t, plan.Taken, "a dry run with a changed every plans a taken pass")
+	svBefore, err := r.s.Served(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, time.Minute, svBefore.Every, "a dry run leaves hook:serve's every untouched")
+
+	got2, err := r.s.Pass(ctx, []string{"ada"}, 5*time.Minute, hook.DownAfter, next, "srv-5m")
+	require.NoError(t, err)
+	assert.True(t, got2.Taken, "a restart with a longer every takes the pass at once")
+	sv, err := r.s.Served(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Minute, sv.Every, "the row's every is 5m at once")
+	assert.Equal(t, "srv-5m", sv.By)
+
+	// 2m into the 5m interval: stale under the old 1m row (2*1m = 2m), fresh under 5m (2*5m = 10m).
+	r.pass(2*time.Minute + time.Second)
+	sv2m, err := r.s.Served(ctx)
+	require.NoError(t, err)
+	assert.False(t, sv2m.Down, "not stale at minute 2 of the 5m interval")
+
+	// Past 2*5m = 10m from the 5m pass: stale.
+	r.pass(8 * time.Minute)
+	sv10m, err := r.s.Served(ctx)
+	require.NoError(t, err)
+	assert.True(t, sv10m.Down, "stale past two 5m intervals")
+}
+
+// TestTwoServersWithTheSameEveryStillTakeOnePass pins SameEveryStillDeduplicated
+// and a shorter every after a longer one: two servers with the same every take
+// one pass between them inside 0.9*every, while a restart with a shorter every
+// (5m -> 1m at 10s) also takes the pass at once.
+func TestTwoServersWithTheSameEveryStillTakeOnePass(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Friend)
+	next := nonces()
+
+	got1, err := r.s.Pass(ctx, []string{"ada"}, 5*time.Minute, hook.DownAfter, next, "srv-a")
+	require.NoError(t, err)
+	require.True(t, got1.Taken)
+
+	r.pass(10 * time.Second)
+	same, err := r.s.Pass(ctx, []string{"ada"}, 5*time.Minute, hook.DownAfter, next, "srv-b")
+	require.NoError(t, err)
+	assert.False(t, same.Taken, "a second server with the same 5m every inside 0.9*5m is skipped")
+
+	shorter, err := r.s.Pass(ctx, []string{"ada"}, time.Minute, hook.DownAfter, next, "srv-1m")
+	require.NoError(t, err)
+	assert.True(t, shorter.Taken, "a restart with a shorter 1m every takes the pass at once")
+	sv, err := r.s.Served(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, time.Minute, sv.Every)
+
+	r.pass(10 * time.Second)
+	same1m, err := r.s.Pass(ctx, []string{"ada"}, time.Minute, hook.DownAfter, next, "srv-1m-b")
+	require.NoError(t, err)
+	assert.False(t, same1m.Taken, "a second server with the same 1m every inside 0.9*1m is skipped")
+}
