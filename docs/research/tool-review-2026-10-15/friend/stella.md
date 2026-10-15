@@ -1,7 +1,7 @@
 # nova-friend AI-usability review, 2026-10-15
 
 Reviewer: Mercury
-Build: d7e47f037ea8
+Build: e9554ca0d8ad
 Score: 8/10 (45/55)
 
 ## Rubric
@@ -15,7 +15,7 @@ Score: 8/10 (45/55)
 | 6 | no prompts | 5 | `nova-friend status --as me --dir friendtest` -> returns immediately, no prompt |
 | 7 | exit codes | 5 | `nova-friend status` -> `EXIT=1` (verb said no), matches help exit table |
 | 8 | one word | 5 | `nova-friend help` -> verbs are single words (hook, run, install, uninstall, check, host, reach, pong, watch, status, lanes, refuse-go, resume, acceptance, version) |
-| 9 | push | 3 | `nova-friend watch` help -> `every 10s it asks queue` (polling); stateful push could not be tried without a daemon |
+| 9 | push | 5 | `nova-friend watch -h` -> `It waits on your stream, on your wake file ... and on events, and returns on the first wake` (event/push-driven, not polled) |
 | 10 | no leaks | 5 | `nova-friend status --json` -> JSON contains no secret |
 | 11 | true help | 3 | `nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run` -> `INSTALL REFUSED: --redis is required` (help example omits the required flag) |
 
