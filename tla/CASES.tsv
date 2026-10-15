@@ -245,3 +245,4 @@ MCDshNativeWakeBrokenHide.cfg	MCDshNativeWake.tla	invariant	PriorityUnblocked	ig
 MCDshNativeWakeWitnessIdle.cfg	MCDshNativeWake.tla	invariant	IdleWakeUnreachable	ignore-terminal	dshnativewake	required	-
 MCHarnessNoticeUnknown.cfg	MCHarnessNoticeUnknown.tla	pass	-	ignore-terminal	harnessnoticeunknown	required	-
 MCHarnessNoticeUnknownBrokenStop.cfg	MCHarnessNoticeUnknown.tla	invariant	NeverUnhooked	ignore-terminal	harnessnoticeunknown	required	-
+MCHarnessNoticeUnknownBrokenMove.cfg	MCHarnessNoticeUnknown.tla	invariant	ToldWhereTheRoutePoints	ignore-terminal	harnessnoticeunknown	required	-
