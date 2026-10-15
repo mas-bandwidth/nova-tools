@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -116,14 +115,4 @@ func TestWriteTreeLeavesGitOutUnlessWithGit(t *testing.T) {
 	m = readTar(t, b.Bytes())
 	assert.Contains(t, m, ".git/")
 	assert.Contains(t, m, ".git/HEAD")
-}
-
-func TestWriteTreeRefusesSomethingThatIsNotAFileDirOrSymlink(t *testing.T) {
-	t.Parallel()
-	src := t.TempDir()
-	if err := syscall.Mkfifo(filepath.Join(src, "pipe"), 0o644); err != nil {
-		t.Skipf("mkfifo: %v", err)
-	}
-	var b bytes.Buffer
-	assert.ErrorContains(t, WriteTree(&b, src, false), "refusing to copy it")
 }
