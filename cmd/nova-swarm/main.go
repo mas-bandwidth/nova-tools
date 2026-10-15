@@ -634,6 +634,7 @@ type nativeFlags struct {
 	budgetAs        *string
 	budgetHolder    *string
 	budgetSlots     *bool
+	localBase        *string
 	repos           []string
 	recipients      []string
 }
@@ -690,6 +691,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	nf.budgetAs = f.fs.String("budget-as", "", "the `worker` the budget is taken as (the member or reader), with --budget-server")
 	nf.budgetHolder = f.fs.String("budget-holder", "", "the `prefix` of each request's holder (the launch), with --budget-server")
 	nf.budgetSlots = f.fs.Bool("budget-slots", false, "the route's provider has a concurrency budget: each request's slot is renewed and released through --budget-server")
+	nf.localBase = f.fs.String("local-base", "", "a local route's serving `endpoint`, the http URL of the engine's /v1 (loopback or the tailnet); required with a local-<host>/<tag> model and refused otherwise")
 	f.fs.Var(stringListValue{&nf.repos}, "repo", "a repository the card may clone, `owner/name` (again for more): the wall opens the network to it alone")
 	f.fs.Var(stringListValue{&nf.recipients}, "recipient", "a bus lane the card may address (again for more); a bus send is denied inside the wall whatever is named")
 	return f, nf
@@ -925,6 +927,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		budgetAs:       *nf.budgetAs,
 		budgetHolder:   *nf.budgetHolder,
 		budgetSlots:    *nf.budgetSlots,
+		localBase:      *nf.localBase,
 	}
 	if workerGiven {
 		cfg.worker = &w

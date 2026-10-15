@@ -2383,6 +2383,18 @@ when the cutoff occurred before a later stop or tool message.
 `--deadline` or on `SIGTERM`, the machinery reaps the entire process group, writes usage,
 and records the outcome.
 
+### local-native-launches-at-the-endpoint: `--local-base`
+
+A local route's packet names the engine that serves its model as its endpoint
+(docs/SPEC-LOCAL.md, "Fleet"); the member hands it to native as `--local-base
+<endpoint>`. Native takes the flag only with a `local-<host>/<tag>` model and
+refuses it otherwise, and refuses such a model without it; the endpoint's host
+must be loopback or the tailnet (rule 3). The job's harness config declares the
+provider `local-<host>` as OpenCode's OpenAI-compatible provider at that base
+with no key, declares the model under it, and the read-deadline proxy stands in
+front of the base as it does for any provider. On a loopback base, the wall
+opens that one port and no other.
+
 ### The doctor
 
 The doctor compares the `version` line of the `nova-swarm` first on PATH with the one at

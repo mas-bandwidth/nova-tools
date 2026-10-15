@@ -396,6 +396,9 @@ type Packet struct {
 	USD      string `json:"usd,omitempty"`     // the dollar budget per card, a decimal; "" for none (#5094)
 	Harness  string `json:"harness,omitempty"` // the harness the route names (pkg/harness); "" is the member's --harness
 	Deadline int    `json:"deadline,omitempty"`
+	// Endpoint is a local route's serving endpoint, the engine that serves the model
+	// (docs/SPEC-LOCAL.md, "Fleet"); "" for every other route.
+	Endpoint string `json:"endpoint,omitempty"`
 	// RateRPM and RateConcurrent are the route's global limits when the coordinator set
 	// them (nova-sprint routes limit): the runner's provider proxy then takes the budget from
 	// the sprint's server before every model request; 0 is unlimited and nothing changes.
