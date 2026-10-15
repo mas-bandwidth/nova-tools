@@ -1,7 +1,7 @@
 # nova-sandbox AI-usability review, 2026-10-15
 
 Reviewer: mercury-3-preview-1002
-Build: cc2f2f8c814
+Build: ee201d6267cc
 Score: 8.5/10 (47/55)
 
 ## Rubric
@@ -38,7 +38,8 @@ Score: 8.5/10 (47/55)
 3. add `--op` idempotency or document its absence (nice-to-have 1) — recovers criterion 5.
 
 ## Good, keep
-The wall is genuinely enforced and honest: `check` reports the real backend and abi, `probe` runs real allow/deny steps, and refusals every time name the cause and the exact next command in one line. Nothing is guessed: every path must exist, be absolute, and sit in the named set, and HOME must resolve inside a --write. `--json` on check, policy and probe is parseable and matches the typed line output, and probe's `--secret` design (prove unreadability, never read contents) keeps secrets out of every output line. There is no prior sandbox rating in docs/ratings to compare old defects against.
+The wall is genuinely enforced and honest: `check` reports the real backend and abi, `probe` runs real allow/deny steps, and refusals every time name the cause and the exact next command in one line. Nothing is guessed: every path must exist, be absolute, and sit in the named set, and HOME must resolve inside a --write. `--json` on check, policy and probe is parseable and matches the typed line output, and probe's `--secret` design (prove unreadability, never read contents) keeps secrets out of every output line.
+The six 1.2.0 nova-sandbox ratings under docs/ratings/1.2.0/ (2026-10-02) flag the read-noexec override of command dir, computed root uncounted on OK, -h examples that do not run, exit text vs reality (125/126), bare form listing other verbs' flags then refusing them, ABI NOTE before every run, probe control file in unnamed parent, reap 125 undocumented on linux; none of those are among the findings or blockers in this review (so either addressed on the path to this head, or not exercised by the probe set here).
 
 ## What could not be tried
 run, reap and the darwin APFS path are darwin-only and refuse on this linux host (exit 125); egress plan could not complete because it must resolve allowlist names over a network this job does not have (i/o timeout); worktree needs a forge pull request and was judged from its help only; egress apply/drop need nft and a live bench table and were not run.
