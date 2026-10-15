@@ -20,6 +20,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -1113,7 +1114,47 @@ func (w world) prove(c *tool.Call) *tool.Out {
 	if !pr.Issued.IsZero() {
 		o.Fact("issued", pr.Issued.Format(time.RFC3339))
 	}
+	w.pruneNoticesOnProve(c, s.as, c.Str("nonce"), o)
 	return o
+}
+
+func (w world) pruneNoticesOnProve(c *tool.Call, as, nonce string, o *tool.Out) {
+	var dirs []string
+	add := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir != "" && filepath.IsAbs(dir) && !slices.Contains(dirs, dir) {
+			dirs = append(dirs, dir)
+		}
+	}
+	if w.getenv != nil {
+		add(w.getenv("NOVA_HOOK_ANTIGRAVITY_EVENTS_DIR"))
+		add(w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"))
+		add(w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"))
+	}
+	var home string
+	if w.antigravityHome != nil {
+		home, _ = w.antigravityHome()
+	}
+	if home == "" && w.home != nil {
+		home, _ = w.home()
+	}
+	if home == "" && w.getenv != nil {
+		home = w.getenv("HOME")
+	}
+	if home != "" && filepath.IsAbs(home) {
+		add(filepath.Join(home, ".gemini", "antigravity", "nova-hook", as))
+		add(filepath.Join(home, ".local", "state", "nova-hook", as+"-dsh"))
+		add(filepath.Join(home, ".local", "state", "nova-hook", as+"-codex"))
+	}
+	for _, dir := range dirs {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		if _, err := dshdesktop.PruneOnProve(dir, nonce); err != nil {
+			msg := fmt.Sprintf("prune resolved notices in %s: %v", dir, err)
+			o.Note(msg)
+		}
+	}
 }
 
 // matched is which challenge a proof answered, as prove's reply says it:
