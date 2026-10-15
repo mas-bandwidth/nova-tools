@@ -62,7 +62,7 @@ var verbExit = map[string]string{
 // The banner keeps what member, lint and disk-guard are, and names the verb's -h for the rest.
 var verbDetail = map[string]string{
 	"version":    "prints this build's identity: the version, the commit it was built from and the time it was stamped.",
-	"mirror":     "keeps the bench's bare mirrors fresh: each --repos name is cloned from <base>/<name>.git into <dir>/<name>.git when absent, then every head and every pull-request head is fetched into it, so a card's git clone --reference finds the repository. It never prunes objects (the disk guard sweeps a mirror's temporary packs) and one repository's failure never stops the others; --every keeps refreshing until stopped.",
+	"mirror":     "keeps the bench's bare mirrors fresh: each --repos name is cloned from <base>/<name>.git into <dir>/<name>.git when absent, then every head and every pull-request head is fetched into it, so a card's git clone --reference finds the repository. It never prunes objects (the disk guard sweeps a mirror's temporary packs) and one repository's failure never stops the others; --every keeps refreshing until stopped. A refresh of this bench's own flat mirror also points /tmp/<repo>-mirror.git at the bare mirror, the link swarm.FindBenchMirror reads; --no-links skips it and --check writes nothing.",
 	"profile":    "reads the timeline.tsv of every job the glob names and prints one PROFILE line per job and one mean summary, so a slow card shows where its time went.",
 	"slots init": "creates the slot store for an owner: the machine's capacity and the owner's share of it, which slots take then leases from.",
 	"slots list": "prints the store's slots: each owner's capacity and share, and every lease held, with its label and when it expires.",

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
@@ -44,12 +46,17 @@ func realMirrorGit(ctx context.Context, dir string, args ...string) error {
 
 // mirrorRun is one mirror pass's inputs. benches are the fleet rows to converge; empty is
 // this bench's own mirror directory, the flat layout. check makes the pass the
-// converge-check: it names the missing mirrors and writes none.
+// converge-check: it names the missing mirrors and writes none. links makes the pass point
+// <linkDir>/<repo>-mirror.git at this bench's own bare mirror, the link
+// swarm.FindBenchMirror reads (stage.go); a converge-check and a run with --no-links write
+// no link.
 type mirrorRun struct {
 	dir, base string
 	repos     []string
 	benches   []string
 	check     bool
+	links     bool
+	linkDir   string
 	git       mirrorGit
 	out       io.Writer
 }
@@ -110,7 +117,55 @@ func (m *mirrorRun) refresh(ctx context.Context, bench, name string) error {
 	} else if err != nil {
 		return err
 	}
-	return m.git(ctx, bare, append([]string{"fetch", "--quiet", "--no-tags", "--prune", "--", url}, mirrorRefspecs...)...)
+	if err := m.git(ctx, bare, append([]string{"fetch", "--quiet", "--no-tags", "--prune", "--", url}, mirrorRefspecs...)...); err != nil {
+		return err
+	}
+	// The flat layout is this bench's own mirror, the one FindBenchMirror looks for
+	// under /tmp; a bench row in <dir>/<bench>/ has no link (the bench's own home names
+	// it). A link failure is the pass's failure: a stage that cannot find the mirror is
+	// exactly what the link prevents.
+	if m.links && bench == "" {
+		return linkMirror(m.linkDir, m.dir, bare, name)
+	}
+	return nil
+}
+
+// linkMirror points <linkDir>/<name>-mirror.git at bare, this bench's own bare mirror, so
+// a stage's FindBenchMirror finds what a keeper made (stage.go reads
+// /tmp/<repo>-mirror.git after its bench-home candidates). The repository name is one path
+// element and bare must resolve strictly under root, both through pkg/safepath rather than
+// by a raw join. An existing link is replaced.
+func linkMirror(linkDir, root, bare, name string) error {
+	if !safepath.NameOK(name) {
+		return fmt.Errorf("mirror link: %q is no repository name: one name, never a path", name)
+	}
+	if strings.TrimSpace(linkDir) == "" || strings.TrimSpace(root) == "" {
+		return errors.New("mirror link: the link directory and the mirror directory are wanted")
+	}
+	target, err := safepath.ResolvedUnder(bare, root)
+	if err != nil {
+		return fmt.Errorf("mirror link %s: %w", name, err)
+	}
+	// A relative --dir resolves the target against the process's directory, but a
+	// symlink's target is read against the link's own directory: name it absolutely.
+	if target, err = filepath.Abs(target); err != nil {
+		return fmt.Errorf("mirror link %s: the target does not resolve: %w", name, err)
+	}
+	link := filepath.Join(linkDir, name+"-mirror.git")
+	if _, err := os.Lstat(link); err == nil {
+		if err := os.Remove(link); err != nil {
+			return fmt.Errorf("mirror link %s: the link %s could not be replaced: %w", name, link, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("mirror link %s: %s could not be read: %w", name, link, err)
+	}
+	if err := os.MkdirAll(linkDir, 0o755); err != nil {
+		return fmt.Errorf("mirror link %s: the link directory could not be made: %w", name, err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		return fmt.Errorf("mirror link %s: %w", name, err)
+	}
+	return nil
 }
 
 // THE CONVERGED MIRROR SET (docs/FLEET.md, the mirrors' refresh row; docs/SPEC-SWARM.md,
@@ -178,18 +233,30 @@ func waitFor(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// mirrorLinkDir is where a bench's own flat mirror gets its FindBenchMirror link,
+// /tmp/<repo>-mirror.git. A test passes its own directory to runMirrorIn, so no test
+// writes the shared /tmp.
+const mirrorLinkDir = "/tmp"
+
 // cmdMirror is `nova-swarm mirror`.
 func cmdMirror(args []string, stdout, stderr io.Writer) int {
 	return runMirror(args, stdout, stderr, realMirrorGit, waitFor)
 }
 
 func runMirror(args []string, stdout, stderr io.Writer, git mirrorGit, wait func(context.Context, time.Duration) bool) int {
+	return runMirrorIn(args, stdout, stderr, git, wait, mirrorLinkDir)
+}
+
+// runMirrorIn is runMirror with the link directory named: production passes /tmp, a test
+// passes its own t.TempDir().
+func runMirrorIn(args []string, stdout, stderr io.Writer, git mirrorGit, wait func(context.Context, time.Duration) bool, linkDir string) int {
 	f := newFlags("mirror")
 	dir := f.fs.String("dir", "~/nova-bench/mirror", "the `dir` the bare mirrors live in: <dir>/<bench>/<repo>.git, or <dir>/<repo>.git for this bench's own mirror (default ~/nova-bench/mirror)")
 	repos := f.fs.String("repos", "", "the running sprint's stream repository names to mirror, a comma-separated `list`; the fixed set every bench carries is added to them")
 	base := f.fs.String("base", "", "the `url` each repository is fetched from, <url>/<name>.git, such as https://github.com/<org> or git@<alias>:<org>")
 	benches := f.fs.String("benches", "", "the fleet rows (bench names) every mirror is converged to, a comma-separated `list`; empty is this bench's own flat mirror dir")
 	check := f.fs.Bool("check", false, "the converge-check: print one MIRROR MISSING <bench> <repo> per mirror the fleet lacks, write nothing, exit 1 when any is missing")
+	noLinks := f.fs.Bool("no-links", false, "skip the /tmp/<repo>-mirror.git link this bench's own flat mirror gets, so the pass writes nothing outside --dir")
 	every := f.fs.Duration("every", 0, "refresh again after this `duration`, until stopped; 0 refreshes once (default 0)")
 	if !f.parse(args, stderr) {
 		return 2
@@ -229,7 +296,7 @@ func runMirror(args []string, stdout, stderr io.Writer, git mirrorGit, wait func
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	m := &mirrorRun{dir: d, base: *base, repos: names, benches: benchNames, check: *check, git: git, out: stdout}
+	m := &mirrorRun{dir: d, base: *base, repos: names, benches: benchNames, check: *check, links: !*noLinks, linkDir: linkDir, git: git, out: stdout}
 	return m.loop(ctx, *every, wait)
 }
 

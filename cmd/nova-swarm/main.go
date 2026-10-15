@@ -80,12 +80,12 @@ usage:
                         over --log-max-mb and sweeps a stopped loop's pool and old land clones. It never
                         removes anything with uncommitted work or a live process, and prints one REMOVED,
                         TRIMMED, CLEANED, ROTATED or KEPT line per action. disk-guard -h has the rest.)
-  nova-swarm mirror    --repos <a,b> --base <url> [--dir <dir>] [--every <duration>]
-                       (keep the bench's bare mirrors fresh: each repository cloned into <dir>/<name>.git when absent, then every head and pull-request head fetched, one MIRROR OK or MIRROR FAILED line each; --every runs until stopped. mirror -h has the rest.)
+  nova-swarm mirror    --repos <a,b> --base <url> [--dir <dir>] [--benches <a,b>] [--check] [--every <duration>] [--no-links]
+                       (keep the bench's bare mirrors fresh: each repository cloned into <dir>/<name>.git when absent, then every head and pull-request head fetched, one MIRROR OK or MIRROR FAILED line each; --every runs until stopped; --check names the fleet's missing mirrors and writes nothing; --no-links skips the /tmp/<repo>-mirror.git link. mirror -h has the rest.)
   nova-swarm install   <disk-guard|mirror-refresh> [--dir <dir>] [--log <file>] [--every <duration>] [--dry-run]
                        (writes the unit that runs this binary, kept alive, and loads it. disk-guard's own
-                        flags ride on the unit; mirror-refresh is refused here, and its loop runs
-                        nova-swarm mirror as a nova-config loop row.)
+                        flags ride on its unit; a mirror-refresh unit runs nova-swarm mirror with the
+                        same --every, --dir and --log handling.)
   nova-swarm uninstall <disk-guard|mirror-refresh> [--dir <dir>] [--dry-run]
                        (unloads that unit and removes its file; a dry run removes nothing.)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>

@@ -189,7 +189,7 @@ and started again at login, that runs the verb itself by the tool's absolute pat
 | the friend sync loop | `nova-sprint install friend-sync --every 15s` | `nova-sprint friend sync --every` |
 | the live table | `nova-sprint install table --out <file>` | `nova-sprint where --watch` |
 | the disk guard | `nova-swarm install disk-guard` | `nova-swarm disk-guard`, one pass every 15 minutes |
-| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror`, one pass every minute, the mirror set a converged property of the fleet: the repositories are the union of every REPO a card can name (the running sprint's stream repos `--repos` plus the fixed set every bench carries, `swarm.MirrorSetRepos`) and every fleet row is a bench (`--benches`), so `nova-swarm mirror --check` names a bench missing a mirror `MIRROR MISSING <bench> <repo>` and a refresh pass creates it; a machine that joins the fleet runs the same verb and gets the full fixed set |
+| the mirrors' refresh | `nova-swarm install mirror-refresh` | `nova-swarm mirror`, one pass every minute, the mirror set a converged property of the fleet: the repositories are the union of every REPO a card can name (the running sprint's stream repos `--repos` plus the fixed set every bench carries, `swarm.MirrorSetRepos`) and every fleet row is a bench (`--benches`), so `nova-swarm mirror --check` names a bench missing a mirror `MIRROR MISSING <bench> <repo>` and a refresh pass creates it; a machine that joins the fleet runs the same verb and gets the full fixed set |
 
 serve writes redis-server's configuration from its flags (binding, port, store directory under the
 bench root, persistence) and reads its password in its own process from the secret its unit names;
@@ -200,9 +200,10 @@ the service's environment has to give them. `nova-sprint units --check` names ea
 machine a stranger set up is checked against what a sprint needs; a unit written by hand around a
 wrapper reads as different. `nova-swarm install disk-guard` writes that unit in the swarm
 binary, and the unit runs `nova-swarm disk-guard` itself. The unit text the sprint and redis
-verbs share lives in `pkg/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` stays owed: the mirror verb `nova-swarm mirror` is written, its
-unit is not, and `units --check` says the unit is owed rather than telling a stranger to run it. Until
-that unit is written, a mirror refresh is not installed from here. The play's disk-guard row above is the
+verbs share lives in `pkg/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` writes the
+mirror unit the same way, and the unit runs `nova-swarm mirror` itself; a refresh of this bench's own flat
+mirror also points `/tmp/<repo>-mirror.git` at the bare mirror, the link `FindBenchMirror` reads after its
+bench-home candidates (`--no-links` skips it, and `--check` writes none). The play's disk-guard row above is the
 fleet's copy of the same pass.
 
 ## A fixture inventory

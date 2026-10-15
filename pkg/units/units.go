@@ -61,14 +61,13 @@ func sdQuote(s string) string {
 // UnitKind is one kind of unit a running sprint needs: its file names, the nova tool it
 // runs, the words every such unit starts with after the tool, and the verb that installs it.
 type UnitKind struct {
-	Kind    string   `json:"kind"`           // the word the install verb takes
-	Label   string   `json:"label"`          // the launchd label; its plist is Label.plist
-	Service string   `json:"service"`        // the systemd user unit
-	Tool    string   `json:"tool"`           // the nova binary the unit runs, by its base name
-	Verb    []string `json:"verb"`           // the words after the binary every such unit starts with
-	Install string   `json:"install"`        // the verb line that writes and loads it
-	What    string   `json:"what"`           // one line: what the unit is
-	Owed    string   `json:"owed,omitempty"` // what the install verb still waits on, "" when it is there
+	Kind    string   `json:"kind"`    // the word the install verb takes
+	Label   string   `json:"label"`   // the launchd label; its plist is Label.plist
+	Service string   `json:"service"` // the systemd user unit
+	Tool    string   `json:"tool"`    // the nova binary the unit runs, by its base name
+	Verb    []string `json:"verb"`    // the words after the binary every such unit starts with
+	Install string   `json:"install"` // the verb line that writes and loads it
+	What    string   `json:"what"`    // one line: what the unit is
 }
 
 // UnitKinds is every unit a running sprint needs on its coordinator's machine, in the
@@ -92,8 +91,7 @@ var UnitKinds = []UnitKind{
 	{Kind: "disk-guard", Label: "nova-swarm.disk-guard", Service: "nova-swarm-disk-guard.service", Tool: "nova-swarm", Verb: []string{"disk-guard"},
 		Install: "nova-swarm install disk-guard", What: "the machine's disk upkeep, one pass every --every (nova-swarm disk-guard)"},
 	{Kind: "mirror-refresh", Label: "nova-swarm.mirror-refresh", Service: "nova-swarm-mirror-refresh.service", Tool: "nova-swarm", Verb: []string{"mirror"},
-		Install: "nova-swarm install mirror-refresh", What: "the bench's repository mirrors kept fresh (nova-swarm mirror)",
-		Owed: "nova-swarm has no mirror verb for the unit to run"},
+		Install: "nova-swarm install mirror-refresh", What: "the bench's repository mirrors kept fresh (nova-swarm mirror)"},
 }
 
 // UnitKindOf is the kind named k.
@@ -380,11 +378,9 @@ const (
 )
 
 // UnitState is one needed unit as units --check found it: its kind, the file it is
-// looked for at, its state, why it is different, the verb that installs it, and what
-// that verb still waits on when it is not there yet.
+// looked for at, its state, why it is different, and the verb that installs it.
 type UnitState struct {
 	Kind    string `json:"kind"`
-	Owed    string `json:"owed,omitempty"`
 	Path    string `json:"path"`
 	State   string `json:"state"`
 	Why     string `json:"why,omitempty"`
@@ -402,7 +398,7 @@ func CheckUnits(dir, goos string, kinds []UnitKind) ([]UnitState, error) {
 		if name == "" {
 			return nil, errors.New("units --check reads launchd agents (macOS) or systemd user units (Linux), and " + orDash(goos) + " has neither")
 		}
-		s := UnitState{Kind: k.Kind, Path: filepath.Join(dir, name), Install: k.Install, Owed: k.Owed}
+		s := UnitState{Kind: k.Kind, Path: filepath.Join(dir, name), Install: k.Install}
 		b, err := os.ReadFile(s.Path)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):

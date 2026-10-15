@@ -38,7 +38,7 @@ func TestMirrorClonesWhatIsAbsentAndFetchesHeadsAndPullRequests(t *testing.T) {
 	dir := t.TempDir()
 	g := &recordGit{}
 	var out, errb bytes.Buffer
-	code := runMirror([]string{"--dir", dir, "--repos", "a, b", "--base", "https://example.test/org/"}, &out, &errb, g.run, nil)
+	code := runMirror([]string{"--dir", dir, "--repos", "a, b", "--base", "https://example.test/org/", "--no-links"}, &out, &errb, g.run, nil)
 	require.Equal(t, 0, code, errb.String())
 	assert.Contains(t, out.String(), "MIRROR OK a\n")
 	assert.Contains(t, out.String(), "MIRROR OK b\n")
@@ -49,7 +49,7 @@ func TestMirrorClonesWhatIsAbsentAndFetchesHeadsAndPullRequests(t *testing.T) {
 	// a second pass finds every mirror and only fetches
 	g.calls = nil
 	out.Reset()
-	require.Equal(t, 0, runMirror([]string{"--dir", dir, "--repos", "a,b", "--base", "https://example.test/org"}, &out, &errb, g.run, nil))
+	require.Equal(t, 0, runMirror([]string{"--dir", dir, "--repos", "a,b", "--base", "https://example.test/org", "--no-links"}, &out, &errb, g.run, nil))
 	require.Len(t, g.calls, 4)
 	assert.Contains(t, g.calls[0], "|fetch ")
 }
@@ -62,7 +62,7 @@ func TestMirrorAddsTheFixedRepositoriesToTheStreamList(t *testing.T) {
 	dir := t.TempDir()
 	g := &recordGit{}
 	var out, errb bytes.Buffer
-	require.Equal(t, 0, runMirror([]string{"--dir", dir, "--repos", "a", "--base", "https://example.test/o"}, &out, &errb, g.run, nil), errb.String())
+	require.Equal(t, 0, runMirror([]string{"--dir", dir, "--repos", "a", "--base", "https://example.test/o", "--no-links"}, &out, &errb, g.run, nil), errb.String())
 	for _, want := range []string{"a", "nova-tools", "nova-sprint"} {
 		assert.Contains(t, out.String(), "MIRROR OK "+want+"\n")
 	}
@@ -72,7 +72,7 @@ func TestMirrorOneFailureDoesNotStopTheOthers(t *testing.T) {
 	t.Parallel()
 	g := &recordGit{failOn: "/a.git"}
 	var out, errb bytes.Buffer
-	code := runMirror([]string{"--dir", t.TempDir(), "--repos", "a,b", "--base", "https://example.test/o"}, &out, &errb, g.run, nil)
+	code := runMirror([]string{"--dir", t.TempDir(), "--repos", "a,b", "--base", "https://example.test/o", "--no-links"}, &out, &errb, g.run, nil)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, out.String(), "MIRROR FAILED a: fatal: unable to access\n")
 	assert.Contains(t, out.String(), "MIRROR OK b\n")
@@ -88,7 +88,7 @@ func TestMirrorRefusesWhatIsNotARepositoryName(t *testing.T) {
 	} {
 		g := &recordGit{}
 		var out, errb bytes.Buffer
-		code := runMirror(append([]string{"--dir", t.TempDir()}, strings.Fields(args)...), &out, &errb, g.run, nil)
+		code := runMirror(append([]string{"--dir", t.TempDir(), "--no-links"}, strings.Fields(args)...), &out, &errb, g.run, nil)
 		assert.Equal(t, 2, code, args)
 		assert.Contains(t, errb.String(), want, args)
 		assert.Empty(t, g.calls, "a refused invocation runs no git: %s", args)
@@ -125,7 +125,7 @@ func TestMirrorEveryRunsAgainUntilTheWaitEnds(t *testing.T) {
 		waited = append(waited, d)
 		return waits <= 2
 	}
-	code := runMirror([]string{"--dir", t.TempDir(), "--repos", "a", "--base", "https://example.test/o", "--every", "60s"}, &out, &errb, g.run, wait)
+	code := runMirror([]string{"--dir", t.TempDir(), "--repos", "a", "--base", "https://example.test/o", "--every", "60s", "--no-links"}, &out, &errb, g.run, wait)
 	assert.Equal(t, 0, code, errb.String())
 	assert.Equal(t, 3, strings.Count(out.String(), "MIRROR OK a"), "one pass, then one after each of two waits")
 	assert.Equal(t, []time.Duration{time.Minute, time.Minute, time.Minute}, waited)
@@ -193,4 +193,51 @@ func TestDiskGuardStopsUnderItsStopFloor(t *testing.T) {
 	g.stopFloor = 50 * gib
 	assert.Equal(t, 0, g.run(), "a volume over the stop floor ends OK")
 	assert.Contains(t, out.String(), "DISK-GUARD OK")
+}
+
+// A refresh of this bench's own flat mirror points <linkDir>/<repo>-mirror.git at the bare
+// mirror, the path swarm.FindBenchMirror reads after the bench-home candidates (stage.go).
+// runMirrorIn names the link directory, so this test uses t.TempDir() and never /tmp. A
+// second pass replaces the link with the same target, --no-links writes none, and --check
+// writes none.
+func TestMirrorLinksItsOwnFlatMirrorForFindBenchMirror(t *testing.T) {
+	t.Parallel()
+	dir, linkDir := t.TempDir(), t.TempDir()
+	link := filepath.Join(linkDir, "a-mirror.git")
+	g := &recordGit{}
+	var out, errb bytes.Buffer
+	args := []string{"--dir", dir, "--repos", "a", "--base", "https://example.test/o"}
+
+	require.Equal(t, 0, runMirrorIn(args, &out, &errb, g.run, nil, linkDir), errb.String())
+	target, err := os.Readlink(link)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "a.git"), target)
+
+	// a second pass replaces the link, and it still names the bare mirror
+	require.Equal(t, 0, runMirrorIn(args, &out, &errb, g.run, nil, linkDir), errb.String())
+	target, err = os.Readlink(link)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "a.git"), target)
+
+	// --no-links is the pass that writes nothing outside --dir
+	noLinkDir := t.TempDir()
+	require.Equal(t, 0, runMirrorIn(append(args, "--no-links"), &out, &errb, g.run, nil, noLinkDir), errb.String())
+	assert.NoFileExists(t, filepath.Join(noLinkDir, "a-mirror.git"))
+
+	// --check names the missing mirrors (a fresh --dir holds none) and writes no link
+	checkDir, checkMirrorDir := t.TempDir(), t.TempDir()
+	code := runMirrorIn([]string{"--dir", checkMirrorDir, "--repos", "a", "--base", "https://example.test/o", "--check"}, &out, &errb, g.run, nil, checkDir)
+	assert.Equal(t, 1, code, "the fresh mirror directory holds none of the repositories")
+	assert.NoFileExists(t, filepath.Join(checkDir, "a-mirror.git"))
+}
+
+// linkMirror validates the repository name through pkg/safepath before it joins a path, so
+// a name that is no path element is refused rather than followed out of the link directory.
+func TestMirrorLinkRefusesANameThatIsNoPathElement(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"../evil", "a/b", "", ".", "-a"} {
+		err := linkMirror(t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "x.git"), name)
+		assert.Error(t, err, name)
+		assert.Contains(t, err.Error(), "no repository name", name)
+	}
 }
