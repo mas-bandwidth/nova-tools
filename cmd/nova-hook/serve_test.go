@@ -467,3 +467,30 @@ func upTo(after []hook.Status) []string {
 	}
 	return out
 }
+
+// TestServeDryRunPlansAPassAndWritesNothing pins --dry-run: the plan names the
+// challenges, the unhook and the telling the next pass would carry out, from
+// the same script, and writes nothing: no challenge reaches a stream, the
+// interval stays free for the real pass, and a name the plan unhooks is still
+// hooked until that pass.
+func TestServeDryRunPlansAPassAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	cli := r.cli()
+
+	cli.Do(t, "serve", "--as", "ada", "--dry-run", "--down-after", stepDownAfter).Exit(0).
+		Out("SERVE OK", "taken=true", "dry_run=true", "SERVE CHALLENGE name=ada", "SERVE CHALLENGE name=bob").NotOut("nonce")
+	assert.Empty(t, r.stream(t, "bob"), "a dry run sends no challenge")
+	r.step(t, []string{"ada"}, "ada")
+	assert.Equal(t, 1, r.count(t, "bob", "HOOK CHALLENGE"), "the real pass after a dry run is taken")
+	r.step(t, []string{"ada"}, "ada")
+
+	cli.Do(t, "serve", "--as", "ada", "--dry-run", "--down-after", stepDownAfter).Exit(0).
+		Out("SERVE UNHOOK name=bob misses=2", "SERVE TELL audience=coordinator down=bob back=-").NotOut("SERVE CHALLENGE name=bob")
+	require.NotEqual(t, hook.StateUnhooked, r.h.State(t, "bob").State, "the plan unhooks no one")
+	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN bob"), "the plan tells no one")
+	r.step(t, []string{"ada"}, "ada")
+	require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State, "the real pass does what the plan said")
+}

@@ -351,9 +351,10 @@ sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE 
 			},
 			{
 				Name:    "serve",
-				Usage:   "serve --as <me> [--every <d>] [--down-after <d>] [--judge-within <d>] [--once] [--redis <addr>]",
+				Usage:   "serve --as <me> [--every <d>] [--down-after <d>] [--judge-within <d>] [--once] [--dry-run] [--redis <addr>]",
 				Example: "", // a server needs a hooked name and a live bus store: no example line can carry it
 				Effect:  tool.Delivery + ": challenges every hooked name on its bus, unhooks a name silent for --down-after, and expires overdue asks",
+				DryRun:  true,
 				Detail: `The heartbeat server (docs/SPEC-HOOK.md, the heartbeat; tla/HookBeat.tla). Every --every (default ` + hook.BeatEvery.String() + `),
 in one atomic pass by the store's TIME, each hooked name whose role a session answers in (coordinator, friend,
 comms) gets a fresh challenge as a bus message to its name, subject HOOK CHALLENGE nonce=<n>, due within the
@@ -369,6 +370,10 @@ a judgment instead when the coordinator went down (COORDINATOR DOWN: who takes o
 overdue bus asks. Two servers take one pass per interval between them. Each line is SERVE STATE event=<challenge|
 judgment|told|overdue|answered|expired|skip|fault>; a fault is event=fault and the loop goes on. --as must be hooked in as coordinator or comms.
 --once runs one pass and exits 0. It stops on SIGINT or SIGTERM.
+--dry-run plans one pass now and writes nothing: the same atomic script with its writes off (hook.Store.PlanPass),
+then SERVE OK with one SERVE CHALLENGE name=<n> misses=<m>, SERVE UNHOOK name=<n> misses=<m>, SERVE TELL
+audience=<coordinator|rest> down=<names> back=<names> and SERVE EXPIRE ask=<id> from=<name> line for each thing the
+pass would do; taken=false when another server's pass holds this interval. No challenge, message or mark is sent.
 example: nova-hook serve --as ada --once`,
 				Flags: func(f *tool.Flags) {
 					as(f)
