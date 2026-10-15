@@ -614,7 +614,7 @@ Expire(s, n) == /\ ask[n] = "due"
                 /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, issued, proof>>
 
 \* Everything the push actions leave as it is: the heartbeat's and the tell's.
-nonpush == <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
+nonpush == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
              jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof>>
 
 \* One transition of n, the oldest in hand, is sent as its own status message
@@ -682,7 +682,7 @@ Spec == Init /\ [][Next]_vars
 \* tried again and again is delivered at last, and a sent tell is marked.
 LiveSpec == Spec /\ WF_vars(Tick) /\ WF_vars(\E s \in Servers : Pass(s))
                  /\ \A s \in Servers : SF_vars(Tell(s)) /\ WF_vars(Mark(s))
-                 /\ \A n \in Names : SF_vars(Deliver(n))
+                 /\ (\A n \in Names : SF_vars(Deliver(n)))
                  /\ SF_vars(PushFold \/ \E n \in Names : PushSend(n)) /\ SF_vars(Show)
 
 \* Only the clock is fair: the servers may stop for good.
