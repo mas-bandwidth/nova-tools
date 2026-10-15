@@ -286,3 +286,201 @@ func testPathsCoverTheTestRegistry(t *testing.T) {
 
 	assert.Contains(t, BriefRemedy("paths-cover-registry"), "registry")
 }
+
+// TestTheLateSprintHunksArePorted pins the two behaviours nova-sprint's copy of pkg/swarm
+// gained on 2026-10-15, after TestSprintHunksArePorted was measured (card
+// swarm-tools-takes-the-model-gate-and-runner-base-hunks). Each subtest is nova-sprint's own
+// test of the behaviour, run against this package:
+//   - model-gate-named: nova-sprint 705fa0b1 (lintpaths.go modelGateMissing)
+//     TestAModelCardRunsItsModelInTheGate
+//   - test-absent-at-base-for-every-runner: nova-sprint 94736cdb, landed 73b04e12
+//     (lintbase.go runnerDoneTest and testDefinedAt, lintpaths.go LintBrief)
+//     TestTestAbsentAtBaseForEveryRunner and TestLintCardBaseReadsRunnerFormDoneWhen
+func TestTheLateSprintHunksArePorted(t *testing.T) {
+	t.Parallel()
+	t.Run("a model card runs its model in the gate", testAModelCardRunsItsModelInTheGate)
+	t.Run("a runner TEST is absent at the base", testTestIsAbsentAtBaseForEveryRunner)
+	t.Run("the base check reads a runner DONE-WHEN", testLintCardBaseReadsRunnerFormDoneWhen)
+}
+
+// wantModelGate is internal/cardgen's modelGate sentence, which model-gate-named quotes in its
+// refusal and remedy when a brief whose PATHS or NEW reaches tla/*.tla or tla/*.cfg omits the
+// model gate step or GATE-NEEDS: tla.
+const wantModelGate = "The PATHS reach tla/, so the gate also runs the model: on a Linux TLC bench (java, the pinned jar at /opt/tla/tla2tools.jar; never a working machine), for each group g that `go run ./tools/tlacheck groups --root . --stale` lists (the groups of the cases your edit touched), run `make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g`, then `go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv $JOB/scratch/tlc-*/RUNS.tsv`, until the groups command prints []; commit tla/RUNS.tsv with the change, never a row written by hand. The lander refuses a head that edits tla/*.tla or tla/*.cfg without a current RUNS.tsv row for each case it touches, naming the case."
+
+// modelGateFindings is the model-gate-named findings LintBrief draws on raw, with no tree
+// handed over (the rule reads the header and STEPs alone).
+func modelGateFindings(t *testing.T, raw string) []CardHeaderFinding {
+	t.Helper()
+	fs, _ := LintBrief([]byte(raw), BriefBase{})
+	return findingsWith(fs, "model-gate-named")
+}
+
+// rocketnetCookieBrief is the header and steps of rocketnet-cookie-key-rotates-on-its-period
+// as sprint 21 admitted it (attempt 3 head 2251e1b was refused by the lander because
+// MCRNSecurityTables.cfg had no current RUNS.tsv record), with extraHeader and gateStep
+// spliced in.
+func rocketnetCookieBrief(extraHeader, gateStep string) string {
+	return "RESULT: rocketnet-cookie-key-rotates-on-its-period sha=2251e1b00000 tier: heavy\n" +
+		"REPO: mas-bandwidth/rocketnet\n" +
+		"BASE: sprint/rocketnet-audit\n" +
+		"KIND: fix-red\n" +
+		"PATHS: pkg/security/cookie.go, pkg/security/cookie_test.go, tla/RNSecurityTables.tla, tla/MCRNSecurityTables.cfg, tla/RUNS.tsv\n" +
+		extraHeader +
+		"TEST: pkg/security TestCookieKeyRotatesOnItsPeriod\n\n" +
+		"THE TASK. Rotate the cookie key on its period and update tla/RNSecurityTables.tla and tla/MCRNSecurityTables.cfg.\n\n" +
+		"STEP 1. Enter the staged checkout with cd $JOB/repo && git log --oneline -1.\n" +
+		"STEP 2. Red test first: go test ./pkg/security/ -run TestCookieKeyRotatesOnItsPeriod.\n" +
+		"STEP 3. Make it pass in pkg/security/cookie.go and the TLA+ model.\n" +
+		"STEP 4. Run the gate: go test -count=1 -timeout 600s ./pkg/security/ ./internal/ci/." + gateStep + "\n"
+}
+
+// The model-gate-named rule, replayed from rocketnet-cookie-key-rotates-on-its-period #3:
+// when PATHS or NEW reaches a .tla or .cfg under tla/, some STEP must run `make tlc` or
+// `tlacheck`, and a GATE-NEEDS line must name tla; else LintBrief refuses with the remedy
+// quoting cardgen's modelGate sentence.
+func testAModelCardRunsItsModelInTheGate(t *testing.T) {
+	t.Parallel()
+
+	// As admitted in sprint 21: neither a model gate step nor GATE-NEEDS: tla -> refused.
+	fs := modelGateFindings(t, rocketnetCookieBrief("", ""))
+	require.Len(t, fs, 1, "the rocketnet-cookie brief as admitted is refused")
+	assert.Equal(t, 5, fs[0].Line, "the finding points at PATHS")
+	assert.Contains(t, fs[0].Excerpt, wantModelGate, "the refusal quotes modelGate's sentence")
+
+	// With cardgen's modelGate step and GATE-NEEDS: linux, tla -> passes.
+	assert.Empty(t, modelGateFindings(t, rocketnetCookieBrief("GATE-NEEDS: linux, tla\n", " "+wantModelGate)),
+		"with the model gate step and GATE-NEEDS: linux, tla the brief passes")
+
+	// Either half missing still refuses: a STEP with the tool but no GATE-NEEDS: tla, or
+	// GATE-NEEDS: linux, tla with no STEP running make tlc or tlacheck.
+	require.Len(t, modelGateFindings(t, rocketnetCookieBrief("", " "+wantModelGate)), 1,
+		"the model gate step without GATE-NEEDS: tla is refused")
+	require.Len(t, modelGateFindings(t, rocketnetCookieBrief("GATE-NEEDS: linux\n", " "+wantModelGate)), 1,
+		"GATE-NEEDS without tla is refused")
+	require.Len(t, modelGateFindings(t, rocketnetCookieBrief("GATE-NEEDS: linux, tla\n", "")), 1,
+		"GATE-NEEDS: linux, tla without a STEP running make tlc or tlacheck is refused")
+
+	// Either `make tlc` or `tlacheck` in a STEP satisfies the tool check when GATE-NEEDS names tla.
+	assert.Empty(t, modelGateFindings(t, rocketnetCookieBrief("GATE-NEEDS: linux, tla\n", " Run `make tlc TLC_GROUP=rnsecuritytables`.")))
+	assert.Empty(t, modelGateFindings(t, rocketnetCookieBrief("GATE-NEEDS: tla\n", " Run `go run ./tools/tlacheck groups --root . --stale`.")))
+
+	// A .cfg alone under tla/, a glob reaching models, or a new model file on NEW: is held too;
+	// non-model files under tla/ (RUNS.tsv, CASES.tsv, README.md) and Go-only cards are not.
+	for _, paths := range []string{"tla/MCRNSecurityTables.cfg", "tla/RNSecurityTables.tla", "tla/*.cfg", "tla/*.tla", "tla/*", "tla/**", "tla/"} {
+		raw := "card x tier: heavy\nPATHS: " + paths + "\n\nTHE TASK. x\n\nSTEP 1. go test ./...\n"
+		require.Len(t, modelGateFindings(t, raw), 1, "PATHS: %s is held to model-gate-named", paths)
+	}
+	newModel := "card x tier: heavy\nPATHS: pkg/x/a.go\nNEW: tla/MCNew.cfg\n\nTHE TASK. x\n\nSTEP 1. go test ./...\n"
+	fs = modelGateFindings(t, newModel)
+	require.Len(t, fs, 1, "a new .cfg on NEW: is held to model-gate-named")
+	assert.Equal(t, 3, fs[0].Line, "when PATHS has no model, the finding points at NEW")
+
+	for _, paths := range []string{"tla/RUNS.tsv", "tla/CASES.tsv", "tla/README.md", "pkg/security/cookie.go"} {
+		raw := "card x tier: heavy\nPATHS: " + paths + "\n\nTHE TASK. x\n\nSTEP 1. go test ./...\n"
+		assert.Empty(t, modelGateFindings(t, raw), "PATHS: %s touches no .tla or .cfg under tla/", paths)
+	}
+
+	remedy := BriefRemedy("model-gate-named")
+	assert.Equal(t, BriefBaseRemedies["model-gate-named"], remedy)
+	assert.Contains(t, remedy, wantModelGate, "BriefBaseRemedies quotes modelGate's sentence")
+}
+
+// initDeltaRepo makes a throwaway git repository holding a delta-shaped C++ test
+// source that already registers DeltaBitsWiderThan32, and returns its directory and
+// base commit.
+func initLateDeltaRepo(t *testing.T) (dir, sha string) {
+	t.Helper()
+	dir = t.TempDir()
+	git := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+	}
+	git("init", "-q", "-b", "main")
+	write("test/delta_test.cpp", "#include \"unit_test.h\"\nREGISTER_UNIT_TEST(DeltaBitsWiderThan32)\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "base")
+	return dir, git("rev-parse", "HEAD")
+}
+
+// runnerCard is a brief whose TEST line is the runner form `<runner> <file> <case>`
+// and whose PATHS names the C++ test source.
+func lateRunnerCard(sha, test string) []byte {
+	return []byte("RESULT: c1 sha=" + sha + " tier: heavy\n" +
+		"REPO: example.com/m\n" +
+		"BASE: sprint/x\n" +
+		"base-sha: " + sha + "\n" +
+		"PATHS: test/delta_test.cpp\n" +
+		"KIND: fix-red\n" +
+		"TEST: " + test + "\n" +
+		"\n" +
+		"THE TASK.\n")
+}
+
+// The absent-at-base check runs on every form the card lint accepts. A runner-form
+// TEST naming a case the base already registers is refused; one naming a new case
+// passes; a brief handed no tree draws MISSING.
+func testTestIsAbsentAtBaseForEveryRunner(t *testing.T) {
+	t.Parallel()
+	dir, sha := initLateDeltaRepo(t)
+	bb := BriefBase{Repo: dir, Sha: sha}
+
+	refused, _ := LintBrief(lateRunnerCard(sha, "make test/delta_test.cpp DeltaBitsWiderThan32"), bb)
+	got := findingsWith(refused, "donewhen-test-name")
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Excerpt, "exists")
+
+	newCase, _ := LintBrief(lateRunnerCard(sha, "make test/delta_test.cpp SomeNewCase"), bb)
+	assert.Empty(t, findingsWith(newCase, "donewhen-test-name"), "%+v", newCase)
+
+	missingTarget, _ := LintBrief(lateRunnerCard(sha, "make test/nonexistent.cpp SomeNewCase"), bb)
+	missTarget := findingsWith(missingTarget, "donewhen-test-name")
+	require.Len(t, missTarget, 1)
+	assert.Contains(t, missTarget[0].Excerpt, "target must exist")
+
+	missing, _ := LintBrief(lateRunnerCard(sha, "make test/delta_test.cpp SomeNewCase"), BriefBase{})
+	miss := findingsWith(missing, "donewhen-test-name")
+	require.Len(t, miss, 1)
+	assert.Contains(t, miss[0].Excerpt, "MISSING")
+}
+
+// The base card check (LintCardBase) reads the same runner form off DONE-WHEN: a
+// case the base registers is refused, a new one passes.
+func testLintCardBaseReadsRunnerFormDoneWhen(t *testing.T) {
+	t.Parallel()
+	dir, sha := initLateDeltaRepo(t)
+	bc := BaseCheck{Repo: dir}
+	card := func(doneWhen string) []byte {
+		return []byte("RESULT: c1 sha=" + sha + " tier: pro\n" +
+			"base-sha: " + sha + "\n" +
+			"PATHS: test/delta_test.cpp\n" +
+			"KIND: fix\n" +
+			"LEG: go\n" +
+			"DEADLINE: 2700\n" +
+			"DONE-WHEN: " + doneWhen + "\n" +
+			"\n" +
+			"THE TASK.\n")
+	}
+
+	present := LintCardBase(card("make test/delta_test.cpp DeltaBitsWiderThan32"), bc)
+	got := findingsWith(present, "donewhen-test-name")
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Excerpt, "exists at base-sha")
+
+	absent := LintCardBase(card("make test/delta_test.cpp SomeNewCase"), bc)
+	assert.Empty(t, findingsWith(absent, "donewhen-test-name"), "%+v", absent)
+
+	missingTarget := LintCardBase(card("make test/nonexistent.cpp SomeNewCase"), bc)
+	missTarget := findingsWith(missingTarget, "donewhen-test-name")
+	require.Len(t, missTarget, 1)
+	assert.Contains(t, missTarget[0].Excerpt, "target must exist")
+}
