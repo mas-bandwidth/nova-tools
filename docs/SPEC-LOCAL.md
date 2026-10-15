@@ -231,16 +231,14 @@ because the caller can retry it: a `--model` the engine does not serve, remedy
 
 ## Fleet
 
-The owner's design, 2026-10-04: a local model is a provider like any other, and the
-sprint deals to it as it deals to any route. Whether a lane's calls go to a local model or
-to a remote one is route configuration, never a second count on the machine: a machine's
-lanes are its `width`, and a route says what serves them.
+Local is a provider per fleet machine, dealt like any route:
 
 **Status: designed, not built.** `cmd/nova-local` builds the store and the endpoint's
-serving-host rule (rules 3 and 15). The route, the concurrency, the deal and the launch
-below need nova-config's route fields `endpoint` and `concurrency`, the sprint's cap and
-`nova-swarm native --local-base`, none of which exists yet; until they do, `serve` prints
-no `nova-config route add` line and has no `--concurrency`.
+serving-host rule (rules 3 and 15). The deal lives in mas-bandwidth/nova-sprint. Owed:
+nova-config's provider field endpoint (card local-config-provider-endpoint), the deal's
+stamp and the routes view (card local-deal-stamps-the-endpoint, in mas-bandwidth/nova-sprint),
+the launch (card local-native-launches-at-the-endpoint), and serve's printed rows (card
+local-serve-prints-the-fleet-rows).
 
 - **The store.** Every machine keeps its weights under the shared directory of its AI
   root, `<ai-root>/shared/models/<engine>` (rule 15), never per account.
@@ -248,32 +246,11 @@ no `nova-config route add` line and has no `--concurrency`.
   served tag, and the most requests it takes at once. Over the tailnet its ollama listens
   on its tailnet address, and every caller reaches it there or on loopback (rule 3). The
   endpoint of a model served on host `h` is `http://h:11434/v1`.
-- **The route.** A route of `--provider local` names its endpoint and a concurrency
-  (nova-config's route fields `endpoint` and `concurrency`; only a local route names an
-  endpoint, and a local route wants a concurrency above 0), `--model` the served tag. Its
-  prices are 0 (`--price_input 0 --price_output 0`): its cost is $0 and its tokens are
-  recorded as any route's. `serve --base http://<host>:11434/v1 --concurrency <n>` prints
-  the row's `nova-config route add` line; its name is `local-<model>-<host>`.
-- **The concurrency.** The cap on how many lanes may use a route at once is the
-  endpoint's, so it is the route's: nova-config's route field `concurrency` (migration
-  0028), the cards using the route at once; 0, the default, is no cap, and any route may
-  carry one (a metered provider's limit is the same field). A host running N instances of
-  a model is N routes of the instances' concurrency each, or one route of concurrency N;
-  both are only configuration. A machine row holds no second count: `width` is its lanes,
-  and `--width 0` is a machine that runs no member, whatever its endpoints serve. A change
-  reaches the deal at the next `nova-config apply` of the routes.
-- **The deal** (`internal/sprint/route.go`, the cap). A local route is in its tier's
-  route set and is drawn like any route. A work card ready or working, or a read card
-  asked or reading, whose `route` names a capped route holds one of its slots; a draw
-  skips a route whose slots are all taken, as it skips a resting route, and the card
-  waits for a slot with no judgment, since the route serves the tier. The draw writes the
-  route's endpoint on the work card (`serve`), the packet hands it to the member, and
-  `nova-sprint routes` shows `endpoint=<url> concurrency=<busy>/<cap>`.
-- **The launch.** The member passes `--local-base <endpoint>` to
-  `nova-swarm native` for a card whose packet names an endpoint; native declares the
-  provider `local` at that endpoint in the job's harness config (OpenCode's
-  OpenAI-compatible provider, no key), the route's model under it, and stands its
-  read-deadline proxy in front of it; on loopback the wall opens that one port.
+- The provider: one nova-config provider row per serving machine, named local-<host>, with a new provider field endpoint, http://<host>:11434/v1. A provider whose name begins local- carries an endpoint and every other provider carries none. The endpoint obeys nova-local's rule 3 (loopback or the tailnet, 100.64.0.0/10, every address a name resolves to), and an endpoint whose host is a nova-config machine row holding the role coordination is refused: the coordinating machine serves no local model. Billing subscription, funded true, no key.
+- The route: --provider local-<host> --model <the served tag>, every price 0, named local-<model>-<host>; its tokens are recorded as any route's.
+- The concurrency: the provider concurrency budget nova-sprint already has (nova-sprint routes limit local-<host> --concurrent <n>; the sprint's rate_budget and RateBudget.tla): the deal falls back past a full provider and the card waits ready when none of its tier has room. No route field concurrency, no machine field, no new count on a machine row: a machine's width stays its lanes.
+- The deal stamps the provider's endpoint on the work or read card as the card field endpoint, the packet carries it as JSON endpoint, and nova-sprint routes prints endpoint=<url> concurrency=<busy>/<cap> on a local route.
+- The launch: the member passes --local-base <endpoint> to nova-swarm native for a packet naming an endpoint; native declares provider local-<host> at that base in the job's harness config (OpenCode's OpenAI-compatible provider, no key), the route's model under it, its read-deadline proxy in front.
 
 ## Deliberately not in this tool
 
@@ -309,7 +286,7 @@ Each runs against a fake engine through the injected transport (`cmd/nova-local`
 | 13 | `TestStatusListingIsBounded`, `TestStatusWithNothingAnsweringIsOneRemedyLine` |
 | 14 | `TestWorkerRefusesEveryProblemAtOnce` |
 | 15 | `TestTheSharedStore`, `TestSharedAndResolve` |
-| Fleet | `TestALocalRouteNamesItsEndpointAndConcurrency` (config), `TestALocalRouteTakesItsConcurrencyOfCardsAndRecordsItsUsageAtNoCost` and `TestARouteAtItsConcurrencyDrawsTheNextRoute` (the sprint's twin), `TestRoutesAndWhereShowALocalRoute`, `TestAMemberLaunchesALocalRoutesCardAtItsEndpoint`, `TestNativeTakesALocalBaseOnlyWithALocalModel`, `TestAJobOnALocalRouteDeclaresTheProviderAtItsEndpoint`, `TestDeclareLocalProviderPointsTheHarnessAtTheEndpoint`, `TestServeOverTheTailnetNamesTheFleetRoute`: owed with the Fleet's build |
+| Fleet | `TestALocalProviderNamesItsEndpoint` (owed: local-config-provider-endpoint), `TestALocalEndpointOnTheCoordinatingMachineIsRefused` (owed: local-config-provider-endpoint); `TestADealOnALocalProviderStampsItsEndpoint` (in mas-bandwidth/nova-sprint), `TestALocalProviderAtItsConcurrencyDrawsTheNextRoute` (in mas-bandwidth/nova-sprint) and `TestRoutesShowsALocalRoutesEndpointAndConcurrency` (in mas-bandwidth/nova-sprint); `TestAMemberPassesTheLocalBaseToNative` (owed: local-native-launches-at-the-endpoint), `TestNativeTakesALocalBaseOnlyWithALocalProvider` (owed: local-native-launches-at-the-endpoint), `TestDeclareLocalProviderPointsTheHarnessAtTheEndpoint` (owed: local-native-launches-at-the-endpoint); `TestServeOverTheTailnetNamesTheFleetRows` (owed: local-serve-prints-the-fleet-rows) |
 
 The first run (`docs/TESTS.md`) is executed by `TestTESTSFirstRunIsWhatTheToolPrints`,
 and the banner's examples by `TestUsageBannerExamplesRun`. The functional tier's
