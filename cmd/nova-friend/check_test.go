@@ -58,9 +58,9 @@ func TestCheckSaysOkForALiveFriend(t *testing.T) {
 	state := friend.DefaultStateDir(r.home, "bob")
 	r.launchctlOut = "12345 0 com.nova.friend-bob\n"
 	require.NoError(t, friend.WriteStatus(state, friend.Status{
-		Friend:     "bob",
-		Harness:    "opencode",
-		At:         start,
+		Friend:  "bob",
+		Harness: "opencode",
+		At:      start,
 	}))
 	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work messages=1 took=3s exit=0 acked=true"))
 
@@ -155,9 +155,9 @@ func TestCheckJSONCarriesEveryFact(t *testing.T) {
 	state := friend.DefaultStateDir(r.home, "bob")
 	r.launchctlOut = "12345 0 com.nova.friend-bob\n"
 	require.NoError(t, friend.WriteStatus(state, friend.Status{
-		Friend:     "bob",
-		Harness:    "opencode",
-		At:         start,
+		Friend:  "bob",
+		Harness: "opencode",
+		At:      start,
 	}))
 	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
 

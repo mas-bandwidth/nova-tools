@@ -22,8 +22,8 @@ func TestAStepAppliesEveryEndedLaneResultWaitingOnTheChannels(t *testing.T) {
 	d := &Daemon{Friend: "bob", SaveLanes: func(LaneState) error { return nil }, Record: func(string) {}}
 	l := &loop{d: d, ctx: context.Background(),
 		outboxRes: make(chan outboxResult, 8),
-		lanes: &laneSet{results: make(chan laneResult, 8), state: LaneState{Sessions: map[int]string{}}},
-		reads: newReadSet()}
+		lanes:     &laneSet{results: make(chan laneResult, 8), state: LaneState{Sessions: map[int]string{}}},
+		reads:     newReadSet()}
 	for n := 1; n <= 4; n++ {
 		l.lanes.results <- laneResult{ln: &lane{n: n}, open: true, session: fmt.Sprintf("ses_%d", n)}
 	}

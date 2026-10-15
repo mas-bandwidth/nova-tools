@@ -2351,3 +2351,4 @@ pkg/friend/codex_queue_test.go the Codex app-server queue was the retired Codex 
 pkg/friend/codex_session_test.go NewestCodexSession was the retired Codex adapter's (v1.3.6)
 pkg/friend/spendcap_daemon_test.go the spend cap through the daemon's batch turns is retired with them (v1.3.6); the cap's gate and lane tests stay in spendcap_test.go
 pkg/friend/spendcap_redis_functional_test.go the spend cap through the daemon's batch turns on a private store is retired with them (v1.3.6)
+pkg/friend/lock_unix_test.go FlockHeld is retired with the daemon Codex delivery adapter (v1.3.8); hook leases own session presence
