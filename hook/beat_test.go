@@ -483,3 +483,71 @@ func (r *rig) startHeartbeat(t *testing.T) {
 	t.Helper()
 	require.NoError(t, r.Client.HSet(context.Background(), hook.ServeKey, "by", "silence-test").Err())
 }
+
+// TestThePushedMarkIsTheStateAndTheCount pins the row's pushed mark
+// (tla/HookBeat.tla, PushSend): a fresh row has none, the baseline writes the
+// states found once and never over a mark that stands, a mark reads back as
+// the state and the count, and a proven record with no heartbeat evidence is pushed as down.
+func TestThePushedMarkIsTheStateAndTheCount(t *testing.T) {
+	t.Parallel()
+	rig := newRig(t)
+	ctx := context.Background()
+	got, seen, err := rig.s.Pushed(ctx)
+	require.NoError(t, err)
+	assert.False(t, seen)
+	assert.Empty(t, got)
+	require.NoError(t, rig.s.Baseline(ctx, map[string]string{"ada": "proven", "bob": "unhooked"}))
+	require.NoError(t, rig.Client.HSet(ctx, hook.ServeKey, hook.PushMark("ada", "expired", 0).Field, hook.PushMark("ada", "expired", 0).Value).Err())
+	require.NoError(t, rig.s.Baseline(ctx, map[string]string{"ada": "proven"}))
+	got, seen, err = rig.s.Pushed(ctx)
+	require.NoError(t, err)
+	assert.True(t, seen)
+	assert.Equal(t, hook.Pushed{State: "expired", Gen: 1}, got["ada"], "a baseline never replaces a mark")
+	assert.Equal(t, hook.Pushed{State: "unhooked", Gen: 0}, got["bob"])
+	assert.NotEqual(t, hook.PushOnce("ada", 1, "proven", 1), hook.PushOnce("ada", 1, "proven", 3), "a flap back to a state in one epoch is a push of its own")
+	assert.Equal(t, hook.StateDown, hook.PushState(hook.Status{State: hook.StateProven, Down: hook.NoAnswerReason}))
+	assert.Equal(t, hook.StateProven, hook.PushState(hook.Status{State: hook.StateProven}))
+	assert.Equal(t, hook.StateExpired, hook.PushState(hook.Status{State: hook.StateExpired, Down: hook.StaleReason}))
+}
+
+// TestAProofGrantsAFreshSilenceWindow pins the silence rule's clock
+// (tla/HookBeat.tla, NoChallengeWhileTalking): a busy friend who sends no bus
+// message is challenged after BusyQuietAfter, proves, and is not challenged
+// again until BusyQuietAfter after that proof, however many passes run between;
+// the window counts from the later of her last send and her last proof.
+func TestAProofGrantsAFreshSilenceWindow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Friend)
+	r.startHeartbeat(t)
+	next := nonces()
+	pass := func() hook.Beat {
+		names, err := r.s.Names(ctx)
+		require.NoError(t, err)
+		got, err := r.s.Pass(ctx, names, hook.BeatEvery, hook.DownAfter, next, "srv", "ada")
+		require.NoError(t, err)
+		for _, b := range got.Beats {
+			if b.Did == hook.BeatChallenged {
+				require.NoError(t, r.s.Delivered(ctx, b))
+			}
+			if b.Name == "ada" {
+				return b
+			}
+		}
+		return hook.Beat{}
+	}
+	r.pass(hook.BusyQuietAfter + time.Minute)
+	b := pass()
+	require.Equal(t, hook.BeatChallenged, b.Did)
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Friend, hook.Bus, b.Epoch, "holder"))
+	_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
+	require.NoError(t, err)
+	for range int(hook.BusyQuietAfter/hook.BeatEvery) - 1 { // one-minute passes up to the end of her window
+		r.pass(hook.BeatEvery)
+		assert.Equal(t, hook.BeatLeft, pass().Did)
+	}
+	r.pass(hook.BeatEvery)
+	r.pass(hook.BeatEvery)
+	assert.Equal(t, hook.BeatChallenged, pass().Did, "challenged again once the window from her proof has passed")
+}

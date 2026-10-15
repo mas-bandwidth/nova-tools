@@ -170,6 +170,7 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, downAfter, with
 		}
 		serveLine(c, "challenge", "", "name", bt.Name, "misses", bt.Misses)
 	}
+	w.push(c, s, b, p, names)
 	w.tell(c, s, b, p, within)
 	w.judgments(c, s, b)
 	ctx, cancel = call()
@@ -399,6 +400,131 @@ func (w world) judgments(c *tool.Call, s *session, b *bus.Bus) {
 				continue
 			}
 			serveLine(c, "overdue", j.Subject, "id", j.ID)
+		}
+	}
+}
+
+// serverSent says m, on the stream of the name as, is the heartbeat server's
+// speaking under that same name (the server runs as the coordinator): a
+// challenge, a friend-status line, or a judgment it raised or pushed again. The
+// hook's loop passes over a message from its own name (what the session sent
+// itself with nova-bus send) and shows these, each as its own HOOK PUSH line
+// (tla/HookBeat.tla, Show; Broken "selffilter" is the loop that skipped them
+// all, and the coordinator saw no friend change). The server's messages are
+// told by their kind and their subject, which a session sending under its name
+// with another kind or subject is not.
+func serverSent(m bus.Message, as string) bool {
+	if m.From != as {
+		return false
+	}
+	switch m.Kind {
+	case bus.KindStatus:
+		return strings.HasPrefix(m.Subject, stateSubject)
+	case bus.KindJudgment:
+		for _, p := range judgmentSubjects {
+			if strings.HasPrefix(m.Subject, p) {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.HasPrefix(m.Subject, "HOOK CHALLENGE ")
+}
+
+// stateSubject starts a friend-status line's subject; judgmentSubjects start
+// the judgments the server raises (tell) and pushes again (judgments).
+const stateSubject = "FRIEND STATE "
+
+var judgmentSubjects = []string{"FRIEND DOWN ", "FRIEND BACK ", "COORDINATOR DOWN ", "OVERDUE "}
+
+// transition is one change of a name's state the server found at a pass: from
+// old to new, at the store's TIME of the pass that saw it, in the epoch it was
+// found in, and the count of its push (the once-key's).
+type transition struct {
+	old, new string
+	at       time.Time
+	epoch    int64
+	gen      int64
+}
+
+// push tells the coordinator every friend status change as its own message
+// (tla/HookBeat.tla, Pass's compare and PushSend): each name's state, as the
+// store reads it now, against the state last pushed for it (the row's pushed
+// mark) or the last still in hand; a difference is a transition in hand, and
+// each in hand goes out oldest first as one message of kind status, never
+// folded with another name's or another change's, under a once-key of the name,
+// its epoch, the new state and the count, in one write with the mark. A send
+// that fails leaves the transition in hand and the mark unwritten, and the next
+// pass sends it; one that went is never sent again (NeverPushedTwice,
+// TransitionPushedToCoordinator). The message waits on no judgment and on no
+// --judge-within: it is not answered and never OVERDUE. With no coordinator the
+// pass pushes nothing, and the first pass of a fresh row writes the states it
+// finds as pushed with no message.
+func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names []string) {
+	if p.Coord == "" || len(names) == 0 {
+		return
+	}
+	ctx, cancel := call()
+	sts, now, err := s.hooks.Read(ctx, names...)
+	cancel()
+	if err != nil {
+		fault(c, "friend states", err)
+		return
+	}
+	ctx, cancel = call()
+	pushed, seen, err := s.hooks.Pushed(ctx)
+	cancel()
+	if err != nil {
+		fault(c, "pushed states", err)
+		return
+	}
+	if !seen {
+		base := map[string]string{}
+		for _, st := range sts {
+			base[st.Name] = hook.PushState(st)
+		}
+		ctx, cancel := call()
+		err := s.hooks.Baseline(ctx, base)
+		cancel()
+		if err != nil {
+			fault(c, "pushed baseline", err)
+		}
+		return
+	}
+	if s.pending == nil {
+		s.pending = map[string][]transition{}
+	}
+	for _, st := range sts {
+		last := cmp.Or(pushed[st.Name].State, hook.StateNone)
+		gen := pushed[st.Name].Gen
+		q := s.pending[st.Name]
+		for len(q) > 0 && q[0].gen < gen { // sent already, by this server or another
+			q = q[1:]
+		}
+		if len(q) > 0 {
+			last = q[len(q)-1].new
+		}
+		if cur := hook.PushState(st); cur != last {
+			q = append(q, transition{old: last, new: cur, at: now, epoch: st.Epoch, gen: gen + int64(len(q))})
+		}
+		for len(q) > 0 {
+			t := q[0]
+			subject := fmt.Sprintf("%s%s %s->%s at=%s", stateSubject, st.Name, t.old, t.new, t.at.UTC().Format(time.RFC3339))
+			mark := hook.PushMark(st.Name, t.new, t.gen)
+			m := bus.Message{From: s.as, To: []string{p.Coord}, Kind: bus.KindStatus, Subject: subject,
+				Body:  fmt.Sprintf("%s\nnova-hook friends shows every name's state. No answer is wanted.\n", subject),
+				Once:  hook.PushOnce(st.Name, t.epoch, t.new, t.gen),
+				Marks: []bus.Mark{{Key: hook.ServeKey, Field: mark.Field, Value: mark.Value}}}
+			if _, ok := w.sendOnce(c, s, b, m); !ok {
+				break // kept, and sent at the next pass
+			}
+			serveLine(c, "pushed", subject, "to", p.Coord)
+			q = q[1:]
+		}
+		if len(q) == 0 {
+			delete(s.pending, st.Name)
+		} else {
+			s.pending[st.Name] = q
 		}
 	}
 }

@@ -489,14 +489,27 @@ INFO` on Redis 8 answers):
 | Verb | Commands | Keys |
 | --- | --- | --- |
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
-| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`, then `HGETALL` (the NOTE); with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
-| recv | `SMEMBERS`, `TIME`, `HGETALL` (the NOTE, once per run), `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`; `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>`; `bus2:receipt:<f>` |
+| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HSETNX`, `HDEL`, `EXEC`; with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HSETNX`, `HDEL` | `friends`, `machines` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:answers:<f>` when it answers (re: every reply, ask or not, `HSETNX` the first reply's `at`, in the send's transaction or the script); with `--kind ask`, `bus2:ask:<id>` (the ask's record, a new id, so every name) and `bus2:asks:<f>` (the sender's index); `bus2:sent:<f>:*` with a token |
+| recv | `SMEMBERS`, `TIME`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`, `XCLAIM` (a message the filter skips is handed back at once); `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:to:<f>`; `bus2:receipt:<f>` |
 | wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
-| names | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`, `bus2:push` |
-| the friend daemon's push proof | `SMEMBERS`, `TIME`, `MULTI`, `HSET`, `EXEC` | `friends`, `machines`; `bus2:push` |
+| names | `SMEMBERS`, `TIME` | `friends`, `machines` |
+| asks | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`; `bus2:asks:<f>`; `bus2:ask:<each id>`; `bus2:answers:<each recipient>` (read: the recipients' replies are theirs); with `--liveness`, and for `overdue` (its plan, `--dry-run`, and its reads), `bus2:asks:<every name>` (read) and `bus2:receipt:<every friend>`, `bus2:owed:*` |
+| the expiry (`ExpireAsks`; no friend's login) | the asks' reads above, then the once-script: `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `bus2:asktimeout:<id>`, `bus2:ask:<id>`, the sender's stream, `bus2:log`, `bus2:owed:<sender>`: the first is on no friend's line |
+
+The expiry (`Bus.ExpireAsks`, which delivers an ask's timeout) is run by two
+processes and by no friend's login: `nova-bus overdue`, the alarm the
+coordinator's loop runs under the coordinator's login, and `nova-hook serve`,
+once a pass, under the hook server's (`cmd/nova-bus/main.go` overdue,
+`cmd/nova-hook/serve.go`). Its once-key `bus2:asktimeout:<id>` is therefore
+on no friend's line, and a friend who runs `nova-bus overdue` without
+`--dry-run` is refused (`NOPERM`) at the one write of an ask that is due: its
+plan and reads (`--dry-run`) are hers. Likewise `SADD` (`Bus.Enroll`, the
+roster's growth, nova-sprint's `friend sync`) is the enroller's and not a
+friend's. `bus2:push` (the push proof) was deleted from the code (#5801, E2c)
+and is no longer granted.
 
 The wrinkle, said plainly: a sender writes other friends' streams. `send` fans
 the message out from the client, one `XADD` per recipient stream inside the
@@ -511,18 +524,46 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:push ~bus2:sent:<f>:* ~friends ~machines resetchannels
-  +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
-  +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hdel +hget +hgetall
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:sent:<f>:* ~bus2:ask:* ~bus2:asks:<f> %R~bus2:asks:* ~bus2:answers:<f> %R~bus2:answers:* %R~friends %R~machines resetchannels
+  +hello +ping +smembers +time +type +xadd +xgroup|create +xreadgroup
+  +xautoclaim +xclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hsetnx +hdel +hget +hgetall
   +eval +evalsha (~bus2:sent:<f>:* +get +set)
 ```
 
+The ask records (the asks above): `bus2:ask:*` is the whole family because an
+ask's id is made by the store's time and so cannot be named before the send
+(`bus2:asks:` and `bus2:asktimeout:` do not match it: the pattern ends at the
+colon). The sender's index and her answers are her own and no one else's:
+`~bus2:asks:<f>` and `~bus2:answers:<f>` are the only read-write patterns on
+them, so `ada` cannot `HSET` or `HSETNX` `bus2:answers:bob` (a forged reply
+to `bob`'s ask) and cannot write another sender's index; the reads of
+others' (`%R~bus2:asks:*`, `%R~bus2:answers:*`) are read-only selectors,
+because `asks` reads the recipients' answers and `--liveness` every name's
+index. `+hsetnx` is a root command, and adds no reach to `+hset`: every key
+the line makes writable to a hash command can already be `HSET`.
+
+The roster patterns `%R~friends` and `%R~machines` grant reads only.
+Even a root `+set` cannot overwrite them.
+
 The selector in parentheses is there because a root `+set` would reach every
-key the user has (a friend could `SET friends x` and wipe the roster, or
-`SET bus2:log x` and destroy the log), and the token's record is the only key
-a send ever gets or sets: Redis 7 checks each command a script runs, so the
+writable key the user has (`SET bus2:log x` destroys the log), and the token's
+record is the only key a send ever gets or sets: Redis 7 checks each command a script runs, so the
 script's `GET` and `SET` pass on the selector, on the sender's own records
 only, while `EVAL`'s declared keys pass on the root.
+
+The line is a checked artifact, not a hand-kept copy of the code:
+`TestTheFriendACLCoversEveryBusKeyFamily` (`pkg/bus/acl_test.go`) reads
+`pkg/bus`'s Go and Lua source (`go/parser`, no store, no clock), derives the key
+families (every `bus2:` constant and every constant passed as a key) and
+the commands (every go-redis call by its command name, every `redis.call` in a
+script, the `Do` arguments, and `pkg/redisconn`'s `HELLO` and `PING`), and
+fails when a family or command has no grant or a named server-only reason, and
+when the line grants a key pattern or a command nothing uses. The unit
+check preserves independent selectors and read/write permissions. It pins the
+current layout: bus commands on the root, with `GET` and `SET` on the token
+selector; it does not accept arbitrary rearrangements of the ACL. The functional
+tier applies the same line to a real Redis user
+(`TestRedisFriendACLSetsOnlyItsOwnTokenRecords`).
 
 If the fan-out moved into the store (a Redis function running `XADD` for the
 caller, which Redis runs under the caller's own ACL, so it buys nothing; or a

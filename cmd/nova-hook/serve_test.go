@@ -57,6 +57,16 @@ func (r *rig) challenge(t *testing.T, name string) string {
 	return ""
 }
 
+// hasChallenge is whether a challenge message for name is on its stream.
+func (r *rig) hasChallenge(t *testing.T, name string) bool {
+	for _, m := range r.stream(t, name) {
+		if strings.HasPrefix(m.subject, "HOOK CHALLENGE nonce=") {
+			return true
+		}
+	}
+	return false
+}
+
 // stepDownAfter is the --down-after of step's servers: an interval and a
 // half, so the telling tests see a name silent since its hooking in go down
 // at the third pass (the first whose silence is older), as they always have;
@@ -76,7 +86,7 @@ func (r *rig) step(t *testing.T, servers []string, answering ...string) string {
 		out += res.Stdout
 	}
 	for _, n := range answering {
-		if r.h.Client.Exists(context.Background(), hook.ChallengeKey(n)).Val() > 0 {
+		if r.h.Client.Exists(context.Background(), hook.ChallengeKey(n)).Val() > 0 && r.hasChallenge(t, n) { // a challenge whose send failed has no nonce to answer
 			cli.Do(t, "prove", "--as", n, "--nonce", r.challenge(t, n)).Exit(0)
 		}
 	}

@@ -60,6 +60,28 @@
 \* and the expiry delivers each timeout once (pkg/bus ExpireAsks, AddOnce).
 \* The sprint's hold is set and cleared at any time.
 \*
+\* Pushing (serve.go push; Parts "push"): the friend status the coordinator is
+\* pushed is not the unhooked set the tell carries. Each pass the server
+\* compares every name's state (unhooked, proven, expired: the hook.Status
+\* state, the record's hooked and its answer's age) with the state it last
+\* pushed for that name (the row's pushed mark, pushed, with its count, pgen);
+\* a name that differs is queued in the server's hand (pq) as one transition
+\* (old, new), a queued one not yet sent counting as the state pushed so the
+\* next change queues behind it, and so a down and a back in two intervals are
+\* two lines. Each queued transition is sent as its own bus message to the
+\* coordinator (kind status, subject FRIEND STATE <name> <old>-><new> at=<time>)
+\* under a once-key of the name and its count, in one atomic write with the
+\* mark (PushSend): a send that fails is not a step, the transition stays
+\* queued and is sent at a later pass, and a key written is never written again
+\* (NeverPushedTwice). The coordinator's hook shows each message as its own
+\* HOOK PUSH line (Show), including one the heartbeat server sent under the
+\* coordinator's own name, which is the production case (the server runs as the
+\* coordinator): ServerName is the coordinator's. The hook's loop skips only
+\* what its session sent itself. PushCap bounds the transitions per name, so
+\* the model has finitely many states. Broken: "selffilter" (the hook skips
+\* every message from its own name) and "fold" (one message for every name's
+\* head in hand) are the reversed witnesses.
+\*
 \* The clock is not a counter: every count here is bounded by the hooks and
 \* asks, so the model has finitely many states, and the liveness properties
 \* are checked under fairness of the tick, the pass and the sender.
@@ -102,6 +124,9 @@ QuietCap == IF Silence THEN CoordinatorEvery + 3 ELSE DownAfter + 2
 \*                 row whatever the time since the last answer (NoDownBeforeDownAfter)
 \*   "oldnonce"    BadProveOldNonce: a proof answers a challenge older than the
 \*                 window (ProofNamesIssuedInWindow)
+\*   "selffilter"  BadSelfFiltered: the coordinator's hook skips a message from its own
+\*                 name, though the heartbeat server sent it (TransitionPushedToCoordinator)
+\*   "fold"        BadFolded: one message for every name's transition in hand (NoFold)
 \*   "othername"   BadProveOtherName: a proof answers another name's challenge
 \*                 (ProofNamesIssuedInWindow)
 \* BadUnhookAtThree (Limit = 3) is retired with Limit: the down rule is time.
@@ -142,18 +167,29 @@ VARIABLES
     busy, \* authoritative sprint row contains ready or working cards
     lastActivity, \* age of max(last proof, last bus send, arm), in store TIME
     challengedWhileTalking, \* ghost: a pass violated the silence guard
-    proof      \* ghost: the last proof, None or [by, to, ep, epNow, age, older]
+    proof,     \* ghost: the last proof, None or [by, to, ep, epNow, age, older]
+    pushed,    \* [Names -> PStates]: the state last pushed for the name (the row's pushed mark)
+    pgen,      \* [Names -> Nat]: transitions pushed for the name (the mark's count; the once-key)
+    pq,        \* [Names -> Seq(<<old, new>>)]: the server's transitions in hand, not yet pushed
+    psent,     \* the once-keys of pushes delivered: <<name, count>>
+    pdups,     \* deliveries of a once-key already delivered
+    inbox,     \* the status messages on the coordinator's stream: [ids, names]
+    shown,     \* the lines the coordinator's hook has shown: [ids, names]
+    want       \* ghost: the transitions a pass found, <<name, count>>, each owed a line
+
 
 QuietLimit(n) == IF n \in CoordRole THEN CoordinatorEvery ELSE IF busy[n] THEN DownAfter ELSE QuietAfter
 
 activity == <<busy, lastActivity, challengedWhileTalking>>
 
-tellv == <<told, tv, out, sent, dups, heard>>
+pushv == <<pushed, pgen, pq, psent, pdups, inbox, shown, want>>
+tellv == <<told, tv, out, sent, dups, heard, pushv>>
 judv == <<jst, jkind, jto, jresent>>
 server == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, held, ask, expiries, issued, proof>>
 client == <<elapsed, alarm>>
 vars == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
-          jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof>>
+          jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof,
+          pushed, pgen, pq, psent, pdups, inbox, shown, want>>
 
 Cap3(x) == IF x < 3 THEN x ELSE 3
 CapQ(x) == IF x < QuietCap THEN x ELSE QuietCap
@@ -170,6 +206,18 @@ CoordOf(h) == IF \E n \in CoordRole : h[n] THEN CHOOSE n \in CoordRole : h[n] EL
 StateOf(h) == <<UnhookedOf(h), CoordOf(h)>>
 Cur == StateOf(hooked)
 States == (SUBSET Names) \X (Names \cup {NoCoord})
+
+\* The state a pass finds a name in, of the hook state h and the answers' ages q
+\* (the code's hook.Status state; live and partial are proven's and expired's
+\* kin here: one push, so the record is live only until its first proof).
+PStates == {"unhooked", "proven", "expired"}
+PS(h, q, n) == IF ~h[n] THEN "unhooked" ELSE IF q[n] <= DownAfter THEN "proven" ELSE "expired"
+\* The state the server has pushed or has in hand to push last for n.
+Last(n) == IF pq[n] = <<>> THEN pushed[n] ELSE pq[n][Len(pq[n])][2]
+PushCap == 2
+\* The heartbeat server runs under the coordinator's own name.
+Coord == CHOOSE n \in CoordRole : TRUE
+ServerName == Coord
 
 \* The server row is older than two intervals: no server is passing.
 Stale == rowAge > 2 /\ "nostale" \notin Broken
@@ -224,6 +272,14 @@ Init ==
     /\ expiries = [n \in Names |-> 0]
     /\ issued = {}
     /\ proof = None
+    /\ pushed = [n \in Names |-> "proven"]
+    /\ pgen = [n \in Names |-> 0]
+    /\ pq = [n \in Names |-> <<>>]
+    /\ psent = {}
+    /\ pdups = 0
+    /\ inbox = {}
+    /\ shown = {}
+    /\ want = {}
 
 \* The interval ends: a standing challenge is late (past its until, still
 \* answered inside the window), an issued challenge ages and leaves the
@@ -278,13 +334,20 @@ Pass(s) ==
           /\ elapsed' = [n \in Names |-> IF n \in targets THEN 0 ELSE elapsed[n]]
           /\ alarm' = [n \in Names |-> IF n \in targets THEN FALSE ELSE alarm[n]]
           /\ quiet' = IF "quiet" \in Parts THEN [n \in Names |-> IF hooked[n] THEN CapQ(quiet[n] + 1) ELSE quiet[n]] ELSE quiet
+          \* the states found are compared with the last pushed (serve.go push)
+          /\ LET cur == [n \in Names |-> PS(h2, qtime, n)]
+                 grow == IF "push" \in Parts
+                            THEN {n \in Names : cur[n] # Last(n) /\ pgen[n] + Len(pq[n]) < PushCap}
+                            ELSE {}
+             IN /\ pq' = [n \in Names |-> IF n \in grow THEN Append(pq[n], <<Last(n), cur[n]>>) ELSE pq[n]]
+                /\ want' = want \cup {<<n, pgen[n] + Len(pq[n])>> : n \in grow}
           /\ IF now # told /\ "tell" \in Parts
                 THEN /\ out' = [out EXCEPT ![s] = [v |-> tv, to |-> now, sent |-> FALSE]]
                      /\ IF "markfirst" \in Broken
                            THEN told' = now /\ tv' = tv + 1
                            ELSE UNCHANGED <<busy, lastActivity, told, tv>>
                 ELSE UNCHANGED <<busy, lastActivity, out, told, tv>>
-    /\ UNCHANGED <<busy, lastActivity, hooks, sent, dups, heard, judv, alive, qtime, held, ask, expiries, proof>>
+    /\ UNCHANGED <<busy, lastActivity, hooks, sent, dups, heard, judv, alive, qtime, held, ask, expiries, proof, pushed, pgen, psent, pdups, inbox, shown>>
 
 \* The judgment a tell raises (serve.go tell): friends down or back go to the
 \* coordinator; the coordinator gone with none after it, to every live name.
@@ -320,14 +383,14 @@ Tell(s) ==
                         ELSE /\ out' = [out EXCEPT ![s] = None]
                              /\ told' = t.to
                              /\ tv' = t.v + 1
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv>>
 
 \* The send fails: nothing is marked, a later pass prepares it again.
 TellFails(s) ==
     /\ out[s] # None
     /\ ~out[s].sent
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv>>
 
 \* The server crashes holding a tell, before or after its send: the tell in
 \* hand is lost; a later pass prepares it again (under "markafter", a crash
@@ -335,7 +398,7 @@ TellFails(s) ==
 Crash(s) ==
     /\ out[s] # None
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv>>
 
 \* BadMarkAfterSend: after the send, the row's told is marked, if no one marked it since.
 Mark(s) ==
@@ -345,7 +408,7 @@ Mark(s) ==
           THEN told' = out[s].to /\ tv' = tv + 1
           ELSE UNCHANGED <<activity, told, tv>>
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv>>
 
 \* A judgment past its due is pushed again as OVERDUE, once (Judge).
 Judge ==
@@ -550,7 +613,58 @@ Expire(s, n) == /\ ask[n] = "due"
                 /\ expiries' = [expiries EXCEPT ![n] = expiries[n] + 1]
                 /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, issued, proof>>
 
+\* Everything the push actions leave as it is: the heartbeat's and the tell's.
+nonpush == <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
+             jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof>>
+
+\* One transition of n, the oldest in hand, is sent as its own status message
+\* to the coordinator (serve.go push), its once-key and the row's pushed mark
+\* one atomic write: both or neither, and a key already written writes nothing.
+\* A send that fails is no step: the transition stays in hand for a later pass.
+PushSend(n) ==
+    /\ "push" \in Parts
+    /\ "fold" \notin Broken
+    /\ pq[n] # <<>>
+    /\ LET g == pgen[n]
+           id == <<n, g>>
+       IN /\ psent' = psent \cup {id}
+          /\ pdups' = IF id \in psent THEN pdups + 1 ELSE pdups
+          /\ pushed' = [pushed EXCEPT ![n] = pq[n][1][2]]
+          /\ pgen' = [pgen EXCEPT ![n] = g + 1]
+          /\ pq' = [pq EXCEPT ![n] = Tail(pq[n])]
+          /\ inbox' = inbox \cup {[ids |-> {id}, names |-> {n}]}
+    /\ UNCHANGED <<nonpush, shown, want>>
+
+\* BadFolded: the transitions in hand for every name go as one message.
+PushFold ==
+    /\ "push" \in Parts
+    /\ "fold" \in Broken
+    /\ \E n \in Names : pq[n] # <<>>
+    /\ LET ns == {n \in Names : pq[n] # <<>>}
+           ids == {<<n, pgen[n]>> : n \in ns}
+       IN /\ psent' = psent \cup ids
+          /\ pdups' = IF ids \cap psent # {} THEN pdups + 1 ELSE pdups
+          /\ pushed' = [n \in Names |-> IF n \in ns THEN pq[n][1][2] ELSE pushed[n]]
+          /\ pgen' = [n \in Names |-> IF n \in ns THEN pgen[n] + 1 ELSE pgen[n]]
+          /\ pq' = [n \in Names |-> IF n \in ns THEN Tail(pq[n]) ELSE pq[n]]
+          /\ inbox' = inbox \cup {[ids |-> ids, names |-> ns]}
+    /\ UNCHANGED <<nonpush, shown, want>>
+
+\* The coordinator's hook, hooked and answering, shows a status message on its
+\* stream as its own HOOK PUSH line, whoever sent it, the server under the
+\* coordinator's own name included. Under "selffilter" its loop skips every
+\* message from its own name (main.go, the stream loop before this change).
+Show ==
+    /\ "push" \in Parts
+    /\ hooked[Coord] /\ alive[Coord]
+    /\ ~("selffilter" \in Broken /\ ServerName = Coord)
+    /\ \E m \in inbox \ shown : shown' = shown \cup {m}
+    /\ UNCHANGED <<nonpush, pushed, pgen, pq, psent, pdups, inbox, want>>
+
 Next ==
+    \/ PushFold
+    \/ \E n \in Names : PushSend(n)
+    \/ Show
     \/ Tick
     \/ \E s \in Servers : Pass(s) \/ Tell(s) \/ TellFails(s) \/ Crash(s) \/ Mark(s)
     \/ Judge \/ JudgeAnswered
@@ -569,6 +683,7 @@ Spec == Init /\ [][Next]_vars
 LiveSpec == Spec /\ WF_vars(Tick) /\ WF_vars(\E s \in Servers : Pass(s))
                  /\ \A s \in Servers : SF_vars(Tell(s)) /\ WF_vars(Mark(s))
                  /\ \A n \in Names : SF_vars(Deliver(n))
+                 /\ SF_vars(PushFold \/ \E n \in Names : PushSend(n)) /\ SF_vars(Show)
 
 \* Only the clock is fair: the servers may stop for good.
 ClockSpec == Spec /\ WF_vars(Tick)
@@ -591,6 +706,8 @@ TypeOK ==
     /\ told \in States /\ heard \in States
     /\ jst \in {"none", "open", "due", "overdue", "closed"}
     /\ issued \subseteq [to : Names, ep : 1..2, age : 0..DownAfter]
+    /\ pushed \in [Names -> PStates]
+    /\ pgen \in [Names -> 0..PushCap]
 
 \* The dashboard row is the table applied to the hook record (its state and
 \* answered_at) and the hold, under a live server row, and nothing else.
@@ -682,6 +799,27 @@ ProofRefreshesAnswer ==
 \* Reached: a proof of a challenge older than one still issued to the name
 \* (the late delivery the window is for).
 WitnessProveOlder == proof = None \/ ~proof.older
+
+\* The push cases keep every model there (GoSilent and ComeBack are not taken): a name still
+\* goes down by being left unanswered, and the count of states stays small.
+AllAlive == \A n \in Names : alive[n]
+
+\* No push is delivered twice, however a send fails or servers race.
+NeverPushedTwice == pdups = 0
+
+\* No line the coordinator's hook shows names more than one friend: a change is
+\* never folded into another's (BadFolded fails it).
+NoFold == \A l \in shown : Cardinality(l.names) <= 1
+
+\* Every transition of a name's state a pass found (down, back, up, expired:
+\* the state compared with the last pushed) is shown as a line of the
+\* coordinator's hook at last, even when the server's name is the coordinator's,
+\* with no escape for a later change: a down and a back are two lines. The one
+\* way out is a coordinator not hooked and answering at the time, which no hook
+\* shows anything for (Show's fairness covers one that comes back).
+TransitionPushedToCoordinator ==
+    \A n \in Names, g \in 0..PushCap - 1 :
+        (<<n, g>> \in want) ~> ((\E l \in shown : <<n, g>> \in l.ids) \/ ~(hooked[Coord] /\ alive[Coord]))
 
 \* Reversed witnesses: reached states. TLC's counterexample shows each is reached.
 WitnessUnhook == \A n \in Names : events[n] = 0

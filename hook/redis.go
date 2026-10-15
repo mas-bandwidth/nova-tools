@@ -770,6 +770,81 @@ func (s Store) Sent(ctx context.Context, once string) (bool, error) {
 	return n == 1, err
 }
 
+// The friend status the coordinator is pushed (tla/HookBeat.tla, PushSend):
+// for each name the state last pushed and the count of pushes, one field of
+// the server row, written in the same atomic step as the push's message.
+const pushedField = "pushed:"
+
+// StateDown is a proven record that reads down at this read (Served.Down: no
+// answer within the window, or no server), the state nova-hook friends shows
+// as down; every other state is the record's own.
+const StateDown = "down"
+
+// PushState is the state of st a friend-status push names: the record's state,
+// or down for a proven one the heartbeat's evidence does not stand behind.
+func PushState(st Status) string {
+	if st.Down != "" && st.State == StateProven {
+		return StateDown
+	}
+	return st.State
+}
+
+// Pushed is what was last pushed for one name: its state and how many pushes went.
+type Pushed struct {
+	State string
+	Gen   int64
+}
+
+// PushOnce is the once-key of a name's gen-th push, naming its epoch and the
+// state it pushes (tla/HookBeat.tla, NeverPushedTwice): the count makes a
+// flap back to a state in the same epoch a push of its own.
+func PushOnce(name string, epoch int64, state string, gen int64) string {
+	return fmt.Sprintf("%spush:%s:%d:%s:%d", prefix, name, epoch, state, gen)
+}
+
+// PushMark is the server-row mark a push of state, the gen-th, writes in the
+// same atomic step as its message.
+func PushMark(name, state string, gen int64) ToldMark {
+	return ToldMark{pushedField + name, state + ":" + strconv.FormatInt(gen+1, 10)}
+}
+
+// Pushed reads what was last pushed for each name, and whether any push or
+// baseline was ever written (false: the first pass of a fresh row).
+func (s Store) Pushed(ctx context.Context) (map[string]Pushed, bool, error) {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	row, err := s.C.HGetAll(ctx, ServeKey).Result()
+	if err != nil {
+		return nil, false, err
+	}
+	out := map[string]Pushed{}
+	for f, v := range row {
+		name, ok := strings.CutPrefix(f, pushedField)
+		if !ok {
+			continue
+		}
+		st, gen, _ := strings.Cut(v, ":")     // ignored: a mark with no count reads as the first
+		n, _ := strconv.ParseInt(gen, 10, 64) // ignored: a mark with no count is the first
+		out[name] = Pushed{State: st, Gen: n}
+	}
+	return out, len(out) > 0, nil
+}
+
+// Baseline writes the states of the first pass as pushed, with no message: a
+// server row with no pushed mark would else push every name at once. A mark
+// already there stays (HSETNX).
+func (s Store) Baseline(ctx context.Context, states map[string]string) error {
+	ctx, cancel := s.call(ctx)
+	defer cancel()
+	_, err := s.C.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for n, st := range states {
+			p.HSetNX(ctx, ServeKey, pushedField+n, st+":0")
+		}
+		return nil
+	})
+	return err
+}
+
 // Challenged is the pushes a heartbeat challenge names for each role a session
 // answers in: the bus push. The sprint push is the seat hook's own
 // (nova-sprint run), and a member's or reader's loop has no session: neither

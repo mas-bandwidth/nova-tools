@@ -219,7 +219,10 @@ example: nova-hook status --as ada`,
 				Detail: `Hooks you in as --role (` + roleNames() + `): a record already hooked as that role is joined at
 its epoch, otherwise a new epoch starts and every lease and proof of the old one is cleared. This process holds
 the bus push when the role carries it: it renews the lease every ` + hook.RenewEvery.String() + ` and prints each message on your bus
-stream as it lands, HOOK PUSH push=bus id= from= subject=. A push it does not hold (the sprint push, held by
+stream as it lands, HOOK PUSH push=bus id= from= subject=. A message from your own name is passed over (what
+this session sent itself with nova-bus send) except what the heartbeat server sent under that name, which a
+coordinator's does: each FRIEND STATE line, every FRIEND DOWN / FRIEND BACK / COORDINATOR DOWN judgment and its OVERDUE
+push-again, and the challenges, each its own HOOK PUSH line. A push it does not hold (the sprint push, held by
 nova-sprint run; the work push, held by the friend daemon or the member loop) is named with its holder on the
 HOOK ARMED line's notes. A standalone loop asks at start and every ` + hook.ChallengeEvery.String() + `.
 Codex, DeepSeek and Antigravity clients bootstrap once. The heartbeat server checks every hooked name whose
@@ -377,10 +380,15 @@ Readers also mark a name down after silence exceeds its quiet window plus the an
 A bus send does not create or extend a proof; only the model answers with nova-hook prove.
 Each real change is told once, coalesced per pass: the coordinator gets one judgment (bus kind judgment) naming
 every FRIEND DOWN and FRIEND BACK, open until answered with nova-bus send --re <id> and pushed again as OVERDUE
-once past --judge-within; every other live name gets one message with the changes and COORDINATOR IS <name>,
+once past --judge-within; and apart from it, never folded into it, every change of a friend's state (the record's:
+unhooked, expired, partial, live, proven, and down for a proven one with no answer in the window) is pushed to the
+coordinator at once, in that pass, as its own bus message of kind status, subject FRIEND STATE <name> <old>-><new>
+at=<store time, RFC 3339>, one per name per change, sent with its mark in one write under a once-key so a failed
+send is sent at the next pass and a sent one never twice; it is not answered and never OVERDUE, and the first pass
+on a fresh row writes the states it finds with no message. Every other live name gets one message with the changes and COORDINATOR IS <name>,
 a judgment instead when the coordinator went down (COORDINATOR DOWN: who takes over). The pass also expires
 overdue bus asks. Two servers take one pass per interval between them. Each line is SERVE STATE event=<challenge|
-judgment|told|overdue|answered|expired|skip|fault>; a fault is event=fault and the loop goes on. --as must be hooked in as coordinator or comms.
+judgment|told|pushed|overdue|answered|expired|skip|fault>; a fault is event=fault and the loop goes on. --as must be hooked in as coordinator or comms.
 --once runs one pass and exits 0. It stops on SIGINT or SIGTERM.
 --dry-run plans one pass now and writes nothing: the same atomic script with its writes off (hook.Store.PlanPass),
 then SERVE OK with one SERVE CHALLENGE name=<n> misses=<m>, SERVE UNHOOK name=<n> misses=<m>, SERVE TELL
@@ -425,6 +433,10 @@ type session struct {
 	hooks hook.Store
 	as    string
 	close func()
+	// pending is the friend-status transitions the heartbeat server found and
+	// has not yet pushed, per name, oldest first (serve.go push). A restart
+	// loses it; the next pass finds the change against the last pushed mark.
+	pending map[string][]transition
 }
 
 // open opens the store a verb names and says who acts (bus.Address,
@@ -956,7 +968,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			var batch []bus.Message
 			for _, e := range got {
 				cursor = e.Entry
-				if m := e.Message(); m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") || laneSelf(m, s.as) { // a server may challenge its own name; the lane client tells its own
+				if m := e.Message(); m.From != s.as || serverSent(m, s.as) || laneSelf(m, s.as) { // a server may speak under its own name (serverSent); the lane client tells its own
 					if core != nil {
 						batch = append(batch, m)
 						continue
