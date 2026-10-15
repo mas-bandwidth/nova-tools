@@ -94,6 +94,8 @@
 \*                            error is never classed as a refusal
 \*   StampedKindHasNoRefusal  apply.go apply, no stamp when an op was
 \*                            refused
+\*   NoSilentUnappliedWrite  a completed route command either stamps its
+\*                            committed revision or reports NOT-APPLIED
 \*   FriendWidthNeverRefused  redis.go writeFriend, capacity.lua
 \*                            capacity_desired: no friend ceiling
 \*   CrashedApplyCompletes    a crashed apply is finished by the next apply
@@ -120,6 +122,8 @@
 \*                  in the same kind is classed as a
 \*                  refusal and the run goes on (the
 \*                  first cut of PR 5662)
+\*   "silentunapplied" a route set ends OK before its copy reaches the revision
+\*                  NoSilentUnappliedWrite
 \*   "friendceiling" the old ceiling refuses a        FriendWidthNeverRefused
 \*                  friend whose width exceeds the
 \*                  slots of her machine
@@ -140,7 +144,7 @@ ASSUME Len(FriendList) = 2 /\ FriendList[1] # FriendList[2]
 ASSUME MaxRev \in Nat /\ MaxFaults \in Nat /\ MaxCrashes \in Nat /\ MaxRefusals \in Nat
 ASSUME Broken \in {"none", "stampfirst", "friendfirst", "nohistory", "overahead",
                     "stopatrefusal", "stamprefused", "swallowerr",
-                    "heldjudgedonrow", "friendceiling"}
+                    "heldjudgedonrow", "friendceiling", "silentunapplied"}
 ASSUME Width \in Nat /\ Width >= 1
 ASSUME WithSprint \in BOOLEAN
 
@@ -155,7 +159,7 @@ VARIABLES
   refusedRows, refusals, planned, attempted, crashedRun, storeErred,
   sRow, sGit, sView, seatMoved, sOutcome, sDue, capRefused
 
-vars == <<mRows, fRows, history, mViews, fViews, stamp,
+coreVars == <<mRows, fRows, history, mViews, fViews, stamp,
           phase, stages, si, oi, mPlan, fPlan, prefix, ceilAtStart, ahead0,
           stampMoved, opsDone, clean, idemApplied, wroteAhead, owed,
           crashes, faults, checked, seen,
@@ -166,54 +170,6 @@ vars == <<mRows, fRows, history, mViews, fViews, stamp,
 \* leaves them as they are.
 rvars == <<refusedRows, refusals, planned, attempted, crashedRun, storeErred,
            sRow, sGit, sView, seatMoved, sOutcome, sDue, capRefused>>
-
-TypeOK ==
-  /\ mRows \in [Machines -> 0..2]
-  /\ fRows \in [Friends -> Machines \cup {Absent}]
-  /\ Len(history) <= MaxRev
-  /\ \A i \in 1..Len(history) :
-       /\ history[i].kind \in Kinds \cup {"sprint"}
-       /\ history[i].op \in {"add", "set", "remove"}
-       /\ history[i].kind = "sprint" => history[i].value \in Friends
-       /\ history[i].kind = "machine" =>
-            history[i].name \in Machines /\ history[i].value \in 0..2
-       /\ history[i].kind = "friend" =>
-            history[i].name \in Friends /\
-            (history[i].value \in Machines \/ history[i].value = Absent)
-  /\ mViews \in [Machines -> 0..2]
-  /\ fViews \in [Friends -> Machines \cup {Absent}]
-  /\ stamp \in [Kinds -> 0..(MaxRev + 1)]
-  /\ phase \in {"idle", "applying"}
-  /\ Len(stages) <= 5
-  /\ \A i \in 1..Len(stages) : stages[i] \in {"mops", "mstamp", "fops", "fstamp", "sops"}
-  /\ si \in 0..6
-  /\ oi \in 0..3
-  /\ Len(mPlan) <= 2 /\ Len(fPlan) <= 2 /\ Len(prefix) <= 4
-  /\ ceilAtStart \in [Machines -> BOOLEAN]
-  /\ ahead0 \in [Kinds -> BOOLEAN]
-  /\ stampMoved \in [Kinds -> BOOLEAN]
-  /\ opsDone \in [Kinds -> BOOLEAN]
-  /\ clean \in [Kinds -> BOOLEAN]
-  /\ idemApplied \in [Kinds -> 0..MaxRev]
-  /\ wroteAhead \in BOOLEAN
-  /\ owed \in [Kinds -> BOOLEAN]
-  /\ crashes \in 0..MaxCrashes
-  /\ faults \in 0..MaxFaults
-  /\ checked \in BOOLEAN
-  /\ seen \in BOOLEAN
-  /\ refusedRows \subseteq (Machines \cup Friends)
-  /\ refusals \in 0..MaxRefusals
-  /\ planned \in [Kinds -> BOOLEAN]
-  /\ attempted \in [Kinds -> BOOLEAN]
-  /\ crashedRun \in BOOLEAN
-  /\ storeErred \in BOOLEAN
-  /\ sRow \in Friends \cup {Absent}
-  /\ sGit \in 0..1
-  /\ sView \in [coord : Friends \cup {Absent}, git : 0..1]
-  /\ seatMoved \in BOOLEAN
-  /\ sOutcome \in {"none", "written", "refused"}
-  /\ sDue \in BOOLEAN
-  /\ capRefused \in BOOLEAN
 
 Rev(k) ==
   LET ids == {i \in 1..Len(history) : history[i].kind = k}
@@ -322,7 +278,7 @@ RefRefused(op) ==
   /\ op.value \in refusedRows
   /\ (mViews[op.value] = 0 \/ op.op = "set")
 
-Init ==
+CoreInit ==
   /\ mRows = [m \in Machines |-> 0]
   /\ fRows = [f \in Friends |-> Absent]
   /\ history = <<>>
@@ -749,7 +705,7 @@ StoreError ==
                  attempted, sRow, sGit, sView, seatMoved, sOutcome, sDue,
                  capRefused>>
 
-Next ==
+CoreNext ==
   \/ \E m \in Machines : InsertMachine(m) \/ UpdateMachine(m) \/ DeleteMachine(m)
   \/ \E f \in Friends : \E h \in Machines : InsertFriend(f, h) \/ UpdateFriend(f, h)
   \/ \E f \in Friends : DeleteFriend(f) \/ SetSprint(f) \/ MoveSeat(f)
@@ -757,12 +713,124 @@ Next ==
   \/ \E k \in Kinds : OutsideRedisWrite(k)
   \/ StartApply \/ Advance \/ ApplyCrash \/ StoreError
 
+\* Route command scenarios compose with the existing apply scenarios by
+\* choosing a lane at initialization; their Cartesian product adds no rule.
+\* The existing kinds retain every action and invariant. The route lane
+\* abstracts one route's add/set/remove, the copy write, its stamp, and the
+\* command result. Failure includes missing fleet, connection and refusal.
+VARIABLES routeLane, routeRow, routeCopy, routeHistory, routeStamp, routePhase
+routeVars == <<routeLane, routeRow, routeCopy, routeHistory, routeStamp, routePhase>>
+vars == <<coreVars, routeVars>>
+Init ==
+  /\ CoreInit
+  /\ routeLane \in BOOLEAN
+  /\ routeRow = 0 /\ routeCopy = 0
+  /\ routeHistory = <<>> /\ routeStamp = 0 /\ routePhase = "idle"
+
+RouteWrite(value) ==
+  /\ routePhase \in {"idle", "ok", "not-applied", "dry-run"}
+  /\ Len(routeHistory) < MaxRev
+  /\ routeRow # value
+  /\ routeRow' = value
+  /\ routeHistory' = Append(routeHistory, value)
+  /\ routePhase' = "pending"
+  /\ UNCHANGED <<routeLane, routeCopy, routeStamp>>
+RouteCopyWrite ==
+  /\ routePhase = "pending"
+  /\ routeCopy' = routeRow
+  /\ routePhase' = "copied"
+  /\ UNCHANGED <<routeLane, routeRow, routeHistory, routeStamp>>
+RouteStamp ==
+  /\ routePhase = "copied"
+  /\ routeStamp' = Len(routeHistory)
+  /\ routePhase' = "stamped"
+  /\ UNCHANGED <<routeLane, routeRow, routeCopy, routeHistory>>
+RouteResult ==
+  /\ routePhase \in {"pending", "copied", "stamped"}
+  /\ routePhase' = IF routeStamp >= Len(routeHistory) \/
+                      (Broken = "silentunapplied" /\ Len(routeHistory) > 1 /\
+                       routeHistory[Len(routeHistory)-1] # 0 /\ routeRow # 0)
+                    THEN "ok" ELSE "not-applied"
+  /\ UNCHANGED <<routeLane, routeRow, routeCopy, routeHistory, routeStamp>>
+RouteDryRun ==
+  /\ routePhase \in {"idle", "ok", "not-applied", "dry-run"}
+  /\ routePhase' = "dry-run"
+  /\ UNCHANGED <<routeLane, routeRow, routeCopy, routeHistory, routeStamp>>
+RouteNext ==
+  /\ routeLane
+  /\ ((\E value \in 0..2 : RouteWrite(value)) \/ RouteCopyWrite \/ RouteStamp \/ RouteResult \/ RouteDryRun)
+  /\ UNCHANGED coreVars
+Next ==
+  \/ /\ ~routeLane /\ CoreNext /\ UNCHANGED routeVars
+  \/ RouteNext
+NoSilentUnappliedWrite ==
+  routePhase = "ok" => routeStamp >= Len(routeHistory)
+RouteTypeOK ==
+  /\ routeLane \in BOOLEAN
+  /\ routeRow \in 0..2 /\ routeCopy \in 0..2
+  /\ Len(routeHistory) <= MaxRev
+  /\ routeStamp \in 0..Len(routeHistory)
+  /\ routePhase \in {"idle", "pending", "copied", "stamped", "ok", "not-applied", "dry-run"}
+  /\ routeRow = IF routeHistory = <<>> THEN 0 ELSE routeHistory[Len(routeHistory)]
+  /\ routeStamp = Len(routeHistory) => routeCopy = routeRow
+
+TypeOK ==
+  /\ RouteTypeOK
+  /\ NoSilentUnappliedWrite
+  /\ mRows \in [Machines -> 0..2]
+  /\ fRows \in [Friends -> Machines \cup {Absent}]
+  /\ Len(history) <= MaxRev
+  /\ \A i \in 1..Len(history) :
+       /\ history[i].kind \in Kinds \cup {"sprint"}
+       /\ history[i].op \in {"add", "set", "remove"}
+       /\ history[i].kind = "sprint" => history[i].value \in Friends
+       /\ history[i].kind = "machine" =>
+            history[i].name \in Machines /\ history[i].value \in 0..2
+       /\ history[i].kind = "friend" =>
+            history[i].name \in Friends /\
+            (history[i].value \in Machines \/ history[i].value = Absent)
+  /\ mViews \in [Machines -> 0..2]
+  /\ fViews \in [Friends -> Machines \cup {Absent}]
+  /\ stamp \in [Kinds -> 0..(MaxRev + 1)]
+  /\ phase \in {"idle", "applying"}
+  /\ Len(stages) <= 5
+  /\ \A i \in 1..Len(stages) : stages[i] \in {"mops", "mstamp", "fops", "fstamp", "sops"}
+  /\ si \in 0..6
+  /\ oi \in 0..3
+  /\ Len(mPlan) <= 2 /\ Len(fPlan) <= 2 /\ Len(prefix) <= 4
+  /\ ceilAtStart \in [Machines -> BOOLEAN]
+  /\ ahead0 \in [Kinds -> BOOLEAN]
+  /\ stampMoved \in [Kinds -> BOOLEAN]
+  /\ opsDone \in [Kinds -> BOOLEAN]
+  /\ clean \in [Kinds -> BOOLEAN]
+  /\ idemApplied \in [Kinds -> 0..MaxRev]
+  /\ wroteAhead \in BOOLEAN
+  /\ owed \in [Kinds -> BOOLEAN]
+  /\ crashes \in 0..MaxCrashes
+  /\ faults \in 0..MaxFaults
+  /\ checked \in BOOLEAN
+  /\ seen \in BOOLEAN
+  /\ refusedRows \subseteq (Machines \cup Friends)
+  /\ refusals \in 0..MaxRefusals
+  /\ planned \in [Kinds -> BOOLEAN]
+  /\ attempted \in [Kinds -> BOOLEAN]
+  /\ crashedRun \in BOOLEAN
+  /\ storeErred \in BOOLEAN
+  /\ sRow \in Friends \cup {Absent}
+  /\ sGit \in 0..1
+  /\ sView \in [coord : Friends \cup {Absent}, git : 0..1]
+  /\ seatMoved \in BOOLEAN
+  /\ sOutcome \in {"none", "written", "refused"}
+  /\ sDue \in BOOLEAN
+  /\ capRefused \in BOOLEAN
+
 \* Fairness is the next apply: once a crash has left a kind owed, and no
 \* further crash is left, the apply that is enabled runs to its stamp.
 \* Crashes and outside writes are not fair. Outside writes run only while
 \* nothing is owed, so they do not overtake that next apply. A kind whose
 \* stamp is already ahead is refused, and the liveness does not claim it.
-Spec == Init /\ [][Next]_vars /\ WF_vars(StartApply) /\ WF_vars(Advance)
+Spec == Init /\ [][Next]_vars /\ WF_vars(~routeLane /\ StartApply /\ UNCHANGED routeVars) /\
+        WF_vars(~routeLane /\ Advance /\ UNCHANGED routeVars)
 
 -----------------------------------------------------------------------------
 \* Every change of a row has one history row (store.go; SPEC-CONFIG History).

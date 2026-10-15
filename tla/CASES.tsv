@@ -248,3 +248,4 @@ MCHookBeatBrokenTalkingProof.cfg	MCHookBeat.tla	invariant	TalkingProofStaysFresh
 MCHookBeatQuietDelivery.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenLostDelivery.cfg	MCHookBeat.tla	temporal	SilentFriendGoesDown	ignore-terminal	hookbeat	required	-
 MCHookBeatQuietCoordinator.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
+MCConfigApplyBrokenSilentUnapplied.cfg	MCConfigApply.tla	invariant	NoSilentUnappliedWrite	ignore-terminal	configapply	required	-

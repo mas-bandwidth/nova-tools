@@ -625,6 +625,25 @@ global ids, so they rise across kinds and never repeat.
 
 ## Apply
 
+Route `add`, `set` and `remove` commit the permanent write and its history,
+then apply the route kind in the same command through `config.Apply`. The
+copy endpoint comes from the fleet row's `store` and `redis_port`, regardless
+of an ambient Redis address. A route-only `apply --kind route` likewise
+uses the fleet endpoint unless `--redis` explicitly overrides it; a missing
+fleet endpoint refuses without falling back to an environment address. A successful copy prints `CONFIG APPLY` with
+its revision. A failure leaves the write and history committed, prints
+`CONFIG NOT-APPLIED kind=route rev=<n> applied=<m>` and the exact
+`nova-config apply --kind route ...` command with the actor, store selection
+and resolved Redis endpoint, and exits 1. `applied=-1` means the copy's
+revision could not be read; it never claims zero for an unreachable copy.
+The reason retains any prerequisite repair, such as pricing an enabled
+route or declaring the fleet endpoint. JSON carries the same outcome,
+revision and remedy in the write's single result. `--dry-run` opens no copy
+and writes nothing. Other kinds and `route prices --refresh` retain their
+explicit-apply behavior. The command-completion rule is
+`tla/ConfigApply.tla: NoSilentUnappliedWrite`; existing apply invariants still
+hold.
+
 `nova-config apply [--kind <k>] [--check]` runs per kind, in kind order
 (`KindNames`): machines (the ceilings), the fleet row (a friend with no beat
 is recorded with its coordinator machine), friends, the sprint row, loops (each

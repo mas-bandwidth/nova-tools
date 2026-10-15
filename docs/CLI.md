@@ -3364,6 +3364,25 @@ nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the 
 nova-config route set|remove|list|show|history                            # the one grammar, as for every kind
 ```
 
+Route `add`, `set` and `remove` commit the permanent write and its history,
+then apply the route kind in the same command through `config.Apply`. The
+copy endpoint comes from the fleet row's `store` and `redis_port`, regardless
+of an ambient Redis address. A route-only `apply --kind route` likewise
+uses the fleet endpoint unless `--redis` explicitly overrides it; a missing
+fleet endpoint refuses without falling back to an environment address. A successful copy prints `CONFIG APPLY` with
+its revision. A failure leaves the write and history committed, prints
+`CONFIG NOT-APPLIED kind=route rev=<n> applied=<m>` and the exact
+`nova-config apply --kind route ...` command with the actor, store selection
+and resolved Redis endpoint, and exits 1. `applied=-1` means the copy's
+revision could not be read; it never claims zero for an unreachable copy.
+The reason retains any prerequisite repair, such as pricing an enabled
+route or declaring the fleet endpoint. JSON carries the same outcome,
+revision and remedy in the write's single result. `--dry-run` opens no copy
+and writes nothing. Other kinds and `route prices --refresh` retain their
+explicit-apply behavior. The command-completion rule is
+`tla/ConfigApply.tla: NoSilentUnappliedWrite`; existing apply invariants still
+hold.
+
 `nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width, tla; the name is the tailnet host; `tla=true` marks a TLC record machine), `fleet` (one row: the store and coordinator machines, Redis port and explicit password-free Postgres URI), `friend` (tiers, roles, width: the jobs the friend works at once and the friend's one capacity number, 8 by default, with no slots and no machine ceiling, mode: one-shot always, how the daemon hands the friend work; batch is retired, pronouns: a stated value prints as stored, and an empty value is unstated, read as they/them and printed `pronouns=they/them(unstated)`; a set that names other fields leaves the stored pronouns), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash, pro or heavy tier: tier, provider, model, harness, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash, pro and heavy, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
 
 ### First run

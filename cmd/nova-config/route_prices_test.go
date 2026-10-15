@@ -50,7 +50,8 @@ func TestRoutePricesRefreshSetsTheListPrice(t *testing.T) {
 		{"route", "add", "pro-direct", "--tier", "pro", "--provider", "deepseek", "--model", "deepseek-v4", "--deadline", "60"},
 	} {
 		code, _, errs := h.run(t, args...)
-		require.Equal(t, 0, code, errs)
+		require.Equal(t, 1, code, errs)
+		assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 	}
 	from := writeList(t, openRouterList)
 	const url = config.OpenRouterModelsURL
