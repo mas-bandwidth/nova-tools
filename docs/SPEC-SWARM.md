@@ -263,7 +263,19 @@ doctor` prints one `DOCTOR HARNESS` line per headless harness: its binary, its v
 and whether its login verb (`claude auth status`, `codex login status`, `grok models`)
 says it is logged in. The functional test
 `TestHeadlessHarnessesRunAOneLineCard` (`NOVA_SWARM_HEADLESS=1`) runs one one-line card
-through each harness on the machine and prints the usage it read.
+ through each harness on the machine and prints the usage it read.
+
+## local-native-launches-at-the-endpoint: a local provider is declared at its endpoint
+
+A local route's packet names the serving endpoint (docs/SPEC-LOCAL.md, "Fleet"); the
+member hands it to native as `--local-base <endpoint>`. Native takes the flag only with a
+`local-<host>/<tag>` model and refuses it at exit 2 before any launch otherwise, and
+refuses such a model without it; the endpoint's host must be loopback or the tailnet
+(rule 3). With it, the job's harness config declares the provider `local-<host>` as
+OpenCode's OpenAI-compatible provider (`npm @ai-sdk/openai-compatible`) whose
+`options.baseURL` is the endpoint, with no key, declares the route's model under it, and
+the read-deadline proxy stands in front of that base as it does for any provider. On a
+loopback base, the wall opens that one port (`--net-allow`) and no other.
 
 
 ## Bench slot leases

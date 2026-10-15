@@ -818,6 +818,11 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 			args = append(args, "--budget-slots")
 		}
 	}
+	if p.Endpoint != "" {
+		// a local route's packet names the engine that serves its model (docs/SPEC-LOCAL.md,
+		// "Fleet"): native declares the provider at that endpoint and launches against it
+		args = append(args, "--local-base", p.Endpoint)
+	}
 	// A long-lived child: its own cancellable context and no deadline (its own --deadline
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
