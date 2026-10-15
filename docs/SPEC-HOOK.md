@@ -175,8 +175,8 @@ Every line runs as printed:
   event once. `pending_until` retains that obligation even if the transient challenge key expires.
   With uninterrupted minute passes and successful challenge delivery, silence is detected after
   the quiet window plus the 5m answer
-  bound, rounded to the next pass at each strict boundary: busy friend about 10m, idle friend/comms
-  about 15m, coordinator about 35m. A server outage adds its duration; stale-server detection remains
+  bound, rounded to the next pass at each strict boundary: at most 12m for a busy friend, 17m for
+  an idle friend/comms name, and 37m for a coordinator (`quiet + AnswerBound + 2*BeatEvery`). A server outage adds its duration; stale-server detection remains
   two pass intervals. The model checks all prior invariants and liveness, role quiet and detection
   bounds, daemon non-activity, and proof renewal. Legacy short-cadence configurations overapproximate
   old issued-nonce compatibility and the delivery protocol; silence configurations check current
@@ -196,6 +196,14 @@ Every line runs as printed:
   no challenge was due.
 
 ## The friend lane client
+
+For a model that answers immediately, aligned minute passes ask a silent busy friend roughly
+10 times/hour, an idle friend/comms name 5.5 times/hour, and a coordinator 1.9 times/hour, instead of
+60 each. Continuous explicit model traffic suppresses quiet challenges, but proof renewal still
+asks roughly 1.8 times/hour at the default 33m threshold. Delayed answers reduce that frequency.
+These are scheduling estimates; the deterministic tests pin 30 talking passes with zero challenges,
+role thresholds, renewal and deadline behavior. The full proof-renewal lead assumes pass gaps remain
+inside the fresh-server bound; arbitrary outages do not provide that guarantee.
 
 A friend's supervised hook service (`nova-hook hook --role friend` under `nova-hook.client.<name>`) is also her lane client (`internal/friend`, `cmd/nova-hook/lanes.go`; the card the-friend-lane-is-a-client-with-no-local-state). The sprint server owns every lane's record: the card it holds, its generation, its lease and the finish. Every `LaneEvery` (a third of the server's 10m lane lease, `ServerLaneLease`, never the challenge cadence), and at once on start, the client asks for each lane 1..`--lanes` (default 8; the server's width for her row bounds what is taken; `--lanes 0` asks nothing) with the fleet's lane take, `take --as friend.<name> --lane <n> --json`, at `--sprint-server` (`NOVA_SPRINT_SERVER`, else `127.0.0.1:6390`). An ask renews that lane's lease; one round is bounded to half the hook's own renewal (`hook.RenewEvery`) so a hung sprint server never stalls the hook. The client asks only while the friend's record reads proven: a model that stops answering its challenges stops the asks, and the server returns its cards when the lease runs out. New holds make one bus message to her own name, subject `SPRINT CARDS n=<N> as=friend.<name>`, which the loop folds into the one pending notice like any other: "N cards taken; briefs at <paths>; work each in a child agent to width", with the server's finish and progress verbs for every card she holds. The briefs are cached under `~/.local/state/nova-hook/<name>/briefs/<job>/BRIEF.md`, a cache rebuilt from the server's answers: a client started in an empty directory resumes from the server alone and tells the model again what she holds. The model is `tla/FriendLaneClient.tla`.
 

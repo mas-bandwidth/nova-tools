@@ -641,7 +641,7 @@ const (
 type Beat struct {
 	Name   string
 	Did    int    // BeatLeft, BeatChallenged or BeatUnhooked
-	Nonce  string // the challenge's nonce, when challenged: the store keeps only its sum
+	Nonce  string // pending payload; the private outbox retains it until delivery
 	Misses int
 	Epoch  int64
 	// DownAfter is the pass's down-after: the silence that unhooks.
