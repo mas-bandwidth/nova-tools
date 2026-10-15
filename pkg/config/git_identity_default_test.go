@@ -139,3 +139,20 @@ func TestTheGeneralityRuleForAGitIdentityRefusesOursAndAcceptsTheGenericOne(t *t
 		assert.Empty(t, identityForbiddenReason(c[1]), c[0])
 	}
 }
+
+// TestGitIdentityEnvSetsAuthorAndCommitter pins the commit environment pkg/config's
+// GitIdentity carries (nova-sprint's identity.go and swarm stage.go call it through
+// pkg/config): the author and committer name and email, in that order, so a commit takes
+// the configured identity whatever the host's git config held. GitIdentity is an alias of
+// gitrun.GitIdentity, so Env is gitrun's method reached through this package.
+func TestGitIdentityEnvSetsAuthorAndCommitter(t *testing.T) {
+	t.Parallel()
+	id, ok := ParseGitIdentity("Ada Lovelace <ada@example.invalid>")
+	require.True(t, ok)
+	assert.Equal(t, []string{
+		"GIT_AUTHOR_NAME=Ada Lovelace",
+		"GIT_AUTHOR_EMAIL=ada@example.invalid",
+		"GIT_COMMITTER_NAME=Ada Lovelace",
+		"GIT_COMMITTER_EMAIL=ada@example.invalid",
+	}, id.Env())
+}
