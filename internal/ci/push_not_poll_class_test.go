@@ -58,7 +58,7 @@ var pushClockTime = map[string]bool{"Sleep": true, "After": true, "Tick": true, 
 var pushClockSeams = map[string]bool{"Pause": false, "pause": false, "after": false, "sleep": true, "ticker": true}
 
 // durationName is a name a duration goes by in the tree: BeatEvery, *every,
-// WaitPongEvery, pushWaits[i], lr.every, TmuxPoll, w.pause, d.
+// LaneAskEvery, pushWaits[i], lr.every, TmuxPoll, w.pause, d.
 var durationName = regexp.MustCompile(`(?i)(every|wait|delay|backoff|interval|period|poll|pause|^d$)`)
 
 // durationArg is whether a call's argument is a duration: it reaches package

@@ -50,6 +50,7 @@ type world struct {
 	codexLock          func(string) (func() error, error)
 	codexValidate      func(string, string, string) error
 	codexDeliver       func(context.Context, string, string, string, string) (string, error)
+	codexChats         func(home string) ([]codexdesktop.Chat, error) // the desktop chats a Codex home holds
 	dshValidate        func(dshdesktop.Route) error
 	dshDeliver         func(dshdesktop.Route, string, string) (string, error)
 	dshHeld            dshdesktop.HeldFunc // which session.lock files a process holds open
@@ -83,6 +84,7 @@ func realWorld() world {
 		codexLock:          notice.Lock,
 		codexValidate:      notice.ValidateCodex,
 		codexDeliver:       codexdesktop.DeliverSaved,
+		codexChats:         func(home string) ([]codexdesktop.Chat, error) { return codexdesktop.DesktopChats(os.DirFS(home)) },
 		dshValidate:        notice.ValidateDsh,
 		dshDeliver:         dshdesktop.Deliver,
 		dshHeld:            dshdesktop.LsofHeld,
@@ -249,18 +251,18 @@ example: nova-hook hook --as ada --role coordinator`,
 				Flags: func(f *tool.Flags) {
 					as(f)
 					f.Required("role", "the role you hook in as, one of "+roleNames())
-					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "install a harness adapter before arming: grok, muse, claude, deepseek (alias dsh) or antigravity; the Codex desktop route uses the --codex-* flags")
+					f.String("harness", w.getenv("NOVA_HOOK_HARNESS"), "install a harness adapter before arming: grok, muse, claude, deepseek (alias dsh), antigravity, or codex (the Codex desktop route: the friend's current chat, followed to a new one; the --codex-* flags override its defaults)")
 					f.String("grok-home", w.getenv("GROK_HOME"), "absolute grok config directory the adapter installs into; empty uses GROK_HOME, else the grok directory under the user home")
 					f.String("muse-bundle", w.getenv("NOVA_HOOK_MUSE_BUNDLE"), "the Muse plugin bundle to install (default: muse-bundle beside the nova-hook binary)")
 					f.String("muse-bin", w.getenv("NOVA_HOOK_MUSE_BIN"), "the Muse CLI to run (default: muse on PATH)")
-					f.String("codex-socket", w.getenv("NOVA_HOOK_CODEX_SOCKET"), "native Codex desktop socket; requires thread and private event directory")
-					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID")
-					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "existing private directory for bounded external event JSON")
-					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
+					f.String("codex-socket", w.getenv("NOVA_HOOK_CODEX_SOCKET"), "native Codex desktop socket (default: CODEX_HOME/ipc/ipc.sock)")
+					f.String("codex-thread", w.getenv("NOVA_HOOK_CODEX_THREAD"), "native recipient thread ID; an override: by default the route finds the friend's current desktop chat (newest in a workspace named for the friend) and follows the friend to a new one")
+					f.String("codex-events-dir", w.getenv("NOVA_HOOK_CODEX_EVENTS_DIR"), "private directory for bounded external event JSON (default: ~/.local/state/nova-hook/<name>-codex, created 0700)")
+					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); by default the store's time at the first hook, kept in the events directory's .cutover; earlier work must be resent")
 					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "private directory for bounded external event JSON and the native notification queue (default ~/.local/state/nova-hook/<as>-dsh, created 0700)")
 					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "absolute native Cordis include .json path, mounted into the harness desktop profile (default ~/.dsh/<as>-hook/hooks.json)")
 					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "pin one existing harness session (default: the newest live session in the friend's workspace, followed when she starts another); never creates or resumes a session")
-					f.String("dsh-since", w.getenv("NOVA_HOOK_DSH_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); persist unchanged in launch configuration, earlier work must be resent")
+					f.String("dsh-since", w.getenv("NOVA_HOOK_DSH_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); by default the store's time at the first hook, kept in the events directory's .cutover; earlier work must be resent")
 					f.String("antigravity-dir", w.getenv("NOVA_HOOK_ANTIGRAVITY_DIR"), "Antigravity workspace directory for --harness antigravity")
 					f.String("antigravity-session", w.getenv("NOVA_HOOK_ANTIGRAVITY_SESSION"), "Antigravity conversation UUID (default: newest root conversation for --antigravity-dir)")
 					f.String("session", w.getenv("NOVA_HOOK_ANTIGRAVITY_SESSION"), "Antigravity conversation UUID alias for --antigravity-session")
@@ -639,7 +641,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 			st.Note(dshRestartNote)
 		}
 		line(c, st)
-		shim = &notice.Dsh{Route: dsh.route, Deliver: w.dshDeliver, Follow: dsh.followFunc()}
+		shim = &notice.Dsh{Route: dsh.route, Deliver: w.dshDeliver, Discover: dsh.discover}
 	case grokR != nil:
 		grokR.as = s.as
 		grokR.role = role
@@ -667,6 +669,11 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	}
 	if native != nil {
 		var err error
+		if native.since.IsZero() && native.cutoverFile != "" {
+			if native.since, err = codexCutover(s, native.cutoverFile); err != nil {
+				return tool.Refuse(err.Error())
+			}
+		}
 		recovery, err = codexBacklog(s, cursor, native.since)
 		if err != nil {
 			return tool.Refuse(err.Error())
@@ -799,7 +806,7 @@ func (w world) nativeShim(r *codexRoute) notice.Shim {
 				return w.antigravityDeliver(ctx, ag, id, dir)
 			}}
 	}
-	return &notice.Codex{Socket: r.socket, Thread: r.thread, Directory: r.directory, Deliver: w.codexDeliver}
+	return &notice.Codex{Socket: r.socket, Thread: r.thread, Directory: r.directory, Deliver: w.codexDeliver, Discover: r.discover}
 }
 
 // newCore wires one friend's pending notice: the store, the shim, the saved

@@ -38,8 +38,9 @@ docs/SPEC-HOOK.md), never from a daemon beat, a process check, or a ping script:
   down or unhooked, `nova-bus send` refuses deliveries to her and her lanes take
   no work.
 - `nova-hook friends [--json]` and `nova-hook status --as <name>` read presence
-  directly from the hook record. The per-friend beat loops, `nova-friend ping` /
-  `pong`, and `SESSION CHECK` files are retired with no replacement.
+  directly from the hook record. The per-friend beat loops, the coordinator's
+  ping verbs and keepalive loop, and the daemon's `SESSION CHECK` presence are
+  retired with no replacement (internal/ci/testdata/retired-presence.txt).
 
 ## Her harness's settings: `nova-friend install` writes them
 

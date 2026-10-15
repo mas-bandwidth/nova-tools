@@ -209,21 +209,3 @@ func WriteTarget(eventsDir, sessionID string) (changed bool, err error) {
 	}
 	return true, nil
 }
-
-// Follower keeps the receiver on the friend's newest live session.
-type Follower struct {
-	Home      string
-	Name      string
-	EventsDir string
-	Held      HeldFunc
-}
-
-// Follow rediscovers the session and repoints the receiver when it moved.
-func (f Follower) Follow() (Session, bool, error) {
-	s, err := Discover(f.Home, f.Name, f.Held)
-	if err != nil {
-		return Session{}, false, err
-	}
-	changed, err := WriteTarget(f.EventsDir, s.ID)
-	return s, changed, err
-}

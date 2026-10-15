@@ -2,6 +2,7 @@ package notice
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
@@ -16,6 +17,31 @@ type Codex struct {
 	Socket, Thread, Directory string
 	// Deliver is codexdesktop.DeliverSaved; a test passes its fake harness.
 	Deliver func(ctx context.Context, socket, thread, id, directory string) (string, error)
+	// Discover, when set, is the friend's current chat (codexdesktop.CurrentChat
+	// over the Codex home): the route follows the friend to a new chat. It is
+	// nil when the chat was named with --codex-thread.
+	Discover func() (string, error)
+}
+
+// Follow moves the route to the friend's current chat. It answers the chat it
+// left and the one it moved to, or moved false when the friend is where the
+// route already points.
+func (c *Codex) Follow(context.Context) (from, to string, moved bool, err error) {
+	if c.Discover == nil {
+		return c.Thread, c.Thread, false, nil
+	}
+	current, err := c.Discover()
+	if err != nil {
+		return c.Thread, c.Thread, false, err
+	}
+	if current == "" || current == c.Thread {
+		return c.Thread, c.Thread, false, nil
+	}
+	if !codexdesktop.ValidThread(current) {
+		return c.Thread, c.Thread, false, errors.New("the current chat's id is invalid")
+	}
+	from, c.Thread = c.Thread, current
+	return from, current, true, nil
 }
 
 // Name is the harness word.

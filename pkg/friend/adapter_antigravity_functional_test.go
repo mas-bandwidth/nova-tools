@@ -5,13 +5,12 @@ package friend
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -23,11 +22,11 @@ import (
 // on NOVA_FRIEND_ANTIGRAVITY_DIR: it finds the language server, the newest
 // root conversation of that directory and the port that answers, through
 // the real commands. When NOVA_FRIEND_ANTIGRAVITY_DIR is set, it runs the
-// ten-run acceptance: nova-friend ping --as rowan --to emma, then
-// nova-friend wait-pong --from emma --nonce <n> --timeout 60s, accepting only
-// the session pong --nonce (a daemon-pong alone does not count), and names
-// the harness transcript file and line showing that turn in the same session id
-// during that minute.
+// ten-run acceptance: nova-friend reach --as rowan --to emma --from push
+// --step-timeout 60s, which pushes a nonce into the session through the
+// adapter and accepts only the session's pong for it (the coordinator's ping
+// and wait-pong verbs are retired, v1.3.5), and names the harness transcript
+// file and line showing that turn in the same session id during that minute.
 func TestAntigravityOnTheLiveHarness(t *testing.T) {
 	t.Parallel()
 	dir := os.Getenv("NOVA_FRIEND_ANTIGRAVITY_DIR")
@@ -76,18 +75,14 @@ func TestAntigravityOnTheLiveHarness(t *testing.T) {
 	}
 
 	for run := 1; run <= 10; run++ {
-		nonceBytes := make([]byte, 3)
-		_, _ = rand.Read(nonceBytes)
-		nonce := hex.EncodeToString(nonceBytes)
 		t0 := time.Now().UTC()
 
-		pingCmd := exec.CommandContext(ctx, novaFriend, "ping", "--as", "rowan", "--to", friend, "--nonce", nonce)
-		pingOut, err := pingCmd.CombinedOutput()
-		require.NoError(t, err, "ping failed: %s", string(pingOut))
-
-		waitCmd := exec.CommandContext(ctx, novaFriend, "wait-pong", "--from", friend, "--nonce", nonce, "--timeout", "60s")
-		waitOut, err := waitCmd.CombinedOutput()
-		require.NoError(t, err, "wait-pong failed (session pong required, daemon-pong alone exits 1): %s", string(waitOut))
+		reachCmd := exec.CommandContext(ctx, novaFriend, "reach", "--as", "rowan", "--to", friend, "--from", "push", "--step-timeout", "60s")
+		reachOut, err := reachCmd.CombinedOutput()
+		require.NoError(t, err, "reach failed (the session's pong is required): %s", string(reachOut))
+		m := regexp.MustCompile(`STEP step=push nonce=(\S+)`).FindStringSubmatch(string(reachOut))
+		require.NotNil(t, m, "reach named no push step's nonce: %s", string(reachOut))
+		nonce := m[1]
 
 		tPong := time.Now().UTC()
 		duration := tPong.Sub(t0).Round(time.Millisecond)

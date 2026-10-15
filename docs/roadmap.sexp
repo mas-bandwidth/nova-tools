@@ -630,14 +630,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
-  (item "friend-daemon-liveness" :group "friends"
-   :title "Show and alarm friend daemon state, and ping every friend each second"
-   :text "A test pins the installed service definition, and a view shows which binary each friend daemon
-    runs and alarms when one died or was not reinstalled. A nova-friend verb replaces the hand ping
-    loop and marks a friend down after ten seconds without a pong."
-   :date "2026-10-10"
-   :release "v1.5"
-   :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "friend-lane-wall-profile" :group "friends"
    :title "Run every friend lane inside a wall profile taken from its friend row"
    :text "A lane child runs inside the wall, with writes allowed only to the friend's own working

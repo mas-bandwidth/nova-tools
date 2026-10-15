@@ -16,11 +16,9 @@ type dshRoute struct {
 	since time.Time
 	// profile is the harness desktop profile the include is mounted into.
 	profile string
-	// follow repoints the receiver at the friend's newest live session; nil
-	// when --dsh-session pins one.
-	follow *dshdesktop.Follower
-	// session is the discovered session, for the report.
-	session dshdesktop.Session
+	// discover finds the friend's current session; nil when --dsh-session
+	// pins one.
+	discover func() (string, error)
 	// made lists the default directories to create before validation.
 	made []string
 }
@@ -85,12 +83,15 @@ func (w world) dshConfig(c *tool.Call) (*dshRoute, error) {
 		r.made = append(r.made, filepath.Dir(r.route.HooksFile))
 	}
 	if r.route.SessionID == "" {
-		r.follow = &dshdesktop.Follower{Home: dshHome, Name: as, EventsDir: r.route.EventsDir, Held: w.dshHeld}
-		s, err := dshdesktop.Discover(dshHome, as, w.dshHeld)
+		held := w.dshHeld
+		r.discover = func() (string, error) {
+			s, err := dshdesktop.Discover(dshHome, as, held)
+			return s.ID, err
+		}
+		s, err := dshdesktop.Discover(dshHome, as, held)
 		if err != nil {
 			return nil, errors.New(err.Error() + " (or pin one with --dsh-session)")
 		}
-		r.session = s
 		r.route.SessionID = s.ID
 	}
 	if c.DryRun() {
@@ -130,13 +131,4 @@ func dshSetup(r *dshRoute) (restart bool, err error) {
 		return false, err
 	}
 	return restart || mounted, nil
-}
-
-// shim's Follow: rediscover before each push.
-func (r *dshRoute) followFunc() func() error {
-	if r.follow == nil {
-		return nil
-	}
-	f := *r.follow
-	return func() error { _, _, err := f.Follow(); return err }
 }

@@ -27,10 +27,17 @@ file:
   deliveries to her with the reason and one deduplicated judgment to the
   coordinator.
 - `nova-hook friends [--json]` and `nova-hook status --as <friend>` read
-  presence directly from the hook record. The legacy `PING`/`pong`/`daemon-pong`
-  protocol, `SESSION CHECK`, `presence.json`, `pong.json`, `bus2:push`,
-  `nova-friend ping`/`pong`/`wait-pong`/`serve`/`beat`, and `WatchHarness` are
-  retired and removed.
+  presence directly from the hook record. Retired and removed (v1.3.5; the
+  class rule `internal/ci/retired_presence_class_test.go` refuses their
+  return, its table `internal/ci/testdata/retired-presence.txt` naming each
+  identifier, verb and flag): the coordinator's one-second keepalive loop, the
+  coordinator's ping, the wake ping loop and its launchd agent, the pong wait,
+  the hand beat, the daemon's session-check presence and its `presence.json`,
+  `pong.json` and `bus2:push`. `nova-friend pong` stays as the answer to a `nova-friend
+  reach` step and to the delivery check (`check --harness`). The daemon still
+  answers a `PING` that reaches its stream with a `daemon-pong` and still runs
+  its advisory harness process check (`WatchHarness`); nothing sends a `PING`
+  any more, and both go when the daemon's own delivery is retired.
 
 ## The local child load gate
 

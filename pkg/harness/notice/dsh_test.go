@@ -10,29 +10,43 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Each push first lets the route follow the friend's newest session; a failed
-// rediscovery keeps the last target and still queues the notice.
-func TestDshPushFollowsBeforeQueueing(t *testing.T) {
+// Rule 6 for DSH: Follow moves the receiver's follow file to the friend's
+// current session; a failed look and a pinned route stay where they are.
+func TestDshFollowRewritesTheTargetFile(t *testing.T) {
 	t.Parallel()
-	var order []string
-	follows := []error{nil, errors.New("workspace unreadable")}
-	d := &Dsh{
-		Route: dshdesktop.Route{EventsDir: t.TempDir()},
-		Deliver: func(_ dshdesktop.Route, id, _ string) (string, error) {
-			order = append(order, "deliver "+id)
-			return "queued", nil
-		},
-		Follow: func() error {
-			order = append(order, "follow")
-			err := follows[0]
-			follows = follows[1:]
-			return err
-		},
-	}
-	for _, id := range []string{"one", "two"} {
-		got, err := d.Push(context.Background(), Notice{ID: id})
-		require.NoError(t, err)
-		assert.Equal(t, "queued", got)
-	}
-	assert.Equal(t, []string{"follow", "deliver one", "follow", "deliver two"}, order)
+	events := t.TempDir()
+	_, err := dshdesktop.WriteTarget(events, "session-one")
+	require.NoError(t, err)
+	answers := []struct {
+		id  string
+		err error
+	}{{"session-one", nil}, {"", errors.New("workspace unreadable")}, {"session-two", nil}}
+	d := &Dsh{Route: dshdesktop.Route{EventsDir: events, SessionID: "session-one"}, Discover: func() (string, error) {
+		a := answers[0]
+		answers = answers[1:]
+		return a.id, a.err
+	}}
+	var _ Follower = d
+
+	from, to, moved, err := d.Follow(context.Background())
+	require.NoError(t, err)
+	assert.False(t, moved)
+	assert.Equal(t, []string{"session-one", "session-one"}, []string{from, to})
+
+	_, _, moved, err = d.Follow(context.Background())
+	require.Error(t, err)
+	assert.False(t, moved)
+	assert.Equal(t, "session-one", dshdesktop.ReadTarget(events), "a failed look keeps the target")
+
+	from, to, moved, err = d.Follow(context.Background())
+	require.NoError(t, err)
+	assert.True(t, moved)
+	assert.Equal(t, []string{"session-one", "session-two"}, []string{from, to})
+	assert.Equal(t, "session-two", dshdesktop.ReadTarget(events))
+	assert.Equal(t, "session-two", d.Route.SessionID)
+
+	pinned := &Dsh{Route: dshdesktop.Route{EventsDir: events, SessionID: "session-two"}}
+	_, _, moved, err = pinned.Follow(context.Background())
+	require.NoError(t, err)
+	assert.False(t, moved, "a pinned route never moves")
 }

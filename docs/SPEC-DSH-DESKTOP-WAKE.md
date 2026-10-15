@@ -33,8 +33,9 @@ session. No gateway credentials or HTTP gateway are involved.
 
 Following a new session needs no restart. The include names no session: the
 receiver reads `<events dir>/session.json` (`{"version":1,"sessionId":...}`,
-private) on each drain and on its change, and the hook client rediscovers and
-rewrites it before every push. A move to another session drops the old
+private) on each drain and on its change. The hook client rediscovers the
+session once a `FollowEvery` and rewrites the file when it moved; a pending
+notice is pushed once into the new session (pkg/harness/notice rule 6). A move to another session drops the old
 session's ordinary hold (tla/DshNativeWake.tla `Retarget`, `HoldOnTarget`).
 
 `--dsh-events-dir`, `--dsh-hooks-file` and `--dsh-session` (or

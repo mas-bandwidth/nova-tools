@@ -111,36 +111,36 @@ func TestDiscoverRefusesWithoutWorkspaceOrSession(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestFollowerMovesTargetToANewSession(t *testing.T) {
+func TestDiscoverFollowsANewSessionIntoTheTargetFile(t *testing.T) {
 	t.Parallel()
+	events := t.TempDir()
 	home := fixtureHome(t, nil, map[string][]fixtureSession{
 		"ada": {{"session-one", epoch}},
 	})
-	events := t.TempDir()
-	live := []string{"session-one"}
-	f := Follower{Home: home, Name: "ada", EventsDir: events, Held: func(locks []string) map[string]bool { return heldIDs(home, live...)(locks) }}
-	s, changed, err := f.Follow()
+	s, err := Discover(home, "ada", heldIDs(home, "session-one"))
+	require.NoError(t, err)
+	changed, err := WriteTarget(events, s.ID)
 	require.NoError(t, err)
 	assert.True(t, changed)
-	assert.Equal(t, "session-one", s.ID)
-	_, changed, err = f.Follow()
+	changed, err = WriteTarget(events, s.ID)
 	require.NoError(t, err)
 	assert.False(t, changed, "an unchanged session leaves the target alone")
 
-	// She starts a new session: it appears in her workspace and holds its lock.
-	home2 := fixtureHome(t, []string{"session-one"}, map[string][]fixtureSession{
+	// She starts a new session and archives the old one; both locks are still open.
+	home = fixtureHome(t, []string{"session-one"}, map[string][]fixtureSession{
 		"ada": {{"session-one", epoch}, {"session-two", epoch.Add(time.Hour)}},
 	})
-	f.Home = home2
-	live = []string{"session-one", "session-two"}
-	s, changed, err = f.Follow()
+	s, err = Discover(home, "ada", heldIDs(home, "session-one", "session-two"))
+	require.NoError(t, err)
+	changed, err = WriteTarget(events, s.ID)
 	require.NoError(t, err)
 	assert.True(t, changed)
-	assert.Equal(t, "session-two", s.ID)
 	assert.Equal(t, "session-two", ReadTarget(events))
 	info, err := os.Stat(TargetPath(events))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	_, err = WriteTarget(events, "bad id/../x")
+	require.Error(t, err)
 }
 
 func TestHomeResolvesLikeTheHarness(t *testing.T) {

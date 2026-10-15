@@ -221,12 +221,8 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"run nothing given", []string{"run"}, []string{"--as is required", "--harness is required", "--dir is required"}},
 		{"run bad harness", []string{"run", "--as", "bob", "--harness", "vim", "--dir", "d"}, []string{`--harness "vim" is no harness`, "opencode, codex, claude, antigravity, dsh"}},
 		{"install nothing given", []string{"install"}, []string{"--as is required", "--harness is required", "--dir is required"}},
-		{"ping nothing given", []string{"ping"}, []string{"--as is required", "--to is required"}},
-		{"ping bad since", []string{"ping", "--as", "ada", "--to", "bob", "--since", "yesterday"}, []string{"--since wants an RFC3339 instant"}},
-		{"ping unknown friend", []string{"ping", "--as", "ada", "--to", "zed"}, []string{"zed is no known name", "nova-config friend add zed"}},
 		{"pong nothing given", []string{"pong"}, []string{"--as is required", "--nonce is required"}},
 		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--state-dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
-		{"wait-pong nothing given", []string{"wait-pong"}, []string{"--from is required", "--nonce is required"}},
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
 		{"check delivery nothing given", []string{"check", "--harness", "opencode"}, []string{"--as is required", "--dir is required"}},
 		{"check bad harness and window", []string{"check", "--as", "bob", "--harness", "vim", "--dir", "d", "--within", "0s"}, []string{`--harness "vim" is no harness`, "--within wants a positive duration"}},
@@ -243,46 +239,26 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 	}
 	r := newRig(t, "ada", "bob")
 	r.env = map[string]string{}
-	r.cli().Do(t, "ping", "--as", "ada", "--to", "bob").Exit(2).Err("--redis is required", RedisEnv)
+	r.cli().Do(t, "pong", "--as", "bob", "--nonce", "n1", "--to", "ada").Exit(2).Err("--redis is required", RedisEnv)
 	r.cli().Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "d", "--model", "deepseek/deepseek-v4", "--dry-run").Exit(2).Err("--redis is required", "written into the agent")
 }
 
-func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
+// pong is the session's answer to a reach step: one note on the bus to the
+// coordinator, from the friend's own name, carrying the nonce and the counts.
+func TestPongSendsTheSessionsAnswerToTheCoordinator(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
-	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE daemon=false: no pong abc123 from bob within 3s")
-
-	sent := cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "abc123").Exit(0).Out("PING OK nonce=abc123 id=", " to=bob at=2026-10-04T03:00:", "NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123")
-	_ = sent
-	entries, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 10)
+	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--to", "ada", "--queue", "2", "--working", "1", "--width", "4").Exit(0).Out("PONG OK nonce=abc123 to=ada id=")
+	entries, err := r.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 10)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	m := entries[0].Message()
-	assert.Equal(t, "PING abc123", m.Subject)
-	assert.Contains(t, m.Body, "seat=ada since=2026-10-04T03:00:")
-	assert.Contains(t, m.Body, "nova-friend pong --as <you> --nonce abc123")
-	cli.Do(t, "ping", "--as", "ada", "--to", "bob").Exit(0).Out("PING OK nonce=r4nd0m")
-	assert.False(t, friend.IsWake(m.Body), "a plain ping asks no wake turn")
-	cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "wake01", "--wake").Exit(0).Out("PING OK nonce=wake01")
-	entries, err = r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 10)
-	require.NoError(t, err)
-	require.Len(t, entries, 3)
-	assert.True(t, friend.IsWake(entries[2].Message().Body), "--wake carries the wake line")
-	// the daemon's answer alone never satisfies wait-pong: only the session's pong does
-	_, err = (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.DaemonPongSubject, Body: "daemon-pong wake01\n"})
-	require.NoError(t, err)
-	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "wake01", "--timeout", "2s").Exit(1).Err("WAIT-PONG NONE daemon=true", "the daemon answered and the session did not: deaf")
-
-	// the session answers, naming the coordinator since no daemon has recorded a seat
-	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--to", "ada", "--queue", "2", "--working", "1", "--width", "4").Exit(0).Out("PONG OK nonce=abc123 to=ada id=")
-	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob at=", "queue=2 working=1 width=4 daemon=false")
-
-	// a pong in the body from another name never counts: the from is the proof
-	_, err = (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("zzz999", 0, 0, 0)})
-	require.NoError(t, err)
-	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "zzz999", "--timeout", "2s").Exit(1).Err("WAIT-PONG NONE")
-	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--json").Exit(0).Out(`"status":"ok"`, `"nonce":"abc123"`)
+	assert.Equal(t, "bob", m.From, "the from is the proof, never the body")
+	assert.Equal(t, friend.PongSubject, m.Subject)
+	n, q, wk, wd, ok := friend.ParsePong(strings.TrimSpace(m.Body))
+	require.True(t, ok, m.Body)
+	assert.Equal(t, []any{"abc123", 2, 1, 4}, []any{n, q, wk, wd})
 }
 
 func TestPongCarriesTheDaemonsNameAndTheSeatItRecorded(t *testing.T) {
@@ -423,12 +399,6 @@ func TestInstallWritesTheBeatVerbAndNoHandPlist(t *testing.T) {
 	written, err := os.ReadDir(agents)
 	require.NoError(t, err)
 	assert.Len(t, written, 1, "install writes the daemon's agent alone; the beat needs no plist of its own")
-	cli.Do(t, "beat", "--as", "bob", "--server", "127.0.0.1:6390", "--dry-run").Exit(0).Out("BEAT OK as=bob server=127.0.0.1:6390 dry_run=true")
-	assert.Empty(t, r.beats, "a dry run sends no beat")
-	cli.Do(t, "beat", "--as", "bob", "--server", "127.0.0.1:6390").Exit(0).Out("BEAT OK as=bob server=127.0.0.1:6390")
-	assert.Equal(t, []string{"127.0.0.1:6390 bob"}, r.beats, "the verb makes the same call the daemon's loop makes")
-	r.beatErr = errors.New("the sprint server at 127.0.0.1:6390 did not answer")
-	cli.Do(t, "beat", "--as", "bob").Exit(2).Err("BEAT REFUSED", "did not answer")
 }
 
 // run over the fake store, the fake opencode session and a cancelled context: the
@@ -672,26 +642,6 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.Equal(t, OpenRetryMax, slept[len(slept)-1], "the wait is capped")
 	assert.Contains(t, out.String(), "opening again in "+OpenRetryMax.String())
-}
-
-// wait-pong reads the log from --timeout before the wait began, never from
-// its start: a log longer than one read's limit still answers (the finding
-// of 2026-10-04: the whole log from "-" with a 10,000 cap), and a pong older
-// than the wait is not looked for.
-func TestWaitPongReadsTheLogFromTheWaitsOwnWindow(t *testing.T) {
-	t.Parallel()
-	r := newRig(t, "ada", "bob")
-	b := &bus.Bus{Store: r.store}
-	for i := 0; i < 10000; i++ { // one second of the store's clock each
-		_, err := b.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "old", Body: "x"})
-		require.NoError(t, err)
-	}
-	_, err := b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: "pong", Body: friend.PongLine("abc123", 1, 0, 4)})
-	require.NoError(t, err)
-	cli := r.cli()
-	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(0).Out("WAIT-PONG OK nonce=abc123 from=bob", "queue=1 working=0 width=4")
-	r.store.Advance(time.Minute)
-	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "abc123", "--timeout", "3s").Exit(1).Err("WAIT-PONG NONE")
 }
 
 // install --secrets NAME[,NAME] --seat <seat> writes the agent with the
@@ -957,7 +907,7 @@ func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
-	assert.Empty(t, checks, "run does not start SessionCheck")
+	assert.Empty(t, checks, "run starts no session check")
 	assert.Equal(t, 2, beats)
 }
 
@@ -990,8 +940,8 @@ func holdAHarnessAtItsLimitWithRow(t *testing.T, rowPronouns string, extra ...st
 		}
 		go f()
 	}
-	w.friends = func(context.Context, string) ([]friend.WakeRow, string, error) {
-		return nil, "ada", nil // the carried startup note comes from the actual seat
+	w.seatHolder = func(context.Context, string) (string, error) {
+		return "ada", nil // the carried startup note comes from the actual seat
 	}
 	var mu sync.Mutex
 	clock := start
