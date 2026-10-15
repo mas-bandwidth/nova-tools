@@ -495,3 +495,29 @@ func TestDownAfterIsTheReadersWindow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2*hook.BeatEvery, sv.Window(), "an older server's row: its own two intervals")
 }
+
+// TestThePushedMarkIsTheStateAndTheCount pins the row's pushed mark
+// (tla/HookBeat.tla, PushSend): a fresh row has none, the baseline writes the
+// states found once and never over a mark that stands, a mark reads back as
+// the state and the count, and a proven record with no heartbeat evidence is pushed as down.
+func TestThePushedMarkIsTheStateAndTheCount(t *testing.T) {
+	t.Parallel()
+	rig := newRig(t)
+	ctx := context.Background()
+	got, seen, err := rig.s.Pushed(ctx)
+	require.NoError(t, err)
+	assert.False(t, seen)
+	assert.Empty(t, got)
+	require.NoError(t, rig.s.Baseline(ctx, map[string]string{"ada": "proven", "bob": "unhooked"}))
+	require.NoError(t, rig.Client.HSet(ctx, hook.ServeKey, hook.PushMark("ada", "expired", 0).Field, hook.PushMark("ada", "expired", 0).Value).Err())
+	require.NoError(t, rig.s.Baseline(ctx, map[string]string{"ada": "proven"}))
+	got, seen, err = rig.s.Pushed(ctx)
+	require.NoError(t, err)
+	assert.True(t, seen)
+	assert.Equal(t, hook.Pushed{State: "expired", Gen: 1}, got["ada"], "a baseline never replaces a mark")
+	assert.Equal(t, hook.Pushed{State: "unhooked", Gen: 0}, got["bob"])
+	assert.NotEqual(t, hook.PushOnce("ada", 1, "proven", 1), hook.PushOnce("ada", 1, "proven", 3), "a flap back to a state in one epoch is a push of its own")
+	assert.Equal(t, hook.StateDown, hook.PushState(hook.Status{State: hook.StateProven, Down: hook.NoAnswerReason}))
+	assert.Equal(t, hook.StateProven, hook.PushState(hook.Status{State: hook.StateProven}))
+	assert.Equal(t, hook.StateExpired, hook.PushState(hook.Status{State: hook.StateExpired, Down: hook.StaleReason}))
+}
