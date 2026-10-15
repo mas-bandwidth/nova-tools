@@ -170,18 +170,6 @@ func RecordStartupCost(root, harnessSHA256 string, cacheRead, turns int) error {
 	return writeAtomic(filepath.Join(root, StartupCostFile), []byte(body), 0o644)
 }
 
-// RecordStartupCostIfAbsent writes the measurement from the first finished
-// task, and only when no measurement is there yet: the first run has nothing
-// to compare against, so it accepts its budget and leaves the next run a fact.
-func RecordStartupCostIfAbsent(root, harnessSHA256 string, cacheRead, turns int) error {
-	if _, err := os.Stat(filepath.Join(root, StartupCostFile)); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	return RecordStartupCost(root, harnessSHA256, cacheRead, turns)
-}
-
 // BudgetRefusal is the one line a card budget below the measured startup cost
 // is refused with, or "" when the budget stands or no measurement exists. A
 // max_cache_read below twice the measured first cache read cannot leave room

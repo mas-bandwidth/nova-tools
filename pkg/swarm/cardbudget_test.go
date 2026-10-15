@@ -73,27 +73,6 @@ func TestCardBudgetAtTwiceStartupIsAccepted(t *testing.T) {
 	require.Empty(t, line, "a max_turns of 9 over a startup of 7 is accepted, got %q", line)
 }
 
-// An absent startup file accepts the budget, and the file is written from
-// the first finished task's usage so the next run has a measurement.
-func TestCardBudgetAbsentStartupIsAcceptedAndRecorded(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	sc, err := ReadStartupCost(root)
-	require.NoError(t, err)
-	require.False(t, sc.Present, "an absent startup-cost.tsv is no measurement, got %+v", sc)
-	line := (Worker{MaxCacheRead: 2000}).BudgetRefusal(sc)
-	require.Empty(t, line, "an absent startup file accepts the budget, got %q", line)
-	require.NoError(t, RecordStartupCostIfAbsent(root, "abc123", 5000, 7))
-	sc, err = ReadStartupCost(root)
-	require.NoError(t, err)
-	require.True(t, sc.Present, "the startup cost is written from the first finished task, got %+v", sc)
-	require.Equal(t, 5000, sc.FirstUsageCacheRead, "the startup cost is written from the first finished task, got %+v", sc)
-	require.Equal(t, 7, sc.FirstUsageTurns, "the startup cost is written from the first finished task, got %+v", sc)
-	line = (Worker{MaxCacheRead: 2000}).BudgetRefusal(sc)
-	require.NotEmpty(t, line, "once measured, the same budget is refused by name")
-}
-
 // A description without a budget is unchanged: the same fake usage
 // does not end the card.
 func TestCardBudgetWithoutBudgetIsUnchanged(t *testing.T) {

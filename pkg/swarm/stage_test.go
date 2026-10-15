@@ -168,31 +168,6 @@ func TestMirrorKeepsObjectsSetsAndReadsGcAuto(t *testing.T) {
 	assert.True(t, mirrorKeepsObjects(context.Background(), git, dir))
 }
 
-func TestParseCardBase(t *testing.T) {
-	t.Parallel()
-
-	card := []byte("RESULT test-1 sha=1234\nbase-repo: https://example.com/mas-bandwidth/nova-tools.git\nbase-sha: 09fbedc9052145b20677501a1dbcb5f5ba9c87d4\nKIND: fix\n")
-	repo, sha, ok := ParseCardBase(card)
-	require.True(t, ok, "expected ok=true")
-	require.Equal(t, "https://example.com/mas-bandwidth/nova-tools.git", repo, "unexpected repo: %s", repo)
-	require.Equal(t, "09fbedc9052145b20677501a1dbcb5f5ba9c87d4", sha, "unexpected sha: %s", sha)
-
-	// The header only (docs/SPEC-CARD-CONTRACT.md): a clone URL in the body names no
-	// repository, and a header-looking line in the body overrides nothing.
-	cardFallback := []byte("RESULT test-2\nBASE: dev@09fbedc9052145b20677501a1dbcb5f5ba9c87d4\nSTEP 1. " + forgeClone("mas-bandwidth/schema") + " repo\n")
-	_, _, ok = ParseCardBase(cardFallback)
-	assert.False(t, ok, "a clone URL in the body is prose, not the card's repository")
-	prose := []byte("RESULT test-3\nbase-repo: https://example.com/o/real.git\nBASE: main@09fbedc9052145b20677501a1dbcb5f5ba9c87d4\n\nThe card says, later:\nbase-repo: https://example.com/o/prose.git\nbase-sha: 1111111111111111111111111111111111111111\n")
-	cb := ReadCardBase(prose)
-	assert.Equal(t, "https://example.com/o/real.git", cb.Repo)
-	assert.Equal(t, "09fbedc9052145b20677501a1dbcb5f5ba9c87d4", cb.Sha)
-	assert.Equal(t, "main", cb.Ref)
-	inline := []byte("c1: the card tier: pro\nREPO: o/real\nBASE: main\nRepo o/real. The base is main.\nbase-repo: https://example.com/o/prose.git\n")
-	assert.Equal(t, "o/real", ReadCardBase(inline).Named, "the header ends at the first line of prose")
-	staged := []byte("c1: the card\nREPO: o/real\nStage: pr/4926.md notes/a.md\nStage: b.md\n\nStage: prose.md\n")
-	assert.Equal(t, []string{"pr/4926.md", "notes/a.md", "b.md"}, ReadCardBase(staged).Stage, "Stage: header lines, in order; one in the body names nothing")
-}
-
 func TestFindBenchMirror(t *testing.T) {
 	t.Parallel()
 

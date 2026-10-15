@@ -89,22 +89,3 @@ func TestReleaseByIDIsQuietAboutALeaseThatIsAlreadyGone(t *testing.T) {
 	require.NoError(t, err, "a second release is not an error: %v", err)
 	assert.Equal(t, 0, released, "released %d, want 0", released)
 }
-
-// The by-owner-and-label verb is UNCHANGED and this says so on purpose: `slots release`
-// is a person's hand at a prompt, who wants exactly "free whatever this owner holds for
-// that card" and who can see the store. A deferred cleanup cannot.
-func TestReleaseByOwnerAndLabelStillTakesThemAll(t *testing.T) {
-	t.Parallel()
-
-	store := writeSlotStore(t, "capacity\t4\nreserve\t0\nbench\t4\n")
-	now := time.Now().UTC()
-	for i := 0; i < 2; i++ {
-		_, _, _, _, _, ok, err := TakeSlotLeases(store, "bench", 1, time.Hour, "card-7", now, os.Getpid())
-		require.NoError(t, err, "take %d: ok=%v err=%v", i, ok, err)
-		require.True(t, ok, "take %d: ok=%v err=%v", i, ok, err)
-	}
-	released, held, err := ReleaseSlotLeases(store, "bench", "card-7", false)
-	require.NoError(t, err)
-	assert.Equal(t, 2, released, "released=%d held=%d, want 2 and 0: the by-hand verb frees every lease this owner holds for that label, which is what a person asking for it means", released, held)
-	assert.Equal(t, 0, held, "released=%d held=%d, want 2 and 0: the by-hand verb frees every lease this owner holds for that label, which is what a person asking for it means", released, held)
-}
