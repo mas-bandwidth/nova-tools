@@ -13,7 +13,6 @@ import (
 	"io/fs"
 	"math/big"
 	"net"
-	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -3267,9 +3266,6 @@ func loopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// localTailnet is the address range a tailnet hands its machines (RFC 6598's shared range).
-var localTailnet = netip.MustParsePrefix("100.64.0.0/10")
-
 // localBaseProblem is why base cannot be a local route's serving endpoint, "" when it can:
 // an http URL whose host may serve on loopback or the tailnet (docs/SPEC-LOCAL.md, rule 3).
 func localBaseProblem(base string) string {
@@ -3278,25 +3274,35 @@ func localBaseProblem(base string) string {
 		return fmt.Sprintf("--local-base wants an http URL of an engine's /v1, such as http://127.0.0.1:11434/v1 (got %q)", base)
 	}
 	if p := localServingHostProblem(u.Hostname()); p != "" {
-		return "--local-base " + base + ": " + p
+		return "--local-base " + oneline.Field(base) + ": " + p
 	}
 	return ""
 }
 
 // localServingHostProblem is why host may not serve a local model, "" when it may:
-// loopback, or an address in the tailnet's range (100.64.0.0/10).
+// loopback, or an address in the tailnet's range (100.64.0.0/10, RFC 6598).
 func localServingHostProblem(host string) string {
 	if strings.EqualFold(host, "localhost") {
 		return ""
 	}
-	ip, err := netip.ParseAddr(host)
-	if err != nil {
-		return fmt.Sprintf("the host %s does not resolve here, so it cannot be checked to be loopback or the tailnet's", host)
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Sprintf("the host %s does not resolve here, so it cannot be checked to be loopback or the tailnet's", oneline.Field(host))
 	}
-	if !(ip.IsLoopback() || localTailnet.Contains(ip.Unmap())) {
-		return fmt.Sprintf("the host %s is neither loopback nor the tailnet's (100.64.0.0/10); a local tier pointed at a remote endpoint is not a local tier", host)
+	if !(ip.IsLoopback() || localTailnetContains(ip)) {
+		return fmt.Sprintf("the host %s is neither loopback nor the tailnet's (100.64.0.0/10); a local tier pointed at a remote endpoint is not a local tier", oneline.Field(host))
 	}
 	return ""
+}
+
+// localTailnetContains reports whether ip is in the tailnet's shared range, the one a
+// tailnet hands its machines (100.64.0.0/10, RFC 6598).
+func localTailnetContains(ip net.IP) bool {
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	return v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
 }
 
 // fileSHA256 returns the lowercase hex sha256 of a file's bytes.
