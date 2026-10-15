@@ -102,7 +102,8 @@ Every rule is normative and has a test (**Tests**, below).
 
 10. **The memory is read at the moment of the call, and printed — not judged.** `status`
     prints each model's weights and, on its first line, `mem_used`, `mem_free`,
-    `mem_total` and the live `wired_cap` (darwin's GPU wired limit, `unset` when none).
+    `mem_total` and the live `wired_cap` (darwin's GPU wired limit, `unset` when none,
+    including a platform with no wired limit). Unread memory is `unknown` for all three.
     No verdict, never cached.
 
 11. **Triage and report; never decide-and-act.** What a local model returns is untrusted
@@ -187,7 +188,7 @@ models (`/api/tags`, `/api/ps`) and its store (`/api/show` of the first model). 
 is down or timed out does not answer, so its line is `store=unknown shared=unknown: the engine did not answer`, which is no verdict. The box is read either way. Writes nothing.
 
 ```
-STATUS OK engines=<n> answering=<n> loaded=<n> models=<n> mem_used=<n> mem_free=<n> mem_total=<n> wired_cap=<n|unset> load1=<f>
+STATUS OK engines=<n> answering=<n> loaded=<n> models=<n> mem_used=<n|unknown> mem_free=<n|unknown> mem_total=<n|unknown> wired_cap=<n|unset> load1=<f|unknown>
 STATUS ENGINE name=<e> state=<up|down|timeout> [status=<code>] base=<url> [loaded=<n> advertised=<n>] [num_ctx=<n>] store=<dir|unknown> shared=<yes|no|unknown>[: <why>]
 STATUS MODEL engine=<e> model=<ref> digest=<sha256:...|none> weights=<n> loaded=<yes|no> [num_ctx=<n>]
 STATUS MORE kind=model shown=<n> total=<n> ...
@@ -204,7 +205,7 @@ Reads the box (rule 8) **before** starting anything, then the parent's tags, the
 tag's four compared parameters, and the store; its own clock across the warm-up.
 
 ```
-SERVE OK engine=<e> model=<ref> serve_as=<tag> digest=<...> num_ctx=<n> keep_alive=<d> temperature=<0|unset> seed=<n|unset> created=<yes|no> load=<t> mem_used=<n> mem_free=<n> mem_total=<n> wired_cap=<...> load1=<f> engines=<n> store=<dir|unknown> shared=<yes|no|unknown>
+SERVE OK engine=<e> model=<ref> serve_as=<tag> digest=<...> num_ctx=<n> keep_alive=<d> temperature=<0|unset> seed=<n|unset> created=<yes|no> load=<t> mem_used=<n|unknown> mem_free=<n|unknown> mem_total=<n|unknown> wired_cap=<n|unset> load1=<f|unknown> engines=<n> store=<dir|unknown> shared=<yes|no|unknown>
 SERVE OK stopped=yes engine=<e> model=<tag>
 SERVE FAILED: <reason>; run: <command>
 SERVE REFUSED: <reason>; run: <command>

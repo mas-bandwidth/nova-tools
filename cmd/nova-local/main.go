@@ -230,7 +230,9 @@ func (w world) store(ctx context.Context, a Adapter, c Client, model string) (di
 	return dir, shared, why
 }
 
-// boxFacts are the box's facts, read now, as fields of a first line.
+// boxFacts are the box's facts, read now, as fields of a first line (rule 10).
+// All five are always printed: unread memory and load are unknown, and a wired
+// cap the box does not have, or that reports none, is unset.
 func (w world) boxFacts(o *tool.Out) (load1 float64, free uint64, ok bool) {
 	free, total, memOK := uint64(0), uint64(0), false
 	if w.box.Mem != nil {
@@ -239,14 +241,16 @@ func (w world) boxFacts(o *tool.Out) (load1 float64, free uint64, ok bool) {
 	if memOK {
 		o.Fact("mem_used", total-free).Fact("mem_free", free).Fact("mem_total", total)
 	} else {
-		o.Fact("mem_free", "unknown").Fact("mem_total", "unknown")
+		o.Fact("mem_used", "unknown").Fact("mem_free", "unknown").Fact("mem_total", "unknown")
 	}
-	if mib, set := uint64(0), false; w.box.WiredCap != nil {
-		if mib, set = w.box.WiredCap(); set {
+	if w.box.WiredCap != nil {
+		if mib, set := w.box.WiredCap(); set {
 			o.Fact("wired_cap", mib<<20)
 		} else {
 			o.Fact("wired_cap", "unset")
 		}
+	} else {
+		o.Fact("wired_cap", "unset")
 	}
 	load1, loadOK := 0.0, false
 	if w.box.Load1 != nil {
