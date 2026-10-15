@@ -81,6 +81,20 @@ func SprintKey(field string) string { return "sprint:" + field }
 // no machine caps a friend (her width is her one capacity number).
 func FriendBeatKey(f string) string { return "friend:" + f + ":beat" }
 
+// FriendDesiredKey is the hash apply writes a friend row's desired fields to; its
+// session field (FriendSessions) is what nova-bus reads to refuse a send to a
+// one-shot friend.
+func FriendDesiredKey(f string) string { return "friend:" + f + ":desired" }
+
+// friendSessionView is the session a desired hash holds, live when it holds none (a
+// hash written before the field).
+func friendSessionView(s string) string {
+	if s == "" {
+		return DefaultFriendSession
+	}
+	return s
+}
+
 // BeatKey is the machine's own heartbeat, written by the bench that runs on
 // it (nova-sprint bench beat): host, at (unix ms), load1, ncpu, cpu today;
 // os, arch and memory_gb when the beat carries them. nova-config reads it,
@@ -248,7 +262,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "pronouns", "slots")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "pronouns", "slots", "session")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -281,6 +295,8 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			// the pronouns the friend goes by. Empty is unstated and must stay
 			// empty, so apply does not rewrite it into a stated they/them.
 			"pronouns": str(d, 7),
+			// live or one-shot; a hash from before the field reads live
+			"session": friendSessionView(str(d, 9)),
 		}
 	}
 	return views, revValue(rev), nil
@@ -480,8 +496,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	writeStreams := prev == nil || prev["streams"] != row.Fields["streams"]
 	writeKinds := prev == nil || prev["kinds"] != row.Fields["kinds"]
 	writePronouns := prev == nil || prev["pronouns"] != row.Fields["pronouns"]
+	writeSession := prev == nil || prev["session"] != FriendSession(row)
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeStreams && !writeKinds && !writePronouns && !writeRoles {
+	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeStreams && !writeKinds && !writePronouns && !writeSession && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -506,6 +523,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writePronouns { // the configured pronouns mirrored in the desired hash; sprint sync reads the config store and supplies row_pronouns on beats
 		pipe.HSet(ctx, "friend:"+f+":desired", "pronouns", row.Fields["pronouns"])
+	}
+	if writeSession { // live or one-shot: nova-bus refuses a send to a one-shot at once (FriendDesiredKey)
+		pipe.HSet(ctx, FriendDesiredKey(f), "session", FriendSession(row))
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)

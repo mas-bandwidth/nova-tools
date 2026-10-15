@@ -78,6 +78,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	warnLoad := fs.Float64("warn-load", 0, "the one-minute host `load` at which a local child start warns, at or below --max-load (default 0: no warning)")
 	gocacheGiB := fs.Int("gocache-limit", int(gocache.Limit/gib), "the `GiB` the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
+	prompt := fs.String("prompt", "", "an identity prompt `file` prepended to every card's prompt, work and read alike: a one-shot friend's name, pronouns and voice, the member run --as friend.<name> (nova-config friend --session one-shot); read once at start, refused when unreadable or empty")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
 	// a worker runs the width its queue answers on every pass, which the server reads from
 	// nova-config: a member its own machine row's, a reader its machine's (reader-<m>,
@@ -156,6 +157,16 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 			f.add(err.Error())
 		}
 	}
+	// a one-shot friend's identity prompt, read here so a file that cannot carry one is a
+	// refusal before any card is taken (member.ReadIdentityPrompt); each launch reads it again
+	// through native --prompt
+	if _, err := member.ReadIdentityPrompt(*prompt); err != nil {
+		f.add(err.Error())
+	} else if *prompt != "" {
+		if abs, aerr := filepath.Abs(*prompt); aerr == nil {
+			*prompt = abs // each launch reads it, wherever it runs from
+		}
+	}
 	pass := splitNames(*passFlag)
 	for _, n := range pass {
 		if !envNameRE.MatchString(n) {
@@ -219,7 +230,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity, prompt: *prompt,
 		server: *server, as: *as,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
@@ -543,6 +554,7 @@ type nativeRunner struct {
 	self, harness, model, root, slots, resultsRoot string
 	deadline, stageWall                            time.Duration
 	tokens, auth, config, worker, identity         string
+	prompt                                         string // the identity prompt file handed to each launch (native --prompt); "" for none
 	noWall                                         bool
 	// server and as are the sprint's server and this worker's name: a limited route's
 	// child takes its global rate budget there (--budget-server, nativebudget.go)
@@ -793,6 +805,9 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	}
 	if r.identity != "" {
 		args = append(args, "--identity", r.identity)
+	}
+	if r.prompt != "" {
+		args = append(args, "--prompt", r.prompt)
 	}
 	if (p.RateRPM > 0 || p.RateConcurrent > 0) && r.server != "" {
 		// a limited route (nova-sprint routes limit): every model request of the child takes
