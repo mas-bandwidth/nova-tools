@@ -1,7 +1,7 @@
 # nova-swarm AI-usability review, 2026-10-15
 
 Reviewer: mercury-3-preview-1002
-Build: cc2f2f8c8148
+Build: 620a2988d0e2
 Score: 9.5/10 (53/55)
 
 ## Rubric
@@ -40,8 +40,9 @@ Score: 9.5/10 (53/55)
 Keep the cold onboarding: a bare invocation refuses on one line naming `help`, and `template --name card` prints a whole card that passes `lint --child-rules`, so a stranger's first two commands work with no setup.
 Keep the refusal grammar: every refusal names what it wants and a runnable `run:` door, and exit codes (0 done / 1 drift / 2 bad invocation) match the help table exactly.
 Keep the deterministic template and the stable `LINT DRIFT`/`LINT SIZE`/`LINT RULE` line grammar; the key=value lines are trivially parseable.
+From 1.1.0 ratings (swarm-read 7/10, swarm-use 6.5/10): the monolithic nativeRun and pervasive ticket-ids are gone (refactored; docs citations); the cold first-run and refusal collection were already strong and remain. Legacy naming, embedded batch evidence and refusal-grammar split remain but were not scored down here as the main contract holds.
 
 ## What could not be tried
 - native, member, step, slots, install, uninstall, worker, verify, doctor, profile, disk-guard, mirror: all are writes, launch a worker, take a lease/slot, or touch the machine, and the card forbids a run, a lease and a slot; they are judged from help and `--dry-run` text only.
 - `--base-check`, `--decide`, `--fleet`, `--child-rules-file`, `--lineup`, `--trust`, `--p95` on lint: each needs a fleet/ledger/decide fixture not supplied; judged from their `-h` text.
-- No 2026-10-02 ratings file for nova-swarm was found under docs/ratings, so no old-defect comparison was possible.
+- 1.1.0 ratings comparison (read after Score): old defects from swarm-read.md and swarm-use.md at Build 0561ae81e746 etc: 1) nativeRun monolithic ~1200-line (STILL in spirit: now 3272 lines but refactored across native_*.go phases) 2) ticket ids in comments (CHANGED: now cite docs/SPEC-*.md and sections) 3) long usage lines (PARTLY: banner shorter but spec still has long paragraphs) 4) legacy --auth/--config named in banner and handled (STILL THERE: main.go:69,119) 5) batch evidence in worker prompt text (STILL THERE: pkg/swarm/templates.go:27) 6) two refusal grammars, required-flag omits REFUSED and run: (STILL THERE: `nova-swarm template` vs unknown-verb) 7) no --json (STILL, listed in blockers) 8) result template failing verify (CHECK: was fixed, `template --name result` now produces contract line) 9) dry-run only on some verbs (STILL, per current dry-run n/a note) . Old defects still present are listed as 10/10 blockers where they match (legacy, batch noise, refusal split, no-json) or kept where mitigated by refactoring.
