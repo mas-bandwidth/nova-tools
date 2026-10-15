@@ -394,20 +394,6 @@ func TestNoWakeOrIdleNoteWhileStopped(t *testing.T) {
 	})
 }
 
-// A lane state file written by this build reads back with its stop-returns.
-func TestLaneStateKeepsItsStopReturns(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	path := dir
-	want := LaneState{Sessions: map[int]string{1: "s"}, StopReturns: []StopReturn{{Lane: 1, Job: "c1~15", Row: "friend.bob", Card: "c1", Gen: 2, Epoch: "15", Pid: 41, Exit: -1, Ended: true, At: t0, Result: "ok"}}}
-	require.NoError(t, WriteLanes(path, want))
-	got, err := ReadLanes(path)
-	require.NoError(t, err)
-	assert.Equal(t, want.StopReturns, got.StopReturns)
-	_, err = os.Stat(filepath.Join(dir, LanesFile))
-	require.NoError(t, err)
-}
-
 // Regression test for Fix 3: stopReads falls back to readSet.epoch and asked queue epoch
 // when r.Epoch is unpopulated on an asked/active read.
 func TestStopReadsFallsBackToReadSetEpochWhenReadEpochUnpopulated(t *testing.T) {

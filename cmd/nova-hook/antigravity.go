@@ -137,14 +137,14 @@ func (w world) antigravityConfig(c *tool.Call) (*codexRoute, error) {
 		}
 		return r, nil
 	}
-	if err := w.antigravityInstall(ag); err != nil {
+	if err := validateAntigravityDirs(ag); err != nil {
 		return nil, err
 	}
 	r.directory = ag.eventsDir
 	return r, nil
 }
 
-func installAntigravityRoute(ag *antigravityRoute) error {
+func validateAntigravityDirs(ag *antigravityRoute) error {
 	if ag == nil {
 		return errors.New("antigravity route is nil")
 	}
@@ -154,11 +154,42 @@ func installAntigravityRoute(ag *antigravityRoute) error {
 			return fmt.Errorf("antigravity workspace directory %s is not accessible", ag.workspaceDir)
 		}
 	}
-	if err := ensureAntigravityEventsDir(ag.eventsDir); err != nil {
+	return ensureAntigravityEventsDir(ag.eventsDir)
+}
+
+// probeAntigravity runs the Antigravity startup probe with bounded exponential
+// backoff inside the client until the local language_server and conversation
+// answer or a signal stops the process (the never-unhooked rule).
+func (w world) probeAntigravity(c *tool.Call, ag *antigravityRoute) *tool.Out {
+	ctx, stop := w.signals(context.Background())
+	defer stop()
+	lastFault := ""
+	for attempt := 0; ; attempt++ {
+		err := w.antigravityInstall(ag)
+		if err == nil {
+			return nil
+		}
+		if why := err.Error(); why != lastFault {
+			lastFault = why
+			line(c, tool.Done().As("STATE").Fact("state", "probe-retry").Note(why+"; retrying with backoff"))
+		}
+		if !w.sleep(ctx, w.retryBackoff(attempt)) {
+			return tool.Exit(0)
+		}
+	}
+}
+
+func (ag *antigravityRoute) run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	runCtx, cancel := context.WithTimeout(ctx, antigravityCmdTimeout)
+	defer cancel()
+	return ag.exec(runCtx, dir, env, name, args...)
+}
+
+func installAntigravityRoute(ag *antigravityRoute) error {
+	if err := validateAntigravityDirs(ag); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), antigravityCmdTimeout)
-	defer cancel()
+	ctx := context.Background()
 
 	pid, token, ports, serverBin, err := discoverAntigravityServer(ctx, ag)
 	if err != nil {
@@ -207,7 +238,7 @@ func ensureAntigravityEventsDir(dir string) error {
 }
 
 func discoverAntigravityServer(ctx context.Context, ag *antigravityRoute) (int, string, []int, string, error) {
-	psOut, err := ag.exec(ctx, "", nil, "ps", "-axo", "pid=,command=")
+	psOut, err := ag.run(ctx, "", nil, "ps", "-axo", "pid=,command=")
 	if err != nil {
 		return 0, "", nil, "", fmt.Errorf("discover Antigravity language_server via ps: %w", err)
 	}
@@ -222,7 +253,7 @@ func discoverAntigravityServer(ctx context.Context, ag *antigravityRoute) (int, 
 	if token == "" {
 		return 0, "", nil, "", fmt.Errorf("antigravity language_server pid %d has no --csrf_token", pid)
 	}
-	lsofOut, err := ag.exec(ctx, "", nil, "lsof", "-nP", "-a", "-p", strconv.Itoa(pid), "-iTCP", "-sTCP:LISTEN")
+	lsofOut, err := ag.run(ctx, "", nil, "lsof", "-nP", "-a", "-p", strconv.Itoa(pid), "-iTCP", "-sTCP:LISTEN")
 	if err != nil {
 		return 0, "", nil, "", fmt.Errorf("discover Antigravity language_server ports via lsof: %w", err)
 	}
@@ -420,7 +451,7 @@ func resolveAntigravityConversation(ctx context.Context, ag *antigravityRoute) (
 		return ag.sessionID, nil
 	}
 	dbPath := filepath.Join(ag.homeDir, ".gemini", "antigravity", "conversations", "conversation_summaries.db")
-	out, err := ag.exec(ctx, "", nil, "sqlite3", "-json", dbPath, "SELECT key, value FROM ItemTable WHERE key LIKE 'conversation_summaries.%';")
+	out, err := ag.run(ctx, "", nil, "sqlite3", "-json", dbPath, "SELECT key, value FROM ItemTable WHERE key LIKE 'conversation_summaries.%';")
 	if err != nil {
 		return "", fmt.Errorf("read Antigravity conversations from %s: %w", dbPath, err)
 	}
@@ -594,7 +625,7 @@ func probeAntigravityPort(ctx context.Context, ag *antigravityRoute, token strin
 	var lastErr error
 	for _, port := range ports {
 		env := antigravityEnv(token, port)
-		out, err := ag.exec(ctx, ag.workspaceDir, env, ag.agentAPI, "get-conversation-metadata", ag.conversation)
+		out, err := ag.run(ctx, ag.workspaceDir, env, ag.agentAPI, "get-conversation-metadata", ag.conversation)
 		err = checkAntigravityOutput(out, err)
 		if err == nil {
 			return port, nil
@@ -682,18 +713,16 @@ func deliverAntigravitySaved(ctx context.Context, ag *antigravityRoute, id, dire
 	}
 
 	// Re-discover the running language_server in case it restarted with a new PID, token, or port.
-	discCtx, discCancel := context.WithTimeout(ctx, antigravityCmdTimeout)
-	pid, token, ports, _, discErr := discoverAntigravityServer(discCtx, ag)
+	pid, token, ports, _, discErr := discoverAntigravityServer(ctx, ag)
 	if discErr == nil {
 		var port int
-		port, discErr = probeAntigravityPort(discCtx, ag, token, ports)
+		port, discErr = probeAntigravityPort(ctx, ag, token, ports)
 		if discErr == nil {
 			ag.pid = pid
 			ag.csrfToken = token
 			ag.port = port
 		}
 	}
-	discCancel()
 	if discErr != nil {
 		if sendErr != nil {
 			detail := strings.TrimSpace(string(out))
