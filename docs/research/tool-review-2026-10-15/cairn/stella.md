@@ -12,7 +12,7 @@ Score: 8.5/10 (47/55)
 | 3 | output | 4 | `nova-cairn open --store scratch/refusal-store --session x --publish manual --bogus 1 --json` -> `OPEN REFUSED: unknown flag --bogus; the flags of open are --dry-run, --json, --now, --publish, --session, --source, --store; run: nova-cairn open -h`, exit 2; a later `--json` does not select JSON refusal output. |
 | 4 | dry-run | 5 | `nova-cairn append --store scratch/help-store --session first --entry e2 --text "would remain absent" --dry-run --json` -> `{"result":{"verb":"append","status":"ok","exit":0},"facts":{"session":"first","entry":"e2","source":"-","persisted":false,"published":false,"publish":"manual","duplicate":false,"stamp":"2026-10-15T16:15:41.655658052Z","dry_run":true}}` |
 | 5 | idempotent | 4 | `nova-cairn append --store scratch/help-store --session first --entry stable --text "stable synthetic bytes"` -> `APPEND OK session=first entry=stable source=- persisted=true published=false publish=manual duplicate=true stamp=2026-10-15T16:15:41.844498463Z` |
-| 6 | no prompts | 5 | `printf 'stdin synthetic words\n' | nova-cairn append --store "$PWD/scratch/help-store" --session first --entry stdin --file - --now 2026-01-02T03:04:05Z` -> `APPEND OK session=first entry=stdin source=- persisted=true published=false publish=manual duplicate=false stamp=2026-01-02T03:04:05Z` |
+| 6 | no prompts | 5 | `nova-cairn append --store scratch/help-store --session first --entry stdin --file - --now 2026-01-02T03:04:05Z` -> `APPEND OK session=first entry=stdin source=- persisted=true published=false publish=manual duplicate=false stamp=2026-01-02T03:04:05Z`; stdin contained `stdin synthetic words\n`. |
 | 7 | exit codes | 5 | `nova-cairn append --store "$store" --session second --entry x2 --text 'policy conflict synthetic' --publish manual` -> `exit=1` |
 | 8 | one word | 4 | `nova-cairn` -> `CAIRN REFUSED: no verb given; the verbs are open, append, index, receipt, version; run: nova-cairn help`; the help's pseudo-`NOTE` line still resembles a command. |
 | 9 | push | 5 | `n/a: local file writes and reads do not wait on external state` |
@@ -40,7 +40,7 @@ Score: 8.5/10 (47/55)
 
 ## Good, keep
 Stable IDs make exact append retries return `duplicate=true` without changing store bytes.
-Both write verbs offer `--dry-run`; synthetic store hashes remained unchanged.
+Both write verbs offer `--dry-run`; the open reply says `dry_run=true`, the append reply says `persisted=false` and `dry_run=true`, and follow-up listings show no `dry` session or `e2` file.
 The four-step help example takes a new reader from session open to a text receipt.
 
 ## What could not be tried
