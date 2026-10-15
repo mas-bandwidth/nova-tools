@@ -18,7 +18,20 @@
 \* DownAfter + 1 (an answer late in its interval); the model fires at the
 \* first, and NoDownBeforeDownAfter holds for both. Only
 \* the live model answers (nova-hook prove inside its turn), inside the
-\* interval of its challenge; a model may go silent, come back and hook in.
+\* window of its challenge; a model may go silent, come back and hook in.
+\*
+\* The proof window (hook/redis.go answerLua and the record's recent, under
+\* Parts "window"): a harness may deliver a challenge into the model's turn an
+\* interval or more late, after the server issued a newer one. A proof answers
+\* any challenge the server issued to that name, in its epoch, within the last
+\* DownAfter intervals and not yet spent, not only the newest, and it counts
+\* as an answer at the time of the proof. issued holds those challenges with
+\* their age in intervals; one DownAfter intervals old has left the window
+\* (the code's deadline is its issue time plus down-after by TIME, so an age
+\* under DownAfter is inside it whatever the fraction of the interval).
+\* Without "window" the challenges are one, answered while open: the cases
+\* that check the tell, the client and liveness stay inside their budget, and
+\* the window cases check the late answers.
 \*
 \* Telling (serve.go tell): what the friends see is the unhooked set and the
 \* coordinator (a hooked name of the coordinator role, CoordRole, chosen
@@ -62,7 +75,8 @@ QuietCap == DownAfter + 2
 \*   "tell" (the tell and its sends), "judge", "hold", "client", "ask", "bootstrap",
 \*   "quiet" (the ghost quiet is counted; else it stays 0), "misses" (misses are
 \*   counted, for the old rule and its witness; else they stay 0). Neither decides
-\*   a down now, so the cases that do not read them leave them out.
+\*   a down now, so the cases that do not read them leave them out. "window"
+\*   (the issued challenges a proof answers, and the ghost proof).
 \* Broken (reversed witnesses, each must fail):
 \*   "noonce"      no once-key: every server's pass is taken
 \*   "heldfirst"   BadHeldWhileDown: the dashboard reads the hold before the hook
@@ -76,6 +90,10 @@ QuietCap == DownAfter + 2
 \*   "bootstrapoverwrite" client DEL/HSET replaces a delivered server nonce
 \*   "twomisses"   BadDownEarly: the old rule, down at two missed challenges in a
 \*                 row whatever the time since the last answer (NoDownBeforeDownAfter)
+\*   "oldnonce"    BadProveOldNonce: a proof answers a challenge older than the
+\*                 window (ProofNamesIssuedInWindow)
+\*   "othername"   BadProveOtherName: a proof answers another name's challenge
+\*                 (ProofNamesIssuedInWindow)
 \* BadUnhookAtThree (Limit = 3) is retired with Limit: the down rule is time.
 
 None == <<>>
@@ -107,19 +125,25 @@ VARIABLES
     alarm,     \* [Names -> BOOLEAN]: the client's own alarm: the server is lost
     held,      \* [Names -> BOOLEAN]: nova-sprint's hold
     ask,       \* [Names -> {"none", "open", "due", "answered", "timedout"}]: one ask to the name
-    expiries   \* [Names -> Nat]: timeouts delivered for the name's ask
+    expiries,  \* [Names -> Nat]: timeouts delivered for the name's ask
+    issued,    \* the heartbeat challenges a proof may answer, [to, ep, age] (the record's recent)
+    proof      \* ghost: the last proof, None or [by, to, ep, epNow, age, older]
 
 tellv == <<told, tv, out, sent, dups, heard>>
 judv == <<jst, jkind, jto, jresent>>
-server == <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, held, ask, expiries>>
+server == <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, held, ask, expiries, issued, proof>>
 client == <<elapsed, alarm>>
 vars == <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
-          jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries>>
+          jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof>>
 
 Cap3(x) == IF x < 3 THEN x ELSE 3
 CapQ(x) == IF x < QuietCap THEN x ELSE QuietCap
 \* misses decide nothing now but the old rule's witness: counted to two.
 CapM(x) == IF x < 2 THEN x ELSE 2
+
+\* The oldest age an issued challenge is kept at: inside the window, under
+\* DownAfter; under "oldnonce" one interval past it.
+MaxAge == IF "oldnonce" \in Broken THEN DownAfter ELSE DownAfter - 1
 
 \* What the friends are to hear, of a hook state h.
 UnhookedOf(h) == {n \in Names : ~h[n]}
@@ -171,9 +195,13 @@ Init ==
     /\ held = [n \in Names |-> FALSE]
     /\ ask = [n \in Names |-> "none"]
     /\ expiries = [n \in Names |-> 0]
+    /\ issued = {}
+    /\ proof = None
 
-\* The interval ends: a standing challenge is late (answerLua refuses it, -4),
-\* an open ask and an open judgment are past their due, the row ages.
+\* The interval ends: a standing challenge is late (past its until, still
+\* answered inside the window), an issued challenge ages and leaves the
+\* window at DownAfter, an open ask and an open judgment are past their due,
+\* the row ages.
 Tick ==
     /\ taken' = FALSE
     /\ passed' = {}
@@ -182,7 +210,8 @@ Tick ==
     /\ ask' = [n \in Names |-> IF ask[n] = "open" THEN "due" ELSE ask[n]]
     /\ jst' = IF jst = "open" THEN "due" ELSE jst
     /\ qtime' = [n \in Names |-> IF qtime[n] < QCap THEN qtime[n] + 1 ELSE QCap]
-    /\ UNCHANGED <<beatOwned, hooked, misses, events, hooks, tellv, jkind, jto, jresent, alive, quiet, client, held, expiries>>
+    /\ issued' = {[c EXCEPT !.age = c.age + 1] : c \in {d \in issued : d.age < MaxAge}}
+    /\ UNCHANGED <<beatOwned, hooked, misses, events, hooks, tellv, jkind, jto, jresent, alive, quiet, client, held, expiries, proof>>
 
 \* One server's pass (beatLua), atomic: the beat, the row stamped, and a tell
 \* prepared when what the friends are to hear differs from the row's told.
@@ -205,6 +234,11 @@ Pass(s) ==
           /\ misses' = IF "misses" \in Parts THEN [n \in Names |-> IF hooked[n] THEN m[n] ELSE misses[n]] ELSE misses
           /\ events' = [n \in Names |-> IF n \in gone THEN events[n] + 1 ELSE events[n]]
           /\ chal' = [n \in Names |-> IF h2[n] THEN "open" ELSE IF n \in gone THEN "none" ELSE chal[n]]
+          \* each challenge set joins the name's recent; an unhook clears it
+          /\ issued' = IF "window" \in Parts
+                          THEN {c \in issued : c.to \notin gone}
+                               \cup {[to |-> x, ep |-> hooks[x], age |-> 0] : x \in {y \in Names : h2[y]}}
+                          ELSE issued
           /\ elapsed' = [n \in Names |-> IF h2[n] THEN 0 ELSE elapsed[n]]
           /\ alarm' = [n \in Names |-> IF h2[n] THEN FALSE ELSE alarm[n]]
           /\ quiet' = IF "quiet" \in Parts THEN [n \in Names |-> IF hooked[n] THEN CapQ(quiet[n] + 1) ELSE quiet[n]] ELSE quiet
@@ -214,7 +248,7 @@ Pass(s) ==
                            THEN told' = now /\ tv' = tv + 1
                            ELSE UNCHANGED <<told, tv>>
                 ELSE UNCHANGED <<out, told, tv>>
-    /\ UNCHANGED <<hooks, sent, dups, heard, judv, alive, qtime, held, ask, expiries>>
+    /\ UNCHANGED <<hooks, sent, dups, heard, judv, alive, qtime, held, ask, expiries, proof>>
 
 \* The judgment a tell raises (serve.go tell): friends down or back go to the
 \* coordinator; the coordinator gone with none after it, to every live name.
@@ -250,14 +284,14 @@ Tell(s) ==
                         ELSE /\ out' = [out EXCEPT ![s] = None]
                              /\ told' = t.to
                              /\ tv' = t.v + 1
-    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
 
 \* The send fails: nothing is marked, a later pass prepares it again.
 TellFails(s) ==
     /\ out[s] # None
     /\ ~out[s].sent
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
 
 \* The server crashes holding a tell, before or after its send: the tell in
 \* hand is lost; a later pass prepares it again (under "markafter", a crash
@@ -265,7 +299,7 @@ TellFails(s) ==
 Crash(s) ==
     /\ out[s] # None
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
 
 \* BadMarkAfterSend: after the send, the row's told is marked, if no one marked it since.
 Mark(s) ==
@@ -275,7 +309,7 @@ Mark(s) ==
           THEN told' = out[s].to /\ tv' = tv + 1
           ELSE UNCHANGED <<told, tv>>
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
 
 \* A judgment past its due is pushed again as OVERDUE, once (Judge).
 Judge ==
@@ -283,24 +317,53 @@ Judge ==
     /\ jresent = 0
     /\ jst' = "overdue"
     /\ jresent' = jresent + 1
-    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
 
 \* A live recipient answers the judgment: closed.
 JudgeAnswered ==
     /\ jst \in {"open", "due", "overdue"}
     /\ \E n \in jto : alive[n]
     /\ jst' = "closed"
-    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, jresent, alive, quiet, qtime, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, jresent, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
 
-\* The model answers its open challenge (answerLua); a late one is refused.
+\* The model answers its current challenge (answerLua): a bootstrap, or,
+\* without "window", the heartbeat's while open (AnswerIssued, under
+\* "window", answers it late too).
 Answer(n) ==
     /\ alive[n]
     /\ hooked[n]
-    /\ chal[n] \in {"open", "bootstrap"}
+    /\ chal[n] \in IF "window" \in Parts THEN {"bootstrap"} ELSE {"open", "bootstrap"}
     /\ chal' = [chal EXCEPT ![n] = "none"]
     /\ misses' = [misses EXCEPT ![n] = 0]
     /\ quiet' = [quiet EXCEPT ![n] = 0]
     /\ qtime' = [qtime EXCEPT ![n] = 0]
+    /\ UNCHANGED <<beatOwned, hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, client, held, ask, expiries, issued, proof>>
+
+\* The youngest challenge issued to n: the one hook:chal holds while it stands.
+Youngest(n, c) == \A d \in issued : d.to = n => d.age >= c.age
+
+\* The model proves a heartbeat challenge it was handed (answerLua over the
+\* record's recent): any challenge issued to it, in its epoch, inside the
+\* window and not yet spent. The proof spends that challenge and counts as an
+\* answer now; a newer challenge still standing stays standing (and is a miss
+\* at the next pass, which the answer's time keeps from a down). Under
+\* "othername" it answers another name's challenge; under "oldnonce" issued
+\* keeps challenges one interval past the window.
+AnswerIssued(n, c) ==
+    /\ "window" \in Parts
+    /\ alive[n]
+    /\ hooked[n]
+    /\ c \in issued
+    /\ c.to = n \/ "othername" \in Broken
+    /\ c.ep = hooks[c.to]
+    /\ issued' = issued \ {c}
+    /\ chal' = IF c.to = n /\ Youngest(n, c) /\ chal[n] \in {"open", "late"}
+                 THEN [chal EXCEPT ![n] = "none"] ELSE chal
+    /\ misses' = [misses EXCEPT ![n] = 0]
+    /\ quiet' = [quiet EXCEPT ![n] = 0]
+    /\ qtime' = [qtime EXCEPT ![n] = 0]
+    /\ proof' = [by |-> n, to |-> c.to, ep |-> c.ep, epNow |-> hooks[n], age |-> c.age,
+                 older |-> \E d \in issued : d.to = n /\ d.age < c.age]
     /\ UNCHANGED <<beatOwned, hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, client, held, ask, expiries>>
 
 \* BadDaemonAnswers: a process answers with no model behind it; the record
@@ -312,9 +375,9 @@ DaemonAnswer(n) ==
     /\ chal' = [chal EXCEPT ![n] = "none"]
     /\ misses' = [misses EXCEPT ![n] = 0]
     /\ qtime' = [qtime EXCEPT ![n] = 0]
-    /\ UNCHANGED <<beatOwned, hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, client, held, ask, expiries>>
+    /\ UNCHANGED <<beatOwned, hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, client, held, ask, expiries, issued, proof>>
 
-\* The model's own word hooks it in again (armLua: a new epoch, misses cleared).
+\* The model's own word hooks it in again (armLua: a new epoch, misses and recent cleared).
 Hook(n) ==
     /\ alive[n]
     /\ ~hooked[n]
@@ -328,7 +391,8 @@ Hook(n) ==
     /\ alarm' = [alarm EXCEPT ![n] = FALSE]
     /\ quiet' = [quiet EXCEPT ![n] = 0]
     /\ qtime' = [qtime EXCEPT ![n] = 0]
-    /\ UNCHANGED <<events, taken, passed, rowAge, tellv, judv, alive, held, ask, expiries>>
+    /\ issued' = {c \in issued : c.to # n}
+    /\ UNCHANGED <<events, taken, passed, rowAge, tellv, judv, alive, held, ask, expiries, proof>>
 
 \* Client startup/periodic challengeLua is one atomic write. beat_at belongs
 \* to the epoch, so an answered or expired server challenge does not reopen
@@ -342,7 +406,7 @@ Bootstrap(n) ==
           ELSE /\ ~beatOwned[n] /\ chal[n] = "none"
                /\ chal' = [chal EXCEPT ![n] = "bootstrap"]
     /\ UNCHANGED <<beatOwned, hooked, misses, events, hooks, taken, passed, rowAge,
-                   tellv, judv, alive, quiet, qtime, client, held, ask, expiries>>
+                   tellv, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
 
 \* The world: the model goes silent (a closed app, a limit, a stuck turn) or comes back.
 GoSilent(n) == /\ alive[n] /\ alive' = [alive EXCEPT ![n] = FALSE]
@@ -353,7 +417,7 @@ ComeBack(n) == /\ ~alive[n] /\ alive' = [alive EXCEPT ![n] = TRUE]
 \* The sprint sets or clears its hold, any time.
 SetHold(n, v) == /\ "hold" \in Parts
                  /\ held[n] # v /\ held' = [held EXCEPT ![n] = v]
-                 /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, ask, expiries>>
+                 /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, ask, expiries, issued, proof>>
 
 \* A client loses everything it holds (a restart): the server reads nothing of it.
 ClientLose(n) == /\ "client" \in Parts
@@ -377,13 +441,13 @@ ClientAlarm(n) == /\ "client" \in Parts
 \* any expiry delivers its timeout once (AddOnce's once-key).
 Ask(n) == /\ "ask" \in Parts
           /\ ask[n] = "none" /\ ask' = [ask EXCEPT ![n] = "open"]
-          /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries>>
+          /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries, issued, proof>>
 Reply(n) == /\ alive[n] /\ ask[n] = "open" /\ ask' = [ask EXCEPT ![n] = "answered"]
-            /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries>>
+            /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries, issued, proof>>
 Expire(s, n) == /\ ask[n] = "due"
                 /\ ask' = [ask EXCEPT ![n] = "timedout"]
                 /\ expiries' = [expiries EXCEPT ![n] = expiries[n] + 1]
-                /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held>>
+                /\ UNCHANGED <<beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, issued, proof>>
 
 Next ==
     \/ Tick
@@ -391,6 +455,7 @@ Next ==
     \/ Judge \/ JudgeAnswered
     \/ \E s \in Servers, n \in Names : Expire(s, n)
     \/ \E n \in Names : \/ Answer(n) \/ DaemonAnswer(n) \/ Hook(n) \/ Bootstrap(n)
+                        \/ \E c \in issued : AnswerIssued(n, c)
                         \/ GoSilent(n) \/ ComeBack(n)
                         \/ ClientLose(n) \/ ClientElapse(n) \/ ClientAlarm(n)
                         \/ Ask(n) \/ Reply(n)
@@ -418,6 +483,7 @@ TypeOK ==
     /\ rowAge \in 0..3
     /\ told \in States /\ heard \in States
     /\ jst \in {"none", "open", "due", "overdue", "closed"}
+    /\ issued \subseteq [to : Names, ep : 1..2, age : 0..DownAfter]
 
 \* The dashboard row is the table applied to the hook record (its state and
 \* answered_at) and the hold, under a live server row, and nothing else.
@@ -494,6 +560,21 @@ ClientAlarmOnlyAfterTwo == \A n \in Names : alarm[n] => elapsed[n] >= 2
 BootstrapPreservesServerNonce == \A n \in Names : chal[n] # "clobbered"
 BootstrapOnlyBeforeHeartbeat == \A n \in Names : beatOwned[n] => chal[n] # "bootstrap"
 WitnessBootstrap == \A n \in Names : chal[n] # "bootstrap"
+
+\* The proof window: a proof always names a challenge actually issued to the
+\* name that proves, in its epoch, inside the window (BadProveOldNonce and
+\* BadProveOtherName fail it).
+ProofNamesIssuedInWindow ==
+    proof = None \/ (proof.to = proof.by /\ proof.ep = proof.epNow /\ proof.age < DownAfter)
+
+\* A proof counts as an answer at the time of the proof: the name's
+\* answered_at is now, so it reads up and is not unhooked for that silence.
+ProofRefreshesAnswer ==
+    [][proof' # proof /\ proof' # None => qtime'[proof'.by] = 0 /\ hooked'[proof'.by]]_vars
+
+\* Reached: a proof of a challenge older than one still issued to the name
+\* (the late delivery the window is for).
+WitnessProveOlder == proof = None \/ ~proof.older
 
 \* Reversed witnesses: reached states. TLC's counterexample shows each is reached.
 WitnessUnhook == \A n \in Names : events[n] = 0

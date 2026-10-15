@@ -407,7 +407,7 @@ func TestBootstrapPreservesHeartbeatOwnership(t *testing.T) {
 			}
 			if state == "late" {
 				_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
-				assert.ErrorIs(t, err, hook.ErrExpired, "the server deadline still stands")
+				assert.NoError(t, err, "past its interval and inside the down-after window, the server nonce still answers")
 			}
 			e2, _, err := r.s.Arm(ctx, "ada", hook.Comms, "test", true)
 			require.NoError(t, err)

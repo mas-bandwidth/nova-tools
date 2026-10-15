@@ -142,38 +142,124 @@ func TestOneAnswerResetsTheSilence(t *testing.T) {
 }
 
 // TestAStaleOrWrongNonceIsRefused pins prove's refusals (tla/HookBeat.tla,
-// Answer): another nonce, the last interval's nonce, a challenge past its
-// interval, and one answered already.
+// AnswerIssued and ProofNamesIssuedInWindow): another nonce, a nonce older
+// than the down-after window (the refusal names it), another name's nonce,
+// one of an earlier epoch, the current nonce past its window, and one
+// answered already.
 func TestAStaleOrWrongNonceIsRefused(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.Hook(t, "bob", hook.Comms)
 	next := nonces()
-	old := r.beat(t, "srv", next)["ada"].Nonce
+	first := r.beatAfter(t, "srv", next, hook.DownAfter)
+	for range 6 { // both answer every challenge after the first: up, and the first leaves the window
+		r.pass(hook.BeatEvery)
+		for n, b := range r.beatAfter(t, "srv", next, hook.DownAfter) {
+			_, err := r.s.Answer(ctx, n, b.Nonce, "session")
+			require.NoError(t, err)
+		}
+	}
 	r.pass(hook.BeatEvery)
-	cur := r.beat(t, "srv", next)["ada"].Nonce
+	cur := r.beatAfter(t, "srv", next, hook.DownAfter)
 	rows := []struct {
 		name  string
+		as    string
 		nonce string
-		pass  time.Duration
 		want  error
+		says  string
 	}{
-		{"another nonce", "nope", 0, hook.ErrWrongNonce},
-		{"the last interval's nonce", old, 0, hook.ErrWrongNonce},
-		{"the current nonce past its interval", cur, hook.BeatEvery + time.Second, hook.ErrExpired},
+		{"another nonce", "ada", "nope", hook.ErrWrongNonce, "(the window: 5m0s)"},
+		{"older than the window", "ada", first["ada"].Nonce, hook.ErrWrongNonce, "(the window: 5m0s)"},
+		{"another name's nonce", "ada", cur["bob"].Nonce, hook.ErrWrongNonce, "within its down-after window"},
 	}
 	for _, row := range rows {
-		r.pass(row.pass)
-		_, err := r.s.Answer(ctx, "ada", row.nonce, "session")
+		_, err := r.s.Answer(ctx, row.as, row.nonce, "session")
 		assert.ErrorIs(t, err, row.want, row.name)
+		assert.ErrorContains(t, err, row.says, row.name)
 	}
+	r.pass(hook.DownAfter + time.Second)
+	_, err := r.s.Answer(ctx, "ada", cur["ada"].Nonce, "session")
+	assert.ErrorIs(t, err, hook.ErrExpired, "the current nonce past its window")
+
+	_, _, err = r.s.Arm(ctx, "bob", hook.Comms, "test", true)
+	require.NoError(t, err)
 	r.Hook(t, "bob", hook.Comms)
-	fresh := r.beat(t, "srv", next)["bob"].Nonce
-	_, err := r.s.Answer(ctx, "bob", fresh, "session")
+	fresh := r.beatAfter(t, "srv", next, hook.DownAfter)["bob"].Nonce
+	_, err = r.s.Answer(ctx, "bob", cur["bob"].Nonce, "session")
+	assert.ErrorIs(t, err, hook.ErrWrongNonce, "a nonce of an earlier epoch")
+	_, err = r.s.Answer(ctx, "bob", fresh, "session")
 	require.NoError(t, err)
 	_, err = r.s.Answer(ctx, "bob", fresh, "session")
 	assert.ErrorIs(t, err, hook.ErrNoChallenge, "an answered challenge is spent")
+}
+
+// TestALateDeliveredNonceProves pins the proof window (tla/HookBeat.tla,
+// AnswerIssued; WitnessProveOlder): a nonce issued an interval ago answers
+// after a newer challenge was issued, says which challenge it matched and
+// when it was issued, counts as an answer now (misses cleared, answered_at
+// now), leaves the newer challenge standing for its own answer, and is
+// spent: the same nonce again is refused.
+func TestALateDeliveredNonceProves(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	next := nonces()
+	old := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+	_, at, err := r.s.Read(ctx, "ada")
+	require.NoError(t, err)
+	r.pass(hook.BeatEvery)
+	cur := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+	require.Equal(t, 1, cur.Misses)
+	r.pass(50 * time.Second)
+	require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, cur.Epoch, "hook"), "its holder's renewal")
+
+	p, err := r.s.AnswerProof(ctx, "ada", old.Nonce, "session")
+	require.NoError(t, err, "a nonce issued one interval ago answers after a newer one was issued")
+	assert.Equal(t, hook.Proof{Proven: 1, Back: 1, Issued: at}, p)
+	st, now, err := r.s.Read(ctx, "ada")
+	require.NoError(t, err)
+	assert.Equal(t, now, st[0].AnswerAt, "the answer counts at the time of the proof")
+	assert.Zero(t, st[0].Misses)
+
+	_, err = r.s.Answer(ctx, "ada", old.Nonce, "session")
+	assert.ErrorIs(t, err, hook.ErrWrongNonce, "a nonce answered once is spent")
+	p, err = r.s.AnswerProof(ctx, "ada", cur.Nonce, "session")
+	require.NoError(t, err, "the newer challenge still stands")
+	assert.Equal(t, 0, p.Back)
+}
+
+// TestAFriendProvingOneIntervalLateStaysUp pins the bug the window fixes: a
+// harness that hands every challenge to the model 50 s late, after the server
+// issued the next one, proves each nonce it was handed; under the default
+// down-after the name is never unhooked and never reads down. Before the
+// window every such proof was refused, and the name went down.
+func TestAFriendProvingOneIntervalLateStaysUp(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	next := nonces()
+	handed := ""
+	for i := range 12 {
+		b := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+		require.Equal(t, hook.BeatChallenged, b.Did, "interval %d", i)
+		r.pass(50 * time.Second)
+		if handed != "" {
+			p, err := r.s.AnswerProof(ctx, "ada", handed, "session")
+			require.NoError(t, err, "interval %d", i)
+			assert.Equal(t, 1, p.Back, "interval %d: the challenge before the newest", i)
+		}
+		handed = b.Nonce
+		r.pass(10 * time.Second)
+		require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, b.Epoch, "hook"), "its holder's renewal")
+		st := r.state(t, "ada")
+		require.Equal(t, hook.StateProven, st.State, "interval %d", i)
+		require.Empty(t, st.Down, "interval %d", i)
+	}
+	assert.Zero(t, r.events(t), "never unhooked")
 }
 
 // TestARoleWithNoBusPushIsNeverChallenged pins who the heartbeat asks: a

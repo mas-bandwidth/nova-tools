@@ -1474,7 +1474,10 @@ minutes. A friend's daemon (`nova-friend run`) is her hook: it hooks her in at
 its start. `nova-hook status` lists every record; `nova-hook unhook --as <name>`
 ends one, and tools refuse that name when it acts without its required proven push.
 The proof records a protocol response to the challenge; it does not establish
-foreground session presence or native idle-wake behavior.
+foreground session presence or native idle-wake behavior. A heartbeat challenge
+handed to the model late, after `nova-hook serve` issued a newer one, still
+proves while it is inside the server's `--down-after` window; the reply says
+which one it matched (`matched=newest` or `matched=<k>-back`).
 `nova-hook hook` and `nova-hook prove` take `--dry-run`: each reads the record
 and prints what it would write -- the plan, or the pushes it would prove -- and
 writes nothing.

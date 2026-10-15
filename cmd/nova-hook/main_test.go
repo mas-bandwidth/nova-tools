@@ -254,6 +254,44 @@ func (s *streamOut) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// TestProveSaysWhichChallengeItMatched pins prove's reply under the proof
+// window (tla/HookBeat.tla, AnswerIssued): a nonce handed late, after the
+// heartbeat issued a newer one, proves and says matched=1-back with its issue
+// time; one older than the window is FAILED naming the window.
+func TestProveSaysWhichChallengeItMatched(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Comms)
+	ctx := context.Background()
+	n := 0
+	nonce := func() string { n++; return "nonce" + strings.Repeat("x", n) }
+	pass := func() string {
+		p, err := r.h.Store.Pass(ctx, []string{"ada"}, hook.BeatEvery, hook.DownAfter, nonce, "test")
+		require.NoError(t, err)
+		require.Len(t, p.Beats, 1)
+		return p.Beats[0].Nonce
+	}
+	ancient := pass()
+	for range 6 {
+		r.h.Pass(hook.BeatEvery)
+		r.h.Hook(t, "ada", hook.Comms)
+		pass()
+	}
+	r.h.Pass(hook.BeatEvery)
+	r.h.Hook(t, "ada", hook.Comms)
+	handed := pass()
+	r.h.Pass(hook.BeatEvery)
+	r.h.Hook(t, "ada", hook.Comms)
+	pass()
+	r.h.Pass(50 * time.Second)
+	cli := r.cli()
+	cli.Do(t, "prove", "--as", "ada", "--nonce", handed).Exit(0).Out("PROVE OK proven=1 state=proven role=comms matched=1-back issued=2026-10-11T12:07:00Z")
+	res := cli.Run("prove", "--as", "ada", "--nonce", ancient)
+	assert.Equal(t, 1, res.Code)
+	assert.Contains(t, res.Stdout+res.Stderr, "PROVE FAILED: the nonce is not the one the challenge asked")
+	assert.Contains(t, res.Stdout+res.Stderr, "(the window: 5m0s)")
+}
+
 // TestTheHookStreamsPushesUntilASignal pins the loop: it prints the challenge,
 // the session answers it from the stream, a message to the name is printed as
 // a push, and a signal stops it at exit 0 with the record proven.
