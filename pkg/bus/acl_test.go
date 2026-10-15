@@ -334,7 +334,7 @@ func deriveACLNeeds(t *testing.T, srcs map[string]string) aclNeeds {
 					}
 					return true
 				}
-				if recv != "pipe" && !strings.HasSuffix(recv, ".C") {
+				if !redisReceiver(sel.X, 0) {
 					return true
 				}
 				cmds, known := goRedisCommands[sel.Sel.Name]
@@ -343,7 +343,7 @@ func deriveACLNeeds(t *testing.T, srcs map[string]string) aclNeeds {
 					return true
 				}
 				if sel.Sel.Name == "Do" {
-					if command, ok := doCommand(n, consts); ok {
+					if command, ok := doCommand(n, consts, files[fn]); ok {
 						add(command, "Do", n)
 					} else {
 						needs.Unmapped = append(needs.Unmapped, "Do command unresolved at "+where(n))
@@ -410,29 +410,132 @@ func deriveACLNeeds(t *testing.T, srcs map[string]string) aclNeeds {
 	return needs
 }
 
+// initialValue reads a local declaration without executing the program.
+func initialValue(id *ast.Ident) ast.Expr {
+	if id.Obj == nil {
+		return nil
+	}
+	switch decl := id.Obj.Decl.(type) {
+	case *ast.AssignStmt:
+		for i, lhs := range decl.Lhs {
+			if types.ExprString(lhs) == id.Name && i < len(decl.Rhs) {
+				return decl.Rhs[i]
+			}
+		}
+	case *ast.ValueSpec:
+		for i, name := range decl.Names {
+			if name.Name == id.Name && i < len(decl.Values) {
+				return decl.Values[i]
+			}
+		}
+	}
+	return nil
+}
+
+// redisReceiver follows local client/pipeline aliases. The depth bound makes
+// malformed cyclic source terminate; real calls use the client or a pipeline.
+func redisReceiver(e ast.Expr, depth int) bool {
+	if e == nil || depth > 16 {
+		return false
+	}
+	switch e := e.(type) {
+	case *ast.SelectorExpr:
+		return e.Sel.Name == "C"
+	case *ast.Ident:
+		if e.Name == "pipe" {
+			return true
+		}
+		if e.Obj != nil {
+			if field, ok := e.Obj.Decl.(*ast.Field); ok {
+				return slices.Contains([]string{"*redis.Client", "redis.Pipeliner", "redis.Cmdable", "redis.UniversalClient"}, types.ExprString(field.Type))
+			}
+		}
+		return redisReceiver(initialValue(e), depth+1)
+	case *ast.CallExpr:
+		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "Pipeline" || sel.Sel.Name == "TxPipeline") {
+			return redisReceiver(sel.X, depth+1)
+		}
+	}
+	return false
+}
+
+func refersTo(n ast.Node, object *ast.Object) bool {
+	found := false
+	ast.Inspect(n, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Obj == object {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// stableCommandArgs accepts the current tail-append construction only. A
+// replacement, indexed write, alias or opaque call can change the command;
+// fail closed instead of claiming its initializer is still the command.
+func stableCommandArgs(file *ast.File, object *ast.Object, use *ast.CallExpr) bool {
+	stable := true
+	appendOnly := func(e ast.Expr) bool {
+		call, ok := e.(*ast.CallExpr)
+		if !ok || types.ExprString(call.Fun) != "append" || len(call.Args) == 0 {
+			return false
+		}
+		id, ok := call.Args[0].(*ast.Ident)
+		return ok && id.Obj == object
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if n == object.Decl {
+				break
+			}
+			for _, lhs := range n.Lhs {
+				if refersTo(lhs, object) && !(len(n.Lhs) == 1 && len(n.Rhs) == 1 && types.ExprString(lhs) == object.Name && appendOnly(n.Rhs[0])) {
+					stable = false
+				}
+			}
+			for _, rhs := range n.Rhs {
+				if refersTo(rhs, object) && !appendOnly(rhs) {
+					stable = false
+				}
+			}
+		case *ast.ValueSpec:
+			for _, value := range n.Values {
+				if refersTo(value, object) {
+					stable = false
+				}
+			}
+		case *ast.CallExpr:
+			if n == use || appendOnly(n) {
+				break
+			}
+			for _, arg := range n.Args {
+				if _, closure := arg.(*ast.FuncLit); closure {
+					continue
+				} // its body is inspected separately
+				if refersTo(arg, object) {
+					stable = false
+				}
+			}
+		}
+		return stable
+	})
+	return stable
+}
+
 // doCommand follows a Do call's literal command or its slice initializer.
 // A dynamic command fails closed; unrelated slices are not Redis calls.
-func doCommand(call *ast.CallExpr, consts map[string]string) (string, bool) {
+func doCommand(call *ast.CallExpr, consts map[string]string, file *ast.File) (string, bool) {
 	if len(call.Args) < 2 {
 		return "", false
 	}
 	e := call.Args[1]
 	if call.Ellipsis.IsValid() {
-		if id, ok := e.(*ast.Ident); ok && id.Obj != nil {
-			switch decl := id.Obj.Decl.(type) {
-			case *ast.AssignStmt:
-				for i, lhs := range decl.Lhs {
-					if types.ExprString(lhs) == id.Name && i < len(decl.Rhs) {
-						e = decl.Rhs[i]
-					}
-				}
-			case *ast.ValueSpec:
-				for i, name := range decl.Names {
-					if name.Name == id.Name && i < len(decl.Values) {
-						e = decl.Values[i]
-					}
-				}
+		if id, ok := e.(*ast.Ident); ok {
+			if id.Obj == nil || !stableCommandArgs(file, id.Obj, call) {
+				return "", false
 			}
+			e = initialValue(id)
 		}
 		list, ok := e.(*ast.CompositeLit)
 		if !ok || len(list.Elts) == 0 {
@@ -844,6 +947,11 @@ func TestTheFriendACLCoversEveryBusKeyFamily(t *testing.T) {
 		{"direct Do", `func (r Redis) probe(ctx any) { r.C.Do(ctx, "FLUSHALL") }`, "FLUSHALL"},
 		{"slice Do", `func (r Redis) probe(ctx any) { args := []any{"FLUSHALL"}; r.C.Do(ctx, args...) }`, "FLUSHALL"},
 		{"dynamic Do", `func (r Redis) probe(ctx any, command string) { r.C.Do(ctx, command) }`, "Do command unresolved"},
+		{"aliased client", `func (r Redis) probe(ctx any) { client := r.C; client.FlushAll(ctx) }`, "FlushAll"},
+		{"aliased pipeline", `func (r Redis) probe(ctx any) { p := r.C.TxPipeline(); p.FlushAll(ctx) }`, "FlushAll"},
+		{"mutated Do element", `func (r Redis) probe(ctx any) { args := []any{"PING"}; args[0]="FLUSHALL"; r.C.Do(ctx,args...) }`, "Do command unresolved"},
+		{"replaced Do slice", `func (r Redis) probe(ctx any) { args := []any{"PING"}; args=[]any{"FLUSHALL"}; r.C.Do(ctx,args...) }`, "Do command unresolved"},
+		{"escaped Do slice", `func (r Redis) probe(ctx any) { args := []any{"PING"}; mutate(args); r.C.Do(ctx,args...) }`, "Do command unresolved"},
 	} {
 		t.Run("reversed: "+row.name, func(t *testing.T) {
 			more := cloneSrcs(srcs)
