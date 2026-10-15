@@ -643,6 +643,11 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	case muse != nil:
 		shim = &notice.Muse{Notices: muse.notices}
 	case native != nil:
+		if native.antigravity != nil {
+			if out := w.probeAntigravity(c, native.antigravity); out != nil {
+				return out
+			}
+		}
 		shim = w.nativeShim(native)
 	}
 	var recovery codexRecovery
