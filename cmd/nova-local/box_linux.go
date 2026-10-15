@@ -4,13 +4,17 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 )
 
 func localBox() Box {
 	return Box{
-		Load1: hostload.Local().Load1,
+		Load1: func() (float64, bool) {
+			raw, err := os.ReadFile("/proc/loadavg")
+			if err != nil {
+				return 0, false
+			}
+			return parseProcLoadavg(raw)
+		},
 		Mem: func() (uint64, uint64, bool) {
 			raw, err := os.ReadFile("/proc/meminfo")
 			if err != nil {

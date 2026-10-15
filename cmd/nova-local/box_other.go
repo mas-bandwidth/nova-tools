@@ -2,6 +2,5 @@
 
 package main
 
-import "github.com/mas-bandwidth/nova-tools/pkg/hostload"
-
-func localBox() Box { return Box{Load1: hostload.Local().Load1} }
+// No platform source for the load here, so it is unknown (printed as load1=unknown).
+func localBox() Box { return Box{} }

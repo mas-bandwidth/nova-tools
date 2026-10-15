@@ -3,13 +3,17 @@ package main
 import (
 	"encoding/binary"
 	"syscall"
-
-	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 )
 
 func localBox() Box {
 	return Box{
-		Load1: hostload.Local().Load1,
+		Load1: func() (float64, bool) {
+			s, err := syscall.Sysctl("vm.loadavg")
+			if err != nil {
+				return 0, false
+			}
+			return parseDarwinLoadavg(s)
+		},
 		Mem: func() (uint64, uint64, bool) {
 			total, ok1 := sysctlUint("hw.memsize")
 			pages, ok2 := sysctlUint("vm.page_free_count")
