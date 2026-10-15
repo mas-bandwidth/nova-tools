@@ -21,7 +21,8 @@ file:
   `nova-hook prove --as <friend> --nonce <n>`, proving both `bus` and `work`.
 - The daemon reads nothing off the friend's bus stream and delivers nothing
   into her session: a message to her reaches her through `nova-hook hook`.
-- Two missed challenges in a row unhook the friend (`missed 2 challenges`) and
+- No answer for more than `nova-hook serve --down-after` (5m) unhooks the friend at its next missed
+  challenge (`no answer in 5m0s (<n> challenges missed)`) and
   send one coalesced `judgment` (`FRIEND DOWN <friend>: <reason>`) to the
   coordinator.
 - While the hook gate says no (`hook.Status.Gate`), her lanes take nothing and

@@ -34,7 +34,8 @@ docs/SPEC-HOOK.md), never from a daemon beat, a process check, or a ping script:
   session's `nova-hook hook` (pkg/harness/notice, the one delivery path).
 - Her session answers from inside its own turn with
   `nova-hook prove --as <name> --nonce <n>`, proving both `bus` and `work`.
-- Two missed challenges in a row unhook her (`missed 2 challenges`) and send one
+- No answer for more than five minutes (`nova-hook serve --down-after`) unhooks her at her next missed
+  challenge (`no answer in 5m0s (<n> challenges missed)`) and send one
   coalesced judgment (`FRIEND DOWN <name>: <reason>`) to the coordinator. While
   down or unhooked, `nova-bus send` refuses deliveries to her and her lanes take
   no work.

@@ -101,9 +101,14 @@ const (
 	// every hooked name whose role carries the bus push once an interval, and
 	// the answer is due within the same interval (tla/HookBeat.tla).
 	BeatEvery = time.Minute
-	// MissLimit is how many challenges in a row a name may leave unanswered:
-	// at the MissLimit-th, serve unhooks it.
-	MissLimit = 2
+	// DownAfter is the heartbeat's default silence before a name goes down:
+	// nova-hook serve unhooks a name only once its last answer (or its
+	// hooking in, whichever is later) is older than DownAfter by the store's TIME
+	// and the challenge of the last pass still stands unanswered; challenges
+	// still go out every interval (Glenn, 2026-10-14: a harness that cannot
+	// answer mid-turn needs more than two one-minute intervals). The readers'
+	// up (Served.Down) uses the same window (tla/HookBeat.tla, DownAfter).
+	DownAfter = 5 * time.Minute
 )
 
 // The keys (docs/SPEC-HOOK.md, the key layout), all in the bus Redis.
@@ -186,7 +191,7 @@ type Status struct {
 	Epoch    int64
 	Armed    time.Time // when the record was last hooked, zero when never
 	Unhooked time.Time // when it was unhooked, zero when it is not
-	Reason   string    // why it was unhooked, when the heartbeat did it ("missed 2 challenges")
+	Reason   string    // why it was unhooked, when the heartbeat did it ("no answer in 5m0s (5 challenges missed)")
 	BeatAt   time.Time // when the heartbeat server last challenged it, zero when never
 	AnswerAt time.Time // when the session last answered a challenge, zero when never
 	// Down is why the record reads down at this read whatever its state says

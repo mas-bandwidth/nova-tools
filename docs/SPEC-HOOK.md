@@ -52,7 +52,7 @@ All keys live in the bus Redis (`--redis`, else `NOVA_BUS_REDIS`, else the fleet
 | `hook:proof:<name>:<push>` | string, TTL `ProofTTL` | the proof, the same shape |
 | `hook:chal:<name>` | hash, TTL `AnswerBound` | `epoch`, `sum` (SHA-256 of the nonce, never the nonce), `pushes`, `until` |
 | `hook:names` | set | every name that ever hooked in |
-| `hook:serve` | hash | the heartbeat server's row (`at`, `every`, `by`, `told:*`, `coord:*`, `gen:*`) |
+| `hook:serve` | hash | the heartbeat server's row (`at`, `every`, `down_after`, `by`, `told:*`, `coord:*`, `gen:*`) |
 | `hook:judgments` | hash | open presence judgments awaiting `nova-bus send --re <id>` |
 | `hook:events` | stream | capped audit stream of unhooks, judgments, answers, and `not-connected` episodes |
 
@@ -66,7 +66,7 @@ the record's state, role, and epoch in the same step.
 | `LeaseTTL` | 90 s | a push stays live this long after its holder last renewed it |
 | `RenewEvery` | 30 s | a holder renews three times inside one lease |
 | `BeatEvery` | 1 min | `nova-hook serve` challenges every hooked session-backed name |
-| `MissLimit` | 2 | consecutive unanswered heartbeat challenges before the name is unhooked |
+| `DownAfter` | 5 min | `nova-hook serve --down-after`: a name silent longer than this is unhooked at its next miss, and reads down |
 | `ChallengeEvery` | 30 min | a standalone `nova-hook hook` loop's own challenge cadence |
 | `AnswerBound` | 5 min | a standalone challenge's answer window |
 | `ProofTTL` | 40 min | a standalone proof's TTL |
@@ -79,8 +79,9 @@ A push is `down` (no lease of the record's epoch), `armed` (a lease and no proof
 The record is `none` (never hooked), `unhooked`, `expired` (hooked, no push of its role live), `partial`
 (some live), `live` (every push live, not every one proven), or `proven` (every push live and proven).
 Furthermore, `Served.Down` (`Status.Down`) reads any session-backed name `down` when `hook:serve` has
-never run, is more than two intervals old by the store's `TIME`, or when the name's last answer is more
-than two intervals old (`tla/HookBeat.tla`). The gate's one yes is `proven` and not `Down`, with a role
+never run, is more than two intervals old by the store's `TIME`, or when the name's last answer is older
+than the server's down-after (`hook:serve` `down_after`, written by every pass; two intervals for a row
+without one) (`tla/HookBeat.tla`, `DownAfter`). The gate's one yes is `proven` and not `Down`, with a role
 that carries every push the act needs (`hook.Status.Gate`; `tla/Hook.tla`, `GateMeansHooked`).
 
 ## The epoch and the clear rule
@@ -132,9 +133,14 @@ Every line runs as printed:
   a fresh challenge in `hook:chal:<name>` (`until` = now + every) and a bus message with subject
   `HOOK CHALLENGE nonce=<n>`. A friend's challenge names both `bus` and `work`; her session's
   `nova-hook prove --as <name> --nonce <n>` proves both and clears `misses`.
-- **Two misses unhook.** A challenge still unanswered at the next pass increments `misses`; at
-  `MissLimit` (2) the pass unhooks the name with `reason` `"missed 2 challenges"` and logs to
-  `hook:events`.
+- **Down after silence, not after a count.** A challenge still unanswered at the next pass is a miss
+  and increments `misses`. The pass unhooks the name only at a miss when its last answer
+  (`answered_at`, or `armed` if later) is older than `--down-after` (`DownAfter`, 5 min) by the store's
+  `TIME`, with `reason` `"no answer in 5m0s (<n> challenges missed)"`, and logs to `hook:events`.
+  Challenges still go out every `--every`: a harness that cannot answer mid-turn (Antigravity) answers
+  between turns and stays up. Glenn, 2026-10-14: "1m is too fast" unless every harness can be injected
+  into mid-turn. The model is `tla/HookBeat.tla` (`DownAfter`, `NoDownBeforeDownAfter`; the reversed
+  witness `MCHookBeatBrokenDownEarly` is the old two-miss rule).
 - **Coalesced telling, one write per audience.** Changes in the unhooked set or coordinator are sent
   once per audience (`hook:told:<audience>:<gen>`): one `judgment` to the coordinator (`FRIEND DOWN
   <name>: <reason>`, `FRIEND BACK <name>`) and one message (or `COORDINATOR DOWN` judgment) to the
@@ -163,7 +169,8 @@ A friend's supervised hook service (`nova-hook hook --role friend` under `nova-h
 - `nova-hook status [--as <name>]`: checks one record (0 proven, 1 not with breadcrumb) or lists all.
 - `nova-hook friends [--json]`: lists every name's presence from the hook record (`up` or `down`,
   `since`, `reason`, last challenge and answer, `misses`, coordinator, and server age).
-- `nova-hook serve --as <name> [--every <d>] [--judge-within <d>]`: runs the heartbeat pass loop.
+- `nova-hook serve --as <name> [--every <d>] [--down-after <d>] [--judge-within <d>]`: runs the heartbeat
+  pass loop; `--down-after` (default 5m, at least `--every`) is the silence before a name goes down.
 
 ## Using the package from another repository
 
