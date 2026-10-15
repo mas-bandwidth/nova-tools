@@ -16,6 +16,9 @@ type Dsh struct {
 	Route dshdesktop.Route
 	// Deliver is dshdesktop.Deliver; a test passes its fake harness.
 	Deliver func(r dshdesktop.Route, id, notice string) (string, error)
+	// Follow, when set, repoints the receiver at the friend's newest live
+	// session before each push (dshdesktop.Follower). Nil keeps a pinned route.
+	Follow func() error
 }
 
 // Name is the harness word.
@@ -28,6 +31,9 @@ func (d *Dsh) Dir() string { return d.Route.EventsDir }
 // notice whose record the receiver has not taken yet is that record: it is
 // still queued, and the saved file it names holds the newest challenge.
 func (d *Dsh) Push(_ context.Context, n Notice) (string, error) {
+	if d.Follow != nil {
+		_ = d.Follow() // ignored: a failed rediscovery keeps the last target, which still holds the queue
+	}
 	if path, err := dshdesktop.PendingPath(d.Route.EventsDir, n.ID); err == nil {
 		if _, err := os.Lstat(path); err == nil {
 			return "queued", nil
