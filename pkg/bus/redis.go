@@ -145,6 +145,27 @@ if KEYS[1] ~= '' then
 end
 local activityKey = nil
 local ns, nf = tonumber(ARGV[3]), tonumber(ARGV[4])
+-- Redis scripts isolate writes but do not roll back runtime errors. Refuse
+-- conflicting/malformed keys and invalid arguments before the first XADD.
+if ns > 0 and nf == 0 then return redis.error_reply('XADD wants fields') end
+if KEYS[1] ~= '' and tonumber(ARGV[2]) <= 0 then return redis.error_reply('send-once lifetime must be positive') end
+local expected = {}
+if KEYS[1] ~= '' then expected[KEYS[1]] = 'string' end
+for i = 2, #KEYS do
+  local want = 'hash'
+  if i <= ns + 1 then want = 'stream' end
+  if expected[KEYS[i]] and expected[KEYS[i]] ~= want then
+    return redis.error_reply('WRONGTYPE conflicting send key roles')
+  end
+  expected[KEYS[i]] = want
+end
+for key, want in pairs(expected) do
+  local kind = redis.call('TYPE', key)
+  if type(kind) == 'table' then kind = kind.ok end
+  if kind ~= 'none' and kind ~= want then
+    return redis.error_reply('WRONGTYPE send key wants ' .. want)
+  end
+end
 local fields = {}
 for i = 1, nf * 2 do fields[i] = ARGV[4 + i] end
 for i = 1, ns do redis.call('XADD', KEYS[1 + i], '*', unpack(fields)) end
@@ -199,7 +220,7 @@ func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Durati
 			keys = append(keys, "hook:rec:"+fields["from"])
 			args = append(args, "activity")
 		}
-		res, err := addOnce.Run(ctx, r.C, keys, args...).Slice()
+		res, err := addOnce.Eval(ctx, r.C, keys, args...).Slice() // one round trip even on a cold script cache
 		if err != nil {
 			return err
 		}

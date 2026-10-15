@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
-	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"io"
 	"testing"
 	"time"
@@ -12,6 +10,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testredis"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -274,17 +275,45 @@ func TestQuietEligibilityAndUndeliveredChallengeDoNotReadDown(t *testing.T) {
 
 func TestFailedXADDNeverStampsActivityOrOnceReceipt(t *testing.T) {
 	t.Parallel()
+	for _, once := range []bool{false, true} {
+		t.Run(fmt.Sprint(once), func(t *testing.T) {
+			t.Parallel()
+			r := newQuietRig(t)
+			r.h.Hook(t, "bob", hook.Comms)
+			ctx := context.Background()
+			store := bus.Redis{C: r.h.Client}
+			require.NoError(t, r.h.Client.Set(ctx, "bad-stream", "wrong-type", 0).Err())
+			fields := map[string]string{"from": "bob", "model_activity": "1"}
+			streams := []string{"good-stream", "bad-stream"}
+			for range 2 { // a refused retry cannot append twice to the first destination
+				if once {
+					_, _, err := store.AddOnce(ctx, "failed-once", "receipt", time.Hour, streams, fields)
+					require.Error(t, err)
+				} else {
+					require.Error(t, store.AddAll(ctx, streams, fields))
+				}
+			}
+			assert.Zero(t, r.h.Client.XLen(ctx, "good-stream").Val())
+			assert.Empty(t, r.h.Client.HGet(ctx, hook.RecordKey("bob"), "bus_sent_at").Val())
+			assert.Zero(t, r.h.Client.Exists(ctx, "failed-once").Val())
+			_, _, err := store.AddOnce(ctx, "bad-lifetime", "receipt", 0, []string{"good-stream"}, fields)
+			require.Error(t, err)
+			require.Error(t, store.AddAll(ctx, []string{"good-stream"}, fields, bus.Mark{Key: "bad-stream", Field: "x", Value: "y"}))
+			require.Error(t, store.AddAll(ctx, []string{hook.RecordKey("bob")}, fields))
+			assert.Zero(t, r.h.Client.XLen(ctx, "good-stream").Val())
+		})
+	}
+}
+
+func TestActivitySendUsesOneColdStoreRoundTrip(t *testing.T) {
+	t.Parallel()
 	r := newQuietRig(t)
-	r.h.Hook(t, "bob", hook.Comms)
 	ctx := context.Background()
-	store := bus.Redis{C: r.h.Client}
-	require.NoError(t, r.h.Client.Set(ctx, "bad-stream", "wrong-type", 0).Err())
-	fields := map[string]string{"from": "bob", "model_activity": "1"}
-	require.Error(t, store.AddAll(ctx, []string{"bad-stream"}, fields))
-	_, _, err := store.AddOnce(ctx, "failed-once", "receipt", time.Hour, []string{"bad-stream"}, fields)
-	require.Error(t, err)
-	assert.Empty(t, r.h.Client.HGet(ctx, hook.RecordKey("bob"), "bus_sent_at").Val())
-	assert.Zero(t, r.h.Client.Exists(ctx, "failed-once").Val())
+	trips, countHook := testredis.RoundTrips(t)
+	r.h.Client.AddHook(countHook)
+	trips.Expect(t, 1, func() {
+		require.NoError(t, (bus.Redis{C: r.h.Client}).AddAll(ctx, []string{"stream"}, map[string]string{"from": "bob", "model_activity": "1"}))
+	})
 }
 
 func TestProofRenewalReservesOnePassAtFractionalOffset(t *testing.T) {
