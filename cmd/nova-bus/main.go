@@ -675,6 +675,9 @@ func downReason(st hook.Status) string {
 func (w world) checkRecipients(ctx context.Context, b *bus.Bus, as string, draft bus.Message, dry bool) *tool.Out {
 	var rcpts []string
 	for _, n := range slices.Compact(slices.Sorted(slices.Values(slices.Concat(draft.To, draft.CC)))) {
+		if n == bus.HookFrom || n == bus.TimeoutFrom {
+			continue
+		}
 		if bus.CheckName(n) == "" {
 			rcpts = append(rcpts, n)
 		}

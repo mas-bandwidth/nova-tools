@@ -78,14 +78,25 @@ func (r *rig) step(t *testing.T, servers []string, answering ...string) string {
 	return out
 }
 
-// TestServeRefusesAServerThatIsNotHooked pins that the server cannot run deaf.
-func TestServeRefusesAServerThatIsNotHooked(t *testing.T) {
+// TestServeRunsUnderServiceIdentityWithoutHookedSession pins that nova-hook
+// serve runs under its own service identity (nova-hook) and never needs any
+// session to be hooked, even when --as is omitted or names an unhooked friend.
+func TestServeRunsUnderServiceIdentityWithoutHookedSession(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	res := r.cli().Run("serve", "--as", "ada", "--once")
-	assert.Equal(t, 1, res.Code)
-	assert.Contains(t, res.Stdout+res.Stderr, "the heartbeat server must itself be hooked in")
-	assert.Contains(t, res.Stdout+res.Stderr, "run: nova-hook hook --as ada --role comms")
+	r.h.Hook(t, "bob", hook.Comms)
+	cli := r.cli()
+
+	res := cli.Run("serve", "--once")
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Contains(t, res.Stdout, "SERVE OK as=nova-hook every=1m0s down_after=5m0s")
+	cli.Do(t, "prove", "--as", "bob", "--nonce", r.challenge(t, "bob")).Exit(0)
+
+	r.h.Pass(hook.BeatEvery)
+	r.h.Hook(t, "bob", hook.Comms)
+	res = cli.Run("serve", "--as", "ada", "--once") // ada is not hooked in at all
+	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+	assert.Contains(t, res.Stdout, "SERVE OK as=nova-hook every=1m0s down_after=5m0s")
 }
 
 // TestAFriendDownIsOneJudgmentToTheCoordinator pins the coordinator's half
@@ -103,14 +114,14 @@ func TestAFriendDownIsOneJudgmentToTheCoordinator(t *testing.T) {
 	r.h.Hook(t, "carl", hook.Comms)
 	servers := []string{"ada", "carl"}
 	var out string
-	for range 3 {
+	for range hook.MissLimit + 1 {
 		out += r.step(t, servers, "ada", "carl")
 	}
 	assert.NotContains(t, out, "nonce", "the server never prints a nonce")
-	assert.Equal(t, 3, strings.Count(out, "event=skip"), "the second server's pass shares the first's interval, every step")
+	assert.Equal(t, hook.MissLimit+1, strings.Count(out, "event=skip"), "the second server's pass shares the first's interval, every step")
 	require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
-	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: missed 2 challenges"))
-	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob: missed 2 challenges"))
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: missed 5 challenges"))
+	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob: missed 5 challenges"))
 	var judgment msg
 	for _, m := range r.stream(t, "ada") {
 		if strings.HasPrefix(m.subject, "FRIEND DOWN") {
@@ -148,7 +159,7 @@ func TestAFriendDownIsOneJudgmentToTheCoordinator(t *testing.T) {
 }
 
 // TestACoordinatorDownIsOneJudgmentToEveryFriend pins who takes over: the
-// coordinator missing two makes one COORDINATOR DOWN judgment for every
+// coordinator missing five makes one COORDINATOR DOWN judgment for every
 // other live name, with two servers, never repeated.
 func TestACoordinatorDownIsOneJudgmentToEveryFriend(t *testing.T) {
 	t.Parallel()
@@ -157,7 +168,7 @@ func TestACoordinatorDownIsOneJudgmentToEveryFriend(t *testing.T) {
 	r.h.Hook(t, "ada", hook.Coordinator)
 	r.h.Hook(t, "bob", hook.Comms)
 	r.h.Hook(t, "carl", hook.Comms)
-	for range 5 {
+	for range hook.MissLimit + 2 {
 		r.step(t, []string{"bob", "carl"}, "bob", "carl")
 	}
 	for _, n := range []string{"bob", "carl"} {
@@ -178,9 +189,9 @@ func TestFriendsJSONIsTheRecord(t *testing.T) {
 	r := newRig(t)
 	r.h.Hook(t, "ada", hook.Coordinator)
 	r.h.Hook(t, "bob", hook.Comms)
-	r.step(t, []string{"ada"}, "ada")
-	r.step(t, []string{"ada"}, "ada")
-	r.step(t, []string{"ada"}, "ada") // bob missed two: down
+	for range hook.MissLimit + 1 { // bob missed five (5m): down
+		r.step(t, []string{"ada"}, "ada")
+	}
 	res := r.cli().Run("friends", "--json")
 	require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
 	var got struct {
@@ -199,8 +210,8 @@ func TestFriendsJSONIsTheRecord(t *testing.T) {
 	assert.Equal(t, map[string]any{"name": "ada", "role": "coordinator", "state": "up", "since": stamp(st.Armed), "reason": "",
 		"last_challenge_at": stamp(st.BeatAt), "last_answer_at": stamp(st.AnswerAt), "misses": float64(0)}, ada)
 	sb := r.h.State(t, "bob")
-	assert.Equal(t, map[string]any{"name": "bob", "role": "comms", "state": "down", "since": stamp(sb.Unhooked), "reason": "missed 2 challenges",
-		"last_challenge_at": stamp(sb.BeatAt), "last_answer_at": stamp(sb.AnswerAt), "misses": float64(2)}, bob)
+	assert.Equal(t, map[string]any{"name": "bob", "role": "comms", "state": "down", "since": stamp(sb.Unhooked), "reason": "missed 5 challenges",
+		"last_challenge_at": stamp(sb.BeatAt), "last_answer_at": stamp(sb.AnswerAt), "misses": float64(5)}, bob)
 }
 
 // TestStatusSaysNoChallengeWhenTheServerIsGone pins the client's timeout on
@@ -299,8 +310,9 @@ func TestAFailedTellIsToldAgainOnceAtTheNextPass(t *testing.T) {
 	r.h.Hook(t, "ada", hook.Coordinator)
 	r.h.Hook(t, "bob", hook.Comms)
 	r.h.Hook(t, "carl", hook.Comms)
-	r.step(t, []string{"ada"}, "ada", "carl")
-	r.step(t, []string{"ada"}, "ada", "carl")
+	for range hook.MissLimit {
+		r.step(t, []string{"ada"}, "ada", "carl")
+	}
 	r.failTells.Store(true) // the pass that unhooks bob: its tells do not go out
 	r.step(t, []string{"ada"}, "ada", "carl")
 	require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
@@ -353,9 +365,46 @@ func TestALostAnswerIsNeverToldTwice(t *testing.T) {
 	r.h.Hook(t, "bob", hook.Comms)
 	r.h.Hook(t, "carl", hook.Comms)
 	r.loseAnswers.Store(true)
-	for range 8 { // bob down at the third; the judgment overdue past two minutes
+	for range hook.MissLimit + 6 { // bob down at the sixth; the judgment overdue past two minutes
 		r.step(t, []string{"ada"}, "ada", "carl")
 	}
 	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob"))
 	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob"))
+}
+
+// TestServeDownAfterAndEveryAreSeparate pins that --down-after (default 5m) is
+// separate from --every (default 1m), and that readers judge server staleness
+// from --every rather than a fixed guess (so --every 2m30s never makes
+// everyone show down at 2m01s).
+func TestServeDownAfterAndEveryAreSeparate(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	cli := r.cli()
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+
+	refused := cli.Run("serve", "--every", "1m", "--down-after", "30s", "--once")
+	assert.Equal(t, 2, refused.Code)
+	assert.Contains(t, refused.Stdout+refused.Stderr, "--down-after 30s is under --every 1m0s")
+
+	// First pass at 1m, then restart with --every 2m30s inside the 1m pass window:
+	cli.Do(t, "serve", "--every", "1m", "--down-after", "5m", "--once").Exit(0)
+	cli.Do(t, "prove", "--as", "ada", "--nonce", r.challenge(t, "ada")).Exit(0)
+	cli.Do(t, "prove", "--as", "bob", "--nonce", r.challenge(t, "bob")).Exit(0)
+	ansAt := r.h.State(t, "ada").AnswerAt
+
+	r.h.Pass(30 * time.Second)
+	cli.Do(t, "serve", "--every", "2m30s", "--down-after", "5m", "--once").Exit(0) // skipped pass, updates every=2m30s
+
+	// Advance to 2m30s since the initial pass (past 2*1m = 2m, inside 2*2m30s = 5m):
+	r.h.Pass(2 * time.Minute)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	require.NoError(t, r.h.Client.HSet(context.Background(), hook.RecordKey("ada"), "answered_at", ansAt.UnixMilli()).Err())
+	require.NoError(t, r.h.Client.HSet(context.Background(), hook.RecordKey("bob"), "answered_at", ansAt.UnixMilli()).Err())
+
+	friendsOut := cli.Do(t, "friends").Exit(0).Stdout
+	assert.Contains(t, friendsOut, "serve_alive=true", "readers judge server staleness from --every 2m30s, not 1m")
+	assert.Contains(t, friendsOut, "up=2")
+	cli.Do(t, "status", "--as", "ada").Exit(0)
 }

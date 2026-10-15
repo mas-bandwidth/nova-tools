@@ -101,17 +101,33 @@ const (
 	// every hooked name whose role carries the bus push once an interval, and
 	// the answer is due within the same interval (tla/HookBeat.tla).
 	BeatEvery = time.Minute
-	// MissLimit is how many challenges in a row a name may leave unanswered:
-	// at the MissLimit-th, serve unhooks it.
-	MissLimit = 2
+	// DownAfter is the default window without an answer before a hooked
+	// session-backed name is down and unhooked (docs/SPEC-HOOK.md, the clocks).
+	DownAfter = 5 * time.Minute
+	// MissLimit is how many challenges in a row a name may leave unanswered at
+	// the default cadence (DownAfter / BeatEvery): at the MissLimit-th, serve
+	// unhooks it.
+	MissLimit = int(DownAfter / BeatEvery)
+	// ServeFrom is the heartbeat server's own bus sender identity: nova-hook
+	// serve runs under it and never needs a session to be hooked in.
+	ServeFrom = "nova-hook"
 )
+
+// MissesFor is how many unanswered challenges of every span downAfter (at
+// least one): the ceiling of downAfter / every.
+func MissesFor(every, downAfter time.Duration) int {
+	if every <= 0 || downAfter <= every {
+		return 1
+	}
+	return int((downAfter + every - 1) / every)
+}
 
 // The keys (docs/SPEC-HOOK.md, the key layout), all in the bus Redis.
 const (
 	prefix = "hook:"
 	// NamesKey is the set of every name that ever hooked in.
 	NamesKey = prefix + "names"
-	// ServeKey is the heartbeat server's own stamp: a hash of at, every, by.
+	// ServeKey is the heartbeat server's own stamp: a hash of at, every, down_after, by.
 	ServeKey = prefix + "serve"
 	// EventsKey is the capped stream of the heartbeat's unhooks, one entry each.
 	EventsKey = prefix + "events"

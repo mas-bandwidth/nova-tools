@@ -31,6 +31,9 @@ const (
 // step is one read of the server row (read false: the store did not answer)
 // at this client's now, and the event it makes, "" for none.
 func (l *link) step(now time.Time, sv hook.Served, read bool) string {
+	if read && sv.OK {
+		l.every = sv.Every
+	}
 	if read && sv.OK && (!l.seen || !sv.At.Equal(l.at)) {
 		l.seen, l.at, l.every, l.fresh = true, sv.At, sv.Every, now
 		if l.lost {

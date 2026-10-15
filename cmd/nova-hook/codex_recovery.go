@@ -186,9 +186,10 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 	observed := func(m bus.Message) bool { return m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") }
 	senderNames := make([]string, 0)
 	seenSenders := map[string]bool{}
+	serverRole := map[string]bool{hook.ServeFrom: true}
 	for _, entry := range entries {
 		m := entry.Message()
-		if canonical(m, s.as) && !seenSenders[m.From] {
+		if canonical(m, s.as) && !serverRole[m.From] && !seenSenders[m.From] {
 			if why := bus.CheckName(m.From); why != "" {
 				return codexRecovery{}, errors.New(why)
 			}
@@ -196,7 +197,6 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 			senderNames = append(senderNames, m.From)
 		}
 	}
-	serverRole := map[string]bool{}
 	if len(senderNames) > 0 {
 		statuses, _, err := s.hooks.Read(ctx, senderNames...)
 		if err != nil {

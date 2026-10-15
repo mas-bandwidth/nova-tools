@@ -53,7 +53,7 @@ func (w world) friends(c *tool.Call) *tool.Out {
 	o.Fact("count", len(sts)).Fact("up", up).Fact("coordinator", coord)
 	alive, age := false, ""
 	if sv.OK {
-		alive, age = sv.Now.Sub(sv.At) <= 2*sv.Every, sv.Now.Sub(sv.At).Round(time.Second).String()
+		alive, age = !sv.Stale(), sv.Now.Sub(sv.At).Round(time.Second).String()
 	}
 	o.Fact("serve_alive", alive).Fact("serve_age", age)
 	if !c.Given("json") {

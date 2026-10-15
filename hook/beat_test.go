@@ -61,16 +61,16 @@ func TestAProvingClientStaysHookedAcrossTenIntervals(t *testing.T) {
 }
 
 // TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce pins the
-// heartbeat's no (tla/HookBeat.tla, Pass and UnhookOnce): two challenges in a
-// row left unanswered unhook the name at the next pass, not before, with the
-// reason; two servers passing at every step challenge once and unhook once.
+// heartbeat's no (tla/HookBeat.tla, Pass and UnhookOnce): MissLimit challenges
+// in a row left unanswered unhook the name at the next pass, not before, with
+// the reason; two servers passing at every step challenge once and unhook once.
 func TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
 	next := nonces()
 	var did [][2]int
-	for range 4 {
+	for range hook.MissLimit + 2 {
 		a := r.beat(t, "srv-a", next)["ada"]
 		b := r.beat(t, "srv-b", next)["ada"]
 		did = append(did, [2]int{a.Did, b.Did})
@@ -79,15 +79,18 @@ func TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce(t *testing.T) {
 	assert.Equal(t, [][2]int{
 		{hook.BeatChallenged, hook.BeatLeft}, // the first challenge
 		{hook.BeatChallenged, hook.BeatLeft}, // the first miss, a second challenge
-		{hook.BeatUnhooked, hook.BeatLeft},   // the second miss: unhooked
+		{hook.BeatChallenged, hook.BeatLeft}, // the second miss
+		{hook.BeatChallenged, hook.BeatLeft}, // the third miss
+		{hook.BeatChallenged, hook.BeatLeft}, // the fourth miss
+		{hook.BeatUnhooked, hook.BeatLeft},   // the fifth miss (5m): unhooked
 		{hook.BeatLeft, hook.BeatLeft},       // unhooked stays unhooked
 	}, did)
 	st := r.state(t, "ada")
 	assert.Equal(t, hook.StateUnhooked, st.State)
-	assert.Equal(t, "missed 2 challenges", st.Reason)
+	assert.Equal(t, "missed 5 challenges", st.Reason)
 	assert.Equal(t, 1, r.events(t), "the unhook is logged once")
 	require.NotNil(t, st.Gate(hook.Want{Name: "ada"}))
-	assert.Contains(t, st.Gate(hook.Want{Name: "ada"}).Why, "by the heartbeat (missed 2 challenges)")
+	assert.Contains(t, st.Gate(hook.Want{Name: "ada"}).Why, "by the heartbeat (missed 5 challenges)")
 
 	r.Hook(t, "ada", hook.Comms)
 	st = r.state(t, "ada")
@@ -168,7 +171,7 @@ func TestARoleWithNoBusPushIsNeverChallenged(t *testing.T) {
 }
 
 // TestTheServerStampsItsOwnRow pins Serve: no stamp before a pass; after it,
-// the interval and the store's time.
+// the interval, the down-after window and the store's time.
 func TestTheServerStampsItsOwnRow(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -181,6 +184,7 @@ func TestTheServerStampsItsOwnRow(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, sv.OK)
 	assert.Equal(t, hook.BeatEvery, sv.Every)
+	assert.Equal(t, hook.DownAfter, sv.DownAfter)
 	assert.Equal(t, time.Second, sv.Now.Sub(sv.At))
 }
 
@@ -202,7 +206,7 @@ func TestAChangeNotMarkedToldIsFoundAgain(t *testing.T) {
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
 	next := nonces()
-	for range 3 {
+	for range hook.MissLimit + 1 {
 		r.passAll(t, "srv", next)
 		r.pass(hook.BeatEvery)
 	}
@@ -246,15 +250,17 @@ func TestEachChangeIsToldOncePerTransition(t *testing.T) {
 		}
 		r.pass(hook.BeatEvery)
 	}
-	step()
-	step()
-	step() // both missed twice: unhooked, the coordinator with them
+	for range hook.MissLimit {
+		step()
+	}
+	step() // both missed MissLimit challenges: unhooked, the coordinator with them
 	step()
 	r.Hook(t, "ada", hook.Coordinator)
 	step() // ada back, and the coordinator again
 	step()
 	assert.Equal(t, []told{
-		{nil, nil, "ada", ""}, {nil, nil, "ada", "ada"},
+		{nil, nil, "ada", ""},
+		{nil, nil, "ada", "ada"}, {nil, nil, "ada", "ada"}, {nil, nil, "ada", "ada"}, {nil, nil, "ada", "ada"},
 		{[]string{"ada", "bob"}, nil, "", "ada"}, {nil, nil, "", ""},
 		{nil, []string{"ada"}, "ada", ""}, {nil, nil, "ada", "ada"},
 	}, got)
@@ -334,8 +340,8 @@ func TestNoServerOrNoAnswerIsNoEvidence(t *testing.T) {
 
 // TestAStaleAnswerIsDownWithAFreshServer pins the answer's own window
 // (tla/HookBeat.tla; the model's BadUpAfterOutage): with the server passing
-// every interval, a name whose last answer is older than two intervals by the
-// store's TIME reads down, though it is still hooked.
+// every interval, a name whose last answer is older than the server's
+// down-after window by the store's TIME reads down, though it is still hooked.
 func TestAStaleAnswerIsDownWithAFreshServer(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -351,11 +357,63 @@ func TestAStaleAnswerIsDownWithAFreshServer(t *testing.T) {
 	r.pass(hook.BeatEvery)
 	r.beat(t, "srv", next)
 	r.Hook(t, "ada", hook.Comms) // its holder's renewal only
-	require.NoError(t, r.Client.HSet(ctx, hook.RecordKey("ada"), "answered_at", r.state(t, "ada").BeatAt.Add(-2*hook.BeatEvery).UnixMilli()).Err())
-	require.NoError(t, r.s.Gate(ctx, want), "two intervals exactly: up")
+	require.NoError(t, r.Client.HSet(ctx, hook.RecordKey("ada"), "answered_at", r.state(t, "ada").BeatAt.Add(-hook.DownAfter).UnixMilli()).Err())
+	require.NoError(t, r.s.Gate(ctx, want), "down-after window (5m) exactly: up")
 	r.pass(time.Second)
 	var refusal *hook.Refusal
 	require.ErrorAs(t, r.s.Gate(ctx, want), &refusal)
 	assert.Contains(t, refusal.Why, hook.NoAnswerReason)
 	assert.Equal(t, hook.StateProven, r.state(t, "ada").State, "hooked and proven all the same: only the evidence is old")
+}
+
+// TestDownAfterIsSeparateFromEvery pins that --down-after (5m) is separate from
+// --every (1m or 2m30s), and that restarting a server with a wider --every
+// inside the previous pass's window still updates hook:serve's every and
+// down_after so readers judge server staleness from the new --every instead of
+// showing everyone down.
+func TestDownAfterIsSeparateFromEvery(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	want := hook.Want{Name: "ada", Need: []hook.Push{hook.Bus}}
+	next := nonces()
+
+	// Start with 1m every, 5m down-after: answer once, then miss 4 challenges (4m) -> still up!
+	p, err := r.s.PassWindow(ctx, []string{"ada"}, time.Minute, 5*time.Minute, hook.MissesFor(time.Minute, 5*time.Minute), next, "srv")
+	require.NoError(t, err)
+	_, err = r.s.Answer(ctx, "ada", p.Beats[0].Nonce, "session")
+	require.NoError(t, err)
+	ansAt := r.state(t, "ada").AnswerAt
+	for range 4 {
+		r.pass(time.Minute)
+		r.Hook(t, "ada", hook.Comms) // keep lease fresh, restore original answer_at
+		require.NoError(t, r.Client.HSet(ctx, hook.RecordKey("ada"), "answered_at", ansAt.UnixMilli()).Err())
+		p, err = r.s.PassWindow(ctx, []string{"ada"}, time.Minute, 5*time.Minute, hook.MissesFor(time.Minute, 5*time.Minute), next, "srv")
+		require.NoError(t, err)
+		require.Equal(t, hook.BeatChallenged, p.Beats[0].Did)
+		require.NoError(t, r.s.Gate(ctx, want), "missed <5m with 1m challenges: still up")
+	}
+
+	// Now restart server with --every 2m30s, --down-after 5m right after a pass (10s later):
+	// the pass is skipped (10s < 0.9 * 2m30s), yet hook:serve updates every=2m30s so
+	// readers do not judge the server stale after 2m while it sleeps for 2m30s.
+	_, err = r.s.Answer(ctx, "ada", p.Beats[0].Nonce, "session")
+	require.NoError(t, err)
+	ansAt = r.state(t, "ada").AnswerAt
+	r.pass(10 * time.Second)
+	every230 := 2*time.Minute + 30*time.Second
+	p, err = r.s.PassWindow(ctx, []string{"ada"}, every230, 5*time.Minute, hook.MissesFor(every230, 5*time.Minute), next, "srv")
+	require.NoError(t, err)
+	assert.False(t, p.Taken, "inside 9/10 of 2m30s: pass skipped")
+	sv, err := r.s.Serve(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, every230, sv.Every, "hook:serve every updated even when pass skipped")
+	assert.Equal(t, 5*time.Minute, sv.DownAfter)
+
+	// Advance 2m20s more (total 2m30s since last pass): server is NOT stale because every is 2m30s (stale > 5m).
+	r.pass(2*time.Minute + 20*time.Second)
+	r.Hook(t, "ada", hook.Comms)
+	require.NoError(t, r.Client.HSet(ctx, hook.RecordKey("ada"), "answered_at", ansAt.UnixMilli()).Err())
+	require.NoError(t, r.s.Gate(ctx, want), "at 2m30s with --every 2m30s: server is fresh and friend is up")
 }

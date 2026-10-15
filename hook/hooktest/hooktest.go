@@ -108,7 +108,7 @@ func (r *Rig) Evidence(t testing.TB, name string) {
 	// a server row only where none is, an interval old, so a real pass in the
 	// test is still taken (its once-key) and the row is not yet stale
 	if n, err := r.Client.Exists(ctx, hook.ServeKey).Result(); err != nil || n == 0 {
-		if err := r.Client.HSet(ctx, hook.ServeKey, "at", ms-hook.BeatEvery.Milliseconds(), "every", hook.BeatEvery.Milliseconds(), "by", rigServer).Err(); err != nil {
+		if err := r.Client.HSet(ctx, hook.ServeKey, "at", ms-hook.BeatEvery.Milliseconds(), "every", hook.BeatEvery.Milliseconds(), "down_after", hook.DownAfter.Milliseconds(), "by", rigServer).Err(); err != nil {
 			t.Fatalf("hooktest: the server row: %v", err)
 		}
 	}

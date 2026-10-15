@@ -458,20 +458,23 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 // audience told only after its message went out (Store.Told), so a send that
 // fails is told again by the next pass.
 // KEYS: events, serve, then per name its record and allKeys (8 keys; the challenge last).
-// ARGV: every ms, limit, ttl ms, by, events cap, the count of roles, a role and
-// the pushes its challenge names (comma) per role, then per name its name and
-// its nonce's sum.
+// ARGV: every ms, limit, down_after ms, ttl ms, by, events cap, the count of
+// roles, a role and the pushes its challenge names (comma) per role, then per
+// name its name and its nonce's sum.
 var beatLua = redis.NewScript(nowMS + `
 local now = tonumber(ms)
-local every, limit, ttl, by, cap = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5]
+local every, limit, down_after, ttl, by, cap = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3], ARGV[4], ARGV[5], ARGV[6]
 local prev = tonumber(redis.call('HGET', KEYS[2], 'at') or '0')
-if prev > 0 and now - prev < every * 9 / 10 then return {0, {}, '', '', '', '', '', '', '', '', ''} end
-redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'by', by)
-local nroles = tonumber(ARGV[6])
+if prev > 0 and now - prev < every * 9 / 10 then
+  redis.call('HSET', KEYS[2], 'every', ARGV[1], 'down_after', down_after)
+  return {0, {}, '', '', '', '', '', '', '', '', ''}
+end
+redis.call('HSET', KEYS[2], 'at', ms, 'every', ARGV[1], 'down_after', down_after, 'by', by)
+local nroles = tonumber(ARGV[7])
 local bus = {}
-for i = 1, nroles do bus[ARGV[5 + 2 * i]] = ARGV[6 + 2 * i] end
+for i = 1, nroles do bus[ARGV[6 + 2 * i]] = ARGV[7 + 2 * i] end
 local out, gone, live, coord = {}, {}, {}, ''
-local k, a = 3, 7 + 2 * nroles
+local k, a = 3, 8 + 2 * nroles
 while k <= #KEYS do
   local rec, chal, name, sum = KEYS[k], KEYS[k + 7], ARGV[a], ARGV[a + 1]
   local did, misses, e = 0, 0, 0
@@ -640,8 +643,14 @@ var Challenged = map[Role][]Push{Coordinator: {Bus}, Friend: {Bus}, Comms: {Bus}
 // is unhooked, once; and the set of unhooked names is told once per change
 // (tla/HookBeat.tla).
 func (s Store) Pass(ctx context.Context, names []string, every time.Duration, limit int, nonce func() string, by string) (Passed, error) {
+	return s.PassWindow(ctx, names, every, max(time.Duration(limit)*every, every), max(limit, 1), nonce, by)
+}
+
+// PassWindow is Pass with an explicit answer window (downAfter), separate from
+// the challenge interval (every).
+func (s Store) PassWindow(ctx context.Context, names []string, every, downAfter time.Duration, limit int, nonce func() string, by string) (Passed, error) {
 	keys := []string{EventsKey, ServeKey}
-	args := []any{every.Milliseconds(), limit, (2*every + AnswerBound).Milliseconds(), by, EventsMax, len(Challenged)}
+	args := []any{every.Milliseconds(), limit, downAfter.Milliseconds(), (2*every + AnswerBound).Milliseconds(), by, EventsMax, len(Challenged)}
 	for _, r := range Roles {
 		if ps, ok := Challenged[r]; ok {
 			var w []string
@@ -705,11 +714,13 @@ func (s Store) Pass(ctx context.Context, names []string, every time.Duration, li
 }
 
 // Served is the heartbeat server's stamp as the store holds it: when it last
-// passed and its interval, with the store's now; ok false when no server ever passed.
+// passed, its interval and its answer window, with the store's now; ok false
+// when no server ever passed.
 type Served struct {
-	At, Now time.Time
-	Every   time.Duration
-	OK      bool
+	At, Now   time.Time
+	Every     time.Duration
+	DownAfter time.Duration
+	OK        bool
 }
 
 // Why a hooked record reads down although its state says otherwise: up needs
@@ -727,8 +738,8 @@ func (sv Served) Stale() bool { return !sv.OK || sv.Now.Sub(sv.At) > 2*sv.Every 
 // Down is why st reads down at this read whatever its state says, "" when the
 // evidence stands (tla/HookBeat.tla, the findings of the model run): no server
 // row, or one older than two intervals, puts every name down; and a name of a
-// challenged role is up only when it answered a challenge within the last two
-// intervals, by the store's TIME, however fresh the server row is. A role the heartbeat never challenges (a member's
+// challenged role is up only when it answered a challenge within the server's
+// down-after window, by the store's TIME, however fresh the server row is. A role the heartbeat never challenges (a member's
 // or reader's loop: no session) needs only the server. The one rule every
 // reader uses: Store.Read sets Status.Down from it, and the gate refuses on it.
 func (sv Served) Down(st Status) string {
@@ -738,7 +749,7 @@ func (sv Served) Down(st Status) string {
 	case sv.Stale():
 		return StaleReason
 	}
-	if _, ok := Challenged[st.Role]; ok && (st.AnswerAt.IsZero() || sv.Now.Sub(st.AnswerAt) > 2*sv.Every) {
+	if _, ok := Challenged[st.Role]; ok && (st.AnswerAt.IsZero() || sv.Now.Sub(st.AnswerAt) > sv.DownAfter) {
 		return NoAnswerReason
 	}
 	return ""
@@ -765,7 +776,12 @@ func servedOf(m map[string]string, now time.Time) Served {
 	if err != nil || every <= 0 {
 		return Served{Now: now} // ignored: no stamp, or one with no interval, is no server
 	}
-	return Served{At: msTime(m["at"]), Now: now, Every: time.Duration(every) * time.Millisecond, OK: true}
+	ev := time.Duration(every) * time.Millisecond
+	downAfter := max(DownAfter, 2*ev)
+	if da, err := strconv.ParseInt(m["down_after"], 10, 64); err == nil && da > 0 {
+		downAfter = time.Duration(da) * time.Millisecond
+	}
+	return Served{At: msTime(m["at"]), Now: now, Every: ev, DownAfter: downAfter, OK: true}
 }
 
 // JudgmentsKey holds the heartbeat's open judgments: a hash of message id to

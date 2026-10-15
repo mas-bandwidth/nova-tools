@@ -50,6 +50,10 @@ const ClaimAfter = 15 * time.Minute
 // pending lists, and renaming it there is a migration (SPEC-BUS.md, the data).
 const Consumer = "nova-bus2"
 
+// HookFrom is the from of a heartbeat challenge or notice: the hook server's
+// own service identity, which is not a roster friend or machine.
+const HookFrom = "nova-hook"
+
 // unknown is the refusal of a name the roster does not hold, with how to add one.
 func unknown(n string) string {
 	return fmt.Sprintf("%s is no known name; the names are nova-config's friend and machine rows (nova-bus names lists them); add one with nova-config friend add %s --width 1 --tiers flash --as <you>, then nova-config apply", n, n)
@@ -411,7 +415,7 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, []strin
 	if err != nil {
 		return Message{}, time.Time{}, nil, err
 	}
-	names := slices.Concat(friends, machines)
+	names := append(slices.Concat(friends, machines), HookFrom, TimeoutFrom)
 	for _, n := range append(append([]string{m.From}, m.To...), m.CC...) {
 		if !slices.Contains(names, n) {
 			problems = append(problems, unknown(n))

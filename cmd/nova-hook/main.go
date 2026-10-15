@@ -173,7 +173,7 @@ func hookTool(w world) *tool.Tool {
 strict gates require the acting name's role push to be live and proven.
 nova-bus send/recv note unproven mailboxes unless --require-push or NOVA_BUS_REQUIRE_PUSH=1.
 a hook proof is a protocol response only, not foreground presence or native idle-wake evidence.
-the record is in bus Redis; serve challenges each hooked name every minute, two misses unhook.`,
+the record is in bus Redis; serve challenges each hooked name every minute, five misses (5m) unhook.`,
 		ExitTable: "0 done (status: proven), 1 the verb ran and said no (not hooked in, a challenge not answered, unhooked under the loop), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"ARMED", "CHALLENGE", "PUSH", "STATE", "STOP", "DRY-RUN"},
 		UsageNote: "only the model answers a challenge, with nova-hook prove from inside its own turn; no daemon, loop or script may call prove.",
@@ -340,25 +340,29 @@ sprint's). The lines stop at ` + fmt.Sprint(friendsShown) + ` names with a MORE 
 			},
 			{
 				Name:    "serve",
-				Usage:   "serve --as <me> [--every <d>] [--judge-within <d>] [--once] [--redis <addr>]",
-				Example: "", // a server needs a hooked name and a live bus store: no example line can carry it
-				Effect:  tool.Delivery + ": challenges every hooked name on its bus, unhooks after misses, and expires overdue asks",
+				Usage:   "serve [--every <d>] [--down-after <d>] [--judge-within <d>] [--once] [--redis <addr>]",
+				Example: "", // a server needs a live bus store: no example line can carry it
+				Effect:  tool.Delivery + ": challenges every hooked name on its bus, unhooks after --down-after without an answer, and expires overdue asks",
 				Detail: `The heartbeat server (docs/SPEC-HOOK.md, the heartbeat; tla/HookBeat.tla). Every --every (default ` + hook.BeatEvery.String() + `),
 in one atomic pass by the store's TIME, each hooked name whose role a session answers in (coordinator, friend,
 comms) gets a fresh challenge as a bus message to its name, subject HOOK CHALLENGE nonce=<n>, due within the
 interval: the push it already has (its hook's HOOK PUSH line, or its friend daemon's adapter). A challenge left
-unanswered a whole interval is a miss; at ` + fmt.Sprint(hook.MissLimit) + ` in a row the name is unhooked (reason "missed ` + fmt.Sprint(hook.MissLimit) + ` challenges").
+unanswered a whole interval is a miss; once a name has gone --down-after (default ` + hook.DownAfter.String() + `) without answering,
+it reads down and is unhooked at the next pass (reason "missed <n> challenges"). Readers judge whether the server
+itself is stale from --every (two intervals), separate from --down-after.
 Each real change is told once, coalesced per pass: the coordinator gets one judgment (bus kind judgment) naming
 every FRIEND DOWN and FRIEND BACK, open until answered with nova-bus send --re <id> and pushed again as OVERDUE
 once past --judge-within; every other live name gets one message with the changes and COORDINATOR IS <name>,
 a judgment instead when the coordinator went down (COORDINATOR DOWN: who takes over). The pass also expires
 overdue bus asks. Two servers take one pass per interval between them. Each line is SERVE STATE event=<challenge|
-judgment|told|overdue|answered|expired|skip|fault>; a fault is event=fault and the loop goes on. --as must be hooked in as coordinator or comms.
+judgment|told|overdue|answered|expired|skip|fault>; a fault is event=fault and the loop goes on. The server runs
+under its own service identity (` + hook.ServeFrom + `) and needs no hooked session (--as is accepted and ignored).
 --once runs one pass and exits 0. It stops on SIGINT or SIGTERM.
-example: nova-hook serve --as ada --once`,
+example: nova-hook serve --once`,
 				Flags: func(f *tool.Flags) {
-					as(f)
+					f.String("as", hook.ServeFrom, "ignored: serve runs under its own service identity ("+hook.ServeFrom+") and needs no hooked session")
 					f.Duration("every", hook.BeatEvery, "the interval between passes, and each challenge's deadline")
+					f.Duration("down-after", hook.DownAfter, "how long a challenged name may go without answering before it reads down and is unhooked")
 					f.Duration("judge-within", 2*time.Minute, "how long a judgment waits for its answer before it is pushed again, once, as OVERDUE")
 					f.Bool("once", false, "run one pass and exit 0; no loop")
 					store(f)
@@ -1166,7 +1170,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		}
 		if age, lost := noChallenge(st[0], sv); lost { // the gate refuses a record with no evidence first (Status.Down)
 			o = tool.Fail(fmt.Sprintf("NO CHALLENGE FOR %s: the heartbeat server last passed %s ago (every %s), so nothing checks this link", age, sv.Now.Sub(sv.At).Round(time.Second), sv.Every))
-			o.Remedy = "nova-hook serve --as <a coordinator or comms name>"
+			o.Remedy = "nova-hook serve"
 			o.Facts = statusFacts(st[0])
 		}
 		return o
