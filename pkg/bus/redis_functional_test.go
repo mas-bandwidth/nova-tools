@@ -280,6 +280,61 @@ func TestRedisFriendACLSetsOnlyItsOwnTokenRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"ada", "bob"}, friends, "the roster is untouched")
 
+	// the asks under the line (SPEC-BUS.md, asks): ada sends an ask and its
+	// records are written (bus2:ask:<id>, bus2:asks:ada); bob's ask to ada is
+	// answered by a reply with and without a token, each HSETNX on
+	// bus2:answers:ada; asks reads the recipients' answers; and her own line
+	// writes no other friend's answers and nothing of the expiry's.
+	q, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "q", Body: "?\n", Kind: KindAsk, Wait: 10 * time.Minute})
+	require.NoError(t, err)
+	qb, err := (&Bus{Store: Redis{C: admin}}).Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "q for ada", Body: "?\n", Kind: KindAsk, Wait: 10 * time.Minute})
+	require.NoError(t, err)
+	_, err = b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "a", Body: "yes\n", Re: qb.ID})
+	require.NoError(t, err)
+	qt, err := (&Bus{Store: Redis{C: admin}}).Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "q2 for ada", Body: "?\n", Kind: KindAsk, Wait: 10 * time.Minute})
+	require.NoError(t, err)
+	_, err = b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "a2", Body: "yes\n", Re: qt.ID, Token: "t-answer"})
+	require.NoError(t, err)
+	answers, err := admin.HGetAll(ctx, AnswersOf("ada")).Result()
+	require.NoError(t, err)
+	assert.Contains(t, answers, qb.ID, "a reply marked bus2:answers:ada (HSETNX in the send's transaction)")
+	assert.Contains(t, answers, qt.ID, "and in the token's script")
+	idx, err := admin.HGetAll(ctx, AsksOf("ada")).Result()
+	require.NoError(t, err)
+	assert.Contains(t, idx, q.ID, "the ask is on ada's index")
+	asks, _, err := b.Asks(ctx, "ada")
+	require.NoError(t, err)
+	require.Len(t, asks, 1, "asks reads the index, the record and the recipients' answers as ada")
+	assert.Equal(t, q.ID, asks[0].ID)
+	_, _, err = b.Liveness(ctx, time.Hour)
+	require.NoError(t, err, "asks --liveness reads every name's index as ada")
+	_, err = b.DueAsks(ctx)
+	require.NoError(t, err, "overdue --dry-run reads the same")
+	for _, probe := range []struct {
+		what string
+		err  error
+	}{
+		{"HSET another friend's answers", ada.HSet(ctx, AnswersOf("bob"), "forged", "1").Err()},
+		{"HSETNX another friend's answers", ada.HSetNX(ctx, AnswersOf("bob"), "forged", "1").Err()},
+		{"HSET another sender's ask index", ada.HSet(ctx, AsksOf("bob"), "forged", "1").Err()},
+		{"HSET the expiry's once-key", ada.HSet(ctx, AskTimeoutPrefix+q.ID, "forged", "1").Err()},
+		{"HGET the expiry's once-key", ada.HGet(ctx, AskTimeoutPrefix+q.ID, "forged").Err()},
+	} {
+		assert.ErrorContains(t, probe.err, "NOPERM", probe.what)
+	}
+	// an ask that is due, as the expiry finds it: the once-key is a server's
+	require.NoError(t, admin.HSet(ctx, AskOf("01DUE"), "from", "bob", "to", "ada", "subject", "due", "at", "1", "due", "2").Err())
+	require.NoError(t, admin.HSet(ctx, AsksOf("bob"), "01DUE", "2").Err())
+	_, err = b.ExpireAsks(ctx)
+	require.ErrorContains(t, err, "NOPERM", "a friend's login cannot deliver a timeout: the once-key is on no friend's line")
+	_, err = b.DueAsks(ctx)
+	require.NoError(t, err, "but she may read what is due")
+	_, err = ada.HGetAll(ctx, AnswersOf("bob")).Result()
+	require.NoError(t, err, "her line reads the recipients' answers")
+	forged, err := admin.HGetAll(ctx, AnswersOf("bob")).Result()
+	require.NoError(t, err)
+	assert.Empty(t, forged, "nothing was written to bob's answers")
+
 	wide := apply("wide", strings.Replace(line, " (~bus2:sent:ada:* +get +set)", " +get +set", 1))
 	require.NoError(t, wide.Set(ctx, "machines", "x", 0).Err(), "reversed: +set on the root overwrites a roster key")
 }
