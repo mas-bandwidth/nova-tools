@@ -9,7 +9,7 @@ not a product unless the owner decides it is.
 
 ## The pin (reuse this; the sibling tracer schema-tracer-done-record-fixed does)
 
-- **Compiler:** github.com/mas-bandwidth/schema at commit
+- **Compiler:** the schema compiler repository (module path in the go run line below) at commit
   **`4d9941fbc7fd420b560739e48256d5b5e2892cdc`** (main on 2026-10-15). The Go pseudo-version is
   **`v2.5.1-0.20261014163537-4d9941fbc7fd`** and `schema version` prints
   `schema v2.5.1-0.20261014163537-4d9941fbc7fd`.
@@ -87,7 +87,7 @@ not a product unless the owner decides it is.
   silent on success.
 - `uint32 | max = N` is refused with "min without max (or vice versa) is a compile error". An
   unsigned field still has to spell out `min = 0`. Each error line is followed by the compiler
-  version line, and the whole error block is printed twice.
+  version line.
 - `generate` (with `--verbose`) and `check` print a notice that no `tables.baseline` exists
   ("save-game evolution is unguarded"). Committing one belongs in `schemas/friend/`, outside
   this card's NEW (see "Proposed diffs").
@@ -119,7 +119,7 @@ not a product unless the owner decides it is.
     replace.
   - An adopter generating into its own module needs none of that.
 - If a later nova unit has a wide value (int128, or a type that pulls in serialize.go), the
-  answer is `require github.com/mas-bandwidth/serialize.go v1.9.0` (public, tagged; not
+  answer is a plain `require` of the serialize.go module at v1.9.0 (public, tagged; not
   verified here because nothing needed it). It is never a replace.
 - **The compiler is never a go.mod dependency.** `go run module@pseudo-version` pins it by
   exact SHA without touching go.mod, which also keeps the AGPL compiler out of nova-tools'
@@ -195,12 +195,14 @@ not matter: they are tens of bytes against the bus's 1 MiB `MaxBody`.
 - The cards facade has `ReadStrict`, which is exactly "refuse unknown or lossy", but it is
   hand-written for cards. Every adopter rewrites it.
 - nova-tools' CI class tests do not recognise Go's `// Code generated ... DO NOT EDIT.` header:
-  - `TestGeneralityGuardrail` counts the generated JSON reader's method `space()` (6
-    occurrences) and one comment as the host name "space". It also counts the module path in
+  - `TestGeneralityGuardrail` counts the generated JSON reader's whitespace-skipping method
+    (6 occurrences) and one comment as a host name from its token list. It also counts the
+    module path in
     the `//go:generate` line as the org name. Imports are exempt; directives are not.
   - `TestEveryNamedRepoPathExists` reads the generated comments' references to the
-    compiler's own docs (`docs/SPEC-TABLES.md`, `docs/FIXED-FORM-ALGORITHM.md`,
-    `internal/codegen/golang/functions.go`, `internal/tablenames`) as broken nova-tools paths.
+    compiler's own tree (schema/docs/SPEC-TABLES.md, schema/docs/FIXED-FORM-ALGORITHM.md,
+    schema/internal/codegen/golang/functions.go, schema/internal/tablenames) as broken
+    nova-tools paths.
 - staticcheck reports SA4005 twice in the generated `TableBuildVersionMismatch.Error`
   (`pongTable.go:288`, `:292`).
 
@@ -268,9 +270,9 @@ not matter: they are tens of bytes against the bus's 1 MiB `MaxBody`.
    - Smallest fix: on an unsigned type, an omitted `min` is 0. Or keep the rule and make the
      message say "an unsigned field still spells min = 0".
 3. **schema-cli-error-noise**
-   - Evidence: each compile error is followed by the version line, and the whole error block
-     prints twice.
-   - Smallest fix: print the version once, at the end, and print each error once.
+   - Evidence: each compile error line is followed by the version line (three errors print the
+     version three times).
+   - Smallest fix: print the version once, after the error count.
 4. **schema-go-table-strict-load**
    - Evidence: a safe, refusing read takes four calls and four report checks
      (`LoadMeasureReason`, builder `Init`, `LoadBuilder`, then the `Malformed`, `Clamped` and
@@ -299,18 +301,20 @@ not matter: they are tens of bytes against the bus's 1 MiB `MaxBody`.
      Save, Load and reflection for a table, or a shared runtime package for the
      table-independent machinery.
 8. **schema-generated-go-lint-clean**
-   - Evidence: staticcheck SA4005 at `pongTable.go:288` and `:292` (the hex loops in
-     `TableBuildVersionMismatch.Error` assign to the value receiver's fields). A method named
-     `space()` and in-tree path references in generated comments (`docs/SPEC-TABLES.md`,
-     `internal/codegen/golang/functions.go`, `internal/tablenames`) trip adopters' path and
+   - Evidence: staticcheck SA4005 at `pongTable.go:288` and `:292` (in
+     `TableBuildVersionMismatch.Error`, each hex loop's last shift of the value receiver's
+     field is never read). The generated JSON reader's whitespace method is named like a host
+     name in nova's token list, and in-tree path references in generated
+     comments (schema/docs/SPEC-TABLES.md, schema/internal/codegen/golang/functions.go,
+     schema/internal/tablenames, each written without the schema/ prefix) trip adopters' path and
      name linters.
    - Smallest fix: use local copies in `Error()`, and write comment references as
      `schema:docs/SPEC-TABLES.md` (or full URLs) so they read as another repo's paths.
 9. **schema-go-adopter-recipe**
    - Evidence: CARDS.md "Import and module setup" describes only the local-module-plus-replace
      route. An adopter has to discover that table-only units are stdlib-only and that
-     `go run github.com/mas-bandwidth/schema/v2/cmd/schema@<pseudo-version>` pins the compiler
-     without touching go.mod.
+     `go run <compiler module>/cmd/schema@<pseudo-version>` (the pin section's line) pins the
+     compiler without touching go.mod.
    - Smallest fix: a USAGE.md "Adopting from Go" section with exactly that recipe, plus when
      serialize.go is needed (`require ... v1.9.0`, no replace). This replaces C3.
 10. **schema-tables-baseline-notice-location**
