@@ -2,7 +2,7 @@
 
 Reviewer: mercury-3-preview-1002
 Build: cc2f2f8c8148
-Score: 9.5/10 (51/55)
+Score: 9/10 (49/55)
 
 ## Rubric
 | # | criterion | score | evidence |
@@ -10,7 +10,7 @@ Score: 9.5/10 (51/55)
 | 1 | cold | 5 | `nova-update example --out versions.tsv` -> `EXAMPLE OK wrote=versions.tsv entries=1 unchanged=false` |
 | 2 | refusals | 5 | `nova-update check` -> `CHECK REFUSED: missing --file; refusing to guess; run: nova-update check -h` |
 | 3 | output | 5 | `nova-update report --file versions.tsv --json` -> `{"result":{"verb":"report","status":"ok","exit":0},...}` |
-| 4 | dry-run | 5 | `nova-update apply --file versions.tsv go --dry-run` -> `APPLY NOTE dry run: nothing installed, nothing written` |
+| 4 | dry-run | 3 | `nova-update report --file versions.tsv --dry-run` -> `REPORT REFUSED: unknown flag --dry-run; ...; run: nova-update report -h` (`--snapshot` is a local write with no preview; `release build`/`install` list no `--dry-run` either), while `apply --file versions.tsv go --dry-run` -> `APPLY NOTE dry run: nothing installed, nothing written` |
 | 5 | idempotent | 2 | `nova-update apply -h` -> flags list has no `--op`; write verbs cannot be retried idempotently by op id |
 | 6 | no prompts | 5 | `nova-update report --file versions.tsv` -> `REPORT OK checked=1 ...` (returns without prompting) |
 | 7 | exit codes | 5 | `nova-update status --file unk.tsv` -> `STATUS FAILED ... unknown=1` exit=1; refusal exit=2; ok exit=0 |
@@ -31,9 +31,9 @@ Score: 9.5/10 (51/55)
 | 2 | `nova-update report -h` | `report --snapshot` is a write but report takes no `--dry-run`, so its local write cannot be previewed | accept `--dry-run` on report to print the snapshot plan and write nothing | S |
 
 ## Top 3 fixes
-1. Add `--op <id>` to the write verbs so a retried apply/release/report-snapshot is idempotent by op id (moves criterion 5).
-2. Print literal spaces instead of `\x20` escapes in line-rendered value fields (moves criterion 3 readability).
-3. Give `report` a `--dry-run` so its `--snapshot` write can be previewed (moves criterion 4 coverage).
+1. Add `--op <id>` to the write verbs so a retried apply/release/report-snapshot is idempotent by op id (moves criterion 5, 2 to 5).
+2. Give `report` a `--dry-run` so its `--snapshot` write can be previewed (moves criterion 4, 3 to 5).
+3. Print literal spaces instead of `\x20` escapes in line-rendered value fields (moves criterion 3 readability; already scored 5).
 
 ## Good, keep
 - Every refusal names its cause and the next command (`run: nova-update <verb> -h`), and a malformed manifest reports every bad line at once, not only the first.
