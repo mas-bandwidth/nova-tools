@@ -312,6 +312,13 @@ type Bus struct {
 	// later stamp lands. Nil drops it, the overdue alarm standing for it
 	// (stages.go).
 	OnStampError func(err error)
+	// Native is the writer switch of the native binary form (native.go): when
+	// set, every message Send writes carries its typed envelope as the binary
+	// wire in EnvelopeField, beside the legacy text fields, and a message past
+	// one of the envelope's bounds is refused before anything is written. Off,
+	// a send writes the legacy fields alone. Readers learn the field first;
+	// writers switch after (SPEC-BUS.md, the native form).
+	Native bool
 }
 
 // Refusal is a reason a verb could not run as asked: the input, not the store.
@@ -356,10 +363,14 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	}
 	streams = append(streams, LogKey)
 	marks := slices.Concat(owe(m, friends), askMarks(m), answerMark(m), m.Marks)
-	if m.Token != "" || m.Once != "" {
-		return b.sendOnce(ctx, m, now, streams, marks)
+	fields, err := b.entryFields(m)
+	if err != nil {
+		return Message{}, err
 	}
-	if err := b.Store.AddAll(ctx, streams, m.Fields(), marks...); err != nil {
+	if m.Token != "" || m.Once != "" {
+		return b.sendOnce(ctx, m, now, streams, fields, marks)
+	}
+	if err := b.Store.AddAll(ctx, streams, fields, marks...); err != nil {
 		return Message{}, err
 	}
 	return m, nil
@@ -425,7 +436,25 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, []strin
 		m.Due = m.At.Add(m.Wait) // the store's clock, never the sender's
 	}
 	m.To, m.CC = slices.Compact(slices.Sorted(slices.Values(m.To))), slices.Compact(slices.Sorted(slices.Values(m.CC)))
+	if b.Native {
+		// the envelope's bounds, checked before an id is made: a stand-in id
+		// of a ULID's length
+		probe := m
+		probe.ID = strings.Repeat("0", 26)
+		if _, err := NativeFields(probe); err != nil {
+			return Message{}, time.Time{}, nil, err
+		}
+	}
 	return m, now, friends, nil
+}
+
+// entryFields is the entry Send writes for m: the legacy text fields, and the
+// native field beside them once the writer has switched (Native).
+func (b *Bus) entryFields(m Message) (map[string]string, error) {
+	if !b.Native {
+		return m.Fields(), nil
+	}
+	return NativeFields(m)
 }
 
 // Recv is one message for the recipient: the oldest one delivered and not

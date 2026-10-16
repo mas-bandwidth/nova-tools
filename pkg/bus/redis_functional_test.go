@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/mas-bandwidth/nova-tools/pkg/testredis"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -351,4 +352,33 @@ func TestRedisReceiptsMoveForwardOnlyAndOverdueListsTheUntaken(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, Acted, got[0].State)
+}
+
+// TestRedisCarriesTheNativeFieldByteForByte: the native field rides a real
+// stream as the raw wire, both through MULTI/EXEC (a send) and through the
+// send-once script (a send under a token), and a recv hands back the same
+// bytes, read as form binary (SPEC-BUS.md, the native form).
+func TestRedisCarriesTheNativeFieldByteForByte(t *testing.T) {
+	t.Parallel()
+	b, _, ctx := live(t)
+	b.Native = true
+	r := NewEnvelopeReader()
+	for _, token := range []string{"", "t-native"} {
+		sent, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "native", Body: "the body\n", Token: token})
+		require.NoError(t, err)
+		want, err := EnvelopeWire(Message{ID: sent.ID, From: sent.From, To: sent.To, Subject: sent.Subject, Kind: sent.Kind, At: sent.At, Body: sent.Body})
+		require.NoError(t, err)
+		assert.Contains(t, string(want), "\x00", "the wire holds bytes no text field would")
+		e, ok, err := b.Recv(ctx, "bob", 0)
+		require.NoError(t, err)
+		require.True(t, ok)
+		assert.Equal(t, string(want), e.Fields[EnvelopeField], "token %q: byte for byte", token)
+		got, form, err := r.ReadEntry(e.Fields)
+		require.NoError(t, err)
+		assert.Equal(t, schemaread.FormBinary, form)
+		assert.Equal(t, sent.ID, got.ID)
+		assert.Equal(t, sent.Body, got.Body)
+		assert.Equal(t, Parse(e.Fields), got, "an old reader reads the same entry alike")
+	}
+	assert.Equal(t, uint64(2), r.Reads(schemaread.FormBinary))
 }
