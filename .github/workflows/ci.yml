@@ -953,6 +953,23 @@ jobs:
         run: |
           "$RUNNER_TEMP/ci" install-postgres
 
+      - name: keep this job's temporary files in the runner's own temp
+        if: matrix.entry.packages != ''
+        # /tmp on the AMD benches is a tmpfs with a per-user quota (systemd's
+        # usrquota), shared with every other process the nova user runs there.
+        # Worker scratch filled it to the quota on amd-2 (2026-10-16), and the
+        # throwaway Postgres (pkg/nsprint/testutil/pg, under os.MkdirTemp) hit
+        # "disk quota exceeded" on a WAL write: PANIC, crash recovery, then
+        # 57P03 and refused connections for every later test in the package;
+        # go build into /tmp failed the same way. RUNNER_TEMP is on the
+        # runner's disk and is emptied by the runner for every job, and its
+        # path is no longer than a macOS TMPDIR, so unix sockets still fit.
+        shell: bash
+        run: |
+          [ -d "${RUNNER_TEMP:?}" ] || exit 1
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TMPDIR=$RUNNER_TEMP ($(df -h "$RUNNER_TEMP" | tail -1))"
+
       - name: functional tests
         if: matrix.entry.packages != ''
         run: make test-functional PKGS="${{ matrix.entry.packages }}"
