@@ -530,6 +530,12 @@ func holds(r hook.Role) []hook.Push {
 // path (another route's environment, a flag) is a failure: Claude Code reads
 // exit 2 as a block, and one that stands would keep a Stop from ever ending.
 func (w world) hook(c *tool.Call) *tool.Out {
+	if c.Bool("claude-boundary") && w.getenv(notice.ClaudeChildEnv) != "" {
+		// a headless claude child's hook (a lane's card, read or proof, inside its
+		// wall, where the session's state is out of reach): no event of the
+		// session's, so nothing is read, written or said
+		return tool.Exit(0)
+	}
 	o := w.hookVerb(c)
 	if c.Bool("claude-boundary") && o != nil && o.Exit == 2 {
 		return claudeHookFail(strings.Join(o.Why, "; "))

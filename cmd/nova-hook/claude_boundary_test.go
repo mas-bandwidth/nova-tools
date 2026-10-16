@@ -59,8 +59,12 @@ func TestTheClaudeBoundarySkipsAHeadlessChild(t *testing.T) {
 	child := map[string]string{notice.ClaudeChildEnv: "1"}
 	out = claudeHookRun(t, state, settings, `{"hook_event_name":"Stop"}`, child)
 	require.Zero(t, out.Code, out.Stdout+out.Stderr)
-	assert.Contains(t, out.Stdout, "state=boundary-skipped generation=1")
+	assert.Empty(t, out.Stdout)
 	assert.Equal(t, 1, gen(), "a child's Stop leaves the session's generation alone")
+	// inside a lane's wall the session's state directory is out of reach: still silent, exit 0
+	out = claudeHookRun(t, filepath.Join(state, "out-of-reach"), settings, `{"hook_event_name":"SessionStart"}`, child)
+	require.Zero(t, out.Code, out.Stdout+out.Stderr)
+	assert.Empty(t, out.Stdout+out.Stderr)
 	out = claudeHookRun(t, state, settings, `{"hook_event_name":"SessionStart"}`, child)
 	require.Zero(t, out.Code)
 	assert.Empty(t, out.Stdout, "a child's other events are no event of the session's")

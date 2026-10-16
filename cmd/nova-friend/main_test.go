@@ -526,13 +526,18 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 				var walls []string    // the config dir of each wall a lane's child ran in
 				var denies [][]string // and what each wall denied
 				var plain int         // children run outside any lane's wall
+				var proofs int        // harness proofs, which run inside the wall as a card does
 				w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
-					return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+					return func(ctx context.Context, _, _ string, args []string, _ string) (string, int, error) {
 						mu.Lock()
 						defer mu.Unlock()
 						if !friend.InLane(ctx) {
 							plain++
 							return "", 0, nil
+						}
+						if proofCall(args) {
+							proofs++
+							return `{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed"}` + "\n", 0, nil
 						}
 						walls = append(walls, wl.ConfigDir)
 						denies = append(denies, wl.Deny)
@@ -569,6 +574,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 				}
 				assert.Equal(t, wantDeny, denies[0], "the wall's deny list")
 				assert.Zero(t, plain, "no child of the lane ran outside the wall")
+				assert.NotZero(t, proofs, "the harness proof ran inside the lane's wall, where a card's login must work")
 				assert.Contains(t, out.String(), "card=done")
 				assert.Equal(t, 1, strings.Count(out.String(), "spend: harness=claude runs=1 cost_usd=0.0125"), "the beat after the run says its cost once, not on every beat\n%s", out.String())
 			})
