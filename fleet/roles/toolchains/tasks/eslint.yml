@@ -22,7 +22,7 @@
   environment:
     PATH: "{{ nova_sdk_home }}/bin:/usr/local/bin:/usr/bin:/bin"
   register: nova_eslint_probe
-  failed_when: false
+  failed_when: false  # ignored: a missing or older eslint is the probe's answer; the install task below acts on rc and stdout
   changed_when: false
   check_mode: false
 
