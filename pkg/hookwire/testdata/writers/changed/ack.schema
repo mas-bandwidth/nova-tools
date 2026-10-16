@@ -1,0 +1,39 @@
+// ack.schema: the send receipt, what a sender is told about one message it
+// sent: how far the message has gone (stage) and whether the recipient can
+// hear it now (push), with the reason when it cannot. It replaces reading the
+// receipt out of a prose line, where a refused send and a stale push look
+// alike. Its Go is generated into pkg/hookwire (go generate ./pkg/hookwire).
+//
+// A VARIABLE table: friends exchange it, so an older reader may meet a newer
+// writer's ack, and a variable table skips and counts a field it does not know
+// instead of refusing the message. No version field: the table wire's form
+// byte versions the file, and a field's identity is the hash of its name.
+//
+// Absent reads as zero in a variable table. Every enum here keeps the implicit
+// None (0) as "not said", so an absent stage or push reads as None, which the
+// reader refuses: a liveness count never reads absence as a real state.
+package hookwire
+
+// Stage is how far a message has gone, in the one order a receipt moves
+// (pkg/bus stages.go): queued (on the recipient's stream, not yet taken; the
+// receipt store holds none), delivered (the recipient's reader took it off its
+// stream), read (the turn carrying it started), acted (the turn ended at exit
+// 0, or the recipient answered it). Append only: an ordinal is its wire value.
+enum Stage { queued, delivered, read, acted }
+
+// PushState is the recipient's bus push as the sender's hook read judges it:
+// up (a live lease), down (no live lease: its holder is not running), stale
+// (the heartbeat server's row is stale, so the judgment is old and nothing
+// says up). Append only.
+enum PushState { up, down, stale }
+
+table Ack
+{
+    // id: the message's id, a ULID (26 bytes) made at send; the bus bounds
+    // an id at 64 bytes.
+    id     string(64)
+    stage  Stage
+    push   PushState
+    // reason: why the push is not up, one line; empty when it is up.
+    reason ?int64
+}
