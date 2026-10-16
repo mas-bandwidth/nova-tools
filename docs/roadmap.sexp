@@ -491,114 +491,114 @@
 
   (item "l1-nova-bus-reader-builder-and-show" :group "after-rocketnet" :area "nova-tools"
    :title "C12: nova-bus reads both forms, builds typed envelopes with refusals, and shows the text form"
-   :text "Resume after the rocketnet milestone. THE TASK. In nova-bus: recv dual-reads legacy and typed envelopes (any of the three forms); a builder validates a typed envelope from flags and Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. In nova-bus: recv dual-reads legacy and typed envelopes (any of the three forms); a builder validates a typed envelope from flags and Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l1-nova-bus-reader-builder-and-show-2 (stream v15-schema-tables, aspect 1 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l1-nova-bus-reader-builder-and-show" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "heavy" :sprint-base "v1.5-schema-tables" :needs "l1-defs-bus-envelope" :pushed-head "" :pushed-branch ""))
 
   (item "l1-nova-bus-native-binary-form" :group "after-rocketnet" :area "nova-tools"
    :title "C31: nova-bus carries the envelope in its native binary form, with no base64 on the bus itself"
-   :text "Resume after the rocketnet milestone. THE TASK. Give the bus a native binary carrier: the typed Envelope's binary wire goes into a dedicated stream field as bytes, beside or instead of Source: Owner 2026-10-15: nova-bus gets a native binary form (card it in nova-tools Layer 1); the schema-go card Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Give the bus a native binary carrier: the typed Envelope's binary wire goes into a dedicated stream field as bytes, beside or instead of Source: Owner 2026-10-15: nova-bus gets a native binary form (card it in nova-tools Layer 1); the schema-go card Heads: none. Back in the sprint 2026-10-16 as l1-nova-bus-native-binary-form-2 (stream v15-schema-tables, aspect 1 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l1-nova-bus-native-binary-form" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "heavy" :sprint-base "v1.5-schema-tables" :needs "l1-defs-bus-envelope" :pushed-head "" :pushed-branch ""))
 
   (item "l1-pong-dual-read" :group "after-rocketnet" :area "nova-tools"
    :title "C13: the pong is read in both forms, refused by name when malformed, never read as silence"
-   :text "Resume after the rocketnet milestone. THE TASK. Make the friend machine's pong reader accept both forms through pkg/schemaread, refuse every malformed or clamped pong by name, and count Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Make the friend machine's pong reader accept both forms through pkg/schemaread, refuse every malformed or clamped pong by name, and count Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l1-pong-dual-read-2 (stream v15-schema-tables, aspect 2 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l1-pong-dual-read" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "heavy" :sprint-base "v1.5-schema-tables" :needs "l1-defs-pong" :pushed-head "" :pushed-branch ""))
 
   (item "l1-hook-stamp-typed" :group "after-rocketnet" :area "nova-tools"
    :title "C14: the hook lease stamp is typed, with int64 millisecond times, refused by name when malformed"
-   :text "Resume after the rocketnet milestone. THE TASK. Replace the hook's stamp parse with the typed stamp through pkg/schemaread, keeping the legacy read for the window and counting Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Replace the hook's stamp parse with the typed stamp through pkg/schemaread, keeping the legacy read for the window and counting Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l1-hook-stamp-typed-2 (stream v15-schema-tables, aspect 3 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l1-hook-stamp-typed" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "heavy" :sprint-base "v1.5-schema-tables" :needs "l1-defs-ack-beat-hook-stamp" :pushed-head "" :pushed-branch ""))
 
   (item "l1-seat-hook-typed-reader" :group "after-rocketnet" :area "nova-tools"
    :title "C15: the seat hook reads typed and legacy stamps alike"
-   :text "Resume after the rocketnet milestone. THE TASK. Make the seat's hook reader (the coordinator's seat path in hook/) read the typed stamp and the legacy JSON stamp alike, refusing malformed Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Make the seat's hook reader (the coordinator's seat path in hook/) read the typed stamp and the legacy JSON stamp alike, refusing malformed Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l1-seat-hook-typed-reader-2 (stream v15-schema-tables, aspect 3 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l1-seat-hook-typed-reader" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "heavy" :sprint-base "v1.5-schema-tables" :needs "l1-defs-ack-beat-hook-stamp" :pushed-head "" :pushed-branch ""))
 
   (item "l1-writers-switch" :group "after-rocketnet" :area "nova-tools"
    :title "C30: writers switch to the table form, only after readers adopted, and refuse instead of falling back"
-   :text "Resume after the rocketnet milestone. THE TASK. Switch nova-friend's pong writer and nova-bus send to the table form, refusing on any validation failure rather than writing legacy. Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Switch nova-friend's pong writer and nova-bus send to the table form, refusing on any validation failure rather than writing legacy. Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l1-writers-switch-2 (stream v15-schema-tables, aspect 4 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l1-writers-switch" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "heavy" :sprint-base "v1.5-schema-tables" :needs "l1-nova-bus-reader-builder-and-show,l1-nova-bus-native-binary-form,l1-defs-pong" :pushed-head "" :pushed-branch ""))
 
   (item "l2-tla-card-contract-result-typed" :group "after-rocketnet" :area "nova-tools"
    :title "C17: CardContract gains 'result typed before review'"
-   :text "Resume after the rocketnet milestone. THE TASK. Add to tla/CardContract.tla the rule that no result reaches review unless its frame validated, with a Broken config that lets an untyped Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Add to tla/CardContract.tla the rule that no result reaches review unless its frame validated, with a Broken config that lets an untyped Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l2-tla-card-contract-result-typed-3 (stream v15-schema-tables, aspect 5 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l2-tla-card-contract-result-typed" :sprint-stream "v13-schema-adoption" :sprint-column "ready" :tier "" :sprint-base "v1.5-schema-tables" :needs "" :pushed-head "" :pushed-branch ""))
 
   (item "l2-defs-card-jobpacket-result" :group "after-rocketnet" :area "nova-tools"
    :title "C18: the Layer 2 definitions: card, job packet and result"
-   :text "Resume after the rocketnet milestone. THE TASK. Write schemas/card with the Card (the upstream tables/cards Card plus nova's 16 KiB body bound in the facade), JobPacket and Result of Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Write schemas/card with the Card (the upstream tables/cards Card plus nova's 16 KiB body bound in the facade), JobPacket and Result of Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l2-defs-card-jobpacket-result-2 (stream v15-schema-tables, aspect 5 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l2-defs-card-jobpacket-result" :sprint-stream "v13-schema-adoption" :sprint-column "ready" :tier "" :sprint-base "v1.5-schema-tables" :needs "nova-tools-strict-read-and-form-counter" :pushed-head "" :pushed-branch ""))
 
   (item "l2-brief-parse-parity" :group "after-rocketnet" :area "nova-tools"
    :title "C19: the table parse of a brief matches today's parser on every admitted brief"
-   :text "Resume after the rocketnet milestone. THE TASK. Add the table parse of a card beside pkg/cardhdr's text parse and prove parity over a corpus of real briefs (with no person's name, key or Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Add the table parse of a card beside pkg/cardhdr's text parse and prove parity over a corpus of real briefs (with no person's name, key or Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l2-brief-parse-parity-2 (stream v15-schema-tables, aspect 5 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l2-brief-parse-parity" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "" :sprint-base "v1.5-schema-tables" :needs "l2-defs-card-jobpacket-result" :pushed-head "" :pushed-branch ""))
 
   (item "l2-result-table-reader" :group "after-rocketnet" :area "nova-tools"
    :title "C20: the result is read as a table; no shape fault is ever blamed on a worker"
-   :text "Resume after the rocketnet milestone. THE TASK. Read RESULT.md as the Result table (dual-read with the two historical text shapes, counted per form), citing CardContract's Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Read RESULT.md as the Result table (dual-read with the two historical text shapes, counted per form), citing CardContract's Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l2-result-table-reader-2 (stream v15-schema-tables, aspect 5 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l2-result-table-reader" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "" :sprint-base "v1.5-schema-tables" :needs "l2-defs-card-jobpacket-result" :pushed-head "" :pushed-branch ""))
 
   (item "l2-friend-report-gateway" :group "after-rocketnet" :area "nova-tools"
    :title "C21: the friend outbox gateway refuses an untyped report by name and leaves nothing unread"
-   :text "Resume after the rocketnet milestone. THE TASK. Transcode REPORT.md through the Result table at the outbox gateway, refusing by name and surfacing the refusal instead of leaving the Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Transcode REPORT.md through the Result table at the outbox gateway, refusing by name and surfacing the refusal instead of leaving the Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l2-friend-report-gateway-2 (stream v15-schema-tables, aspect 5 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l2-friend-report-gateway" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "" :sprint-base "v1.5-schema-tables" :needs "l2-result-table-reader" :pushed-head "" :pushed-branch ""))
 
   (item "l3-defs-and-refusals-whole" :group "after-rocketnet" :area "nova-tools"
    :title "C23: refusal and finding definitions; every verb's --json refusal is one whole object"
-   :text "Resume after the rocketnet milestone. THE TASK. Define the Refusal and Finding tables in schemas/refusal, generate pkg/refusalwire, and make every verb's --json refusal one whole typed Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Define the Refusal and Finding tables in schemas/refusal, generate pkg/refusalwire, and make every verb's --json refusal one whole typed Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l3-defs-and-refusals-whole-3 (stream v15-schema-tables, aspect 6 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l3-defs-and-refusals-whole" :sprint-stream "v13-schema-adoption" :sprint-column "ready" :tier "" :sprint-base "v1.5-schema-tables" :needs "" :pushed-head "" :pushed-branch ""))
 
   (item "l5-retire-legacy-result-parser" :group "after-rocketnet" :area "nova-tools"
    :title "C26: delete the legacy result parser once the per-form counter shows zero legacy reads"
-   :text "Resume after the rocketnet milestone. THE TASK. Remove the legacy RESULT.md and REPORT.md text parsers once the counter proves no legacy read Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Remove the legacy RESULT.md and REPORT.md text parsers once the counter proves no legacy read Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l5-retire-legacy-result-parser-2 (stream v15-schema-tables, aspect 7 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l5-retire-legacy-result-parser" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "" :sprint-base "v1.5-schema-tables" :needs "l2-signoff-fence,l2-result-table-reader,l2-friend-report-gateway" :pushed-head "" :pushed-branch ""))
 
   (item "l1-defs-bus-envelope" :group "after-rocketnet" :area "nova-tools"
    :title "C10a: the bus area and the Envelope, generated into pkg/buswire"
-   :text "Resume after the rocketnet milestone. THE TASK. Write schemas/bus/envelope.schema with the variable table of UNION.md section 4.1, Envelope, with the Kind enum and the Name element, Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Write schemas/bus/envelope.schema with the variable table of UNION.md section 4.1, Envelope, with the Kind enum and the Name element, Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l1-defs-bus-envelope-2 (stream v15-schema-tables, aspect 1 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l1-defs-bus-envelope" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "" :sprint-base "v1.5-schema-tables" :needs "nova-schema-conformance-ci,l1-tla-typed-frames,nova-tools-strict-read-and-form-counter,table-wire-over-text-transports" :pushed-head "" :pushed-branch ""))
 
   (item "l1-defs-ack-beat-hook-stamp" :group "after-rocketnet" :area "nova-tools"
    :title "C10c: the hook area (ack, beat, hook stamp), generated into pkg/hookwire"
-   :text "Resume after the rocketnet milestone. THE TASK. Write the variable tables of UNION.md section 4.2 into the hook area: schemas/hook/ack.schema (Ack: id, stage, push, reason, with the Stage Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Write the variable tables of UNION.md section 4.2 into the hook area: schemas/hook/ack.schema (Ack: id, stage, push, reason, with the Stage Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l1-defs-ack-beat-hook-stamp-2 (stream v15-schema-tables, aspect 3 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l1-defs-ack-beat-hook-stamp" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "" :sprint-base "v1.5-schema-tables" :needs "nova-schema-conformance-ci,l1-tla-typed-frames,nova-tools-strict-read-and-form-counter,table-wire-over-text-transports" :pushed-head "" :pushed-branch ""))
 
   (item "l1-defs-pong" :group "after-rocketnet" :area "nova-tools"
    :title "C10b: the pong area, generated into pkg/pongwire"
-   :text "Resume after the rocketnet milestone. THE TASK. Write schemas/pong/pong.schema with the variable table of UNION.md section 4.2, Pong: friend, nonce text(32), queue, working, width with Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none."
+   :text "Resume after the rocketnet milestone. THE TASK. Write schemas/pong/pong.schema with the variable table of UNION.md section 4.2, Pong: friend, nonce text(32), queue, working, width with Source: nova-sprint docs/research/schema-tables/UNION.md (read) at 98f8a280 (branch sprint/schema-adoption-union-fixes.w2.g1.e21) section Heads: none. Back in the sprint 2026-10-16 as l1-defs-pong-2 (stream v15-schema-tables, aspect 2 of the schema-table adoption, one aspect at a time)."
    :date "2026-10-15"
-   :release "after the rocketnet milestone"
+   :release "v1.5"
    :kept (:sprint-card "l1-defs-pong" :sprint-stream "v13-schema-adoption" :sprint-column "waiting" :tier "" :sprint-base "v1.5-schema-tables" :needs "nova-schema-conformance-ci,l1-tla-typed-frames,nova-tools-strict-read-and-form-counter,table-wire-over-text-transports" :pushed-head "" :pushed-branch ""))
 
 ))
