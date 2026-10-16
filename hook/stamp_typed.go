@@ -37,35 +37,11 @@ const stampName = "STAMP"
 const ReasonLegacyShape = "legacy_shape"
 
 // stampReader is the one reader every Judge uses; its counters are the
-// process's per-form stamp reads.
+// process's per-form stamp reads (the tests read them through stampReads).
 var stampReader = schemaread.NewReader(stampCodec())
 
 // legacyRFC3339 counts legacy stamps whose time was RFC 3339 text.
 var legacyRFC3339 atomic.Uint64
-
-// StampReads is the stamp reads of this process: the per-form counts
-// ("binary", "base64", "json", "legacy"), "legacy_rfc3339" (the legacy reads
-// whose time was RFC 3339 text), "unknown_fields" and "refused_<reason>".
-func StampReads() map[string]uint64 {
-	m := stampReader.Counts().Snapshot()
-	m["legacy_rfc3339"] = legacyRFC3339.Load()
-	return m
-}
-
-// StampBytes is a stamp written in form (the binary wire, padded standard
-// base64 of it, or the JSON text), refused by name when epoch, atMs or by is
-// no stamp. Times are Unix milliseconds.
-func StampBytes(epoch, atMs int64, by string, form schemaread.Form) ([]byte, error) {
-	var v hookwire.Stamp
-	hookwire.StampReset(&v)
-	v.Epoch, v.EpochPresent = epoch, true
-	v.AtMs, v.AtMsPresent = atMs, true
-	v.ByLength = int32(copy(v.By[:len(v.By)-1], by))
-	if len(by) > len(v.By)-1 {
-		v.ByLength = int32(len(by)) // past the bound: the check refuses it
-	}
-	return stampReader.Write(&v, form)
-}
 
 // readStamp reads raw with r, the stamp it holds, or the refusal by name.
 func readStamp(r *schemaread.Reader[hookwire.Stamp], raw string) (stamp, error) {

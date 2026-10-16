@@ -8,8 +8,34 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/hookwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
+
+// stampReads is the stamp reads of this process, a test helper: no production
+// path reads the counts yet. The per-form counts are "binary", "base64",
+// "json" and "legacy"; "legacy_rfc3339" counts the legacy reads whose time was
+// RFC 3339 text; then "unknown_fields" and "refused_<reason>".
+func stampReads() map[string]uint64 {
+	m := stampReader.Counts().Snapshot()
+	m["legacy_rfc3339"] = legacyRFC3339.Load()
+	return m
+}
+
+// stampBytes is a test helper: a stamp written in form (the binary wire, padded standard
+// base64 of it, or the JSON text), refused by name when epoch, atMs or by is
+// no stamp. Times are Unix milliseconds.
+func stampBytes(epoch, atMs int64, by string, form schemaread.Form) ([]byte, error) {
+	var v hookwire.Stamp
+	hookwire.StampReset(&v)
+	v.Epoch, v.EpochPresent = epoch, true
+	v.AtMs, v.AtMsPresent = atMs, true
+	v.ByLength = int32(copy(v.By[:len(v.By)-1], by))
+	if len(by) > len(v.By)-1 {
+		v.ByLength = int32(len(by)) // past the bound: the check refuses it
+	}
+	return stampReader.Write(&v, form)
+}
 
 // TestHookStampTyped pins the typed stamp (schemas/hook/stamp.schema): the
 // stamp carries an int64 millisecond time in every form, a malformed stamp is
@@ -30,7 +56,7 @@ func TestHookStampTyped(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, want, got)
 		for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
-			raw, err := StampBytes(7, at, "nova-friend 4242", form)
+			raw, err := stampBytes(7, at, "nova-friend 4242", form)
 			require.NoError(t, err, form.String())
 			got, err := readStamp(r, string(raw))
 			require.NoError(t, err, form.String())
@@ -44,17 +70,17 @@ func TestHookStampTyped(t *testing.T) {
 
 	t.Run("a legacy stamp with an RFC 3339 time still reads and is counted", func(t *testing.T) {
 		t.Parallel()
-		before := StampReads()["legacy_rfc3339"]
+		before := stampReads()["legacy_rfc3339"]
 		got, err := readStamp(stampReader, `{"epoch":3,"at":"2026-10-11T12:00:00Z","by":"x"}`)
 		require.NoError(t, err)
 		assert.Equal(t, stamp{Epoch: 3, At: 1791720000000, By: "x"}, got)
-		assert.Greater(t, StampReads()["legacy_rfc3339"], before)
+		assert.Greater(t, stampReads()["legacy_rfc3339"], before)
 	})
 
 	t.Run("a malformed stamp is refused by name", func(t *testing.T) {
 		t.Parallel()
 		r := schemaread.NewReader(stampCodec())
-		good, err := StampBytes(7, at, "x", schemaread.FormBinary)
+		good, err := stampBytes(7, at, "x", schemaread.FormBinary)
 		require.NoError(t, err)
 		for name, tc := range map[string]struct{ in, reason string }{
 			"no stamp at all":               {"hello stamp", "malformed"},
@@ -100,11 +126,11 @@ func TestHookStampTyped(t *testing.T) {
 	t.Run("Judge reads every form and counts it", func(t *testing.T) {
 		t.Parallel()
 		rec := hooked(Comms, 4)
-		before := StampReads()
+		before := stampReads()
 		for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
-			lease, err := StampBytes(4, at, "holder", form)
+			lease, err := stampBytes(4, at, "holder", form)
 			require.NoError(t, err)
-			proof, err := StampBytes(4, at+1, "prover", form)
+			proof, err := stampBytes(4, at+1, "prover", form)
 			require.NoError(t, err)
 			rs := reads(4, nil, nil)
 			rs[0] = PushRead{Live: string(lease), LiveLeft: LeaseTTL, Proof: string(proof), ProofLeft: ProofTTL}
@@ -114,7 +140,7 @@ func TestHookStampTyped(t *testing.T) {
 			assert.Equal(t, "holder", st.Pushes[0].By, form.String())
 			assert.Empty(t, st.Pushes[0].Refused)
 		}
-		after := StampReads()
+		after := stampReads()
 		for _, k := range []string{"binary", "base64", "json"} {
 			assert.GreaterOrEqual(t, after[k], before[k]+2, "the %s reads are counted", k)
 		}
@@ -123,10 +149,10 @@ func TestHookStampTyped(t *testing.T) {
 	t.Run("the writer refuses what is no stamp", func(t *testing.T) {
 		t.Parallel()
 		for name, f := range map[string]func() ([]byte, error){
-			"a zero epoch":    func() ([]byte, error) { return StampBytes(0, at, "x", schemaread.FormJSON) },
-			"a zero time":     func() ([]byte, error) { return StampBytes(1, 0, "x", schemaread.FormBinary) },
-			"an empty holder": func() ([]byte, error) { return StampBytes(1, at, "", schemaread.FormBase64) },
-			"a long holder":   func() ([]byte, error) { return StampBytes(1, at, strings.Repeat("h", 129), schemaread.FormBinary) },
+			"a zero epoch":    func() ([]byte, error) { return stampBytes(0, at, "x", schemaread.FormJSON) },
+			"a zero time":     func() ([]byte, error) { return stampBytes(1, 0, "x", schemaread.FormBinary) },
+			"an empty holder": func() ([]byte, error) { return stampBytes(1, at, "", schemaread.FormBase64) },
+			"a long holder":   func() ([]byte, error) { return stampBytes(1, at, strings.Repeat("h", 129), schemaread.FormBinary) },
 		} {
 			_, err := f()
 			require.Error(t, err, name)
