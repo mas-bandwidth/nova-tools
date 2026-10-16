@@ -1,4 +1,12 @@
-//go:build race
+//go:build functional
+
+// These two tests run the whole friend daemon with its lane and beat loops on
+// real goroutines and judge the order their writes land in. Their outcome
+// depends on the scheduler, not on the logic under test: on a hosted runner
+// (dev run 38968667637) the beat loop reached its twelfth beat and cancelled
+// the run before the lane had run at all. A unit test is not sensitive to
+// timing (Glenn, 2026-10-16), so they are functional tests. They were
+// `//go:build race` before: run only under the race detector.
 
 package main
 
