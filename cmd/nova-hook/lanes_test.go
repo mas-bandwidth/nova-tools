@@ -125,6 +125,7 @@ func TestTheConfigPassSaysEachChangeOnceAndClosesIntakeOnAFailedRead(t *testing.
 	width = 5
 	o, changed = configPass(context.Background(), lc, now.Add(2*friend.ConfigEvery))
 	require.True(t, changed, "a raised width takes effect on the next cycle")
+	assert.Equal(t, "config-applied", stateFact(o))
 	assert.Equal(t, 5, lc.Intake())
 
 	fail = errors.New("the store did not answer")
