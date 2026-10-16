@@ -89,6 +89,7 @@ var DefaultCatalog = []Entry{
 	E("internal/redisfn", "build, load and check a Redis function library from embedded Lua source", "go test ./internal/redisfn", "go test ./internal/redisfn"),
 	E("internal/redisq", "Redis transport queue", "go test ./internal/redisq", "go test ./internal/redisq"),
 	E("internal/release", "release packaging and manifest gates", "go test ./internal/release", "go test ./internal/release"),
+	E("internal/roadmapdoc", "roadmap.sexp decoder and ROADMAP.md renderer", "go test ./internal/roadmapdoc", "make roadmap"),
 	E("internal/safepath", "path sanitization and sandboxing", "go test ./internal/safepath", "go test ./internal/safepath"),
 	E("internal/sandbox", "OS isolation primitives (seatbelt/landlock)", "go test ./internal/sandbox", "go test ./internal/sandbox"),
 	E("internal/scaffold", "scaffolding engine for class rules and CLI verbs", "go test ./internal/scaffold", "go test ./internal/scaffold"),
@@ -122,5 +123,6 @@ var DefaultCatalog = []Entry{
 	E("tools/ci", "CI helper and build scripts", "go test ./internal/ci", "make test"),
 	E("tools/newrule", "class rule scaffolding CLI", "go test ./tools/newrule", "go test ./tools/newrule"),
 	E("tools/newverb", "CLI verb scaffolding CLI", "go test ./tools/newverb", "go test ./tools/newverb"),
+	E("tools/roadmap", "roadmap page generator CLI", "go test ./internal/roadmapdoc", "make roadmap"),
 	E("tools/testmanifest", "exact named Go test manifest checker", "go test ./tools/testmanifest", "go test ./tools/testmanifest"),
 }

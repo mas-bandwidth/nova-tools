@@ -339,3 +339,9 @@ clean:
 	rm -rf ./bin ./scratch
 
 -include make/*.mk
+
+# roadmap regenerates docs/ROADMAP.md from docs/roadmap.sexp (the hand-written ROADMAP.md at the
+# root is the release plan). Never edit docs/ROADMAP.md by hand; the generated-page test holds it.
+.PHONY: roadmap
+roadmap:
+	$(GO) run ./tools/roadmap --file docs/roadmap.sexp --out docs/ROADMAP.md
