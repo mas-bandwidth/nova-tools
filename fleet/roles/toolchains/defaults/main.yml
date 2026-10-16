@@ -106,7 +106,7 @@ nova_toolchains:
         root: OTP-29.1.1
         probe: Install
         # OTP's Install builds in place: its ERL_ROOT is the unpacked tree (the dir holding erts-*), so bin/erl lands
-        # there, not at the prefix (2026-10-16: "{prefix}" alone failed "erts-17.1/bin does not exist" on hulk)
+        # there, not at the prefix (2026-10-16: "{prefix}" alone failed "erts-17.1/bin does not exist" on a fresh machine)
         install_root: OTP-29.1.1
         install_probe: bin/erl
         installer_argv: ["./Install", "-sasl", "{prefix}/OTP-29.1.1"]

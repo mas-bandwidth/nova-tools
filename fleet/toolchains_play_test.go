@@ -144,7 +144,7 @@ func hasRole(raw any, want string) bool {
 }
 
 // TestToolchainsInstallerArgvMatchesTheArchive pins the two installer defects a fresh Linux machine hit
-// (hulk, 2026-10-16): rust's install.sh accepts --prefix=<dir> only, and OTP's Install builds in place, so its
+// (a fresh Linux machine, 2026-10-16): rust's install.sh accepts --prefix=<dir> only, and OTP's Install builds in place, so its
 // ERL_ROOT and install_root are the unpacked tree (archive root), never the bare prefix.
 func TestToolchainsInstallerArgvMatchesTheArchive(t *testing.T) {
 	t.Parallel()
