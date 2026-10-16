@@ -1,0 +1,50 @@
+---
+# google-java-format under the login's SDK prefix: the all-deps jar is fetched by the bench from the GitHub release and
+# refused unless it matches nova_gjf_sha256; <sdk>/bin/google-java-format is a wrapper that runs it with the bench's Java.
+
+- name: the google-java-format directory
+  ansible.builtin.file:
+    path: "{{ nova_sdk_home }}/google-java-format-{{ nova_gjf_version }}"
+    state: directory
+    mode: "0755"
+
+- name: the all-deps jar is downloaded by the bench and verified against its pinned sha256
+  ansible.builtin.get_url:
+    url: "{{ nova_gjf_url }}"
+    dest: "{{ nova_sdk_home }}/google-java-format-{{ nova_gjf_version }}/google-java-format-all-deps.jar"
+    checksum: "sha256:{{ nova_gjf_sha256 }}"
+    mode: "0644"
+  register: nova_gjf_jar
+
+- name: the SDK bin dir carries the google-java-format wrapper
+  ansible.builtin.copy:
+    dest: "{{ nova_sdk_home }}/bin/google-java-format"
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by the toolchains role (nova_gjf_version={{ nova_gjf_version }}). Runs the pinned all-deps jar with the
+      # SDK's Java, else the Java on PATH. The --add-exports are what the formatter needs on JDK 16 and later.
+      if [ -x "{{ nova_sdk_home }}/bin/java" ]; then JAVA="{{ nova_sdk_home }}/bin/java"; else JAVA=java; fi
+      exec "$JAVA" \
+        --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
+        --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED \
+        --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED \
+        --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED \
+        --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
+        --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
+        -jar "{{ nova_sdk_home }}/google-java-format-{{ nova_gjf_version }}/google-java-format-all-deps.jar" "$@"
+
+- name: the login's google-java-format answers with the pinned version
+  ansible.builtin.command:
+    cmd: "{{ nova_sdk_home }}/bin/google-java-format --version"
+  environment:
+    PATH: "{{ nova_sdk_home }}/bin:/usr/local/bin:/usr/bin:/bin"
+  register: nova_gjf_version_out
+  changed_when: false
+  check_mode: false
+  failed_when: nova_gjf_version not in (nova_gjf_version_out.stdout ~ nova_gjf_version_out.stderr)
+  when: not ansible_check_mode
+
+- name: google-java-format for the bench
+  ansible.builtin.debug:
+    msg: "TOOLCHAINS GJF host={{ inventory_hostname }} version={{ nova_gjf_version }} sha256={{ nova_gjf_sha256 }} fetched={{ nova_gjf_jar is changed }}"

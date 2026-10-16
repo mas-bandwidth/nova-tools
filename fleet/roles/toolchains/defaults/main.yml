@@ -197,3 +197,10 @@ nova_toolchains:
 # archives are linked. Tag: `eslint` (`ansible-playbook fleet/tools.yml --tags eslint` converges this alone, and
 # touches no other toolchain). eslint.config.mjs imports no package, so eslint is the only package installed.
 nova_eslint_version: "9.39.5"
+# google-java-format (schema make/java.mk GOOGLE_JAVA_FORMAT, issue #424): the all-deps jar from the google/google-java-format
+# GitHub release, downloaded by each bench itself and held to this sha256 (the release asset's published digest). It lives
+# at <sdk>/google-java-format-<version>/ and <sdk>/bin/google-java-format is a wrapper that runs it with the SDK's Java
+# (else the bench's PATH java). Tag: `gjf` (`ansible-playbook fleet/tools.yml --tags gjf` converges this alone).
+nova_gjf_version: "1.37.0"
+nova_gjf_sha256: 834b2a0c38cb774953322a84b5ca3f2f40dd3156650b3cd44d3b744345962f7a
+nova_gjf_url: "https://github.com/google/google-java-format/releases/download/v{{ nova_gjf_version }}/google-java-format-{{ nova_gjf_version }}-all-deps.jar"
