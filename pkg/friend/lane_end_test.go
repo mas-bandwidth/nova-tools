@@ -247,12 +247,12 @@ func TestPushedHeadIsTheBranchsRemoteTrackingRef(t *testing.T) {
 // lane hands the generation the queue names.
 func TestParseJobReadsTheEpochAndTheGeneration(t *testing.T) {
 	t.Parallel()
-	for job, want := range map[string][3]any{"c~15": {"c", 15, 1}, "a.w1~15.g3": {"a.w1", 15, 3}, "c~0": {"c", 0, 1}} {
+	for job, want := range map[string][3]any{"c~15": {"c", 15, 1}, "a.w1~15.g3": {"a.w1", 15, 3}, "c~0": {"c", 0, 1}, "a.w1": {"a.w1", 0, 1}, "a.w1.g3": {"a.w1", 0, 3}} {
 		id, epoch, gen, ok := ParseJob(job)
 		require.True(t, ok, job)
 		assert.Equal(t, want, [3]any{id, epoch, gen}, job)
 	}
-	for _, bad := range []string{"c", "~1", "c~x", "c~1.gx", "c~1.g0"} {
+	for _, bad := range []string{"c", "by-hand", "not-a-job", "~1", "c~x", "c~1.gx", "c~1.g0", "../c"} {
 		_, _, _, ok := ParseJob(bad)
 		assert.False(t, ok, bad)
 	}

@@ -701,6 +701,9 @@ func (w world) send(c *tool.Call) *tool.Out {
 		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body, Token: c.Str("token"),
 		Wait: c.Dur("deadline"),
 	}
+	// Explicit send is model activity for every allowed kind and subject.
+	// Library and daemon callers keep ModelActivity false (HookBeat BusSend).
+	draft.ModelActivity = true
 	b.TokenLife, b.TokenCleanup = c.Dur("token-life"), c.Dur("token-cleanup")
 	if refused := w.checkRecipients(context.Background(), b, as, draft, dry); refused != nil {
 		return refused

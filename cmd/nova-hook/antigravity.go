@@ -18,6 +18,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
+	"github.com/mas-bandwidth/nova-tools/pkg/dshdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
@@ -702,10 +703,10 @@ func deliverAntigravitySaved(ctx context.Context, ag *antigravityRoute, id, dire
 			if turn == "" {
 				turn = "antigravity-" + id
 			}
-			return turn, nil
+			return finishAntigravityDeliver(directory, id, turn)
 		}
 		if turn := notice.MailboxConfirm(msgDir, before, id); turn != "" {
-			return turn, nil
+			return finishAntigravityDeliver(directory, id, turn)
 		}
 		if timedOut {
 			return "", fmt.Errorf("%w: %v", codexdesktop.ErrOutcomeUnknown, sendErr)
@@ -740,10 +741,10 @@ func deliverAntigravitySaved(ctx context.Context, ag *antigravityRoute, id, dire
 		if turn == "" {
 			turn = "antigravity-" + id
 		}
-		return turn, nil
+		return finishAntigravityDeliver(directory, id, turn)
 	}
 	if turn := notice.MailboxConfirm(msgDir, before, id); turn != "" {
-		return turn, nil
+		return finishAntigravityDeliver(directory, id, turn)
 	}
 	if timedOut {
 		return "", fmt.Errorf("%w: %v", codexdesktop.ErrOutcomeUnknown, sendErr)
@@ -753,4 +754,14 @@ func deliverAntigravitySaved(ctx context.Context, ag *antigravityRoute, id, dire
 		return "", fmt.Errorf("%w: %v (%s)", codexdesktop.ErrRejected, sendErr, detail)
 	}
 	return "", fmt.Errorf("%w: %v", codexdesktop.ErrRejected, sendErr)
+}
+
+func finishAntigravityDeliver(directory, id, turn string) (string, error) {
+	if err := dshdesktop.MarkPending(directory, id); err != nil {
+		return "", fmt.Errorf("%w: %v", codexdesktop.ErrOutcomeUnknown, err)
+	}
+	if _, err := dshdesktop.PruneResolvedNotices(directory, id); err != nil {
+		return "", fmt.Errorf("%w: %v", codexdesktop.ErrOutcomeUnknown, err)
+	}
+	return turn, nil
 }

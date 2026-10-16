@@ -73,15 +73,20 @@ func CheckName(s string) string {
 
 // Message is one message of the bus: its fields on every stream it is on.
 type Message struct {
-	ID      string
-	From    string
-	To      []string
-	CC      []string
-	Subject string
-	Re      string
-	Kind    string // one of Kinds; "" is status
-	At      time.Time
-	Body    string
+	// ModelActivity is set only by the explicit send CLI for the model's own
+	// work messages. Library and daemon sends leave it false. This call-site
+	// attribution is not attestation and never creates or renews a nonce proof
+	// (tla/HookBeat.tla, BusSend and DaemonSend).
+	ModelActivity bool
+	ID            string
+	From          string
+	To            []string
+	CC            []string
+	Subject       string
+	Re            string
+	Kind          string // one of Kinds; "" is status
+	At            time.Time
+	Body          string
 	// Wait is how long an ask waits for its answer, the sender's word (ask
 	// only); Due is the deadline the store stamps from its own clock, At plus
 	// Wait, never the sender's clock (ask.go).
@@ -161,6 +166,9 @@ func (m Message) Fields() map[string]string {
 	f := map[string]string{
 		"id": m.ID, "from": m.From, "to": strings.Join(m.To, ","), "cc": strings.Join(m.CC, ","),
 		"subject": m.Subject, "re": m.Re, "kind": m.Kind, "at": m.At.UTC().Format(time.RFC3339), "body": m.Body,
+	}
+	if m.ModelActivity {
+		f["model_activity"] = "1"
 	}
 	if !m.Due.IsZero() {
 		f["deadline"] = m.Due.UTC().Format(time.RFC3339) // an ask's only
