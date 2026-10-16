@@ -19,7 +19,7 @@ const TLAJar = "/opt/tla/tla2tools.jar"
 const KVMDevice = "/dev/kvm"
 
 // KVMAPIVersion is what KVM_GET_API_VERSION answers on every Linux since 2.6.22: the "kvm" gate fact is a device that
-// opens read-write and answers it with this, the check the fleet's kvm play makes (rowan-tools fleet/roles/kvm). A
+// opens read-write and answers it with this, the same check the fleet's kvm provisioning makes. A
 // node alone is no hypervisor: a WSL2 bench with nested virtualisation off has /dev/kvm root:kvm 660 whose open fails
 // ENODEV, and a VM there runs under QEMU's TCG at a tenth of the speed with no word said.
 const KVMAPIVersion = 12
