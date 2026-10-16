@@ -84,8 +84,8 @@
 (*                  first empty one; a fresh client with lane 1 free never *)
 (*                  asks lane 2: LiveHoldNeverExpires fails.               *)
 (* A fresh client that reads neither friend cards nor its row (width       *)
-(* unread, held empty) knows no lane to ask; MCFriendLaneClient.cfg holds  *)
-(* MaxLosses = 0 so that double failure is outside its bound.              *)
+(* unread, held empty) knows no lane to ask; MCFriendLaneClientBlind.cfg  *)
+(* holds MaxLosses = 0 so that double failure is outside its bound.        *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
