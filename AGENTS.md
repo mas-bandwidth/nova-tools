@@ -20,7 +20,7 @@ This is the standard every tool and module in this repository is built to, and t
 
 *The rules below say what holds. This section says which wrong turn each one prevents, so a builder does not have to discover it. Every line is the goal; the check beside it is where the tree enforces it.*
 
-**Before writing new code**, check it exists (both repos, recent git log, tools' help) and extend it; two paths for one thing is a defect. **Friends** are reached only through nova-hook push: one mechanism. (Glenn, 2026-10-16.)
+**Before writing new code**, check it exists (both repos, recent git log, tools' help) and extend it; two paths for one thing is a defect. **Friends** are reached only through nova-hook push: one mechanism.
 
 **Before any design.** Compute the data's size in bytes (rows times bytes per row) and say whether it fits one process's memory; at this repository's sizes it almost always does. Say where the truth lives, and whether it could live in one process: name the one place the truth lives before adding a second copy. Write the pattern under the requirements in one sentence. Put the target two orders of magnitude beyond today's number on paper and ask what survives it; build what survives. If the answers are small, one and simple, the design is the simple thing: a struct, a loop, a socket. A store, a cache or a protocol is earned only by an answer that is large, many or unclear, and each carries a price that is named before it is paid.
 
