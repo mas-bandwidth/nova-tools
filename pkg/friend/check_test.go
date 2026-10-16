@@ -32,6 +32,8 @@ func TestDecideVerdictPure(t *testing.T) {
 	}{
 		{"broken session", up, HarnessFacts{Friend: "bob", Broken: "2026-10-05T10:00:00Z", Reason: "rate limit exceeded"}, nil, VerdictBroken, "session broken: rate limit exceeded"},
 		{"every lane turn in the window failed", up, hf(3, 3), nil, VerdictBroken, "every lane turn in the window failed (3 of 3)"},
+		{"a failed harness proof is broken with its reason", up, HarnessFacts{Friend: "bob", Broken: "-", Reason: "-", Proof: "harness claude cannot answer: api_error (config dir /cfg)"}, nil, VerdictBroken, "harness proof failed, no card is taken: harness claude cannot answer: api_error (config dir /cfg)"},
+		{"a passing harness proof is live", up, HarnessFacts{Friend: "bob", Broken: "-", Reason: "-", Proof: "ok"}, nil, VerdictOK, "live: hook proven"},
 		{"one failure among successes is not broken", up, hf(3, 1), nil, VerdictOK, "live: hook proven"},
 		{"a proven record is live with no daemon at all", DaemonFacts{Friend: "bob", Presence: PresenceUp, Agent: "none", Status: "none", Hook: HookProven, Reason: "-"}, hf(0, 0), nil, VerdictOK, "live: hook proven"},
 		{"an unhooked record is down with its reason", unhooked, hf(0, 0), nil, VerdictDown, "hook unhooked: missed 2 challenges"},

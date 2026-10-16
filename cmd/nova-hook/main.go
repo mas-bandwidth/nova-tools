@@ -259,6 +259,8 @@ directory), discovers the live Antigravity language_server and conversation, sav
 and delivers via agentapi send-message --title=nova-hook.
 Claude Code clients use --harness claude with --claude-state and --claude-settings (existing directories): before arming
 it installs a Stop hook that advances the generation file; the session's Monitor on this process's stdout is the delivery.
+A headless claude child (a nova-friend lane's card, read or harness proof) runs with NOVA_HOOK_CLAUDE_CHILD=1, and its
+Stop leaves the generation alone (STATE state=boundary-skipped), so --claude-settings may be the lanes' config_dir too.
 Every harness keeps one pending notice (pkg/harness/notice): a saved file rewritten in place with the newest valid
 challenge and the message count; a new push waits until the model consumed the last one; only the model proves.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
@@ -545,6 +547,13 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		if claude.boundary {
 			if c.DryRun() {
 				return tool.Refuse("claude boundary writes the generation file; omit --dry-run")
+			}
+			if w.getenv(notice.ClaudeChildEnv) != "" {
+				n, err := notice.ClaudeGeneration(claude.state)
+				if err != nil {
+					return tool.Refuse("claude generation could not be read: " + err.Error())
+				}
+				return tool.Done().As("STATE").Fact("state", "boundary-skipped").Fact("generation", n).Note("a headless claude child's Stop (" + notice.ClaudeChildEnv + " set) is no turn of the session's")
 			}
 			n, err := notice.ClaudeBoundary(claude.state)
 			if err != nil {

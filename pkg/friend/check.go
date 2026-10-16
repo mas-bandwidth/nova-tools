@@ -52,6 +52,7 @@ type HarnessFacts struct {
 	Failed         int    `json:"failed"`    // of those, the ones that failed (JSON only)
 	Broken         string `json:"broken"`    // RFC3339 or "-"
 	Reason         string `json:"reason"`    // one line or "-"
+	Proof          string `json:"proof"`     // the daemon's last harness proof: "ok", its failure, or "-" (JSON only)
 }
 
 // BusFacts carries facts about real messages on the bus.
@@ -274,6 +275,8 @@ func factsVerdict(df DaemonFacts, hf HarnessFacts) (verdict, why string) {
 		return VerdictBroken, "session broken since " + hf.Broken
 	case hf.Delivered > 0 && hf.Failed == hf.Delivered:
 		return VerdictBroken, fmt.Sprintf("every lane turn in the window failed (%d of %d)", hf.Failed, hf.Delivered)
+	case hf.Proof != "" && hf.Proof != "-" && hf.Proof != "ok":
+		return VerdictBroken, "harness proof failed, no card is taken: " + hf.Proof
 	case df.Presence != PresenceUp:
 		why := "hook " + df.Hook
 		if df.Reason != "-" && df.Reason != "" {
@@ -401,6 +404,14 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 			hf.Broken = st.At.UTC().Format(time.RFC3339)
 		}
 		hf.Reason = dash(st.SessionReason)
+	}
+	// A fresh status's failed harness proof: the daemon takes no card while it
+	// stands (2026-10-16: a claude row checked ok while every take was refused).
+	if stFound && df.Status == "ok" && st.Proof != "" {
+		hf.Proof = st.Proof
+		if st.Proof != "ok" && hf.Reason == "-" {
+			hf.Reason = st.Proof
+		}
 	}
 
 	// Bus facts
