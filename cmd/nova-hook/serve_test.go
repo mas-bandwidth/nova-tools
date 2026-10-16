@@ -661,3 +661,42 @@ func TestAHookedCoordinatorNotProvenIsCoordinatorDown(t *testing.T) {
 	}
 	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN ada"), "no judgment about herself")
 }
+
+// TestADownWhileNoCoordinatorIsUpIsJudgedToTheNextOne pins that no change is
+// dropped for want of a coordinator (tla/HookBeat.tla, JudgeCoord and
+// DownJudgedToCoordinator): ada, the coordinator, reads down (her service
+// stopped), then carl does; nobody is up to judge it, so the change waits,
+// and when ada is back she gets the FRIEND DOWN carl judgment, once, and no
+// FRIEND BACK about herself.
+func TestADownWhileNoCoordinatorIsUpIsJudgedToTheNextOne(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "carl", hook.Comms)
+	servers := []string{"bob"}
+	for range 3 { // ada's lease lapses: still hooked, not proven, down
+		r.step(t, servers, "bob", "carl")
+	}
+	require.Equal(t, hook.StateExpired, r.h.State(t, "ada").State)
+	require.Equal(t, 1, r.count(t, "carl", "COORDINATOR DOWN ada"))
+	for range 3 { // then carl's
+		r.step(t, servers, "bob")
+	}
+	require.Equal(t, hook.StateExpired, r.h.State(t, "carl").State)
+	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN carl"), "no coordinator up: nothing judged yet")
+	r.h.Hook(t, "ada", hook.Coordinator) // ada is back
+	for range 2 {
+		r.step(t, servers, "ada", "bob")
+	}
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN carl"), "the waiting change is judged to the coordinator up again")
+	var j msg
+	for _, m := range r.stream(t, "ada") {
+		if strings.Contains(m.subject, "FRIEND DOWN carl") {
+			j = m
+		}
+	}
+	assert.Equal(t, bus.KindJudgment, j.kind)
+	assert.Zero(t, r.count(t, "ada", "FRIEND BACK ada"), "her own return is no judgment for her")
+}

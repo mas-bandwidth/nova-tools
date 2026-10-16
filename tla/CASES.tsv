@@ -266,6 +266,8 @@ MCHookBeatProvenRetry.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	require
 MCHookBeatBrokenLatch.cfg	MCHookBeat.tla	temporal	AliveHookedEventuallyUp	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenKeepUp.cfg	MCHookBeat.tla	action	NoFlapWithoutProof	ignore-terminal	hookbeat	required	-
 MCHookBeatKeepUpBackHolds.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
+MCHookBeatCoordJudged.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
+MCHookBeatBrokenMarkDrop.cfg	MCHookBeat.tla	temporal	DownJudgedToCoordinator	ignore-terminal	hookbeat	required	-
 MCTypedFrames.cfg	MCTypedFrames.tla	pass	-	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenRefusedBeforeTransition.cfg	MCTypedFrames.tla	invariant	FrameRefusedBeforeTransition	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenDualReadLoss.cfg	MCTypedFrames.tla	invariant	DualReadNoLoss	ignore-terminal	typed-frames	required	-

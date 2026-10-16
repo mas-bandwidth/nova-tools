@@ -203,7 +203,10 @@ Every line runs as printed:
   proves. A proven name whose lease or proof lapses is down (`hooked, not proven (<state>)`). The
   other live names, who hear a broadcast, are the names up (proven); the coordinator is the first
   name of its role up: a coordinator hooked and not proven is down, and the other live names get
-  the `COORDINATOR DOWN <name>: who takes over?` judgment, as for an unhooked one. The model is
+  the `COORDINATOR DOWN <name>: who takes over?` judgment, as for an unhooked one. While no coordinator
+  is up, the coordinator audience is left unmarked: the changes pile up and are judged to the next
+  coordinator up, never marked told with no message; her own return is left out of her judgment
+  (`JudgeCoord`, `DownJudgedToCoordinator`; reversed witness `MCHookBeatBrokenMarkDrop`). The model is
   `tla/HookBeat.tla` (Parts `proven`: `DaemonHook`, `NoBackWithoutProof`, `NoFlapWithoutProof`;
   the reversed witness `MCHookBeatBrokenArmedBack`, up as hooked, and `MCHookBeatWitnessArmedDown`).
 - **Coalesced telling, one write per audience.** Changes in the down set or coordinator are sent
