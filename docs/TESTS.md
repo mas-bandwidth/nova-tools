@@ -132,7 +132,8 @@ NAMES NAME name=bob state=proven role=comms reason=-
 
 Run by `cmd/nova-hook/firstrun_test.go` on a throwaway redis-server, its address
 in `NOVA_BUS_REDIS`, so the lines read as a reader types them. The sitting is a
-machine's record: m1 is not hooked in, so `status` refuses with the command of
+machine's record: `codex-owner --dry-run` plans the Codex desktop owner probe
+and sends nothing; m1 is not hooked in, so `status` refuses with the command of
 each role that hooks it in; `hook --once` as a member arms the record, holds no
 push (a member's work push is its loop's) and says so, naming the holder; and
 `unhook` ends it, its epoch moved on. Nothing in it is run-owned.
@@ -140,6 +141,10 @@ push (a member's work push is its loop's) and says so, naming the holder; and
 ### First run
 
 ```
+$ nova-hook codex-owner --thread example-thread --dry-run
+CODEX-OWNER DRY-RUN thread=example-thread native=unchecked dry_run=true
+CODEX-OWNER NOTE no native owner discovery was sent
+
 $ nova-hook status --as m1
 ! STATUS FAILED name=m1 state=none role=- epoch=0 reason=unhooked: m1 is not hooked in: no hook record (never hooked); nothing on the bus, friend comms or the sprint works until it is; run: nova-hook status --as m1
 ! STATUS NOTE hook in as comms (on the bus, taking no sprint work): nova-hook hook --as m1 --role comms
