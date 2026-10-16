@@ -196,6 +196,8 @@ func TestAMessageFromTheHooksOwnNameIsShownOnlyWhenTheServerSentIt(t *testing.T)
 		{bus.Message{From: "ada", Kind: bus.KindJudgment, Subject: "FRIEND BACK bob"}, true},
 		{bus.Message{From: "ada", Kind: bus.KindJudgment, Subject: "OVERDUE FRIEND BACK bob"}, true},
 		{bus.Message{From: "ada", Kind: bus.KindJudgment, Subject: "COORDINATOR DOWN ada: who takes over?"}, true},
+		{bus.Message{From: "ada", Kind: bus.KindStatus, Subject: "FRIEND BACK bob"}, true},            // a kind-less judgment, as the bus stores it
+		{bus.Message{From: "ada", Kind: bus.KindStatus, Subject: "FRIEND DOWN bob: no answer"}, true}, // the fleet's v1.4.5 wire form, 2026-10-16
 		{bus.Message{From: "ada", Kind: bus.KindStatus, Subject: "note to self"}, false},
 		{bus.Message{From: "ada", Subject: "hello"}, false},
 		{bus.Message{From: "ada", Kind: bus.KindJudgment, Subject: "my own judgment"}, false},
