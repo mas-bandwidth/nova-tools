@@ -915,7 +915,8 @@ NoBackWithoutProof ==
 NoFlapWithoutProof ==
     [][\A n \in Names : (~proven[n] /\ ~proven'[n]) => (n \in Cur[1] <=> n \in Cur'[1])]_vars
 
-\* Reached: a name the heartbeat unhooked, re-armed by its service with no
-\* model, hooked and unproven, and heard by the friends as down.
-WitnessArmedDown == \A n \in Names : ~(hooked[n] /\ ~proven[n] /\ ~alive[n] /\ events[n] >= 1 /\ n \in heard[1])
+\* Reached (an action property TLC finds violated): a supervised service arms,
+\* with no model running, a name the heartbeat unhooked and the friends heard
+\* as down, the step the old rule told back.
+WitnessArmedDown == [][\A n \in Names : ~(DaemonHook(n) /\ events[n] >= 1 /\ n \in heard[1])]_vars
 =============================================================================
