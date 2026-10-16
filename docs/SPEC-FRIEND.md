@@ -125,7 +125,10 @@ leaves admission unchanged.
     still limits checkout, outbox, account directory, network and denied roots;
     a failed wall setup starts no model. This is not a desktop session
     delivery route or an idle-wake claim. `nova-hook` owns bus and challenge notices;
-    the lane loop owns refill and report collection.
+    the lane loop owns refill and report collection. If the same friend is the
+    sprint coordinator, the daemon joins her existing coordinator hook epoch
+    and holds the optional work lease; it never changes her bus+sprint role or
+    starts a second bus reader. A different existing hook role still refuses.
   - `antigravity`: delivers into the conversation mailbox via
     `agentapi send-message --title=nova-friend <conversation> <text>`, tracks
     deliveries and `read.json` receipts in `antigravity-ledger.json`, waits when
