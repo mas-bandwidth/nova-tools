@@ -12,8 +12,11 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/hook/seatstamp"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
 	"github.com/mas-bandwidth/nova-tools/pkg/hookwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -299,5 +302,35 @@ func TestSeatHookTypedStamp(t *testing.T) {
 		assert.Equal(t, "legacy holder", sts[0].Pushes[1].By)
 		assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBase64))
 		assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormLegacy))
+	})
+
+	t.Run("the production store reads a typed lease it holds", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		rg := newRig(t)
+		e, _, err := rg.s.Arm(ctx, "ada", hook.Coordinator, "test", false)
+		require.NoError(t, err)
+		for _, p := range []hook.Push{hook.Bus, hook.Sprint} {
+			require.NoError(t, rg.s.Renew(ctx, "ada", hook.Coordinator, p, e, "legacy holder"))
+		}
+		// a typed writer's lease replaces the bus lease
+		typed := forms(e, 1792000000000, "typed holder")[schemaread.FormBase64]
+		key := hook.LiveKey("ada", hook.Bus)
+		require.NoError(t, rg.Client.Set(ctx, key, typed, redis.KeepTTL).Err())
+		assert.Equal(t, hook.StatePartial, rg.state(t, "ada").State, "a store built by hand reads it as none")
+
+		// the store every tool opens: hookgate.Store over the bus store
+		hs, err := hookgate.Store(bus.Redis{C: rg.Client})
+		require.NoError(t, err)
+		before := hookgate.StampCounts().Reads(schemaread.FormBase64)
+		sts, _, err := hs.Read(ctx, "ada")
+		require.NoError(t, err)
+		assert.Equal(t, hook.StateLive, sts[0].State, "the production store reads the typed lease")
+		assert.Equal(t, "typed holder", sts[0].Pushes[0].By)
+		assert.Equal(t, "legacy holder", sts[0].Pushes[1].By)
+		assert.Equal(t, before+1, hookgate.StampCounts().Reads(schemaread.FormBase64), "and counts it by its form on the one shared reader")
+		hs2, err := hookgate.Store(bus.Redis{C: rg.Client})
+		require.NoError(t, err)
+		assert.Same(t, hs.Stamps, hs2.Stamps, "every store the factory makes shares the one reader, so the counters accumulate")
 	})
 }
