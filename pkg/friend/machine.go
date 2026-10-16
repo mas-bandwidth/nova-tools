@@ -357,7 +357,10 @@ func (p *PongReader) CountsLine() string {
 
 // Message reads m's body as a pong, the friend and the send time from m.
 func (p *PongReader) Message(m bus.Message) (Pong, schemaread.Form, error) {
-	return p.Read(m.From, m.At, []byte(strings.TrimSpace(m.Body)))
+	// Only the one framing newline the writer adds is dropped: any other
+	// whitespace is part of the body, so a legacy pong with extra spaces is
+	// malformed, never normalised into a good one.
+	return p.Read(m.From, m.At, []byte(strings.TrimSuffix(m.Body, "\n")))
 }
 
 // Read reads body as a pong in whichever form it arrived. from and at are

@@ -396,6 +396,10 @@ func TestReachProofRequiresFreshFriendEvidence(t *testing.T) {
 		{"other sender", "ada", "hello", "I am here", "", "", true},
 		{"message", "bob", "hello", "I am here", "message", "", true},
 		{"matching pong", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0), "pong", "", true},
+		{"matching pong with its framing newline", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\n", "pong", "", true},
+		{"a pong with extra trailing spaces", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "  \n", "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"a pong with a leading space", "bob", friend.PongSubject, " " + friend.PongLine("n1", 0, 0, 0), "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"a pong with a second newline", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\n\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
 		{"matching table pong", "bob", friend.PongSubject, reachTablePong(t, "bob", "n1"), "pong", "", true},
 		{"table pong for another nonce", "bob", friend.PongSubject, reachTablePong(t, "bob", "wrong"), "", "", true},
 	} {

@@ -278,6 +278,16 @@ func TestPongDualRead(t *testing.T) {
 		assert.False(t, IsPong(bus.Message{Subject: "hello", Body: "I am here"}))
 		got, _, err := r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: "pong abc123\n", At: pongAt})
 		assert.Equal(t, "absent_required (queue)", pongRefusal(t, got, err, "message"))
+		// only the one framing newline is dropped: other whitespace is
+		// damage, refused as malformed, never normalised into a good pong
+		okBody := PongLine("abc123", 5, 3, 8)
+		got, _, err = r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: okBody + "\n", At: pongAt})
+		require.NoError(t, err)
+		assert.Equal(t, 5, got.Queue)
+		for _, body := range []string{okBody + "  \n", okBody + " ", " " + okBody + "\n", okBody + "\n\n", okBody + "\r\n", "\t" + okBody} {
+			got, _, err = r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: body, At: pongAt})
+			assert.Equal(t, "malformed", pongRefusal(t, got, err, "whitespace "+body))
+		}
 	})
 
 	// A seeded, deterministic mutation pass over a pong of each form: every
