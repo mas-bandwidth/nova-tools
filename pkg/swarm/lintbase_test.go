@@ -318,6 +318,12 @@ func TestDoneWhenTestsReadsTheRunners(t *testing.T) {
 	require.Empty(t, why)
 	require.Len(t, tests, 1, "got %v", tests)
 	assert.Equal(t, "test_one", tests[0].name)
+
+	// An option is no runner-form target: `--rootdir=. tests` names no case "tests".
+	tests, why = doneWhenTests("`pytest --rootdir=. tests -k test_one` passes")
+	require.Empty(t, why)
+	require.Len(t, tests, 1, "got %v", tests)
+	assert.Equal(t, "test_one", tests[0].name)
 }
 
 // pytestTakesValue says whether a pytest option word is followed by its value.
