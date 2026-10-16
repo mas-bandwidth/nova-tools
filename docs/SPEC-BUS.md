@@ -85,7 +85,8 @@ the writer (`EnvelopeWire`, `NativeFields`, `EnvelopeText`) and the reader
   the field, `legacy` for an entry without it, `base64` and `json` for the text
   forms), and the `legacy` count standing still is the evidence that every
   writer has switched.
-- `EnvelopeReader.ReadEntry` (and `Bus.ReadEntry` on `recv`) reads an entry:
+- `EnvelopeReader.ReadEntry` (and `Bus.ReadEntry` on `recv`, `Bus.ReadEntries`
+  on `peek`, `log`, and `wait`) reads an entry:
   with the field there, the field is the message, read strictly through
   `pkg/schemaread`. A truncated wire, trailing bytes, an unknown form byte, an
   empty field, a text form in the field (the bus carries none), a value past a
@@ -230,8 +231,9 @@ takes `--json`; `log` takes `--max`.
   group.
 - `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
 - `show [--as <me>] (--id <id> | --stdin)` reads one message by `--id <id>` from
-  `bus2:log` (through `EnvelopeReader.ReadEntry`, accepting both native and
-  legacy entries) or one envelope from `--stdin` (through
+  `bus2:log`, paging through every bounded log window until it finds the ID
+  (through `EnvelopeReader.ReadEntry`, accepting both native and legacy
+  entries), or one envelope from `--stdin` (through
   `EnvelopeReader.ReadText`, accepting the binary wire, base64 or JSON text
   form) and prints its name-keyed schema text form on stdout (`EnvelopeText`,
   with `"schema":"bus/envelope"`, `"version":1` and every non-default field by

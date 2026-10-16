@@ -1379,7 +1379,9 @@ are is the user the connection logged in as (`NOVA_SPRINT_REDIS_USER`): `--as`
 may repeat it or be left out, and another name is refused; on a store with no
 users (this first run) `--as` is your word and every write says `login=none`. `peek`
 prints `PEEK OK pending= new=` and one `PEEK MESSAGE state= id= from= at=
-subject=` line per message waiting, moving nothing. `recv` reads each claimed or
+subject=` line per message waiting, moving nothing. `peek`, `log`, and `wait`
+also read native entries strictly, refusing damage by name and counting each
+form. `recv` reads each claimed or
 new stream entry through `EnvelopeReader.ReadEntry` (accepting both the native
 binary `envelope` field and legacy stream fields, counting each form, and
 refusing a damaged native `envelope` field by name) and prints the oldest
@@ -1390,7 +1392,7 @@ message for fifteen minutes. With `--exec '<command>'` the command reads that sa
 stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
 non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
 answers `acked=false` for an id that is not pending, at exit 0. `show` reads one
-message by `--id <id>` from `bus2:log` or one envelope from `--stdin` (binary
+message by `--id <id>` from every bounded window of `bus2:log` or one envelope from `--stdin` (binary
 wire, base64 or JSON text form) and prints its name-keyed schema text form on
 stdout (`{"schema":"bus/envelope","version":1,...}`), never raw binary bytes. `names` prints
 each name's push (`push=proven|stale|down|none age= harness=`). What a first run

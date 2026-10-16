@@ -1149,29 +1149,27 @@ func (w world) show(c *tool.Call) *tool.Out {
 		return refused
 	}
 	want := c.Str("id")
-	got, err := b.Log(context.Background(), "-")
-	if err != nil {
-		return answer(err)
-	}
-	for _, e := range got {
-		if id := e.Fields["id"]; id != "" && id != want {
-			continue
-		}
-		m, _, err := b.ReadEntry(e)
-		if err != nil {
-			if e.Fields["id"] == want {
-				return answer(err)
-			}
-			continue
-		}
-		if m.ID != want {
-			continue
-		}
-		text, err := bus.EnvelopeText(m)
+	cursor := "0-0"
+	for {
+		got, next, more, err := b.LogForward(context.Background(), cursor)
 		if err != nil {
 			return answer(err)
 		}
-		return tool.Payload(string(text))
+		for _, e := range got {
+			m := e.Message()
+			if m.ID != want {
+				continue
+			}
+			text, err := bus.EnvelopeText(m)
+			if err != nil {
+				return answer(err)
+			}
+			return tool.Payload(string(text))
+		}
+		if !more {
+			break
+		}
+		cursor = next
 	}
 	return tool.Fail("no message " + want).As("NONE")
 }
@@ -1514,6 +1512,10 @@ func (w world) wait(c *tool.Call) *tool.Out {
 			}
 		}
 		got, err := waiter.BlockRead(ctx, bus.StreamOf(as), cursor, block, bus.WaitRead)
+		if err != nil {
+			return answer(err)
+		}
+		got, err = b.ReadEntries(got)
 		if err != nil {
 			return answer(err)
 		}

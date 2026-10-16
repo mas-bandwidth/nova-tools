@@ -214,15 +214,12 @@ type Entry struct {
 	parsed *Message
 }
 
-// Message is the entry's message.
+// Message is the entry's decoded message when ReadEntries populated it, or
+// the legacy fields otherwise. A native reader uses ReadEntry or ReadEntries
+// so damage is reported instead of silently read from the legacy fields.
 func (e Entry) Message() Message {
 	if e.parsed != nil {
 		return *e.parsed
-	}
-	if _, ok := e.Fields[EnvelopeField]; ok {
-		if m, _, err := NewEnvelopeReader().ReadEntry(e.Fields); err == nil {
-			return m
-		}
 	}
 	return Parse(e.Fields)
 }
@@ -361,6 +358,20 @@ func (b *Bus) envelopes() *EnvelopeReader {
 // form it arrived in and refusing a damaged native field by name.
 func (b *Bus) ReadEntry(e Entry) (Message, schemaread.Form, error) {
 	return b.envelopes().ReadEntry(e.Fields)
+}
+
+// ReadEntries decodes a batch with the bus's shared reader, preserving each
+// decoded message for callers of Entry.Message. A damaged native entry stops
+// the batch with its named refusal; it is never patched from legacy fields.
+func (b *Bus) ReadEntries(es []Entry) ([]Entry, error) {
+	for i := range es {
+		m, _, err := b.ReadEntry(es[i])
+		if err != nil {
+			return nil, err
+		}
+		es[i].parsed = &m
+	}
+	return es, nil
 }
 
 // Refusal is a reason a verb could not run as asked: the input, not the store.
@@ -704,6 +715,13 @@ func (b *Bus) Peek(ctx context.Context, as string) (pending, fresh []Entry, err 
 		from = "(" + last
 	}
 	fresh, err = b.Store.Range(ctx, StreamOf(as), from, "+", pendingLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	if pending, err = b.ReadEntries(pending); err != nil {
+		return nil, nil, err
+	}
+	fresh, err = b.ReadEntries(fresh)
 	return pending, fresh, err
 }
 
@@ -797,7 +815,11 @@ func (b *Bus) WaitArm(ctx context.Context, as, after string) (string, error) {
 // fresh entry is past the cap on every read. Arm at LogCursor and read
 // with LogForward.
 func (b *Bus) Log(ctx context.Context, from string) ([]Entry, error) {
-	return b.Store.Range(ctx, LogKey, from, "+", logLimit)
+	es, err := b.Store.Range(ctx, LogKey, from, "+", logLimit)
+	if err != nil {
+		return nil, err
+	}
+	return b.ReadEntries(es)
 }
 
 // LogCursor is the log's tail, the cursor a reader arms at so LogForward

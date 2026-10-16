@@ -168,6 +168,36 @@ func TestShowRendersText(t *testing.T) {
 		Err("SHOW NONE: no message 01ARZ3NDEKTSV4RRFFQ69G5FAV")
 }
 
+func TestShowFindsBeyondLogWindow(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	for i := range 10000 {
+		require.NoError(t, r.store.AddAll(context.Background(), []string{bus.LogKey}, map[string]string{"id": fmt.Sprintf("old-%d", i)}))
+	}
+	sent := r.cli().OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "later", "--body", "later body\n")
+	got := r.cli().OK(t, "show", "--as", "bob", "--id", id(t, sent.Stdout))
+	assert.Contains(t, got.Stdout, `"subject": "later"`)
+}
+
+func TestNativeViewsRefuseDamage(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	fields, err := bus.NativeFields(bus.Message{
+		ID: "01JA2B3C4D5E6F7G8H9J0KMNPZ", From: "ada", To: []string{"bob"},
+		Subject: "damaged", Kind: bus.KindStatus, At: r.clock, Body: "x\n",
+	})
+	require.NoError(t, err)
+	wire := fields[bus.EnvelopeField]
+	fields[bus.EnvelopeField] = wire[:len(wire)-1]
+	require.NoError(t, r.store.AddAll(context.Background(), []string{bus.StreamOf("bob"), bus.LogKey}, fields))
+	for _, args := range [][]string{{"peek", "--as", "bob"}, {"log", "--as", "bob"}, {"wait", "--as", "bob", "--after", "0-0", "--timeout", "1ms"}} {
+		res := r.cli().Run(args...)
+		assert.Equal(t, 2, res.Code, "%v: stdout=%q stderr=%q", args, res.Stdout, res.Stderr)
+		assert.Contains(t, res.Stderr, "wire_damaged", "%v", args)
+	}
+	assert.Equal(t, uint64(3), r.envelopes.Snapshot()["refused_wire_damaged"], "each view counts the refusal")
+}
+
 // TestRecvDualRead pins that nova-bus recv routes every stream entry through
 // the pkg/schemaread dual-read helper, reading both the legacy stream fields
 // and the native binary envelope during the cutover window, incrementing the
@@ -189,6 +219,14 @@ func TestRecvDualRead(t *testing.T) {
 		Body: "native body\n",
 	})
 	require.NoError(t, err)
+	nativeEntries, err := r.store.Range(ctx, bus.StreamOf("bob"), "-", "+", 0)
+	require.NoError(t, err)
+	require.Len(t, nativeEntries, 2)
+	oldReader := bus.Parse(nativeEntries[1].Fields)
+	assert.Equal(t, nativeSent.ID, oldReader.ID, "the old reader still sees a native writer's legacy fields")
+	assert.Equal(t, nativeSent.Subject, oldReader.Subject)
+	assert.Equal(t, nativeSent.Body, oldReader.Body)
+	assert.Equal(t, nativeSent.Kind, oldReader.Kind)
 
 	gotLegacy := cli.OK(t, "recv", "--as", "bob", "--ack")
 	assert.Contains(t, gotLegacy.Stdout, "RECV OK id="+legacyID+" from=ada to=bob")
