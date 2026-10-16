@@ -192,3 +192,8 @@ nova_toolchains:
         sha256: da922c20d1792e5b2cbf375593d7a658acf034c12c84e007e71c76ef959c337e
         root: gh_2.102.0_macOS_arm64
         probe: bin/gh
+# eslint (schema issue #547, make/js.mk ESLINT: "eslint 9"): an npm package, so it is not an archive pair above. The
+# play installs it with the SDK's own npm into its own versioned prefix and links it into the SDK bin dir, the way the
+# archives are linked. Tag: `eslint` (`ansible-playbook fleet/tools.yml --tags eslint` converges this alone, and
+# touches no other toolchain). eslint.config.mjs imports no package, so eslint is the only package installed.
+nova_eslint_version: "9.39.5"
