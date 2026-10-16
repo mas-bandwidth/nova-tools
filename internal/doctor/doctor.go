@@ -239,13 +239,13 @@ first run: nova-doctor run; nothing is changed, no fix is run for you.`,
 		ExitTable: "0 every check ok (a warn too, unless --strict), 1 a warn under --strict, 2 a fail, or usage",
 		Verbs: []tool.Verb{{
 			Name:    "run",
-			Usage:   "[run] [--check <name>]... [--dir <path>] [--local] [--strict] [--json]",
+			Usage:   "run [--check <name>]... [--dir <path>] [--local] [--strict] [--json]",
 			Example: "run --check harness\nrun --dir .\nrun --local --json",
 			Effect:  tool.Inspection,
 			Detail:  "checks: " + strings.Join(reg.Names(), ", ") + "\nexample: nova-doctor run --local",
 			Flags: func(f *tool.Flags) {
 				f.Prints()
-				f.Var(new(list), "check", "run only this check (repeatable); the names are in `help run`")
+				f.Var(new(list), "check", "run only the check of this `name` (repeatable): one of the checks: line in help run")
 				f.Bool("local", false, "skip the checks only a fleet needs, and say which")
 				f.Bool("strict", false, "exit 1 on a warn")
 				f.Bool("json", false, "print the results as one JSON object instead of lines")

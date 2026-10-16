@@ -7,7 +7,7 @@ cmd/nova-swarm/lintchild_test.go:111 a test fixture: a bad card the child lint m
 pkg/cardcontract/openai_functional_test.go:198 a test fixture row: a force push the shim must refuse, kept so the refusal is proved
 pkg/cardcontract/shims_functional_test.go:103 a test fixture row: a leased push the shim must carry on the caller's own branch, kept so the handling is proved
 pkg/cardcontract/shims_functional_test.go:368 a test fixture list: leased pushes the shim must carry, kept so the handling is proved
-pkg/swarm/lintbase_test.go:378 a test fixture: a card body quoting a leased push to the card's own branch, kept so the base lint's read is proved
+pkg/swarm/lintbase_test.go:391 a test fixture: a card body quoting a leased push to the card's own branch, kept so the base lint's read is proved
 pkg/swarm/lintchild_test.go:508 a test fixture table: the force lines the child lint must refuse, kept so the refusal is proved
 pkg/swarm/lintchild_test.go:509 a test fixture table: the accepted pushes the child lint must not refuse, the rule sentence beside them names the remote
 tools/ci/revertonred_test.go:316 a test fixture: the revert-on-red tool's forced push to its own revert branch, kept so the fallback is proved

@@ -440,10 +440,11 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
 			{
-				Name:   "hook",
-				Usage:  "hook --harness claude",
-				Effect: tool.Inspection + ": reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON",
-				Detail: "An opt-in project hook for interactive Claude Code sessions (docs/CLAUDE-ASYNC-BASH-CANDIDATE.md). No settings are installed by this verb. Bash input is changed to run_in_background=true without approving the command; malformed input is denied.",
+				Name:      "hook",
+				Usage:     "hook --harness claude",
+				Effect:    tool.Inspection + ": reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON",
+				ExitTable: "0 the hook answered: one Claude hook JSON object or nothing (malformed input is answered with a deny), 2 a word or flag other than --harness claude, or the answer could not be written.",
+				Detail:    "An opt-in project hook for interactive Claude Code sessions (docs/CLAUDE-ASYNC-BASH-CANDIDATE.md). No settings are installed by this verb. Bash input is changed to run_in_background=true without approving the command; malformed input is denied.",
 				Flags: func(f *tool.Flags) {
 					f.Required("harness", "claude: the harness whose PreToolUse JSON is on stdin")
 				},
@@ -1643,9 +1644,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if perCard && c.Str("harness") == "claude" {
 		// a claude lane proves its harness before it takes: claude -p "ok"
 		// --output-format json --max-turns 1 with the row's CLAUDE_CONFIG_DIR,
-		// run by the daemon itself, never through the lane's wall (the proof is
-		// the daemon's own read, not a card child; docs/SPEC-FRIEND.md, "A lane
-		// proves its harness")
+		// run through the lane's own wall as a card is (docs/SPEC-FRIEND.md, "A
+		// lane proves its harness"). Dogfood 2026-10-16: run outside the wall it
+		// passed on a macOS keychain login the wall cannot read, and every card
+		// then ended "Not logged in" in two seconds, burning its attempts.
 		d.Prove = func(ctx context.Context) string {
 			configDir := c.Str("config-dir")
 			if configDir == "" {
@@ -1658,7 +1660,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if configDir == "" {
 				configDir = dir
 			}
-			return friend.ClaudeProofWhy(ctx, w.exec, dir, configDir, "claude")
+			return friend.ClaudeProofWhy(friend.LaneContext(ctx), walledRaw, dir, configDir, "claude")
 		}
 	}
 	if c.Str("harness") == "opencode" {

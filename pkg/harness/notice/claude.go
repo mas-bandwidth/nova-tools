@@ -81,6 +81,15 @@ func InstallClaude(bin, as, role, state, settings string) error {
 	return mergeClaudeStopHook(filepath.Join(settings, "settings.json"), shQuote(script))
 }
 
+// ClaudeChildEnv names the environment variable set on a headless claude child
+// (a friend lane's card, read or harness proof). Its Stop hook still runs when
+// the child's CLAUDE_CONFIG_DIR is the directory the session's Stop hook was
+// installed in, and the boundary then leaves the generation alone: a child's
+// end is no turn of the session's (2026-10-16: the daemon's proof advanced the
+// session's generation every minute, each counting as the session consuming a
+// notice it never saw).
+const ClaudeChildEnv = "NOVA_HOOK_CLAUDE_CHILD"
+
 // ClaudeBoundary advances the generation file: the Stop hook's one write.
 func ClaudeBoundary(state string) (int, error) {
 	n, err := ClaudeGeneration(state)

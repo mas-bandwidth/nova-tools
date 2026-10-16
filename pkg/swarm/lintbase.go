@@ -295,8 +295,10 @@ var (
 	// runnerFormRE (nova-sprint 73b04e12, from de93ff0c) is the runner-form test a card names with `make`, `ctest`,
 	// `cargo`, `dotnet` or `pytest`: `<runner> <file or target> <case>`, the shape
 	// cardhdr test-named accepts (lintheader.go). The case is a test, fact, case or
-	// target name as that runner spells them, never a shell word.
-	runnerFormRE = regexp.MustCompile(`\b(make|ctest|cargo|dotnet|pytest)[ \t]+([^ \t]+)[ \t]+([A-Za-z_][A-Za-z0-9_.:]*)`)
+	// target name as that runner spells them, never a shell word. The target stops
+	// at a backtick: in "`pytest tests/x.py::test_y` passes" the word after the
+	// closing backtick is prose, not a case. An option (`--rootdir=.`) is no target.
+	runnerFormRE = regexp.MustCompile(`\b(make|ctest|cargo|dotnet|pytest)[ \t]+([^ \t` + "`" + `-][^ \t` + "`" + `]*)[ \t]+([A-Za-z_][A-Za-z0-9_.:]*)`)
 )
 
 // doneWhenTests is every literal test the DONE-WHEN names, or nil and why not. A go

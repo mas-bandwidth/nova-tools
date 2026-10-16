@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -213,8 +212,10 @@ func hookServiceArgs(c *tool.Call, as string, role hook.Role, addr string) []str
 			args = append(args, "--"+flag, v)
 		}
 	}
-	if c.Given("lanes") {
-		args = append(args, "--lanes", strconv.Itoa(c.Int("lanes")))
+	// --lanes is retired: the lanes take to her nova-config row's width, and only an explicit
+	// --lanes 0 (a service with no lanes, laneClient) is written, so the install keeps it
+	if c.Given("lanes") && c.Int("lanes") == 0 {
+		args = append(args, "--lanes", "0")
 	}
 	return args
 }

@@ -159,4 +159,3 @@ test('resolved notice-*.json files in eventsDir are pruned to maxResolvedNotices
  assert.ok(notices.includes('notice-0024.json'),'oldest retained resolved notice stands');
  assert.ok(!notices.includes('notice-0001.json'),'older resolved notices are pruned');
 });
-

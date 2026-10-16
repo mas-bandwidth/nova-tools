@@ -28,7 +28,6 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 
 	help := cli.OK(t, "help").Stdout
 	for _, want := range []string{
-		"--publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append with no --publish carries the session's, and one that differs is a conflict naming both (exit 1).",
 		"Same id, same words: duplicate (duplicate=true, exit 0); same id, other words: conflict (exit 1).",
 		"exit codes: 0 done, 2 usage or could not run, for every verb; by verb:",
 		"  open: 0 ",
@@ -38,6 +37,9 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	} {
 		require.Contains(t, help, want, "`nova-cairn help` no longer says %q", want)
 	}
+
+	openHelp := cli.OK(t, "help", "open").Stdout
+	require.Contains(t, openHelp, "--publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append with no --publish carries the session's, and one that differs is a conflict naming both (exit 1).", "`nova-cairn help open` no longer says it")
 
 	dir := t.TempDir()
 	// open records the policy; append with no --publish carries it, and one that

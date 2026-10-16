@@ -67,7 +67,7 @@ const (
 // verb's flags, effect and worked example are in its own -h (verbExtra).
 const usageTop = `nova-config: a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis
 
-how it works: each kind (machine, fleet, friend, sprint, loop, route, tier) is a
+how it works: each kind (machine, fleet, friend, sprint, loop, provider, route, tier) is a
 table of rows in PostgreSQL's schema config, which migrate makes; every write
 adds a history row naming who made it. apply copies the rows into Redis, the
 view the fleet reads; inventory prints that view for Ansible. --file <path>

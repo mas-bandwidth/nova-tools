@@ -405,23 +405,35 @@ func serverSent(m bus.Message, as string) bool {
 	}
 	switch m.Kind {
 	case bus.KindStatus:
-		return strings.HasPrefix(m.Subject, stateSubject)
+		// the bus stores a kind-less send as status (bus.Bus.check): the challenge,
+		// and a judgment from a server whose wire form sends it with no kind (the
+		// fleet's v1.4.5 FRIEND BACK, 2026-10-16)
+		return strings.HasPrefix(m.Subject, stateSubject) || strings.HasPrefix(m.Subject, challengeSubject) || judgmentSubject(m.Subject)
 	case bus.KindJudgment:
-		for _, p := range judgmentSubjects {
-			if strings.HasPrefix(m.Subject, p) {
-				return true
-			}
-		}
-		return false
+		return judgmentSubject(m.Subject)
 	}
-	return strings.HasPrefix(m.Subject, "HOOK CHALLENGE ")
+	return strings.HasPrefix(m.Subject, challengeSubject)
 }
 
 // stateSubject starts a friend-status line's subject; judgmentSubjects start
 // the judgments the server raises (tell) and pushes again (judgments).
 const stateSubject = "FRIEND STATE "
 
+// challengeSubject starts the heartbeat's challenge, sent with no kind and
+// stored as status.
+const challengeSubject = "HOOK CHALLENGE "
+
 var judgmentSubjects = []string{"FRIEND DOWN ", "FRIEND BACK ", "COORDINATOR DOWN ", "OVERDUE "}
+
+// judgmentSubject says subject starts one of judgmentSubjects.
+func judgmentSubject(subject string) bool {
+	for _, p := range judgmentSubjects {
+		if strings.HasPrefix(subject, p) {
+			return true
+		}
+	}
+	return false
+}
 
 // transition is one change of a name's state the server found at a pass: from
 // old to new, at the store's TIME of the pass that saw it, in the epoch it was
