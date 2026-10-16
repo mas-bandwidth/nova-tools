@@ -94,12 +94,19 @@ type answer struct {
 // answers every hold the server names and, of them, the ones this client has not told the
 // model yet (fresh), lane order.
 //
-// The held lanes are the server's answer to friend cards (each working card's lane); when it
-// does not answer, every lane 1..max(width, the highest lane the last round found held) is
-// asked, an empty one not ending the round, so no held lane goes unrenewed (a fresh client
-// has found none yet). Only
-// a lane the server says holds a card is asked as a renewal: a free lane's ask is a take. A lowered width therefore drains: no lane takes until the held cards are
-// under it, and the held ones finish where they are. A raised width takes on the next round.
+// The held lanes are the server's answer to friend cards (each working card's lane). When it
+// does not answer the round is blind: the lane take is the only lane ask the server has (no
+// renew-only form: a free lane's ask is a take, and progress, the one verb that renews a lane
+// without dealing, also stamps the late rule's sign that the card moves, which the client
+// cannot say), so a blind round asks only the lanes the last round found held, and only
+// while their count is within the applied width (Intake above 0): a held lane that freed
+// since then takes at most into a lane she held, never past her width, never while her row
+// is unread. Otherwise it asks nothing and keeps what it last found. The bound: a held lane
+// the client does not know (a fresh client, or one restarted, has found none yet), or one
+// held while she drains past a lowered width or her row is unread, is not renewed while
+// friend cards keeps failing, and its lease (the server's 10m) returns the card if that
+// lasts. A lowered width drains: no lane takes until the held cards are under it, and the
+// held ones finish where they are. A raised width takes on the next round.
 // Not proven, it asks nothing: an ask renews a lease, and only a proving model's lanes are
 // renewed. A lane whose ask fails is skipped this round, its error kept, and takes stop for
 // the round; the server's record stands, and the next round asks again.
@@ -114,10 +121,15 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 	lanes, err := c.serverHolds(ctx)
 	blind := err != nil
 	if blind {
-		// friend cards did not answer: the lanes the last round found held are asked again, so
-		// none goes unrenewed (a lane among them that finished since may take: the server's
-		// own take still holds her row to its width)
+		// friend cards did not answer: the lanes the last round found held are asked again,
+		// and only while they are within her width, so no blind ask takes past it (an ask of a
+		// held lane that finished since is a take, the server's lane ask having no renew-only
+		// form); else nothing is asked and the last view kept (tla/FriendLaneClient.tla
+		// RenewBlind, BlindAsk; witness MCFriendLaneClientBrokenBlindTakes.cfg)
 		errs = append(errs, err)
+		if w := c.Intake(); w == 0 || len(c.held) > w {
+			return nil, nil, errs
+		}
 		lanes = slices.Clone(c.held)
 	}
 	slices.Sort(lanes)
@@ -140,23 +152,6 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 	for _, n := range lanes {
 		if h, ok := ask(n); ok {
 			holds = append(holds, h)
-		}
-	}
-	if blind {
-		// which lanes hold is unknown (a fresh client has found none yet): every lane up to
-		// the larger of her width and the highest lane last found held is asked, an empty one
-		// not stopping the round, so a lane holding a card past a free one is still renewed
-		top := c.Intake()
-		if len(lanes) > 0 {
-			top = max(top, lanes[len(lanes)-1])
-		}
-		for n := 1; n <= min(top, MaxLanes); n++ {
-			if asked[n] {
-				continue
-			}
-			if h, ok := ask(n); ok {
-				holds = append(holds, h)
-			}
 		}
 	}
 	for n := 1; n <= MaxLanes && !blind && !failed && len(holds) < c.Intake(); n++ {

@@ -115,7 +115,7 @@ func configPass(ctx context.Context, lc *friend.Client, now time.Time) (*tool.Ou
 		return nil, false
 	}
 	if !ch.OK {
-		return tool.Done().As("STATE").Fact("state", "config-unread").Fact("intake", 0).Note("her nova-config row did not read: " + ch.Why + "; no lane takes a card until it reads again, and every held card's lane is still renewed"), true
+		return tool.Done().As("STATE").Fact("state", "config-unread").Fact("intake", 0).Note("her nova-config row did not read: " + ch.Why + "; no lane takes a card until it reads again, and every held card's lane is still renewed while friend cards answers"), true
 	}
 	return tool.Done().As("STATE").Fact("state", "config-applied").Fact("width", ch.Config.Width).Note("her nova-config row applied: the lanes take to width " + fmt.Sprint(ch.Config.Width) + "; a lowered width drains, never returns a held card"), true
 }

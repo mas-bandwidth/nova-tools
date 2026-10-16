@@ -391,28 +391,81 @@ func TestAHeldLaneIsRenewedWhenFriendCardsDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, []int{1, 2}, srv.renewed())
 }
 
-// A client started fresh (it has found no held lane yet) whose friend cards read fails still
-// asks every lane up to her width: lane 1 answering free and empty does not stop the round
-// before lane 2, whose card's lease is renewed (tla/FriendLaneClient.tla CardsReadFails,
-// RenewBlind; witness MCFriendLaneClientBrokenBlindStops.cfg).
-func TestAFreshClientWhoseCardsReadFailsStillRenewsAHeldLane(t *testing.T) {
+// A client started fresh (it has found no held lane yet) whose friend cards read fails asks
+// nothing: it knows no lane to renew, and a blind ask of a free lane would be a take. Its
+// held lane is renewed on the first round friend cards answers again (the bound,
+// tla/FriendLaneClient.tla RenewBlind; the lease returns the card if the failure outlasts it).
+func TestAFreshClientWhoseCardsReadFailsAsksNothingUntilItReads(t *testing.T) {
 	t.Parallel()
 	srv := newFake()
 	srv.held[2] = "s1-9.w1"
-	srv.ready = nil
 	srv.cardsDown = true
 	c := client(t, srv, &row{width: 2})
 	holds, _, errs := c.Round(context.Background(), true)
 	require.Len(t, errs, 1)
 	assert.Contains(t, errs[0].Error(), "friend cards")
-	assert.Equal(t, []int{1, 2}, srv.renewed(), "lane 1 free and empty, lane 2 still asked")
-	assert.Equal(t, []int{2}, lanesOf(holds))
+	assert.Empty(t, srv.renewed(), "a blind fresh client asks no lane")
+	assert.Empty(t, holds)
 	assert.Zero(t, srv.takes)
 
-	// the next round, still blind, renews it again from what this one found
+	srv.cardsDown = false
+	holds, _, errs = c.Round(context.Background(), true)
+	require.Empty(t, errs)
+	assert.Contains(t, srv.renewed(), 2, "friend cards answers: lane 2 renewed")
+	assert.Contains(t, lanesOf(holds), 2)
+}
+
+// A blind round never takes past her width: with lanes 1-3 held and her width lowered to 1,
+// lane 1 finishing and friend cards failing, no lane is asked (an ask of lane 1 would take
+// into it, 3 held at width 1), and the last view is kept for the next round
+// (tla/FriendLaneClient.tla DrainNeverTakes; witness MCFriendLaneClientBrokenBlindTakes.cfg).
+func TestABlindRoundWhileDrainingTakesNothing(t *testing.T) {
+	t.Parallel()
+	srv := newFake()
+	srv.ready = append(srv.ready, "s1-4.w1")
+	cfg := &row{width: 3}
+	c := client(t, srv, cfg)
+	holds, _, _ := c.Round(context.Background(), true)
+	require.Equal(t, []int{1, 2, 3}, lanesOf(holds))
+	srv.renewed()
+	cfg.width = 1
+	_, changed := c.Apply(context.Background(), t0.Add(ConfigEvery))
+	require.True(t, changed)
+
+	srv.finish(1)
+	srv.cardsDown = true
+	_, _, errs := c.Round(context.Background(), true)
+	require.Len(t, errs, 1)
+	assert.Empty(t, srv.renewed(), "draining and blind: no lane asked")
+	assert.Equal(t, 3, srv.takes, "nothing taken into lane 1")
+	assert.Equal(t, []string{"s1-4.w1"}, srv.ready)
+
+	srv.cardsDown = false
 	holds, _, _ = c.Round(context.Background(), true)
-	assert.Equal(t, []int{1, 2}, srv.renewed())
-	assert.Equal(t, []int{2}, lanesOf(holds))
+	assert.Equal(t, []int{2, 3}, lanesOf(holds), "cards reads again: the held lanes renewed, still no take")
+	assert.Equal(t, 3, srv.takes)
+}
+
+// A blind round takes nothing while her row is unread (intake 0), even on a lane it found
+// held that finished since.
+func TestABlindRoundWithTheRowUnreadTakesNothing(t *testing.T) {
+	t.Parallel()
+	srv := newFake()
+	cfg := &row{width: 1}
+	c := client(t, srv, cfg)
+	holds, _, _ := c.Round(context.Background(), true)
+	require.Equal(t, []int{1}, lanesOf(holds))
+	srv.renewed()
+	cfg.down = true
+	_, changed := c.Apply(context.Background(), t0.Add(ConfigEvery))
+	require.True(t, changed)
+	require.Zero(t, c.Intake())
+
+	srv.finish(1)
+	srv.cardsDown = true
+	c.Round(context.Background(), true)
+	assert.Empty(t, srv.renewed(), "row unread and blind: no lane asked")
+	assert.Equal(t, 1, srv.takes, "nothing taken")
 }
 
 // The one notice: how many were taken, the briefs, and the server's finish verb for each
