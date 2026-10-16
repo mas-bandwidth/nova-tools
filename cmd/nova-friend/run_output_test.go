@@ -139,7 +139,12 @@ func TestRunNeverWritesItsOutputFromTwoGoroutinesAtOnce(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
 	w.wall = func(_ friend.Wall, _ friend.Exec) friend.Exec {
-		return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+		return func(ctx context.Context, _, _ string, args []string, _ string) (string, int, error) {
+			if proofCall(args) {
+				// the harness proof runs inside the lane's wall as a card does
+				// (a6714d09c), and is no card's run
+				return `{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed"}` + "\n", 0, nil
+			}
 			if !friend.InLane(ctx) {
 				return "", 0, nil
 			}
