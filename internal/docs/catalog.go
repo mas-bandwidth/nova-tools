@@ -101,6 +101,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/ntable", "a general Redis-backed table: ordered sets per cell, projections, folds, the render", "go test ./pkg/ntable", "go test ./pkg/ntable"),
 	E("pkg/onboarding", "onboarding banner and doc verifier", "go test ./pkg/onboarding", "go test ./pkg/onboarding"),
 	E("pkg/oneline", "single-line log and output grammar", "go test ./pkg/oneline", "go test ./pkg/oneline"),
+	E("pkg/pongwire", "the friend pong's table wire, generated from schemas/pong by the pinned schema compiler (generate.go); its wire-fuzz driver in pkg/pongwire/cmd/pong-driver", "go test ./pkg/pongwire", "make schemawire-check"),
 	E("pkg/pathcase", "the one case-folding probe pkg/sandbox and pkg/swarm share: whether a directory folds case, and the case-boundary path the fixture measures", "go test ./pkg/pathcase", "go test ./pkg/pathcase"),
 	E("pkg/pkgselect", "package selection, the shard deal and the test fan-out that CI and nova-ci local share", "go test ./pkg/pkgselect", "go test ./pkg/pkgselect"),
 	E("pkg/provbalance", "a model provider's balance read through the seat's key", "go test ./pkg/provbalance", "go test ./pkg/provbalance"),

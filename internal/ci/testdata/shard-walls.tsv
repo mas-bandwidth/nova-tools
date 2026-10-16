@@ -112,6 +112,7 @@ pkg/oneline	0.2	@local	-
 pkg/oneline/audit	0.1	@local	-
 pkg/pathcase	0.0	@local	-
 pkg/pkgselect	0.2	@local	-
+pkg/pongwire	0.5	@local	-
 pkg/provbalance	0.0	@run37518625834	self-hosted
 pkg/readregular	0.2	@local	-
 internal/record	0.0	@run37411066588	self-hosted

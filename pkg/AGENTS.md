@@ -43,6 +43,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `oneline/` | single-line log and output grammar | `go test ./pkg/oneline` | `go test ./pkg/oneline` |
 | `pathcase/` | the one case-folding probe pkg/sandbox and pkg/swarm share: whether a directory folds case, and the case-boundary path the fixture measures | `go test ./pkg/pathcase` | `go test ./pkg/pathcase` |
 | `pkgselect/` | package selection, the shard deal and the test fan-out that CI and nova-ci local share | `go test ./pkg/pkgselect` | `go test ./pkg/pkgselect` |
+| `pongwire/` | the friend pong's table wire, generated from schemas/pong by the pinned schema compiler (generate.go); its wire-fuzz driver in pkg/pongwire/cmd/pong-driver | `go test ./pkg/pongwire` | `make schemawire-check` |
 | `provbalance/` | a model provider's balance read through the seat's key | `go test ./pkg/provbalance` | `go test ./pkg/provbalance` |
 | `readregular/` | the one way to read a file a tool did not write: regular files only (links followed), size capped, FIFOs and devices refused by name | `go test ./pkg/readregular` | `go test ./pkg/readregular` |
 | `redisacl/` | the fleet store's ACL users rendered from the function library and the key families, and compared with a store's live ACL | `go test ./pkg/redisacl` | `go test ./pkg/redisacl` |
