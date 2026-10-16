@@ -190,7 +190,12 @@ func ClaudeStop(state, watch string) (ClaudeStopDecision, error) {
 			if err := writeWord(filepath.Join(state, claudeNagged), "1"); err != nil {
 				return ClaudeStopDecision{}, err
 			}
-			return ClaudeStopDecision{Block: true, Reason: "nova-hook: no watcher is armed, so a push cannot wake this session once it is idle. Before this turn ends, arm it with the Monitor tool (the longest timeout; re-arm it each time it ends): " + watch}, nil
+			reason := "nova-hook: no watcher is armed, so a push cannot wake this session once it is idle. Before this turn ends, arm it with the Monitor tool (the longest timeout; re-arm it each time it ends): " + watch
+			if p.Path != "" {
+				// ending the turn consumes the pending notice, which no watcher showed
+				reason += ". A notice is pending: " + Notice{Path: p.Path}.Text() + "."
+			}
+			return ClaudeStopDecision{Block: true, Reason: reason}, nil
 		}
 	}
 	n, err := ClaudeBoundary(state)

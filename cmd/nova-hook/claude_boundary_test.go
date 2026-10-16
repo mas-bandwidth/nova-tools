@@ -209,9 +209,12 @@ func TestTheClaudeWatcherHoldsTheLockWhileItRuns(t *testing.T) {
 	assert.Contains(t, out.String()+errs.String(), "another watcher already holds")
 	require.NoError(t, held.Unlock())
 
+	pending := filepath.Join(state, "n1.json")
+	require.NoError(t, os.WriteFile(pending, []byte(`{"local_receiver":{"identity":"bob"},"messages":1}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "pending"), []byte(pending+"\n"), 0o600))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stdout := &cancelOn{word: "state=watching", cancel: func() {
+	stdout := &cancelOn{word: "HOOK PENDING", cancel: func() {
 		watched, err := notice.ClaudeWatched(state)
 		assert.NoError(t, err)
 		assert.True(t, watched, "the lock is held while the watcher runs")
@@ -219,6 +222,7 @@ func TestTheClaudeWatcherHoldsTheLockWhileItRuns(t *testing.T) {
 	}}
 	code = hookTool(w).RunContext(ctx, args, strings.NewReader(""), stdout, &errs)
 	assert.Contains(t, stdout.b.String(), "state=watching")
+	assert.Contains(t, stdout.b.String(), pending, "a notice pushed before the watcher was armed is told at arming")
 	_ = code // ended by its context: the closing line names it
 	watched, err := notice.ClaudeWatched(state)
 	require.NoError(t, err)

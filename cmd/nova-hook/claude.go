@@ -189,6 +189,11 @@ func (w world) claudeWatch(c *tool.Call, r *claudeRoute) *tool.Out {
 		return tool.Refuse("claude watch: " + err.Error())
 	}
 	line(c, tool.Done().As("STATE").Fact("state", "watching").Fact("log", log).Note("each PUSH line is a notice for the model; only the model proves"))
+	// A notice pushed before this watcher held the lock was never seen: the log
+	// is read from its end, so the pending one is told now.
+	if p, err := notice.ReadClaudePending(r.state); err == nil && p.Path != "" {
+		line(c, tool.Done().As("PENDING").Fact("nonce", cmpOr(p.Nonce, "-")).Fact("notice", tool.Text(notice.Notice{Path: p.Path}.Text())).Note("pushed before this watcher was armed; only the model proves"))
+	}
 	tick := time.NewTicker(claudeWatchEvery)
 	defer tick.Stop()
 	failing := "" // the read failure last said: each is said once, each line being a notification
@@ -216,6 +221,13 @@ func (w world) claudeWatch(c *tool.Call, r *claudeRoute) *tool.Out {
 			}
 		}
 	}
+}
+
+func cmpOr(s, or string) string {
+	if s == "" {
+		return or
+	}
+	return s
 }
 
 // claudeWatched is a service log line the model acts on: every HOOK line but
@@ -254,7 +266,7 @@ func (t *claudeTail) next() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer f.Close() // ignored: a read-only file; nothing written is lost on a failed close
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err

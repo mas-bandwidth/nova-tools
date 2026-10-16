@@ -63,7 +63,7 @@ func TestTheClaudeStopBlocksOnceForAChallengeThenOnceForAWatcher(t *testing.T) {
 	assert.True(t, d.Block, "no watcher holds the lock")
 	assert.Contains(t, d.Reason, "Monitor tool")
 	assert.Contains(t, d.Reason, "/s/watch.sh")
-	assert.NotContains(t, d.Reason, "abc123", "the challenge is blocked once only")
+	assert.NotContains(t, d.Reason, "hook challenge abc123", "the challenge is blocked once only")
 
 	d, err = ClaudeStop(state, "/s/watch.sh")
 	require.NoError(t, err)
@@ -108,6 +108,18 @@ func TestANewerChallengeBlocksTheStopAgain(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, d.Block)
 	assert.Contains(t, d.Reason, "bbb222")
+}
+
+// With no watcher, a messages-only notice was never shown: the one watcher
+// block names it before the turn's end consumes it.
+func TestTheWatcherBlockNamesAnUnseenNotice(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	path := pendingChallenge(t, state, "")
+	d, err := ClaudeStop(state, "w")
+	require.NoError(t, err)
+	require.True(t, d.Block)
+	assert.Contains(t, d.Reason, path)
 }
 
 // Messages without a challenge never block a watched session: the Monitor told them.
