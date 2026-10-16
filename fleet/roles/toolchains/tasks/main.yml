@@ -385,3 +385,6 @@
 - name: toolchain paths and versions for the bench
   ansible.builtin.debug:
     msg: "TOOLCHAINS CHECK host={{ inventory_hostname }} facts={{ nova_toolchains_facts | to_json }}"
+
+- name: eslint, the npm-installed linter (tag eslint)
+  ansible.builtin.import_tasks: eslint.yml
