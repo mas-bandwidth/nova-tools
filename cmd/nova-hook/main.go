@@ -52,6 +52,7 @@ const Tick = time.Second
 type world struct {
 	codexLock          func(string) (func() error, error)
 	codexValidate      func(string, string, string) error
+	codexProbe         func(context.Context, string, string) error
 	codexDeliver       func(context.Context, string, string, string, string) (string, error)
 	codexChats         func(home string) ([]codexdesktop.Chat, error) // the desktop chats a Codex home holds
 	dshValidate        func(dshdesktop.Route) error
@@ -89,6 +90,7 @@ func realWorld() world {
 	w := world{
 		codexLock:          notice.Lock,
 		codexValidate:      notice.ValidateCodex,
+		codexProbe:         codexdesktop.Probe,
 		codexDeliver:       codexdesktop.DeliverSaved,
 		codexChats:         func(home string) ([]codexdesktop.Chat, error) { return codexdesktop.DesktopChats(os.DirFS(home)) },
 		dshValidate:        notice.ValidateDsh,
@@ -189,6 +191,23 @@ the record is in bus Redis; serve checks every ` + hook.BeatEvery.String() + `; 
 		Words:     []string{"ARMED", "CHALLENGE", "PUSH", "STATE", "STOP", "DRY-RUN"},
 		UsageNote: "only the model answers a challenge, with nova-hook prove from inside its own turn; no daemon, loop or script may call prove.",
 		Verbs: []tool.Verb{
+			{
+				Name:    "codex-owner",
+				Usage:   "codex-owner --thread <id> [--socket <path>] [--dry-run]",
+				Example: "codex-owner --thread example-thread --dry-run",
+				Effect:  tool.Inspection + ": probes whether this Codex desktop can accept native input for the named thread; writes no hook record, bus message or turn",
+				DryRun:  true,
+				Detail: `Checks the native thread owner before a Codex hook is moved to a recipient. An available owner
+means only that the desktop says it can accept an external input turn; it does not establish delivery,
+model acknowledgement, idle wake or a challenge proof. A subagent thread with no desktop owner is refused;
+do not substitute a parent chat without an explicit routing decision. No Redis or sprint server is needed.
+example: nova-hook codex-owner --thread example-thread --dry-run`,
+				Flags: func(f *tool.Flags) {
+					f.Required("thread", "the exact Codex desktop thread ID to probe")
+					f.String("socket", w.getenv("NOVA_HOOK_CODEX_SOCKET"), "native Codex desktop socket (default: CODEX_HOME/ipc/ipc.sock)")
+				},
+				Run: w.codexOwner,
+			},
 			{
 				Name:    "status",
 				Usage:   "status [--as <name>] [--max <n>] [--redis <addr>]",

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,37 @@ import (
 )
 
 const maxCodexEvent = notice.MaxSaved
+
+// codexOwner checks whether the desktop currently has a native input owner for
+// exactly the requested chat. It never starts a turn or changes the hook.
+func (w world) codexOwner(c *tool.Call) *tool.Out {
+	thread := c.Str("thread")
+	if !codexdesktop.ValidThread(thread) {
+		return tool.Refuse("invalid Codex thread ID")
+	}
+	socket := c.Str("socket")
+	if socket == "" {
+		home, err := w.codexHomeDir()
+		if err != nil {
+			return tool.Refuse("finding the Codex desktop socket: " + err.Error())
+		}
+		socket = filepath.Join(home, "ipc", "ipc.sock")
+	}
+	if c.DryRun() {
+		return tool.Done().As("DRY-RUN").Fact("thread", thread).Fact("native", "unchecked").Note("no native owner discovery was sent")
+	}
+	if w.codexProbe == nil {
+		return tool.Refuse("Codex desktop owner probe is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := w.codexProbe(ctx, socket, thread); err != nil {
+		o := tool.Fail("no usable native Codex desktop owner for thread "+thread+": "+err.Error()).Fact("thread", thread).Fact("native", "unavailable")
+		o.Remedy = "keep the current hook route; use a supported recipient or active monitored delivery, and prove model receipt separately"
+		return o
+	}
+	return tool.Done().Fact("thread", thread).Fact("native", "available").Note("owner availability is not delivery, model acknowledgement, or idle wake")
+}
 
 // codexRoute is the Codex desktop route's flags, or the Antigravity route's
 // (antigravity set): the shim's mechanism, and the native startup recovery.

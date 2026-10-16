@@ -16,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
 	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,6 +45,7 @@ func TestCodexRouteRefusesBeforeArming(t *testing.T) {
 		{"offset cutover", append(append([]string{}, codexArgs...), "--codex-since", "2026-10-11T12:00:00+01:00"), nil},
 		{"no chat to find", []string{"hook", "--as", "ada", "--role", "comms", "--harness", "codex", "--codex-events-dir", "/private/events"}, nil},
 		{"owner unavailable", codexArgs, errors.New("owner is unavailable")},
+		{"child has no native owner", codexArgs, errors.New("native app rejected thread-owner-discovery: \"no-client-found\"")},
 		{"once", append(append([]string{}, codexArgs...), "--once"), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,6 +57,70 @@ func TestCodexRouteRefusesBeforeArming(t *testing.T) {
 			assert.Equal(t, 2, code, out.String())
 			assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
 		})
+	}
+}
+
+func TestCodexOwnerProbeDoesNotRouteOrArm(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, thread string
+		probeErr     error
+		code         int
+		want         string
+	}{
+		{"top-level owner", "top-level-thread", nil, 0, "native=available"},
+		{"child has no owner", "child-thread", errors.New("thread-owner-discovery: no-client-found"), 1, "native=unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t)
+			w := fakeCodexWorld(r)
+			calls := 0
+			w.codexProbe = func(_ context.Context, socket, thread string) error {
+				calls++
+				assert.Equal(t, "/private/socket", socket)
+				assert.Equal(t, tc.thread, thread)
+				return tc.probeErr
+			}
+			var out, errOut bytes.Buffer
+			code := run([]string{"codex-owner", "--thread", tc.thread, "--socket", "/private/socket"}, strings.NewReader(""), &out, &errOut, w)
+			assert.Equal(t, tc.code, code, out.String()+errOut.String())
+			assert.Contains(t, out.String()+errOut.String(), tc.want)
+			assert.Equal(t, 1, calls)
+			assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
+		})
+	}
+}
+
+func TestCodexOwnerDryRunNeverContactsDesktop(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	w := fakeCodexWorld(r)
+	w.codexProbe = func(context.Context, string, string) error {
+		t.Fatal("dry-run must not contact Codex desktop")
+		return nil
+	}
+	var out bytes.Buffer
+	code := run([]string{"codex-owner", "--thread", "child-thread", "--socket", "/private/socket", "--dry-run"}, strings.NewReader(""), &out, io.Discard, w)
+	assert.Zero(t, code, out.String())
+	assert.Contains(t, out.String(), "native=unchecked")
+	assert.Equal(t, hook.StateNone, r.h.State(t, "ada").State)
+}
+
+func TestCodexOwnerHelpExampleThroughComparator(t *testing.T) {
+	t.Parallel()
+	const example = "nova-hook codex-owner --thread example-thread --dry-run"
+	cli, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(cli), example)
+	var out, errOut bytes.Buffer
+	code := run([]string{"codex-owner", "--thread", "example-thread", "--dry-run"}, strings.NewReader(""), &out, &errOut, fakeCodexWorld(newRig(t)))
+	step := onboarding.Step{Line: "$ " + example, Want: []string{
+		"CODEX-OWNER DRY-RUN thread=example-thread native=unchecked dry_run=true",
+		"CODEX-OWNER NOTE no native owner discovery was sent",
+	}}
+	assert.Zero(t, code, out.String()+errOut.String())
+	for _, p := range onboarding.Compare(step, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errOut.String()}, nil) {
+		assert.Fail(t, p.Message)
 	}
 }
 
