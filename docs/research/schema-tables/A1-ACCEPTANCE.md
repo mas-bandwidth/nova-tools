@@ -89,7 +89,9 @@ In the whole-package run, 22 cmd/nova-sprint tests at the tip and 26 at the pre-
 
 At the commit that carries this document: `go test -count=1 ./internal/ci -run 'TestEveryNamedRepoPathExists|TestNoWholeTreeGoTestInDocs'` passes:
 
-
+```
+ok  	github.com/mas-bandwidth/nova-tools/internal/ci	0.369s
+```
 
 ## 6. Not done
 
