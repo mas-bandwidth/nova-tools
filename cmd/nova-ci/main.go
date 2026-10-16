@@ -69,15 +69,18 @@ usage, in any Go module (no state, no store):
                       with more finding lines than --max prints the first --max
                       and one CI-SLOW MORE shown=<n> total=<n> line naming the
                       flag that prints the rest; --max 0 prints every finding.
-                      --json prints the same verdict as one JSON object.
-  nova-ci functional <package-dir>...
+                      --json prints the same verdict as one JSON object. Unenforced
+                      overruns add within_budget=false and an enforcement
+                      command; exit 0 remains a measurement.
+  nova-ci functional [--json] <package-dir>...
                       (inspection) print the packages among these that hold
                       functional tests (a _test.go built only under the
                       functional build tag) on one line and a go test -run
                       pattern naming exactly those tests on the next; when
                       there are none, one line
-                      CI FUNCTIONAL OK packages=0 reason=<why>. A flag, and a
-                      pattern matching no package, are refused.
+                      CI FUNCTIONAL OK packages=0 reason=<why>. An unknown flag, and a
+                      pattern matching no package, are refused. --json projects the same
+                      packages and pattern as one JSON object.
 
 usage, in a nova-tools checkout (this repository's own CI steps):
   nova-ci local [--base origin/dev] [--functional] [--dry-run]

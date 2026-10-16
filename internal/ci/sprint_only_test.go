@@ -2,7 +2,6 @@ package ci
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -98,19 +97,8 @@ func TestTheSprintGuardRefusesAPlantedPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"internal/sprint"}, present, "the planted path is not refused")
 
-	ft := &guardT{}
+	ft := &generalityMessageReporter{}
 	refuseSprintPaths(ft, present)
-	assert.True(t, ft.failed, "the guard's assertion passes a tree holding internal/sprint")
-	assert.Contains(t, ft.msg, sprintLeftMessage, "the refusal does not say where the change belongs")
-}
-
-// guardT records what an assertion says without failing the test running it.
-type guardT struct {
-	failed bool
-	msg    string
-}
-
-func (f *guardT) Errorf(format string, args ...any) {
-	f.failed = true
-	f.msg = fmt.Sprintf(format, args...)
+	assert.NotEmpty(t, ft.messages, "the guard's assertion passes a tree holding internal/sprint")
+	assert.Contains(t, strings.Join(ft.messages, "\n"), sprintLeftMessage, "the refusal does not say where the change belongs")
 }

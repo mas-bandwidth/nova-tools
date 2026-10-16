@@ -407,3 +407,32 @@ func TestARouteATierNamesIsHeld(t *testing.T) {
 	_, err = st.Delete(ctx, KindRoute, "flash-a", "a1")
 	assert.NoError(t, err)
 }
+
+func TestAMuseRouteIsAddedListedAndReadBack(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := reopening{t: t, path: migratedFile(t)}
+	k, _ := Lookup(KindRoute)
+	row, err := k.NewRow("frontier-muse", map[string]string{"tier": "frontier", "provider": "meta", "harness": "muse", "model": "frontier-model", "deadline": "1800", "billing": "plan", "price_input": "0", "price_cache_read": "0", "price_cache_write": "0", "price_output": "0"})
+	require.NoError(t, err)
+	addProvider(t, st, "meta")
+	_, err = st.Insert(ctx, KindRoute, row, "a1")
+	require.NoError(t, err)
+	rows, err := st.List(ctx, KindRoute)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "muse", rows[0].Fields["harness"])
+	got, found, err := st.Get(ctx, KindRoute, "frontier-muse")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, row.Fields, got.Fields)
+}
+
+func TestSubscriptionRouteAppliesWithoutNumericPrices(t *testing.T) {
+	t.Parallel()
+	kind, _ := Lookup(KindRoute)
+	row, err := kind.NewRow("muse-fixture", map[string]string{"tier": "pro", "provider": "meta", "model": "fixture", "deadline": "60", "billing": "subscription"})
+	require.NoError(t, err)
+	assert.NoError(t, CheckRoutesPriced([]Row{row}))
+	assert.Equal(t, "subscription", row.Fields["billing"])
+}

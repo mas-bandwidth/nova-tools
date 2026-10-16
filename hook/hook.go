@@ -56,7 +56,7 @@ var Roles = []Role{Coordinator, Friend, Comms, Member, Reader}
 // needs is each role's pushes.
 var needs = map[Role][]Push{
 	Coordinator: {Bus, Sprint},
-	Friend:      {Bus, Work},
+	Friend:      {Bus},
 	Comms:       {Bus},
 	Member:      {Work},
 	Reader:      {Work},
@@ -97,6 +97,18 @@ const (
 	// bound outlives the whole bound of the next (a session answering every
 	// challenge inside its bound is never unproven between them).
 	ProofTTL = ChallengeEvery + 2*AnswerBound
+	// BeatEvery is the server's pass interval, not its challenge cadence
+	// (tla/HookBeat.tla, Pass).
+	BeatEvery = time.Minute
+	// BusyQuietAfter applies to a friend with ready or working sprint cards.
+	BusyQuietAfter = 5 * time.Minute
+	// QuietAfter applies to an idle friend or comms name.
+	QuietAfter = 10 * time.Minute
+	// CoordinatorEvery is the coordinator's quiet window.
+	CoordinatorEvery = 30 * time.Minute
+	// DownAfter is silence required in addition to an outstanding challenge
+	// past AnswerBound before the server unhooks a name (tla/HookBeat.tla).
+	DownAfter = 5 * time.Minute
 )
 
 // The keys (docs/SPEC-HOOK.md, the key layout), all in the bus Redis.
@@ -104,6 +116,12 @@ const (
 	prefix = "hook:"
 	// NamesKey is the set of every name that ever hooked in.
 	NamesKey = prefix + "names"
+	// ServeKey is the heartbeat server's own stamp: a hash of at, every, by.
+	ServeKey = prefix + "serve"
+	// EventsKey is the capped stream of the heartbeat's unhooks, one entry each.
+	EventsKey = prefix + "events"
+	// EventsMax caps EventsKey (approximately, MAXLEN ~).
+	EventsMax = 10000
 )
 
 // RecordKey is name's record: a hash of role, state, epoch, armed, unhooked, by.
@@ -117,6 +135,15 @@ func ProofKey(name string, p Push) string { return prefix + "proof:" + name + ":
 
 // ChallengeKey is name's outstanding challenge: a hash of epoch, sum, pushes, with a TTL.
 func ChallengeKey(name string) string { return prefix + "chal:" + name }
+
+// DeliveryKey holds the private pending challenge payload until bus delivery
+// is confirmed (tla/HookBeat.tla, delivery obligation).
+func DeliveryKey(name string) string { return prefix + "delivery:" + name }
+
+// DeliveryOnce is the bus once-key of this challenge, stable across retries.
+func DeliveryOnce(name string, epoch int64, nonce string) string {
+	return fmt.Sprintf("%s:%d:%s", DeliveryKey(name), epoch, Sum(nonce))
+}
 
 // The record's states and a push's (docs/SPEC-HOOK.md, the states).
 const (
@@ -167,13 +194,25 @@ type PushStatus struct {
 
 // Status is one identity's record, judged at the store's now.
 type Status struct {
-	Name     string
-	Role     Role
-	State    string // StateNone .. StateProven
-	Epoch    int64
-	Armed    time.Time // when the record was last hooked, zero when never
-	Unhooked time.Time // when it was unhooked, zero when it is not
-	Pushes   []PushStatus
+	Name         string
+	Role         Role
+	State        string // StateNone .. StateProven
+	Epoch        int64
+	Armed        time.Time     // when the record was last hooked, zero when never
+	Unhooked     time.Time     // when it was unhooked, zero when it is not
+	Reason       string        // why it was unhooked, when the heartbeat did it ("no answer in 5m0s (5 challenges missed)")
+	BeatAt       time.Time     // when the heartbeat server last challenged it, zero when never
+	ActivityAt   time.Time     // latest explicit model bus send, at store TIME
+	PendingSent  bool          // the bus committed this challenge, not merely prepared it
+	PendingUntil time.Time     // outstanding server challenge deadline, even after its key expires
+	QuietAfter   time.Duration // policy selected from the authoritative sprint row at the last pass
+	AnswerAt     time.Time     // when the session last answered a challenge, zero when never
+	// Down is why the record reads down at this read whatever its state says
+	// (Served.Down: no server, a stale one, or no answer), "" when the evidence
+	// stands. No reader trusts the last written state then, and the gate refuses.
+	Down   string
+	Misses int // challenges in a row left unanswered
+	Pushes []PushStatus
 }
 
 // Judge is the status a record and its pushes' reads say: the state machine,
@@ -188,6 +227,15 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 	st.Role = Role(rec["role"])
 	st.Epoch, _ = strconv.ParseInt(rec["epoch"], 10, 64) // ignored: an epoch that is no number matches no stamp, so nothing counts
 	st.Armed = msTime(rec["armed"])
+	st.BeatAt = msTime(rec["beat_at"])
+	st.AnswerAt = msTime(rec["answered_at"])
+	st.ActivityAt = msTime(rec["bus_sent_at"])
+	st.PendingUntil = msTime(rec["pending_until"])
+	st.PendingSent = rec["pending_sent"] == "1"
+	quiet, _ := strconv.ParseInt(rec["quiet_after"], 10, 64) // ignored: an old record uses the role default
+	st.QuietAfter = time.Duration(quiet) * time.Millisecond
+	st.Misses, _ = strconv.Atoi(rec["misses"]) // ignored: no count reads as none missed
+	st.Reason = rec["reason"]
 	if rec["state"] != "hooked" {
 		st.State = StateUnhooked
 		st.Unhooked = msTime(rec["unhooked"])
@@ -226,6 +274,30 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 		st.State = StateExpired
 	}
 	return st
+}
+
+// LastActivity is actual model activity or the initial arm, never a holder's
+// lease renewal (tla/HookBeat.tla, lastActivity).
+func (st Status) LastActivity() time.Time {
+	at := st.AnswerAt
+	if st.ActivityAt.After(at) {
+		at = st.ActivityAt
+	}
+	if st.Armed.After(at) {
+		at = st.Armed
+	}
+	return at
+}
+
+// QuietWindow is the policy selected by the last pass, or the role's default.
+func (st Status) QuietWindow() time.Duration {
+	if st.QuietAfter > 0 {
+		return st.QuietAfter
+	}
+	if st.Role == Coordinator {
+		return CoordinatorEvery
+	}
+	return QuietAfter
 }
 
 // msTime is the instant a record field of ms since the epoch names, zero when none.
@@ -281,7 +353,7 @@ func (st Status) Gate(w Want) *Refusal {
 		}
 	}
 	otherRole := hooked && len(w.Roles) > 0 && !slices.Contains(w.Roles, st.Role)
-	if st.State == StateProven && len(missing) == 0 && !otherRole {
+	if st.State == StateProven && len(missing) == 0 && !otherRole && st.Down == "" {
 		return nil
 	}
 	role := st.Role
@@ -290,10 +362,12 @@ func (st Status) Gate(w Want) *Refusal {
 	}
 	r := &Refusal{Status: st}
 	switch {
+	case st.Down != "" && st.State == StateProven: // proven, without the heartbeat's evidence; any other state says its own why
+		r.Why = fmt.Sprintf("%s is not hooked in: %s: up needs a heartbeat server passing (nova-hook serve) and, for a session, its answer to the latest challenge (nova-hook prove); nothing on the bus, friend comms or the sprint works until then", w.Name, st.Down)
 	case st.State == StateNone:
 		r.Why = fmt.Sprintf("%s is not hooked in: no hook record (never hooked); nothing on the bus, friend comms or the sprint works until it is", w.Name)
 	case st.State == StateUnhooked:
-		r.Why = fmt.Sprintf("%s is not hooked in: unhooked at %s; nothing on the bus, friend comms or the sprint works until it hooks in again", w.Name, st.Unhooked.Format(time.RFC3339))
+		r.Why = fmt.Sprintf("%s is not hooked in: unhooked at %s%s; nothing on the bus, friend comms or the sprint works until it hooks in again", w.Name, st.Unhooked.Format(time.RFC3339), st.because())
 	case otherRole:
 		r.Why = fmt.Sprintf("%s is hooked in as %s, and this act is only for %s; hook in as one of them", w.Name, st.Role, roleWords(w.Roles))
 	case len(missing) > 0:
@@ -303,6 +377,14 @@ func (st Status) Gate(w Want) *Refusal {
 	}
 	r.Hook, r.Lines = Breadcrumb(w.Name, role, w.Need, st)
 	return r
+}
+
+// because is the heartbeat's reason for an unhook as a clause, "" when it gave none.
+func (st Status) because() string {
+	if st.Reason == "" {
+		return ""
+	}
+	return " by the heartbeat (" + st.Reason + ")"
 }
 
 // pushWords is each push's state: "bus=proven sprint=down".
@@ -374,18 +456,9 @@ func HookCommand(name string, r Role) string {
 	return "nova-hook hook --as " + name + " --role " + string(r)
 }
 
-// SprintHookPR is where the sprint push's holder, nova-sprint hook, ships:
-// until it does, a coordinator cannot be proven, and the seat hooks in as
-// comms (the bus alone).
-const SprintHookPR = "nova-sprint PR #93"
-
-// AgentLabel is the service that holds a friend's pushes for role: her daemon
-// (com.nova.friend-<name>) as a friend, her notifications receiver
-// (com.nova.friend-notifications-<name>) as comms.
+// AgentLabel is the service that runs a friend's lanes: her daemon
+// (com.nova.friend-<name>).
 func AgentLabel(name string, r Role) string {
-	if r == Comms {
-		return "com.nova.friend-notifications-" + name
-	}
 	return "com.nova.friend-" + name
 }
 
@@ -404,12 +477,9 @@ func RestartCommand(goos, label string) string {
 func HeldBy(name string, r Role, p Push) string {
 	switch {
 	case p == Sprint:
-		return "nova-sprint hook --as " + name + " under its own Monitor (nova-sprint hook ships with " + SprintHookPR + "; until then: --role comms, " + HookCommand(name, Comms) + ")"
-	case p == Bus && (r == Friend || r == Comms):
-		label := AgentLabel(name, r)
-		return "the friend daemon's service " + label + ", which hooks in at its start; restart it: " + RestartCommand(runtime.GOOS, label) + "; or a session's own " + HookCommand(name, r) + " under a Monitor"
+		return "the sprint's server (nova-sprint run), which holds it for the coordinator while it runs and reaches the bus"
 	case p == Bus:
-		return HookCommand(name, r) + " under the session's Monitor (each line it prints is a push; it prints HOOK CHALLENGE, answered with nova-hook prove --as " + name + " --nonce <nonce>)"
+		return HookCommand(name, r) + " under the session's Monitor (each line it prints is a push; it prints HOOK CHALLENGE, answered with nova-hook prove --as " + name + " --nonce <nonce>); supervised service label: nova-hook.client." + name
 	case r == Friend:
 		label := AgentLabel(name, r)
 		return "the friend daemon's lanes, its service " + label + ", which hooks in at its start; restart it: " + RestartCommand(runtime.GOOS, label)

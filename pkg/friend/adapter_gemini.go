@@ -23,7 +23,6 @@ type Gemini struct {
 	Program      string    // "gemini" when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
 
-	turns SessionTurns // the session's last turns, its liveness (alive.go)
 }
 
 // GeminiArgs is the argument list of one delivery: the frame, apart from the
@@ -36,8 +35,6 @@ func GeminiArgs(session, text string) []string {
 }
 
 func (g *Gemini) Deliver(ctx context.Context, text string) (int, error) {
-	g.turns.begin()
-	defer g.turns.end()
 	program := g.Program
 	if program == "" {
 		program = "gemini"
@@ -48,6 +45,5 @@ func (g *Gemini) Deliver(ctx context.Context, text string) (int, error) {
 	}
 	session := GeminiArgs(g.Session, "")[2]
 	exit, err = refused(session, out, exit, err)
-	g.turns.saw(session, exit, err)
 	return exit, err
 }

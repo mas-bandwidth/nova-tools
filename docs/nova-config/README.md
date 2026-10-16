@@ -130,9 +130,9 @@ true of one is true of all:
 nova-config <kind> add <name> --<field> <value> ... --as <friend>
 nova-config <kind> set <name> --<field> <value> ... --as <friend>
 nova-config <kind> remove <name> --as <friend>
-nova-config <kind> list
+nova-config <kind> list [--max <n>]
 nova-config <kind> show <name>
-nova-config <kind> history <name>
+nova-config <kind> history <name> [--max <n>]
 nova-config <kind> <verb> -h
 ```
 
@@ -143,11 +143,17 @@ field and refuses a value outside its type, naming every problem in one line.
 (the fleet, the sprint) is one row `migrate` creates: `set`, `show` and
 `history` take no name, and there is no `add`, `remove` or `list`.
 
+List and history accept `--max <n>` to show only the first `n` rows in their
+existing stable order. The summary and JSON `rows`/`changes` fact still report
+the full count; a shortened text or JSON listing has a `MORE` count. `--max 0`
+means all rows and preserves the output without the flag. Negative or
+non-integer values are refused before the store is opened.
+
 ### machine
 
 A machine of the fleet, named by its tailnet host: `ssh <name>` reaches it
 ("All fleet machines *must* be on the tailnet. This is a hard requirement."),
-so there is no address field. The row is exactly the six declared facts
+so there is no address field. The row holds the declared facts
 something reads, "not invented rando stuff".
 
 ```
@@ -156,8 +162,8 @@ CONFIG ADD kind=machine name=m2 rev=1
 nova-config machine add m1 --user nova --seat m1 --slots 64 --runners 1 --width 16 --tla true --as f1
 CONFIG ADD kind=machine name=m1 rev=2
 nova-config machine list
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=-
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false note=-
+MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 roles=bench width=16 tla=true note=-
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 roles=bench width=32 tla=false note=-
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -166,7 +172,9 @@ nova-secrets seat; `--slots` the machine ceiling apply writes
 (`machine:<m>:ceiling`), which a bench's share fits under (never a cap on a
 friend), and not the sprint's width; `--runners` how many CI runners it hosts (0, the
 default, hosts none); `--width` the most work cards the sprint's member on it
-runs at once (0, the default, is no member); `--tla` whether it is a TLC record
+runs at once (0, the default, is no member); `--roles` its explicit inventory
+memberships (bench by default; services, coordination and runner are never
+inferred); `--tla` whether it is a TLC record
 machine (false, the default, is none): the inventory's `tla` group, where the
 tools play holds the pinned TLC jar, and the machines `tlacheck run --bench
 any` picks from (tla/README.md, "The record machines").
@@ -179,8 +187,12 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 
 ```
 nova-config machine list --redis db1:6380
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=- beat=none
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false note=- os=- arch=- cores=64 memory_gb=- beat=<t>
+MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 roles=bench width=16 tla=true note=- beat=none
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 roles=bench width=32 tla=false note=- os=- arch=- cores=64 memory_gb=- beat=<t>
+CONFIG LIST kind=machine rows=2
+nova-config machine list --max 1
+MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=-
+CONFIG MORE kind=machine shown=1 total=2 --max <n> raises the ceiling, --max 0 lists all
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -316,7 +328,7 @@ CONFIG LIST kind=loop rows=2
 nova-config loop set reader-m1 --argv '["/opt/bin/nova-swarm","member","--as","reader-m1","--reader","--width","16"]' --as a1
 nova-config loop set REFUSED: loop reader-m1: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's, read from the fleet row every tick; drop --width from the argv and set the machine's: machine set <m> --width <n>; run: nova-config loop show reader-m1
 nova-config machine show m1
-MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 width=4 tla=false note=- created=<t> updated=<t> loops=reader-m1,refresh-m1
+MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 roles=bench width=4 tla=false note=- created=<t> updated=<t> loops=reader-m1,refresh-m1
 ```
 
 `--every <seconds>` runs it periodically and `--keepalive true` keeps a
@@ -444,7 +456,8 @@ nova-config route remove REFUSED: route flash-a is in the --routes of tier flash
 nova-config route set REFUSED: --enabled false takes a route out of the deal and a disabled route carries its reason; say why: --note '<the measured reason>'; run: nova-config route set -h
 nova-config fleet set REFUSED: fleet takes no name: it is one row; want fleet set --<field> <value> ...; run: nova-config fleet set -h
 nova-config loop set REFUSED: loop refresh-m1 has --every 60 and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false; run: nova-config loop show refresh-m1
-nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --pg, --redis; run: nova-config machine list -h
+nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --max, --pg, --redis; run: nova-config machine list -h
+nova-config provider add REFUSED: --billing "foo": want one of metered, plan, both; valid options: metered, plan, both; run: nova-config provider add -h
 ```
 
 Exit 1 is the store saying no; exit 2 is an invocation that could not run

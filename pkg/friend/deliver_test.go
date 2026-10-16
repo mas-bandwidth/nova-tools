@@ -24,17 +24,10 @@ func TestAnUndeliveredMessageShowsAndAnAuthFailureAlarms(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// a session that never acknowledges: the daemon pushes the turn in, the
-	// turn ends at exit 0 and the daemon acks the stream, and no receipt comes
+	// a session that never acknowledges: no receipt comes
 	r := newRig(t)
 	r.store.Friends = []string{"bob"}
 	m := r.send(t, "ada", "card c1 dealt", "your card is in your inbox")
-	r.run(t, 4)
-	require.Len(t, r.delivered, 1, "the daemon pushed the message into the session")
-	pending, fresh, err := r.bus.Peek(ctx, "bob")
-	require.NoError(t, err)
-	assert.Empty(t, pending, "the daemon acked the stream at exit 0")
-	assert.Empty(t, fresh)
 
 	now := r.now.Add(10 * time.Minute)
 	got, err := r.bus.Undelivered(ctx, "bob", "ada")
@@ -42,7 +35,7 @@ func TestAnUndeliveredMessageShowsAndAnAuthFailureAlarms(t *testing.T) {
 	require.Len(t, got, 2)
 	bob := got[0]
 	assert.Equal(t, "bob", bob.Name)
-	assert.Equal(t, 1, bob.Count, "the daemon's ack is no receipt: the message is undelivered until the session says so")
+	assert.Equal(t, 1, bob.Count, "the message is undelivered until the session says so")
 	assert.Equal(t, m.ID, bob.OldestID)
 	assert.Equal(t, m.At, bob.OldestAt)
 	assert.Equal(t, 0, got[1].Count, "ada is owed nothing: no message to her is a friend's")

@@ -64,12 +64,12 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "machine show lists the machine's loops",
 			args: []string{"machine", "show", "m1"},
-			out:  "MACHINE name=m1 user=u seat=s slots=160 runners=0 width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=member-m1,refresh beat=none\n",
+			out:  "MACHINE name=m1 user=u seat=s slots=160 runners=0 roles=bench width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=member-m1,refresh beat=none\n",
 		},
 		{
 			name: "a machine with no loop says so",
 			args: []string{"machine", "show", "m2"},
-			out:  "MACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- beat=none\n",
+			out:  "MACHINE name=m2 user=u seat=s slots=160 runners=0 roles=bench width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- beat=none\n",
 		},
 		{
 			name: "set that leaves a loop both periodic and kept alive is refused",
@@ -205,6 +205,7 @@ func TestALoopArgvWithAWidthIsRefused(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t, "m1")
+	h.redis.beats["m1"] = &config.Beat{OS: "linux", Arch: "amd64", Cores: "4"}
 	code, _, errs := h.run(t, "loop", "add", "reader-m1", "--machine", "m1", "--argv", `["nova-swarm","member","--as","reader-m1","--reader","--width","8"]`, "--keepalive", "true")
 	require.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, "loop reader-m1: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's")

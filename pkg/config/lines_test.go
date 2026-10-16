@@ -13,7 +13,7 @@ func TestRowLineNamesEveryFieldAndEscapesValues(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	row := Row{Name: "rowan", Fields: map[string]string{"slots": "64", "roles": "builder,reader"}, CreatedAt: "2026-09-27T01:00:00Z", UpdatedAt: "2026-09-27T02:00:00Z"}
-	want := `FRIEND name=rowan tiers=- roles=builder,reader width=- mode=- config_dir=- token_cap=- streams=- kinds=- pronouns=-`
+	want := `FRIEND name=rowan tiers=- roles=builder,reader width=- mode=- config_dir=- token_cap=- streams=- kinds=- pronouns=they/them(unstated) session=-`
 	scopedGot17 := RowLine(friend, row)
 	require.Equal(t, want, scopedGot17, "row line\n got %s\nwant %s", scopedGot17, want)
 	scopedGot21 := ShowLine(friend, row)
@@ -23,8 +23,8 @@ func TestRowLineNamesEveryFieldAndEscapesValues(t *testing.T) {
 	scopedN27 := len(strings.Fields(RowLine(friend, row)))
 	require.Equal(t, 1+1+len(friend.Fields), scopedN27, "%d tokens, want %d", scopedN27, 2+len(friend.Fields))
 	machine, _ := Lookup(KindMachine)
-	spaced := Row{Name: "studio", Fields: map[string]string{"user": "glenn f", "seat": "studio", "slots": "64", "runners": "0", "width": "32", "tla": "true"}}
-	scopedGot33, scopedWant33 := RowLine(machine, spaced), `MACHINE name=studio user=glenn\x20f seat=studio slots=64 runners=0 width=32 tla=true note=-`
+	spaced := Row{Name: "studio", Fields: map[string]string{"user": "glenn f", "seat": "studio", "slots": "64", "runners": "0", "roles": "bench", "width": "32", "tla": "true"}}
+	scopedGot33, scopedWant33 := RowLine(machine, spaced), `MACHINE name=studio user=glenn\x20f seat=studio slots=64 runners=0 roles=bench width=32 tla=true note=-`
 	require.Equal(t, scopedWant33, scopedGot33, "escaped line\n got %s\nwant %s", scopedGot33, scopedWant33)
 }
 
@@ -50,7 +50,7 @@ func TestOpAndKindLines(t *testing.T) {
 	scopedGot66, scopedWant66 := OpLine("CHECK", "machine", Op{Op: OpRemove, Name: "mini"}), "CHECK REMOVE kind=machine name=mini"
 	assert.Equal(t, scopedWant66, scopedGot66, "remove\n got %s\nwant %s", scopedGot66, scopedWant66)
 	friend, _ := Lookup(KindFriend)
-	scopedGot71, scopedWant71 := KindLine(friend), "CONFIG KIND name=friend table=config.friends fields=tiers,roles,width,mode,config_dir,token_cap,streams,kinds,pronouns required=tiers rows=many"
+	scopedGot71, scopedWant71 := KindLine(friend), "CONFIG KIND name=friend table=config.friends fields=tiers,roles,width,mode,config_dir,token_cap,streams,kinds,pronouns,session required=tiers rows=many"
 	assert.Equal(t, scopedWant71, scopedGot71, "kind\n got %s\nwant %s", scopedGot71, scopedWant71)
 	fleet, _ := Lookup(KindFleet)
 	scopedGot76, scopedWant76 := KindLine(fleet), "CONFIG KIND name=fleet table=config.fleet fields=store,coordinator,redis_port,pg_dsn,bus,loops_dir required=- rows=one"
@@ -82,7 +82,7 @@ func TestEveryKindHasAMigrationDeclaringItsColumns(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(all), 1+len(Kinds), "%d migrations for the schema and %d kinds", len(all), len(Kinds))
 	for i, m := range all {
-		assert.Equal(t, i+1, m.Version, "migration %s is version %d at position %d; the numbers run 1, 2, 3 with no gap", m.Name, m.Version, i+1)
+		assert.Equal(t, migrationVersion(i), m.Version, "migration %s is version %d at position %d", m.Name, m.Version, i+1)
 	}
 	joined := ""
 	for _, m := range all {

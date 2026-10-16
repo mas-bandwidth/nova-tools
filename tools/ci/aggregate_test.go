@@ -11,12 +11,12 @@ func runAggregate(args ...string) (int, string, string) {
 	return code, out.String(), errb.String()
 }
 
-// The pull-request aggregate of ci-ok: a skipped lisp and a skipped
-// test-hosted-pr are good on any event, a skipped functional only on a pull
+// The pull-request aggregate of ci-ok: a skipped test-hosted-pr is good
+// on any event, a skipped functional only on a pull
 // request, and nothing else skipped is.
 func ciOKPullRequestArgs(event string, results map[string]string) []string {
-	args := []string{"--event", event, "--skip-ok", "lisp,test-hosted-pr", "--skip-ok-on", "pull_request=functional"}
-	for _, j := range []string{"lint", "test", "functional", "lisp", "e2e", "test-hosted-pr"} {
+	args := []string{"--event", event, "--skip-ok", "test-hosted-pr", "--skip-ok-on", "pull_request=functional"}
+	for _, j := range []string{"lint", "test", "functional", "e2e", "test-hosted-pr"} {
 		args = append(args, j+"="+results[j])
 	}
 	return args
@@ -24,7 +24,7 @@ func ciOKPullRequestArgs(event string, results map[string]string) []string {
 
 func allResults(r string) map[string]string {
 	m := map[string]string{}
-	for _, j := range []string{"lint", "test", "functional", "lisp", "e2e", "test-hosted-pr"} {
+	for _, j := range []string{"lint", "test", "functional", "e2e", "test-hosted-pr"} {
 		m[j] = r
 	}
 	return m
@@ -50,8 +50,6 @@ func TestAggregateSkipRulesOfTheCIOKPullRequestStep(t *testing.T) {
 		result string
 		want   int
 	}{
-		{"lisp skipped on a pull request", "pull_request", "lisp", "skipped", 0},
-		{"lisp skipped on a merge group", "merge_group", "lisp", "skipped", 0},
 		{"test-hosted-pr skipped on a manual run", "workflow_dispatch", "test-hosted-pr", "skipped", 0},
 		{"functional skipped on a pull request", "pull_request", "functional", "skipped", 0},
 		{"functional skipped on a merge group", "merge_group", "functional", "skipped", 1},
@@ -59,8 +57,6 @@ func TestAggregateSkipRulesOfTheCIOKPullRequestStep(t *testing.T) {
 		{"lint skipped", "pull_request", "lint", "skipped", 1},
 		{"test skipped", "merge_group", "test", "skipped", 1},
 		{"e2e skipped", "pull_request", "e2e", "skipped", 1},
-		{"lisp red", "pull_request", "lisp", "failure", 1},
-		{"lisp cancelled", "merge_group", "lisp", "cancelled", 1},
 		{"test-hosted-pr red", "pull_request", "test-hosted-pr", "failure", 1},
 		{"a job with no result at all", "pull_request", "test", "", 1},
 	}
@@ -90,17 +86,17 @@ func TestAggregateCountsEveryBadPairNotOnlyTheFirst(t *testing.T) {
 	}
 }
 
-// The push step of ci-ok: only lisp may be skipped.
+// The push step of ci-ok: no listed job may be skipped.
 func TestAggregateSkipRulesOfTheCIOKPushStep(t *testing.T) {
 	t.Parallel()
 	push := func(r map[string]string) []string {
-		return []string{"--skip-ok", "lisp", "lint=" + r["lint"], "test=" + r["test"], "e2e=" + r["e2e"], "lisp=" + r["lisp"], "test-hosted=" + r["test-hosted"]}
+		return []string{"lint=" + r["lint"], "test=" + r["test"], "e2e=" + r["e2e"], "test-hosted=" + r["test-hosted"]}
 	}
-	good := map[string]string{"lint": "success", "test": "success", "e2e": "success", "lisp": "skipped", "test-hosted": "success"}
+	good := map[string]string{"lint": "success", "test": "success", "e2e": "success", "test-hosted": "success"}
 	if code, out, _ := runAggregate(push(good)...); code != 0 {
-		t.Fatalf("push with lisp skipped: exit %d\n%s", code, out)
+		t.Fatalf("push with all jobs successful: exit %d\n%s", code, out)
 	}
-	bad := map[string]string{"lint": "success", "test": "success", "e2e": "success", "lisp": "success", "test-hosted": "skipped"}
+	bad := map[string]string{"lint": "success", "test": "success", "e2e": "success", "test-hosted": "skipped"}
 	if code, out, _ := runAggregate(push(bad)...); code != 1 {
 		t.Fatalf("push with test-hosted skipped: exit %d, want 1 (the hosted suite must have run on main)\n%s", code, out)
 	}

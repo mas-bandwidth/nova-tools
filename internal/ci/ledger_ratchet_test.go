@@ -633,6 +633,12 @@ func testCountedShardInMemory(t *testing.T) {
 	skippedExisting := shardProblems("internal/ci/testdata/waits/fixture.go.txt", "123456789abc", fixtureTxt, true, []byte(fixtureTxt))
 	require.Empty(t, skippedExisting, "an existing ceiling-less .txt is not a counted shard and is skipped")
 
+	// An existing shard that adds a row and raises its ceiling reports both, in order.
+	require.Equal(t, []string{
+		"internal/ci/testdata/sample/shard.txt adds the row \"row-c\", which its merge base 123456789 lacks; the ledgers only shrink: fix the code and drop the row",
+		"internal/ci/testdata/sample/shard.txt raises its ceiling over the merge base 123456789; a ceiling only falls",
+	}, shardProblems("internal/ci/testdata/sample/shard.txt", "123456789abc", base, true, []byte(grown)))
+
 	// A new shard that does carry a ceiling is reported as all growth.
 	absent := shardProblems("internal/ci/testdata/rule/shard.txt", "123456789abc", "", false, []byte(grown))
 	require.Equal(t, []string{
@@ -685,78 +691,6 @@ func ratchetGit(t *testing.T, dir string, args ...string) string {
 	out, err := cmd.Output()
 	require.NoError(t, err, "git %v: %s", args, stderr.String())
 	return string(out)
-}
-
-// TestCountedShardsRatchetInGitRepo verifies that checkCountedShards detects
-// added rows and raised ceilings against a base commit in a real git repository,
-// flags brand-new ceiling-bearing shards as all growth, and skips ceiling-less
-// fixture .txt files.
-func TestCountedShardsRatchetInGitRepo(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	if r, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = r
-	}
-
-	ratchetGit(t, dir, "init", "--quiet")
-	ratchetGit(t, dir, "config", "commit.gpgSign", "false")
-
-	// Base commit has an established shard and a ceiling-less fixture.
-	shardRel := "internal/ci/testdata/sample/shard.txt"
-	fixtureRel := "internal/ci/testdata/waits/fixture.go.txt"
-	baseShard := "# a rule's shard\nrow-a  reason\nrow-b  reason\n# ceiling: 2\n"
-	fixtureCode := "package waits\n\nfunc Wait() {}\n"
-
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal/ci/testdata/sample"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal/ci/testdata/waits"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(shardRel)), []byte(baseShard), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(fixtureRel)), []byte(fixtureCode), 0o644))
-
-	ratchetGit(t, dir, "add", ".")
-	ratchetGit(t, dir, "commit", "--quiet", "-m", "base")
-	baseCommit := strings.TrimSpace(ratchetGit(t, dir, "rev-parse", "HEAD"))
-
-	// In the working copy:
-	// 1. Existing shard adds a row and raises its ceiling.
-	grownShard := "# a rule's shard\nrow-a  reason\nrow-b  reason\nrow-c  reason\n# ceiling: 3\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(shardRel)), []byte(grownShard), 0o644))
-
-	// 2. Existing ceiling-less fixture adds lines (must not be treated as a shard).
-	modifiedFixture := "package waits\n\nfunc Wait() {}\nfunc More() {}\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(fixtureRel)), []byte(modifiedFixture), 0o644))
-
-	// 3. Brand-new ceiling-bearing shard is added (all growth).
-	newShardRel := "internal/ci/testdata/newrule/shard.txt"
-	newShard := "# brand-new rule shard\nrow-z  reason\n# ceiling: 1\n"
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal/ci/testdata/newrule"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(newShardRel)), []byte(newShard), 0o644))
-
-	// 4. Brand-new ceiling-less fixture is added (must be skipped).
-	newFixtureRel := "internal/ci/testdata/waits/new_fixture.go.txt"
-	newFixtureCode := "package waits\n\nfunc NewHelper() {}\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(newFixtureRel)), []byte(newFixtureCode), 0o644))
-
-	// ledgerRatchetShards discovers only counted shards: new and modified shards with ceilings.
-	atBase, baseShards, err := readMergeBase(gitOutIn, dir, baseCommit)
-	require.NoError(t, err, "readMergeBase")
-	shards, err := ledgerRatchetShards(dir, atBase)
-	require.NoError(t, err, "ledgerRatchetShards")
-	require.Equal(t, []string{newShardRel, shardRel}, shards, "only counted shards with ceilings are selected")
-
-	// checkCountedShards reports the expected growth problems.
-	problems, err := checkCountedShards(dir, baseCommit, shards, baseShards, atBase)
-	require.NoError(t, err, "checkCountedShards")
-	require.ElementsMatch(t, []string{
-		fmt.Sprintf("%s is not in the merge base %s: a new shard is all growth; justify it beside the rule it measures", newShardRel, baseCommit[:9]),
-		fmt.Sprintf("%s adds the row %q, which its merge base %s lacks; the ledgers only shrink: fix the code and drop the row", shardRel, "row-c", baseCommit[:9]),
-		fmt.Sprintf("%s raises its ceiling over the merge base %s; a ceiling only falls", shardRel, baseCommit[:9]),
-	}, problems)
-
-	// Explicitly passing ceiling-less fixtures to checkCountedShards yields no problems.
-	fixtureProblems, err := checkCountedShards(dir, baseCommit, []string{fixtureRel, newFixtureRel}, baseShards, atBase)
-	require.NoError(t, err, "checkCountedShards on fixtures")
-	require.Empty(t, fixtureProblems, "ceiling-less fixtures produce no ratchet problems")
 }
 
 // fakeBaseGit is a merge base held in memory: it answers the git commands the
@@ -943,7 +877,13 @@ func TestTheSinglePassReadsWhatTheTwoCallPathRead(t *testing.T) {
 	gotShards, err := ledgerRatchetShards(dir, single)
 	require.NoError(t, err)
 	require.Equal(t, wantShards, gotShards, "the shard list")
-	require.NotEmpty(t, gotShards)
+	require.Equal(t, []string{
+		"internal/ci/testdata/newrule/shard.txt",
+		"internal/ci/testdata/sample/deep/nested.txt",
+		"internal/ci/testdata/sample/no newline.txt",
+		"internal/ci/testdata/sample/shard-ceiling.txt",
+		"internal/ci/testdata/sample/shard.txt",
+	}, gotShards, "only shards a directory deep with a ceiling at the head or the base are counted; a new one is kept, a ceiling-less fixture and a top-level file are not")
 
 	for _, check := range []func(baseLookup, []string) ([]string, error){
 		func(at baseLookup, bs []string) ([]string, error) {

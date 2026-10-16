@@ -30,17 +30,17 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 		pre  bool
 	}{
 		{
-			name: "add a pro route through one provider",
+			name: "add a pro route through one provider", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "add", "pro-deepseek-opencode", "--tier", "pro", "--provider", "opencode", "--model", "deepseek-v4", "--tokens", "400000", "--deadline", "1800"},
 			out:  "CONFIG ADD kind=route name=pro-deepseek-opencode rev=4\n",
 		},
 		{
-			name: "add the same model direct",
+			name: "add the same model direct", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "add", "pro-deepseek-direct", "--tier", "pro", "--provider", "deepseek", "--model", "deepseek-v4", "--tokens", "400000", "--deadline", "1800"},
 			out:  "CONFIG ADD kind=route name=pro-deepseek-direct rev=5\n",
 		},
 		{
-			name: "add a model whose name holds a slash",
+			name: "add a model whose name holds a slash", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "add", "pro-grok-openrouter", "--tier", "pro", "--provider", "openrouter", "--model", "x-ai/grok-4", "--tokens", "300000", "--deadline", "1800"},
 			out:  "CONFIG ADD kind=route name=pro-grok-openrouter rev=6\n",
 		},
@@ -59,7 +59,7 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 			pre:  true,
 		},
 		{
-			name: "set the price sheet, each decimal in its one spelling",
+			name: "set the price sheet, each decimal in its one spelling", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "set", "pro-deepseek-opencode", "--price_input", "0.270", "--price_cache_read", "0.07", "--price_output", "1.10",
 				"--long_context", "128000", "--price_input_long", "0.54", "--price_output_long", "2.2", "--gateway_percent", "5", "--price_source", "https://example.com/pricing",
 				"--price_as_of", "2026-10-01"},
@@ -92,7 +92,7 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 			errs: "route pro-grok-openrouter has --deadline 0; want the seconds a card on it may run, above 0; run: nova-config route show pro-grok-openrouter",
 		},
 		{
-			name: "set takes a route out of the deal, with its reason",
+			name: "set takes a route out of the deal, with its reason", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "set", "pro-grok-openrouter", "--enabled", "false", "--note", "not measured yet"},
 			out:  "CONFIG SET kind=route name=pro-grok-openrouter rev=8 changed=enabled,note\n",
 		},
@@ -103,7 +103,7 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 			pre:  true,
 		},
 		{
-			name: "remove",
+			name: "remove", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "remove", "pro-deepseek-direct"},
 			out:  "CONFIG REMOVE kind=route name=pro-deepseek-direct rev=9\n",
 		},
@@ -113,7 +113,7 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 		require.Equal(t, s.code, code, "%s: %v\nstdout: %s\nstderr: %s", s.name, s.args, out, errs)
 		if s.pre {
 			assert.True(t, strings.HasPrefix(out, s.out), "%s: %q, want the prefix %q", s.name, out, s.out)
-		} else if s.code == 0 {
+		} else if s.out != "" {
 			assert.Equal(t, s.out, out, s.name)
 		}
 		if s.errs != "" {
@@ -136,7 +136,8 @@ func TestFrontierRouteVerbsKeepThreeTierRows(t *testing.T) {
 		{"route", "set", "pro-a", "--tier", "frontier"},
 	} {
 		code, _, errs := h.run(t, args...)
-		require.Equal(t, 0, code, errs)
+		require.Equal(t, 1, code, errs)
+		assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 	}
 	code, out, errs := h.run(t, "route", "list")
 	require.Equal(t, 0, code, errs)
@@ -158,12 +159,13 @@ func TestApplyRefusalNamesTheRouteAndAsksForItsPrice(t *testing.T) {
 	h := loopHarness(t)
 	addProviders(t, h.store, "inception")
 	code, _, errs := h.run(t, "route", "add", "pro-mercury3", "--tier", "pro", "--provider", "inception", "--model", "mercury-3-preview-1002", "--deadline", "1800")
-	require.Equal(t, 0, code, errs)
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 
 	const asks = "nova-config route set pro-mercury3 --price_input <USD per million> --price_output <USD per million> --price_source <url> --price_as_of <YYYY-MM-DD> --actor <name>"
 	for _, args := range [][]string{
-		{"apply", "--kind", "route", "--check"},
-		{"apply", "--kind", "route"},
+		{"apply", "--redis", "127.0.0.1:6379", "--kind", "route", "--check"},
+		{"apply", "--redis", "127.0.0.1:6379", "--kind", "route"},
 	} {
 		code, out, errs := h.run(t, args...)
 		require.Equal(t, 1, code, "%v: %s", args, errs)
@@ -191,7 +193,8 @@ func TestAnUnpricedRouteRefusesOnlyTheRouteKind(t *testing.T) {
 			code, _, errs := h.run(t, "fleet", "set", "--coordinator", "m1", "--redis_port", "6380", "--pg_dsn", dsn)
 			require.Equal(t, 0, code, errs)
 			code, _, errs = h.run(t, "route", "add", "pro-mercury3", "--tier", "pro", "--provider", "inception", "--model", "mercury-3-preview-1002", "--deadline", "1800")
-			require.Equal(t, 0, code, errs)
+			require.Equal(t, 1, code, errs)
+			assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 			code, out, errs := h.run(t, args...)
 			require.Equal(t, 1, code, "%v: %s", args, errs)
 			assert.Contains(t, out, " REFUSED kinds=route:1 applied=machine,fleet,friend,sprint,loop,provider,tier; run: ", "%v: %s", args, out)
@@ -248,14 +251,15 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	h := loopHarness(t)
 	addProviders(t, h.store, "p")
 	code, _, errs := h.run(t, "route", "add", "r1", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--price_input", "1")
-	require.Equal(t, 0, code, errs)
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 
-	code, out, _ := h.run(t, "apply", "--kind", "route", "--check")
+	code, out, _ := h.run(t, "apply", "--redis", "127.0.0.1:6379", "--kind", "route", "--check")
 	require.Equal(t, 0, code)
 	assert.Equal(t, "CHECK ADD kind=route name=r1\nCONFIG CHECK kind=route add=1 set=0 remove=0 rev=2 applied=0\n", out)
 	assert.Empty(t, h.redis.log, "--check writes nothing")
 
-	code, out, _ = h.run(t, "apply", "--kind", "route")
+	code, out, _ = h.run(t, "apply", "--redis", "127.0.0.1:6379", "--kind", "route")
 	require.Equal(t, 0, code)
 	assert.Equal(t, "APPLY ADD kind=route name=r1\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=2 ms=0\nCONFIG APPLY OK kinds=1\n", out)
 	assert.Equal(t, []string{"write route r1"}, h.redis.log)
@@ -270,8 +274,9 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 
 	// the price sheet reaches the view the sprint reads, exactly as typed in its one spelling
 	code, _, errs = h.run(t, "route", "set", "r1", "--price_input", "0.10000000000000000000000000001", "--price_output", "2.50", "--billing", "plan")
-	require.Equal(t, 0, code, errs)
-	code, out, _ = h.run(t, "apply", "--kind", "route")
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "CONFIG NOT-APPLIED")
+	code, out, _ = h.run(t, "apply", "--redis", "127.0.0.1:6379", "--kind", "route")
 	require.Equal(t, 0, code)
 	assert.Equal(t, "APPLY SET kind=route name=r1 changed=price_input,price_output,billing\nCONFIG APPLY kind=route add=0 set=1 remove=0 rev=3 ms=0\nCONFIG APPLY OK kinds=1\n", out)
 	view := h.redis.views["route"]["r1"]
@@ -294,7 +299,8 @@ func TestRouteRemoveRemedyNamesTheTierSetThatClearsIt(t *testing.T) {
 		{"route", "add", "b", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60"},
 	} {
 		code, _, errs := h.run(t, args...)
-		require.Equal(t, 0, code, errs)
+		require.Equal(t, 1, code, errs)
+		assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 	}
 	code, _, errs := h.run(t, "tier", "set", "flash", "--routes", "a,b")
 	require.Equal(t, 0, code, errs)
@@ -308,7 +314,8 @@ func TestRouteRemoveRemedyNamesTheTierSetThatClearsIt(t *testing.T) {
 	code, _, errs = h.run(t, "tier", "set", "flash", "--routes", "b")
 	require.Equal(t, 0, code, errs)
 	code, out, errs = h.run(t, "route", "remove", "a")
-	require.Equal(t, 0, code, "stdout %q stderr %q", out, errs)
+	require.Equal(t, 1, code, "stdout %q stderr %q", out, errs)
+	assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 	assert.True(t, strings.HasPrefix(out, "CONFIG REMOVE kind=route name=a rev="), out)
 }
 
@@ -328,7 +335,8 @@ func TestTierVerbsEndToEndOnTheFake(t *testing.T) {
 		{"route", "add", "off", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--enabled", "false", "--note", "off for the test"},
 	} {
 		code, _, errs := h.run(t, args...)
-		require.Equal(t, 0, code, errs)
+		require.Equal(t, 1, code, errs)
+		assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 	}
 	code, out, errs := h.run(t, "tier", "set", "flash", "--routes", "a,b,b")
 	require.Equal(t, 0, code, errs)

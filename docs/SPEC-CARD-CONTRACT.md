@@ -207,7 +207,21 @@ In the claude and openai profiles `gh pr create` and `gh pr review` record it in
 a file the child is never told to write, so a RESULT.md the child also writes (as an older card
 template asked) overwrites nothing: it rides at the end of the pull request body. A plain child
 writes `<job>/RESULT.md` itself. The finish record wins over RESULT.md. A result without the six
-keys is no result.
+keys is no result, with one exception measured on a worker's own file: a result with every key
+but `report:` (head a commit or `-`, a known verdict, branch, gate and output present) and a body
+takes the body's first prose line as its report (`CardResult.ReportDerived`;
+`TestAResultWithNoReportLineTakesItsReportFromTheBody`). The report guards nothing; the head and
+the verdict still do, and a `report:` line that is present and empty is still refused
+(`TestAResultWithNoReportLineIsStillRefusedWhenAnythingElseFails`).
+
+**A result out of shape says why.** The failed finish's reason stays `no RESULT.md shape`, and
+its report now begins `RESULT.md shape fault: ` and names what is wrong with a file the worker
+wrote: the keys missing, a head that is no commit, a verdict that is none of the four
+(`CardResult.Fault`, `shapeFault`), so the attempt after it fixes that and does not guess. A
+RESULT.md native wrote itself for a card it ended (an idle reap, a deadline, a stage timeout;
+`written-by: nova-swarm native`) is native's word and carries no fault
+(`typedrec.NativeWritten`). Every profile's JOB.md states the rules right after the shape
+(`cardcontract.ShapeRules`, and for a work card `ShapeWorkRule`).
 
 **The verdict per step.** A tree card's result (docs/SPEC-SPRINT.md, a card is a tree of steps)
 also carries one line per work step in its body (under `## Body`, never among the header's
@@ -260,6 +274,15 @@ file, line or rule it breaks); a read commits nothing and pushes nothing. A read
 member is run as a reader's read is, its verdict reported with `read --as <member>`.
 
 ## 4. The finish
+
+A run with no published result whose assistant turn ends at the harness's
+output limit (finish `length`, including an intermediate turn before a later
+stop or tool message) is a harness fault, the staging kind: no card attempt,
+redeal or cost is spent. Native checks it before provider hand-back or
+synthetic asked/deadline results, sets `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`
+itself (default 128000, `--output-token-max` selects a positive per-turn
+limit including reasoning), and emits `NATIVE HARNESS-FAULT` with output and
+reasoning counts. A published result keeps its existing judgment.
 
 A work card's finish is judged in one place, `member.Judge`, cited from the model's `Finish`:
 
@@ -457,9 +480,9 @@ A profile is keyed by model family, derived from the model id the member runs th
 
 | profile | git | gh | JOB.md asks for |
 |---|---|---|---|
-| `plain` | `push` recorded and answered as a push; everything else passes through | refused, one line | commit on the branch, write RESULT.md in the shape |
-| `claude` | `push` recorded and answered as a push (a delete, prune, mirror, `--all`, `--branches`, `--tags` or push option is refused, one line naming the flag as typed, and recorded as nothing, a long flag at every prefix of those names too, since git accepts an unambiguous prefix (an ambiguous prefix is refused as well: git rejects it anyway); an option's value is never read as an operand); `clone` of the card's repository (https, ssh, scp form, the scheme's default port, `.git` or not) becomes a link to the staged checkout, any other clone is refused; `checkout -b`, `switch -c`, `branch`, `fetch` and `pull` pass through | `pr create` writes a work card's result and finishes; `pr review --approve` / `--request-changes` writes a read's verdict (each refused on the other kind); `pr diff`, `pr view` and `pr checks` answer from the staged checkout against the base; everything else is refused, one line, with the reason: the wall holds no forge credential and no network | work as on any pull request: branch, commit, push, `gh pr create`, and nothing else to write; a read reviews with `gh pr review` |
-| `openai` | `-C`, linked worktree, branch and commit use real Git; `push` and `push origin [HEAD\|branch]` record a source commit, with optional `-u`; deletion, force and other push options are refused | `pr create --title ... --body-file ...` records a work finish from the current checkout or linked worktree; `pr review --approve\|--request-changes --body-file ...` records a read verdict; `pr diff [--name-only]`, `pr view` and `pr checks` read the staged checkout; target-changing, draft and unknown forms are refused | use the staged checkout or its linked worktree, commit and record a push, then create a pull request from the commit-owning directory; a read records a review with a body file |
+| `plain` | `push` recorded and answered as a push; history rewrites use the guard below; everything else passes through | refused, one line | commit on the branch, write RESULT.md in the shape |
+| `claude` | `push` recorded and answered as a push (a delete, prune, mirror, `--all`, `--branches`, `--tags` or push option is refused, one line naming the flag as typed, and recorded as nothing, a long flag at every prefix of those names too, since git accepts an unambiguous prefix (an ambiguous prefix is refused as well: git rejects it anyway); an option's value is never read as an operand); `clone` of the card's repository (https, ssh, scp form, the scheme's default port, `.git` or not) becomes a link to the staged checkout, any other clone is refused; history rewrites use the guard below; `checkout -b`, `switch -c`, `branch`, `fetch` and `pull` pass through | `pr create` writes a work card's result and finishes; `pr review --approve` / `--request-changes` writes a read's verdict (each refused on the other kind); `pr diff`, `pr view` and `pr checks` answer from the staged checkout against the base; everything else is refused, one line, with the reason: the wall holds no forge credential and no network | work as on any pull request: branch, commit, push, `gh pr create`, and nothing else to write; a read reviews with `gh pr review` |
+| `openai` | `-C`, linked worktree, branch and commit use real Git subject to the history guard below; `push` and `push origin [HEAD\|branch]` record a source commit, with optional `-u`; deletion, force and other push options are refused | `pr create --title ... --body-file ...` records a work finish from the current checkout or linked worktree; `pr review --approve\|--request-changes --body-file ...` records a read verdict; `pr diff [--name-only]`, `pr view` and `pr checks` read the staged checkout; target-changing, draft and unknown forms are refused | use the staged checkout or its linked worktree, commit and record a push, then create a pull request from the commit-owning directory; a read records a review with a body file |
 
 ### Writing a profile
 
@@ -487,6 +510,19 @@ push to land. So is a push run in any repository but the staged checkout (one wh
 directory is not the checkout's; a linked worktree and the clone link share it): a gate's tests
 push to an `origin` of their own temp repositories, and a recorded test commit would be taken
 for the child's head by a finish that names none (`LastPushed`).
+
+Every git profile refuses `reset` to or below the staged commit when it moves HEAD,
+`rebase --root` and rebases onto history below the staged commit, and `commit --amend`
+at or below the staged commit. The guard covers the staged checkout and every linked
+worktree sharing its Git common directory, including commands using `-C`. Accepted
+abbreviations of history flags and rebase options taking values keep the same
+guard. Commit option values and paths after `--` are not amend flags; reset
+operands after `--` select an index-only reset even with an explicit revision.
+A readable regular nonempty `--pathspec-from-file` input selects it too; an
+empty input can move HEAD, so unknown or empty inputs retain the revision guard.
+Git reports incompatible reset modes. Commits above the staged commit may be amended, resets
+staying above it and rebases onto it pass through, as do commands in independent
+repositories and targets Git cannot resolve.
 
 A profile is done when it passes the harness every profile passes: `TestEveryProfileKeepsTheContract`
 (the shims answer every verb form the profile claims) and `TestTheScriptedChildEndToEnd`, the

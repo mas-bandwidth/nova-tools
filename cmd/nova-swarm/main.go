@@ -19,6 +19,7 @@ import (
 	"os"
 
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/harness"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -64,8 +66,8 @@ usage:
                         OK|FAILED line per step; --remainder prints the card a failed step leaves.)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>] [--prompt <file>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>] [--prompt <file>]
                         (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
                          Each tick beats, reads the queue, reports ended children and takes cards to the
                          fleet row's width; --width overrides it, and --pass names environment secrets to
@@ -602,6 +604,8 @@ func cmdProfile(args []string, stdout, stderr io.Writer) int {
 }
 
 type nativeFlags struct {
+	billing         *string
+	outputTokenMax  *int
 	harness         *string
 	model           *string
 	cardPath        *string
@@ -625,6 +629,7 @@ type nativeFlags struct {
 	stageTimeout    *string
 	frame           *string
 	identity        *string
+	prompt          *string
 	budgetServer    *string
 	budgetAs        *string
 	budgetHolder    *string
@@ -645,6 +650,8 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	// directory after that publish, so a bench sweep never deletes the results with the
 	// working directory.
 	nf := &nativeFlags{
+		billing:         f.fs.String("billing", "", "declared route billing; activates receipt contract 2"),
+		outputTokenMax:  f.fs.Int("output-token-max", opencodeOutputTokenMax, "the positive per-turn output `tokens` limit, reasoning included; the harness sets it itself on every opencode child (default 128000)"),
 		harness:         f.fs.String("harness", "", "required: the harness binary `path` the child runs under, checked for existence and execution"),
 		model:           f.fs.String("model", "", "required without --worker: the `provider/model` to run, one slash, both sides nonempty"),
 		cardPath:        f.fs.String("card", "", "required: the card `file`, handed to the child byte for byte as its task"),
@@ -675,6 +682,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	nf.stageTimeout = f.fs.String("stage-timeout", "", "the bound on staging the card's checkout from the bench mirror, a `duration` (default 120s)")
 	nf.frame = f.fs.String("frame", "", "the frame `file` a member wrote: the repository, commit and branch to stage, from which JOB.md and the shims are written")
 	nf.identity = f.fs.String("identity", "", "the pool identity the child commits under, `owner,name,email` (default: <root>/identity.tsv)")
+	nf.prompt = f.fs.String("prompt", "", "an identity prompt `file` (a one-shot friend's name, pronouns and voice) prepended to the card's prompt as the harness is handed it; the card file itself is unchanged")
 	// a limited route's global rate budget (nova-sprint routes limit): every model request
 	// takes it from the sprint's server first (budget take) and stalls while it is spent;
 	// absent, the route is unlimited and the proxy is as it was (providerbudget.go)
@@ -744,6 +752,12 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 				f.add("--config is the legacy shape's and this worker description names a secret; the description's own provider declaration is written instead")
 			}
 		}
+	}
+	if *nf.billing != "" && !slices.Contains(cardcost.Billings, *nf.billing) {
+		f.add("--billing wants metered, plan or subscription; use the declared route billing")
+	}
+	if *nf.outputTokenMax <= 0 {
+		f.add("--output-token-max wants positive tokens, reasoning included")
 	}
 	f.want(*harnessBin, "harness", "the harness binary path, checked for existence and execution")
 	if !workerGiven {
@@ -830,6 +844,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm native: --card wants a readable file: %s\n", oneline.Err(err))
 		return 2
 	}
+	// a one-shot friend's identity prompt, read once: an unreadable or empty file is
+	// refused here, before any spend, never run as a card without it
+	identityPrompt, perr := member.ReadIdentityPrompt(*nf.prompt)
+	if perr != nil {
+		fmt.Fprintf(stderr, "nova-swarm native: %s\n", oneline.WithRemedy(oneline.Err(perr), "nova-swarm native -h"))
+		return 2
+	}
 	// the pool identity from the loop's argv (nova-config), over <root>/identity.tsv
 	var identity *swarm.StagingIdentity
 	if *nf.identity != "" {
@@ -873,11 +894,14 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		frame = &fr
 	}
 	cfg := nativeRunConfig{
+		billing:        *nf.billing,
+		outputTokenMax: *nf.outputTokenMax,
 		frame:          frame,
 		binary:         *harnessBin,
 		model:          effectiveModel,
 		label:          lbl,
 		card:           cardRaw,
+		prompt:         identityPrompt,
 		slotDir:        *slot,
 		root:           *root,
 		authFile:       *auth,
@@ -942,6 +966,15 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// fields still reads them all.
 	// The request may have been accepted and the response was lost. That is
 	// not a delivered card and not an ordinary failure the coordinator may retry.
+	return printNativeResult(stdout, stderr, cfg, res, code, *sweepNow)
+}
+
+// printNativeResult is the lines a native run that started prints once it has ended: the
+// NATIVE line, its notes and the typed end the watch gave the card. It returns the
+// process exit. It is a function of its inputs and writes only to the two writers (and,
+// with sweep, removes the job once its results are published), so a test hands it a
+// result and reads the lines.
+func printNativeResult(stdout, stderr io.Writer, cfg nativeRunConfig, res nativeRunResult, code int, sweep bool) int {
 	verdict, why := nativeVerdictWhy(res)
 	// harness=<ok|silent> is ALWAYS present: the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
@@ -957,7 +990,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
-		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped), idleSuffix(res.idled))
+		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped), idleSuffix(res.idled, res.idleEnd.Cause))
 	if res.survivors != "" {
 		// what the harness left in its group, ended before this line (nativeEndLeftovers)
 		fmt.Fprintf(stdout, " survivors=%s", oneline.Field(res.survivors))
@@ -1023,7 +1056,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// is the control: it deletes the job directory the way the bench sweep does,
 	// and only when publishNativeResults named the directory it landed in. A
 	// publish that did not land leaves the job, which is then the only copy.
-	if *sweepNow {
+	if sweep {
 		if res.resultsDir == "" {
 			fmt.Fprintf(stderr, "NATIVE NOTE: --sweep-now left %s in place: its results were not published\n", oneline.Field(res.job))
 		} else if err := sweepNativeJob(res.root, res.job); err != nil {
@@ -1174,11 +1207,19 @@ func termSuffix(terminated bool) string {
 // the log tells a card the watch reaped from a card the deadline killed -- both are
 // rc=-1 -- so the finish states idle reaping and never a deadline that never fired
 // (docs/roadmap.sexp, swarm-idle-reap-verdict).
-func idleSuffix(idled bool) string {
-	if idled {
-		return " reason=" + oneline.Field("idle-reap")
+//
+// A reap whose harness never started work carries its cause beside it
+// (` reason=idle-reap cause=harness-never-started`, swarm.IdleCauseNeverStarted), so the
+// member's finish and the sprint tell it from a card that worked and then went still.
+func idleSuffix(idled bool, cause string) string {
+	if !idled {
+		return ""
 	}
-	return ""
+	mark := " reason=" + oneline.Field("idle-reap")
+	if cause != "" {
+		mark += " cause=" + oneline.Field(cause)
+	}
+	return mark
 }
 
 // usageSuffix renders the usage status the NATIVE OK line carries: the empty string when a

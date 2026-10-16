@@ -36,12 +36,12 @@ func (s *onQueueSprint) Run(args ...string) (int, []byte) {
 // endedRig builds a member with one work card c1 at gen 1 already ours, then arms the
 // sprint to end its child while the next pass reads the queue, so the end reaches
 // endEnded. The queue card's column is read from the answer set before the pass.
-func endedRig(t *testing.T, cfg Config, pu Pusher, id string, r Result) (*rig, *onQueueSprint) {
+func endedRig(t *testing.T, width int, cfg Config, pu Pusher, id string, r Result) (*rig, *onQueueSprint) {
 	t.Helper()
 	s0 := newScript()
 	s := &onQueueSprint{scriptSprint: s0}
 	rn, out := newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(cfg, s, rn, pu, out), s: s0, r: rn, out: out}
+	g := &rig{m: New(cfg, rowWidth(s, width), rn, pu, out), s: s0, r: rn, out: out}
 	p := pk(id)
 	s0.set("queue", 0, queueJSON(t, 7, working(id, 1, &p)))
 	_, err := g.tick(t)
@@ -56,7 +56,7 @@ func endedRig(t *testing.T, cfg Config, pu Pusher, id string, r Result) (*rig, *
 // absent pusher: "this member has no pusher" (member.go:1942).
 func TestAWorkChildThatEndedWithNoPusherIsFinishedNoCommit(t *testing.T) {
 	t.Parallel()
-	g, _ := endedRig(t, Config{As: "m", Width: 1}, nil, "c1",
+	g, _ := endedRig(t, 1, Config{As: "m"}, nil, "c1",
 		Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "done"})
 	_, err := g.tick(t)
 	require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestAWorkChildWhosePacketNamesNoBranchIsFinishedNoCommit(t *testing.T) {
 	s0 := newScript()
 	s := &onQueueSprint{scriptSprint: s0}
 	rn, out := newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "m", Width: 1}, s, rn, &fakePusher{def: Push{Sha: fullSha}}, out), s: s0, r: rn, out: out}
+	g := &rig{m: New(Config{As: "m"}, rowWidth(s, 1), rn, &fakePusher{def: Push{Sha: fullSha}}, out), s: s0, r: rn, out: out}
 	p := pk("c1")
 	p.Branch = ""
 	s0.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
@@ -93,7 +93,7 @@ func TestAWorkChildWhosePacketNamesNoBranchIsFinishedNoCommit(t *testing.T) {
 // finished, and the launch stays (member.go:1918, the column test).
 func TestAChildDoneWhileItsCardIsReadyIsNotFinished(t *testing.T) {
 	t.Parallel()
-	g, s := endedRig(t, Config{As: "m", Width: 1}, &fakePusher{def: Push{Sha: fullSha}}, "c1",
+	g, s := endedRig(t, 1, Config{As: "m"}, &fakePusher{def: Push{Sha: fullSha}}, "c1",
 		Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "done"})
 	p := pk("c1")
 	s.scriptSprint.set("queue", 0, queueJSON(t, 7, queueCard{ID: "c1", Col: "ready", Gen: 1, Packet: &p}))
@@ -109,7 +109,7 @@ func TestAChildDoneWhileItsCardIsReadyIsNotFinished(t *testing.T) {
 func TestAChildDoneWhenTheClaimMovedIsNotFinished(t *testing.T) {
 	t.Parallel()
 	pu := &fakePusher{def: Push{Sha: fullSha}}
-	g, s := endedRig(t, Config{As: "m", Width: 1}, pu, "c1",
+	g, s := endedRig(t, 1, Config{As: "m"}, pu, "c1",
 		Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "done"})
 	s.scriptSprint.set("queue", 0, queueJSON(t, 7, queueCard{ID: "c1", Col: "working", Gen: 2}))
 	_, err := g.tick(t)
@@ -124,7 +124,7 @@ func TestAReaderChildEndedPostsOneReadReportAndNoPush(t *testing.T) {
 	s0 := newScript()
 	s := &onQueueSprint{scriptSprint: s0}
 	rn, out := newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "r", Width: 1, Reader: true}, s, rn, nil, out), s: s0, r: rn, out: out}
+	g := &rig{m: New(Config{As: "r", Reader: true}, rowWidth(s, 1), rn, nil, out), s: s0, r: rn, out: out}
 	a := Packet{Card: "r1", Kind: "read", As: "r", Primary: "p1", Attempt: 1, Epoch: 7}
 	s0.set("queue", 0, queueJSON(t, 7, queueCard{ID: "r1", Col: "reading", Packet: &a}))
 	_, err := g.tick(t)
@@ -142,7 +142,7 @@ func TestAReaderChildEndedPostsOneReadReportAndNoPush(t *testing.T) {
 func TestAFinishTheStoreRefusedIsReportedAgainAndPushedOnce(t *testing.T) {
 	t.Parallel()
 	pu := &fakePusher{def: Push{Sha: fullSha}}
-	g, s := endedRig(t, Config{As: "m", Width: 1}, pu, "c1",
+	g, s := endedRig(t, 1, Config{As: "m"}, pu, "c1",
 		Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "r"})
 	s.scriptSprint.set("finish", 2, "no route to the store")
 	_, err := g.tick(t)
@@ -166,7 +166,7 @@ func TestNineChildrenEndedAtOncePushAtMostPushWidth(t *testing.T) {
 	s := &onQueueSprint{scriptSprint: s0}
 	pu := &fakePusher{def: Push{Sha: fullSha}, yield: 2000}
 	rn, out := newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "m", Width: n}, s, rn, pu, out), s: s0, r: rn, out: out}
+	g := &rig{m: New(Config{As: "m"}, rowWidth(s, n), rn, pu, out), s: s0, r: rn, out: out}
 	var cards []queueCard
 	var ids []string
 	for i := 1; i <= n; i++ {

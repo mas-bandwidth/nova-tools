@@ -93,7 +93,22 @@ func Classify(code int, stdout, stderr []byte, answered bool) Answer {
 	return Refused
 }
 
-// RunAnswer is Run with what became of the write (Classify): the server's own
+// Answer is what became of the result's write: the server's own Outcome when it
+// names one (accepted, refused or unknown), else Classify reading the code and the
+// words, for a server that names no outcome.
+func (r Result) Answer() Answer {
+	switch r.Outcome {
+	case "accepted":
+		return Accepted
+	case "refused":
+		return Refused
+	case "unknown":
+		return Unknown
+	}
+	return Classify(r.Code, []byte(r.Stdout), []byte(r.Stderr), true)
+}
+
+// RunAnswer is Run with what became of the write (Result.Answer): the server's own
 // result read whole, before Failed shapes it for the log, so a capped log line
 // never decides it.
 func (w *Worker) RunAnswer(args ...string) (code int, out []byte, answer Answer) {
@@ -119,7 +134,7 @@ func (w *Worker) RunAnswer(args ...string) (code int, out []byte, answer Answer)
 			continue
 		}
 		r := res[0]
-		answer = Classify(r.Code, []byte(r.Stdout), []byte(r.Stderr), true)
+		answer = r.Answer()
 		if r.Code != 0 {
 			return r.Code, w.failed([]byte(r.Stdout), []byte(r.Stderr)), answer
 		}

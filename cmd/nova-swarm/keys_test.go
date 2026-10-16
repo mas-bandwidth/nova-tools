@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 )
@@ -190,4 +193,51 @@ func secretEquals(s secrets.Secret, got string) bool {
 		return nil
 	})
 	return ok
+}
+
+func TestMuseNamesLoginIsOptionalAndExplicitLoginTakesPriority(t *testing.T) {
+	t.Parallel()
+	for _, explicit := range []bool{false, true} {
+		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			dir := filepath.Join(home, ".config", "nova-swarm")
+			require.NoError(t, os.MkdirAll(dir, 0o700))
+			optional := filepath.Join(dir, "muse-keys.json")
+			require.NoError(t, os.WriteFile(optional, []byte(`{"store":"/fixture","as":"seat","key":"/fixture.key","names":["META_API_KEY"]}`), 0o600))
+			named := filepath.Join(home, "explicit.json")
+			require.NoError(t, os.WriteFile(named, []byte(`{"store":"/fixture","as":"seat","key":"/fixture.key","names":["OTHER_API_KEY"]}`), 0o600))
+			_, names, err := prepareMemberKeysFrom(nil, func(name string) string {
+				if name == "HOME" {
+					return home
+				}
+				if explicit && name == swarmKeysEnv {
+					return named
+				}
+				return ""
+			}, func(login secrets.UnitKeyLogin) (map[string]secrets.Secret, error) {
+				return map[string]secrets.Secret{}, nil
+			})
+			require.NoError(t, err)
+			want := "META_API_KEY"
+			if explicit {
+				want = "OTHER_API_KEY"
+			}
+			assert.Equal(t, []string{want}, names)
+		})
+	}
+}
+
+func TestAMuseRouteRefusesAMemberWithoutItsOwnKey(t *testing.T) {
+	t.Parallel()
+	r := &nativeRunner{pass: []string{"META_API_KEY"}, env: []string{"META_API_KEY="}, lookPath: func(name string) (string, error) { return "/bin/" + name, nil }}
+	_, err := r.harnessFor(member.Packet{Card: "card", Route: "frontier-muse", Harness: harness.Muse})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "needs META_API_KEY")
+	assert.Contains(t, err.Error(), "--pass META_API_KEY")
+	r.held = map[string]secrets.Secret{"META_API_KEY": secrets.NewSecret("fake-key")}
+	r.env = nil
+	bin, err := r.harnessFor(member.Packet{Card: "card", Route: "frontier-muse", Harness: harness.Muse})
+	require.NoError(t, err)
+	assert.Equal(t, "/bin/muse", bin)
 }

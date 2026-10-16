@@ -47,6 +47,7 @@ fleet	10.2	@local	-
 fleet/toolchainapply/baddigest	24.2	@local	-
 fleet/toolchainapply/drift	29.4	@local	-
 fleet/toolchainapply/idempotent	30.2	@local	-
+hook	0.3	@local	-
 pkg/atomicfile	1.4	@run37411066588	self-hosted
 pkg/bench	0.1	@local	-
 pkg/binstamp	0.1	@local	-
@@ -68,6 +69,8 @@ pkg/ci/shrinkonly	0.0	@run37517528825	self-hosted
 internal/ci/slowtests	0.0	@run37411066588	self-hosted
 internal/ci/timing	0.2	@run37411066588	self-hosted
 internal/cireceipt	0.0	@run37411066588	self-hosted
+pkg/codexdesktop	0.004	@b2	-
+pkg/dshdesktop	0.2	@local	-
 pkg/config	0.7	@run37518625834	self-hosted
 internal/converge	0.0	@run37411066588	self-hosted
 pkg/decide	0.3	@run37518625834	self-hosted
@@ -78,6 +81,7 @@ internal/doctor	0.0	@run37518625834	self-hosted
 pkg/dogfood	0.2	@run37518625834	self-hosted
 pkg/filelock	0.5	@run37411066588	self-hosted
 pkg/fleet	0.0	@run37411066588	self-hosted
+internal/friend	0.3	@local	-
 pkg/friend	2.6	@run37518625834	self-hosted
 internal/fuse	0.0	@run37411066588	self-hosted
 internal/ghevent	0.0	@run37411066588	self-hosted
@@ -86,6 +90,7 @@ pkg/gitrun	0.4	@local	-
 pkg/gocache	0.3	@local	-
 pkg/goenv	0.0	@run37411066588	self-hosted
 pkg/harness	0.1	@local	-
+pkg/harness/notice	0.6	@local	-
 pkg/hookgate	0.0	@local	-
 pkg/hostload	1.1	@local	-
 pkg/hygiene	0.5	@run37411066588	self-hosted
@@ -102,13 +107,15 @@ pkg/nsprint/testutil/pg	0.0	@local	-
 pkg/nsprint/verbflag	0.0	@run37411066588	self-hosted
 pkg/ntable	0.0	@run37411066588	self-hosted
 pkg/onboarding	0.0	@run37411066588	self-hosted
+pkg/oneline	0.2	@local	-
+pkg/oneline/audit	0.1	@local	-
 pkg/pathcase	0.0	@local	-
 pkg/pkgselect	0.2	@local	-
 pkg/provbalance	0.0	@run37518625834	self-hosted
 pkg/readregular	0.2	@local	-
 internal/record	0.0	@run37411066588	self-hosted
-internal/roadmap	0.1	@local	-
-internal/roadmap/sexp	0.0	@local	-
+pkg/roadmap	0.1	@local	-
+pkg/sexp	0.0	@local	-
 pkg/redisacl	0.2	@local	-
 pkg/redisconn	0.6	@run37411066588	self-hosted
 pkg/redisfn	0.3	@run37411066588	self-hosted
@@ -117,6 +124,7 @@ pkg/safepath	0.0	@run37411066588	self-hosted
 pkg/sandbox	0.3	@local	-
 pkg/sandbox/darwincheck	0.2	@local	-
 internal/scaffold	0.0	@run37411066588	self-hosted
+pkg/schemaread	0.2	@local	-
 pkg/seatcred	0.4	@run37411066588	self-hosted
 pkg/seatcred/seattest	0.0	@local	-
 pkg/secrets	0.7	@run37411066588	self-hosted
@@ -132,7 +140,6 @@ pkg/testguard	0.0	@run37411066588	self-hosted
 pkg/testkit	0.5	@local	-
 pkg/testredis	0.0	@run37411066588	self-hosted
 internal/testverbhelp	0.0	@run37411066588	self-hosted
-internal/textbody	0.0	@run37411066588	self-hosted
 pkg/tlc	0.4	@run37517528825	self-hosted
 internal/tokens	0.2	@run37411066588	self-hosted
 pkg/tool	0.2	@local	-

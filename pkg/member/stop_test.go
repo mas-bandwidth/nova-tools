@@ -65,10 +65,10 @@ func (r *stopRunner) child(card string) *stopChild {
 	return r.children[card]
 }
 
-func stopRig(cfg Config) (*Member, *scriptSprint, *stopRunner, *strings.Builder) {
+func stopRig(width int, cfg Config) (*Member, *scriptSprint, *stopRunner, *strings.Builder) {
 	s, out := newScript(), &strings.Builder{}
 	r := &stopRunner{fakeRunner: newRunner(), children: map[string]*stopChild{}}
-	return New(cfg, s, r, &fakePusher{}, out), s, r, out
+	return New(cfg, rowWidth(s, width), r, &fakePusher{}, out), s, r, out
 }
 
 func queueWith(t *testing.T, machine string, epoch uint64, cards ...queueCard) string {
@@ -82,7 +82,7 @@ func queueWith(t *testing.T, machine string, epoch uint64, cards ...queueCard) s
 // again, the card taken at the queue's new generation.
 func TestStoppedCancelsTheLaneAndHandsTheCardBackWithStopReturn(t *testing.T) {
 	t.Parallel()
-	m, s, r, out := stopRig(Config{As: "m", Width: 2})
+	m, s, r, out := stopRig(2, Config{As: "m"})
 	p := pk("c1")
 	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
 	s.set("take", 0, takeJSON(t, p))
@@ -132,7 +132,7 @@ func TestStoppedCancelsTheLaneAndHandsTheCardBackWithStopReturn(t *testing.T) {
 // ready or working with no child of ours; the word is read every pass before any start.
 func TestStoppedTakesAndRecoversNothing(t *testing.T) {
 	t.Parallel()
-	m, s, r, _ := stopRig(Config{As: "m", Width: 4})
+	m, s, r, _ := stopRig(4, Config{As: "m"})
 	p := pk("c2")
 	s.set("queue", 0, queueWith(t, "STOPPED", 7, ready("c1"), working("c2", 1, &p)))
 	s.set("take", 0, takeJSON(t, pk("c1")))
@@ -161,8 +161,8 @@ func TestAStartQueuedBehindStartMuDoesNotLaunchAfterStop(t *testing.T) {
 		once.Do(func() { close(entered) })
 		<-release
 	}
-	m, s, r, out := stopRig(Config{
-		As: "m", Width: 2, Background: true,
+	m, s, r, out := stopRig(2, Config{
+		As: "m", Background: true,
 		Clock: func() time.Time { return time.Unix(0, 0) },
 		Sleep: sleep,
 	})
@@ -207,7 +207,7 @@ func TestAStartQueuedBehindStartMuDoesNotLaunchAfterStop(t *testing.T) {
 // the card back and frees the lane, and the card is never finished meanwhile.
 func TestARefusedStopReturnIsTriedAgainWhateverTheWord(t *testing.T) {
 	t.Parallel()
-	m, s, r, out := stopRig(Config{As: "m", Width: 1})
+	m, s, r, out := stopRig(1, Config{As: "m"})
 	p := pk("c1")
 	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
 	s.set("take", 0, takeJSON(t, p))
@@ -216,9 +216,11 @@ func TestARefusedStopReturnIsTriedAgainWhateverTheWord(t *testing.T) {
 	c := r.child("c1")
 	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
 	s.set("stop-return", 2, "nova-sprint stop-return: unknown verb")
+	_, err = m.Tick(time.Unix(10, 0))
+	require.NoError(t, err)
 	c.end(Result{OK: true, Head: "abc"})
-	for i := range 3 {
-		_, err = m.Tick(time.Unix(10+int64(i), 0))
+	for i := range 2 {
+		_, err = m.Tick(time.Unix(11+int64(i), 0))
 		require.NoError(t, err)
 	}
 	assert.Len(t, s.lines("stop-return"), 1, "one try, then StopReturnRetry: no verb a pass")
@@ -249,7 +251,7 @@ func TestARefusedStopReturnIsTriedAgainWhateverTheWord(t *testing.T) {
 // concurrent map read and write. The count is an atomic, so the read does not range the map.
 func TestTheBeatReadsOwedStopReturnsWhileTickWritesRunning(t *testing.T) {
 	t.Parallel()
-	m, s, r, _ := stopRig(Config{As: "m", Width: 1})
+	m, s, r, _ := stopRig(1, Config{As: "m"})
 	p := pk("c1")
 	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
 	s.set("take", 0, takeJSON(t, p))
@@ -293,7 +295,7 @@ func TestTheBeatReadsOwedStopReturnsWhileTickWritesRunning(t *testing.T) {
 // the machine runs again; the result is nobody's, the card is handed back, never finished.
 func TestACancelledChildEndingUnderRunningIsHandedBackNotFinished(t *testing.T) {
 	t.Parallel()
-	m, s, r, out := stopRig(Config{As: "m", Width: 1})
+	m, s, r, out := stopRig(1, Config{As: "m"})
 	p := pk("c1")
 	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
 	s.set("take", 0, takeJSON(t, p))
@@ -323,7 +325,7 @@ func TestACancelledChildEndingUnderRunningIsHandedBackNotFinished(t *testing.T) 
 // its own return, or dropped it): nothing is left to return, the launch is reaped.
 func TestACancelledLaunchWhoseClaimMovedIsReaped(t *testing.T) {
 	t.Parallel()
-	m, s, r, out := stopRig(Config{As: "m", Width: 1})
+	m, s, r, out := stopRig(1, Config{As: "m"})
 	p := pk("c1")
 	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
 	s.set("take", 0, takeJSON(t, p))
@@ -349,7 +351,7 @@ func TestACancelledLaunchWhoseClaimMovedIsReaped(t *testing.T) {
 // under its row with no child of ours is handed back at once, and nothing is recovered.
 func TestAMemberRestartedMidStopHandsBackItsWorkingCards(t *testing.T) {
 	t.Parallel()
-	m, s, r, out := stopRig(Config{As: "m", Width: 4})
+	m, s, r, out := stopRig(4, Config{As: "m"})
 	p := pk("c2")
 	p.Gen = 3
 	s.set("queue", 0, queueWith(t, "STOPPED", 7, ready("c1"), working("c2", 3, &p)))
@@ -384,7 +386,7 @@ func TestAMemberRestartedMidStopHandsBackItsWorkingCards(t *testing.T) {
 // A server before the word (no machine field) changes nothing: the member runs as it did.
 func TestAQueueWithoutTheMachineWordRunsAsBefore(t *testing.T) {
 	t.Parallel()
-	m, s, r, _ := stopRig(Config{As: "m", Width: 2})
+	m, s, r, _ := stopRig(2, Config{As: "m"})
 	s.set("queue", 0, queueJSON(t, 7, ready("c1")))
 	s.set("take", 0, takeJSON(t, pk("c1")))
 	_, err := m.Tick(time.Unix(0, 0))
@@ -396,7 +398,7 @@ func TestAQueueWithoutTheMachineWordRunsAsBefore(t *testing.T) {
 // A child that is no Stopper is left to end by itself and handed back when it has.
 func TestAChildThatCannotBeStoppedIsHandedBackWhenItEnds(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1})
+	g := newWidthRig(1, Config{As: "m"})
 	p := pk("c1")
 	g.s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
 	g.s.set("take", 0, takeJSON(t, p))
@@ -418,7 +420,7 @@ func TestAChildThatCannotBeStoppedIsHandedBackWhenItEnds(t *testing.T) {
 // owed count clears to 0 after the last hand-back and start does not wait for ever.
 func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	t.Parallel()
-	m, s, r, _ := stopRig(Config{As: "m", Width: 2})
+	m, s, r, _ := stopRig(2, Config{As: "m"})
 	p := pk("c1")
 	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
 	s.set("take", 0, takeJSON(t, p))
@@ -428,7 +430,7 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	// initial beat with 0 owed
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live c1@1 --load 0.0"}, s.lines("beat"))
 
 	// the machine stops: c1 is cancelled, now 1 stop-return is owed
 	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
@@ -436,7 +438,7 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	require.NoError(t, err)
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 1 --load 0.0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 1 --live c1@1 --load 0.0"}, s.lines("beat"))
 
 	// child ends and is handed back via stop-return
 	r.child("c1").end(Result{OK: true})
@@ -447,7 +449,7 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	// beat after hand-back: owed returns to 0
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --load 0.0"}, s.lines("beat"))
 }
 
 // While Room says no (the disk floor), the member's fleet beat carries its word (--no-room),
@@ -455,19 +457,19 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 func TestBeatCarriesNoRoomWhileRoomSaysNo(t *testing.T) {
 	t.Parallel()
 	room, why := false, "free disk 0.0 GiB under the floor of 10 GiB"
-	m, s, _, _ := stopRig(Config{As: "m", Width: 2, Room: func() (bool, string) { return room, why }})
+	m, s, _, _ := stopRig(2, Config{As: "m", Room: func() (bool, string) { return room, why }})
 	s.set("queue", 0, queueWith(t, "RUNNING", 7))
 	_, err := m.Tick(time.Unix(0, 0))
 	require.NoError(t, err)
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why + " --load 0.0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --no-room " + why + " --load 0.0"}, s.lines("beat"))
 	room = true
 	_, err = m.Tick(time.Unix(10, 0))
 	require.NoError(t, err)
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, s.lines("beat"))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --load 0.0"}, s.lines("beat"))
 }
 
 // A draining member's beat carries this tick's word, not a stale one: Room is asked before
@@ -478,7 +480,7 @@ func TestBeatCarriesNoRoomWhileRoomSaysNo(t *testing.T) {
 func TestADrainingMembersBeatCarriesThisTicksNoRoom(t *testing.T) {
 	t.Parallel()
 	room, why := false, "free disk 0.0 GiB under the floor of 10 GiB"
-	m, s, _, _ := stopRig(Config{As: "m", Width: 2, Room: func() (bool, string) { return room, why }})
+	m, s, _, _ := stopRig(2, Config{As: "m", Room: func() (bool, string) { return room, why }})
 	s.set("queue", 0, queueWith(t, "RUNNING", 7))
 	beat := func(at int64) []string {
 		t.Helper()
@@ -488,12 +490,12 @@ func TestADrainingMembersBeatCarriesThisTicksNoRoom(t *testing.T) {
 		require.NoError(t, m.Beat())
 		return s.lines("beat")
 	}
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why + " --load 0.0"}, beat(0))
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --no-room " + why + " --load 0.0"}, beat(0))
 	m.Drain()
 	room = true
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --draining --load 0.0"}, beat(10), "the disk freed while draining: the word is gone, the drain is said")
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --draining --load 0.0"}, beat(10), "the disk freed while draining: the word is gone, the drain is said")
 	room = false
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why + " --draining --load 0.0"}, beat(20), "under the floor again while draining: the word is said")
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --no-room " + why + " --draining --load 0.0"}, beat(20), "under the floor again while draining: the word is said")
 }
 
 // A member that drains (its binary was replaced) says so on every beat from the drain on
@@ -502,20 +504,20 @@ func TestADrainingMembersBeatCarriesThisTicksNoRoom(t *testing.T) {
 // 2026-10-11: "Why are cards stuck in ready."). Before the drain its beat says nothing of it.
 func TestADrainingMembersBeatSaysItDrains(t *testing.T) {
 	t.Parallel()
-	m, s, _, _ := stopRig(Config{As: "m", Width: 2})
+	m, s, _, _ := stopRig(2, Config{As: "m"})
 	s.set("queue", 0, queueWith(t, "RUNNING", 7))
 	_, err := m.Tick(time.Unix(0, 0))
 	require.NoError(t, err)
 	s.reset()
 	require.NoError(t, m.Beat())
-	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, s.lines("beat"), "a member that takes says nothing of a drain")
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --load 0.0"}, s.lines("beat"), "a member that takes says nothing of a drain")
 	m.Drain()
 	for at := int64(10); at <= 20; at += 10 {
 		_, err = m.Tick(time.Unix(at, 0))
 		require.NoError(t, err)
 		s.reset()
 		require.NoError(t, m.Beat())
-		assert.Equal(t, []string{"fleet beat m --stop-returns 0 --draining --load 0.0"}, s.lines("beat"), "every beat from the drain on says it")
+		assert.Equal(t, []string{"fleet beat m --stop-returns 0 --live - --draining --load 0.0"}, s.lines("beat"), "every beat from the drain on says it")
 	}
 }
 
@@ -524,7 +526,7 @@ func TestADrainingMembersBeatSaysItDrains(t *testing.T) {
 // and the cards are not recovered when RUNNING again.
 func TestAReaderMemberRestartedMidStopHandsBackItsReadingCards(t *testing.T) {
 	t.Parallel()
-	m, s, r, out := stopRig(Config{As: "reader.r1", Reader: true, Width: 4})
+	m, s, r, out := stopRig(4, Config{As: "reader.r1", Reader: true})
 	p1 := pk("rd1")
 	p1.Gen = 1
 	p1.Attempt = 3 // attempt is 3, but generation is 1!

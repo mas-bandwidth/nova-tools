@@ -31,14 +31,12 @@ func TestSnapshotReadsExeNamesAndKeepsTheSuffix(t *testing.T) {
 
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		require.NoError(t, err, err)
-	}
+	err := os.MkdirAll(bin, 0o755)
+	require.NoError(t, err, err)
 	stub := func(name, line string) {
 		t.Helper()
-		if err := testbin.WriteExecutable(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0o755); err != nil {
-			require.NoError(t, err, err)
-		}
+		err := testbin.WriteExecutable(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0o755)
+		require.NoError(t, err, err)
 	}
 	stub("nova-bus.exe", "nova-bus v0.16.0 windows/amd64 go1.26.5")
 	stub("nova-update.exe", "nova-update v0.16.0 windows/amd64 go1.26.5")
@@ -49,32 +47,20 @@ func TestSnapshotReadsExeNamesAndKeepsTheSuffix(t *testing.T) {
 
 	out := filepath.Join(dir, "snapshot.tsv")
 	var o, e bytes.Buffer
-	if code := Main("nova-version", []string{"snapshot", "--bin", bin, "--out", out}, "", &o, &e); code != 0 {
-		require.EqualValuesf(t, 0, code, "snapshot refused a windows bin directory: %d\n%s", code, e.String())
-	}
-	if !strings.Contains(o.String(), "tools=2") {
-		require.Failf(t, "", "want tools=2, got:\n%s", o.String())
-	}
+	code := Main("nova-version", []string{"snapshot", "--bin", bin, "--out", out}, "", &o, &e)
+	require.EqualValuesf(t, 0, code, "snapshot refused a windows bin directory: %d\n%s", code, e.String())
+	require.Truef(t, strings.Contains(o.String(), "tools=2"), "want tools=2, got:\n%s", o.String())
 	body, err := os.ReadFile(out)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err, err)
 	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-	if lines[0] != snapshotHeader {
-		require.EqualValuesf(t, snapshotHeader, lines[0], "header is %q", lines[0])
-	}
+	require.EqualValuesf(t, snapshotHeader, lines[0], "header is %q", lines[0])
 	var names []string
 	for _, line := range lines[1:] {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 4 {
-			require.Lenf(t, fields, 4, "row %q is not four columns", line)
-		}
-		if fields[3] != "windows/amd64" {
-			require.EqualValuesf(t, "windows/amd64", fields[3], "row %q does not carry the platform the binary reported", line)
-		}
+		require.Lenf(t, fields, 4, "row %q is not four columns", line)
+		require.EqualValuesf(t, "windows/amd64", fields[3], "row %q does not carry the platform the binary reported", line)
 		names = append(names, fields[0])
 	}
-	if got := strings.Join(names, " "); got != "nova-bus.exe nova-update.exe" {
-		require.EqualValuesf(t, "nova-bus.exe nova-update.exe", got, "snapshot rows are %q; the name column is the file's real name, suffix and all", got)
-	}
+	got := strings.Join(names, " ")
+	require.EqualValuesf(t, "nova-bus.exe nova-update.exe", got, "snapshot rows are %q; the name column is the file's real name, suffix and all", got)
 }

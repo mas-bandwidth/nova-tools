@@ -16,7 +16,7 @@ import (
 // and nothing said so).
 func TestAReaderWithNoRowSaysSoOnceAndWhenItsRowCame(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "reader-x-2", Width: 2, Reader: true})
+	g := newWidthRig(2, Config{As: "reader-x-2", Reader: true})
 	g.s.set("queue", 0, `{"as":"reader-x-2","epoch":7,"cards":[],"reader":false}`)
 	for range 3 {
 		_, err := g.tick(t)
@@ -36,7 +36,7 @@ func TestAReaderWithNoRowSaysSoOnceAndWhenItsRowCame(t *testing.T) {
 func TestAReaderWithItsRowOrAnOldServerSaysNothing(t *testing.T) {
 	t.Parallel()
 	for _, answer := range []string{`{"as":"r","epoch":7,"cards":[]}`, `{"as":"r","epoch":7,"cards":[],"reader":true}`} {
-		g := newRig(Config{As: "r", Width: 2, Reader: true})
+		g := newWidthRig(2, Config{As: "r", Reader: true})
 		g.s.set("queue", 0, answer)
 		_, err := g.tick(t)
 		require.NoError(t, err)

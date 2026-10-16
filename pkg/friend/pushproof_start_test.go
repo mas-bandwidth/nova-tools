@@ -25,8 +25,7 @@ func TestThePushProofRefusesWhatCannotBeDriven(t *testing.T) {
 		return Conformance{Friend: "bob", Harness: harness, Deliver: d, Store: bustest.NewFake(start, "ada", "bob"), Within: time.Minute,
 			Now: func() time.Time { now = now.Add(time.Second); return now }, Nonce: func() string { return "n1" },
 			Wait: func(context.Context) bool { now = now.Add(10 * time.Second); return true },
-			Text: func(nonce string) string { return SessionCheckPrefix + nonce },
-			Pong: func() (Pong, bool, error) { return Pong{}, false, nil }}
+			Text: func(nonce string) string { return SessionCheckPrefix + nonce }}
 	}
 	ran := 0
 	exec := func(out string, exit int) Exec {

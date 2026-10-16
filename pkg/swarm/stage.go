@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 )
 
 // DefaultStageTimeout is the hard timeout for card staging (120 s).
@@ -327,6 +328,10 @@ type StageOptions struct {
 	// pushed carried on top where it applies cleanly (restageAtTip). A first attempt leaves it
 	// nil and is staged as before.
 	Rework *Rework
+	// GitIdentity, when set, is the author and committer the clone's local config is set to
+	// ("Name <email>"), the sprint row's git_identity; "" uses the machine's own default
+	// (gitrun.DefaultGitIdentity), never the host's global git config.
+	GitIdentity string
 
 	// git, when set, builds every staging git call in place of stageGit: a test's seam for
 	// a step git itself would not fail.
@@ -389,9 +394,6 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	if baseRepo == "" {
 		return StageResult{}, nil
 	}
-	if isGitDir(opts.TargetDir) {
-		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Staged: true}, nil
-	}
 	for _, v := range []struct{ what, value string }{
 		{"base-repo", baseRepo}, {"base-sha", baseSha}, {"BASE ref", cb.Ref},
 	} {
@@ -422,6 +424,74 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		secs = 1
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	stageCmd := stageGit
+	if opts.git != nil {
+		stageCmd = opts.git
+	}
+
+	branch := CardStageBranch(opts.Card)
+	if opts.Branch != "" {
+		if err := refuseOptionLike("branch", opts.Branch); err != nil {
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, err
+		}
+		branch = opts.Branch
+	}
+
+	// A job directory that already holds a checkout is reused, never cleared (native.go): a
+	// rework or redeal that keeps the slot's generation and epoch stages onto an earlier
+	// attempt's checkout, which sits at that attempt's base. The carried head is then in no
+	// branch of the checkout and the push refuses at cmd/nova-swarm/memberpush.go. When the
+	// head is an ancestor of the checkout's HEAD the checkout is the frame's own and its work
+	// in progress is kept (the resume case); otherwise the head is brought in and the card's
+	// branch switched to it, so every branch the push reads reaches the staged commit
+	// (docs/SPEC-CARD-CONTRACT.md, staging; tla/CardContract.tla StagedFromOrigin). The
+	// earlier attempt's commits stay in the reflog: they belong to a frame that is over.
+	if isGitDir(opts.TargetDir) {
+		if baseSha == "" {
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Staged: true}, nil
+		}
+		if stageCmd(ctx, "-C", opts.TargetDir, "merge-base", "--is-ancestor", "--end-of-options", baseSha, "HEAD").Run() == nil {
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Staged: true}, nil
+		}
+		var fetchTime, checkoutTime time.Duration
+		var fetched []byte
+		var ferr error
+		var ok bool
+		for try := 0; try < 2 && !ok; try++ {
+			if try > 0 {
+				select {
+				case <-time.After(cmp.Or(opts.fetchRetryDelay, stageFetchRetryDelay)):
+				case <-ctx.Done():
+				}
+			}
+			if ok, fetched, ferr = stageHead(ctx, stageCmd, opts.TargetDir, baseSha, &fetchTime); ferr != nil {
+				break
+			}
+		}
+		if ferr != nil {
+			// ignored: the timeout is returned as ErrStageTimeout on the next line; the result file is a courtesy for the reader of the job directory
+			_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, TimedOut: true}, ErrStageTimeout
+		}
+		if !ok {
+			why := strings.Join(strings.Fields(string(fetched)), " ")
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref},
+				fmt.Errorf("staging refused: head %s is in neither the mirror %s nor origin %s: %s", baseSha, "(none)", baseRepo, why)
+		}
+		if out, cerr := stageTimedOutput(stageCmd(ctx, "-C", opts.TargetDir, "switch", "-q", "-C", branch, "--end-of-options", baseSha), &checkoutTime); cerr != nil {
+			if stageTimedOut(ctx, cerr) {
+				// ignored: the timeout is returned as ErrStageTimeout on the next line; the result file is a courtesy for the reader of the job directory
+				_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
+				return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, TimedOut: true}, ErrStageTimeout
+			}
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref},
+				fmt.Errorf("git checkout failed: %s (%w)", strings.TrimSpace(string(out)), cerr)
+		}
+		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Branch: branch, Staged: true}, nil
+	}
+
 	mirror := FindBenchMirror(opts.BenchHome, baseRepo)
 	if mirror == "" && isRemoteRepo(baseRepo) {
 		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, fmt.Errorf("staging refused: no bench mirror for %s: a card may not clone directly from github without a bench mirror", baseRepo)
@@ -430,13 +500,6 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	cloneSource := mirror
 	if cloneSource == "" {
 		cloneSource = baseRepo
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	stageCmd := stageGit
-	if opts.git != nil {
-		stageCmd = opts.git
 	}
 
 	start := time.Now()
@@ -481,13 +544,6 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 
 	// Fetch and checkout baseSha (else the BASE: ref) on the card's branch.
-	branch := CardStageBranch(opts.Card)
-	if opts.Branch != "" {
-		if err := refuseOptionLike("branch", opts.Branch); err != nil {
-			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, Wall: time.Since(start)}, err
-		}
-		branch = opts.Branch
-	}
 	switch {
 	case baseSha != "":
 		// RULE (docs/SPEC-CARD-CONTRACT.md, staging): the head is checked out only when its
@@ -498,23 +554,24 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		// whose tree is unread fails (or, in git 2.43, reports done with an empty worktree). The
 		// fetch is --refetch: a plain fetch of a sha does nothing when a stage ref (a clone's
 		// refs/remotes/origin/*) already reaches the commit, whatever its tree.
-		haveHead := func() bool {
-			return stageCmd(ctx, "-C", opts.TargetDir, "cat-file", "-e", "--end-of-options", baseSha+"^{tree}").Run() == nil
-		}
 		var fetched []byte
-		for try := 0; try < 2 && !haveHead(); try++ {
+		var ferr error
+		var ok bool
+		for try := 0; try < 2 && !ok; try++ {
 			if try > 0 {
 				select {
 				case <-time.After(cmp.Or(opts.fetchRetryDelay, stageFetchRetryDelay)):
 				case <-ctx.Done():
 				}
 			}
-			var ferr error
-			if fetched, ferr = stageTimedOutput(stageCmd(ctx, "-C", opts.TargetDir, "fetch", "-q", "--refetch", "--", "origin", baseSha), &fetchTime); stageTimedOut(ctx, ferr) {
-				return fail("fetch", fetched, ferr)
+			if ok, fetched, ferr = stageHead(ctx, stageCmd, opts.TargetDir, baseSha, &fetchTime); ferr != nil {
+				break
 			}
 		}
-		if !haveHead() {
+		if ferr != nil {
+			return fail("fetch", fetched, ferr)
+		}
+		if !ok {
 			why := strings.Join(strings.Fields(string(fetched)), " ")
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, Wall: time.Since(start)},
 				fmt.Errorf("staging refused: head %s is in neither the mirror %s nor origin %s: %s", baseSha, cmp.Or(mirror, "(none)"), baseRepo, why)
@@ -550,11 +607,25 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	head := strings.TrimSpace(string(headOut))
 
 	// A checkout whose identity could not be set would take the model's commits under no
-	// name, found only when it commits: the stage fails here instead, saying which.
-	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.name", "worker").CombinedOutput(); err != nil {
+	// name, found only when it commits: the stage fails here instead, saying which. The
+	// configured identity (the sprint row's git_identity) is set when given, else the
+	// machine's own default (gitrun.DefaultGitIdentity), never the host's global git config
+	// or a placeholder, so a clone the launcher stages and a rework-at-tip carry take the
+	// machine.
+	identityStr := opts.GitIdentity
+	if strings.TrimSpace(identityStr) == "" {
+		identityStr = gitrun.DefaultGitIdentity
+	}
+	name, email := "worker", "worker@example.com"
+	var identity []string
+	if id, ok := gitrun.ParseGitIdentity(identityStr); ok {
+		name, email = id.Name, id.Email
+		identity = id.Env()
+	}
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "--local", "--", "user.name", name).CombinedOutput(); err != nil {
 		return fail("config user.name", out, err)
 	}
-	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.email", "worker@example.com").CombinedOutput(); err != nil {
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "--local", "--", "user.email", email).CombinedOutput(); err != nil {
 		return fail("config user.email", out, err)
 	}
 
@@ -563,7 +634,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		var what string
 		var out []byte
 		var err error
-		if carry, what, out, err = restageAtTip(ctx, stageCmd, opts.TargetDir, branch, cb.Ref, *opts.Rework, &fetchTime, &checkoutTime); err != nil {
+		if carry, what, out, err = restageAtTip(ctx, stageCmd, opts.TargetDir, branch, cb.Ref, *opts.Rework, identity, &fetchTime, &checkoutTime); err != nil {
 			return fail(what, out, err)
 		}
 		if carry != nil {
@@ -585,6 +656,29 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		Checkout: checkoutTime,
 		Carry:    carry,
 	}, nil
+}
+
+// stageHead makes baseSha's tree present in the checkout at dir: the cat-file probe of
+// the head's tree, then, when it is absent, the fetch from origin (docs/SPEC-CARD-CONTRACT.md,
+// staging; tla/CardContract.tla StagedFromOrigin). The commit alone is no answer: a mirror
+// caught between a commit and its tree hands the clone the commit, and the checkout of a
+// head whose tree is unread fails (or, in git 2.43, reports done with an empty worktree),
+// so the tree is what is probed. The fetch is --refetch: a plain fetch of a sha does nothing
+// when a stage ref already reaches the commit, whatever its tree. It answers whether the
+// tree is now present, the fetch's output for the refusal, and a fetch that ended on the
+// deadline as err. The retry around it stays with the caller, where the clock is.
+func stageHead(ctx context.Context, stageCmd func(context.Context, ...string) *exec.Cmd, dir, baseSha string, fetchTime *time.Duration) (bool, []byte, error) {
+	haveHead := func() bool {
+		return stageCmd(ctx, "-C", dir, "cat-file", "-e", "--end-of-options", baseSha+"^{tree}").Run() == nil
+	}
+	if haveHead() {
+		return true, nil, nil
+	}
+	fetched, ferr := stageTimedOutput(stageCmd(ctx, "-C", dir, "fetch", "-q", "--refetch", "--", "origin", baseSha), fetchTime)
+	if stageTimedOut(ctx, ferr) {
+		return false, fetched, ferr
+	}
+	return haveHead(), fetched, nil
 }
 
 // stageTimedOutput accumulates the Git command time of a staging phase,

@@ -13,7 +13,7 @@ import (
 // the read verb as the member, not finish.
 func TestAMemberRunsReadCardsAtHalfASlotAndReportsThemWithTheReadVerb(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1})
+	g := newWidthRig(1, Config{As: "m"})
 	pusher := &fakePusher{def: Push{Sha: fullSha}}
 	g.m.pusher = pusher
 	a := Packet{Card: "p1.r1.m", Kind: "read", As: "m", Primary: "p1", Attempt: 1, Gen: 1, Epoch: 7, Head: fullSha}

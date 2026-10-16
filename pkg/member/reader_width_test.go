@@ -19,7 +19,7 @@ func queueJSONWidth(t *testing.T, width int, cards ...queueCard) string {
 
 // A reader runs the width of its machine's fleet row, as a member runs its own
 // (the owner, 2026-10-02: "why not just have as many readers as workers
-// per-machine"): started with no --width it reads the width with its queue
+// per-machine"): it has no width of its own: it reads the width with its queue
 // every tick, begins that many reads, and follows a change of the row.
 func TestAReaderRunsTheWidthOfItsMachinesRow(t *testing.T) {
 	t.Parallel()
@@ -34,13 +34,13 @@ func TestAReaderRunsTheWidthOfItsMachinesRow(t *testing.T) {
 	g.s.set("queue", 0, queueJSONWidth(t, 2, cards...))
 	_, err := g.tick(t)
 	require.NoError(t, err)
-	assert.Contains(t, g.out.String(), "width 0 -> 2 (the fleet row)\n", "the row's width is read with the queue")
+	assert.Contains(t, g.out.String(), "width 0 -> 2 (nova-config)\n", "the width nova-config names is read with the queue")
 	assert.Equal(t, []string{"r1", "r2"}, g.r.started(), "two reads at width 2")
 
 	g.s.set("queue", 0, queueJSONWidth(t, 3, cards...))
 	_, err = g.tick(t)
 	require.NoError(t, err)
-	assert.Contains(t, g.out.String(), "width 2 -> 3 (the fleet row)\n", "a raised row is followed")
+	assert.Contains(t, g.out.String(), "width 2 -> 3 (nova-config)\n", "a raised row is followed")
 	assert.Equal(t, []string{"r1", "r2", "r3"}, g.r.started(), "the third read at width 3")
 }
 
@@ -56,6 +56,6 @@ func TestAWorkerWithNoRowWidthSaysSoOnce(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assert.Empty(t, g.r.started(), "nothing starts at width 0")
-	assert.Equal(t, 1, strings.Count(g.out.String(), "NOTE width 0: no fleet row names this worker's width"), "said once:\n%s", g.out.String())
+	assert.Equal(t, 1, strings.Count(g.out.String(), "NOTE width 0: nova-config names no width for this worker"), "said once:\n%s", g.out.String())
 	assert.Contains(t, g.out.String(), "reader-<m> runs at machine m's", "the note names the rule")
 }

@@ -59,7 +59,7 @@ func TestKindsApplyInDependencyOrder(t *testing.T) {
 
 // TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I
 // only want the fleet to have actual defined useful things associated with
-// each machine, not invented rando stuff". Six declared fields and the note
+// each machine, not invented rando stuff". Seven declared fields and the note
 // (Glenn 2026-10-02: "these should be saved somewhere permanent with notes
 // (ideally, nova-config)"), no address (the name is the tailnet host), no
 // measured fact. width is the
@@ -71,12 +71,12 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 
 	machine, _ := Lookup(KindMachine)
 	scopedGot70 := strings.Join(machine.FieldNames(), ",")
-	require.Equal(t, "user,seat,slots,runners,width,tla,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,width,tla,note", scopedGot70)
+	require.Equal(t, "user,seat,slots,runners,roles,width,tla,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,roles,width,tla,note", scopedGot70)
 	for _, f := range machine.Fields {
-		scopedWant75 := f.Name != "runners" && f.Name != "width" && f.Name != "tla" && f.Name != "note"
-		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, tla to false and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
+		scopedWant75 := f.Name != "runners" && f.Name != "roles" && f.Name != "width" && f.Name != "tla" && f.Name != "note"
+		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, roles to bench, tla to false and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
 	}
-	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "store", "coordinator", "machine", "harness", "logins", "wake"} {
+	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "store", "coordinator", "machine", "harness", "logins", "wake"} {
 		_, scopedOk81 := machine.Field(invented)
 		assert.False(t, scopedOk81, "machine has a field %s: an address is the name, a measured fact comes live from the beat, a fleet fact is the fleet's", invented)
 	}
@@ -94,7 +94,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "tiers,roles,width,mode,config_dir,token_cap,streams,kinds,pronouns", scopedGot97, "friend fields %s, want tiers,roles,width,mode,config_dir,token_cap,streams,kinds,pronouns", scopedGot97)
+	require.Equal(t, "tiers,roles,width,mode,config_dir,token_cap,streams,kinds,pronouns,session", scopedGot97, "friend fields %s, want tiers,roles,width,mode,config_dir,token_cap,streams,kinds,pronouns,session", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -400,7 +400,7 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 	machine, _ := Lookup(KindMachine)
 	_, err = machine.NewRow("hulk", map[string]string{"slots": "40", "ssh": "hulk", "os_arch": "linux/x64"})
 	require.Error(t, err, "a machine row with no user, no seat and two invented fields was accepted")
-	for _, want := range []string{"--user is required", "--seat is required", "--ssh is not a machine field; the fields are user, seat, slots, runners", "--os_arch is not a machine field"} {
+	for _, want := range []string{"--user is required", "--seat is required", "--ssh is not a machine field; the fields are user, seat, slots, runners, roles", "--os_arch is not a machine field"} {
 		assert.ErrorContains(t, err, want, "the machine refusal does not name %q:\n%s", want, err)
 	}
 	row, err := friend.NewRow("rowan", map[string]string{"tiers": "frontier"})

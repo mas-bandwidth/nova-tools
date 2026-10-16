@@ -140,12 +140,11 @@ with the raw numbers and the kernel settings it was measured under.
 A friend's working directory, how her jobs arrive and are reported, and how
 their clones are removed once done, is docs/FRIENDS.md. The friends are
 nova-config's friend rows: `nova-sprint friend sync --actor ada`
-copies their names into the sprint's friends table, and each friend says it is
-there only by evidence from her own session: a wake ping her session answered
-within 10 minutes, or a card of hers finished within 30 (`where` shows `up` on
-it, `down` without it, with working 0, and `held` while `nova-sprint friend
-down <friend>` holds it; docs/SPEC-FRIEND.md, "Presence is her session's
-evidence"). Her daemon's beat, every second (`sprint.FriendBeatEvery`), is
+copies their names into the sprint's friends table, and whether each friend
+is there is the nova-hook record's alone: `nova-hook serve` challenges her once
+a minute and only her model's `nova-hook prove` answers (`where` shows `up` while
+she is hooked in, `down` without it, and `held` while `nova-sprint friend down
+<friend>` holds it; docs/SPEC-HOOK.md). Her daemon's beat, every second (`sprint.FriendBeatEvery`), is
 recorded and never makes her up. The same sync
 reads each friend's working directory, `<root>/ai/<friend>/working` (`--root
 <dir>`, else `HOME`, so it runs on the machine that holds them), and writes her
@@ -209,8 +208,10 @@ fleet's copy of the same pass.
 ## A fixture inventory
 
 `nova-config inventory --fixture <file>` reads the rows from a YAML or JSON
-file instead of the store: machines (with `os` and `arch` standing in for the
-beat), the fleet row and loops. A file with no `loops` key is a fleet whose
+file instead of the store: machines (with an explicit `roles` list, `os`,
+`arch` and `cores` standing in for the beat, and optional `width` for the
+machine row), the fleet row and loops. Empty `roles` is valid; a missing key
+is not. A file with no `loops` key is a fleet whose
 loops were never applied. `fleet/testdata/inventory-fixture.yml` is two
 machines and their loops; `fleet/testdata/check-fixture.yml` is the machine
 running the play, named `localhost`, with no store deployer, which is what
@@ -221,8 +222,9 @@ with `--check`.
 
 The inventory gives each host `ansible_user`, `nova_seat`, `slots`,
 `runners`, `nova_tla` (its row's `tla`; the `tla` group is the hosts where it
-is true), `nova_redis_port`, `nova_redis_addr`, the explicit `nova_pg_dsn`,
-`nova_os` and `nova_arch` (from its beat, when it has one) and `nova_loops`,
+is true), `nova_redis_port`, `nova_redis_addr`, `nova_bus_addr` (the applied fleet row's `bus`, omitted when empty), the explicit `nova_pg_dsn`,
+`registry_roles` (the machine row's canonical roles), `nova_os` and
+`nova_arch` (from its beat) and `nova_loops`,
 and `all.vars` `nova_store`. The rest are defaults in
 `fleet/group_vars/all.yml`. The inventory's host variables override them, and
 so do a `group_vars/benches.yml` and `host_vars/<machine>.yml` beside the
@@ -230,6 +232,63 @@ inventory; a `group_vars/all.yml` beside the inventory does not (the play's own
 is read after it). The host variables ensure an applied nonstandard Redis port
 outranks every group default. The Postgres URI is preserved exactly, including
 an explicit localhost; it is never derived from the Redis store machine.
+
+The play variables with a machine-row or beat source are projected as follows.
+The measured facts are optional, and the inventory never refuses a host for
+them: a machine that is down, or whose beat lacks a fact, is listed from its
+row with the facts it has, and the verb prints one `NOTE machine <m>: ...` line
+on stderr for each (never in the JSON, where ansible would read it as a group).
+The play gathers `os`, `arch` and cores from its own facts for any host whose
+beat lacks them (`fleet/tools.yml`). A beat is read from one source per fact:
+`cores` is the nova-sprint member's beat record, `sprint:beat:<machine>` (JSON,
+written by every member on every beat), the source of truth; a configured bench
+publisher's `bench:<machine>:beat` hash `ncpu` is read only when the member's
+record has no cores, so a stale hash never overrides a live beat; `os`, `arch`
+and `memory_gb` are only ever in that hash. When neither carries cores,
+`cores` is absent, and so is `slots_share` unless the row sets `width`.
+
+A machine row applied before migration 0042 has no `roles` field (the store the
+previous release leaves for this release's adopt): the inventory derives it as
+0042 does (`bench`; `coordination` on the fleet coordinator; `services` on the
+fleet store; `config.DeriveMachineRoles`, one rule with the migration's SQL,
+held to one table of cases) and prints a NOTE; `nova-config apply --kind
+machine` stores it. Only a row with nothing to derive from (the fleet row was
+never applied) is refused. A present field always wins. The release gate
+`TestReleaseNInventoryOverReleaseNMinus1Store` (certification.yml,
+release-checks) builds this release's inventory from the store the previous
+release leaves (`fleet/testdata/inventory-fixture-n-1.yml`) and asserts every
+host and group of the previous release's own inventory of it
+(`fleet/testdata/inventory-n-1-golden.json`) is present.
+
+| variable | inventory source | plays that read it |
+|---|---|---|
+| `ansible_host` | the machine row name | Ansible connection target for every play |
+| `ansible_connection` | `local` when the inventory runs on that machine; otherwise absent | the local host in the play that invokes Ansible |
+| `bench_os` | beat `os` | bench, monitoring and tools plays |
+| `cores` | beat cores (`ncpu`), as an integer; absent when no beat has it | bench-register and runners plays |
+| `registry_seat` | machine row `seat` | bench play and fleet group variables |
+| `slots_capacity` | machine row `slots` | bench-register play |
+| `slots_share` | machine row `width`; when width is unset, half the beat cores; absent when neither is known | bench-register play |
+| `registry_roles` | canonical machine row `roles` list | bench and runners plays |
+
+The `benches`, `store`, and `coordinator` groups contain hosts with the
+`bench`, `services`, and `coordination` roles, respectively. `runner` is an
+explicit role carried in `registry_roles`; the existing `runners` group still
+comes from the row's runner count. The store and coordinator role groups must
+match the fleet row's `store` and `coordinator` singleton references exactly:
+one matching role host when a reference is set, and both empty when it is
+unset. Inventory refuses a mismatch before output so Ansible's role groups
+cannot point at different hosts than `nova_store`, Redis routing, or adoption.
+Other groups (`all`, `adopt`, `store_deployer`, `runners`, and `tla`) retain
+their existing sources and ordering. Empty role groups serialize as `[]`.
+
+Migration 0042 backfills each existing config machine with `bench` and adds
+`services` and `coordination` from the current fleet row references. It does
+not infer `runner` or restore assignments from the former external
+`machines.tsv`; those roles must be set explicitly with `nova-config machine
+set <machine> --roles <roles>` and applied. The migration uses only
+`config.machines` and `config.fleet` and changes no live rows until a caller
+runs the normal migration and apply steps.
 
 | variable | default | what it is |
 |---|---|---|
@@ -242,6 +301,7 @@ an explicit localhost; it is never derived from the Redis store machine.
 | `nova_retire_units` | `[]` | units of another tool's to retire by name (below) |
 | `nova_disk_guard`, `nova_disk_guard_every`, `nova_disk_guard_args` | `true`, `900`, `--scan ~/nova-bench/run --cache ~/runner-*/_cache/go-build` | the disk guard `loops.yml` adds to every machine (below): on or off, its period in seconds, and its arguments after the `--root` of each record |
 | `nova_redis_port`, `nova_redis_addr` | the explicit applied fleet row (no port default) | the store |
+| `nova_bus_addr` | the applied fleet row's `bus`, omitted when that bus is empty | `NOVA_BUS_REDIS` in the loop units, rendered only when this variable is defined and not empty |
 | `nova_redis_deploy_user`, `nova_redis_deploy_password_key` | `coordinator`, `NOVA_REDIS_COORDINATOR_PASSWORD` | who loads the library, and the secret holding its password in the `store_deployer` seat |
 | `nova_redis_admin_user`, `nova_redis_admin_password_key` | `admin`, `NOVA_REDIS_ADMIN_PASSWORD` | who writes the ACL, and its secret |
 | `nova_redis_user_password_keys` | `coordinator`, `bench` | the secret holding the password of a user `acl apply` creates |
@@ -515,3 +575,78 @@ child made there by hand is theirs to remove.
 The inventory carries `nova_loops` only once the loop kind has been applied to
 the store; until then `loops.yml` refuses each machine by name instead of
 reading the absence as "no loops" and retiring every unit.
+
+## Muse harness
+
+The tools play installs Muse Code `1.4.7-R6101.1` on every fleet member from
+its public release artefact, verified against the platform's pinned SHA-256
+in `fleet/roles/muse/defaults/main.yml`. A second converge keeps matching bytes.
+The role reads only the member seat's key names with `nova-secrets names`.
+Its adoption table reports `muse_key=present`, `missing`, or `unreadable`.
+A member without `META_API_KEY` refuses a Muse route with the remedy and runs no
+Muse card.
+
+The role writes a login of names, never values, at
+`~/.config/nova-swarm/muse-keys.json`. The member reads that optional login
+in process when `NOVA_SWARM_KEYS` is unset; an explicitly named login takes
+priority and includes `META_API_KEY` in its `names` to serve Muse.
+The direct member unit uses the existing in-process nova-secrets reader;
+its command and environment contain no provider key. Native passes the key
+on Muse's stdin and removes it from the harness environment, so tool children
+inherit no key. Muse reads the card's prompt file in the job worktree, reports
+its JSONL result and token classes, and uses the existing provider-failure
+classifier for a refused key, model, credit, or provider.
+
+A Muse route names `--tier frontier --harness muse --provider meta` and the
+model selected for that route. Muse is a subscription: its route uses the
+existing `--billing plan` vocabulary and explicitly zero marginal prices
+(`--price_input 0 --price_cache_read 0 --price_cache_write 0 --price_output 0`).
+`plan` alone retains the repository's metered-value prediction; the explicit
+zero prices record the subscription's zero marginal card cost. Raw usage stays
+under Muse's original names in the JSONL capture. The common usage table maps
+those reported classes without cache or reasoning subtraction, as the existing
+headless lanes do; overlapping raw classes are no metered price claim.
+`cached_tokens` remains a distinct raw Muse counter in that capture. It is
+not an alias for `cache_read_tokens`: the common `cache_read` column is
+reported only when Muse explicitly reports `cache_read_tokens`. Additional
+raw fields in the durable spend/consumer record belong to the separate
+subscription billing and raw receipts follow-up.
+The coordinator adds `frontier-muse` with
+`nova-config route add` and the selected model, deadline, subscription billing and zero marginal price sheet;
+the tools play writes no route or configuration-store value.
+
+Typed subscription receipt adoption uses a paired installation. Upgrade the sprint
+server first while the existing Muse `plan` route with explicit zero prices remains
+active, then upgrade each member and its native binary. Activate `billing=subscription`
+only after both binaries can pass receipt contract 2. A new native invoked by an old
+member remains on the legacy bridge; the upgraded server refuses that legacy receipt
+for a typed subscription route before writing a result. A new member passes `--billing`
+to native and `--receipt-contract 2` with finish/read; older binaries refuse those flags.
+Do not synthesize original Muse fields from legacy token-only receipts.
+
+The `raw_usage` word is unpadded base64url JSON: version 1, an ordered `records`
+array with `harness=muse`, `execution=fleet`, `source_schema=muse-jsonl-v1`,
+`producer_version`, declared `billing`, and a `tokens` map. Its optional integer
+keys are `input_tokens`, `output_tokens`, `cached_tokens`, `cache_write_tokens`,
+`cache_read_tokens`, and `reasoning_tokens`. Missing differs from zero. Records
+retain launch order and are never summed into disjoint accounting classes.
+`cached_tokens` remains distinct from explicit `cache_read_tokens`; no cache
+subtraction is performed. Envelopes over 32768 JSON bytes are refused.
+
+Before typed activation, let every old native launch end; an old writer does not
+participate in the new usage-file lock. New writers serialize header expansion and
+append through the existing process file lock. A released thirteen- or fourteen-column
+header expands once to the current eighteen columns with one atomic replacement,
+including the first typed row; historical values and file permissions stay intact.
+New historical columns are `-`, including absent raw data. An unknown header or
+incomplete row refuses expansion before publication. Normal appends read only a
+bounded header. Mixed legacy and typed launch rows refuse durable cost recovery;
+start a fresh generation rather than fabricate missing original counters. A durable
+receipt error forces an invalid contract-2 report even if a valid final summary exists.
+The expected contract is stamped in the launch generation and restored on adoption.
+
+Typed rows retain the exact reported amount in optional `actual_usd`; `-` is
+unreported and `0` is a measured zero. The legacy four-place `usd` display remains.
+Receipts with no exact column, and legacy rows, retain their historical display
+precision; recovery never invents a more precise amount. A typed row with an exact
+column uses that column's absence or value independently of the display column.

@@ -14,7 +14,7 @@ import (
 const goProbeTimeout = 10 * time.Second
 
 func init() {
-	Default.Register(Check{Name: "gosdk", Dependency: "the Go toolchain", Run: checkGoSDK})
+	Default.Register(Check{Name: "gosdk", Dependency: "the Go toolchain", Repository: true, Run: checkGoSDK})
 }
 
 // checkGoSDK holds the Go toolchain where it belongs (docs/SETUP.md,

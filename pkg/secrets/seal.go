@@ -84,13 +84,15 @@ func (o SealOptions) say(format string, a ...interface{}) {
 // The value travels from Stdin (or the controlling terminal) to the encrypt child's
 // stdin and nowhere else: not argv, not a file in the clear, not an output line.
 type SealOptions struct {
-	StoreDir string
-	AsName   string
-	KeyPath  string
-	SopsPath string
-	Name     string
-	GHPath   string
-	GitPath  string
+	StoreDir     string
+	AsName       string
+	KeyPath      string
+	SopsPath     string
+	Name         string
+	GHPath       string
+	GHEnv        []string // child environment for the seat-owned forge calls
+	ResolveGHEnv func() ([]string, error)
+	GitPath      string
 
 	NoPR     bool
 	UseStdin bool
@@ -143,6 +145,12 @@ func RunSeal(opts SealOptions) (line string, err error) {
 	if opts.GitPath == "" {
 		opts.GitPath = "git"
 	}
+	if !opts.NoPR && !opts.DryRun && opts.ResolveGHEnv != nil {
+		opts.GHEnv, err = opts.ResolveGHEnv()
+		if err != nil {
+			return "", err
+		}
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -167,6 +175,7 @@ func RunSeal(opts SealOptions) (line string, err error) {
 		storeDir: opts.StoreDir,
 		gitPath:  opts.GitPath,
 		ghPath:   opts.GHPath,
+		ghEnv:    opts.GHEnv,
 		seatFile: seatFile,
 		branch:   branch,
 		message:  commitMsg,
@@ -262,6 +271,7 @@ type sealCarry struct {
 	storeDir string
 	gitPath  string
 	ghPath   string
+	ghEnv    []string
 	seatFile string // the seat file the commit touches
 	rules    []byte // .sops.yaml as it is to be committed beside it, or nil to leave it alone
 	branch   string // seal/<seat>-<NAMES>-<stamp>
@@ -356,7 +366,7 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 		return "", false, err
 	}
 	say("opening the pull request")
-	createOut, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "create", "--head", c.branch, "--title", c.title, "--body", c.body)
+	createOut, err := sealGH(c.run, c.ghPath, c.storeDir, c.ghEnv, "pr", "create", "--head", c.branch, "--title", c.title, "--body", c.body)
 	if err != nil {
 		return "", false, err
 	}
@@ -373,7 +383,7 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	lastSaid := started
 	say("pull request #%s is open; waiting for the gate's approval (up to 2 min)", prNum)
 	for {
-		view, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "view", prNum, "--json", "reviewDecision,state,statusCheckRollup")
+		view, err := sealGH(c.run, c.ghPath, c.storeDir, c.ghEnv, "pr", "view", prNum, "--json", "reviewDecision,state,statusCheckRollup")
 		if err != nil {
 			errStr := strings.ToLower(err.Error())
 			if strings.Contains(errStr, "not found") || strings.Contains(errStr, "could not resolve") || strings.Contains(errStr, "missing") {
@@ -403,7 +413,7 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	}
 
 	say("approved; merging #%s", prNum)
-	if _, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "merge", prNum, "--squash"); err != nil {
+	if _, err := sealGH(c.run, c.ghPath, c.storeDir, c.ghEnv, "pr", "merge", prNum, "--squash"); err != nil {
 		return "", false, err
 	}
 	// Back to the branch the store was on: the squash leaves the seal branch stale, and a
@@ -816,8 +826,12 @@ func sealGitOutput(run execCommand, dir, gitPath string, args ...string) (string
 	return strings.TrimSpace(string(out)), nil
 }
 
-func sealGH(run execCommand, ghPath, dir string, args ...string) (string, error) {
-	out, err := run(nil, append(os.Environ(), "GH_PROMPT_DISABLED=1"), dir, ghPath, args...)
+func sealGH(run execCommand, ghPath, dir string, env []string, args ...string) (string, error) {
+	childEnv := env
+	if childEnv == nil {
+		childEnv = os.Environ()
+	}
+	out, err := run(nil, append(append([]string(nil), childEnv...), "GH_PROMPT_DISABLED=1"), dir, ghPath, args...)
 	if err != nil {
 		verb := strings.Join(args[:min(2, len(args))], " ")
 		return "", fmt.Errorf("gh %s failed: %s (transcript withheld)", verb, oneline.Err(err))

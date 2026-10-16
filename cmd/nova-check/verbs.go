@@ -66,13 +66,12 @@ func verdict(failures []check.Failure) *tool.Out {
 func quickstartVerb() tool.Verb {
 	return tool.Verb{
 		Name:      "quickstart",
-		Usage:     "quickstart --dir <dir> [--exclude <prefix>] [--max <n>]",
+		Usage:     "quickstart --dir <dir> [--exclude <prefix>] [--max <n>] [--json]",
 		Example:   "quickstart --dir ./self",
 		Effect:    tool.Effect("inspection: reads markdown under --dir, runs links then nocode, writes nothing"),
 		Detail:    "Both checks run even if the first says NO.",
 		ExitTable: exitCodes,
 		Flags: func(f *tool.Flags) {
-			f.Prints()
 			f.Required("dir", dirHint)
 			addMax(f)
 			f.Var(&repeatable{}, "exclude", "path prefix not scanned by links (repeatable; empty by default)")
@@ -81,13 +80,46 @@ func quickstartVerb() tool.Verb {
 	}
 }
 
+// quickstart combines the existing checks under STANDARD section 2: one result,
+// with the same statuses and exit codes in both renderings.
 func quickstart(c *tool.Call) *tool.Out {
-	aliasNote(c)
 	dir := c.Str("dir")
 	deny, source, err := effectiveDenyList("", "")
 	if err != nil {
 		return tool.Refuse(oneline.Err(err))
 	}
+	if c.Bool("json") {
+		lo := linksOut(dir, nil, c.Get("exclude").([]string))
+		no := nocodeOut(dir, nil, deny, source)
+		out := tool.Done()
+		out.Exit = max(lo.Exit, no.Exit)
+		if out.Exit == 1 {
+			out.Status = tool.Failed
+		}
+		if out.Exit == 2 {
+			out.Status = tool.Refused
+		}
+		passed, failed, refused, findings := 0, 0, 0, len(lo.Items)+len(no.Items)
+		for i, child := range []*tool.Out{lo, no} {
+			child.Verb = []string{"links", "nocode"}[i]
+			switch child.Status {
+			case tool.OK:
+				passed++
+			case tool.Failed:
+				failed++
+			case tool.Refused:
+				refused++
+				child.Remedy = "nova-check help"
+			}
+			child.Cap(c.Int("max"))
+		}
+		out.Fact("checks", []*tool.Out{lo, no}).Fact("total", 2).Fact("passed", passed).Fact("failed", failed).Fact("refused", refused).Fact("findings", findings)
+		if c.Given("fail-max") {
+			out.Note("--fail-max is --max")
+		}
+		return out
+	}
+	aliasNote(c)
 	fmt.Fprintf(c.Stdout, "QUICKSTART RUN dir=%s checks=2: links, then nocode\n", oneline.Field(dir))
 	lo := linksOut(dir, nil, c.Get("exclude").([]string))
 	no := nocodeOut(dir, nil, deny, source)

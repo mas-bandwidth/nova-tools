@@ -1,0 +1,6 @@
+head: a-1.w1
+branch: b
+verdict: ok
+gate: g
+output: -
+report: r

@@ -1,8 +1,8 @@
 package release
 
 import (
+	"runtime"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,7 +18,11 @@ func TestOneMachineAdoptsOneAtATime(t *testing.T) {
 	require.True(t, o.Start("m1", o.Version, "e1"))
 	assert.False(t, o.Start("m1", o.Version, "e1"), "in flight, or ran: never twice")
 	var run OneRun
-	require.Eventually(t, func() bool { run, _ = o.Run("m1", "e1"); return !run.Running }, 10*time.Second, 10*time.Millisecond)
+	// Wait for the adoption to finish by yielding, never by a clock: go test
+	// -timeout bounds it.
+	for run, _ = o.Run("m1", "e1"); run.Running; run, _ = o.Run("m1", "e1") {
+		runtime.Gosched()
+	}
 	assert.Contains(t, run.Err, "no release to adopt")
 	assert.False(t, o.Start("m1", o.Version, "e1"), "the episode ran")
 	assert.True(t, o.Start("m1", o.Version, "e2"), "a new episode starts")

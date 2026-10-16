@@ -115,47 +115,82 @@ func (r Redis) Members(ctx context.Context) (friends, machines []string, now tim
 	return friends, machines, now, nil
 }
 
+// HookRecPrefix is the hook record of a name (hook.RecordKey): a model send
+// stamps the sender's own, and the friend's ACL line lets her touch only that
+// one (docs/SPEC-BUS.md).
+const HookRecPrefix = "hook:rec:"
+
+// HookRecOf is the hook record of name.
+func HookRecOf(name string) string { return HookRecPrefix + name }
+
+// activityLua stamps a successful explicit model send at Redis TIME. It
+// never creates a hook record or changes a proof (tla/HookBeat.tla, BusSend).
+const activityLua = `
+local function activity(key)
+  if redis.call('HGET', key, 'state') ~= 'hooked' then return end
+  local t = redis.call('TIME')
+  local ms = t[1] .. string.format('%03d', math.floor(tonumber(t[2]) / 1000))
+  redis.call('HSET', key, 'bus_sent_at', ms)
+end
+`
+
+// AddAll uses the same Lua commit as AddOnce, without a deduplication key.
+// A failed XADD aborts before activity; MULTI would execute later writes anyway.
 func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error {
-	return r.call(ctx, false, 0, func(ctx context.Context) error {
-		pipe := r.C.TxPipeline()
-		for _, s := range streams {
-			pipe.XAdd(ctx, &redis.XAddArgs{Stream: s, ID: "*", Values: toValues(fields)})
-		}
-		for _, m := range marks {
-			switch {
-			case m.Clear:
-				pipe.HDel(ctx, m.Key, m.Field)
-			case m.Forward:
-				forward.Eval(ctx, pipe, []string{m.Key}, m.Value, m.Field) // the script's text: a pipeline cannot fall back from EVALSHA
-			default:
-				pipe.HSet(ctx, m.Key, m.Field, m.Value)
-			}
-		}
-		return redisconn.Exec(ctx, pipe)
-	})
+	_, _, err := r.AddOnce(ctx, "", "", 0, streams, fields, marks...)
+	return err
 }
 
 // addOnce is AddOnce's one atomic step: Redis runs a script alone, so no
 // other send under the key comes between its GET and its writes. KEYS are the
 // record's key, the streams, then each mark's hash; ARGV are the record, its
 // expiry in ms, the count of streams, the count of field pairs, the pairs,
-// then each mark as "set" field value, "del" field or "fwd" field state.
-var addOnce = redis.NewScript(forwardLua + `
-local prior = redis.call('GET', KEYS[1])
-if prior then return {1, prior} end
-redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+// then each mark as "set" field value, "del" field, "fwd" field state or "nx" field value.
+var addOnce = redis.NewScript(forwardLua + activityLua + `
+if ARGV[1] ~= '' then
+  local prior = redis.call('GET', KEYS[1])
+  if prior then return {1, prior} end
+end
+local activityKey = nil
 local ns, nf = tonumber(ARGV[3]), tonumber(ARGV[4])
+-- Redis scripts isolate writes but do not roll back runtime errors. Refuse
+-- conflicting/malformed keys and invalid arguments before the first XADD.
+if ns > 0 and nf == 0 then return redis.error_reply('XADD wants fields') end
+if ARGV[1] ~= '' and tonumber(ARGV[2]) <= 0 then return redis.error_reply('send-once lifetime must be positive') end
+local expected = {}
+if ARGV[1] ~= '' then expected[KEYS[1]] = 'string' end
+for i = 2, #KEYS do
+  local want = 'hash'
+  if i <= ns + 1 then want = 'stream' end
+  if expected[KEYS[i]] and expected[KEYS[i]] ~= want then
+    return redis.error_reply('WRONGTYPE conflicting send key roles')
+  end
+  expected[KEYS[i]] = want
+end
+for key, want in pairs(expected) do
+  local kind = redis.call('TYPE', key)
+  if type(kind) == 'table' then kind = kind.ok end
+  if kind ~= 'none' and kind ~= want then
+    return redis.error_reply('WRONGTYPE send key wants ' .. want)
+  end
+end
 local fields = {}
 for i = 1, nf * 2 do fields[i] = ARGV[4 + i] end
 for i = 1, ns do redis.call('XADD', KEYS[1 + i], '*', unpack(fields)) end
 local j, k = 5 + nf * 2, 2 + ns
 local now = redis.call('TIME')[1]
 while j <= #ARGV do
-  if ARGV[j] == 'del' then
+  if ARGV[j] == 'activity' then
+    activityKey = KEYS[k]
+    j = j + 1
+  elseif ARGV[j] == 'del' then
     redis.call('HDEL', KEYS[k], ARGV[j + 1])
     j = j + 2
   elseif ARGV[j] == 'fwd' then
     forward(KEYS[k], ARGV[j + 2], ARGV[j + 1], now)
+    j = j + 3
+  elseif ARGV[j] == 'nx' then
+    redis.call('HSETNX', KEYS[k], ARGV[j + 1], ARGV[j + 2])
     j = j + 3
   else
     redis.call('HSET', KEYS[k], ARGV[j + 1], ARGV[j + 2])
@@ -163,11 +198,19 @@ while j <= #ARGV do
   end
   k = k + 1
 end
+if ARGV[1] ~= '' then redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2]) end
+if activityKey then activity(activityKey) end
 return {0, ''}
 `)
 
 func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, marks ...Mark) (prior string, found bool, err error) {
 	err = r.call(ctx, false, 0, func(ctx context.Context) error {
+		if key == "" {
+			// A send with no once-key still declares a first key: Redis checks every declared
+			// key against the login's patterns, and the empty string is on no friend's line.
+			// The script reads ARGV[1] (the record), not this key, to tell a once-send.
+			key = SentOf(fields["from"], "-")
+		}
 		keys := append([]string{key}, streams...)
 		names := slices.Sorted(maps.Keys(fields))
 		args := []any{record, keep.Milliseconds(), len(streams), len(names)}
@@ -181,11 +224,17 @@ func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Durati
 				args = append(args, "del", m.Field)
 			case m.Forward:
 				args = append(args, "fwd", m.Field, m.Value)
+			case m.Once:
+				args = append(args, "nx", m.Field, m.Value)
 			default:
 				args = append(args, "set", m.Field, m.Value)
 			}
 		}
-		res, err := addOnce.Run(ctx, r.C, keys, args...).Slice()
+		if fields["model_activity"] == "1" && len(streams) > 0 {
+			keys = append(keys, HookRecOf(fields["from"]))
+			args = append(args, "activity")
+		}
+		res, err := addOnce.Eval(ctx, r.C, keys, args...).Slice() // one round trip even on a cold script cache
 		if err != nil {
 			return err
 		}
@@ -517,14 +566,6 @@ func (r Redis) readBlock(ctx context.Context, stream, after string, block time.D
 		out = append(out, entries(s.Stream, s.Messages)...)
 	}
 	return out, nil
-}
-
-func toValues(fields map[string]string) map[string]any {
-	v := make(map[string]any, len(fields))
-	for k, s := range fields {
-		v[k] = s
-	}
-	return v
 }
 
 func entries(stream string, msgs []redis.XMessage) []Entry {

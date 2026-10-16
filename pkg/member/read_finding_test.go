@@ -37,7 +37,7 @@ func TestABrokenReadNamesItsDefectOrIsHandedBack(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			g := newRig(Config{As: "r", Width: 1, Reader: true})
+			g := newWidthRig(1, Config{As: "r", Reader: true})
 			p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 			g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 			_, err := g.tick(t)

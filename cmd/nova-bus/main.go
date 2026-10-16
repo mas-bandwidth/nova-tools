@@ -3,7 +3,7 @@
 // to every recipient's stream and to the log in one transaction; a recipient
 // receives through its consumer group, so a message is pending until it is
 // acked and a reader that died before acking is handed it again. The verbs
-// are wait, send, peek, recv, ack, receipts, overdue, log and names, each run
+// are wait, send, peek, recv, ack, receipts, overdue, asks, log and names, each run
 // only while the identity acting is hooked in (pkg/hookgate, docs/SPEC-HOOK.md);
 // the dispatch, the banner,
 // the help, the version verb, the refusals and the output envelope are
@@ -11,6 +11,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -28,6 +29,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
@@ -50,12 +53,6 @@ const (
 	SprintRedisEnv = bus.SprintRedisEnv
 	FleetBusKey    = bus.FleetBusKey
 )
-
-// RequirePushEnv set to 1 makes the push gate refuse, as --require-push does. Without
-// it the proof is advice, never a gate (issue #5450: a claude friend and a machine
-// with no daemon could never be written to or read as): send and recv print
-// NOTE push=<state> for <name> for each name not heard, and go on.
-const RequirePushEnv = "NOVA_BUS_REQUIRE_PUSH"
 
 // ExecBudget bounds one run of --exec's command: a delivery into a harness
 // is a write of a few lines; one that takes longer is stuck. It is also how
@@ -91,11 +88,19 @@ type world struct {
 	// nil when the identity is hooked in, its bus push live and proven
 	// (pkg/hookgate over the store the verb opened); a test passes its own.
 	gate func(ctx context.Context, st bus.Store, want hook.Want) error
+	// hooks reads each named identity's hook status and the store's now from
+	// the hook record (hook.Store.Read); a test passes its own.
+	hooks func(ctx context.Context, st bus.Store, names ...string) ([]hook.Status, time.Time, error)
+	// oneShots answers which of names are one-shot friends (nova-config friend
+	// --session one-shot, applied to friend:<name>:desired): a friend with no live
+	// session, never on the psychic link, so a send naming one is refused at once
+	// (the v1.3 comms spec, guarantee 19); a test passes its own.
+	oneShots func(ctx context.Context, st bus.Store, names ...string) ([]string, error)
 }
 
 func realWorld() world {
 	w := world{getenv: os.Getenv, run: runShell, now: time.Now,
-		wakeArm: realWakeArm, wakeLine: realWakeLine, gate: hookgate.Gate,
+		wakeArm: realWakeArm, wakeLine: realWakeLine, gate: hookgate.Gate, hooks: realHooks, oneShots: realOneShots,
 		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
@@ -105,6 +110,67 @@ func realWorld() world {
 	w.open = w.openRedis
 	w.fleetBus = w.readFleetBus
 	return w
+}
+
+func realHooks(ctx context.Context, st bus.Store, names ...string) ([]hook.Status, time.Time, error) {
+	hs, err := hookgate.Store(st)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return hs.Read(ctx, names...)
+}
+
+// realOneShots reads each name's applied session (bus.FriendDesiredKey, its
+// session field) in one round trip; a name with no hash, or one written before the
+// field, is not a one-shot. A store that is not Redis (no applied rows) holds none.
+func realOneShots(ctx context.Context, st bus.Store, names ...string) ([]string, error) {
+	r, ok := st.(bus.Redis)
+	if !ok || r.C == nil || len(names) == 0 {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, bus.CallTimeout)
+	defer cancel()
+	pipe := r.C.Pipeline()
+	cmds := make([]*redis.StringCmd, len(names))
+	for i, n := range names {
+		cmds[i] = pipe.HGet(ctx, bus.FriendDesiredKey(n), bus.SessionField)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	var out []string
+	for i, n := range names {
+		if cmds[i].Val() == bus.SessionOneShot {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+// OneShotReason is the code of a send refused because it names a one-shot friend.
+const OneShotReason = "one_shot"
+
+// refuseOneShots is the refusal of a send naming any one-shot friend, alone or among
+// others: nothing is admitted and nothing queues, and each is named with the remedy
+// (the v1.3 comms spec, guarantee 19; tla/FriendLane.tla, OneShot). nil when it
+// names none.
+func (w world) refuseOneShots(ctx context.Context, b *bus.Bus, rcpts []string) *tool.Out {
+	if w.oneShots == nil {
+		return nil
+	}
+	ones, err := w.oneShots(ctx, b.Store, rcpts...)
+	if err != nil {
+		return tool.Refuse("the friend rows could not be read: " + err.Error())
+	}
+	if len(ones) == 0 {
+		return nil
+	}
+	o := tool.Refuse()
+	for _, n := range ones {
+		o.Why = append(o.Why, n+" is a one-shot: put it in the next card's brief")
+		o.Reasons = append(o.Reasons, OneShotReason)
+	}
+	return o
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
@@ -214,7 +280,7 @@ example: nova-bus wait --as bob --timeout 1s`,
 			},
 			{
 				Name:    "send",
-				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--kind ask --deadline <duration>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
 				DryRun:  true,
@@ -223,21 +289,19 @@ message's for ever, and the byte count and digest are the body's as the store ho
 can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
-are, and the line says login=none. The message lands whoever is listening: for the sender and each
-recipient whose friend daemon has not proved its inbox push (a SESSION CHECK carried in by its
-harness's deliver adapter and answered by the session, or a per-card harness's daemon up) under ten
-minutes ago, one SEND NOTE push=<none|down|stale> for <name> line follows, saying the message waits
-on its stream and what would prove the push; nothing is refused on it (nova-bus names shows each
-name's push). With --require-push (or ` + RequirePushEnv + `=1) any such name is refused instead,
-deaf: <name> has no proven push since <age> and the remedy, and nothing is written. --dry-run checks
-the message as send does (every problem named) and prints the line with no id and the same NOTE
-lines (or the same refusal), writing nothing.
+are, and the line says login=none. --dry-run checks the message as send does (every problem named)
+and prints the line with no id, writing nothing.
 --token <t> makes the send safe to retry: the same token and the same arguments within --token-life
 (default 24h) print the first send's SEND OK line again (its id and at) and write nothing, so a send
 whose answer was lost after the store took it is retried without a second message; the same token with
 other arguments, or past its life, is refused naming the message that went. The store drops a token at
 --token-cleanup (default 168h, never before its life ends). Without --token every send is a new message.
-Delivery to a reader is still at least once: a reader may be handed one message twice, by its id.`,
+Delivery to a reader is still at least once: a reader may be handed one message twice, by its id.
+--kind ask --deadline <duration> sends an ask: the store stamps its deadline from its own clock (at plus
+the duration, never yours) and the line adds deadline=<RFC3339>. An ask wants a deadline and only an ask
+takes one: never wait for ever. It is answered only by a message from one of its recipients with
+--re <its id>; past its deadline unanswered, the overdue alarm delivers you one message of kind timeout,
+re=<its id>, subject "ASK TIMEOUT <id> <recipients> after <age>: <subject>" (nova-bus asks lists them).`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
 					f.Required("to", "the recipients, comma-separated names")
@@ -246,11 +310,11 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					f.String("body", "", "the message's text (or --stdin; at most 1 MiB)")
 					f.Bool("stdin", false, "read the message's text from stdin")
 					f.String("re", "", "the id of the message this one answers")
-					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on")
+					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on (timeout is the bus's own)")
+					f.Duration("deadline", 0, "an ask's wait for its answer, a Go duration (10m, 1h); wants --kind ask, and an ask wants it")
 					f.String("token", "", "your word for this one send, the same on every retry of it (letters, digits, . _ : -; at most 128 bytes)")
 					f.Duration("token-life", bus.DefaultTokenLife, "how long a retry under --token answers the first send")
 					f.Duration("token-cleanup", bus.DefaultTokenCleanup, "when the store drops the token (never before its life ends)")
-					f.Bool("require-push", false, "refuse a name with no proven push (deaf: ...) instead of noting it; also "+RequirePushEnv+"=1")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
@@ -260,6 +324,15 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 						}
 						if c.Dur("token-life") <= 0 || c.Dur("token-cleanup") <= 0 {
 							c.Problem("--token-life and --token-cleanup want a duration above zero")
+						}
+						ask := c.Str("kind") == bus.KindAsk
+						switch {
+						case ask && !c.Given("deadline"):
+							c.Problem("an ask wants --deadline <duration>: never wait for ever")
+						case !ask && c.Given("deadline"):
+							c.Problem("--deadline is for --kind ask")
+						case c.Given("deadline") && c.Dur("deadline") <= 0:
+							c.Problem("--deadline wants a duration above zero: never wait for ever")
 						}
 					})
 				},
@@ -290,10 +363,7 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 				DryRun:  true,
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> [kind=<k>] at=<RFC3339>
 subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
-NONE at exit 1 when nothing waits. You are the login user, as in send; a name with no proven push
-reads all the same, with one RECV NOTE push=<none|down|stale> for <name> line on its first result
-(--dry-run, --max, --all and --forever alike); with --require-push (or ` + RequirePushEnv + `=1) a
-recv for a name with no proven push is refused instead (deaf: <name> ...). The oldest message a
+NONE at exit 1 when nothing waits. You are the login user, as in send. The oldest message a
 reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
 reader keeps it for fifteen minutes. --exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
@@ -315,7 +385,6 @@ before kinds existed.`,
 					f.Bool("ack", false, "ack each message after printing it (a plain recv leaves it pending)")
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
-					f.Bool("require-push", false, "refuse a name with no proven push (deaf: ...) instead of noting it; also "+RequirePushEnv+"=1")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
@@ -382,8 +451,9 @@ example: nova-bus receipts --as bob`,
 			},
 			{
 				Name:      "overdue",
-				Usage:     "overdue [--as <me>] [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
-				Effect:    tool.Inspection,
+				Usage:     "overdue [--as <me>] [--older <duration>] [--dry-run] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Effect:    tool.Delivery + ": an ask past its deadline gets its one timeout message, to its sender",
+				DryRun:    true,
 				ExitTable: "0 OVERDUE OK, nothing short of delivered past --older; 1 BUS OVERDUE, one or more, or not hooked in (FAILED reason=unhooked); 2 could not run (a flag, a store that did not answer).",
 				Detail: `The alarm the coordinator's loop and the seat check run. Looks at every known name's stream and
 lists each message still short of delivered (new, never taken by a reader, or pending with no
@@ -391,6 +461,12 @@ delivered receipt) sent longer ago than --older (a Go duration, default 10m), by
 Prints OVERDUE OK count=0 older=<d> at exit 0 when there is none; else OVERDUE OVERDUE count=<n>
 older=<d>, then one OVERDUE MESSAGE name=<recipient> id=<id> state=<new|pending> from=<name>
 age=<duration> subject=<s> line each, oldest first, at exit 1. A message acked is never listed.
+It is also the expiry of asks, first: every ask past its deadline (the store's clock) with no answer by
+it gets its timeout, exactly once however many loops run the alarm: one message to the ask's sender,
+kind timeout, re=<ask id>, which wakes its session; one OVERDUE TIMEOUT ask=<id> from=<sender>
+to=<names> message=<id> line each. A timeout never changes the exit. --dry-run delivers no timeout: it
+lists each ask that would get one now as OVERDUE TIMEOUT ask=<id> from=<sender> to=<names> message=-,
+and the overdue messages as without it.
 example: nova-bus overdue --older 10m`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
@@ -406,6 +482,44 @@ example: nova-bus overdue --older 10m`,
 					})
 				},
 				Run: w.overdue,
+			},
+			{
+				Name:   "asks",
+				Usage:  "asks [--as <me>] [--open | --timedout | --all] [--liveness [--window <duration>]] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Effect: tool.Inspection,
+				Detail: `Prints ASKS OK count=<n> open=<n> answered=<n> timedout=<n>, then one ASKS ASK id=<id>
+state=<open|answered|timedout> to=<names> deadline=<RFC3339> age=<duration> answered_by=<name|->
+timeout=<id|-> subject=<s> line per ask you sent (send --kind ask --deadline <d>), newest first; count is
+of those listed, the three after it of every ask. By the store's clock: answered when a recipient sent
+--re <its id> by its deadline, timedout once the deadline passed without one (timeout= names the message
+the overdue alarm delivered, - until it has), else open. --open and --timedout list only those; --all,
+the default, every one. --liveness prints ASKS OK count=<n> window=<d>, then one ASKS LIVE name=<friend>
+state=<up|deaf|unreached|down> ask=<id|-> age=<duration|-> line per friend, from the newest ask to it sent
+within --window (default 24h) whose outcome is known: up, it answered by the deadline; deaf, delivered
+to it and not answered; unreached, never delivered before the deadline; down, no such ask: nothing heard.
+An ask still open says nothing yet.
+example: nova-bus asks --as ada --timedout`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
+					f.Bool("open", false, "only the asks still open")
+					f.Bool("timedout", false, "only the asks past their deadline unanswered")
+					f.Bool("all", false, "every ask (the default)")
+					f.Bool("liveness", false, "each friend's liveness from the asks to it, instead of your asks")
+					f.Duration("window", 24*time.Hour, "with --liveness, how far back an ask counts, a Go duration (1h, 24h)")
+					f.Max()
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					callTimeoutFlag(f)
+					f.Check(func(c *tool.Call) {
+						refuseNonPositiveTimeout(c)
+						if n := len(slices.DeleteFunc([]bool{c.Bool("open"), c.Bool("timedout"), c.Bool("all")}, func(b bool) bool { return !b })); n > 1 {
+							c.Problem("give one of --open, --timedout or --all")
+						}
+						if c.Dur("window") <= 0 {
+							c.Problem("--window wants a duration above zero")
+						}
+					})
+				},
+				Run: w.asks,
 			},
 			{
 				Name:    "log",
@@ -429,12 +543,12 @@ example: nova-bus overdue --older 10m`,
 				Usage:   "names [--as <me>] [--timeout <duration>] [--redis <addr>]",
 				Example: "names --as bob",
 				Effect:  tool.Inspection,
-				Detail: `Prints NAMES OK count=<n> proven=<n>, then one NAMES NAME name=<name> push=<state> age=<age>
-harness=<h> line per known name (nova-config's friend and machine rows). push is proven (its friend
-daemon proved and renewed its inbox push under ten minutes ago), stale (the daemon stopped
-renewing), down (its session did not answer the daemon's SESSION CHECK) or none (no daemon ever
-recorded one); age is how long ago the daemon wrote it, never when there is none. The push is the
-seat's liveness rule and a sender's advice: send and recv say it as a NOTE, never refuse on it.`,
+				Detail: `Prints NAMES OK count=<n> proven=<n>, then one NAMES NAME name=<name> state=<state> role=<role>
+reason=<text> line per known name (nova-config's friend and machine rows), read from the hook record
+(docs/SPEC-HOOK.md): state is proven (hooked in, every push of its role live and proven, and the
+heartbeat's evidence fresh), down (the holders are proven and the heartbeat server or challenge answer
+is not), live, partial, expired, unhooked or none; role is its hook role (- when none); reason is why
+it is not proven (- when proven).`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
@@ -466,10 +580,6 @@ func refuseNonPositiveTimeout(c *tool.Call) {
 // is one too (exit 2, the banner's table), in redisconn's one line. timeout
 // is the deadline of one call (SPEC-BUS.md, the deadlines); a blocking read
 // gets its block and the margin more on top of it.
-// requirePush says send's or recv's push gate refuses: --require-push, or RequirePushEnv=1.
-func (w world) requirePush(c *tool.Call) bool {
-	return c.Bool("require-push") || w.getenv(RequirePushEnv) == "1"
-}
 
 func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(), *tool.Out) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
@@ -563,6 +673,9 @@ func names(csv string) []string {
 }
 
 func (w world) send(c *tool.Call) *tool.Out {
+	// Read the dry-run before setup can refuse so its early exits are handled
+	// simulations too (STANDARD.md, a verb that writes has a dry run).
+	dry := c.DryRun()
 	body := c.Str("body")
 	if c.Bool("stdin") {
 		raw, err := io.ReadAll(io.LimitReader(c.Stdin, bus.MaxBody+1))
@@ -574,7 +687,6 @@ func (w world) send(c *tool.Call) *tool.Out {
 		}
 		body = string(raw)
 	}
-	gated := w.requirePush(c)
 	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
@@ -587,60 +699,126 @@ func (w world) send(c *tool.Call) *tool.Out {
 	draft := bus.Message{
 		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
 		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body, Token: c.Str("token"),
+		Wait: c.Dur("deadline"),
 	}
+	// Explicit send is model activity for every allowed kind and subject.
+	// Library and daemon callers keep ModelActivity false (HookBeat BusSend).
+	draft.ModelActivity = true
 	b.TokenLife, b.TokenCleanup = c.Dur("token-life"), c.Dur("token-cleanup")
-	send := b.Send
-	if gated {
-		// --require-push: the gate, after the message's own problems are named and
-		// before anything is written
-		send = func(ctx context.Context, m bus.Message) (bus.Message, error) {
-			m, err := b.Check(ctx, m)
-			if err != nil {
-				return m, err
-			}
-			if err := b.Heard(ctx, slices.Concat([]string{m.From}, m.To, m.CC)...); err != nil {
-				return m, err
-			}
-			return b.Send(ctx, m)
-		}
+	if refused := w.checkRecipients(context.Background(), b, as, draft, dry); refused != nil {
+		return refused
 	}
-	if c.DryRun() {
-		// the message as it would be sent, with no id: nothing is written, and the
-		// push gate the write would meet is asked for by name
-		send = func(ctx context.Context, m bus.Message) (bus.Message, error) {
-			m, err := b.Check(ctx, m)
-			if err != nil || !gated {
-				return m, err
-			}
-			return m, b.Heard(ctx, slices.Concat([]string{m.From}, m.To, m.CC)...)
-		}
+	send := b.Send
+	if dry {
+		send = b.Check
 	}
 	m, err := send(context.Background(), draft)
 	if err != nil {
 		return answer(err)
 	}
-	// the push proof is advice, never a gate: the message landed (or would), and a
-	// name nothing proven is pushing into is one NOTE each (SPEC-BUS.md,
-	// bus-requires-inbox-push-proof); a gated send proved every name already
-	var unheard []string
-	if !gated {
-		names := slices.Concat([]string{m.From}, m.To, m.CC)
-		if m.At.IsZero() {
-			// --dry-run: no message was stamped, so judge at the store's now
-			unheard, err = b.Unheard(context.Background(), names...)
-		} else {
-			unheard, err = b.UnheardAt(context.Background(), m.At, names...)
-		}
-		if err != nil {
-			return answer(err)
-		}
-	}
 	sum := sha256.Sum256([]byte(m.Body))
 	o := tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ","))
-	o = loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
+	o = kindFact(o, m)
+	if !m.Due.IsZero() {
+		o.Fact("deadline", m.Due.Format(time.RFC3339))
+	}
+	o = loginFact(o.Fact("at", m.At.Format(time.RFC3339)).
 		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
-	for _, line := range unheard {
-		o.Note(line)
+	return o
+}
+
+func downReason(st hook.Status) string {
+	switch {
+	case st.Down != "" && st.State == hook.StateProven:
+		return st.Down
+	case st.Reason != "":
+		return st.Reason
+	default:
+		return st.State
+	}
+}
+
+func (w world) checkRecipients(ctx context.Context, b *bus.Bus, as string, draft bus.Message, dry bool) *tool.Out {
+	var rcpts []string
+	for _, n := range slices.Compact(slices.Sorted(slices.Values(slices.Concat(draft.To, draft.CC)))) {
+		if bus.CheckName(n) == "" {
+			rcpts = append(rcpts, n)
+		}
+	}
+	if len(rcpts) == 0 {
+		return nil
+	}
+	if o := w.refuseOneShots(ctx, b, rcpts); o != nil {
+		return o
+	}
+	sts, _, err := w.hooks(ctx, b.Store, rcpts...)
+	if err != nil {
+		return tool.Refuse("the hook record could not be read: " + err.Error())
+	}
+	allUp := true
+	for _, st := range sts {
+		if st.State != hook.StateProven || st.Down != "" {
+			allUp = false
+			break
+		}
+	}
+	if allUp {
+		return nil
+	}
+	if _, err := b.Check(ctx, draft); err != nil {
+		return answer(err)
+	}
+	if draft.Token != "" && !dry {
+		if _, found, serr := b.Store.Sent(ctx, bus.SentOf(as, draft.Token)); serr == nil && found {
+			return nil
+		}
+	}
+	coord := ""
+	if !dry {
+		if all, nerr := b.Names(ctx); nerr == nil {
+			if allSts, _, herr := w.hooks(ctx, b.Store, all...); herr == nil {
+				for _, st := range allSts {
+					if st.Role == hook.Coordinator && st.State == hook.StateProven && st.Down == "" {
+						coord = st.Name
+						break
+					}
+				}
+			}
+		}
+	}
+	var problems, reasons, notes []string
+	firstDown := ""
+	for _, st := range sts {
+		if st.State == hook.StateProven && st.Down == "" {
+			continue
+		}
+		if firstDown == "" {
+			firstDown = st.Name
+		}
+		why := downReason(st)
+		problems = append(problems, fmt.Sprintf("%s is down (%s)", st.Name, why))
+		reasons = append(reasons, hookgate.Reason)
+		if !dry && coord != "" {
+			once := fmt.Sprintf("hook:down:%s:%d:%s:%t", st.Name, st.Epoch, st.State, st.Down != "")
+			if _, found, serr := b.Store.Sent(ctx, once); serr == nil && !found {
+				subject := "FRIEND DOWN " + st.Name + ": " + why
+				body := subject + "\nAnswer with nova-bus send --re <this message's id> and one of: wait | reassign " + st.Name + "'s work | tell the owner.\n"
+				jm, jerr := b.Send(ctx, bus.Message{From: as, To: []string{coord}, Kind: bus.KindJudgment, Subject: subject, Body: body, Once: once})
+				if jerr == nil && jm.ID != "" {
+					if hs, herr := hookgate.Store(b.Store); herr == nil {
+						if oerr := hs.OpenJudgment(ctx, hook.Judgment{ID: jm.ID, To: []string{coord}, Subject: subject}, 2*time.Minute); oerr != nil {
+							notes = append(notes, "the judgment record could not be written: "+oerr.Error())
+						}
+					}
+				}
+			}
+		}
+	}
+	o := tool.Fail(problems...)
+	o.Reasons = reasons
+	o.Remedy = "nova-hook status --as " + firstDown
+	for _, n := range notes {
+		o.Note(n)
 	}
 	return o
 }
@@ -688,7 +866,6 @@ func text(m bus.Message, login string) string {
 }
 
 func (w world) recv(c *tool.Call) *tool.Out {
-	gated := w.requirePush(c)
 	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
@@ -702,33 +879,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	if p := bus.CheckKinds(kinds...); p != "" {
 		return tool.Refuse(p)
 	}
-	// the push proof is advice, never a gate: a name nothing proven is pushing
-	// into reads all the same, with one NOTE on its first result (SPEC-BUS.md,
-	// bus-requires-inbox-push-proof); with --require-push a name not heard is
-	// refused before anything is read, --dry-run alike
-	var unheard []string
-	dry := c.DryRun() // read before a refusal, so a refused --dry-run is still a dry run
-	if gated {
-		if err := b.Heard(context.Background(), as); err != nil {
-			return answer(err)
-		}
-	} else {
-		var err error
-		if unheard, err = b.Unheard(context.Background(), as); err != nil {
-			return answer(err)
-		}
-	}
-	noted := false
-	note := func(o *tool.Out) *tool.Out {
-		if !noted {
-			noted = true
-			for _, line := range unheard {
-				o.Note(line)
-			}
-		}
-		return o
-	}
-	if dry {
+	if c.DryRun() {
 		// what waits, read only: the next delivered is a pending one held past fifteen
 		// minutes when there is one, else the oldest new one
 		pending, fresh, err := b.Peek(context.Background(), as)
@@ -740,7 +891,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		if len(fresh) > 0 {
 			next = fresh[0].Message().ID
 		}
-		return note(loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login))
+		return loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login)
 	}
 	command := c.Str("exec")
 	ctx, stop := w.signals(context.Background())
@@ -756,10 +907,10 @@ func (w world) recv(c *tool.Call) *tool.Out {
 			return answer(err), false
 		}
 		if !ok {
-			return note(tool.Fail("nothing for " + as).As("NONE")), false
+			return tool.Fail("nothing for " + as).As("NONE"), false
 		}
 		m := e.Message()
-		o := note(message(m, login))
+		o := message(m, login)
 		if command == "" {
 			o.Payload = "\n" + m.Body
 			if c.Bool("ack") {
@@ -932,23 +1083,23 @@ func (w world) names(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	proofs, now, err := b.PushProofs(context.Background(), got...)
+	sts, _, err := w.hooks(context.Background(), b.Store, got...)
 	if err != nil {
 		return answer(err)
 	}
 	proven := 0
-	for _, p := range proofs {
-		if p.State(now) == bus.PushProven {
+	for _, st := range sts {
+		if st.State == hook.StateProven && st.Down == "" {
 			proven++
 		}
 	}
 	o := tool.Done().Fact("count", len(got)).Fact("proven", proven)
-	for _, p := range proofs {
-		harness := p.Harness
-		if harness == "" {
-			harness = "-"
+	for _, st := range sts {
+		state, reason := st.State, st.Reason
+		if st.Down != "" && state == hook.StateProven {
+			state, reason = "down", st.Down
 		}
-		o.Item("name", "name", p.Name, "push", p.State(now), "age", p.AgeWord(now), "harness", harness)
+		o.Item("name", "name", st.Name, "state", state, "role", string(st.Role), "reason", tool.Text(reason))
 	}
 	return o
 }
@@ -993,6 +1144,23 @@ func (w world) overdue(c *tool.Call) *tool.Out {
 	if _, refused := w.acting(c, b, login); refused != nil {
 		return refused
 	}
+	// the expiry of asks first (bus.ExpireAsks): a timeout is a message, and
+	// the alarm below sees it like any other; --dry-run reads the asks it
+	// would time out (bus.DueAsks) and delivers nothing
+	var expired []bus.Expired
+	var err error
+	if c.DryRun() {
+		var due []bus.Ask
+		due, err = b.DueAsks(context.Background())
+		for _, a := range due {
+			expired = append(expired, bus.Expired{Ask: a, MessageID: "-"})
+		}
+	} else {
+		expired, err = b.ExpireAsks(context.Background())
+	}
+	if err != nil {
+		return answer(err)
+	}
 	older := c.Dur("older")
 	late, _, err := b.Overdue(context.Background(), older)
 	if err != nil {
@@ -1006,7 +1174,69 @@ func (w world) overdue(c *tool.Call) *tool.Out {
 	for _, l := range late {
 		o.Item("message", "name", l.Name, "id", l.ID, "state", l.State, "from", l.From, "age", l.Age.Round(time.Second).String(), "subject", tool.Text(l.Subject))
 	}
+	for _, e := range expired {
+		o.Item("timeout", "ask", e.Ask.ID, "from", e.Ask.From, "to", strings.Join(e.Ask.To, ","), "message", e.MessageID)
+	}
 	return o
+}
+
+// asks is what as asked and where each stands, newest first, or with
+// --liveness each friend's word from the asks to it, by the store's clock
+// (SPEC-BUS.md, asks).
+func (w world) asks(c *tool.Call) *tool.Out {
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := w.acting(c, b, login)
+	if refused != nil {
+		return refused
+	}
+	if c.Bool("liveness") {
+		window := c.Dur("window")
+		lives, now, err := b.Liveness(context.Background(), window)
+		if err != nil {
+			return answer(err)
+		}
+		o := tool.Done().Fact("count", len(lives)).Fact("window", window.String())
+		for _, l := range lives {
+			ask, age := "-", "-"
+			if l.AskID != "" {
+				ask, age = l.AskID, now.Sub(l.At).Round(time.Second).String()
+			}
+			o.Item("live", "name", l.Name, "state", l.State, "ask", ask, "age", age)
+		}
+		return o
+	}
+	all, now, err := b.Asks(context.Background(), as)
+	if err != nil {
+		return answer(err)
+	}
+	want := ""
+	switch {
+	case c.Bool("open"):
+		want = bus.AskOpen
+	case c.Bool("timedout"):
+		want = bus.AskTimedOut
+	}
+	counts := map[string]int{}
+	var shown []bus.Ask
+	for _, a := range slices.Backward(all) {
+		counts[a.State(now)]++
+		if want == "" || a.State(now) == want {
+			shown = append(shown, a)
+		}
+	}
+	o := tool.Done().Fact("count", len(shown)).Fact("open", counts[bus.AskOpen]).
+		Fact("answered", counts[bus.AskAnswered]).Fact("timedout", counts[bus.AskTimedOut])
+	for _, a := range shown {
+		by, timeout := cmp.Or(a.AnsweredBy, "-"), cmp.Or(a.TimeoutID, "-")
+		o.Item("ask", "id", a.ID, "state", a.State(now), "to", strings.Join(a.To, ","),
+			"deadline", a.Due.Format(time.RFC3339), "age", now.Sub(a.At).Round(time.Second).String(),
+			"answered_by", by, "timeout", timeout, "subject", tool.Text(a.Subject))
+	}
+	return loginFact(o, login)
 }
 
 // address is the store a verb opens: --redis (its default is RedisEnv),

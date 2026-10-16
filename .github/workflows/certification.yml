@@ -183,6 +183,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 2
     steps:
+      # NOT fetch-depth 0. A full-depth checkout fetches every branch and tag on origin with
+      # all their blobs: 8,604 branches on 2026-10-14, 28.5 s of git fetch on macos-latest
+      # (27-56 s across the legs of run 38586098775), which put macOS shards 1, 16 and 18 over
+      # the two-minute cap with their packages green (internal/ci 58.160 s, cmd/nova-ci
+      # 52.015 s). Depth 2 is ci.yml's checkout (the classtests rule reads what HEAD deleted
+      # from its first parent); the shard that holds internal/ci completes HEAD's and dev's
+      # ancestry below with `ci fetch-ancestry dev` (commits and trees, --unshallow), as
+      # ci.yml's hosted ratchet step does.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
@@ -252,19 +260,25 @@ jobs:
       - name: fetch origin/dev for the deprecated-imports ratchet
         # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
         # allowlist against the merge base with refs/remotes/origin/dev and refuses when that
-        # ref is missing. actions/checkout creates it only on a run of dev itself; a dispatch
-        # on a tag, on main or on a branch has no such ref. One commit is enough: with no
-        # shared history in the shallow clone the test compares against HEAD's first parent.
+        # ref is missing. The checkout above is depth 2 and fetches only the commit under
+        # test, so the ref is never there. `ci fetch-ancestry dev` fetches dev with its whole
+        # ancestry and, the checkout being shallow, completes HEAD's with --unshallow
+        # (commits and trees only; a ratchet's `git show <base>:<file>` fetches that one blob
+        # from the promisor remote), so every ratchet resolves the real merge base rather
+        # than a shallow boundary. Measured from a Mac on the release/v1.2.26 tip: depth-2
+        # fetch 3 s plus this 3 s, against 14 s for the full-depth fetch of every branch;
+        # internal/ci green under -race on the result.
         if: contains(format(' {0} ', env.HOSTED_PKGS), '/internal/ci ')
         shell: bash
-        run: git fetch --no-tags --depth=1 origin +dev:refs/remotes/origin/dev
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry dev
 
       - name: fetch dev's ancestry for a main run
         # On main (the default branch) at a merge commit, the landed promotion,
         # the classtests rule excuses a deletion only when the second parent's
         # ancestry shows dev deleting it; a shallow ancestry is a red run naming
         # this fetch. blob:none brings commits and trees only; --unshallow
-        # completes them, after the depth-1 fetch above as well as instead of it
+        # completes them when a caller starts with a shallow checkout
         # (`go run ./tools/ci help fetch-ancestry`).
         if: github.ref_name == github.event.repository.default_branch
         shell: bash
@@ -645,6 +659,15 @@ jobs:
       - name: the stamp assertion is red on an unstamped or mutated tool and green on the release's stamp
         shell: bash
         run: go run ./tools/ghrelease controls
+
+      - name: this release's inventory lists every host and group over the store the previous release leaves
+        # The adopt runs this release's inventory over the previous release's applied state
+        # before this release's migrations and apply have run (v1.2.19 refused it twice:
+        # pre-0042 rows with no roles, beats with no os). The fixture is that state, the
+        # golden the previous release's own inventory of it; pkg/config,
+        # TestReleaseNInventoryOverReleaseNMinus1Store.
+        shell: bash
+        run: go test -count=1 -run '^TestReleaseNInventoryOverReleaseNMinus1Store$' ./pkg/config/
 
   perf-plan:
     # Discovery compiles both test lists for every perf package. Run 37159703304 spends

@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/roadmap"
+	"github.com/mas-bandwidth/nova-tools/pkg/roadmap"
 )
 
 // TestRoadmapIsGeneratedFromTheSexp holds ROADMAP.md to docs/roadmap.sexp: it

@@ -73,7 +73,7 @@ func (f *fakePusher) cards() []string {
 func pushRig(t *testing.T, pu Pusher, r Result) (*rig, Packet) {
 	t.Helper()
 	s, rn, out := newScript(), newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "m", Width: 2}, s, rn, pu, out), s: s, r: rn, out: out}
+	g := &rig{m: New(Config{As: "m"}, rowWidth(s, 2), rn, pu, out), s: s, r: rn, out: out}
 	p := pk("c1")
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	_, err := g.tick(t)
@@ -193,7 +193,7 @@ func TestCardsThatEndTogetherArePushedSideBySide(t *testing.T) {
 	}
 	pu := &fakePusher{def: Push{Sha: fullSha}, yield: 2000}
 	s, rn, out := newScript(), newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "m", Width: len(ids)}, s, rn, pu, out), s: s, r: rn, out: out}
+	g := &rig{m: New(Config{As: "m"}, rowWidth(s, len(ids)), rn, pu, out), s: s, r: rn, out: out}
 	var cards []queueCard
 	for _, id := range ids {
 		p := pk(id)
@@ -231,7 +231,7 @@ func TestCardsThatEndTogetherArePushedSideBySide(t *testing.T) {
 func TestAReaderPushesNothing(t *testing.T) {
 	t.Parallel()
 	s, rn, out := newScript(), newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "r", Width: 1, Reader: true}, s, rn, nil, out), s: s, r: rn, out: out}
+	g := &rig{m: New(Config{As: "r", Reader: true}, rowWidth(s, 1), rn, nil, out), s: s, r: rn, out: out}
 	a := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: fullSha}
 	g.s.set("queue", 0, queueJSON(t, 7, queueCard{ID: "r1", Col: "reading", Packet: &a}))
 	_, err := g.tick(t)

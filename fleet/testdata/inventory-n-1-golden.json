@@ -1,0 +1,55 @@
+{
+  "adopt": {
+    "hosts": [
+      "bench-b",
+      "bench-a",
+      "bench-c",
+      "bench-d",
+      "bench-e"
+    ]
+  },
+  "all": {
+    "hosts": [
+      "bench-a",
+      "bench-b",
+      "bench-c",
+      "bench-d",
+      "bench-e"
+    ]
+  },
+  "benches": {
+    "hosts": [
+      "bench-a",
+      "bench-b",
+      "bench-c",
+      "bench-d",
+      "bench-e"
+    ]
+  },
+  "coordinator": {
+    "hosts": [
+      "bench-a"
+    ]
+  },
+  "runners": {
+    "hosts": [
+      "bench-c"
+    ]
+  },
+  "store": {
+    "hosts": [
+      "bench-a"
+    ]
+  },
+  "store_deployer": {
+    "hosts": [
+      "bench-a"
+    ]
+  },
+  "tla": {
+    "hosts": [
+      "bench-a",
+      "bench-c"
+    ]
+  }
+}

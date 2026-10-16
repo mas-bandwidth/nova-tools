@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
@@ -57,6 +58,10 @@ type gitPusher struct {
 	// env is added to this process's environment for every git and gh the pusher
 	// runs: none in production, a test's git configuration
 	env []string
+	// getenv and processEnv keep child environment selection testable; nil uses
+	// the real process environment.
+	getenv     func(string) string
+	processEnv func() []string
 	// git runs one git; gitrun.Run, or a test's fake.
 	git func(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error)
 	mu  sync.Mutex // the push repository's creation
@@ -85,6 +90,9 @@ func newGitPusher(root, slots string) *gitPusher {
 var pushBranchRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]*$`)
 
 // Push pushes the child's commit, or says why it did not (member.Push).
+// tla/CardContract.tla RewriteKeptIsPushed holds at this boundary: only a head
+// descending from the slot's recorded stage reaches origin, even if Git plumbing
+// bypasses the shim. A repeated ancestry refusal leaves origin unchanged.
 func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	head := strings.ToLower(strings.TrimSpace(r.Head))
 	if !typedrec.IsSha(head) {
@@ -292,7 +300,19 @@ func (g *gitPusher) openPR(url, base, branch, title, body string) (pr, note stri
 	cmd, cancel := subproc.CommandFor(context.Background(), prBudget, bin, args...)
 	defer cancel()
 	cmd.Stdin = strings.NewReader(body)
-	cmd.Env = append(append(os.Environ(), g.env...), "GH_PROMPT_DISABLED=1")
+	getenv := g.getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	processEnv := g.processEnv
+	if processEnv == nil {
+		processEnv = os.Environ
+	}
+	cmd.Env, err = seatcred.ForgeCommandEnv(append(processEnv(), g.env...), getenv)
+	if err != nil {
+		return "", "gh pr create: " + oneLineOf(err.Error())
+	}
+	cmd.Env = append(cmd.Env, "GH_PROMPT_DISABLED=1")
 	var errb strings.Builder
 	cmd.Stderr = &errb
 	out, err := cmd.Output()

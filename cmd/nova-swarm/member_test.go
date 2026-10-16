@@ -22,6 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // resultFixture writes a RESULT.md under a fresh directory and returns its path.
@@ -264,6 +265,10 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 		require.True(t, c.Done(), "%s: a child whose done channel is closed is done", tc.name)
 		r := c.Result()
 		wantReport := strings.ReplaceAll(tc.report, "LOG", logPath)
+		if fault := typedrec.ParseCardResult([]byte(tc.result)).Fault; fault != "" && tc.finish == "" {
+			// a work card's RESULT.md out of the contract's shape: the report says what is wrong with it
+			wantReport = "RESULT.md shape fault: " + fault + "; " + wantReport
+		}
 		if tc.finish != "" {
 			assert.Equal(t, "the body\n\n## RESULT.md\n\nRESULT: c1 sha=0123\n## One line\ngate green", r.Body, "the child's RESULT.md rides in the body")
 		}
@@ -306,7 +311,7 @@ func TestNativeChildResultCarriesTheNativeWall(t *testing.T) {
 
 // memberFull is every flag of `member` the verb requires, valid.
 func memberFull(root string) []string {
-	return []string{"member", "--as", "m1", "--server", "sprint.test:6390", "--width", "2", "--harness", "/bin/true", "--model", "p/m",
+	return []string{"member", "--as", "m1", "--server", "sprint.test:6390", "--harness", "/bin/true", "--model", "p/m",
 		"--root", root, "--tokens", "unmetered", "--deadline", "30s", "--once"}
 }
 
@@ -343,29 +348,26 @@ func TestMemberWithNoFlagsRefusesAndNamesEachMissingOne(t *testing.T) {
 	}
 }
 
-// TestMemberWithAWidthBelowZeroRefuses pins that --width is an override of the
-// fleet row's width, a member's or a reader's, and is refused below 0.
-func TestMemberWithAWidthBelowZeroRefuses(t *testing.T) {
+// TestAWorkerGivenAWidthIsRefusedNamingNovaConfig pins that a worker has no width of its
+// own (docs/SPEC-SWARM.md, the width): a loop row or plist that still passes --width fails
+// loudly, exit 2, naming nova-config's machine row as the remedy (a reader its machine's).
+func TestAWorkerGivenAWidthIsRefusedNamingNovaConfig(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
-		width string
 		extra []string
 		want  string
 	}{
-		{"-1", []string{"--reader"}, "--width is an override of the fleet row's width and is at least 1"},
-		{"-1", nil, "--width is an override of the fleet row's width and is at least 1"},
+		{[]string{"--reader", "--as", "reader-m2"}, "nova-config machine set m2 --width 2"},
+		{nil, "nova-config machine set m1 --width 2"},
 	} {
-		args := memberFull(t.TempDir())
-		for i, a := range args {
-			if a == "--width" {
-				args[i+1] = c.width
-			}
-		}
+		args := append(memberFull(t.TempDir()), "--width", "2")
 		args = append(args, c.extra...)
 		var out, errb bytes.Buffer
 		code := run(args, strings.NewReader(""), &out, &errb, time.Now())
-		require.Equal(t, 2, code, "--width %s %v: exit %d, stderr %q", c.width, c.extra, code, errb.String())
-		require.Contains(t, errb.String(), c.want, "--width %s %v: exit %d, stderr %q", c.width, c.extra, code, errb.String())
+		require.Equal(t, 2, code, "%v: exit %d, stderr %q", c.extra, code, errb.String())
+		require.Contains(t, errb.String(), "--width is refused: the width is nova-config's alone", "%v: stderr %q", c.extra, errb.String())
+		require.Contains(t, errb.String(), c.want, "%v: stderr %q", c.extra, errb.String())
+		assert.NotContains(t, out.String(), "MEMBER ", "a refused worker never starts")
 	}
 }
 
@@ -848,8 +850,8 @@ func TestAPidFileThatCannotBeWrittenIsNamed(t *testing.T) {
 // models' alone.
 func TestAReaderBuiltByNovaSwarmHasScriptVerify(t *testing.T) {
 	t.Parallel()
-	reader := memberConfig("r1", 0, true, nil, nil, t.TempDir(), false)
+	reader := memberConfig("r1", true, nil, nil, t.TempDir(), false)
 	assert.NotNil(t, reader.ScriptVerify, "a reader reads a script card by its program")
-	worker := memberConfig("m1", 0, false, nil, nil, t.TempDir(), false)
+	worker := memberConfig("m1", false, nil, nil, t.TempDir(), false)
 	assert.Nil(t, worker.ScriptVerify, "a worker does not read script cards")
 }

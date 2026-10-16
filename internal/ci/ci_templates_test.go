@@ -21,9 +21,8 @@ import (
 // refusal, an allowed shape, the class test itself, the
 // allowlist-grows-refused and the allowlist-survives-shifted-lines rules, the
 // output grammar and the verb line -- are written once below; each rule's own
-// cases are data on its row, and every old top-level test name stays a
-// top-level test that calls the shared helper, so `go test -run` and the docs
-// that name it still find it. Each fixture is a real _test.go written into a
+// cases are data on its row, and TestCIScanRules runs every case as the
+// subtest <rule>/<case>; each rule's class test stays a top-level test. Each fixture is a real _test.go written into a
 // throwaway tree and handed to the checker, so a rule is exercised on a tree
 // given on the command line and never by reaching into the repository; the
 // class test that walks the repo never reads the offenders it is meant to find.
@@ -70,7 +69,6 @@ type ciAllow struct {
 type ciRule struct {
 	key            string
 	prefix         string
-	allowlist      string
 	fixtures       string
 	allowKind      string
 	allowRemedy    string
@@ -173,53 +171,76 @@ func lineAt(t *testing.T, root, rel string, line int) string {
 	return strings.TrimSpace(lines[line-1])
 }
 
-// ciNamedRefusal runs the refusal case of rule named name.
-func ciNamedRefusal(t *testing.T, rule ciRule, name string) {
-	t.Helper()
-	for _, c := range rule.refusals {
-		if c.name == name {
-			root := ruleFixtureTree(t, rule, c.fixture)
-			res, err := rule.check(root, "")
-			require.NoError(t, err)
-			require.Equal(t, 1, res.refused, "%s: refusals = %d, want 1: %+v", name, res.refused, res.findings)
-			require.Len(t, res.findings, 1, "%s: findings = %+v, want 1", name, res.findings)
-			f := res.findings[0]
-			if c.kind != "" {
-				assert.Equal(t, c.kind, f.kind, "%s: kind = %q, want %q", name, f.kind, c.kind)
+// TestCIScanRules runs every case of the four rules: each refusal and allowed
+// shape on its row, then the allowlist-grows-refused and the
+// allowlist-survives-shifted-lines rules, the output grammar and the verb line.
+// A case is the subtest <rule>/<case>, e.g. -run 'TestCIScanRules/waits/RefusesFixedSleep'.
+func TestCIScanRules(t *testing.T) {
+	t.Parallel()
+	for _, rule := range []ciRule{netRule, waitsRule, testbinsRule, templatesRule} {
+		t.Run(rule.key, func(t *testing.T) {
+			t.Parallel()
+			cases := map[string]func(*testing.T){
+				"AllowlistGrowsRefused":  func(t *testing.T) { ciAllowlistGrowsRefused(t, rule) },
+				"OutputMatchesTheSpec":   func(t *testing.T) { ciOutputMatchesTheSpec(t, rule) },
+				"VerbLineMatchesTheSpec": func(t *testing.T) { ciVerbLineMatchesTheSpec(t, rule) },
 			}
-			if c.remedy != "" {
-				assert.Equal(t, c.remedy, f.remedy, "%s: remedy = %q, want %q", name, f.remedy, c.remedy)
+			if rule.secondOffender != nil {
+				cases["AllowlistSurvivesShiftedLines"] = func(t *testing.T) { ciAllowlistShiftedLines(t, rule) }
 			}
-			if c.host != "" {
-				assert.Equal(t, c.host, f.host, "%s: host = %q, want %q", name, f.host, c.host)
+			for _, c := range rule.refusals {
+				cases[c.name] = func(t *testing.T) { ciRefusalCase(t, rule, c) }
 			}
-			if c.contains != "" {
-				got := lineAt(t, root, f.file, f.line)
-				assert.Contains(t, got, c.contains, "%s: finding names %s:%d = %q, want it to carry %q", name, f.file, f.line, got, c.contains)
+			for _, c := range rule.allows {
+				cases[c.name] = func(t *testing.T) { ciAllowCase(t, rule, c) }
 			}
-			return
-		}
+			for name, run := range cases {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					run(t)
+				})
+			}
+		})
 	}
-	t.Fatalf("%s: no refusal case named %q", rule.key, name)
 }
 
-// ciNamedAllow runs the allowed-shape case of rule named name.
-func ciNamedAllow(t *testing.T, rule ciRule, name string) {
+// ciRefusalCase runs one refusal case of rule.
+func ciRefusalCase(t *testing.T, rule ciRule, c ciRefusal) {
 	t.Helper()
-	for _, c := range rule.allows {
-		if c.name == name {
-			root := ruleFixtureTree(t, rule, c.fixture)
-			res, err := rule.check(root, "")
-			require.NoError(t, err)
-			require.Zero(t, res.refused, "%s: refusals = %d, want 0: %+v", name, res.refused, res.findings)
-			require.Empty(t, res.findings, "%s: findings = %+v, want none", name, res.findings)
-			if c.tests >= 0 {
-				assert.Equal(t, c.tests, res.tests, "%s: tests = %d, want %d", name, res.tests, c.tests)
-			}
-			return
-		}
+	name := c.name
+	root := ruleFixtureTree(t, rule, c.fixture)
+	res, err := rule.check(root, "")
+	require.NoError(t, err)
+	require.Equal(t, 1, res.refused, "%s: refusals = %d, want 1: %+v", name, res.refused, res.findings)
+	require.Len(t, res.findings, 1, "%s: findings = %+v, want 1", name, res.findings)
+	f := res.findings[0]
+	if c.kind != "" {
+		assert.Equal(t, c.kind, f.kind, "%s: kind = %q, want %q", name, f.kind, c.kind)
 	}
-	t.Fatalf("%s: no allow case named %q", rule.key, name)
+	if c.remedy != "" {
+		assert.Equal(t, c.remedy, f.remedy, "%s: remedy = %q, want %q", name, f.remedy, c.remedy)
+	}
+	if c.host != "" {
+		assert.Equal(t, c.host, f.host, "%s: host = %q, want %q", name, f.host, c.host)
+	}
+	if c.contains != "" {
+		got := lineAt(t, root, f.file, f.line)
+		assert.Contains(t, got, c.contains, "%s: finding names %s:%d = %q, want it to carry %q", name, f.file, f.line, got, c.contains)
+	}
+}
+
+// ciAllowCase runs one allowed-shape case of rule.
+func ciAllowCase(t *testing.T, rule ciRule, c ciAllow) {
+	t.Helper()
+	name := c.name
+	root := ruleFixtureTree(t, rule, c.fixture)
+	res, err := rule.check(root, "")
+	require.NoError(t, err)
+	require.Zero(t, res.refused, "%s: refusals = %d, want 0: %+v", name, res.refused, res.findings)
+	require.Empty(t, res.findings, "%s: findings = %+v, want none", name, res.findings)
+	if c.tests >= 0 {
+		assert.Equal(t, c.tests, res.tests, "%s: tests = %d, want %d", name, res.tests, c.tests)
+	}
 }
 
 // ciClassTest is the class test itself for one rule: every _test.go under
@@ -332,7 +353,6 @@ func ciVerbLineMatchesTheSpec(t *testing.T, rule ciRule) {
 var templatesRule = ciRule{
 	key:           "templates",
 	prefix:        "CI-TEMPLATES",
-	allowlist:     "template-paths-allowlist.txt",
 	fixtures:      "templates",
 	allowKind:     "join",
 	allowRemedy:   TemplateRemedyAllow,
@@ -344,64 +364,14 @@ var templatesRule = ciRule{
 		` kind=join remedy="wrap the path in strconv.Quote"`,
 	},
 	refusals: []ciRefusal{
-		{name: "TestTemplatesRefusesRawFilepathJoin", fixture: "join.go.txt", kind: "join", remedy: TemplateRemedyJoin, contains: "filepath.Join"},
-		{name: "TestTemplatesRefusesUnquotedOSPathLiteral", fixture: "literal.go.txt", kind: "literal", remedy: TemplateRemedyLiteral, contains: `C:\Users\RUNN\keys\key`},
-		{name: "TestTemplatesRefusesUnquotedPathInTemplate", fixture: "template.go.txt", kind: "literal", remedy: TemplateRemedyLiteral, contains: `C:\Users\RUNN\keys\key`},
+		{name: "RefusesRawFilepathJoin", fixture: "join.go.txt", kind: "join", remedy: TemplateRemedyJoin, contains: "filepath.Join"},
+		{name: "RefusesUnquotedOSPathLiteral", fixture: "literal.go.txt", kind: "literal", remedy: TemplateRemedyLiteral, contains: `C:\Users\RUNN\keys\key`},
+		{name: "RefusesUnquotedPathInTemplate", fixture: "template.go.txt", kind: "literal", remedy: TemplateRemedyLiteral, contains: `C:\Users\RUNN\keys\key`},
 	},
 	allows: []ciAllow{
-		{name: "TestTemplatesAllowsStrconvQuote", fixture: "quoted.go.txt", tests: 1},
-		{name: "TestTemplatesAllowsOnelineQuote", fixture: "oneline_quoted.go.txt", tests: -1},
+		{name: "AllowsStrconvQuote", fixture: "quoted.go.txt", tests: 1},
+		{name: "AllowsOnelineQuote", fixture: "oneline_quoted.go.txt", tests: -1},
 	},
-}
-
-// 1. A test carrying filepath.Join raw into a JSON literal is refused with its
-// file and line, and the remedy names the quote.
-func TestTemplatesRefusesRawFilepathJoin(t *testing.T) {
-	t.Parallel()
-	ciNamedRefusal(t, templatesRule, "TestTemplatesRefusesRawFilepathJoin")
-}
-
-// 2. A C:\ path placed unquoted inside a JSON literal is refused.
-func TestTemplatesRefusesUnquotedOSPathLiteral(t *testing.T) {
-	t.Parallel()
-	ciNamedRefusal(t, templatesRule, "TestTemplatesRefusesUnquotedOSPathLiteral")
-}
-
-// 3. A path unquoted inside a text/template string is refused.
-func TestTemplatesRefusesUnquotedPathInTemplate(t *testing.T) {
-	t.Parallel()
-	ciNamedRefusal(t, templatesRule, "TestTemplatesRefusesUnquotedPathInTemplate")
-}
-
-// 4. A path wrapped in strconv.Quote is allowed.
-func TestTemplatesAllowsStrconvQuote(t *testing.T) {
-	t.Parallel()
-	ciNamedAllow(t, templatesRule, "TestTemplatesAllowsStrconvQuote")
-}
-
-// 5. A path wrapped in oneline.Quote is allowed.
-func TestTemplatesAllowsOnelineQuote(t *testing.T) {
-	t.Parallel()
-	ciNamedAllow(t, templatesRule, "TestTemplatesAllowsOnelineQuote")
-}
-
-// 6. Adding an entry to the allowlist is refused; removing one is allowed.
-func TestTemplatesAllowlistGrowsRefused(t *testing.T) {
-	t.Parallel()
-	ciAllowlistGrowsRefused(t, templatesRule)
-}
-
-// TestTemplatesOutputMatchesTheSpec pins the one-line grammar of the section.
-func TestTemplatesOutputMatchesTheSpec(t *testing.T) {
-	t.Parallel()
-	ciOutputMatchesTheSpec(t, templatesRule)
-}
-
-// TestTemplatesVerbLineMatchesTheSpec pins the help line the class test is
-// entered under, word for word, to the section that prints it.
-func TestTemplatesVerbLineMatchesTheSpec(t *testing.T) {
-	t.Parallel()
-	ciVerbLineMatchesTheSpec(t, templatesRule)
 }
 
 // TestNoUnquotedPathsInTemplateLiterals is the class test itself: every

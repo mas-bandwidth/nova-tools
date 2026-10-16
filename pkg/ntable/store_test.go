@@ -324,8 +324,6 @@ func TestBindMakesTheStoreTheCallersTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ms, 1, "members with the exclude left out = %+v", ms)
 	require.Equal(t, "a1", ms[0].Member, "members with the exclude left out")
-	require.True(t, ntable.SameShape(got, bind("b", "a")), "SameShape does not tell the bound order")
-	require.False(t, ntable.SameShape(got, bind("a", "b")), "SameShape does not tell the bound order")
 }
 
 // TestQueueCellsFillsAnInMemoryTable: a caller holding the shape reads

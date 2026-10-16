@@ -210,11 +210,19 @@ func TestRunSuiteEndsWhenTheBudgetDoes(t *testing.T) {
 	res, err := RunSuite(s.opt)
 	require.NoError(t, err)
 	require.True(t, res.Failed, "records=%d ran=%d failed=%v", len(res.Records), len(s.seen), res.Failed)
-	require.Less(t, len(res.Records), len(s.cases), "records=%d ran=%d failed=%v", len(res.Records), len(s.seen), res.Failed)
-	require.Equal(t, len(res.Records), len(s.seen), "records=%d ran=%d failed=%v", len(res.Records), len(s.seen), res.Failed)
+	require.Less(t, len(s.seen), len(s.cases), "records=%d ran=%d failed=%v", len(res.Records), len(s.seen), res.Failed)
+	// Every chosen case has a record (nova-sprint deaeede0): a case the budget never
+	// reached is a FAIL whose log says the budget ran out before it started.
+	require.Len(t, res.Records, len(s.cases), "records=%d ran=%d failed=%v", len(res.Records), len(s.seen), res.Failed)
+	for _, r := range res.Records[len(s.seen):] {
+		require.Equal(t, "FAIL", r.Result, "an unstarted case: %+v", r)
+		log, err := os.ReadFile(filepath.Join(s.out, r.Config+".log"))
+		require.NoError(t, err)
+		require.Equal(t, "TLC suite budget exhausted before starting this case\n", string(log), "%s", r.Config)
+	}
 	recs, err := ReadRecordsFile(filepath.Join(s.out, RunsFile))
-	require.NoError(t, err, "the records of the cases that ran were not kept: %v, %v", recs, err)
-	require.Len(t, recs, len(res.Records), "the records of the cases that ran were not kept: %v, %v", recs, err)
+	require.NoError(t, err, "the records were not kept: %v, %v", recs, err)
+	require.Len(t, recs, len(res.Records), "the records were not kept: %v, %v", recs, err)
 }
 
 func TestRunSuiteNeverStartsACaseAfterTheBudget(t *testing.T) {

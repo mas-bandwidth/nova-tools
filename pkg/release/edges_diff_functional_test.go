@@ -28,9 +28,8 @@ func TestExecGitReadsLargeRangeWithoutRenameWarningsAsPaths(t *testing.T) {
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 		var out, errs bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errs
-		if err := cmd.Run(); err != nil {
-			require.NoError(t, err, "git %v: %v: %s", args, err, errs.String())
-		}
+		err := cmd.Run()
+		require.NoError(t, err, "git %v: %v: %s", args, err, errs.String())
 		return strings.TrimSpace(out.String()), errs.String()
 	}
 	git("init", "--quiet", "--template=")
@@ -46,9 +45,7 @@ func TestExecGitReadsLargeRangeWithoutRenameWarningsAsPaths(t *testing.T) {
 	}
 	write := func(name, body string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
-			require.NoError(t, err, err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0600))
 	}
 	want := []string{"old-a.txt", "old-b.txt"}
 	write(want[0], "old alpha content\n")
@@ -57,9 +54,7 @@ func TestExecGitReadsLargeRangeWithoutRenameWarningsAsPaths(t *testing.T) {
 	git("commit", "--quiet", "-m", "base")
 	base, _ := git("rev-parse", "HEAD")
 	for _, name := range want {
-		if err := os.Remove(filepath.Join(dir, name)); err != nil {
-			require.NoError(t, err, err)
-		}
+		require.NoError(t, os.Remove(filepath.Join(dir, name)))
 	}
 	for i := 0; i < 500; i++ {
 		name := fmt.Sprintf("new-%04d-%s.txt", i, strings.Repeat("x", 140))
@@ -70,12 +65,9 @@ func TestExecGitReadsLargeRangeWithoutRenameWarningsAsPaths(t *testing.T) {
 	git("commit", "--quiet", "-m", "large range")
 	head, _ := git("rev-parse", "HEAD")
 	raw, warnings := git("diff", "--name-only", base+"..."+head)
-	if len(raw) <= childCap || !strings.Contains(warnings, "rename") {
-		require.FailNowf(t, "", "fixture did not exercise large stdout and warning stderr: bytes=%d stderr=%q", len(raw), warnings)
-	}
+	require.Falsef(t, len(raw) <= childCap || !strings.Contains(warnings, "rename"), "fixture did not exercise large stdout and warning stderr: bytes=%d stderr=%q", len(raw), warnings)
 	files, err := (ExecGit{}).DiffNames(ctx, dir, base, head)
 	sort.Strings(want)
-	if err != nil || !reflect.DeepEqual(files, want) {
-		require.FailNowf(t, "", "production reader lost paths or included warnings: got=%d want=%d error=%v", len(files), len(want), err)
-	}
+	require.NoError(t, err, "production reader lost paths or included warnings: got=%d want=%d error=%v", len(files), len(want), err)
+	require.True(t, reflect.DeepEqual(files, want), "production reader lost paths or included warnings: got=%d want=%d error=%v", len(files), len(want), err)
 }

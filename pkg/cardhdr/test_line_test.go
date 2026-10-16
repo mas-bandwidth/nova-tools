@@ -16,12 +16,12 @@ func TestParseTestIsTheOneGrammar(t *testing.T) {
 	t.Parallel()
 
 	for v, want := range map[string]cardhdr.TestLine{
-		"./internal/x TestY":            {Package: "./internal/x", Name: "TestY"},
-		"  ./internal/x/  ExampleZ ":    {Package: "./internal/x/", Name: "ExampleZ"},
-		". FuzzQ":                       {Package: ".", Name: "FuzzQ"},
-		"internal/x TestY":              {Package: "internal/x", Name: "TestY"},
-		"-tags functional ./x TestY":    {Package: "./x", Name: "TestY", Tags: "functional"},
-		"-tags=slow,functional . TestY": {Package: ".", Name: "TestY", Tags: "slow,functional"},
+		"./internal/x TestY":            {Package: "./internal/x", Name: "TestY", Runner: "go"},
+		"  ./internal/x/  ExampleZ ":    {Package: "./internal/x/", Name: "ExampleZ", Runner: "go"},
+		". FuzzQ":                       {Package: ".", Name: "FuzzQ", Runner: "go"},
+		"internal/x TestY":              {Package: "internal/x", Name: "TestY", Runner: "go"},
+		"-tags functional ./x TestY":    {Package: "./x", Name: "TestY", Tags: "functional", Runner: "go"},
+		"-tags=slow,functional . TestY": {Package: ".", Name: "TestY", Tags: "slow,functional", Runner: "go"},
 		"none the change is one docs page; the reader checks it": {None: true, Why: "the change is one docs page; the reader checks it"},
 		"none: a fixture line":  {None: true, Why: "a fixture line"},
 		"none - a fixture line": {None: true, Why: "a fixture line"},
@@ -34,7 +34,7 @@ func TestParseTestIsTheOneGrammar(t *testing.T) {
 		"":                     "no TEST line",
 		"none":                 "TEST: none says no why",
 		"none   ":              "TEST: none says no why",
-		"rm -rf /":             "is not `[-tags <tags>] <package> <TestName>` or `none <why>`",
+		"rm -rf /":             "is not `[-tags <tags>] <package> <TestName>`, `ctest <TestName>` or `none <why>`",
 		"-tags ./x TestY":      "is not",
 		"-tags a;b ./x TestY":  "is not",
 		"-run TestY ./x TestY": "is not",

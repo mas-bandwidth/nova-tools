@@ -70,7 +70,7 @@
   hosts: all
   gather_facts: true
   gather_subset: [min]
-  tags: [seat]
+  tags: [seat, muse]
   tasks:
     - name: the platform, measured (the beat's os and arch, else the gathered facts)
       ansible.builtin.set_fact:
@@ -503,6 +503,18 @@
       when: >-
         nova_adopt_canary != 'none' and inventory_hostname == nova_adopt_canary
         and ansible_system == 'Darwin' and not ansible_check_mode
+
+    - name: Muse adoption starts unread until the role checks the seat names
+      ansible.builtin.set_fact:
+        nova_muse_key_status: unread
+      tags: [muse, seat]
+
+    - name: the pinned Muse harness and its seat names login
+      ansible.builtin.include_role:
+        name: muse
+        apply:
+          tags: [muse, seat]
+      tags: [muse, seat]
 
     # The install replaced a tool on this machine (a fleet host: the seat play
     # restarts the coordinator's own). Every loop member and reader whose binary
@@ -1808,6 +1820,7 @@
         - /opt/homebrew/bin/grok
         - /usr/local/bin/grok
         - "{{ nova_bin_dir }}/grok"
+        - "{{ nova_bin_dir }}/muse"
       register: seat_table_harness
 
     - name: "table: the disk free under the home"
@@ -1825,6 +1838,7 @@
           ADOPT TABLE host={{ inventory_hostname }} version={{ nova_version }}
           members_readers_up={{ seat_table_up }}
           harness={{ 'present' if seat_table_harness.results | selectattr('stat', 'defined') | selectattr('stat.exists') | list | length > 0 else 'missing' }}
+          muse_key={{ nova_muse_key_status | default('unread') }}
           disk_free_kb={{ (seat_table_disk.stdout | default('') | regex_findall('(?m)^\\S+\\s+\\d+\\s+\\d+\\s+(\\d+)') | first) | default('?') }}
       vars:
         seat_table_up: >-

@@ -2320,3 +2320,37 @@ internal/ci/seatplay_functional_test.go the seat play's adoption test builds and
 cmd/nova-swarm/member_functional_test.go its one test drove the member loop against a built ./cmd/nova-sprint, which left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7); owed in nova-sprint. driveBase and memberCard moved to contract_cases_functional_test.go
 cmd/nova-swarm/contract_functional_test.go both tests (the scripted child end to end, walled and not) ran the card through a built ./cmd/nova-sprint, which left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7); owed in nova-sprint. realWallBackend moved to step_functional_test.go
 internal/ci/testdata/toolanswers/cmd/nova-sprint.txt nova-sprint's tool-answers shard; the tool left for mas-bandwidth/nova-sprint at v1.2.3 (split layer L6/L7), so its row has no site here
+internal/ci/nested_modules_class_test.go nova-tools is one module now (hook/ and pkg/oneline/ folded in, go.work gone); its rule is replaced by TestOneModule in internal/ci/one_module_class_test.go
+internal/update/transaction_locks_test.go stale: it tested only a test helper whose callers were the git-bus join tests, deleted with the join machinery in 91398786c
+pkg/testkit/waits_test.go testkit.Waits had no caller outside its own test (go tool deadcode, lane deadcode-tools); deleted with waits.go
+pkg/testkit/script_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
+pkg/testkit/script_failure_test.go testkit.Script had no caller outside its own tests (go tool deadcode, lane deadcode-tools); deleted with script.go
+pkg/testkit/contract_test.go testkit.Contract had no caller outside its own test (go tool deadcode, lane deadcode-tools); deleted with contract.go
+internal/doctor/check_friend_live_test.go the friend-live doctor check (daemon beat age and beat/inbox refusal on status.json) is retired with the friend daemon beat in v1.3 (2026-10-14, old-presence-inventory.md A21; nova-hook's heartbeat record is the friend liveness check)
+cmd/nova-bus/pushproof_test.go nova-bus send, recv and names read the hook record and no longer emit bus2:push notes or take --require-push; TestNamesReadsTheHookRecord in cmd/nova-bus/hook_test.go covers names
+cmd/nova-friend/pong_defaults_test.go pong.json deleted as a record in v1.3 (E2c); nova-friend pong reads queue and width from QUEUE.json and status.json directly and sends on the bus
+pkg/bus/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record
+pkg/friend/pushproof_test.go bus2:push deleted as a record in v1.3 (E2c); hook records in bus2:hook:{friend} are the sole push liveness record
+tools/ci/lisptest_test.go the Lisp acceptance tier is retired: nova-work kernel moved to nova-work-old; named 2026-10-14 dead-code pass2 retirement removes lisp-test verb
+internal/ci/workflow_recovery_test.go lisp-changes path-filter job is retired with the Lisp acceptance tier after nova-work kernel moved to nova-work-old
+internal/textbody/textbody_test.go StripQuotedAndCode is unreachable from every shipped main (go tool deadcode v0.50.0); no caller outside its own tests in nova-tools or current nova-sprint; package removed in dead-code pass2
+cmd/nova-friend/serve_test.go nova-friend serve, the coordinator's one-second PING keepalive loop, is retired (v1.3.5): liveness is the nova-hook server's per-minute challenge (cmd/nova-hook serve, tla/Hook.tla), whose tests cover it
+cmd/nova-friend/wakeping_test.go nova-friend ping --wake --to-friends, ping-install and ping-uninstall are retired (v1.3.5): the nova-hook challenge is the wake, and nova-friend reach is the escalation ladder with its own tests
+pkg/friend/keepalive_test.go friend.Keepalive (PingEvery, DownAfter) went with nova-friend serve (v1.3.5); the hook record is the one liveness truth
+pkg/friend/wakeping_test.go friend.WakeTargets and DeafChange went with the wake ping loop (v1.3.5); nova-hook serve tells the coordinator FRIEND DOWN once per change
+pkg/friend/presence_test.go friend.Presence and SessionCheck were unreachable from every shipped main (go tool deadcode) once the daemon stopped wiring them (E2); only the model's nova-hook prove proves a session (v1.3.5)
+pkg/friend/proof_test.go the SessionCheck push proof was unreachable from every shipped main (go tool deadcode); retired with Presence (v1.3.5)
+pkg/friend/liveness_test.go the SessionCheck liveness rig was unreachable from every shipped main (go tool deadcode); retired with Presence (v1.3.5)
+cmd/nova-friend/notifications_test.go the --notifications-only receiver and its agent are retired with the daemon's session delivery (v1.3.6); pkg/harness/notice is the one delivery path
+pkg/friend/notifications_test.go the notification receiver (Daemon.runNotifications) was the daemon's own session delivery, retired in v1.3.6; pkg/harness/notice is the one delivery path
+pkg/friend/present_test.go the PRESENT turn and the backlog supersede were the daemon's session delivery, retired in v1.3.6; the daemon reads nothing off her stream
+pkg/friend/daemon_e2e_test.go the batch envelope, the daemon's PING answer and its batch-turn broken streak are retired with the daemon's session delivery (v1.3.6); the lanes keep their own silent-stop and refusal tests
+pkg/friend/idle_wake_test.go the idle wake turn was a batch session delivery, retired in v1.3.6
+pkg/friend/ping_text_test.go the daemon's PING path is retired (v1.3.6): nothing sends or answers a PING
+pkg/friend/alive_test.go the harness process check (WatchHarness, SessionTurns, Alive) is retired in v1.3.6: liveness is the nova-hook record's alone
+pkg/friend/adapter_codex_test.go the Codex queue adapter no factory built (CodexPushUnavailable) is retired with the daemon's session delivery (v1.3.6)
+pkg/friend/codex_queue_test.go the Codex app-server queue was the retired Codex adapter's (v1.3.6)
+pkg/friend/codex_session_test.go NewestCodexSession was the retired Codex adapter's (v1.3.6)
+pkg/friend/spendcap_daemon_test.go the spend cap through the daemon's batch turns is retired with them (v1.3.6); the cap's gate and lane tests stay in spendcap_test.go
+pkg/friend/spendcap_redis_functional_test.go the spend cap through the daemon's batch turns on a private store is retired with them (v1.3.6)
+pkg/friend/lock_unix_test.go FlockHeld is retired with the daemon Codex delivery adapter (v1.3.8); hook leases own session presence

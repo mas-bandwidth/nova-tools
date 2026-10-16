@@ -1,9 +1,11 @@
 package friend
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -54,7 +56,15 @@ func TestNoStringLiteralCallsAFriendHerOrHim(t *testing.T) {
 			if strings.HasSuffix(file, "_test.go") {
 				continue
 			}
+			// A dot-file (an editor swap, a scratch) is not a source.
+			if strings.HasPrefix(filepath.Base(file), ".") {
+				continue
+			}
 			f, err := parser.ParseFile(fset, file, nil, 0)
+			// The file can vanish between Glob and ParseFile.
+			if err != nil && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			require.NoError(t, err, "parse %s", file)
 			allowed := pronounGuardAllowed[filepath.Base(file)]
 			ast.Inspect(f, func(n ast.Node) bool {

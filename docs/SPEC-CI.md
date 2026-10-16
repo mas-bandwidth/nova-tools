@@ -581,10 +581,10 @@ assertion on elapsed time; it polls for the event up to `NOVA_TEST_WAIT`
 **The mistake it prevents.** A wait cut to fit the two-minute gate makes a test
 flaky under load, and a flaky test drops innocent PRs from the queue.
 **The test.** `TestNoFixedWaitsOnTheCIPath` (`internal/ci/ci_waits_test.go`),
-with its six red tests — `TestWaitsRefusesFixedSleep`, `TestWaitsRefusesShortBound`,
-`TestWaitsRefusesElapsedAssertion`, `TestWaitsAllowsThePoll`,
-`TestWaitsAllowsFakeBenchAndClock`, `TestWaitsAllowlistGrowsRefused` — and
-`TestWaitsAllowlistSurvivesShiftedLines` for the file-and-kind match.
+with its six red cases under `TestCIScanRules/waits` — `RefusesFixedSleep`,
+`RefusesShortBound`, `RefusesElapsedAssertion`, `AllowsThePoll`,
+`AllowsFakeBenchAndClock`, `AllowlistGrowsRefused` — and
+`AllowlistSurvivesShiftedLines` for the file-and-kind match.
 **Its allowlist.** `internal/ci/testdata/fixed-waits-allowlist.txt`, the waits
 that predate the checker, one `file:line kind date reason` per row; shrink-only.
 **Its remedy lines.** `remedy="poll for the event up to NOVA_TEST_WAIT, not a
@@ -610,11 +610,11 @@ for a test whose subject is that the file is NOT the same binary.
 fixtures queues behind the macOS policy scanner past the thirty seconds a test
 waits; hard-linking the one fixture passes in less than half the time.
 **The test.** `TestNoCopiedTestBinariesOnTheCIPath`
-(`internal/ci/ci_testbins_test.go`), with `TestTestbinsRefusesACopiedBinary`,
-`TestTestbinsRefusesAMapHeldCopy`, `TestTestbinsAllowsAShellScript`,
-`TestTestbinsAllowsThePlacedHelper`, `TestTestbinsAllowlistGrowsRefused`,
-`TestTestbinsOutputMatchesTheSpec`, `TestTestbinsVerbLineMatchesTheSpec` and
-`TestTestbinsAllowlistSurvivesShiftedLines` for the file-and-kind match.
+(`internal/ci/ci_testbins_test.go`), with the cases under
+`TestCIScanRules/testbins` — `RefusesACopiedBinary`, `RefusesAMapHeldCopy`,
+`AllowsAShellScript`, `AllowsThePlacedHelper`, `AllowlistGrowsRefused`,
+`OutputMatchesTheSpec`, `VerbLineMatchesTheSpec` and
+`AllowlistSurvivesShiftedLines` for the file-and-kind match.
 **Its allowlist.** `internal/ci/testdata/fixed-testbins-allowlist.txt` — empty,
 because every site places by link through `testbin.Place`; shrink-only.
 **Its remedy lines.** `remedy="place built binaries with testbin.Place: link,
@@ -636,10 +636,10 @@ wrapped in `strconv.Quote` (or `oneline.Quote`); a raw `filepath.Join(...)` or a
 into a JSON worker description puts `C:\…\key` in a literal whose grammar has no
 such escape, so the parse fails on Windows where Linux and darwin never look.
 **The test.** `TestNoUnquotedPathsInTemplateLiterals`
-(`internal/ci/ci_templates_test.go`), with `TestTemplatesRefusesRawFilepathJoin`,
-`TestTemplatesRefusesUnquotedOSPathLiteral`, `TestTemplatesRefusesUnquotedPathInTemplate`,
-`TestTemplatesAllowsStrconvQuote`, `TestTemplatesAllowsOnelineQuote` and
-`TestTemplatesAllowlistGrowsRefused`.
+(`internal/ci/ci_templates_test.go`), with the cases under
+`TestCIScanRules/templates` — `RefusesRawFilepathJoin`,
+`RefusesUnquotedOSPathLiteral`, `RefusesUnquotedPathInTemplate`,
+`AllowsStrconvQuote`, `AllowsOnelineQuote` and `AllowlistGrowsRefused`.
 **Its allowlist.** `internal/ci/testdata/template-paths-allowlist.txt`, four
 `ToSlash(Join(...))` rows in `pkg/swarm/inputlimit_test.go` that predate the
 checker; shrink-only.
@@ -663,10 +663,10 @@ fails on the network, not on its logic. A fixture carrying an
 honest fix is to generalize the code to any origin host and retarget the
 fixture — splitting the literal to hide it from the class is an evasion.
 **The test.** `TestNoRealNetworkHostsOnTheCIPath` (`internal/ci/ci_net_test.go`),
-with `TestNetRefusesRealURLHost`, `TestNetAllowsLocalAndReservedHosts`,
-`TestNetAllowsNightlyBuildTag`, `TestNetAllowsSoakBuildTag`,
-`TestNetRefusesBareHostPort`, `TestNetAllowsLocalHostPort`,
-`TestNetAllowlistGrowsRefused` and `TestNetAllowlistSurvivesShiftedLines`.
+with the cases under `TestCIScanRules/net` — `RefusesRealURLHost`,
+`AllowsLocalAndReservedHosts`, `AllowsNightlyBuildTag`, `AllowsSoakBuildTag`,
+`RefusesBareHostPort`, `AllowsLocalHostPort`, `AllowlistGrowsRefused` and
+`AllowlistSurvivesShiftedLines`.
 **Its allowlist.** `internal/ci/testdata/net-allowlist.txt`, matched by file and
 kind; shrink-only.
 **Its remedy lines.** `remedy="mock the endpoint with httptest or a local fake"`,
@@ -759,7 +759,8 @@ the package before it, so `miniredis.RunT` resolves).
 once at the landing from the tree's measure and allowed until moved (v1.3). It
 only shrinks: a site with no row, a row above or below its file's count, a row
 whose file breaks the rule no more, and a row or a count the change's base (the
-pull request's own base in CI, else the merge base with origin/dev) does not have
+pull request's own base in CI, else the merge base with origin/dev; in a merge
+checkout with neither dev ref, its actual first parent) does not have
 are each red; `NOVA_CI_UPDATE=1` lowers a count and drops a row at zero,
 never raises or adds one. A base with no file is the seed.
 **Its remedy line.** `a unit test uses no real time, no real socket and no external service: fake it (a fake clock, a channel the fake signals, net.Pipe, an in-process RoundTripper, httptest.NewRecorder, the store through hooktest.New or testkit.PipeStore) when the test is about logic, or move the test under //go:build functional when its subject is the real thing; the burn-down only shrinks`.
@@ -2385,6 +2386,41 @@ rest; a wrapper around any other nova tool (`nova-tokens`, `nova-redis serve`)
 is not flagged until that tool takes `--seat`; and only
 `docs/` Markdown is read, so a README elsewhere is not.
 
+### `retiredpresence` — the old friend presence does not come back
+
+**The rule.** No name in `internal/ci/testdata/retired-presence.txt` appears in
+the tree: an `ident` row as a whole-word Go identifier in any `.go` file, a
+`verb` row as a `Name: "<verb>"` literal in `cmd/nova-friend`, and a `text` row
+(a command, flag or launchd label) in any text file a person or an AI reads
+(`.go`, `.md`, `.sh`, `.sexp`, `.txt`, `.tsv`, `.yml`, `.json`, `.plist`,
+`.tla`, `.cfg`), not followed by a letter, digit or underscore. Each row names
+what replaced it.
+**The mistake it prevents.** v1.3's one truth for whether a friend is there is
+the nova-hook record and its per-minute challenge, which only the model answers
+(docs/SPEC-HOOK.md). The machinery before it that did the same job (the
+coordinator's one-second keepalive loop, the coordinator's ping, the wake ping
+loop and its agent, the pong wait, the hand beat, the daemon's session-check
+presence and its push proof) kept being used from the tool, rebuilt by new
+code and taught by docs after it was superseded (the owner, 2026-10-14: "remove
+the old stuff, so they don't come back, or get used when using the tool, or
+building new code").
+**The test.** `TestNoRetiredPresenceNameReturns`, with its control
+`TestRetiredPresenceRuleCatchesEachForm`
+(`internal/ci/retired_presence_class_test.go`), which pins a whole-word
+identifier, a nova-friend verb literal, a command and a longer word that is not
+it, and history as unscanned.
+**Its allowlist.** None: the table is the list of names, and history is not
+scanned (CHANGELOG.md, FIXES.md, RESOLUTIONS.md, docs/fixes.sexp,
+docs/RELEASE-NOTES-*, docs/dogfood/, docs/stranger/, the deleted-tests log).
+**Its remedy line.** Use the replacement the finding names; a name that must
+come back is the owner's decision, and its row is deleted in that change with
+the reason.
+**Its narrowings.** Names are matched as written: a retired thing spelled
+another way (a new name for the same loop) is not seen, which is why the table
+names what replaced each one; the daemon's own answer to a `PING` and its
+advisory harness process check are not in the table, since they still run
+until the daemon's delivery is retired.
+
 ### `seatredis` — no verb of a live tool that selects a seat refuses an empty `--redis`
 
 **The rule.** Every `--redis` flag of a live package that selects a seat (a
@@ -2461,7 +2497,8 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 41. `TestEveryLaunchdAgentLogsUnderTheHome` (`internal/ci/launchd_log_home_test.go`) — every launchd agent this repository installs puts its `StandardOutPath` and `StandardErrorPath` under the user's home, `Library/Logs` (`{{ nova_home | e }}/Library/Logs/nova-loop-<name>.log` for the loops), because launchd cannot open its own log file on a network volume such as `/Volumes/nova`: the agent runs but its job never starts or its output vanishes (measured 2026-10-03/04). **Allowlist:** none. **Narrowings:** a literal plist or template value must start at `{{ nova_home`, `{{ ansible_env.HOME`, `~/`, `$HOME/` or `${HOME}/`; a Go source that builds a plist from a variable (`pkg/friend/launchd.go`) is pinned by the home-based default of its log in `cmd/nova-friend/main.go` (nova-sprint's seat installer left with it for mas-bandwidth/nova-sprint), and a new Go writer must be added to the test's table or it fails; a `--log`/`--launchd-log` override is the operator's choice and is not read. The program's own state and logs stay where they are.
 42. `TestNoTestCommitsWithoutTheSharedGitIdentity` (`internal/ci/git_identity_class_test.go`) — every `git commit` a `_test.go` under `cmd/`, `internal/` or `tools/` runs carries the author and committer of `pkg/testgit`, through the command's environment (`cmd.Env = testgit.Environ(...)`), never the runner's global git config and never an identity of the test's own. **The mistake it prevents:** a hosted runner (ubuntu-latest) has no global git identity and the self-hosted benches do, so a test that commits in a scratch clone with no identity of its own is green on every bench, the lander included, and red only on the hosted leg with `Author identity unknown` (`TestWallCoverWallCommitsCountsPastBaseRef`, run 37344601638, shard 6). `testgit.NoGlobalConfig(t)` is the hosted runner's git on any machine (the system config off, the global config an empty file with `user.useConfigOnly`), so a test can prove it needs no machine identity. **The sweep:** a call with a `"commit"` argument that is a git command (the callee's name says git, an earlier argument is `"git"` or a git binary, or the helper it calls runs `"git"`); an inner `[]string` of a `[][]string` that is a git command list (`{"commit", …}`, or flags then `commit`); a string literal that is a script (it carries `&&` or a newline) running `git [-c k=v|-C dir] commit -…`. A call is clean when it is `testgit`'s, or every helper its name resolves to in the package (a function, a method, or a closure in the same file) names `testgit`; an exec, a command list or a script is clean when the function it stands in names `testgit`. `pkg/testgit` itself and `testdata/` are not read. **Its allowlist:** `internal/ci/testdata/git_identity_allowlist.txt`, one `file count reason` row per test file still committing without the shared identity, counted and shrink-only (55 files at the rule's landing, all outside `pkg/swarm`). **The remedy line:** `<file>:<line> (<kind>): a git commit without the shared identity; run the commit with the shared identity: cmd.Env = testgit.Environ(...) in the helper that runs it (pkg/testgit)`; for a falling count `lower the row; run: NOVA_CI_UPDATE=1 make test PKGS=./internal/ci`; for a stale row `delete the stale entry (the list only shrinks)`. **The control:** `TestGitIdentityRuleRefusesItsProbes` feeds the reader one package per shape and wants each refused or passed as named (a bare exec, a `-c user.name`, a test's own `GIT_AUTHOR_*`, a helper or closure without testgit, a command list and a script refused; the same through testgit, a helper that names it, and a word or one command's text that is not a commit, passed); `pkg/testgit`'s own test commits under the hosted runner's config with the identity and is refused without it. **Narrowings:** the read is syntactic and by name: a helper reached through a variable, an interface or another package is not resolved, so its call is read as clean only when the calling function names `testgit`; a one-line script with no `&&` is not read; a function that names `testgit` anywhere clears every exec, list and script in it.
 43. `TestNoTestWritesIntoTheSourceTree` (`internal/ci/testwrites_class_test.go`) — the package tests of a CI invocation leave the checkout as they found it: `git status --porcelain` in the source tree is empty after they run, and a non-empty status is a failure naming every path git reports; it runs no test itself and reads the tree after the tests in its own invocation. **The mistake it prevents:** a nova-sprint test (nova-sprint was in this tree then) ran its watch example with `--state wake.json` and the package directory as its working directory; the file it left made `nova-update release build` record no commit, because the release build stamps the checkout's commit only when the tree is clean; the watch call sites now pass a path under `t.TempDir()`. **Its allowlist:** none, and by design: the failure already names every path it found, so a site is fixed rather than listed, and there is no ledger to keep or grow. **The remedy line:** `pass a path under t.TempDir(): filepath.Join(t.TempDir(), "wake.json")`. **Its narrowings:** two, named out loud. The read is one sample of the tree, not a fence around every test: Go may run the package under test in parallel with this one, so a file written after the sample, or written and removed inside a test's own run, is not seen — the shape it catches is a file LEFT BEHIND, which is the one that dirtied the checkout. And it reads the whole tree, so it cannot tell a file a test left from a file another step left, or from the change under test in a development checkout that is already dirty; it is exact in CI, where the checkout is clean and the package tests are the only writer.
-44. `TestEveryNestedModuleIsTested` (`internal/ci/nested_modules_class_test.go`) — a directory with its own `go.mod` beside the root (`hook/`, `pkg/oneline/`) is not reached by a whole-tree `go list`, `go test` or `go vet` run at the root, with or without `go.work`, so it would silently stop being tested; the Makefile's `MODULES` list must name every module the `go.work` `use` list holds, and `CL_PKGS` must read it, so the targets that test and vet the whole tree loop over the nested modules. **The mistake it prevents:** pulling a package out into its own module makes its tests vanish from `make test`, `make vet`, `make test-full` and `make test-race` in silence, and no leg goes red. **Its allowlist:** none. **The remedy line:** add the module's directory to `MODULES` (the rule names the missing one). **Its narrowings:** the truth is `go.work`'s `use` list; the root itself (`.`) is not a nested module and is never required in `MODULES`.
+44. `TestOneModule` (`internal/ci/one_module_class_test.go`) — nova-tools is one Go module: the root `go.mod`, and no `go.mod` or `go.work` anywhere else (testdata/ skipped). A nested module is not reached by a whole-tree `go list`, `go test` or `go vet` at the root, and an outside module requiring nova-tools must resolve it by its own tagged version, which the root's `replace` cannot supply. **The mistake it prevents:** `hook/` and `pkg/oneline/` were nested modules required at versions never tagged, so `go mod tidy` failed in every module importing nova-tools. **Its allowlist:** none. **The remedy line:** delete the nested `go.mod`/`go.sum` (or `go.work`) and drop its require and replace from the root `go.mod`; the import paths stay as they are. **Its narrowings:** `testdata/`, `.git`, `bin`, `node_modules` and `vendor` directories are not walked.
+45. `TestEveryTopLevelPackageDirIsSelected` (`internal/ci/one_module_class_test.go`) — every top-level directory holding Go packages is in `pkgselect.Roots` (`pkg/pkgselect/select.go`), the one list `select-packages`, its whole-tree fallback, change selection and the non-Go-file mapping read, or in the test's `notSelected` with a reason (`fleet/`: certification.yml deals it; `profiles/`: no tests). **The mistake it prevents:** `hook/`, folded into the root module, was in no root, so no CI leg ran its tests. **Its allowlist:** `notSelected`, each row with its reason. **The remedy line:** add the directory to `Roots`, or to `notSelected` with why. **Its narrowings:** `testdata/`, `vendor/` and `.`/`_` directories are skipped.
 
 ### `cap` — every job two minutes, permanently, on every platform
 
@@ -2976,7 +3013,7 @@ the original failed measurement.
 
 **The rule.** No living Go file under `cmd/`, `internal/` or `tools/` (outside `testdata/`, `vendor/`, and `_test.go` files) carries a reference to our fleet machines, hostnames, tailnet nodes, friend or person names, or GitHub accounts (Rule 1: everything must be general; concepts like machine, bench, coordinator, friend, seat, store, route, pool, card, stream, repo, issue, entry are what code knows; fleet specifics belong in configuration or receipts, not in code, contracts, defaults or refusals).
 **The mistake it prevents.** Code written with hardcoded machine names, friend identities or private accounts cannot be reused or operated as a general platform, leaks private infrastructure details into public source, and prevents running the tool suite against different fleets or configurations.
-**The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestGeneralityMachineNameHasNoSyntaxException` for a machine name counted in every syntax position, `TestGeneralityCommonWordMachineWitness` (`internal/ci/generality_machine_hosts_test.go`) for a machine name that is also a common word refused in every host position (`<name>.local`, `@<name>`, `ssh <name>`, `<name>:` as host:path or host:port, `--machine <name>`, a hostname column, `/Users/<name>`, `/home/<name>`, `~<name>`) and passing in an English phrase, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestGeneralityAllowlistUpdate` for proving allowlist update refuses growth and cleanly writes on shrinking.
+**The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestGeneralityMachineNameHasNoSyntaxException` for a machine name counted in every syntax position, `TestGeneralityCommonWordMachineWitness` (`internal/ci/generality_machine_hosts_test.go`) for a machine name that is also a common word refused in every host position (`<name>.local`, `@<name>`, `ssh <name>`, `<name>:` as host:path or host:port, `--machine <name>`, a hostname column, `/Users/<name>`, `/home/<name>`, `~<name>`) and passing in an English phrase, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestPackagesUpdateTable` (`internal/ci/allowlist/package_test.go`) for proving allowlist update refuses growth and cleanly writes on shrinking.
 **Its allowlist.** the `generality` package ledger, existing occurrences across the living tree, formatted as `path/to/file.go:token count`; sorted, shrink-only with ceiling.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/`, `internal/` and `tools/` only, skipping `testdata/`, `vendor/`, and `_test.go` files. It excludes Go package `import` statements and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched. A machine name counts wherever it appears in Go syntax: identifiers, struct tags, comments and string literals.
@@ -3039,7 +3076,7 @@ the original failed measurement.
 
 **The rule.** Production reachability is analyzed by `deadcode` from the `cmd/` mains (`./cmd/...`) and the `tools/` packages with a `main` executable as roots, without `-test` (code reached only by tests is the next contraction's target). The analysis runs across three operating systems (GOOS `linux`, `darwin`, `windows`) and holds the union of dead functions to a per-package shrink-only ledger.
 **The mistake it prevents.** Unused, unreachable functions and methods accumulating across the codebase; maintainer directive 2026-09-30 contraction phase ("dead code to zero with a class test holding it").
-**The test.** `TestDeadCode` (`internal/ci/dead_code_class_test.go`), with its allowlist mechanics witness `TestDeadCodeWitness`. `TestDeadCodeIncludesToolMains` verifies that a function called only by a `tools/` executable stays live, an unused function remains dead, and a `tools/` library is not a root; `TestDeadcodeRootsReportsGoListStderr` verifies that a failed `go list` of the tool mains reports the go command's stderr. Runs in the functional tier behind `//go:build functional`.
+**The test.** `TestDeadCode` (`internal/ci/dead_code_class_test.go`), with its allowlist mechanics covered by `TestCountedListHoldsSitesNotJustKeys` and `TestCountedUpdateLowersCountsAndNeverRaisesThem` (`internal/ci/allowlist/allowlist_test.go`). `TestDeadCodeIncludesToolMains` verifies that a function called only by a `tools/` executable stays live, an unused function remains dead, and a `tools/` library is not a root; `TestDeadcodeRootsReportsGoListStderr` verifies that a failed `go list` of the tool mains reports the go command's stderr. Runs in the functional tier behind `//go:build functional`.
 **Its allowlist.** `internal/ci/testdata/dead_code_allowlist.txt`, the shrink-only per-package ledger (`<package> <count>`); `NOVA_CI_UPDATE=1 go test -tags functional -run '^TestDeadCode$' ./internal/ci/` lowers counts and drops zero-count rows (the rule is functional-tier only, so `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` never reaches it, and the functional container mounts the source read-only). The list refuses to grow or raise any count.
 **Its remedy line.** `remedy="delete the unreachable function(s) or wire them into a production main; the dead code ledger only shrinks and refuses to raise counts or add rows"`.
 **Its narrowings.** Analyzes static reachability from main executables in `cmd/...` and `tools/...` without `-test` flags using `golang.org/x/tools/cmd/deadcode` across `linux`, `darwin`, and `windows`; libraries and fixtures under `tools/...` are not roots. `pkg/` packages are not counted (`deadCodeCounted`, witnessed by `TestDeadCodeCountsEverythingButPkg`): `pkg/` is a public library whose callers live in other modules (mas-bandwidth/nova-sprint since the split), and the roots are this module's mains only, so a `pkg/` function another module calls would read as dead here; dead code inside `pkg/` is not caught by this rule.
@@ -3199,6 +3236,8 @@ nova-sprint repository, out of this checkout's reach; the same guard is owed the
 **`pkg-boundary` — pkg/ never imports nova-sprint's code, and pkg/ code never imports internal/.** *The rule.* Every Go file under `pkg/`, code or test, that imports one of nova-sprint's paths (`sprintOnlyPaths` in `internal/ci/sprint_only_test.go`: nova-sprint, nova-card and nova-work and the packages only they import) is red, and so is every non-test Go file under `pkg/` that imports this module's `internal/`. *The mistake it prevents.* nova-sprint leaves for a repository of its own (the split, v1.2.3) and imports the building blocks it needs from `pkg/` (split L1). If a `pkg/` package imported the sprint, the two repositories would import each other. If a `pkg/` package's code imported `internal/`, nova-sprint would be handed a type it cannot name. *The test.* `TestPkgNeverImportsTheSprintOrInternal` (`internal/ci/pkg_boundary_class_test.go`). *Its allowlist.* None. *Its remedy line.* `<file> imports <path>: pkg/ is nova-tools' public face and never imports nova-sprint's code`, or `... a pkg/ package's code imports only pkg/ and outside modules, so every type it hands out can be named`. Move the shared piece into `pkg/`, or keep the importer out of it. *Its narrowings.* A `pkg/` test may import `internal/`, because a test is not handed to another module. Only import declarations are read.
 
 **`pkg-boundary-witness` — the pkg/ boundary rule is held against imports whose answer is known.** *The rule.* The findings function reports a `pkg/` code file importing the sprint, a `pkg/` test importing the sprint, and a `pkg/` code file importing `internal/`. It does not report a `pkg/` test importing `internal/`, or a `pkg/` file importing `pkg/` or the standard library. *The mistake it prevents.* A boundary check that reads the wrong import or the wrong directory is green over a tree that crosses the boundary. *The test.* `TestPkgBoundaryFindsTheSprintAndInternalImports` (`internal/ci/pkg_boundary_class_test.go`). *Its allowlist.* None. *Its remedy line.* None of its own; it fails with the assertion that names the case. *Its narrowings.* It holds the rule's decisions over hand-written files, not the tree.
+
+**`bus-address` — the loop units carry the fleet bus.** *The rule.* `fleet/templates/nova-loop.plist.j2` and `fleet/templates/nova-loop.service.j2` render `NOVA_BUS_REDIS` from `nova_bus_addr` only when that variable is defined and not empty, and the inventory sets `nova_bus_addr` from the applied fleet row's bus on every host of that row when the bus is set, and omits it when the bus is empty. *The mistake it prevents.* A loop unit that only knew the sprint redis address never received the bus, so a friend on that unit had nothing to prove a session against. *The test.* `TestTheLoopTemplatesCarryTheBusAddress` (`internal/ci/fleetplays_class_test.go`). *Its allowlist.* None. *Its remedy line.* Put the guarded `NOVA_BUS_REDIS` block in both loop templates, and set `nova_bus_addr` from the fleet row's bus. *Its narrowings.* It reads the two template files and the inventories the fleet tests already build. It does not render a unit and it does not run a loops play.
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 
