@@ -244,6 +244,9 @@ func (w world) tell(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, within 
 	why := map[string]string{}
 	for _, st := range sts {
 		why[st.Name] = cmp.Or(st.Reason, "unhooked")
+		if st.State != hook.StateUnhooked { // hooked and down: no proof from the model (hook.Passed.Unhooked)
+			why[st.Name] = "hooked, not proven (" + st.State + ")"
+		}
 	}
 	lines := func(down, back []string) []string {
 		var out []string

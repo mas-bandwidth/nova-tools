@@ -508,6 +508,16 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 	return nil
 }
 
+// pushSlots is the Lua table of each push's place among a record's push keys
+// (allKeys: a lease and a proof per push, in the order of Pushes).
+func pushSlots() string {
+	var b strings.Builder
+	for i, p := range Pushes {
+		fmt.Fprintf(&b, "%s = %d, ", p, i)
+	}
+	return b.String()
+}
+
 // beatLua performs one atomic server pass (tla/HookBeat.tla, Pass). The
 // server row prevents two passes in one interval. Each hooked bus role gets
 // a challenge at the next pass after it is armed (it has not proved since),
@@ -532,6 +542,22 @@ local keep = math.min(math.floor(after * 10 / (9 * every)) + 1, ` + strconv.Itoa
 local bus = {}
 for i = 1, nroles do bus[ARGV[6 + 2 * i]] = ARGV[7 + 2 * i] end
 local out, gone, live, coord = {}, {}, {}, ''
+-- proven: every push of the comma list ps has its lease and its proof (KEYS
+-- after the record at k, in the order of Pushes) stamped with the epoch e.
+local slot = {` + pushSlots() + `}
+local function stamped(key, e)
+  local v = redis.call('GET', key)
+  if not v then return false end
+  local ok, s = pcall(cjson.decode, v)
+  return ok and type(s) == 'table' and tonumber(s.epoch) == e
+end
+local function proven(k, ps, e)
+  for p in string.gmatch(ps, '[^,]+') do
+    local i = slot[p]
+    if not i or not stamped(KEYS[k + 1 + 2 * i], e) or not stamped(KEYS[k + 2 + 2 * i], e) then return false end
+  end
+  return true
+end
 local k, a = 3, 8 + 2 * nroles
 while k <= #KEYS do
   local rec, chal, delivery, name, sum = KEYS[k], KEYS[k + 7], KEYS[k + 8], ARGV[a], ARGV[a + 1]
@@ -623,11 +649,15 @@ while k <= #KEYS do
   table.insert(out, {did, misses, e, deliveredNonce})
   local st = redis.call('HGET', rec, 'state')
   if did == 2 then st = 'unhooked' end -- what the unhook above wrote, or a dry run would
-  if st == 'unhooked' then table.insert(gone, name) end
-  if st == 'hooked' and bus[role] then
-    table.insert(live, name)
-    if role == 'coordinator' and coord == '' then coord = name end
-  end
+  -- Up is proven, never merely hooked (tla/HookBeat.tla, NoBackWithoutProof): a
+  -- hooked name of a challenged role is up only while every push its challenge
+  -- names holds a lease and a proof of the record's epoch, which only the model's
+  -- nova-hook prove writes. A service that re-arms with no model behind it leaves
+  -- the name down, so nothing is told for the arming nor for its lapse.
+  local up = st == 'hooked' and bus[role] and proven(k, bus[role], tonumber(redis.call('HGET', rec, 'epoch')))
+  if st == 'unhooked' or (st == 'hooked' and bus[role] and not up) then table.insert(gone, name) end
+  if up then table.insert(live, name) end
+  if st == 'hooked' and bus[role] and role == 'coordinator' and coord == '' then coord = name end
   k, a = k + 9, a + 4
 end
 local set = table.concat(gone, ',')
@@ -692,9 +722,9 @@ var Audiences = []string{ToCoordinator, ToRest}
 type Passed struct {
 	Taken    bool     // false: another pass (another server's) was taken inside nine tenths of the interval; nothing was done
 	Beats    []Beat   // one per name, in the order asked
-	Unhooked []string // every name unhooked now, sorted
+	Unhooked []string // every name down now, sorted: unhooked, or hooked in a challenged role and not proven (tla/HookBeat.tla, NoBackWithoutProof)
 	Coord    string   // the coordinator now: the first hooked name of that role, "" for none
-	Live     []string // every hooked name of a challenged role: who hears a broadcast
+	Live     []string // every proven name of a challenged role, the names up: who hears a broadcast
 	Was      map[string]Told
 }
 

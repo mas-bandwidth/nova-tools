@@ -191,7 +191,18 @@ Every line runs as printed:
   old issued-nonce compatibility and the delivery protocol; silence configurations check current
   scheduling. Each new hazard has a broken witness. Quiet policy cases explore one name per role;
   cross-name quiet interactions are not explored. Existing multi-name race and tell cases remain.
-- **Coalesced telling, one write per audience.** Changes in the unhooked set or coordinator are sent
+- **Up is proven, never merely hooked.** The set the telling carries is the names down: every
+  unhooked name, and every hooked name of a challenged role whose challenged pushes (`bus`) are not
+  live and proven in the record's epoch (`live`, `partial`, `expired`). Only the model's
+  `nova-hook prove` writes that proof, and an arming clears it, so a name a supervised hook service
+  re-arms with no model running stays down: no `FRIEND BACK` for the arming, and no second
+  `FRIEND DOWN` when its unanswered challenge unhooks it again. A name is back only once its model
+  proves. A proven name whose lease or proof lapses is down (`hooked, not proven (<state>)`). The
+  other live names, who hear a broadcast, are the names up (proven); the coordinator stays the first
+  hooked name of its role, the recipient of the judgments and the status pushes. The model is
+  `tla/HookBeat.tla` (Parts `proven`: `DaemonHook`, `NoBackWithoutProof`, `NoFlapWithoutProof`;
+  the reversed witness `MCHookBeatBrokenArmedBack`, up as hooked, and `MCHookBeatWitnessArmedDown`).
+- **Coalesced telling, one write per audience.** Changes in the down set or coordinator are sent
   once per audience (`hook:told:<audience>:<gen>`): one `judgment` to the coordinator (`FRIEND DOWN
   <name>: <reason>`, `FRIEND BACK <name>`) and one message (or `COORDINATOR DOWN` judgment) to the
   other live names. Open judgments in `hook:judgments` are re-pushed once as `OVERDUE` past
