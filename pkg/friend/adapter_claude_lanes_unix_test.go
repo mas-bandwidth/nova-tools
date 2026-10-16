@@ -24,6 +24,7 @@ func fakeClaude(t *testing.T, outbox string, write bool) (run Exec, rec string) 
 	bin, rec := t.TempDir(), t.TempDir()
 	script := "#!/bin/sh\n" +
 		"printf '%s' \"$CLAUDE_CONFIG_DIR\" > '" + rec + "/config_dir'\n" +
+		"printf '%s' \"$NOVA_HOOK_CLAUDE_CHILD\" > '" + rec + "/child'\n" +
 		"cat > '" + rec + "/stdin'\n" +
 		"printf '%s\\0' \"$@\" > '" + rec + "/args'\n" +
 		"echo '{\"type\":\"result\",\"result\":\"done, and nothing here is read\"}'\n"
@@ -32,7 +33,8 @@ func fakeClaude(t *testing.T, outbox string, write bool) (run Exec, rec string) 
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755))
 	return func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
-		return RealExec(ctx, dir, "/usr/bin/env", append([]string{"PATH=" + bin + ":/usr/bin:/bin", name}, args...), stdin)
+		// -u: a test run inside a lane inherits the marker; only the lane's own env may set it
+		return RealExec(ctx, dir, "/usr/bin/env", append([]string{"-u", "NOVA_HOOK_CLAUDE_CHILD", "PATH=" + bin + ":/usr/bin:/bin", name}, args...), stdin)
 	}, rec
 }
 
@@ -82,6 +84,9 @@ func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 			got, err := os.ReadFile(filepath.Join(rec, "config_dir"))
 			require.NoError(t, err)
 			assert.Equal(t, tc.configDir, string(got), "CLAUDE_CONFIG_DIR is the row's config_dir")
+			got, err = os.ReadFile(filepath.Join(rec, "child"))
+			require.NoError(t, err)
+			assert.Equal(t, "1", string(got), "a lane is a headless child: no session's Stop hook counts its end")
 			got, err = os.ReadFile(filepath.Join(rec, "stdin"))
 			require.NoError(t, err)
 			assert.Empty(t, got, "stdin is /dev/null")

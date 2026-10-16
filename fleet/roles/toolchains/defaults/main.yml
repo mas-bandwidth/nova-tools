@@ -105,9 +105,11 @@ nova_toolchains:
         sha256: 35186bdae840028df621d14f3a75c68eb52eea90fabd500f7946a5d74bdaf11b
         root: OTP-29.1.1
         probe: Install
-        install_root: .
+        # OTP's Install builds in place: its ERL_ROOT is the unpacked tree (the dir holding erts-*), so bin/erl lands
+        # there, not at the prefix (2026-10-16: "{prefix}" alone failed "erts-17.1/bin does not exist" on a fresh machine)
+        install_root: OTP-29.1.1
         install_probe: bin/erl
-        installer_argv: ["./Install", "-sasl", "{prefix}"]
+        installer_argv: ["./Install", "-sasl", "{prefix}/OTP-29.1.1"]
       darwin-arm64:
         url: https://github.com/erlef/otp_builds/releases/download/OTP-29.1.1/otp-aarch64-apple-darwin.tar.gz
         sha256: 0e80f209b06d9d13cf3b5f7c07228d9561aff983e6e55ea9c8ebda085db286cc
@@ -127,7 +129,7 @@ nova_toolchains:
         probe: install.sh
         install_root: .
         install_probe: bin/rustc
-        installer_argv: ["./install.sh", "--prefix", "{prefix}", "--disable-ldconfig"]
+        installer_argv: ["./install.sh", "--prefix={prefix}", "--disable-ldconfig"]   # rust's install.sh takes --opt=value only ("--prefix" alone: not recognized)
       darwin-arm64:
         url: https://static.rust-lang.org/dist/2026-10-01/rust-1.99.0-aarch64-apple-darwin.tar.xz
         sha256: 0306e4813a6fa7d4353de68f0bb9a8216b4ca04b1cdee409d0e301f958e55dd2
@@ -135,7 +137,7 @@ nova_toolchains:
         probe: install.sh
         install_root: .
         install_probe: bin/rustc
-        installer_argv: ["./install.sh", "--prefix", "{prefix}", "--disable-ldconfig"]
+        installer_argv: ["./install.sh", "--prefix={prefix}", "--disable-ldconfig"]   # rust's install.sh takes --opt=value only ("--prefix" alone: not recognized)
   jdk:
     version: "25.0.4+101.0.LTS"
     fact_path: bin/java
@@ -192,3 +194,15 @@ nova_toolchains:
         sha256: da922c20d1792e5b2cbf375593d7a658acf034c12c84e007e71c76ef959c337e
         root: gh_2.102.0_macOS_arm64
         probe: bin/gh
+# eslint (schema issue #547, make/js.mk ESLINT: "eslint 9"): an npm package, so it is not an archive pair above. The
+# play installs it with the SDK's own npm into its own versioned prefix and links it into the SDK bin dir, the way the
+# archives are linked. Tag: `eslint` (`ansible-playbook fleet/tools.yml --tags eslint` converges this alone, and
+# touches no other toolchain). eslint.config.mjs imports no package, so eslint is the only package installed.
+nova_eslint_version: "9.39.5"
+# google-java-format (schema make/java.mk GOOGLE_JAVA_FORMAT, issue #424): the all-deps jar from the google/google-java-format
+# GitHub release, downloaded by each bench itself and held to this sha256 (the release asset's published digest). It lives
+# at <sdk>/google-java-format-<version>/ and <sdk>/bin/google-java-format is a wrapper that runs it with the SDK's Java
+# (else the bench's PATH java). Tag: `gjf` (`ansible-playbook fleet/tools.yml --tags gjf` converges this alone).
+nova_gjf_version: "1.37.0"
+nova_gjf_sha256: 834b2a0c38cb774953322a84b5ca3f2f40dd3156650b3cd44d3b744345962f7a
+nova_gjf_url: "https://github.com/google/google-java-format/releases/download/v{{ nova_gjf_version }}/google-java-format-{{ nova_gjf_version }}-all-deps.jar"

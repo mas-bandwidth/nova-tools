@@ -128,7 +128,7 @@ func (app *application) cmdMemberRead(args []string, stdout, stderr io.Writer) i
 	addr := app.redisFlag(fs)
 	var cells cellList
 	fs.Var(&cells, "cell", "read every member of the cell `row:col` (repeatable); the ids are then not given")
-	atEpoch := fs.String("at-epoch", "", "read a materialised epoch instead of the active one")
+	atEpoch := fs.String("at-epoch", "", "read the materialised epoch `n` instead of the active one")
 	asJSON := fs.Bool("json", false, "print the reading (or the refusal) as one JSON object instead of the lines")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {

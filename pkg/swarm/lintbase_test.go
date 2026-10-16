@@ -311,6 +311,19 @@ func TestDoneWhenTestsReadsTheRunners(t *testing.T) {
 
 	_, why = doneWhenTests("go test ./pkg")
 	assert.Contains(t, why, "no `-run")
+
+	// The prose after a backticked command is no runner-form case: the node id is
+	// the one test named, so a node id present at base is refused.
+	tests, why = doneWhenTests("`pytest tests/test_x.py::test_one` passes")
+	require.Empty(t, why)
+	require.Len(t, tests, 1, "got %v", tests)
+	assert.Equal(t, "test_one", tests[0].name)
+
+	// An option is no runner-form target: `--rootdir=. tests` names no case "tests".
+	tests, why = doneWhenTests("`pytest --rootdir=. tests -k test_one` passes")
+	require.Empty(t, why)
+	require.Len(t, tests, 1, "got %v", tests)
+	assert.Equal(t, "test_one", tests[0].name)
 }
 
 // pytestTakesValue says whether a pytest option word is followed by its value.

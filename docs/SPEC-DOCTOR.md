@@ -23,7 +23,7 @@ edits no other. A duplicate or unnamed registration panics at start-up.
 ## The command
 
 ```
-nova-doctor [run] [--check <name>]... [--dir <path>] [--local] [--strict] [--json]
+nova-doctor run [--check <name>]... [--dir <path>] [--local] [--strict] [--json]
 ```
 
 `run` is the one verb and the default: `nova-doctor --local` is `nova-doctor run --local`.

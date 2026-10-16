@@ -404,7 +404,7 @@ usage:
   nova-update watch --adopt <checks.tsv> [--as <friend> --to <who,who>] [--host <label>]
     [--timeout <d>] [--budget <d>]
   nova-update adoption --file <path> [--as <friend>] [--max <n>]
-  nova-update release <cut|build|install|adopt|pull> ...
+  nova-update release <cut|build|install|adopt|pull|cycle> ...
     nova-tools' own release pipeline: nova-update help release prints its usage lines
   nova-update help
 ```

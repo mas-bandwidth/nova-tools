@@ -388,6 +388,19 @@ ansible-playbook fleet/tools.yml --tags toolchains
 `--check --diff` reports the same hosts, tool paths and versions without
 installing archives.
 
+eslint (`nova_eslint_version` in the same defaults file; the schema repository's `make/js.mk` pins "eslint 9") is the one
+npm-installed tool: `<sdk>/eslint-<version>` is its npm prefix (`npm install --prefix`, `--ignore-scripts`, run by the
+login, never `npm -g`), `<sdk>/bin/eslint` links to it, and the play fails unless `eslint --version` prints the pin.
+`ansible-playbook fleet/tools.yml --tags eslint --limit <host>` converges it alone and touches no other toolchain;
+`--tags toolchains` converges it with the rest. It needs the SDK's node first. Reach it on the members' PATH (`~/sdk/bin`)
+or from `sudo -u <login> bash -lc 'eslint --version'`; a bare `sudo -u <login> eslint` resets PATH and finds no SDK tool.
+
+google-java-format (`nova_gjf_version` and `nova_gjf_sha256` in the same defaults file; the schema repository's `make/java.mk`
+runs it as `google-java-format`) is the all-deps jar from the google/google-java-format release. Each bench downloads it
+itself and the play refuses it unless it matches the pinned sha256; it lives in `<sdk>/google-java-format-<version>/` and
+`<sdk>/bin/google-java-format` is a wrapper that runs it with the SDK's Java. The play fails unless `--version` prints the pin.
+`ansible-playbook fleet/tools.yml --tags gjf --limit <host>` converges it alone; `--tags toolchains` converges it with the rest.
+
 ## redis.yml
 
 `nova-redis acl render` on the machine running the play prints the users this
