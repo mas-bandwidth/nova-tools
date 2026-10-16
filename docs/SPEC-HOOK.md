@@ -217,8 +217,10 @@ Every line runs as printed:
   `serverSent` tells the server's by kind (`status`, `judgment`) and subject prefix, and the server's
   challenges by theirs. The sprint server may also send under the coordinator's name: its `request`
   subjects `nova-sprint: <positive count> new for the coordinator` and
-  `nova-sprint: judgments waiting on the coordinator`, and its `blocker` subject
-  `nova-sprint: decisions owed`, pass the same filter. Other messages to self stay suppressed.
+  `nova-sprint: judgments waiting on the coordinator`, its `blocker` subjects
+  `nova-sprint: decisions owed` and `nova-sprint: the machine's tick runs late`, and its
+  `status` subject `nova-sprint: coordinator delivery restored`, pass the same filter.
+  Other messages to self stay suppressed.
   Each passing message is its own `HOOK PUSH` line.
 - **Bootstrap and client timers.** A client's standalone `Challenge` (`tla/HookBeat.tla`, `Bootstrap`)
   writes only when no challenge stands and `beat_at` is `0` in the current epoch, so a client never

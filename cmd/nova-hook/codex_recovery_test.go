@@ -64,6 +64,8 @@ func TestRecoveryKeepsSprintCoordinatorSelfNotices(t *testing.T) {
 		{From: "ada", To: []string{"ada"}, Kind: bus.KindRequest, Subject: "nova-sprint: 1 new for the coordinator", Body: "x"},
 		{From: "ada", To: []string{"ada"}, Kind: bus.KindRequest, Subject: "nova-sprint: judgments waiting on the coordinator", Body: "x"},
 		{From: "ada", To: []string{"ada"}, Kind: bus.KindBlocker, Subject: "nova-sprint: decisions owed", Body: "x"},
+		{From: "ada", To: []string{"ada"}, Kind: bus.KindBlocker, Subject: "nova-sprint: the machine's tick runs late", Body: "x"},
+		{From: "ada", To: []string{"ada"}, Kind: bus.KindStatus, Subject: "nova-sprint: coordinator delivery restored", Body: "x"},
 		{From: "ada", To: []string{"ada"}, Kind: bus.KindRequest, Subject: "note to self", Body: "x"},
 	} {
 		sent, err := b.Send(context.Background(), m)

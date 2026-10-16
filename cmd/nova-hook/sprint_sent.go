@@ -30,7 +30,9 @@ func sprintSent(m bus.Message, as string) bool {
 		n, err := strconv.Atoi(count)
 		return err == nil && n > 0 && strconv.Itoa(n) == count
 	case bus.KindBlocker:
-		return m.Subject == "nova-sprint: decisions owed"
+		return m.Subject == "nova-sprint: decisions owed" || m.Subject == "nova-sprint: the machine's tick runs late"
+	case bus.KindStatus:
+		return m.Subject == "nova-sprint: coordinator delivery restored"
 	}
 	return false
 }
