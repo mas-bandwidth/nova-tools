@@ -184,7 +184,8 @@ schemawire-conformance:
 		timeout $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS) $(GO) run github.com/mas-bandwidth/schema/v2/test/conformance/harness@$$pin wire-fuzz \
 			--manifest $$u/fuzz/MANIFEST.txt --json $$u/fuzz --vectors '' \
 			--driver "scratch/$${area}-driver wire-fuzz" --seed 24845619678 --n 100 \
-			|| { echo "schemawire-conformance: the wire fuzz over $$u failed or overran its $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS)s bound; a failing mutant is written where the harness's --failed flag names" >&2; exit 1; }; \
+			--failed scratch/$${area}-wire-fuzz-failed.bin \
+			|| { echo "schemawire-conformance: the wire fuzz over $$u failed or overran its $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS)s bound; the failing mutant is scratch/$${area}-wire-fuzz-failed.bin" >&2; exit 1; }; \
 	done; \
 	fi; \
 	elapsed=$$(($$(date +%s) - $$start)); \
