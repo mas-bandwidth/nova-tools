@@ -105,9 +105,11 @@ nova_toolchains:
         sha256: 35186bdae840028df621d14f3a75c68eb52eea90fabd500f7946a5d74bdaf11b
         root: OTP-29.1.1
         probe: Install
-        install_root: .
+        # OTP's Install builds in place: its ERL_ROOT is the unpacked tree (the dir holding erts-*), so bin/erl lands
+        # there, not at the prefix (2026-10-16: "{prefix}" alone failed "erts-17.1/bin does not exist" on a fresh machine)
+        install_root: OTP-29.1.1
         install_probe: bin/erl
-        installer_argv: ["./Install", "-sasl", "{prefix}"]
+        installer_argv: ["./Install", "-sasl", "{prefix}/OTP-29.1.1"]
       darwin-arm64:
         url: https://github.com/erlef/otp_builds/releases/download/OTP-29.1.1/otp-aarch64-apple-darwin.tar.gz
         sha256: 0e80f209b06d9d13cf3b5f7c07228d9561aff983e6e55ea9c8ebda085db286cc
@@ -127,7 +129,7 @@ nova_toolchains:
         probe: install.sh
         install_root: .
         install_probe: bin/rustc
-        installer_argv: ["./install.sh", "--prefix", "{prefix}", "--disable-ldconfig"]
+        installer_argv: ["./install.sh", "--prefix={prefix}", "--disable-ldconfig"]   # rust's install.sh takes --opt=value only ("--prefix" alone: not recognized)
       darwin-arm64:
         url: https://static.rust-lang.org/dist/2026-10-01/rust-1.99.0-aarch64-apple-darwin.tar.xz
         sha256: 0306e4813a6fa7d4353de68f0bb9a8216b4ca04b1cdee409d0e301f958e55dd2
@@ -135,7 +137,7 @@ nova_toolchains:
         probe: install.sh
         install_root: .
         install_probe: bin/rustc
-        installer_argv: ["./install.sh", "--prefix", "{prefix}", "--disable-ldconfig"]
+        installer_argv: ["./install.sh", "--prefix={prefix}", "--disable-ldconfig"]   # rust's install.sh takes --opt=value only ("--prefix" alone: not recognized)
   jdk:
     version: "25.0.4+101.0.LTS"
     fact_path: bin/java

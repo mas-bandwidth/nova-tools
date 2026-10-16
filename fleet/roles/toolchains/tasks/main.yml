@@ -241,7 +241,7 @@
   ansible.builtin.command:
     argv: "{{ nova_toolchain_spec.archive.installer_argv | map('replace', '{prefix}', nova_toolchain_spec.install_dir) | list }}"
     chdir: "{{ nova_toolchain_spec.install_dir }}/{{ nova_toolchain_spec.archive.root }}"
-    creates: "{{ nova_toolchain_spec.install_dir }}/{{ nova_toolchain_spec.install_probe }}"
+    creates: "{{ nova_toolchain_spec.install_dir }}/{{ nova_toolchain_spec.install_root }}/{{ nova_toolchain_spec.install_probe }}"
   when:
     - (nova_toolchain_replaces[nova_toolchain_spec.key] | default(false))
     - not ansible_check_mode
