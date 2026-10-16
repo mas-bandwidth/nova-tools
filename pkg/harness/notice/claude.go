@@ -26,14 +26,27 @@ func (c *Claude) Name() string { return "claude" }
 // Dir is the private notice directory.
 func (c *Claude) Dir() string { return c.Notices }
 
-// Push records the generation the notice met; the Monitor line is the push.
-func (c *Claude) Push(context.Context, Notice) (string, error) {
+// Push records the generation the notice met and names the notice's file as
+// pending for the session's hooks (claude_hooks.go); the Monitor line is the
+// push.
+func (c *Claude) Push(_ context.Context, n Notice) (string, error) {
 	g, err := ClaudeGeneration(c.State)
 	if err != nil {
 		return "", err
 	}
+	if err := writeWord(filepath.Join(c.State, claudePending), n.Path); err != nil {
+		return "", err
+	}
 	c.seen = g
 	return "monitor", nil
+}
+
+// Clear ends the pending notice for the session's hooks once it is consumed.
+func (c *Claude) Clear(context.Context, Notice) error {
+	if err := os.Remove(filepath.Join(c.State, claudePending)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // Consumed is a Stop since the push.
@@ -68,18 +81,43 @@ func ClaudeGeneration(state string) (int, error) {
 	return n, nil
 }
 
-// InstallClaude writes the Stop hook script into settings and adds it to
-// settings.json once. The script runs bin with --claude-boundary, which
-// advances the generation file Consumed reads.
+// ClaudeHookEvents are the Claude Code events the boundary script answers
+// (claude_hooks.go): its input names which.
+var ClaudeHookEvents = []string{"Stop", "PostToolUse", "SessionStart"}
+
+// ClaudeWatchScript is the watcher's script in settings: the one command a
+// session's Monitor runs.
+func ClaudeWatchScript(settings string) string {
+	return filepath.Join(settings, "nova-hook-claude-watch.sh")
+}
+
+// InstallClaude writes the boundary and watch scripts into settings and adds
+// the boundary script to settings.json once for each of ClaudeHookEvents. The
+// boundary script runs bin with --claude-boundary, which reads the event from
+// its input: a Stop advances the generation file Consumed reads. The watch
+// script runs bin with --claude-watch, under the session's Monitor.
 func InstallClaude(bin, as, role, state, settings string) error {
+	run := "#!/bin/sh\nexec " + shQuote(bin) + " hook --as " + shQuote(as) + " --role " + shQuote(role) +
+		" --harness claude --claude-state " + shQuote(state) + " --claude-settings " + shQuote(settings)
 	script := filepath.Join(settings, "nova-hook-claude-boundary.sh")
-	body := "#!/bin/sh\nexec " + shQuote(bin) + " hook --as " + shQuote(as) + " --role " + shQuote(role) +
-		" --harness claude --claude-state " + shQuote(state) + " --claude-settings " + shQuote(settings) + " --claude-boundary\n"
-	if err := atomicfile.Write(script, []byte(body), 0o700, atomicfile.ExactMode()); err != nil {
+	if err := atomicfile.Write(script, []byte(run+" --claude-boundary\n"), 0o700, atomicfile.ExactMode()); err != nil {
 		return err
 	}
-	return mergeClaudeStopHook(filepath.Join(settings, "settings.json"), shQuote(script))
+	if err := atomicfile.Write(ClaudeWatchScript(settings), []byte(run+" --claude-watch\n"), 0o700, atomicfile.ExactMode()); err != nil {
+		return err
+	}
+	for _, event := range ClaudeHookEvents {
+		if err := mergeClaudeHook(filepath.Join(settings, "settings.json"), event, shQuote(script)); err != nil {
+			return err
+		}
+	}
+	// The session's commands, the model's nova-hook prove among them, run with
+	// this env: prove records the proved nonce where the hooks read it.
+	return mergeClaudeEnv(filepath.Join(settings, "settings.json"), ClaudeStateEnv, state)
 }
+
+// ClaudeStateEnv names the claude state directory in a session's environment.
+const ClaudeStateEnv = "NOVA_HOOK_CLAUDE_STATE"
 
 // ClaudeChildEnv names the environment variable set on a headless claude child
 // (a friend lane's card, read or harness proof). Its Stop hook still runs when

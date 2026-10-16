@@ -261,6 +261,12 @@ Claude Code clients use --harness claude with --claude-state and --claude-settin
 it installs a Stop hook that advances the generation file; the session's Monitor on this process's stdout is the delivery.
 A headless claude child (a nova-friend lane's card, read or harness proof) runs with NOVA_HOOK_CLAUDE_CHILD=1, and its
 Stop leaves the generation alone (STATE state=boundary-skipped), so --claude-settings may be the lanes' config_dir too.
+The install wires one boundary command to three hook events (tla/ClaudeHookNotice.tla): PostToolUse puts an unproved
+pending challenge into the running turn once; Stop blocks the turn's end once for it, then once while no watcher holds
+the watch lock, else ends the turn; SessionStart tells the model to arm the watcher and the pending notice. The watcher
+is <claude-settings>/nova-hook-claude-watch.sh (--claude-watch), run by the session's Monitor: it holds the lock and
+prints each HOOK line of the supervised service's log (--claude-log). nova-hook prove records the proved nonce in the
+claude state directory, so no hook names it again. The hooks read files only and never prove.
 Every harness keeps one pending notice (pkg/harness/notice): a saved file rewritten in place with the newest valid
 challenge and the message count; a new push waits until the model consumed the last one; only the model proves.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
@@ -291,7 +297,9 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("antigravity-since", w.getenv("NOVA_HOOK_ANTIGRAVITY_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds) for Antigravity recovery")
 					f.String("claude-state", w.getenv("NOVA_HOOK_CLAUDE_STATE"), "existing directory whose generation file marks a Claude Code turn boundary")
 					f.String("claude-settings", w.getenv("NOVA_HOOK_CLAUDE_SETTINGS"), "existing directory where the Claude Code Stop hook is installed")
-					f.Bool("claude-boundary", false, "advance the Claude Code generation file and exit; the installed Stop hook runs this")
+					f.Bool("claude-boundary", false, "answer one Claude Code hook event read from standard input (Stop, PostToolUse, SessionStart) and exit; the installed hooks run this, and a Stop advances the generation file")
+					f.Bool("claude-watch", false, "the watcher a Claude Code session's Monitor runs: hold the watch lock and print each HOOK line of the hook service's log as it lands")
+					f.String("claude-log", "", "the hook service's log --claude-watch follows (default: ~/.local/state/nova-hook/<as>.log, the supervised service's)")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
 					laneFlags(w, f)
 					store(f)
@@ -542,24 +550,22 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		var err error
 		claude, err = claudeConfig(c, native)
 		if err != nil {
+			if c.Bool("claude-boundary") {
+				return claudeHookFail(err.Error()) // a hook's error never blocks a Stop
+			}
 			return tool.Refuse(err.Error())
 		}
 		if claude.boundary {
 			if c.DryRun() {
 				return tool.Refuse("claude boundary writes the generation file; omit --dry-run")
 			}
-			if w.getenv(notice.ClaudeChildEnv) != "" {
-				n, err := notice.ClaudeGeneration(claude.state)
-				if err != nil {
-					return tool.Refuse("claude generation could not be read: " + err.Error())
-				}
-				return tool.Done().As("STATE").Fact("state", "boundary-skipped").Fact("generation", n).Note("a headless claude child's Stop (" + notice.ClaudeChildEnv + " set) is no turn of the session's")
+			return w.claudeHook(c, claude)
+		}
+		if claude.watch {
+			if c.DryRun() {
+				return tool.Refuse("claude watch holds the watch lock; omit --dry-run")
 			}
-			n, err := notice.ClaudeBoundary(claude.state)
-			if err != nil {
-				return tool.Refuse("claude generation could not be written: " + err.Error())
-			}
-			return tool.Done().As("STATE").Fact("state", "boundary").Fact("generation", n)
+			return w.claudeWatch(c, claude)
 		}
 	case "", "deepseek", "dsh":
 		var err error
@@ -1124,6 +1130,9 @@ func (w world) prove(c *tool.Call) *tool.Out {
 		o.Fact("issued", pr.Issued.Format(time.RFC3339))
 	}
 	w.pruneNoticesOnProve(c, s.as, c.Str("nonce"), o)
+	if pr.Proven > 0 {
+		w.claudeProvedOnProve(s.as, c.Str("nonce"), o)
+	}
 	return o
 }
 
@@ -1162,6 +1171,39 @@ func (w world) pruneNoticesOnProve(c *tool.Call, as, nonce string, o *tool.Out) 
 		if _, err := dshdesktop.PruneOnProve(dir, nonce); err != nil {
 			msg := fmt.Sprintf("prune resolved notices in %s: %v", dir, err)
 			o.Note(msg)
+		}
+	}
+}
+
+// claudeProvedOnProve records the nonce the model just proved in each claude
+// state directory there is (NOVA_HOOK_CLAUDE_STATE, else
+// ~/.local/state/nova-hook/<as>-claude), so the session's hooks never name a
+// proved challenge again (tla/ClaudeHookNotice.tla, Prove).
+func (w world) claudeProvedOnProve(as, nonce string, o *tool.Out) {
+	var dirs []string
+	if w.getenv != nil {
+		if d := strings.TrimSpace(w.getenv("NOVA_HOOK_CLAUDE_STATE")); d != "" && filepath.IsAbs(d) {
+			dirs = append(dirs, d)
+		}
+	}
+	home := ""
+	if w.home != nil {
+		home, _ = w.home()
+	}
+	if home == "" && w.getenv != nil {
+		home = w.getenv("HOME")
+	}
+	if home != "" && filepath.IsAbs(home) {
+		if d := filepath.Join(home, ".local", "state", "nova-hook", as+"-claude"); !slices.Contains(dirs, d) {
+			dirs = append(dirs, d)
+		}
+	}
+	for _, dir := range dirs {
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			continue
+		}
+		if err := notice.ClaudeProved(dir, nonce); err != nil {
+			o.Note("record the proved challenge in " + dir + ": " + err.Error())
 		}
 	}
 }
