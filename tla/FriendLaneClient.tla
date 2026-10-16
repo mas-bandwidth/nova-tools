@@ -86,6 +86,10 @@
 (*                  1..max(width, max held), ungated; a freed lane takes   *)
 (*                  with the row unread or past a lowered width:           *)
 (*                  DrainNeverTakes fails.                                 *)
+(*   LostDrops      a free lane's take commits and its answer is lost      *)
+(*                  (TakeAnswerLost); the view drops that lane, so a later *)
+(*                  blind round counts too few and takes past a lowered    *)
+(*                  width (before c2d44bcd5b): DrainNeverTakes fails.      *)
 (* The bound, checked as a witness of the design, not excluded             *)
 (* (MCFriendLaneClientBlindRestartLapses.cfg): a client that does not know *)
 (* a held lane (restarted, held empty), or that drains past a lowered      *)
@@ -93,7 +97,9 @@
 (* the lease returns the card: LiveHoldNeverExpires fails there.           *)
 (* MCFriendLaneClientBlind.cfg (no restart) and                            *)
 (* MCFriendLaneClientBlindWidth.cfg (resizes and a failed row read under a *)
-(* failed cards read) hold everything else.                                *)
+(* failed cards read) hold everything else, and                          *)
+(* MCFriendLaneClientBlindRestart.cfg holds every other invariant and      *)
+(* property across a restart under a failed cards read.                    *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -101,7 +107,7 @@ CONSTANTS Cards, Lanes, Bound, RenewTicks, MaxRestarts, MaxDeaths,
           TrustCache, RenewUnproven, TickUnstarts,
           Widths, InitWidth, MaxResizes, MaxLosses,
           ShrinkStopsRenew, ShrinkMoves, TakeOverWidth, NoGrow,
-          MaxCardFails, BlindTakes
+          MaxCardFails, BlindTakes, LostDrops
 
 None == "none"
 NoHold == <<None, 0>>  \* a cache entry naming no card
@@ -109,7 +115,7 @@ ASSUME None \notin Cards /\ Bound > 0 /\ RenewTicks \in 1..Bound
 ASSUME TrustCache \in BOOLEAN /\ RenewUnproven \in BOOLEAN /\ TickUnstarts \in BOOLEAN
 ASSUME Lanes = 1..Cardinality(Lanes) /\ Widths \subseteq Lanes /\ InitWidth \in Widths
 ASSUME ShrinkStopsRenew \in BOOLEAN /\ ShrinkMoves \in BOOLEAN /\ TakeOverWidth \in BOOLEAN /\ NoGrow \in BOOLEAN
-ASSUME MaxCardFails \in Nat /\ BlindTakes \in BOOLEAN
+ASSUME MaxCardFails \in Nat /\ BlindTakes \in BOOLEAN /\ LostDrops \in BOOLEAN
 
 VARIABLES srv,       \* server: the card each lane holds, or None
           col,       \* server: each card ready, held or done
@@ -131,11 +137,12 @@ VARIABLES srv,       \* server: the card each lane holds, or None
           overTake,  \* ghost: a free lane took while the held cards were at the width or the row unread
           held,      \* the client: the lanes its own last answers found holding a card (c.held)
           cardsOk,   \* the client: its last friend cards read answered
-          cardFails  \* failed friend cards reads so far
+          cardFails, \* failed friend cards reads so far
+          seen       \* ghost: the lanes this process asked since it started (a round's asks)
 
-vars == <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, width, cfgOk, resizes, losses, overTake, held, cardsOk, cardFails>>
+vars == <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, width, cfgOk, resizes, losses, overTake, held, cardsOk, cardFails, seen>>
 cfgVars == <<width, cfgOk, resizes, losses, overTake>>
-viewVars == <<held, cardsOk, cardFails>>
+viewVars == <<held, cardsOk, cardFails, seen>>
 
 \* the lanes holding a card, as the server says
 HeldN == Cardinality({l \in Lanes : srv[l] # None})
@@ -157,7 +164,7 @@ TypeOK ==
   /\ restarts \in 0..MaxRestarts /\ deaths \in 0..MaxDeaths
   /\ width \in Widths /\ cfgOk \in BOOLEAN
   /\ resizes \in 0..MaxResizes /\ losses \in 0..MaxLosses /\ overTake \in BOOLEAN
-  /\ held \subseteq Lanes /\ cardsOk \in BOOLEAN /\ cardFails \in 0..MaxCardFails
+  /\ held \subseteq Lanes /\ cardsOk \in BOOLEAN /\ cardFails \in 0..MaxCardFails /\ seen \subseteq Lanes
 
 Init ==
   /\ srv = [l \in Lanes |-> None]
@@ -172,7 +179,7 @@ Init ==
   /\ restarts = 0 /\ deaths = 0
   /\ width = InitWidth /\ cfgOk = TRUE
   /\ resizes = 0 /\ losses = 0 /\ overTake = FALSE
-  /\ held = {} /\ cardsOk = TRUE /\ cardFails = 0
+  /\ held = {} /\ cardsOk = TRUE /\ cardFails = 0 /\ seen = {}
 
 \* the client renews (asks) only while the model proves; the witness renews regardless
 Renewing == up /\ (proven \/ RenewUnproven)
@@ -206,7 +213,7 @@ Renew(l) ==
   /\ srv[l] # None
   /\ lease' = [lease EXCEPT ![l] = Bound]
   /\ cache' = [cache EXCEPT ![l] = <<srv[l], gen[srv[l]]>>]
-  /\ held' = held \cup {l}
+  /\ held' = held \cup {l} /\ seen' = seen \cup {l}
   /\ UNCHANGED <<srv, col, gen, up, proven, told, finished, returned, lostLive, restarts, deaths>>
   /\ UNCHANGED cfgVars
   /\ UNCHANGED <<cardsOk, cardFails>>
@@ -218,7 +225,7 @@ Forget(l) ==
   /\ held' = held \ {l}
   /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths>>
   /\ UNCHANGED cfgVars
-  /\ UNCHANGED <<cardsOk, cardFails>>
+  /\ UNCHANGED <<cardsOk, cardFails, seen>>
 
 \* BlindAsk(l): a blind round's ask of a lane it asks (RenewBlind) that the server says is
 \* free: the lane take has no renew-only form, so the ask takes her next ready card, else
@@ -241,21 +248,25 @@ BlindAsk(l) ==
   /\ UNCHANGED <<gen, up, proven, told, finished, returned, lostLive, restarts, deaths>>
   /\ UNCHANGED <<width, cfgOk, resizes, losses>>
   /\ UNCHANGED <<cardsOk, cardFails>>
+  /\ seen' = seen \cup {l}
 
 \* CardsReadFails: friend cards does not answer (the client falls back to its own view);
 \* CardsReadBack: it answers again. The read is a round's first step, so it fails between
-\* rounds: before this process's first round (held empty) or after a whole round, when held
-\* names every lane the server holds (code: c.held is a round's holds, set at its end).
+\* rounds: before this process asked any lane (seen empty) or after a whole round, when it
+\* has asked every lane the server holds. What held then names is the code's: c.held is a
+\* round's holds, every lane asked kept in it, a failed ask's too (client.go Round), so held
+\* covers the server's lanes; the witness LostDrops drops a take whose answer was lost
+\* (TakeAnswerLost) and breaks DrainNeverTakes.
 CardsReadFails ==
   /\ cardsOk /\ cardFails < MaxCardFails
-  /\ held = {} \/ \A l \in Lanes : srv[l] # None => l \in held
+  /\ seen = {} \/ \A l \in Lanes : srv[l] # None => l \in seen
   /\ cardsOk' = FALSE /\ cardFails' = cardFails + 1
-  /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, held>>
+  /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, held, seen>>
   /\ UNCHANGED cfgVars
 CardsReadBack ==
   /\ ~cardsOk
   /\ cardsOk' = TRUE
-  /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, held, cardFails>>
+  /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, held, cardFails, seen>>
   /\ UNCHANGED cfgVars
 
 \* Take(l): the same verb on a free lane takes her next ready card, else nothing. The client
@@ -279,6 +290,27 @@ Take(l) ==
             /\ held' = held \ {l}
             /\ UNCHANGED <<srv, col, lease, overTake>>
   /\ UNCHANGED <<gen, up, proven, told, finished, returned, lostLive, restarts, deaths>>
+  /\ UNCHANGED <<width, cfgOk, resizes, losses>>
+  /\ UNCHANGED <<cardsOk, cardFails>>
+  /\ seen' = seen \cup {l}
+
+\* TakeAnswerLost(l): Take's ask of a free lane commits on the server (her next ready card is
+\* the lane's) and its answer is lost (a timeout, an unreadable answer, a brief cache write
+\* that failed): the client's cache learns nothing, and the lane stays in its view (held),
+\* as every failed ask's does. The witness LostDrops drops it from the view.
+TakeAnswerLost(l) ==
+  /\ Renewing /\ cardsOk
+  /\ srv[l] = None
+  /\ TakeOverWidth \/ (cfgOk /\ HeldN < TakeWidth)
+  /\ \E c \in Cards :
+       /\ col[c] = "ready"
+       /\ srv' = [srv EXCEPT ![l] = c]
+       /\ col' = [col EXCEPT ![c] = "held"]
+       /\ lease' = [lease EXCEPT ![l] = Bound]
+  /\ overTake' = (overTake \/ ~cfgOk \/ HeldN >= width)
+  /\ held' = IF LostDrops THEN held ELSE held \cup {l}
+  /\ seen' = seen \cup {l}
+  /\ UNCHANGED <<cache, gen, up, proven, told, finished, returned, lostLive, restarts, deaths>>
   /\ UNCHANGED <<width, cfgOk, resizes, losses>>
   /\ UNCHANGED <<cardsOk, cardFails>>
 
@@ -397,7 +429,7 @@ Restart ==
   /\ ~up
   /\ up' = TRUE
   /\ cache' = IF TrustCache THEN cache ELSE [l \in Lanes |-> NoHold]
-  /\ held' = {}
+  /\ held' = {} /\ seen' = {}
   /\ UNCHANGED <<srv, col, gen, lease, proven, told, finished, returned, lostLive, restarts, deaths>>
   /\ UNCHANGED cfgVars
   /\ UNCHANGED <<cardsOk, cardFails>>
@@ -417,7 +449,7 @@ Revive ==
   /\ UNCHANGED viewVars
 
 Next ==
-  \/ \E l \in Lanes : Renew(l) \/ Take(l) \/ Age(l) \/ Expire(l) \/ TickUnstart(l)
+  \/ \E l \in Lanes : Renew(l) \/ Take(l) \/ TakeAnswerLost(l) \/ Age(l) \/ Expire(l) \/ TickUnstart(l)
   \/ \E w \in Widths : SetWidth(w)
   \/ ConfigLost \/ ConfigBack
   \/ CardsReadFails \/ CardsReadBack \/ \E l \in Lanes : Forget(l) \/ BlindAsk(l)
