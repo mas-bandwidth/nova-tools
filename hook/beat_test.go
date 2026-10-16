@@ -597,6 +597,75 @@ func TestAFreshlyArmedNameIsChallengedAtTheNextPass(t *testing.T) {
 	assert.Equal(t, hook.BeatChallenged, r.beatAfter(t, "srv", next, hook.DownAfter)["ada"].Did)
 }
 
+// DO NOT REMOVE THIS WITHOUT GLENN'S EXPLICIT PERMISSION
+// TestTheCoordinatorIsChallengedEveryTenMinutesAndAnUnansweredOneUnhooksIt pins the
+// owner's order of 2026-10-16 (tla/HookBeat.tla, BusSend and CoordUpMeansAnswered): the
+// coordinator is challenged once every CoordinatorEvery, however much it sends on the bus;
+// a challenge answered in time keeps it proven; one left unanswered past AnswerBound
+// unhooks it at the next pass, and the gate refuses with the hook-in breadcrumb. The
+// rig's clock starts at a fixed non-zero instant; the reader's half runs from 1000 s.
+func TestTheCoordinatorIsChallengedEveryTenMinutesAndAnUnansweredOneUnhooksIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Coordinator)
+	r.startHeartbeat(t)
+	next := nonces()
+	// step is one minute of a talking coordinator: its holder renews both leases, it
+	// sends on the bus, and the server passes.
+	step := func() hook.Beat {
+		t.Helper()
+		r.pass(hook.BeatEvery)
+		ada := r.state(t, "ada")
+		if ada.State != hook.StateUnhooked {
+			require.NoError(t, r.s.Renew(ctx, "ada", hook.Coordinator, hook.Bus, ada.Epoch, "holder"))
+			require.NoError(t, r.s.Renew(ctx, "ada", hook.Coordinator, hook.Sprint, ada.Epoch, "holder"))
+			now, err := r.Client.Time(ctx).Result() // the store's TIME, as a bus send stamps it
+			require.NoError(t, err)
+			require.NoError(t, r.Client.HSet(ctx, hook.RecordKey("ada"), "bus_sent_at", now.UnixMilli()).Err())
+		}
+		return r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+	}
+	answer := func(b hook.Beat) {
+		t.Helper()
+		_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
+		require.NoError(t, err)
+		require.Equal(t, hook.StateProven, r.state(t, "ada").State)
+	}
+	var b hook.Beat
+	for i := range 3 { // three periods, each answered in time: proven throughout
+		minutes := 0
+		for b = step(); b.Did != hook.BeatChallenged; b = step() {
+			minutes++
+			require.Less(t, minutes, 11, "challenged within the period, talking or not")
+			require.Equal(t, hook.StateProven, r.state(t, "ada").State)
+		}
+		if i > 0 { // the first period runs from the hook-in
+			assert.GreaterOrEqual(t, minutes, 9, "not before the period")
+		}
+		answer(b)
+	}
+	// the next challenge left unanswered: unhooked once its bound has passed
+	for b = step(); b.Did != hook.BeatChallenged; b = step() {
+	}
+	for i := 0; b.Did != hook.BeatUnhooked; i++ {
+		require.Less(t, i, int(hook.AnswerBound/hook.BeatEvery)+2, "unhooked at the first pass past the bound")
+		b = step()
+	}
+	st := r.state(t, "ada")
+	require.Equal(t, hook.StateUnhooked, st.State)
+	ref := st.Gate(hook.Want{Name: "ada", Need: hook.PushesOf(hook.Coordinator), Roles: []hook.Role{hook.Coordinator}, Role: hook.Coordinator})
+	require.NotNil(t, ref, "every coordinator verb refuses")
+	assert.Contains(t, ref.Error(), "run: nova-hook hook --as ada --role coordinator")
+
+	// the reader's rule, from 1000 s: a coordinator's bus sends are no activity, a friend's are
+	at := time.Unix(1000, 0).UTC()
+	coord := hook.Status{Role: hook.Coordinator, AnswerAt: at, ActivityAt: at.Add(20 * time.Minute)}
+	assert.Equal(t, at, coord.LastActivity())
+	friend := hook.Status{Role: hook.Friend, AnswerAt: at, ActivityAt: at.Add(20 * time.Minute)}
+	assert.Equal(t, at.Add(20*time.Minute), friend.LastActivity())
+}
+
 // TestUpIsProvenNeverMerelyArmed pins who is up (tla/HookBeat.tla,
 // NoBackWithoutProof and NoFlapWithoutProof; the ruling of 2026-10-16:
 // only live when really up): a name its service arms and renews, with no model to

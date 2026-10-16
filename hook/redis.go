@@ -589,7 +589,9 @@ while k <= #KEYS do
     local armed = tonumber(redis.call('HGET', rec, 'armed') or '0')
     local heard = math.max(answer, armed, tonumber(redis.call('HGET', rec, 'bus_sent_at') or '0'))
     local quiet = ` + strconv.FormatInt(QuietAfter.Milliseconds(), 10) + `
-    if role == 'coordinator' then quiet = ` + strconv.FormatInt(CoordinatorEvery.Milliseconds(), 10) + `
+    -- DO NOT REMOVE THIS WITHOUT GLENN'S EXPLICIT PERMISSION
+    -- The coordinator's own bus sends hold off neither its challenge nor its unhook: only its answer does.
+    if role == 'coordinator' then quiet = ` + strconv.FormatInt(CoordinatorEvery.Milliseconds(), 10) + `; heard = math.max(answer, armed)
     elseif role == 'friend' and ARGV[a + 2] == '1' then quiet = ` + strconv.FormatInt(BusyQuietAfter.Milliseconds(), 10) + ` end
     if not dry then redis.call('HSET', rec, 'quiet_after', quiet) end
     local proofDue = now - math.max(answer, armed) >= ` + strconv.FormatInt((ProofTTL-AnswerBound).Milliseconds(), 10) + ` - 2 * every and redis.call('HGET', rec, 'renewal_failed') ~= '1'

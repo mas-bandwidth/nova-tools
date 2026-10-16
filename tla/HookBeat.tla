@@ -112,8 +112,8 @@ EXTENDS Naturals, FiniteSets, Sequences
 
 CONSTANTS Names, Servers, DownAfter, Broken, CoordRole, NoCoord, Parts
 
-\* Silence cases model the production ordering: answer/down < friend quiet <
-\* coordinator quiet. Other cases retain the faster scheduler as an
+\* Silence cases model the production ordering: answer/down < friend quiet =
+\* coordinator period. Other cases retain the faster scheduler as an
 \* overapproximation for old issued nonces and the delivery protocol.
 Silence == "silence" \in Parts
 \* Without Silence the ghosts of the silence rule (busy, lastActivity,
@@ -121,7 +121,10 @@ Silence == "silence" \in Parts
 \* them is guarded by Silence, so they stay at their Init values in every
 \* action and add no states to a case that does not turn on silence.
 QuietAfter == 2 * DownAfter
-CoordinatorEvery == 6 * DownAfter
+\* DO NOT REMOVE THIS WITHOUT GLENN'S EXPLICIT PERMISSION
+\* The coordinator is challenged every 10 minutes (hook.CoordinatorEvery, the owner,
+\* 2026-10-16): two down-afters, as an idle friend's quiet window.
+CoordinatorEvery == 2 * DownAfter
 ActivityCap == IF Silence THEN CoordinatorEvery + 2 * DownAfter + 3 ELSE DownAfter + 1
 ProofLife == 8 * DownAfter
 \* A fresh server may pass up to two intervals apart, including work time.
@@ -167,6 +170,9 @@ QuietCap == IF Silence THEN CoordinatorEvery + 3 ELSE DownAfter + 2
 \*                 (NoJudgmentNamesItsRecipientBack; needs two coordinator-role names)
 \*   "keepup"      BadKeepUp: a lapsed proof leaves the name up until an unhook, which
 \*                 then tells a down with no proof either side (NoFlapWithoutProof only)
+\*   "coordtalk"   BadCoordTalk: the rule before 2026-10-16, a coordinator's own bus send
+\*                 is activity, so a talking coordinator that never answers stays up
+\*                 (CoordUpMeansAnswered)
 \* BadUnhookAtThree (Limit = 3) is retired with Limit: the down rule is time.
 
 None == <<>>
@@ -680,10 +686,15 @@ SetBusy(n) ==
                    judv, alive, qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* A committed send is activity at store TIME, never a proof or an answer.
+\* DO NOT REMOVE THIS WITHOUT GLENN'S EXPLICIT PERMISSION
+\* A coordinator's own send is no activity (beatLua, heard; Status.LastActivity):
+\* only its answer holds off its challenge and its unhook.
 BusSend(n) ==
     /\ Silence /\ alive[n] /\ hooked[n]
-    /\ lastActivity' = [lastActivity EXCEPT ![n] = 0]
-    /\ quiet' = [quiet EXCEPT ![n] = 0]
+    /\ IF n \in CoordRole /\ "coordtalk" \notin Broken
+          THEN UNCHANGED <<lastActivity, quiet>>
+          ELSE /\ lastActivity' = [lastActivity EXCEPT ![n] = 0]
+               /\ quiet' = [quiet EXCEPT ![n] = 0]
     /\ UNCHANGED <<busy, challengedWhileTalking, beatOwned, hooked, nonceVersion, delivered, chal, misses,
                    events, hooks, taken, passed, rowAge, tellv, judv, alive,
                    qtime, client, held, ask, expiries, issued, proof, prv>>
@@ -985,6 +996,12 @@ SilentDetectionBound == \A n \in Names :
 \* the server itself continues to pass. This does not forge an unhook event.
 ReaderBackstop == \A n \in Names :
     Silence /\ lastActivity[n] > ReaderLimit(n) => Shown(n) = "down"
+\* DO NOT REMOVE THIS WITHOUT GLENN'S EXPLICIT PERMISSION
+\* A coordinator shown up answered (or hooked in) within its period, its answer
+\* bound and the reader's window, whatever it sent on the bus since (qtime is
+\* the age of answered_at); "coordtalk" breaks it.
+CoordUpMeansAnswered == \A n \in CoordRole :
+    Silence /\ Shown(n) \in {"up", "held"} => qtime[n] <= ReaderLimit(n)
 NoExpiredRetryWhileTalking ==
     [][\A n \in Names : Silence /\ chal[n] \in {"late", "failed"} /\
        lastActivity[n] <= QuietLimit(n) /\ ~Retry(n) => chal'[n] # "open"]_vars
