@@ -70,10 +70,11 @@ func sprintAsk(ctx context.Context, addr string, argv []string) (string, error) 
 }
 
 // laneClient is the friend lane client a hook run carries: a friend's supervised service
-// with lanes, else nil (a session's own hook, --once, a dry run, another role). Its width is
+// with lanes, else nil (a session's own hook, --once, a dry run, another role). A
+// coordinator works her own friend row too, as nova-friend's daemon joins her hook. Its width is
 // her canonical nova-config row's, fetched by the loop every friend.ConfigEvery (Apply).
 func (w world) laneClient(c *tool.Call, as string, role hook.Role) *friend.Client {
-	if role != hook.Friend || !w.isServiceRun() || c.Bool("once") || c.DryRun() || w.sprint == nil {
+	if !laneRole(role) || !w.isServiceRun() || c.Bool("once") || c.DryRun() || w.sprint == nil {
 		return nil
 	}
 	addr := c.Str("sprint-server")
@@ -94,6 +95,10 @@ func (w world) laneClient(c *tool.Call, as string, role hook.Role) *friend.Clien
 	return &friend.Client{Name: as, Dir: dir, Fetch: fetch,
 		Ask: func(ctx context.Context, argv []string) (string, error) { return w.sprint(ctx, addr, argv) }}
 }
+
+// laneRole is whether a role's service carries the friend lanes: a friend's, and the
+// coordinator's, who works her own friend row too (as nova-friend's daemon joins her hook).
+func laneRole(role hook.Role) bool { return role == hook.Friend || role == hook.Coordinator }
 
 // configPass is the loop's tick of the friend's configuration: the canonical row fetched and
 // applied when due (friend.Client.Apply), and one STATE line when what the lanes run by

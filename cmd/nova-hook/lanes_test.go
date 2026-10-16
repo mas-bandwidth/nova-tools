@@ -160,3 +160,14 @@ func TestAHungConfigReadNeverHoldsTheLoop(t *testing.T) {
 	assert.Equal(t, "config-unread", stateFact(o))
 	assert.Zero(t, hung.Intake())
 }
+
+// The coordinator works her own friend row: her service carries the lanes as a
+// friend's does, so taking the seat never drops the cards her row holds.
+func TestACoordinatorsServiceCarriesHerRowsLanes(t *testing.T) {
+	t.Parallel()
+	assert.True(t, laneRole(hook.Friend))
+	assert.True(t, laneRole(hook.Coordinator))
+	for _, r := range []hook.Role{hook.Comms, hook.Member, hook.Reader} {
+		assert.False(t, laneRole(r), string(r))
+	}
+}
