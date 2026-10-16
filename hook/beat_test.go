@@ -596,3 +596,89 @@ func TestAFreshlyArmedNameIsChallengedAtTheNextPass(t *testing.T) {
 	r.pass(hook.BeatEvery)
 	assert.Equal(t, hook.BeatChallenged, r.beatAfter(t, "srv", next, hook.DownAfter)["ada"].Did)
 }
+
+// TestUpIsProvenNeverMerelyArmed pins who is up (tla/HookBeat.tla,
+// NoBackWithoutProof and NoFlapWithoutProof; the ruling of 2026-10-16:
+// only live when really up): a name its service arms and renews, with no model to
+// prove, is hooked and live but down, so it is never back and never hears a
+// broadcast; its lapse to unhooked changes nothing told; only the model's
+// proof brings it back, once.
+func TestUpIsProvenNeverMerelyArmed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Coordinator)
+	r.Hook(t, "bob", hook.Comms)
+	r.Unhook(t, "bob")
+	next := nonces()
+	tell := func() hook.Passed { // one pass, every audience marked told, the clock an interval on
+		t.Helper()
+		ada := r.state(t, "ada")
+		require.NoError(t, r.s.Renew(ctx, "ada", hook.Coordinator, hook.Bus, ada.Epoch, "holder"))
+		require.NoError(t, r.s.Renew(ctx, "ada", hook.Coordinator, hook.Sprint, ada.Epoch, "holder"))
+		p := r.passAll(t, "srv", next)
+		require.True(t, p.Taken)
+		for _, a := range hook.Audiences {
+			require.NoError(t, r.s.Told(ctx, p, a))
+		}
+		r.pass(hook.BeatEvery)
+		return p
+	}
+	p := tell()
+	assert.Equal(t, []string{"bob"}, p.Unhooked, "bob is down")
+
+	e, _, err := r.s.HookAs(ctx, "bob", hook.Comms, "service") // the service re-arms bob: no model behind it
+	require.NoError(t, err)
+	var challenge hook.Beat
+	for i := range 2 {
+		require.NoError(t, r.s.Renew(ctx, "bob", hook.Comms, hook.Bus, e, "service"))
+		require.Equal(t, hook.StateLive, r.state(t, "bob").State)
+		p := tell()
+		for _, b := range p.Beats {
+			if b.Name == "bob" && b.Did == hook.BeatChallenged {
+				challenge = b
+			}
+		}
+		_, back, _ := p.Diff(hook.ToCoordinator)
+		assert.Empty(t, back, "pass %d: armed is not back", i)
+		assert.Equal(t, []string{"bob"}, p.Unhooked, "pass %d: hooked and live, not proven: down", i)
+		assert.Equal(t, []string{"ada"}, p.Live, "pass %d: the armed name hears no broadcast", i)
+		assert.Equal(t, "ada", p.Coord)
+	}
+	require.NotEmpty(t, challenge.Nonce, "the armed name is challenged at once")
+
+	for i := 0; r.state(t, "bob").State != hook.StateUnhooked; i++ { // unanswered past its answer bound and the down-after: unhooked again
+		require.Less(t, i, 10, "the unanswered challenge unhooks bob")
+		require.NoError(t, r.s.Renew(ctx, "bob", hook.Comms, hook.Bus, e, "service"))
+		p = tell()
+		assert.False(t, p.Changed(hook.ToCoordinator), "pass %d: a lapse from live to unhooked while down is no change", i)
+		assert.False(t, p.Changed(hook.ToRest), "pass %d", i)
+	}
+	p = tell()
+	assert.False(t, p.Changed(hook.ToCoordinator), "unhooked while down: nothing told")
+
+	e, _, err = r.s.HookAs(ctx, "bob", hook.Comms, "service") // armed again; this time the model answers
+	require.NoError(t, err)
+	require.NoError(t, r.s.Renew(ctx, "bob", hook.Comms, hook.Bus, e, "service"))
+	p = tell()
+	var b hook.Beat
+	for _, x := range p.Beats {
+		if x.Name == "bob" {
+			b = x
+		}
+	}
+	require.Equal(t, hook.BeatChallenged, b.Did)
+	assert.False(t, p.Changed(hook.ToCoordinator), "armed again: still down")
+	_, err = r.s.Answer(ctx, "bob", b.Nonce, "session")
+	require.NoError(t, err)
+	require.Equal(t, hook.StateProven, r.state(t, "bob").State)
+	p = tell()
+	down, back, _ := p.Diff(hook.ToCoordinator)
+	assert.Empty(t, down)
+	assert.Equal(t, []string{"bob"}, back, "proven: back")
+	assert.Empty(t, p.Unhooked)
+	assert.Equal(t, []string{"ada", "bob"}, p.Live)
+	require.NoError(t, r.s.Renew(ctx, "bob", hook.Comms, hook.Bus, e, "service"))
+	p = tell()
+	assert.False(t, p.Changed(hook.ToCoordinator), "back once")
+}

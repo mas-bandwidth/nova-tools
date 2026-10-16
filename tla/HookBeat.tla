@@ -82,6 +82,29 @@
 \* every message from its own name) and "fold" (one message for every name's
 \* head in hand) are the reversed witnesses.
 \*
+\* Up is proven (Parts "proven"; hook/redis.go beatLua, Passed.Unhooked and
+\* Passed.Live; the ruling of 2026-10-16: a friend is live only when
+\* really up): what the friends hear as up is a name hooked AND proven in its
+\* epoch, never one merely hooked. proven is the bus push's proof of the
+\* record's epoch, which only the model's own answer writes (Answer,
+\* AnswerIssued); an arming clears it (a new epoch) and so does an unhook. A
+\* supervised hook service re-arms an unhooked name with no model behind it
+\* (DaemonHook): hooked, live, never proven, so down, and its lapse back to
+\* unhooked changes nothing heard (NoBackWithoutProof, NoFlapWithoutProof).
+\* The broadcast audience (Raise's live, the code's Passed.Live) is the names
+\* up, so a down name hears none; the coordinator stays the first hooked name
+\* of its role up (a coordinator hooked and not proven is down, and the others
+\* are asked who takes over). A proof's TTL lapses (Tick: ProofLife intervals
+\* after the answer, lapsed); a lease lapsing is not modelled. A hooked name
+\* whose challenge expired unanswered, or that is not proven, is asked again
+\* once per DownAfter intervals from its last challenge, whatever its activity
+\* (Retry, sinceBeat), so an alive, hooked model is up at last
+\* (AliveHookedEventuallyUp); under "latch" (the rule before: an expired
+\* renewal is asked again only after silence) her own sends hold it off forever.
+\* Without "proven" the model's own word (Hook) carries its first proof, the
+\* rule before this one, and proven stays TRUE: those cases are unchanged.
+\* Broken "armedback" (the old rule: up is hooked) is the reversed witness.
+\*
 \* The clock is not a counter: every count here is bounded by the hooks and
 \* asks, so the model has finitely many states, and the liveness properties
 \* are checked under fairness of the tick, the pass and the sender.
@@ -133,6 +156,17 @@ QuietCap == IF Silence THEN CoordinatorEvery + 3 ELSE DownAfter + 2
 \*   "fold"        BadFolded: one message for every name's transition in hand (NoFold)
 \*   "othername"   BadProveOtherName: a proof answers another name's challenge
 \*                 (ProofNamesIssuedInWindow)
+\*   "armedback"   BadArmedBack: up is hooked, not proven, so a service's re-arm with
+\*                 no model is told back (NoBackWithoutProof)
+\*   "latch"       BadLatch: no Retry; an expired renewal waits for silence, so a talking
+\*                 friend whose proof lapsed stays down (AliveHookedEventuallyUp)
+\*   "markdrop"    BadMarkDrop: with no coordinator up, the coordinator audience is
+\*                 marked told with no message, so a down is never judged to her
+\*                 when she is back (DownJudgedToCoordinator)
+\*   "selfback"    BadSelfBack: a coordinator's judgment names her own return as back
+\*                 (NoJudgmentNamesItsRecipientBack; needs two coordinator-role names)
+\*   "keepup"      BadKeepUp: a lapsed proof leaves the name up until an unhook, which
+\*                 then tells a down with no proof either side (NoFlapWithoutProof only)
 \* BadUnhookAtThree (Limit = 3) is retired with Limit: the down rule is time.
 
 None == <<>>
@@ -159,6 +193,9 @@ VARIABLES
     jkind,     \* "change" (to the coordinator) or "coorddown" (to every live name)
     jto,       \* its recipients
     jresent,   \* OVERDUE pushes of the current judgment
+    ctold,     \* under "cjudge": the down set the coordinator audience's told mark holds (told:coordinator)
+    cjudged,   \* under "cjudge", ghost: the names the coordinator was judged down and not judged back since
+    jself,     \* ghost: a judgment named its own recipient as back
     alive,     \* [Names -> BOOLEAN]: the model is there and answers (the world, not a record)
     quiet,     \* [Names -> 0..QuietCap]: passes since the model itself last answered or hooked in (ghost)
     qtime,     \* [Names -> 0..QCap]: the hook record's answered_at, as its age in intervals of server time
@@ -179,7 +216,10 @@ VARIABLES
     pdups,     \* deliveries of a once-key already delivered
     inbox,     \* the status messages on the coordinator's stream: [ids, names]
     shown,     \* the lines the coordinator's hook has shown: [ids, names]
-    want       \* ghost: the transitions a pass found, <<name, count>>, each owed a line
+    want,      \* ghost: the transitions a pass found, <<name, count>>, each owed a line
+    proven,    \* [Names -> BOOLEAN]: the bus push's proof of the record's epoch stands (only the model writes it)
+    lapsed,    \* [Names -> BOOLEAN]: ghost: the proof lapsed at its TTL in this epoch (read only under "keepup")
+    sinceBeat  \* [Names -> 0..DownAfter + 1]: intervals since the name's last challenge (beat_at), under Proven
 
 
 QuietLimit(n) == IF n \in CoordRole THEN CoordinatorEvery ELSE IF busy[n] THEN DownAfter ELSE QuietAfter
@@ -188,12 +228,13 @@ activity == <<busy, lastActivity, challengedWhileTalking>>
 
 pushv == <<pushed, pgen, pq, psent, pdups, inbox, shown, want>>
 tellv == <<told, tv, out, sent, dups, heard, pushv>>
-judv == <<jst, jkind, jto, jresent>>
-server == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, held, ask, expiries, issued, proof>>
+judv == <<jst, jkind, jto, jresent, ctold, cjudged, jself>>
+prv == <<proven, lapsed, sinceBeat>>
+server == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, held, ask, expiries, issued, proof, prv>>
 client == <<elapsed, alarm>>
 vars == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
-          jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof,
-          pushed, pgen, pq, psent, pdups, inbox, shown, want>>
+          jst, jkind, jto, jresent, ctold, cjudged, jself, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof,
+          pushed, pgen, pq, psent, pdups, inbox, shown, want, prv>>
 
 Cap3(x) == IF x < 3 THEN x ELSE 3
 CapQ(x) == IF x < QuietCap THEN x ELSE QuietCap
@@ -204,11 +245,30 @@ CapM(x) == IF x < 2 THEN x ELSE 2
 \* DownAfter; under "oldnonce" one interval past it.
 MaxAge == IF "oldnonce" \in Broken THEN DownAfter ELSE DownAfter - 1
 
-\* What the friends are to hear, of a hook state h.
-UnhookedOf(h) == {n \in Names : ~h[n]}
-CoordOf(h) == IF \E n \in CoordRole : h[n] THEN CHOOSE n \in CoordRole : h[n] ELSE NoCoord
-StateOf(h) == <<UnhookedOf(h), CoordOf(h)>>
-Cur == StateOf(hooked)
+\* What the friends are to hear, of a hook state h and the proofs p: the names
+\* down (not up: up is hooked and proven; under "armedback", hooked alone) and
+\* the coordinator (the first name of its role up).
+Proven == "proven" \in Parts
+\* The coordinator audience is modelled on its own (JudgeCoord).
+CJudge == "cjudge" \in Parts
+Up(h, p, n) == h[n] /\ (p[n] \/ "armedback" \in Broken \/ ("keepup" \in Broken /\ lapsed[n]))
+DownOf(h, p) == {n \in Names : ~Up(h, p, n)}
+CoordOf(h, p) == IF \E n \in CoordRole : Up(h, p, n) THEN CHOOSE n \in CoordRole : Up(h, p, n) ELSE NoCoord
+StateOf(h, p) == <<DownOf(h, p), CoordOf(h, p)>>
+Cur == StateOf(hooked, proven)
+\* The model's own proof of n stands (under Proven; else proven stays TRUE).
+Proves(n) == /\ proven' = IF Proven THEN [proven EXCEPT ![n] = TRUE] ELSE proven
+             /\ lapsed' = [lapsed EXCEPT ![n] = FALSE]
+             /\ UNCHANGED sinceBeat
+BeatCap == DownAfter + 1
+\* sinceBeat is counted only where Retry reads it, so other cases add no states.
+BeatClock == Proven /\ Silence
+\* The retry cadence (beatLua, retry): a hooked name whose challenge expired
+\* unanswered, or that is not proven, is asked again once DownAfter intervals
+\* have passed since its last challenge, its activity notwithstanding.
+Retry(n) == /\ Proven /\ Silence /\ "latch" \notin Broken
+            /\ (chal[n] \in {"late", "failed"} \/ ~proven[n])
+            /\ sinceBeat[n] >= BeatCap
 States == (SUBSET Names) \X (Names \cup {NoCoord})
 
 \* The state a pass finds a name in, of the hook state h and the answers' ages q
@@ -242,6 +302,9 @@ Shown(n) ==
         ELSE Table[HookUp(n)][held[n]]
 
 Init ==
+    /\ proven = [n \in Names |-> TRUE] \* first: told and heard below read Cur
+    /\ lapsed = [n \in Names |-> FALSE]
+    /\ sinceBeat = [n \in Names |-> 0]
     /\ nonceVersion = [n \in Names |-> FALSE]
     /\ delivered = [n \in Names |-> FALSE]
     /\ busy = [n \in Names |-> FALSE]
@@ -266,6 +329,9 @@ Init ==
     /\ jkind = "change"
     /\ jto = {}
     /\ jresent = 0
+    /\ ctold = Cur[1]
+    /\ cjudged = {}
+    /\ jself = FALSE
     /\ alive = [n \in Names |-> TRUE]
     /\ quiet = [n \in Names |-> 0]
     /\ qtime = [n \in Names |-> 0]
@@ -300,7 +366,13 @@ Tick ==
     /\ jst' = IF jst = "open" THEN "due" ELSE jst
     /\ qtime' = [n \in Names |-> IF qtime[n] < QCap THEN qtime[n] + 1 ELSE QCap]
     /\ issued' = {[c EXCEPT !.age = c.age + 1] : c \in {d \in issued : d.age < MaxAge}}
-    /\ UNCHANGED <<nonceVersion, delivered, busy, challengedWhileTalking, beatOwned, hooked, misses, events, hooks, tellv, jkind, jto, jresent, alive, quiet, client, held, expiries, proof>>
+    \* under Proven a proof lapses ProofLife intervals after its answer (ProofTTL)
+    /\ IF Proven
+          THEN /\ proven' = [n \in Names |-> proven[n] /\ qtime'[n] <= ProofLife]
+               /\ lapsed' = [n \in Names |-> lapsed[n] \/ (proven[n] /\ qtime'[n] > ProofLife)]
+               /\ sinceBeat' = IF BeatClock THEN [n \in Names |-> IF sinceBeat[n] < BeatCap THEN sinceBeat[n] + 1 ELSE BeatCap] ELSE sinceBeat
+          ELSE UNCHANGED prv
+    /\ UNCHANGED <<nonceVersion, delivered, busy, challengedWhileTalking, beatOwned, hooked, misses, events, hooks, tellv, jkind, jto, jresent, ctold, cjudged, jself, alive, quiet, client, held, expiries, proof>>
 
 \* One server's pass (beatLua), atomic: the beat, the row stamped, and a tell
 \* prepared when what the friends are to hear differs from the row's told.
@@ -317,14 +389,19 @@ Pass(s) ==
            \* under "twomisses", the old rule: two misses in a row, whatever the time
            gone == {n \in Names : n \in miss /\ IF "twomisses" \in Broken THEN m[n] >= 2 ELSE ("nodown" \notin Broken /\ IF Silence THEN lastActivity[n] > DownAfter ELSE qtime[n] >= DownAfter)}
            h2 == [n \in Names |-> hooked[n] /\ n \notin gone]
+           \* an unhook clears the proof with the epoch
+           p2 == [n \in Names |-> proven[n] /\ (n \notin gone \/ ~Proven)]
            targets == {n \in Names : h2[n] /\
                        (~Silence \/ (chal[n] \in {"none", "late", "failed"} /\
-                       (lastActivity[n] > QuietLimit(n) \/ (qtime[n] >= ProofDue /\ "ignoreexpiry" \notin Broken /\ (chal[n] = "none" \/ "retryexpired" \in Broken)) \/ "talking" \in Broken)))}
-           now == StateOf(h2)
+                       (lastActivity[n] > QuietLimit(n) \/ (qtime[n] >= ProofDue /\ "ignoreexpiry" \notin Broken /\ (chal[n] = "none" \/ "retryexpired" \in Broken)) \/ Retry(n) \/ "talking" \in Broken)))}
+           now == StateOf(h2, p2)
        IN /\ hooked' = h2
+          /\ proven' = p2
+          /\ lapsed' = [n \in Names |-> lapsed[n] /\ n \notin gone]
+          /\ sinceBeat' = IF BeatClock THEN [n \in Names |-> IF n \in targets THEN 0 ELSE sinceBeat[n]] ELSE sinceBeat
           /\ beatOwned' = [n \in Names |-> beatOwned[n] \/ n \in targets]
           /\ challengedWhileTalking' = (challengedWhileTalking \/
-                  (Silence /\ \E n \in targets : lastActivity[n] <= QuietLimit(n) /\ qtime[n] < ProofDue))
+                  (Silence /\ \E n \in targets : lastActivity[n] <= QuietLimit(n) /\ qtime[n] < ProofDue /\ ~Retry(n)))
           /\ misses' = IF "misses" \in Parts THEN [n \in Names |-> IF hooked[n] THEN m[n] ELSE misses[n]] ELSE misses
           /\ events' = [n \in Names |-> IF n \in gone THEN events[n] + 1 ELSE events[n]]
           /\ nonceVersion' = [n \in Names |-> IF Silence /\ n \in targets THEN ~nonceVersion[n] ELSE nonceVersion[n]]
@@ -353,16 +430,26 @@ Pass(s) ==
                 ELSE UNCHANGED <<busy, lastActivity, out, told, tv>>
     /\ UNCHANGED <<busy, lastActivity, hooks, sent, dups, heard, judv, alive, qtime, held, ask, expiries, proof, pushed, pgen, psent, pdups, inbox, shown>>
 
+\* The names a judgment to c carries as back: never c herself (serve.go tell);
+\* under "selfback" (the rule before) c too.
+BackTo(c, back) == IF "selfback" \in Broken THEN back ELSE back \ {c}
+
 \* The judgment a tell raises (serve.go tell): friends down or back go to the
 \* coordinator; the coordinator gone with none after it, to every live name.
 Raise(from, to) ==
     LET down == to[1] \ from[1]
         back == from[1] \ to[1]
         live == Names \ to[1]
-    IN IF to[2] # NoCoord /\ down \cup back # {}
-          THEN /\ jst' = "open" /\ jkind' = "change" /\ jto' = {to[2]} /\ jresent' = 0
+    \* the coordinator's own return is no judgment for her (serve.go tell); under
+    \* "cjudge" her judgment is the coordinator audience's own (JudgeCoord), so a
+    \* change while no coordinator is up waits for the next one instead of going
+    \* with this tell, which marks it told (the drop before cjudge)
+        mine == BackTo(to[2], back)
+    IN IF ~CJudge /\ to[2] # NoCoord /\ down \cup mine # {}
+          THEN /\ jst' = "open" /\ jkind' = "change" /\ jto' = {to[2]} /\ jresent' = 0 /\ UNCHANGED <<ctold, cjudged>>
+               /\ jself' = (jself \/ to[2] \in mine)
        ELSE IF from[2] # NoCoord /\ to[2] = NoCoord /\ from[2] \in down /\ live \ back # {}
-          THEN /\ jst' = "open" /\ jkind' = "coorddown" /\ jto' = live \ back /\ jresent' = 0
+          THEN /\ jst' = "open" /\ jkind' = "coorddown" /\ jto' = live \ back /\ jresent' = 0 /\ UNCHANGED <<ctold, cjudged, jself>>
        ELSE UNCHANGED judv
 
 \* The tell is sent under its once-key, the told version (Tell), and the
@@ -387,14 +474,14 @@ Tell(s) ==
                         ELSE /\ out' = [out EXCEPT ![s] = None]
                              /\ told' = t.to
                              /\ tv' = t.v + 1
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv, prv>>
 
 \* The send fails: nothing is marked, a later pass prepares it again.
 TellFails(s) ==
     /\ out[s] # None
     /\ ~out[s].sent
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv, prv>>
 
 \* The server crashes holding a tell, before or after its send: the tell in
 \* hand is lost; a later pass prepares it again (under "markafter", a crash
@@ -402,7 +489,7 @@ TellFails(s) ==
 Crash(s) ==
     /\ out[s] # None
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, told, tv, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv, prv>>
 
 \* BadMarkAfterSend: after the send, the row's told is marked, if no one marked it since.
 Mark(s) ==
@@ -412,7 +499,31 @@ Mark(s) ==
           THEN told' = out[s].to /\ tv' = tv + 1
           ELSE UNCHANGED <<activity, told, tv>>
     /\ out' = [out EXCEPT ![s] = None]
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, sent, dups, heard, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, pushv, prv>>
+
+\* The coordinator audience (serve.go tell, ToCoordinator; Parts "cjudge"): its
+\* told mark ctold is diffed with the down set now. With a coordinator up, the
+\* names down and back since (her own return left out) go to her as one
+\* judgment and the mark moves in the same write; with only her own return, the
+\* mark alone. With no coordinator up the mark stays, and the change piles up
+\* for the next one up; under "markdrop" (the rule before) the mark moves with
+\* no message and the change is lost.
+JudgeCoord ==
+    /\ CJudge
+    /\ ctold # Cur[1]
+    /\ LET c == Cur[2]
+           down == Cur[1] \ ctold
+           back == BackTo(c, ctold \ Cur[1])
+       IN IF c # NoCoord
+             THEN /\ ctold' = Cur[1]
+                  /\ cjudged' = (cjudged \ back) \cup down
+                  /\ IF down \cup back # {}
+                        THEN jst' = "open" /\ jkind' = "change" /\ jto' = {c} /\ jresent' = 0 /\ jself' = (jself \/ c \in back)
+                        ELSE UNCHANGED <<jst, jkind, jto, jresent, jself>>
+             ELSE /\ "markdrop" \in Broken
+                  /\ ctold' = Cur[1]
+                  /\ UNCHANGED <<jst, jkind, jto, jresent, cjudged, jself>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* A judgment past its due is pushed again as OVERDUE, once (Judge).
 Judge ==
@@ -420,14 +531,14 @@ Judge ==
     /\ jresent = 0
     /\ jst' = "overdue"
     /\ jresent' = jresent + 1
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, ctold, cjudged, jself, alive, quiet, qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* A live recipient answers the judgment: closed.
 JudgeAnswered ==
     /\ jst \in {"open", "due", "overdue"}
     /\ \E n \in jto : alive[n]
     /\ jst' = "closed"
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, jresent, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, jresent, ctold, cjudged, jself, alive, quiet, qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* The model answers its current challenge (answerLua): a bootstrap, or,
 \* without "window", the heartbeat's while open (AnswerIssued, under
@@ -444,6 +555,7 @@ Answer(n) ==
     /\ misses' = [misses EXCEPT ![n] = 0]
     /\ quiet' = [quiet EXCEPT ![n] = 0]
     /\ qtime' = [qtime EXCEPT ![n] = 0]
+    /\ Proves(n)
     /\ UNCHANGED <<busy, challengedWhileTalking, beatOwned, hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, client, held, ask, expiries, issued, proof>>
 
 \* The youngest challenge issued to n: the one hook:chal holds while it stands.
@@ -474,6 +586,7 @@ AnswerIssued(n, c) ==
     /\ qtime' = [qtime EXCEPT ![n] = 0]
     /\ proof' = [by |-> n, to |-> c.to, ep |-> c.ep, epNow |-> hooks[n], age |-> c.age,
                  older |-> \E d \in issued : d.to = n /\ d.age < c.age]
+    /\ Proves(n)
     /\ UNCHANGED <<busy, challengedWhileTalking, beatOwned, hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, client, held, ask, expiries>>
 
 \* BadDaemonAnswers: a process answers with no model behind it; the record
@@ -489,14 +602,17 @@ DaemonAnswer(n) ==
     /\ chal' = [chal EXCEPT ![n] = "none"]
     /\ misses' = [misses EXCEPT ![n] = 0]
     /\ qtime' = [qtime EXCEPT ![n] = 0]
-    /\ UNCHANGED <<busy, challengedWhileTalking, beatOwned, hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, client, held, ask, expiries, issued, proof>>
+    /\ UNCHANGED <<busy, challengedWhileTalking, beatOwned, hooked, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, client, held, ask, expiries, issued, proof, prv>>
 
-\* The model's own word hooks it in again (armLua: a new epoch, misses and recent cleared).
-Hook(n) ==
+\* An arming (armLua: a new epoch, misses, recent and the proofs cleared):
+\* hooked, and under Proven not proven until the model answers.
+Arm(n) ==
     /\ UNCHANGED nonceVersion
     /\ delivered' = [delivered EXCEPT ![n] = FALSE]
     /\ lastActivity' = [lastActivity EXCEPT ![n] = 0]
-    /\ alive[n]
+    /\ proven' = IF Proven THEN [proven EXCEPT ![n] = FALSE] ELSE proven
+    /\ lapsed' = [lapsed EXCEPT ![n] = FALSE]
+    /\ sinceBeat' = IF BeatClock THEN [sinceBeat EXCEPT ![n] = BeatCap] ELSE sinceBeat
     /\ ~hooked[n]
     /\ hooks[n] < 2
     /\ beatOwned' = [beatOwned EXCEPT ![n] = FALSE]
@@ -510,6 +626,14 @@ Hook(n) ==
     /\ qtime' = [qtime EXCEPT ![n] = 0]
     /\ issued' = {c \in issued : c.to # n}
     /\ UNCHANGED <<busy, challengedWhileTalking, events, taken, passed, rowAge, tellv, judv, alive, held, ask, expiries, proof>>
+
+\* The model's own word hooks it in again.
+Hook(n) == alive[n] /\ Arm(n)
+
+\* Under Proven, a supervised hook service (nova-hook hook under launchd) arms
+\* an unhooked name with no model running: the record is hooked and its lease
+\* live, and no proof is written, for only the model proves.
+DaemonHook(n) == Proven /\ ~alive[n] /\ Arm(n)
 
 \* Client startup/periodic challengeLua is one atomic write. beat_at belongs
 \* to the epoch, so an answered or expired server challenge does not reopen
@@ -525,7 +649,7 @@ Bootstrap(n) ==
           ELSE /\ ~beatOwned[n] /\ chal[n] = "none"
                /\ chal' = [chal EXCEPT ![n] = "bootstrap"]
     /\ UNCHANGED <<activity, beatOwned, hooked, misses, events, hooks, taken, passed, rowAge,
-                   tellv, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof>>
+                   tellv, judv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* The outbox survives a failed send or crash. Deliver is idempotent for
 \* this nonce and cannot move its original deadline. The lost-delivery
@@ -539,7 +663,7 @@ Deliver(n) ==
     /\ alarm' = [alarm EXCEPT ![n] = FALSE]
     /\ UNCHANGED <<activity, beatOwned, hooked, chal, misses, events, hooks,
                    taken, passed, rowAge, tellv, judv, alive, quiet, qtime,
-                   held, ask, expiries, issued, proof>>
+                   held, ask, expiries, issued, proof, prv>>
 
 DeliveryFails(n) ==
     /\ Silence /\ "delivery" \in Parts /\ chal[n] = "open" /\ ~delivered[n]
@@ -553,7 +677,7 @@ SetBusy(n) ==
     /\ quiet' = [quiet EXCEPT ![n] = 0]
     /\ UNCHANGED <<lastActivity, challengedWhileTalking, beatOwned, hooked,
                    nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv,
-                   judv, alive, qtime, client, held, ask, expiries, issued, proof>>
+                   judv, alive, qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* A committed send is activity at store TIME, never a proof or an answer.
 BusSend(n) ==
@@ -562,7 +686,7 @@ BusSend(n) ==
     /\ quiet' = [quiet EXCEPT ![n] = 0]
     /\ UNCHANGED <<busy, challengedWhileTalking, beatOwned, hooked, nonceVersion, delivered, chal, misses,
                    events, hooks, taken, passed, rowAge, tellv, judv, alive,
-                   qtime, client, held, ask, expiries, issued, proof>>
+                   qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* Background traffic is not model activity. The mutation attributes a
 \* daemon pong to the absent model and defeats silent detection.
@@ -574,7 +698,7 @@ DaemonSend(n) ==
           ELSE UNCHANGED <<lastActivity, quiet>>
     /\ UNCHANGED <<busy, challengedWhileTalking, beatOwned, hooked, nonceVersion, delivered, chal,
                    misses, events, hooks, taken, passed, rowAge, tellv, judv,
-                   alive, qtime, client, held, ask, expiries, issued, proof>>
+                   alive, qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* The world: the model goes silent (a closed app, a limit, a stuck turn) or comes back.
 GoSilent(n) == /\ "renewal" \notin Parts /\ alive[n] /\ alive' = [alive EXCEPT ![n] = FALSE]
@@ -585,7 +709,7 @@ ComeBack(n) == /\ ~alive[n] /\ alive' = [alive EXCEPT ![n] = TRUE]
 \* The sprint sets or clears its hold, any time.
 SetHold(n, v) == /\ "hold" \in Parts
                  /\ held[n] # v /\ held' = [held EXCEPT ![n] = v]
-                 /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, ask, expiries, issued, proof>>
+                 /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, ask, expiries, issued, proof, prv>>
 
 \* A client loses everything it holds (a restart): the server reads nothing of it.
 ClientLose(n) == /\ "client" \in Parts
@@ -609,17 +733,17 @@ ClientAlarm(n) == /\ "client" \in Parts
 \* any expiry delivers its timeout once (AddOnce's once-key).
 Ask(n) == /\ "ask" \in Parts
           /\ ask[n] = "none" /\ ask' = [ask EXCEPT ![n] = "open"]
-          /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries, issued, proof>>
+          /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries, issued, proof, prv>>
 Reply(n) == /\ alive[n] /\ ask[n] = "open" /\ ask' = [ask EXCEPT ![n] = "answered"]
-            /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries, issued, proof>>
+            /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, expiries, issued, proof, prv>>
 Expire(s, n) == /\ ask[n] = "due"
                 /\ ask' = [ask EXCEPT ![n] = "timedout"]
                 /\ expiries' = [expiries EXCEPT ![n] = expiries[n] + 1]
-                /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, issued, proof>>
+                /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, alive, quiet, qtime, client, held, issued, proof, prv>>
 
 \* Everything the push actions leave as it is: the heartbeat's and the tell's.
 nonpush == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
-             jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof>>
+             jst, jkind, jto, jresent, ctold, cjudged, jself, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof, prv>>
 
 \* One transition of n, the oldest in hand, is sent as its own status message
 \* to the coordinator (serve.go push), its once-key and the row's pushed mark
@@ -671,9 +795,9 @@ Next ==
     \/ Show
     \/ Tick
     \/ \E s \in Servers : Pass(s) \/ Tell(s) \/ TellFails(s) \/ Crash(s) \/ Mark(s)
-    \/ Judge \/ JudgeAnswered
+    \/ Judge \/ JudgeAnswered \/ JudgeCoord
     \/ \E s \in Servers, n \in Names : Expire(s, n)
-    \/ \E n \in Names : \/ Answer(n) \/ DaemonAnswer(n) \/ Hook(n) \/ Bootstrap(n)
+    \/ \E n \in Names : \/ Answer(n) \/ DaemonAnswer(n) \/ Hook(n) \/ DaemonHook(n) \/ Bootstrap(n)
                         \/ \E c \in issued : AnswerIssued(n, c)
                         \/ Deliver(n) \/ DeliveryFails(n) \/ DaemonSend(n) \/ SetBusy(n) \/ BusSend(n) \/ GoSilent(n) \/ ComeBack(n)
                         \/ ClientLose(n) \/ ClientElapse(n) \/ ClientAlarm(n)
@@ -715,9 +839,13 @@ TypeOK ==
     /\ rowAge \in 0..3
     /\ told \in States /\ heard \in States
     /\ jst \in {"none", "open", "due", "overdue", "closed"}
+    /\ ctold \subseteq Names /\ cjudged \subseteq Names /\ jself \in BOOLEAN
     /\ issued \subseteq [to : Names, ep : 1..2, age : 0..DownAfter]
     /\ pushed \in [Names -> PStates]
     /\ pgen \in [Names -> 0..PushCap]
+    /\ proven \in [Names -> BOOLEAN]
+    /\ lapsed \in [Names -> BOOLEAN]
+    /\ sinceBeat \in [Names -> 0..BeatCap]
 
 \* The dashboard row is the table applied to the hook record (its state and
 \* answered_at) and the hold, under a live server row, and nothing else.
@@ -859,5 +987,46 @@ ReaderBackstop == \A n \in Names :
     Silence /\ lastActivity[n] > ReaderLimit(n) => Shown(n) = "down"
 NoExpiredRetryWhileTalking ==
     [][\A n \in Names : Silence /\ chal[n] \in {"late", "failed"} /\
-       lastActivity[n] <= QuietLimit(n) => chal'[n] # "open"]_vars
+       lastActivity[n] <= QuietLimit(n) /\ ~Retry(n) => chal'[n] # "open"]_vars
+
+\* Up is proven (2026-10-16): a name leaves the down set the friends are
+\* to hear only with the model's proof of its epoch standing. Under
+\* "armedback" (up is hooked) a service's re-arm with no model breaks it.
+NoBackWithoutProof ==
+    [][\A n \in Names : (n \in Cur[1] /\ n \notin Cur'[1]) => proven'[n]]_vars
+
+\* With no proof before or after, a step changes nothing about whether the name
+\* is down: an arming with no model is not back, and its lapse to unhooked is
+\* not a second down.
+NoFlapWithoutProof ==
+    [][\A n \in Names : (~proven[n] /\ ~proven'[n]) => (n \in Cur[1] <=> n \in Cur'[1])]_vars
+
+\* Reached (an action property TLC finds violated): a supervised service arms,
+\* with no model running, a name the heartbeat unhooked and the friends heard
+\* as down, the step the old rule told back.
+WitnessArmedDown == [][\A n \in Names : ~(DaemonHook(n) /\ events[n] >= 1 /\ n \in heard[1])]_vars
+
+\* An alive model hooked in is up at last: a lapsed renewal or proof is asked
+\* again on the retry cadence whatever its activity, and the model answers a
+\* challenge offered again and again (ProvenLiveSpec). Under "latch" a talking
+\* friend whose renewal lapsed is never asked again and stays down.
+AliveHookedEventuallyUp ==
+    \A n \in Names : (alive[n] /\ hooked[n]) ~> (Up(hooked, proven, n) \/ ~alive[n] \/ ~hooked[n])
+
+\* LiveSpec, and the model answers a challenge it is handed again and again.
+ProvenLiveSpec == LiveSpec /\ \A n \in Names : SF_vars(Answer(n))
+
+\* A friend down is judged to a coordinator at last, or the down heals,
+\* whenever a coordinator is up again and again: a change made while none is
+\* up waits for the next one (JudgeCoord). Under "markdrop" it is lost.
+DownJudgedToCoordinator ==
+    ([]<>(Cur[2] # NoCoord)) =>
+        \A n \in Names \ CoordRole : (n \in Cur[1]) ~> (n \in cjudged \/ n \notin Cur[1])
+
+\* ProvenLiveSpec, and the coordinator audience is judged when it can be.
+CJudgeSpec == ProvenLiveSpec /\ SF_vars(JudgeCoord)
+
+\* No judgment names its own recipient as back: a coordinator up again after
+\* another judged her down is told nothing of her own return.
+NoJudgmentNamesItsRecipientBack == ~jself
 =============================================================================

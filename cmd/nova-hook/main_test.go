@@ -36,6 +36,10 @@ type rig struct {
 	// loseAnswers sends every judgment and told message and then answers an
 	// error, as a send whose reply was lost after the store took it.
 	loseAnswers atomic.Bool
+	// held is the names whose hook service renews their bus lease at every
+	// step (serve_test.go, step) while their model answers nothing: up only
+	// while the last proof of its model stands (hook.Passed.Unhooked).
+	held []string
 }
 
 func newRig(t *testing.T) *rig {
