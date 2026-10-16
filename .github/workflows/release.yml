@@ -51,7 +51,9 @@ concurrency:
 
 jobs:
   certified:
-    # THE RELEASE NEEDS A GREEN CERTIFICATION RUN ON THIS EXACT COMMIT, AND ASKS FOR ONE
+    # THE RELEASE NEEDS A GREEN ci.yml RUN (ci-ok, the one-minute tier) ON THIS EXACT COMMIT,
+    # AND ASKS FOR ONE. Certification is a nightly test and gates nothing (the owner, 2026-10-16).
+    # It ASKS
     # rather than running the tests again here. Until v0.15.0 this file ran its own
     # `go test -race ./...` on three operating systems, serially, inside a 15-minute job;
     # certification.yml runs the same tests fanned out per package, and the Windows leg
@@ -82,7 +84,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: certification.yml vouches for this commit
+      - name: ci.yml vouches for this commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}

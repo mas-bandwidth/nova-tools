@@ -138,11 +138,13 @@ two-minute cap. It runs on
 a daily schedule and on demand — from the repository's Actions page, pick the
 "certification" workflow and Run workflow. Nothing here skips: the race detector
 and the platform coverage a change's fast tier does not carry live here. A red
-certification is a blocker for the next release, never for a CL, whose gate is
-`ci-ok` — and so is the absence of one: `release.yml` refuses to publish unless the
-newest completed certification run on the tagged commit is green, so cutting a
-release begins with `gh workflow run certification.yml --ref <ref>` and waits for
-`certification-ok` before the tag is pushed. The `perf-plan` job discovers and vets
+certification is a nightly test: it runs on its schedule and on demand, never
+on a push, and it gates nothing. A red nightly is a card to fix, not a blocker.
+The release gate is the CL tier: `release.yml` refuses to publish unless the
+newest completed `ci.yml` run on the tagged commit is green (`ci-ok`). The owner,
+2026-10-16: CI is one minute on average and two at most, end to end, no
+exceptions; a 17-minute hosted run on every push to dev, and a release waiting
+on it, is verboten while point releases are regular. The `perf-plan` job discovers and vets
 every wall-clock test behind `-tags perf`; `perf` runs one discovered package per
 Linux runner, one test at a time. It finds them rather than naming
 them — a list of test names or packages in a workflow goes stale silently: the

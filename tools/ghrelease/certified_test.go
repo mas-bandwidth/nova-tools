@@ -12,7 +12,7 @@ import (
 // bodies: the verb reads total_count and a workflow_runs list, and a list
 // hand-typed in a test drifts from the shape the API returns.
 
-const certAPI = "repos/example/repo/actions/workflows/certification.yml/runs?head_sha=dr-y-run-sha&per_page=100"
+const certAPI = "repos/example/repo/actions/workflows/ci.yml/runs?head_sha=dr-y-run-sha&per_page=100"
 
 func certHarness(t *testing.T, answer string, rc int) *harness {
 	t.Helper()
@@ -37,7 +37,7 @@ func TestCertifiedNewerFailureAfterOlderSuccessRefusesByNamingTheRed(t *testing.
 	h.mustContain("receipt run 1002 attempt 1, concluded failure")
 	h.mustContain("  run 1001 attempt 1 completed success updated 2026-09-14T10:00:00Z ")
 	h.mustContain("  run 1002 attempt 1 completed failure updated 2026-09-14T11:00:00Z ")
-	h.mustContain("gh workflow run certification.yml -R example/repo --ref v9.9.9-dry-run")
+	h.mustContain("gh workflow run ci.yml -R example/repo --ref v9.9.9-dry-run")
 	h.mustContain("gh run rerun 0000000000 -R example/repo")
 }
 
@@ -45,7 +45,7 @@ func TestCertifiedARunInFlightRefusesWithTheWaitLine(t *testing.T) {
 	t.Parallel()
 	h := certHarness(t, httpAnswer("200", "OK", fixture(t, "testdata/certified/in-flight.json")), 0)
 	h.wantRun(1, "not yet completed", "certified")
-	h.mustContain("1 certification run(s) on dr-y-run-sha not yet completed; wait for certification-ok, then re-run this workflow: gh run rerun 0000000000 -R example/repo")
+	h.mustContain("1 ci run(s) on dr-y-run-sha not yet completed; wait for ci-ok, then re-run this workflow: gh run rerun 0000000000 -R example/repo")
 	h.mustContain("in_progress -")
 }
 
@@ -53,7 +53,7 @@ func TestCertifiedOneGreenVouchesAndPrintsTheReceipt(t *testing.T) {
 	t.Parallel()
 	h := certHarness(t, httpAnswer("200", "OK", fixture(t, "testdata/certified/single-green.json")), 0)
 	h.wantRun(0, "receipt run 3001 attempt 1, concluded success", "certified")
-	h.mustContain("certification runs on dr-y-run-sha: 1 completed; latest update 2026-09-14T13:00:00Z shared by 1 run(s), 0 not green;")
+	h.mustContain("ci runs on dr-y-run-sha: 1 completed; latest update 2026-09-14T13:00:00Z shared by 1 run(s), 0 not green;")
 	h.mustNotContain("refusing")
 }
 
@@ -81,7 +81,7 @@ func TestCertifiedAnAnswerThatIsNot200IsRefusedWithTheWholeResponse(t *testing.T
 		{"empty", "", 1},
 	} {
 		h := certHarness(t, c.answer, c.rc)
-		h.wantRun(1, fmt.Sprintf("asking GitHub for certification runs on dr-y-run-sha did not answer 200 (gh exit %d):", c.rc), "certified")
+		h.wantRun(1, fmt.Sprintf("asking GitHub for ci runs on dr-y-run-sha did not answer 200 (gh exit %d):", c.rc), "certified")
 		if c.answer != "" {
 			h.mustContain(strings.SplitN(c.answer, "\n", 2)[0])
 		}
@@ -93,15 +93,15 @@ func TestCertifiedAListShorterThanItsTotalIsAmbiguousAndRefused(t *testing.T) {
 	t.Parallel()
 	body := `{"total_count": 3, "workflow_runs": [{"id": 1, "status": "completed", "conclusion": "success", "run_attempt": 1, "updated_at": "2026-09-14T10:00:00Z"}]}`
 	h := certHarness(t, httpAnswer("200", "OK", body), 0)
-	h.wantRun(1, "refusing: 3 certification runs on dr-y-run-sha but only 1 listed; the selection would be ambiguous", "certified")
+	h.wantRun(1, "refusing: 3 ci runs on dr-y-run-sha but only 1 listed; the selection would be ambiguous", "certified")
 }
 
 func TestCertifiedNoRunAtAllVouchesForNothing(t *testing.T) {
 	t.Parallel()
 	h := certHarness(t, httpAnswer("200", "OK", `{"total_count": 0, "workflow_runs": []}`), 0)
-	h.wantRun(1, "refusing: no completed certification run on dr-y-run-sha, so nothing vouches for this tree", "certified")
+	h.wantRun(1, "refusing: no completed ci run on dr-y-run-sha, so nothing vouches for this tree", "certified")
 	h.mustContain("receipt run none attempt 0, concluded none")
-	h.mustContain("certify it first")
+	h.mustContain("run ci on it first")
 }
 
 func TestCertifiedTheRunCarryingTheLatestUpdateDecidesNotTheHighestId(t *testing.T) {
