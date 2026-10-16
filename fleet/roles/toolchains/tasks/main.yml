@@ -388,3 +388,6 @@
 
 - name: eslint, the npm-installed linter (tag eslint)
   ansible.builtin.import_tasks: eslint.yml
+
+- name: google-java-format, the pinned all-deps jar (tag gjf)
+  ansible.builtin.import_tasks: gjf.yml
