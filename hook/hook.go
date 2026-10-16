@@ -15,7 +15,6 @@
 package hook
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
@@ -158,13 +157,17 @@ type stamp struct {
 	By    string `json:"by"`
 }
 
-// parseStamp is the stamp raw holds, ok false when it holds none.
-func parseStamp(raw string) (stamp, bool) {
-	var s stamp
-	if raw == "" || json.Unmarshal([]byte(raw), &s) != nil {
-		return stamp{}, false // ignored: a value that is no stamp proves nothing
+// parseStamp is the stamp raw holds, ok false when it holds none. A value that
+// is no stamp is refused by name (stamp_typed.go): err says why, and the push
+// reads down with that refusal on its status.
+func parseStamp(raw string) (s stamp, ok bool, err error) {
+	if raw == "" {
+		return stamp{}, false, nil
 	}
-	return s, true
+	if s, err = readStamp(stampReader, raw); err != nil {
+		return stamp{}, false, err
+	}
+	return s, true, nil
 }
 
 // PushRead is one push's keys as one read found them: the lease and the proof
@@ -181,6 +184,10 @@ type PushStatus struct {
 	By        string // the lease's holder, "" when down
 	LiveLeft  time.Duration
 	ProofLeft time.Duration
+	// Refused is the refusal by name of the lease or proof value this push
+	// holds when it is no stamp, "" when each value read or none stands. A
+	// refused lease reads down; a refused proof reads armed.
+	Refused string
 }
 
 // Status is one identity's record, judged at the store's now.
@@ -234,10 +241,18 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 		ps := PushStatus{Push: p, State: PushDown}
 		if i < len(reads) {
 			r := reads[i]
-			if l, ok := parseStamp(r.Live); ok && l.Epoch == st.Epoch {
+			l, ok, err := parseStamp(r.Live)
+			if err != nil {
+				ps.Refused = err.Error()
+			}
+			if ok && l.Epoch == st.Epoch {
 				ps.State, ps.By, ps.LiveLeft = PushArmed, l.By, r.LiveLeft
 				live++
-				if pr, ok := parseStamp(r.Proof); ok && pr.Epoch == st.Epoch {
+				pr, ok, err := parseStamp(r.Proof)
+				if err != nil {
+					ps.Refused = err.Error()
+				}
+				if ok && pr.Epoch == st.Epoch {
 					ps.State, ps.ProofLeft = PushProven, r.ProofLeft
 					proven++
 				}
@@ -349,7 +364,11 @@ func (st Status) because() string {
 func (st Status) pushWords() string {
 	var out []string
 	for _, p := range st.Pushes {
-		out = append(out, string(p.Push)+"="+p.State)
+		w := string(p.Push) + "=" + p.State
+		if p.Refused != "" {
+			w += " (" + p.Refused + ")"
+		}
+		out = append(out, w)
 	}
 	return strings.Join(out, " ")
 }
