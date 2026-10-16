@@ -180,7 +180,7 @@ func (w world) claudeWatch(c *tool.Call, r *claudeRoute) *tool.Out {
 	// A notice pushed before this watcher held the lock was never seen: the log
 	// is read from its end, so the pending one is told now.
 	if p, err := notice.ReadClaudePending(r.state); err == nil && p.Path != "" {
-		line(c, tool.Done().As("PENDING").Fact("nonce", cmpOr(p.Nonce, "-")).Fact("notice", tool.Text(notice.Notice{Path: p.Path}.Text())).Note("pushed before this watcher was armed; only the model proves"))
+		line(c, tool.Done().As("PENDING").Fact("nonce", cmpOr(p.Unproved(), "-")).Fact("notice", tool.Text(notice.Notice{Path: p.Path}.Text())).Note("pushed before this watcher was armed; only the model proves"))
 		w.claudeShown(c, r, p.Path)
 	}
 	tick := time.NewTicker(claudeWatchEvery)

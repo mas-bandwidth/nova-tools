@@ -267,6 +267,27 @@ func TestTheClaudeStartSeesAWatcherThatStillRuns(t *testing.T) {
 	assert.NotContains(t, text, "arm the watcher now")
 }
 
+// A challenge already proved is never named again while the Core has yet to
+// clear its notice (dogfood 2026-10-16: the watcher's PENDING line at arming
+// named a challenge proved seconds before).
+func TestAProvedChallengeIsNeverNamedAgain(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	pendingChallenge(t, state, "abc123")
+	p, err := ReadClaudePending(state)
+	require.NoError(t, err)
+	assert.Equal(t, "abc123", p.Unproved())
+	require.NoError(t, ClaudeProved(state, "abc123"))
+	p, err = ReadClaudePending(state)
+	require.NoError(t, err)
+	assert.True(t, p.Proved)
+	assert.Equal(t, "", p.Unproved())
+	text, err := ClaudeStart(state, "w")
+	require.NoError(t, err)
+	assert.NotContains(t, text, "hook challenge abc123")
+	assert.Contains(t, text, "A notice is pending")
+}
+
 // Two watchers never hold the lock at once.
 func TestOneClaudeWatcherAtATime(t *testing.T) {
 	t.Parallel()

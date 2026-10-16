@@ -73,8 +73,19 @@ func ReadClaudeEvent(r io.Reader) (ClaudeEvent, error) {
 }
 
 // ClaudePending is the challenge the pending notice holds, as the hooks tell it.
+// Proved is the model's proof of that challenge already recorded: the Core clears
+// the notice at its next step, and until then no hook or watcher names it.
 type ClaudePending struct {
 	Path, Nonce, As, Redis string
+	Proved                 bool
+}
+
+// Unproved is the challenge to name: the nonce, or "" when none or already proved.
+func (p ClaudePending) Unproved() string {
+	if p.Proved {
+		return ""
+	}
+	return p.Nonce
 }
 
 // prove is the one command the model runs for p's challenge. The store's
@@ -110,6 +121,13 @@ func ReadClaudePending(state string) (ClaudePending, error) {
 		if nonce, ok := Canonical(*e.Challenge, p.As); ok {
 			p.Nonce = nonce
 		}
+	}
+	if p.Nonce != "" {
+		proved, err := readWord(filepath.Join(state, claudeProved))
+		if err != nil {
+			return ClaudePending{}, err
+		}
+		p.Proved = proved == p.Nonce
 	}
 	return p, nil
 }
@@ -301,7 +319,7 @@ func ClaudeStart(state, watch string) (string, error) {
 			return "", err
 		}
 		text += "\nA notice is pending: " + Notice{Path: p.Path}.Text() + "."
-		if p.Nonce != "" {
+		if p.Unproved() != "" {
 			text += " It holds hook challenge " + p.Nonce + ": " + p.prove()
 		}
 	}
