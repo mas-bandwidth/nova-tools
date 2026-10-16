@@ -90,6 +90,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/harness", "the harness words: opencode and the headless subscription harnesses of the heavy tier", "go test ./pkg/harness", "go test ./pkg/harness"),
 	E("pkg/gocache", "Go build cache held under a size, least recently used first", "go test ./pkg/gocache", "go test ./pkg/gocache"),
 	E("pkg/goenv", "Go environment scrubber for child processes", "go test ./pkg/goenv", "go test ./pkg/goenv"),
+	E("pkg/hookwire", "the hook area's table wire, generated from schemas/hook by the pinned schema compiler (generate.go): the Ack (a send receipt), the Beat (a friend beat's hot scalars) and the Stamp (the hook lease stamp); its wire-fuzz driver in pkg/hookwire/cmd/hook-driver", "go test ./pkg/hookwire", "make schemawire-check"),
 	E("pkg/hostload", "a machine's load: CPU busy percent of all its cores, else the load average over them", "go test ./pkg/hostload", "go test ./pkg/hostload"),
 	E("pkg/hygiene", "clean checkout and leak assertions", "go test ./pkg/hygiene", "go test ./pkg/hygiene"),
 	E("pkg/keyshape", "cryptographic key format verification", "go test ./pkg/keyshape", "go test ./pkg/keyshape"),

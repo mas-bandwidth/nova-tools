@@ -1,0 +1,36 @@
+schema-tables-baseline 7
+package hookwire
+
+table Ack
+    field id id=0x08b72e07b55c3ac0 kind=12 size=64
+    field stage id=0xee9dbaad45e3448d kind=7 enum=Stage
+    field push id=0x6c80030e2762459d kind=7 enum=PushState
+    field reason id=0x65e8d7f3474f2639 kind=12 size=152
+
+table Beat
+    field friend_name id=0x2bcee2fac7bb6eb5 kind=12 size=64
+    field sent_ms id=0x4a47f5b32c1c056c kind=5 optional=true
+    field active_ms id=0x91e4c82839ceef7c kind=5 optional=true
+    field until_ms id=0x5f419632e10cbf3c kind=5 optional=true
+    field reason id=0x65e8d7f3474f2639 kind=12 size=200
+    field stop_returns id=0xea14e391abc0c981 kind=8 optional=true min=0 max=1024
+
+table Stamp
+    field epoch id=0xfc9697d1196e6ba6 kind=5 optional=true
+    field at_ms id=0x41fdbf81bf00fdc1 kind=5 optional=true
+    field by id=0x08a64b07b54df8d4 kind=12 size=128
+
+enum PushState
+    variant up id=0x08c43a07b566d980
+    variant down id=0xdc04126761bb7455
+    variant stale id=0xee7f9aad45ca109e
+
+enum Stage
+    variant queued id=0x51080fb41d275274
+    variant delivered id=0x943906262985ba0f
+    variant read id=0x4ce6531fbfddd605
+    variant acted id=0xdceeb3391c649caa
+
+## history
+### 2026-10-16 (UTC) — first baseline
+- baseline created over 3 tables — data written BEFORE this point is not covered by it
