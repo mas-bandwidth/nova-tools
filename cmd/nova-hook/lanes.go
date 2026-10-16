@@ -73,8 +73,13 @@ func sprintAsk(ctx context.Context, addr string, argv []string) (string, error) 
 // with lanes, else nil (a session's own hook, --once, a dry run, another role). A
 // coordinator works her own friend row too, as nova-friend's daemon joins her hook. Its width is
 // her canonical nova-config row's, fetched by the loop every friend.ConfigEvery (Apply).
+// A service installed with an explicit --lanes 0 takes nothing: that install said no lanes,
+// and only that value of the retired flag is still read.
 func (w world) laneClient(c *tool.Call, as string, role hook.Role) *friend.Client {
 	if !laneRole(role) || !w.isServiceRun() || c.Bool("once") || c.DryRun() || w.sprint == nil {
+		return nil
+	}
+	if c.Given("lanes") && c.Int("lanes") == 0 {
 		return nil
 	}
 	addr := c.Str("sprint-server")
@@ -187,7 +192,7 @@ func laneSelf(m bus.Message, as string) bool {
 
 // laneFlags are the hook verb's lane client flags.
 func laneFlags(w world, f *tool.Flags) {
-	f.Int("lanes", 0, "retired, accepted and ignored so a service installed with it still starts: a friend's lanes take to her nova-config row's width, read every second (nova-config friend set <name> --width <n>); reinstall the service to drop it")
+	f.Int("lanes", 0, "retired: a service installed with an explicit --lanes 0 carries no lanes, any other value is accepted and ignored so a service installed with it still starts: a friend's lanes take to her nova-config row's width, read every second (nova-config friend set <name> --width <n>); reinstall the service to drop it")
 	f.String("sprint-server", orDefault(w.getenv(sprintServerEnv), DefaultSprintServer), "the sprint server the lanes ask, host:port (default: "+sprintServerEnv+", else "+DefaultSprintServer+")")
 }
 

@@ -171,3 +171,41 @@ func TestACoordinatorsServiceCarriesHerRowsLanes(t *testing.T) {
 		assert.False(t, laneRole(r), string(r))
 	}
 }
+
+// laneClientOf runs a one-verb tool carrying the hook's lane flags and answers whether a
+// friend's service run with args carries a lane client.
+func laneClientOf(t *testing.T, args ...string) bool {
+	t.Helper()
+	w := world{
+		getenv: func(k string) string {
+			if k == serviceRunEnv {
+				return "1"
+			}
+			return ""
+		},
+		sprint: func(context.Context, string, []string) (string, error) { return "", nil },
+	}
+	got := false
+	tl := &tool.Tool{Name: "nova-hook", What: "test", Verbs: []tool.Verb{{
+		Name: "hook", Effect: tool.Inspection,
+		Flags: func(f *tool.Flags) { f.Bool("once", false, "once"); laneFlags(w, f) },
+		Run: func(c *tool.Call) *tool.Out {
+			got = w.laneClient(c, "amy", hook.Friend) != nil
+			return tool.Done()
+		},
+	}}}
+	var out, errb strings.Builder
+	require.Equal(t, 0, tl.Run(append([]string{"hook"}, args...), strings.NewReader(""), &out, &errb), errb.String())
+	return got
+}
+
+// A service installed with an explicit --lanes 0 takes nothing; without the flag, or with
+// any other value, the lanes run to her nova-config width as before.
+func TestAnExplicitLanesZeroCarriesNoLanes(t *testing.T) {
+	t.Parallel()
+	assert.False(t, laneClientOf(t, "--lanes", "0"))
+	assert.False(t, laneClientOf(t, "--lanes=0"))
+	assert.True(t, laneClientOf(t))
+	assert.True(t, laneClientOf(t, "--lanes", "3"))
+	assert.False(t, laneClientOf(t, "--once"))
+}
