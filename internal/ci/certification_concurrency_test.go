@@ -38,24 +38,19 @@ func TestCertificationConcurrencyOnDevNeverCancels(t *testing.T) {
 		require.True(t, hasConditionalCancel, "certification.yml should have conditional cancel-in-progress based on event type")
 	})
 
-	// Test 2: Certification triggers on push to dev and release/**
+	// Test 2: Certification never triggers on a push. It is a nightly test and
+	// on demand only: a push run put 50 hosted shards and 17 minutes beside every
+	// dev commit and its red landed on the commit a release promotes (v1.4.6,
+	// 2026-10-16). The owner: CI is one minute on average, two at most, end to end,
+	// no exceptions.
 	t.Run("certification_triggers", func(t *testing.T) {
 		t.Parallel()
-
-		// Check push triggers
-		require.Contains(t, certContent, "push:")
-		require.Contains(t, certContent, "branches:")
-
-		// Check for dev trigger
-		hasDevTrigger := strings.Contains(certContent, "dev")
-		require.True(t, hasDevTrigger, "certification.yml should trigger on push to dev")
-
-		// Check for release/** trigger
-		hasReleaseTrigger := strings.Contains(certContent, "release/")
-		require.True(t, hasReleaseTrigger, "certification.yml should trigger on push to release branches")
-
-		// Check workflow_dispatch trigger
-		require.Contains(t, certContent, "workflow_dispatch:")
+		on := certContent[strings.Index(certContent, "\non:\n"):]
+		on = on[:strings.Index(on, "\n\n")]
+		require.NotContains(t, on, "push:", "certification.yml must never run on a push; it is nightly and on demand")
+		require.NotContains(t, on, "pull_request:", "certification.yml must never run on a pull request")
+		require.Contains(t, on, "schedule:")
+		require.Contains(t, on, "workflow_dispatch:")
 	})
 
 	// Test 3: Pull request CI keeps its cancel-in-progress
