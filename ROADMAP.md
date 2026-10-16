@@ -24,7 +24,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (24)
-- [Setup, release and operations](#setup-release-and-operations) (97)
+- [Setup, release and operations](#setup-release-and-operations) (98)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -1111,6 +1111,16 @@ The sprint release sums come from the same directory as the binaries, which prov
 Target: v1.5
 
 From: nova-tools PR #5571 cold read
+
+### nova-swarm is renamed nova-worker, freeing the name for a real swarm
+
+Today's nova-swarm runs one fleet member: it takes dealt cards and runs each worker on its machine. That is a worker, not a swarm. Rename the binary, its verbs, help, playbook, docs, launchd and systemd units, ansible roles, loop names, seat and harness references, and every caller to nova-worker, so the name nova-swarm is free for swarm mode (nova-sprint v1.7, swarm-mode-every-lane-on-one-problem). One word per thing: no alias is kept past one release, and the old name refuses by name, naming the new one. Returning members update to the new binary; there is no compatibility policy. DONE-WHEN: no file, unit, role or doc names nova-swarm except the refusal and the changelog; every fleet member runs nova-worker; the fleet's functional tier and the deal stay green.
+
+Why it waits: Swarm mode needs the name nova-swarm; today it names the per-machine worker.
+
+Target: v1.7
+
+From: Glenn, live, 2026-10-16: 'This would also be predicated on us changing nova-swarm to nova-worker so we can actually implement a real swarm with nova-swarm.'
 
 ## Docs, models and the repository
 

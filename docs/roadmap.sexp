@@ -1765,4 +1765,10 @@
     unexported code there, documented in SPEC-CI with a reversed witness."
    :date "2026-10-10"
    :release "v1.5"
-   :origin "seat decision after the repository split")))
+   :origin "seat decision after the repository split")
+  (item "rename-nova-swarm-to-nova-worker" :group "ops" :date "2026-10-16"
+   :title "nova-swarm is renamed nova-worker, freeing the name for a real swarm"
+   :text "Today's nova-swarm runs one fleet member: it takes dealt cards and runs each worker on its machine. That is a worker, not a swarm. Rename the binary, its verbs, help, playbook, docs, launchd and systemd units, ansible roles, loop names, seat and harness references, and every caller to nova-worker, so the name nova-swarm is free for swarm mode (nova-sprint v1.7, swarm-mode-every-lane-on-one-problem). One word per thing: no alias is kept past one release, and the old name refuses by name, naming the new one. Returning members update to the new binary; there is no compatibility policy. DONE-WHEN: no file, unit, role or doc names nova-swarm except the refusal and the changelog; every fleet member runs nova-worker; the fleet's functional tier and the deal stay green."
+   :why "Swarm mode needs the name nova-swarm; today it names the per-machine worker."
+   :release "v1.7"
+   :origin "Glenn, live, 2026-10-16: 'This would also be predicated on us changing nova-swarm to nova-worker so we can actually implement a real swarm with nova-swarm.'")))
