@@ -127,6 +127,7 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
   helps, what you need to try one, and the honest
   limits.
 - [Command reference](docs/CLI.md): every flag, worked examples and caveats.
+- [Tools playbook](docs/TOOLS-PLAYBOOK.md): which verbs to run, in order, for each situation.
 - [Tool contracts](docs/SPEC.md): what each tool promises, and what it refuses.
 - [Terminology](docs/TERMINOLOGY.md): the words the specs define, each linked to its rule.
 - [Onboarding standard](docs/ONBOARDING.md) and
