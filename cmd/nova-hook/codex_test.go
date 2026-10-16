@@ -119,7 +119,7 @@ func TestCodexOwnerHelpExampleThroughComparator(t *testing.T) {
 		"CODEX-OWNER NOTE no native owner discovery was sent",
 	}}
 	assert.Zero(t, code, out.String()+errOut.String())
-	for _, p := range onboarding.Compare(step, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errOut.String()}, nil) {
+	for _, p := range onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{{Code: code, Stdout: out.String(), Stderr: errOut.String()}}, nil) {
 		assert.Fail(t, p.Message)
 	}
 }
