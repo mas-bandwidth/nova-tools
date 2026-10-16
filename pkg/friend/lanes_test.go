@@ -509,8 +509,8 @@ func TestAClaudeLaneRunsEachCardAsAProcessAndReadsItsOutbox(t *testing.T) {
 		run := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			prompts = append(prompts, args[3])
-			if args[3] == "RESULT: c1\n" {
+			prompts = append(prompts, args[4]) // env CLAUDE_CONFIG_DIR= NOVA_HOOK_CLAUDE_CHILD=1 claude -p <brief>
+			if args[4] == "RESULT: c1\n" {
 				out := filepath.Join(dir, "outbox", "c1~15")
 				if err := os.MkdirAll(out, 0o755); err != nil {
 					return "", 0, err

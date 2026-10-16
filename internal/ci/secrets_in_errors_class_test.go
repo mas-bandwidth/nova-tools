@@ -9,6 +9,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/check"
 	ciallowlist "github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 	"github.com/mas-bandwidth/nova-tools/internal/converge"
+	lanefriend "github.com/mas-bandwidth/nova-tools/internal/friend"
 	nsstore "github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
@@ -106,6 +107,7 @@ var secretOpeners = map[string]any{
 	"pkg/config.ParseGitIdentity":                 config.ParseGitIdentity,
 	"internal/converge.ParseCerts":                converge.ParseCerts,
 	"internal/converge.ParseRetired":              converge.ParseRetired,
+	"internal/friend.ParseConfig":                 lanefriend.ParseConfig,
 	"internal/converge.ParseSince":                converge.ParseSince,
 	"internal/converge.ParseVersions":             converge.ParseVersions,
 	"pkg/decide.ParseBar":                         decide.ParseBar,

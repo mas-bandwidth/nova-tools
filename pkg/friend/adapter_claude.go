@@ -123,7 +123,7 @@ func (c *Claude) RunRead(ctx context.Context, model, prompt string) (LaneTurn, e
 	if why := c.Refusal(); why != "" {
 		return LaneTurn{}, errors.New(why)
 	}
-	args := []string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program(), "-p", prompt, "--output-format", "stream-json", "--verbose"}
+	args := append(ClaudeChildEnv(c.configDir()), c.program(), "-p", prompt, "--output-format", "stream-json", "--verbose")
 	if model != "" {
 		args = append(args, "--model", model)
 	}

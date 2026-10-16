@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,8 +90,8 @@ func laneLimitRun(t *testing.T, laneOut, beatReply string, down func(context.Con
 	var mu sync.Mutex
 	hits := 0
 	w.wall = func(_ friend.Wall, _ friend.Exec) friend.Exec {
-		return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
-			if friend.InLane(ctx) {
+		return func(ctx context.Context, _, _ string, args []string, _ string) (string, int, error) {
+			if friend.InLane(ctx) && !proofCall(args) {
 				mu.Lock()
 				hits++
 				mu.Unlock()
@@ -211,7 +212,10 @@ func TestRunRefuseGoWithABrokenShimBuildsNoLane(t *testing.T) {
 		var mu sync.Mutex
 		var laneRuns int
 		w.wall = func(friend.Wall, friend.Exec) friend.Exec {
-			return func(context.Context, string, string, []string, string) (string, int, error) {
+			return func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+				if proofCall(args) {
+					return `{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed"}` + "\n", 0, nil
+				}
 				mu.Lock()
 				laneRuns++
 				mu.Unlock()
@@ -275,3 +279,7 @@ func TestNoticeRetryFindsANewCoordinatorWithoutAStatusStep(t *testing.T) {
 	assert.Zero(t, n.Unsent())
 	assert.Equal(t, friend.NoticeLimit+1, f.Len(bus.StreamOf("ada")))
 }
+
+// proofCall is the harness proof's run (claude -p ok ... --max-turns 1), which
+// goes through the lane's wall as a card does but is no card's run.
+func proofCall(args []string) bool { return slices.Contains(args, "--max-turns") }

@@ -79,6 +79,7 @@ type world struct {
 	service            serviceManager                                                          // the one supervised hook service per friend
 	sprintBatch        func(context.Context, string, ...[]string) ([]sprintwire.Result, error) // one authoritative batch of friend rows
 	sprint             func(ctx context.Context, addr string, argv []string) (string, error)   // one verb to the sprint server (the lane client's ask)
+	novaConfig         func(ctx context.Context, argv []string) (string, error)                // one canonical nova-config read (the lane client's configuration)
 	home               func() (string, error)                                                  // the user's home, where the lane client caches briefs
 }
 
@@ -108,6 +109,7 @@ func realWorld() world {
 		after:              time.After,
 		deliver:            deliver,
 		sprint:             sprintAsk,
+		novaConfig:         novaConfigRun,
 		sprintBatch: func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error) {
 			return (sprintwire.Client{Addr: addr}).Do(ctx, verbs...)
 		},
@@ -278,6 +280,8 @@ directory), discovers the live Antigravity language_server and conversation, sav
 and delivers via agentapi send-message --title=nova-hook.
 Claude Code clients use --harness claude with --claude-state and --claude-settings (existing directories): before arming
 it installs a Stop hook that advances the generation file; the session's Monitor on this process's stdout is the delivery.
+A headless claude child (a nova-friend lane's card, read or harness proof) runs with NOVA_HOOK_CLAUDE_CHILD=1, and its
+Stop leaves the generation alone (STATE state=boundary-skipped), so --claude-settings may be the lanes' config_dir too.
 Every harness keeps one pending notice (pkg/harness/notice): a saved file rewritten in place with the newest valid
 challenge and the message count; a new push waits until the model consumed the last one; only the model proves.
 --once arms, renews once, sets the challenge and prints the record's state, at exit 0 when proven, else 1 with the
@@ -534,6 +538,12 @@ func holds(r hook.Role) []hook.Push {
 // hook is the verb: arm, hold, challenge, then stream until a signal or an unhook
 // (docs/SPEC-HOOK.md, the hook verb; tla/Hook.tla, Arm, Renew and Challenge).
 func (w world) hook(c *tool.Call) *tool.Out {
+	if c.Bool("claude-boundary") && w.getenv(notice.ClaudeChildEnv) != "" {
+		// a headless claude child's hook (a lane's card, read or proof, inside its
+		// wall, where the session's state is out of reach): no event of the
+		// session's, so nothing of the session's is read or written
+		return tool.Done().As("STATE").Fact("state", "boundary-skipped").Note("a headless claude child's Stop (" + notice.ClaudeChildEnv + " set) is no turn of the session's")
+	}
 	native, nativeErr := w.codexConfig(c)
 	if nativeErr != nil {
 		return tool.Refuse(nativeErr.Error())
@@ -824,8 +834,10 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		if err != nil {
 			return tool.Refuse("the challenge could not be written: " + err.Error())
 		}
-		if core != nil && serverOwned {
+		if core != nil && (serverOwned || claude != nil) {
 			// The bootstrap is the Core's first notice: held as pending like any other.
+			// The claude route's own challenges are too: its watcher follows only
+			// what the Core says, and its hooks read only the pending notice.
 			if native != nil {
 				r := &notice.Recovery{Messages: recovery.messages}
 				if !cutover.IsZero() {
@@ -1061,6 +1073,17 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 		if err == nil && st[0].Words() != lastState {
 			lastState = st[0].Words()
 			line(c, stateLine(st[0], role))
+		}
+		if lanes != nil {
+			// her canonical nova-config row, applied every friend.ConfigEvery: a change asks the
+			// lanes on this pass (a raised width takes, a lowered one drains)
+			cctx, ccancel := context.WithTimeout(ctx, configWait)
+			o, changed := configPass(cctx, lanes, w.now())
+			ccancel()
+			if changed {
+				line(c, o)
+				nextLanes = w.now()
+			}
 		}
 		if lanes != nil && err == nil && !w.now().Before(nextLanes) {
 			// the lane client's round: asks (and so renews) only while the model proves

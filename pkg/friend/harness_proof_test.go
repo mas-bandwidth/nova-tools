@@ -33,13 +33,15 @@ func TestClaudeProofWhy(t *testing.T) {
 	run := func(out string, exit int) Exec {
 		return func(_ context.Context, dir, name string, args []string, stdin string) (string, int, error) {
 			assert.Equal(t, "env", name)
-			assert.Equal(t, "CLAUDE_CONFIG_DIR=/cfg", args[0])
-			assert.Equal(t, []string{"claude", "-p", "ok", "--output-format", "json", "--max-turns", "1"}, args[1:])
+			assert.Equal(t, []string{"CLAUDE_CONFIG_DIR=/cfg", "NOVA_HOOK_CLAUDE_CHILD=1"}, args[:2], "the proof is a headless child: no session's Stop hook counts it")
+			assert.Equal(t, []string{"claude", "-p", "ok", "--output-format", "json", "--max-turns", "1"}, args[2:])
 			return out, exit, nil
 		}
 	}
 	assert.Empty(t, ClaudeProofWhy(context.Background(), run(`{"terminal_reason":"end_turn"}`, 0), "/d", "/cfg", "claude"))
 	assert.Empty(t, ClaudeProofWhy(context.Background(), run(``, 0), "/d", "/cfg", "claude"))
+	// claude 2.1.289's answer to the proof on a signed-in account (2026-10-16)
+	assert.Empty(t, ClaudeProofWhy(context.Background(), run(`{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","terminal_reason":"completed"}`, 0), "/d", "/cfg", "claude"), "completed is a normal end")
 	why := ClaudeProofWhy(context.Background(), run(`{"terminal_reason":"api_error","duration_api_ms":0}`, 1), "/d", "/cfg", "claude")
 	assert.Contains(t, why, "harness claude cannot answer: api_error (config dir /cfg)")
 	why = ClaudeProofWhy(context.Background(), run(``, 1), "/d", "/cfg", "claude")
