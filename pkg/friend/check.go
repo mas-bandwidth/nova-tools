@@ -52,7 +52,6 @@ type HarnessFacts struct {
 	Failed         int    `json:"failed"`    // of those, the ones that failed (JSON only)
 	Broken         string `json:"broken"`    // RFC3339 or "-"
 	Reason         string `json:"reason"`    // one line or "-"
-	Proof          string `json:"proof"`     // a fresh status's last harness proof: "ok" or its failure; "" when stale, absent or never run (JSON only)
 }
 
 // BusFacts carries facts about real messages on the bus.
@@ -244,8 +243,7 @@ func DefaultReadWork(dir string) (inboxCount, outboxCount int, newestName string
 // count and age is of the window (docs/SPEC-FRIEND.md "Check": the verdicts).
 // The facts decide first, in this order:
 //  1. broken when the session is marked broken, or deliveries in the window
-//     are all failures (delivered > 0 and failed == delivered), or a fresh
-//     status's harness proof failed (the daemon takes no card while it stands)
+//     are all failures (delivered > 0 and failed == delivered)
 //  2. down when her nova-hook record does not prove her there
 //  3. else ok
 //
@@ -276,8 +274,6 @@ func factsVerdict(df DaemonFacts, hf HarnessFacts) (verdict, why string) {
 		return VerdictBroken, "session broken since " + hf.Broken
 	case hf.Delivered > 0 && hf.Failed == hf.Delivered:
 		return VerdictBroken, fmt.Sprintf("every lane turn in the window failed (%d of %d)", hf.Failed, hf.Delivered)
-	case hf.Proof != "" && hf.Proof != "-" && hf.Proof != "ok":
-		return VerdictBroken, "harness proof failed, no card is taken: " + hf.Proof
 	case df.Presence != PresenceUp:
 		why := "hook " + df.Hook
 		if df.Reason != "-" && df.Reason != "" {
@@ -405,14 +401,6 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 			hf.Broken = st.At.UTC().Format(time.RFC3339)
 		}
 		hf.Reason = dash(st.SessionReason)
-	}
-	// A fresh status's failed harness proof: the daemon takes no card while it
-	// stands (2026-10-16: a claude row checked ok while every take was refused).
-	if stFound && df.Status == "ok" && st.Proof != "" {
-		hf.Proof = st.Proof
-		if st.Proof != "ok" && hf.Reason == "-" {
-			hf.Reason = st.Proof
-		}
 	}
 
 	// Bus facts
