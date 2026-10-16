@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -213,9 +212,7 @@ func hookServiceArgs(c *tool.Call, as string, role hook.Role, addr string) []str
 			args = append(args, "--"+flag, v)
 		}
 	}
-	if c.Given("lanes") {
-		args = append(args, "--lanes", strconv.Itoa(c.Int("lanes")))
-	}
+	// --lanes is retired and never written: the lanes take to her nova-config row's width
 	return args
 }
 

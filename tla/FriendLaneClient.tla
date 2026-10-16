@@ -49,16 +49,42 @@
 (*                  took a card; the tick's friendUnstartedWorking moved it*)
 (*                  working -> ready the same second): TakenStaysTaken     *)
 (*                  fails.                                                 *)
+(*                                                                         *)
+(* The width (the owner, 2026-10-16: "nova-config automatically owns lane *)
+(* count; never unhook to resize"). The client applies the friend's        *)
+(* canonical nova-config row about once a second (friend.Client.Apply):    *)
+(* width is the width it last read, cfgOk whether the last read answered.  *)
+(* SetWidth (the operator's nova-config friend set --width) and ConfigLost *)
+(* / ConfigBack (a read that fails, then answers) are outside events. The  *)
+(* client renews every lane the server says holds a card, whatever the     *)
+(* width (Renew), and a free lane takes only while the row reads and her   *)
+(* held cards are fewer than the width (Take). A lowered width drains; a   *)
+(* raised one takes. Invariants NoLostCard, NoDuplicateHold,               *)
+(* DrainNeverTakes; liveness GrowTakes. Witnesses:                         *)
+(*   ShrinkStopsRenew  the client asks only lanes 1..width (the fixed-lane *)
+(*                  client sized to the new width): a held lane above it   *)
+(*                  goes unrenewed under a live client: NoLostCard fails.  *)
+(*   ShrinkMoves    a lowered width moves a held card into a lane under it *)
+(*                  without ending the old hold (a re-deal on resize):     *)
+(*                  NoDuplicateHold fails.                                 *)
+(*   TakeOverWidth  a free lane takes whatever the width or the read (the  *)
+(*                  --lanes override): DrainNeverTakes fails.              *)
+(*   NoGrow         the client takes to the width it started with (a      *)
+(*                  width read once, at hook time): GrowTakes fails.       *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Cards, Lanes, Bound, RenewTicks, MaxRestarts, MaxDeaths,
-          TrustCache, RenewUnproven, TickUnstarts
+          TrustCache, RenewUnproven, TickUnstarts,
+          Widths, InitWidth, MaxResizes, MaxLosses,
+          ShrinkStopsRenew, ShrinkMoves, TakeOverWidth, NoGrow
 
 None == "none"
 NoHold == <<None, 0>>  \* a cache entry naming no card
 ASSUME None \notin Cards /\ Bound > 0 /\ RenewTicks \in 1..Bound
 ASSUME TrustCache \in BOOLEAN /\ RenewUnproven \in BOOLEAN /\ TickUnstarts \in BOOLEAN
+ASSUME Lanes = 1..Cardinality(Lanes) /\ Widths \subseteq Lanes /\ InitWidth \in Widths
+ASSUME ShrinkStopsRenew \in BOOLEAN /\ ShrinkMoves \in BOOLEAN /\ TakeOverWidth \in BOOLEAN /\ NoGrow \in BOOLEAN
 
 VARIABLES srv,       \* server: the card each lane holds, or None
           col,       \* server: each card ready, held or done
@@ -72,9 +98,18 @@ VARIABLES srv,       \* server: the card each lane holds, or None
           returned,  \* ghost: a hold ended with its lease live, by neither finish nor expiry
           lostLive,  \* ghost: a lease ran out while its client was renewing it
           restarts,  \* client crashes so far
-          deaths     \* model deaths so far
+          deaths,    \* model deaths so far
+          width,     \* the client: the width of the nova-config row it last read
+          cfgOk,     \* the client: its last read of the row answered
+          resizes,   \* operator width changes so far
+          losses,    \* failed reads so far
+          overTake   \* ghost: a free lane took while the held cards were at the width or the row unread
 
-vars == <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths>>
+vars == <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, width, cfgOk, resizes, losses, overTake>>
+cfgVars == <<width, cfgOk, resizes, losses, overTake>>
+
+\* the lanes holding a card, as the server says
+HeldN == Cardinality({l \in Lanes : srv[l] # None})
 
 MaxGen == 2 + MaxRestarts + MaxDeaths
 Gens == 1..MaxGen
@@ -91,6 +126,8 @@ TypeOK ==
   /\ finished \in [Cards -> 0..2]
   /\ returned \in BOOLEAN /\ lostLive \in BOOLEAN
   /\ restarts \in 0..MaxRestarts /\ deaths \in 0..MaxDeaths
+  /\ width \in Widths /\ cfgOk \in BOOLEAN
+  /\ resizes \in 0..MaxResizes /\ losses \in 0..MaxLosses /\ overTake \in BOOLEAN
 
 Init ==
   /\ srv = [l \in Lanes |-> None]
@@ -103,29 +140,74 @@ Init ==
   /\ finished = [c \in Cards |-> 0]
   /\ returned = FALSE /\ lostLive = FALSE
   /\ restarts = 0 /\ deaths = 0
+  /\ width = InitWidth /\ cfgOk = TRUE
+  /\ resizes = 0 /\ losses = 0 /\ overTake = FALSE
 
 \* the client renews (asks) only while the model proves; the witness renews regardless
 Renewing == up /\ (proven \/ RenewUnproven)
 
-\* Ask(l): take --as friend.<name> --lane l. The server answers the card the lane holds
-\* (and that answer is the lane heard: its lease renewed), else takes it a ready card, else
-\* nothing. The client's cache is whatever the server said.
-Ask(l) ==
+\* The lanes a renewing client asks as renewals: every lane the server says holds a card
+\* (friend cards), whatever the width; the witness ShrinkStopsRenew asks only 1..width.
+RenewsLane(l) == Renewing /\ (~ShrinkStopsRenew \/ l <= width)
+
+\* The width a free lane takes to: the row's; the witness NoGrow keeps the width it started at.
+TakeWidth == IF NoGrow THEN IF width < InitWidth THEN width ELSE InitWidth ELSE width
+
+\* Renew(l): take --as friend.<name> --lane l on a lane the server says holds a card: the
+\* server answers it, and the ask is the lane heard (its lease renewed). The client's cache
+\* is whatever the server said.
+Renew(l) ==
+  /\ RenewsLane(l)
+  /\ srv[l] # None
+  /\ lease' = [lease EXCEPT ![l] = Bound]
+  /\ cache' = [cache EXCEPT ![l] = <<srv[l], gen[srv[l]]>>]
+  /\ UNCHANGED <<srv, col, gen, up, proven, told, finished, returned, lostLive, restarts, deaths>>
+  /\ UNCHANGED cfgVars
+
+\* Take(l): the same verb on a free lane takes her next ready card, else nothing. The client
+\* asks a free lane only while the row reads and her held cards are under the width (the
+\* witness TakeOverWidth asks regardless).
+Take(l) ==
   /\ Renewing
-  /\ IF srv[l] # None
-       THEN /\ lease' = [lease EXCEPT ![l] = Bound]
-            /\ cache' = [cache EXCEPT ![l] = <<srv[l], gen[srv[l]]>>]
-            /\ UNCHANGED <<srv, col>>
-       ELSE IF \E c \in Cards : col[c] = "ready"
-              THEN \E c \in Cards :
-                     /\ col[c] = "ready"
-                     /\ srv' = [srv EXCEPT ![l] = c]
-                     /\ col' = [col EXCEPT ![c] = "held"]
-                     /\ lease' = [lease EXCEPT ![l] = Bound]
-                     /\ cache' = [cache EXCEPT ![l] = <<c, gen[c]>>]
-              ELSE /\ cache' = [cache EXCEPT ![l] = NoHold]
-                   /\ UNCHANGED <<srv, col, lease>>
+  /\ srv[l] = None
+  /\ TakeOverWidth \/ (cfgOk /\ HeldN < TakeWidth)
+  /\ IF \E c \in Cards : col[c] = "ready"
+       THEN \E c \in Cards :
+              /\ col[c] = "ready"
+              /\ srv' = [srv EXCEPT ![l] = c]
+              /\ col' = [col EXCEPT ![c] = "held"]
+              /\ lease' = [lease EXCEPT ![l] = Bound]
+              /\ cache' = [cache EXCEPT ![l] = <<c, gen[c]>>]
+              /\ overTake' = (overTake \/ ~cfgOk \/ HeldN >= width)
+       ELSE /\ cache' = [cache EXCEPT ![l] = NoHold]
+            /\ UNCHANGED <<srv, col, lease, overTake>>
   /\ UNCHANGED <<gen, up, proven, told, finished, returned, lostLive, restarts, deaths>>
+  /\ UNCHANGED <<width, cfgOk, resizes, losses>>
+
+\* SetWidth(w): the operator sets her nova-config row's width; the client applies it on its
+\* next read (outside event; the read's own timing is below the grain). No hold changes:
+\* the witness ShrinkMoves re-deals a held card above the new width into a free lane under
+\* it, the old hold kept.
+SetWidth(w) ==
+  /\ resizes < MaxResizes /\ w # width
+  /\ width' = w /\ resizes' = resizes + 1
+  /\ IF ShrinkMoves /\ w < width /\ \E h \in Lanes, k \in Lanes : h > w /\ k <= w /\ srv[h] # None /\ srv[k] = None
+       THEN \E h \in Lanes, k \in Lanes :
+              /\ h > w /\ k <= w /\ srv[h] # None /\ srv[k] = None
+              /\ srv' = [srv EXCEPT ![k] = srv[h]]
+              /\ lease' = [lease EXCEPT ![k] = Bound]
+       ELSE UNCHANGED <<srv, lease>>
+  /\ UNCHANGED <<col, gen, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, cfgOk, losses, overTake>>
+
+\* ConfigLost: a read of the row fails (intake closes); ConfigBack: it answers again.
+ConfigLost ==
+  /\ cfgOk /\ losses < MaxLosses
+  /\ cfgOk' = FALSE /\ losses' = losses + 1
+  /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, width, resizes, overTake>>
+ConfigBack ==
+  /\ ~cfgOk
+  /\ cfgOk' = TRUE
+  /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, width, resizes, losses, overTake>>
 
 \* Notify: the one notice ("N cards taken; briefs at ...") tells the model every hold the
 \* client's cache names. A restarted client tells again what the server says it holds.
@@ -134,6 +216,7 @@ Notify ==
   /\ \E l \in Lanes : cache[l] # NoHold /\ <<cache[l][1], cache[l][2], l>> \notin told
   /\ told' = told \cup {<<cache[l][1], cache[l][2], l>> : l \in {k \in Lanes : cache[k] # NoHold}}
   /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, finished, returned, lostLive, restarts, deaths>>
+  /\ UNCHANGED cfgVars
 
 \* the server's record for lane l holds card c at generation g
 ServerSays(c, g, l) == srv[l] = c /\ gen[c] = g
@@ -151,6 +234,7 @@ Finish(c, g, l) ==
   /\ finished' = [finished EXCEPT ![c] = IF @ < 2 THEN @ + 1 ELSE 2]
   /\ cache' = [cache EXCEPT ![l] = NoHold]
   /\ UNCHANGED <<gen, up, proven, told, returned, lostLive, restarts, deaths>>
+  /\ UNCHANGED cfgVars
 
 \* Progress: the model says the run is alive; applied only on the server's record
 Progress(c, g, l) ==
@@ -159,15 +243,18 @@ Progress(c, g, l) ==
   /\ ServerSays(c, g, l)
   /\ lease' = [lease EXCEPT ![l] = Bound]
   /\ UNCHANGED <<srv, col, gen, up, proven, cache, told, finished, returned, lostLive, restarts, deaths>>
+  /\ UNCHANGED cfgVars
 
-\* Age(l): time passes. A lease nobody renews runs down to 0; a renewing client renews
-\* within RenewTicks ticks, so its lease runs down no further than Bound - RenewTicks.
+\* Age(l): time passes. A lease nobody renews runs down to 0; a renewing client renews each
+\* lane it asks within RenewTicks ticks, so its lease runs down no further than Bound -
+\* RenewTicks. A lease that runs out while the client is up and proving is a lost live hold.
 Age(l) ==
   /\ srv[l] # None /\ lease[l] > 0
-  /\ (~Renewing \/ lease[l] > Bound - RenewTicks)
+  /\ (~RenewsLane(l) \/ lease[l] > Bound - RenewTicks)
   /\ lease' = [lease EXCEPT ![l] = @ - 1]
   /\ lostLive' = (lostLive \/ (Renewing /\ lease[l] = 1))
   /\ UNCHANGED <<srv, col, gen, up, proven, cache, told, finished, returned, restarts, deaths>>
+  /\ UNCHANGED cfgVars
 
 \* Expire(l): the tick returns a card whose lease ran out, ready at its next generation
 Expire(l) ==
@@ -177,6 +264,7 @@ Expire(l) ==
   /\ gen' = [gen EXCEPT ![srv[l]] = @ + 1]
   /\ srv' = [srv EXCEPT ![l] = None]
   /\ UNCHANGED <<lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths>>
+  /\ UNCHANGED cfgVars
 
 \* TickUnstart(l), the witness only: the tick puts a taken card back ready while its lease
 \* is live (friendUnstartedWorking before the fix: a take that was no "start")
@@ -188,6 +276,7 @@ TickUnstart(l) ==
   /\ lease' = [lease EXCEPT ![l] = 0]
   /\ returned' = TRUE
   /\ UNCHANGED <<gen, up, proven, cache, told, finished, lostLive, restarts, deaths>>
+  /\ UNCHANGED cfgVars
 
 \* Crash: the client process dies. Restart: it starts again in an empty working directory,
 \* holding nothing; the witness TrustCache keeps its lanes.json.
@@ -195,31 +284,37 @@ Crash ==
   /\ up /\ restarts < MaxRestarts
   /\ up' = FALSE /\ restarts' = restarts + 1
   /\ UNCHANGED <<srv, col, gen, lease, proven, cache, told, finished, returned, lostLive, deaths>>
+  /\ UNCHANGED cfgVars
 Restart ==
   /\ ~up
   /\ up' = TRUE
   /\ cache' = IF TrustCache THEN cache ELSE [l \in Lanes |-> NoHold]
   /\ UNCHANGED <<srv, col, gen, lease, proven, told, finished, returned, lostLive, restarts, deaths>>
+  /\ UNCHANGED cfgVars
 
 \* the model stops proving (its session gone), and comes back
 Die ==
   /\ proven /\ deaths < MaxDeaths
   /\ proven' = FALSE /\ deaths' = deaths + 1
   /\ UNCHANGED <<srv, col, gen, lease, up, cache, told, finished, returned, lostLive, restarts>>
+  /\ UNCHANGED cfgVars
 Revive ==
   /\ ~proven
   /\ proven' = TRUE
   /\ UNCHANGED <<srv, col, gen, lease, up, cache, told, finished, returned, lostLive, restarts, deaths>>
+  /\ UNCHANGED cfgVars
 
 Next ==
-  \/ \E l \in Lanes : Ask(l) \/ Age(l) \/ Expire(l) \/ TickUnstart(l)
+  \/ \E l \in Lanes : Renew(l) \/ Take(l) \/ Age(l) \/ Expire(l) \/ TickUnstart(l)
+  \/ \E w \in Widths : SetWidth(w)
+  \/ ConfigLost \/ ConfigBack
   \/ Notify
   \/ \E c \in Cards, g \in Gens, l \in Lanes : Finish(c, g, l) \/ Progress(c, g, l)
   \/ Crash \/ Restart \/ Die \/ Revive
 
 Spec == Init /\ [][Next]_vars
-        /\ \A l \in Lanes : WF_vars(Ask(l)) /\ WF_vars(Age(l)) /\ WF_vars(Expire(l))
-        /\ WF_vars(Notify) /\ WF_vars(Restart)
+        /\ \A l \in Lanes : WF_vars(Renew(l)) /\ WF_vars(Take(l)) /\ WF_vars(Age(l)) /\ WF_vars(Expire(l))
+        /\ WF_vars(Notify) /\ WF_vars(Restart) /\ WF_vars(ConfigBack)
 
 -----------------------------------------------------------------------------
 \* No card is held by two lanes: the server's record is the one owner.
@@ -253,4 +348,22 @@ RestartResumes ==
 \* is returned.
 DeadClientReleases == (<>[](~up)) => <>[](\A l \in Lanes : srv[l] = None)
 DeadModelReleases  == (<>[](~proven)) => <>[](\A l \in Lanes : srv[l] = None)
+
+\* No card is lost to a resize or a failed read: a hold ends only by a finish or by its lease
+\* running out under no renewing client (a shrink drains, never drops or returns).
+NoLostCard == ~lostLive /\ ~returned
+
+\* No card is worked twice: one lane holds it, and the model is told it on one lane per
+\* generation (a resize never re-deals a held card).
+NoDuplicateHold ==
+  /\ OneLanePerCard
+  /\ \A c \in Cards, g \in Gens : Cardinality({l \in Lanes : <<c, g, l>> \in told}) <= 1
+
+\* No free lane takes while her held cards are at the width, or while the row is unread.
+DrainNeverTakes == ~overTake
+
+\* A raised width takes: while the row reads, a renewing client holds fewer cards than the
+\* width and a ready card waits, a lane takes it (or that stops being so).
+Starved == Renewing /\ cfgOk /\ HeldN < width /\ \E c \in Cards : col[c] = "ready"
+GrowTakes == Starved ~> ~Starved
 =============================================================================

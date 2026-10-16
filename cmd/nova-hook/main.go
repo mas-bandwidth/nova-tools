@@ -78,6 +78,7 @@ type world struct {
 	service            serviceManager                                                          // the one supervised hook service per friend
 	sprintBatch        func(context.Context, string, ...[]string) ([]sprintwire.Result, error) // one authoritative batch of friend rows
 	sprint             func(ctx context.Context, addr string, argv []string) (string, error)   // one verb to the sprint server (the lane client's ask)
+	novaConfig         func(ctx context.Context, argv []string) (string, error)                // one canonical nova-config read (the lane client's configuration)
 	home               func() (string, error)                                                  // the user's home, where the lane client caches briefs
 }
 
@@ -106,6 +107,7 @@ func realWorld() world {
 		after:              time.After,
 		deliver:            deliver,
 		sprint:             sprintAsk,
+		novaConfig:         novaConfigRun,
 		sprintBatch: func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error) {
 			return (sprintwire.Client{Addr: addr}).Do(ctx, verbs...)
 		},
@@ -1089,6 +1091,17 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 		if err == nil && st[0].Words() != lastState {
 			lastState = st[0].Words()
 			line(c, stateLine(st[0], role))
+		}
+		if lanes != nil {
+			// her canonical nova-config row, applied every friend.ConfigEvery: a change asks the
+			// lanes on this pass (a raised width takes, a lowered one drains)
+			cctx, ccancel := context.WithTimeout(ctx, configWait)
+			o, changed := configPass(cctx, lanes, w.now())
+			ccancel()
+			if changed {
+				line(c, o)
+				nextLanes = w.now()
+			}
 		}
 		if lanes != nil && err == nil && !w.now().Before(nextLanes) {
 			// the lane client's round: asks (and so renews) only while the model proves
