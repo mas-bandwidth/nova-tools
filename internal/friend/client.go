@@ -51,7 +51,6 @@ type Client struct {
 
 	told map[string]bool // the holds told this process's life: connection state, never decides
 	held []int           // the lanes the server last said hold a card: renewed next round even when friend cards does not answer
-	tier map[string]string
 	conf applied
 }
 
@@ -67,9 +66,6 @@ type Hold struct {
 	Epoch uint64
 	Kind  string
 	Job   string
-	Tier  string // the card's tier as the server names it (its packet, else friend cards), "" when unknown
-	Route string // the route and model the server drew for the card from nova-config's tiers, "" when none
-	Model string
 	Brief string // the cached BRIEF.md, "" when the server sent no brief
 }
 
@@ -88,9 +84,6 @@ type answer struct {
 	Packets []struct {
 		Card  string `json:"card"`
 		Brief string `json:"brief"`
-		Tier  string `json:"tier"`
-		Route string `json:"route"`
-		Model string `json:"model"`
 	} `json:"packets"`
 }
 
@@ -174,7 +167,7 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 }
 
 // serverHolds is the lanes of her row the server says hold a working card (friend cards, the
-// read verb the hook's heartbeat server already asks), and each card's tier.
+// read verb the hook's heartbeat server already asks).
 func (c *Client) serverHolds(ctx context.Context) ([]int, error) {
 	out, err := c.Ask(ctx, lane.FriendCardsArgv(c.Name))
 	if err != nil {
@@ -185,9 +178,7 @@ func (c *Client) serverHolds(ctx context.Context) ([]int, error) {
 		return nil, err
 	}
 	var lanes []int
-	c.tier = map[string]string{}
 	for _, h := range cards {
-		c.tier[h.Card] = h.Tier
 		if h.Col == "working" && h.Lane > 0 {
 			lanes = append(lanes, h.Lane)
 		}
@@ -222,11 +213,8 @@ func (c *Client) ask(ctx context.Context, n int) (Hold, bool, error) {
 	if lh.Card == "" {
 		return Hold{}, false, nil
 	}
-	h := Hold{Lane: n, Card: lh.Card, Gen: lh.Gen, Epoch: lh.Epoch, Kind: lh.Kind, Job: lh.Job, Tier: c.tier[lh.Card]}
+	h := Hold{Lane: n, Card: lh.Card, Gen: lh.Gen, Epoch: lh.Epoch, Kind: lh.Kind, Job: lh.Job}
 	for _, p := range a.Packets {
-		if p.Card == h.Card {
-			h.Tier, h.Route, h.Model = cmpOr(p.Tier, h.Tier), p.Route, p.Model
-		}
 		if p.Card == h.Card && strings.TrimSpace(p.Brief) != "" && c.Dir != "" {
 			path := filepath.Join(c.Dir, h.Job, "BRIEF.md")
 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -256,18 +244,11 @@ func (c *Client) Notice(fresh, holds []Hold) (subject, body string) {
 	slices.SortFunc(sorted, func(x, y Hold) int { return x.Lane - y.Lane })
 	for _, h := range sorted {
 		at := fmt.Sprintf("%s@%d --epoch %d --lane %d", h.Card, h.Gen, h.Epoch, h.Lane)
-		tier := ""
-		if w := c.tierWord(h.Tier); w != "" {
-			tier = ", " + w
-		}
-		if h.Model != "" {
-			tier += ", route " + cmpOr(h.Route, "-") + " model " + h.Model
-		}
 		if h.Kind == "read" {
-			fmt.Fprintf(&b, "- lane %d %s (read, job %s%s): nova-sprint read --as %s (--ok | --broken) %s --epoch %d --lane %d\n", h.Lane, h.Card, h.Job, tier, c.Row(), h.Card, h.Epoch, h.Lane)
+			fmt.Fprintf(&b, "- lane %d %s (read, job %s): nova-sprint read --as %s (--ok | --broken) %s --epoch %d --lane %d\n", h.Lane, h.Card, h.Job, c.Row(), h.Card, h.Epoch, h.Lane)
 			continue
 		}
-		fmt.Fprintf(&b, "- lane %d %s (job %s%s): nova-sprint finish --as %s %s (--head <commit> | --failed) --report <text>; alive: nova-sprint progress --as %s %s\n", h.Lane, h.Card, h.Job, tier, c.Row(), at, c.Row(), at)
+		fmt.Fprintf(&b, "- lane %d %s (job %s): nova-sprint finish --as %s %s (--head <commit> | --failed) --report <text>; alive: nova-sprint progress --as %s %s\n", h.Lane, h.Card, h.Job, c.Row(), at, c.Row(), at)
 	}
 	return subject, b.String()
 }

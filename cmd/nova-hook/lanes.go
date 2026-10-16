@@ -112,7 +112,7 @@ func configPass(ctx context.Context, lc *friend.Client, now time.Time) (*tool.Ou
 	if !ch.OK {
 		return tool.Done().As("STATE").Fact("state", "config-unread").Fact("intake", 0).Note("her nova-config row did not read: " + ch.Why + "; no lane takes a card until it reads again, and every held card's lane is still renewed"), true
 	}
-	return tool.Done().As("STATE").Fact("state", "config-applied").Fact("width", ch.Config.Width).Fact("tiers", strings.Join(ch.Config.Tiers, ",")).Note("her nova-config row applied: the lanes take to width " + fmt.Sprint(ch.Config.Width) + "; a lowered width drains, never returns a held card"), true
+	return tool.Done().As("STATE").Fact("state", "config-applied").Fact("width", ch.Config.Width).Note("her nova-config row applied: the lanes take to width " + fmt.Sprint(ch.Config.Width) + "; a lowered width drains, never returns a held card"), true
 }
 
 // novaConfigRun runs the canonical nova-config read, argv after the binary: the one beside

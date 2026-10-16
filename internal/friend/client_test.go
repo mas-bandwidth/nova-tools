@@ -120,10 +120,7 @@ func (f *fakeServer) ask(_ context.Context, argv []string) (string, error) {
 		a.Packets = append(a.Packets, struct {
 			Card  string `json:"card"`
 			Brief string `json:"brief"`
-			Tier  string `json:"tier"`
-			Route string `json:"route"`
-			Model string `json:"model"`
-		}{Card: card, Brief: "the brief of " + card, Tier: "flash"})
+		}{Card: card, Brief: "the brief of " + card})
 	}
 	b, err := json.Marshal(a)
 	return string(b), err
@@ -364,7 +361,7 @@ func TestParseConfigNeverMakesUpAWidth(t *testing.T) {
 	t.Parallel()
 	cfg, err := ParseConfig("amy", config(3))
 	require.NoError(t, err)
-	assert.Equal(t, Config{Width: 3, Tiers: []string{"flash", "pro"}}, cfg)
+	assert.Equal(t, Config{Width: 3}, cfg)
 	for _, bad := range []string{
 		"FRIEND name=amy width=3",
 		`{"result":{"status":"refused","why":["no store named"]}}`,
@@ -405,13 +402,9 @@ func TestTheNoticeNamesTheBriefsAndTheServersVerbs(t *testing.T) {
 	subject, body := c.Notice(fresh, holds)
 	assert.Equal(t, "SPRINT CARDS n=2 as=friend.amy", subject)
 	assert.True(t, strings.HasPrefix(body, "2 cards taken; briefs at "+fresh[0].Brief+", "+fresh[1].Brief+"; work each in a child agent to width.\n"), body)
-	assert.Contains(t, body, "- lane 1 s1-1.w1 (job s1-1.w1~3, tier flash): nova-sprint finish --as friend.amy s1-1.w1@1 --epoch 3 --lane 1 (--head <commit> | --failed)")
+	assert.Contains(t, body, "- lane 1 s1-1.w1 (job s1-1.w1~3): nova-sprint finish --as friend.amy s1-1.w1@1 --epoch 3 --lane 1 (--head <commit> | --failed)")
 	assert.Contains(t, body, "nova-sprint progress --as friend.amy s1-2.w1@1 --epoch 3 --lane 2")
-
-	// a tier her nova-config row does not name is said beside the card; a drawn route is named
-	holds[1].Tier, holds[1].Route, holds[1].Model = "heavy", "heavy-opus-claude", "claude-opus-5-5"
-	_, body = c.Notice(fresh, holds)
-	assert.Contains(t, body, "(job s1-2.w1~3, tier heavy, not among your nova-config tiers flash,pro, route heavy-opus-claude model claude-opus-5-5)")
+	assert.NotContains(t, body, "tier", "the notice names no tier, route or model")
 }
 
 // An answer that is not the take verb's JSON, or names another lane, runs nothing.

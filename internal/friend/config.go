@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +21,6 @@ import (
 //     fewer than the width. Raised, the next round takes into the new lanes; lowered, no
 //     lane takes until her held cards are under it, and every held card's lane is still
 //     asked (renewed) until it finishes: a shrink drains, never drops, returns or re-deals.
-//   - tiers: which tiers the row says she can do, named on the notice beside each card's.
 //
 // A fetch that fails, or a row that names no width, closes intake (the held lanes are still
 // renewed) until a fetch answers again; the client never makes up a width. The sprint server
@@ -36,7 +34,6 @@ const ConfigEvery = time.Second
 // Config is the part of the friend's nova-config row the runtime applies.
 type Config struct {
 	Width int
-	Tiers []string
 }
 
 // Fetch reads the friend's canonical nova-config row: what `nova-config friend show <name>
@@ -47,7 +44,7 @@ type Fetch func(ctx context.Context, name string) (string, error)
 func ConfigArgv(name string) []string { return []string{"friend", "show", name, "--json"} }
 
 // ParseConfig reads nova-config friend show --json for name: its width (a whole number from
-// 1) and its tiers. A refusal, another friend's row or a row with no width is an error: the
+// 1). A refusal, another friend's row or a row with no width is an error: the
 // runtime applies the row as nova-config says it, and never a default in its place.
 func ParseConfig(name, out string) (Config, error) {
 	var a struct {
@@ -74,19 +71,13 @@ func ParseConfig(name, out string) (Config, error) {
 		if err != nil || w < 1 {
 			return Config{}, fmt.Errorf("nova-config friend %s names no width from 1 (width=%q); intake waits for one: nova-config friend set %s --width <n>", name, it.Fields["width"], name)
 		}
-		var tiers []string
-		for _, t := range strings.Split(it.Fields["tiers"], ",") {
-			if t = strings.TrimSpace(t); t != "" {
-				tiers = append(tiers, t)
-			}
-		}
-		return Config{Width: w, Tiers: tiers}, nil
+		return Config{Width: w}, nil
 	}
 	return Config{}, fmt.Errorf("nova-config friend show %s: the answer holds no row for %s", name, name)
 }
 
 func (c Config) String() string {
-	return fmt.Sprintf("width=%d tiers=%s", c.Width, cmpOr(strings.Join(c.Tiers, ","), "-"))
+	return fmt.Sprintf("width=%d", c.Width)
 }
 
 // applied is the configuration a client runs by: the row last fetched, or why there is none.
@@ -107,7 +98,7 @@ type Change struct {
 
 // Apply is the one call the loop makes every tick: when ConfigEvery has passed since the
 // last fetch, it fetches the canonical row and applies it, and answers the change when what
-// the client runs by changed (a new width or tiers, a fetch that failed, one that answers
+// the client runs by changed (a new width, a fetch that failed, one that answers
 // again), so the caller says it once and asks the lanes on its next round. Nothing to fetch
 // (no Fetch) is a closed intake too: a client with no configuration takes nothing.
 func (c *Client) Apply(ctx context.Context, now time.Time) (Change, bool) {
@@ -149,16 +140,4 @@ func (c *Client) Intake() int {
 		return 0
 	}
 	return c.conf.cfg.Width
-}
-
-// tierWord names a card's tier on the notice, and says so when the applied row's tiers do not
-// name it ("" when the server named no tier).
-func (c *Client) tierWord(tier string) string {
-	if tier == "" {
-		return ""
-	}
-	if c.conf.ok && len(c.conf.cfg.Tiers) > 0 && !slices.Contains(c.conf.cfg.Tiers, tier) {
-		return "tier " + tier + ", not among your nova-config tiers " + strings.Join(c.conf.cfg.Tiers, ",")
-	}
-	return "tier " + tier
 }
