@@ -1,10 +1,10 @@
 package ci
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -87,17 +87,6 @@ func parseRetiredNames(src string) ([]retiredName, []string) {
 	return rows, faults
 }
 
-// retiredMatcher is the regexp a row is found by.
-func retiredMatcher(r retiredName) *regexp.Regexp {
-	switch r.Kind {
-	case "ident":
-		return regexp.MustCompile(`\b` + regexp.QuoteMeta(r.Name) + `\b`)
-	case "verb":
-		return regexp.MustCompile(`\bName:\s*"` + regexp.QuoteMeta(r.Name) + `"`)
-	}
-	return regexp.MustCompile(regexp.QuoteMeta(r.Name) + `(?:[^A-Za-z0-9_]|$)`)
-}
-
 // retiredScanned says whether a row of kind is looked for in the file rel.
 func retiredScanned(kind, rel string) bool {
 	for _, h := range retiredHistory {
@@ -114,22 +103,82 @@ func retiredScanned(kind, rel string) bool {
 	return retiredTextExts[path.Ext(rel)]
 }
 
-// retiredFindings is every `<rel>:<line>: <kind> <name>` the rows find in src.
-func retiredFindings(rel string, src []byte, rows []retiredName) []string {
+// retiredRules is the table, grouped by kind. The sweep is a substring search
+// for each name, with the row's boundary rule checked at each hit: an
+// identifier only as a whole word, a verb only as a nova-friend verb literal
+// (`Name: "<verb>"`), a command not as the start of a longer word. It used to be
+// one regexp per row per file, which cost 58s on a hosted runner and pushed
+// internal/ci past its 75s budget (v1.4.6); a unit test tests logic, so the
+// sweep is now a scan with no regexp in it.
+type retiredRules struct {
+	byKind map[string][]retiredName
+}
+
+// compileRetired groups rows by kind.
+func compileRetired(rows []retiredName) *retiredRules {
+	r := &retiredRules{byKind: map[string][]retiredName{}}
+	for _, row := range rows {
+		r.byKind[row.Kind] = append(r.byKind[row.Kind], row)
+	}
+	return r
+}
+
+// isWordByte is regexp's \w: the bytes an identifier is made of.
+func isWordByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// retiredHit says whether the name found at src[i:j] stands as the row's kind
+// means it: a whole word for ident, `Name:` + spaces + `"` before and `"` after
+// for verb, and no word byte after it for text.
+func retiredHit(kind string, src []byte, i, j int) bool {
+	switch kind {
+	case "ident":
+		return (i == 0 || !isWordByte(src[i-1])) && (j == len(src) || !isWordByte(src[j]))
+	case "verb":
+		if j >= len(src) || src[j] != '"' || i == 0 || src[i-1] != '"' {
+			return false
+		}
+		k := i - 1
+		for k > 0 && (src[k-1] == ' ' || src[k-1] == '\t') {
+			k--
+		}
+		return k >= 5 && string(src[k-5:k]) == "Name:" && (k == 5 || !isWordByte(src[k-6]))
+	}
+	return j == len(src) || !isWordByte(src[j])
+}
+
+// findings is every `<rel>:<line>: <kind> <name>` the rules find in src, in
+// row order then file order, as the regexp sweep listed them.
+func (r *retiredRules) findings(rel string, src []byte) []string {
 	var out []string
-	lines := strings.Split(string(src), "\n")
-	for _, r := range rows {
-		if !retiredScanned(r.Kind, rel) {
+	for _, kind := range []string{"ident", "verb", "text"} {
+		if !retiredScanned(kind, rel) {
 			continue
 		}
-		re := retiredMatcher(r)
-		for i, l := range lines {
-			if re.MatchString(l) {
-				out = append(out, fmt.Sprintf("%s:%d: %s %q is retired; use %s", rel, i+1, r.Kind, r.Name, r.Replacement))
+		for _, row := range r.byKind[kind] {
+			name := []byte(row.Name)
+			for from := 0; ; {
+				k := bytes.Index(src[from:], name)
+				if k < 0 {
+					break
+				}
+				i, j := from+k, from+k+len(name)
+				if retiredHit(kind, src, i, j) {
+					line := 1 + bytes.Count(src[:i], []byte{'\n'})
+					out = append(out, fmt.Sprintf("%s:%d: %s %q is retired; use %s", rel, line, row.Kind, row.Name, row.Replacement))
+				}
+				from = i + 1
 			}
 		}
 	}
 	return out
+}
+
+// retiredFindings compiles rows and finds them in one file: the form the
+// fake-form test reads. The sweep compiles once and calls findings.
+func retiredFindings(rel string, src []byte, rows []retiredName) []string {
+	return compileRetired(rows).findings(rel, src)
 }
 
 // TestNoRetiredPresenceNameReturns sweeps the tree for every name the table
@@ -144,6 +193,7 @@ func TestNoRetiredPresenceNameReturns(t *testing.T) {
 	rows, faults := parseRetiredNames(string(raw))
 	require.Empty(t, faults, "%s", retiredPresenceTable)
 	require.NotEmpty(t, rows, "%s names nothing", retiredPresenceTable)
+	rules := compileRetired(rows)
 	var found []string
 	for _, f := range tree.Files {
 		if !retiredScanned("text", f.Rel) && !retiredScanned("ident", f.Rel) {
@@ -155,7 +205,7 @@ func TestNoRetiredPresenceNameReturns(t *testing.T) {
 			require.NoError(t, err)
 			src = b
 		}
-		found = append(found, retiredFindings(f.Rel, src, rows)...)
+		found = append(found, rules.findings(f.Rel, src)...)
 	}
 	sort.Strings(found)
 	assert.Empty(t, found, "the old friend presence is retired (v1.3.5; %s): liveness is the nova-hook record's alone. Use the replacement each line names.", retiredPresenceTable)
