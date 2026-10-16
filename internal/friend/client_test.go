@@ -28,6 +28,7 @@ type fakeServer struct {
 	asks  int
 	takes int
 	fail  map[int]bool // lanes whose ask the server refuses
+	lose  map[int]bool // lanes whose ask commits on the server and whose answer is lost
 
 	asked     []int // the lanes asked, in order
 	cardAsks  int
@@ -111,6 +112,9 @@ func (f *fakeServer) ask(_ context.Context, argv []string) (string, error) {
 		f.held[n] = card
 		f.takes++
 		ok = true
+	}
+	if f.lose[n] {
+		return "", errors.New("take: the answer timed out")
 	}
 	a := answer{}
 	if !ok {
@@ -444,6 +448,32 @@ func TestABlindRoundWhileDrainingTakesNothing(t *testing.T) {
 	holds, _, _ = c.Round(context.Background(), true)
 	assert.Equal(t, []int{2, 3}, lanesOf(holds), "cards reads again: the held lanes renewed, still no take")
 	assert.Equal(t, 3, srv.takes)
+}
+
+// A free lane's take that commits on the server but whose answer is lost stays in the view:
+// with the width then lowered and friend cards failing, the blind round counts that lane and
+// takes nothing (tla/FriendLaneClient.tla TakeAnswerLost; the view a superset of the server's).
+func TestATakeWhoseAnswerIsLostStaysInTheView(t *testing.T) {
+	t.Parallel()
+	srv := newFake()
+	srv.ready = append(srv.ready, "s1-4.w1")
+	srv.lose = map[int]bool{2: true}
+	cfg := &row{width: 2}
+	c := client(t, srv, cfg)
+	_, _, errs := c.Round(context.Background(), true)
+	require.Len(t, errs, 1, "lane 2's answer lost")
+	require.Equal(t, map[int]string{1: "s1-1.w1", 2: "s1-2.w1"}, srv.held, "both takes committed on the server")
+	srv.renewed()
+	srv.lose = nil
+
+	cfg.width = 1
+	_, changed := c.Apply(context.Background(), t0.Add(ConfigEvery))
+	require.True(t, changed)
+	srv.finish(1)
+	srv.cardsDown = true
+	c.Round(context.Background(), true)
+	assert.Empty(t, srv.renewed(), "two lanes in the view at width 1: the blind round asks nothing")
+	assert.Equal(t, 2, srv.takes, "nothing taken into lane 1")
 }
 
 // A blind round takes nothing while her row is unread (intake 0), even on a lane it found

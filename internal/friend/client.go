@@ -141,10 +141,11 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 		if err != nil {
 			errs = append(errs, fmt.Errorf("lane %d: %w", n, err))
 			failed = true
-			if slices.Contains(lanes, n) {
-				// asked again next round: a lane whose answer did not read still holds its card
-				holds = append(holds, Hold{Lane: n})
-			}
+			// the lane stays in the view either way: a held lane whose answer did not read still
+			// holds its card, and a free lane's take may have committed on the server with its
+			// answer lost, so c.held stays a superset of the lanes the server holds (a later
+			// blind round's width gate counts it; tla/FriendLaneClient.tla TakeAnswerLost)
+			holds = append(holds, Hold{Lane: n})
 			return Hold{}, false
 		}
 		return h, ok
