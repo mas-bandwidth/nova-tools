@@ -268,6 +268,10 @@ MCHookBeatBrokenKeepUp.cfg	MCHookBeat.tla	action	NoFlapWithoutProof	ignore-termi
 MCHookBeatKeepUpBackHolds.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
 MCHookBeatCoordJudged.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenMarkDrop.cfg	MCHookBeat.tla	temporal	DownJudgedToCoordinator	ignore-terminal	hookbeat	required	-
+MCHookBeatTwoCoords.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
+MCHookBeatTwoCoordsTell.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
+MCHookBeatBrokenSelfBack.cfg	MCHookBeat.tla	invariant	NoJudgmentNamesItsRecipientBack	ignore-terminal	hookbeat	required	-
+MCHookBeatBrokenSelfBackTell.cfg	MCHookBeat.tla	invariant	NoJudgmentNamesItsRecipientBack	ignore-terminal	hookbeat	required	-
 MCTypedFrames.cfg	MCTypedFrames.tla	pass	-	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenRefusedBeforeTransition.cfg	MCTypedFrames.tla	invariant	FrameRefusedBeforeTransition	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenDualReadLoss.cfg	MCTypedFrames.tla	invariant	DualReadNoLoss	ignore-terminal	typed-frames	required	-

@@ -163,6 +163,8 @@ QuietCap == IF Silence THEN CoordinatorEvery + 3 ELSE DownAfter + 2
 \*   "markdrop"    BadMarkDrop: with no coordinator up, the coordinator audience is
 \*                 marked told with no message, so a down is never judged to her
 \*                 when she is back (DownJudgedToCoordinator)
+\*   "selfback"    BadSelfBack: a coordinator's judgment names her own return as back
+\*                 (NoJudgmentNamesItsRecipientBack; needs two coordinator-role names)
 \*   "keepup"      BadKeepUp: a lapsed proof leaves the name up until an unhook, which
 \*                 then tells a down with no proof either side (NoFlapWithoutProof only)
 \* BadUnhookAtThree (Limit = 3) is retired with Limit: the down rule is time.
@@ -193,6 +195,7 @@ VARIABLES
     jresent,   \* OVERDUE pushes of the current judgment
     ctold,     \* under "cjudge": the down set the coordinator audience's told mark holds (told:coordinator)
     cjudged,   \* under "cjudge", ghost: the names the coordinator was judged down and not judged back since
+    jself,     \* ghost: a judgment named its own recipient as back
     alive,     \* [Names -> BOOLEAN]: the model is there and answers (the world, not a record)
     quiet,     \* [Names -> 0..QuietCap]: passes since the model itself last answered or hooked in (ghost)
     qtime,     \* [Names -> 0..QCap]: the hook record's answered_at, as its age in intervals of server time
@@ -225,12 +228,12 @@ activity == <<busy, lastActivity, challengedWhileTalking>>
 
 pushv == <<pushed, pgen, pq, psent, pdups, inbox, shown, want>>
 tellv == <<told, tv, out, sent, dups, heard, pushv>>
-judv == <<jst, jkind, jto, jresent, ctold, cjudged>>
+judv == <<jst, jkind, jto, jresent, ctold, cjudged, jself>>
 prv == <<proven, lapsed, sinceBeat>>
 server == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, held, ask, expiries, issued, proof, prv>>
 client == <<elapsed, alarm>>
 vars == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
-          jst, jkind, jto, jresent, ctold, cjudged, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof,
+          jst, jkind, jto, jresent, ctold, cjudged, jself, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof,
           pushed, pgen, pq, psent, pdups, inbox, shown, want, prv>>
 
 Cap3(x) == IF x < 3 THEN x ELSE 3
@@ -328,6 +331,7 @@ Init ==
     /\ jresent = 0
     /\ ctold = Cur[1]
     /\ cjudged = {}
+    /\ jself = FALSE
     /\ alive = [n \in Names |-> TRUE]
     /\ quiet = [n \in Names |-> 0]
     /\ qtime = [n \in Names |-> 0]
@@ -368,7 +372,7 @@ Tick ==
                /\ lapsed' = [n \in Names |-> lapsed[n] \/ (proven[n] /\ qtime'[n] > ProofLife)]
                /\ sinceBeat' = IF BeatClock THEN [n \in Names |-> IF sinceBeat[n] < BeatCap THEN sinceBeat[n] + 1 ELSE BeatCap] ELSE sinceBeat
           ELSE UNCHANGED prv
-    /\ UNCHANGED <<nonceVersion, delivered, busy, challengedWhileTalking, beatOwned, hooked, misses, events, hooks, tellv, jkind, jto, jresent, ctold, cjudged, alive, quiet, client, held, expiries, proof>>
+    /\ UNCHANGED <<nonceVersion, delivered, busy, challengedWhileTalking, beatOwned, hooked, misses, events, hooks, tellv, jkind, jto, jresent, ctold, cjudged, jself, alive, quiet, client, held, expiries, proof>>
 
 \* One server's pass (beatLua), atomic: the beat, the row stamped, and a tell
 \* prepared when what the friends are to hear differs from the row's told.
@@ -426,6 +430,10 @@ Pass(s) ==
                 ELSE UNCHANGED <<busy, lastActivity, out, told, tv>>
     /\ UNCHANGED <<busy, lastActivity, hooks, sent, dups, heard, judv, alive, qtime, held, ask, expiries, proof, pushed, pgen, psent, pdups, inbox, shown>>
 
+\* The names a judgment to c carries as back: never c herself (serve.go tell);
+\* under "selfback" (the rule before) c too.
+BackTo(c, back) == IF "selfback" \in Broken THEN back ELSE back \ {c}
+
 \* The judgment a tell raises (serve.go tell): friends down or back go to the
 \* coordinator; the coordinator gone with none after it, to every live name.
 Raise(from, to) ==
@@ -436,10 +444,12 @@ Raise(from, to) ==
     \* "cjudge" her judgment is the coordinator audience's own (JudgeCoord), so a
     \* change while no coordinator is up waits for the next one instead of going
     \* with this tell, which marks it told (the drop before cjudge)
-    IN IF ~CJudge /\ to[2] # NoCoord /\ down \cup (back \ {to[2]}) # {}
+        mine == BackTo(to[2], back)
+    IN IF ~CJudge /\ to[2] # NoCoord /\ down \cup mine # {}
           THEN /\ jst' = "open" /\ jkind' = "change" /\ jto' = {to[2]} /\ jresent' = 0 /\ UNCHANGED <<ctold, cjudged>>
+               /\ jself' = (jself \/ to[2] \in mine)
        ELSE IF from[2] # NoCoord /\ to[2] = NoCoord /\ from[2] \in down /\ live \ back # {}
-          THEN /\ jst' = "open" /\ jkind' = "coorddown" /\ jto' = live \ back /\ jresent' = 0 /\ UNCHANGED <<ctold, cjudged>>
+          THEN /\ jst' = "open" /\ jkind' = "coorddown" /\ jto' = live \ back /\ jresent' = 0 /\ UNCHANGED <<ctold, cjudged, jself>>
        ELSE UNCHANGED judv
 
 \* The tell is sent under its once-key, the told version (Tell), and the
@@ -503,16 +513,16 @@ JudgeCoord ==
     /\ ctold # Cur[1]
     /\ LET c == Cur[2]
            down == Cur[1] \ ctold
-           back == (ctold \ Cur[1]) \ {c}
+           back == BackTo(c, ctold \ Cur[1])
        IN IF c # NoCoord
              THEN /\ ctold' = Cur[1]
                   /\ cjudged' = (cjudged \ back) \cup down
                   /\ IF down \cup back # {}
-                        THEN jst' = "open" /\ jkind' = "change" /\ jto' = {c} /\ jresent' = 0
-                        ELSE UNCHANGED <<jst, jkind, jto, jresent>>
+                        THEN jst' = "open" /\ jkind' = "change" /\ jto' = {c} /\ jresent' = 0 /\ jself' = (jself \/ c \in back)
+                        ELSE UNCHANGED <<jst, jkind, jto, jresent, jself>>
              ELSE /\ "markdrop" \in Broken
                   /\ ctold' = Cur[1]
-                  /\ UNCHANGED <<jst, jkind, jto, jresent, cjudged>>
+                  /\ UNCHANGED <<jst, jkind, jto, jresent, cjudged, jself>>
     /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, alive, quiet, qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* A judgment past its due is pushed again as OVERDUE, once (Judge).
@@ -521,14 +531,14 @@ Judge ==
     /\ jresent = 0
     /\ jst' = "overdue"
     /\ jresent' = jresent + 1
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, ctold, cjudged, alive, quiet, qtime, client, held, ask, expiries, issued, proof, prv>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, ctold, cjudged, jself, alive, quiet, qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* A live recipient answers the judgment: closed.
 JudgeAnswered ==
     /\ jst \in {"open", "due", "overdue"}
     /\ \E n \in jto : alive[n]
     /\ jst' = "closed"
-    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, jresent, ctold, cjudged, alive, quiet, qtime, client, held, ask, expiries, issued, proof, prv>>
+    /\ UNCHANGED <<activity, beatOwned, hooked, nonceVersion, delivered, chal, misses, events, hooks, taken, passed, rowAge, tellv, jkind, jto, jresent, ctold, cjudged, jself, alive, quiet, qtime, client, held, ask, expiries, issued, proof, prv>>
 
 \* The model answers its current challenge (answerLua): a bootstrap, or,
 \* without "window", the heartbeat's while open (AnswerIssued, under
@@ -733,7 +743,7 @@ Expire(s, n) == /\ ask[n] = "due"
 
 \* Everything the push actions leave as it is: the heartbeat's and the tell's.
 nonpush == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
-             jst, jkind, jto, jresent, ctold, cjudged, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof, prv>>
+             jst, jkind, jto, jresent, ctold, cjudged, jself, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof, prv>>
 
 \* One transition of n, the oldest in hand, is sent as its own status message
 \* to the coordinator (serve.go push), its once-key and the row's pushed mark
@@ -829,7 +839,7 @@ TypeOK ==
     /\ rowAge \in 0..3
     /\ told \in States /\ heard \in States
     /\ jst \in {"none", "open", "due", "overdue", "closed"}
-    /\ ctold \subseteq Names /\ cjudged \subseteq Names
+    /\ ctold \subseteq Names /\ cjudged \subseteq Names /\ jself \in BOOLEAN
     /\ issued \subseteq [to : Names, ep : 1..2, age : 0..DownAfter]
     /\ pushed \in [Names -> PStates]
     /\ pgen \in [Names -> 0..PushCap]
@@ -1015,4 +1025,8 @@ DownJudgedToCoordinator ==
 
 \* ProvenLiveSpec, and the coordinator audience is judged when it can be.
 CJudgeSpec == ProvenLiveSpec /\ SF_vars(JudgeCoord)
+
+\* No judgment names its own recipient as back: a coordinator up again after
+\* another judged her down is told nothing of her own return.
+NoJudgmentNamesItsRecipientBack == ~jself
 =============================================================================

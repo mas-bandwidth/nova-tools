@@ -700,3 +700,34 @@ func TestADownWhileNoCoordinatorIsUpIsJudgedToTheNextOne(t *testing.T) {
 	assert.Equal(t, bus.KindJudgment, j.kind)
 	assert.Zero(t, r.count(t, "ada", "FRIEND BACK ada"), "her own return is no judgment for her")
 }
+
+// TestAReturningCoordinatorIsNotJudgedBackAboutHerself pins H2 with two
+// coordinator-role names (tla/HookBeat.tla, NoJudgmentNamesItsRecipientBack):
+// ada's lease lapses, dan becomes the coordinator and is judged FRIEND DOWN
+// ada, so the coordinator audience's mark holds ada; ada hooks in again and is
+// the first of the role up, the coordinator, with back = [ada]. Her own return
+// is left out of her judgment: the mark moves, and she is sent no FRIEND BACK
+// ada and no OVERDUE of one.
+func TestAReturningCoordinatorIsNotJudgedBackAboutHerself(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "dan").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "dan", hook.Coordinator)
+	servers := []string{"bob"}
+	for range 3 { // ada's lease lapses: dan is the coordinator up
+		r.step(t, servers, "bob", "dan")
+	}
+	require.Equal(t, hook.StateExpired, r.h.State(t, "ada").State)
+	require.Equal(t, 1, r.count(t, "dan", "FRIEND DOWN ada"), "dan, the coordinator up, is judged ada down")
+	r.h.Hook(t, "ada", hook.Coordinator) // ada is back, the first of the role up
+	for range 5 {                        // past --judge-within: an open judgment would be pushed OVERDUE
+		r.step(t, servers, "ada", "bob", "dan")
+	}
+	assert.Zero(t, r.count(t, "ada", "FRIEND BACK ada"), "her own return is no judgment for her")
+	assert.Zero(t, r.count(t, "ada", "OVERDUE FRIEND BACK ada"), "no open judgment about herself to re-push")
+	n, err := r.h.Client.HGet(context.Background(), hook.ServeKey, "told:"+hook.ToCoordinator).Result()
+	require.NoError(t, err)
+	assert.Empty(t, n, "the mark moved: nothing waits")
+}
