@@ -49,7 +49,7 @@ func codexRouteModels(raw string) (map[string]string, error) {
 	models := map[string]string{}
 	for _, stat := range view.Routes {
 		r := stat.Route
-		if !r.Enabled || r.Harness != "codex" || r.Provider != "subscription-codex" || r.Prices.Billing != "plan" || r.Model == "" || r.Tier == "" {
+		if !r.Enabled || r.Harness != "codex" || r.Provider != "subscription-codex" || (r.Prices.Billing != "subscription" && r.Prices.Billing != "plan") || r.Model == "" || r.Tier == "" {
 			continue
 		}
 		array, applied := view.TierRoutes[r.Tier]
@@ -60,7 +60,7 @@ func codexRouteModels(raw string) (map[string]string, error) {
 			continue
 		}
 		if _, found := models[r.Tier]; found {
-			return nil, fmt.Errorf("tier %q has more than one enabled Codex subscription plan route; configure exactly one in nova-config and apply it", r.Tier)
+			return nil, fmt.Errorf("tier %q has more than one enabled Codex subscription route; configure exactly one in nova-config and apply it", r.Tier)
 		}
 		models[r.Tier] = r.Model
 	}
@@ -75,7 +75,7 @@ func CodexRoutesReady(raw string) error {
 		return err
 	}
 	if len(models) == 0 {
-		return errors.New("no enabled Codex subscription plan route; configure one in nova-config and apply it")
+		return errors.New("no enabled Codex subscription route; configure one in nova-config and apply it")
 	}
 	return nil
 }
@@ -88,7 +88,7 @@ func CodexModelForTier(raw, tier string) (string, error) {
 	if model := models[tier]; model != "" {
 		return model, nil
 	}
-	return "", fmt.Errorf("tier %q has no enabled Codex subscription plan route; configure one in nova-config and apply it", tier)
+	return "", fmt.Errorf("tier %q has no enabled Codex subscription route; configure one in nova-config and apply it", tier)
 }
 
 func NewCodex(friend, dir string, run Exec, out io.Writer) *Codex {

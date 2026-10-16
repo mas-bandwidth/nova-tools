@@ -107,7 +107,7 @@ leaves admission unchanged.
     model process for each lane card under the existing `nova-friend wall` and uses the
     account's `config_dir`, `CODEX_HOME` or `~/.codex` as its Codex home. The
     server row's work or read tier selects exactly one enabled Codex model
-    from the applied `nova-config` subscription-plan routes exposed by
+    from the applied `nova-config` subscription-backed routes exposed by
     `nova-sprint routes --json`, respecting that tier's applied route array
     (an empty array admits every enabled route). A sprint view without the
     applied arrays refuses intake; no adapter model table or account default

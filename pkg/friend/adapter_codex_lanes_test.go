@@ -110,7 +110,7 @@ func TestCodexProofRequiresChatGPTInTheLaneWall(t *testing.T) {
 func TestCodexModelForTierUsesOneAppliedSubscriptionRoute(t *testing.T) {
 	t.Parallel()
 	routes := func(extra string) string {
-		return `{"tier_routes":{"pro":["pro-codex"]},"routes":[{"route":{"name":"pro-codex","tier":"pro","provider":"subscription-codex","model":"gpt-5.6-sol","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}` + extra + `]}`
+		return `{"tier_routes":{"pro":["pro-codex"]},"routes":[{"route":{"name":"pro-codex","tier":"pro","provider":"subscription-codex","model":"gpt-5.6-sol","harness":"codex","enabled":true,"prices":{"billing":"subscription"}}}` + extra + `]}`
 	}
 	model, err := CodexModelForTier(routes(`,{"route":{"name":"pro-other","tier":"pro","provider":"openrouter","model":"paid","harness":"opencode","enabled":true,"prices":{"billing":"metered"}}}`), "pro")
 	require.NoError(t, err)
@@ -118,10 +118,13 @@ func TestCodexModelForTierUsesOneAppliedSubscriptionRoute(t *testing.T) {
 	model, err = CodexModelForTier(routes(`,{"route":{"name":"second","tier":"pro","provider":"subscription-codex","model":"another","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}`), "pro")
 	require.NoError(t, err, "a second enabled route excluded from the tier array is not ambiguous")
 	assert.Equal(t, "gpt-5.6-sol", model)
+	model, err = CodexModelForTier(strings.Replace(routes(""), `"billing":"subscription"`, `"billing":"plan"`, 1), "pro")
+	require.NoError(t, err, "a plan-priced subscription route also runs under a proved ChatGPT account")
+	assert.Equal(t, "gpt-5.6-sol", model)
 	require.NoError(t, CodexRoutesReady(routes("")))
 	require.ErrorContains(t, CodexRoutesReady(`{"tier_routes":{"pro":[]},"routes":[]}`), "no enabled Codex")
 	_, err = CodexModelForTier(`{"tier_routes":{"pro":["pro-other"]},"routes":[{"route":{"name":"pro-codex","tier":"pro","provider":"subscription-codex","model":"gpt-5.6-sol","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}]}`, "pro")
-	require.ErrorContains(t, err, "tier \"pro\" has no enabled Codex subscription plan route")
+	require.ErrorContains(t, err, "tier \"pro\" has no enabled Codex subscription route")
 	_, err = CodexModelForTier(`{"tier_routes":{"pro":[]},"routes":[{"route":{"name":"pro-codex","tier":"pro","provider":"subscription-codex","model":"gpt-5.6-sol","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}]}`, "pro")
 	require.NoError(t, err, "an empty applied array includes every enabled route")
 	for _, raw := range []string{
