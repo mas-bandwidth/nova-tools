@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,7 +60,7 @@ func TestCodexCardRunnerStartsARealModelCommand(t *testing.T) {
 			}
 			cx := NewCodex("bob", root, run, nil)
 			cx.ConfigDir = func() string { return config }
-			turn, err := cx.RunCard(WithLaneDir(LaneContext(t.Context()), job), Card{ID: "c1", Brief: brief, Outbox: outbox, Tier: "pro"})
+			turn, err := cx.RunCard(WithLaneDir(LaneContext(t.Context()), job), Card{ID: "c1", Brief: brief, Outbox: outbox, Tier: "pro", Model: "gpt-5.6-sol"})
 			if tc.wantErr == "" {
 				require.NoError(t, err)
 			} else {
@@ -69,9 +70,114 @@ func TestCodexCardRunnerStartsARealModelCommand(t *testing.T) {
 			assert.Equal(t, repo, gotDir)
 			assert.Equal(t, "env", gotName)
 			assert.Equal(t, "work c1, epoch 15 generation 1", gotStdin)
-			assert.Equal(t, []string{"CODEX_HOME=" + config, "codex", "--dangerously-bypass-approvals-and-sandbox", "exec", "--ignore-user-config", "--json", "--cd", repo, "--add-dir", outbox, "--model", "gpt-5.6-sol", "-"}, gotArgs)
+			assert.Equal(t, []string{"-u", "CODEX_API_KEY", "-u", "OPENAI_API_KEY", "CODEX_HOME=" + config, "codex", "-c", "forced_login_method=chatgpt", "--dangerously-bypass-approvals-and-sandbox", "exec", "--ignore-user-config", "--json", "--cd", repo, "--add-dir", outbox, "--model", "gpt-5.6-sol", "-"}, gotArgs)
 		})
 	}
+}
+
+func TestCodexProofRequiresChatGPTInTheLaneWall(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, tc := range []struct {
+		answer string
+		exit   int
+		pass   bool
+	}{
+		{"Logged in using ChatGPT\n", 0, true},
+		{"Logged in using API key\n", 0, false},
+		{"Not logged in\n", 1, false},
+	} {
+		var gotArgs []string
+		cx := NewCodex("bob", root, func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+			assert.True(t, InLane(ctx), "proof must pass through the card's wall")
+			assert.Equal(t, root, dir)
+			assert.Equal(t, "sh", name)
+			assert.Empty(t, stdin)
+			gotArgs = slices.Clone(args)
+			return tc.answer, tc.exit, nil
+		}, nil)
+		cx.ConfigDir = func() string { return root }
+		why := cx.ProofWhy(t.Context())
+		if tc.pass {
+			assert.Empty(t, why)
+		} else {
+			assert.Contains(t, why, "ChatGPT subscription")
+		}
+		assert.Equal(t, []string{"-c", `exec "$@" 2>&1`, "sh", "env", "-u", "CODEX_API_KEY", "-u", "OPENAI_API_KEY", "CODEX_HOME=" + root, "codex", "-c", "forced_login_method=chatgpt", "login", "status"}, gotArgs)
+	}
+}
+
+func TestCodexModelForTierUsesOneAppliedSubscriptionRoute(t *testing.T) {
+	t.Parallel()
+	routes := func(extra string) string {
+		return `{"routes":[{"route":{"name":"pro-codex","tier":"pro","provider":"subscription-codex","model":"gpt-5.6-sol","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}` + extra + `]}`
+	}
+	model, err := CodexModelForTier(routes(`,{"route":{"name":"pro-other","tier":"pro","provider":"openrouter","model":"paid","harness":"opencode","enabled":true,"prices":{"billing":"metered"}}}`), "pro")
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.6-sol", model)
+	require.NoError(t, CodexRoutesReady(routes("")))
+	require.ErrorContains(t, CodexRoutesReady(`{"routes":[]}`), "no enabled Codex")
+	for _, raw := range []string{
+		`{"routes":[]}`,
+		routes(`,{"route":{"name":"second","tier":"pro","provider":"subscription-codex","model":"another","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}`),
+		`{"routes":[{"route":{"tier":"pro","provider":"subscription-codex","model":"paid","harness":"codex","enabled":true,"prices":{"billing":"metered"}}}]}`,
+		`{"routes":[{"route":{"tier":"pro","provider":"subscription-codex","model":"off","harness":"codex","enabled":false,"prices":{"billing":"plan"}}}]}`,
+		`not json`,
+	} {
+		_, err := CodexModelForTier(raw, "pro")
+		require.Error(t, err)
+	}
+}
+
+func TestCodexMissingTierWaitsForTheRowWithoutSpendingTheCard(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		root := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		repo := filepath.Join(root, "jobs", "c1~15", "repo")
+		require.NoError(t, os.MkdirAll(repo, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(repo, ".git"), []byte("gitdir: elsewhere\n"), 0o644))
+		var calls int
+		cx := NewCodex("bob", root, func(context.Context, string, string, []string, string) (string, int, error) {
+			calls++
+			return "", 1, errors.New("model fault")
+		}, nil)
+		cx.ConfigDir = func() string { return root }
+		cx.ModelForTier = func(context.Context, string) (string, error) { return "", errors.New("no applied route") }
+		r, _ := laneRig(t, &lanesHarness{dir: root, active: map[string]int{}}, 1)
+		r.d.Harness, r.d.Deliver = "codex", cx
+		r.d.heldCards = []HeldCard{{Job: "c1~15", Tier: ""}}
+		r.run(t, 40)
+		assert.Zero(t, calls, "an absent tier cannot launch or spend a turn")
+		assert.False(t, exists(filepath.Join(root, "outbox", "c1~15", "REPORT.md")), "the card cannot be failed by admission")
+	})
+}
+
+func TestCodexMixedReadyTiersRefuseBeforeServerTake(t *testing.T) {
+	t.Parallel()
+	var takes int
+	cx := NewCodex("bob", t.TempDir(), nil, nil)
+	cx.ModelForTier = func(_ context.Context, tier string) (string, error) {
+		if tier != "heavy" {
+			return "", errors.New("no pro route")
+		}
+		return "gpt-5.6-sol", nil
+	}
+	d := &Daemon{Friend: "bob", Deliver: cx, Record: func(string) {},
+		Take: func(context.Context, []string) (string, error) {
+			takes++
+			return "LANE friend.bob lane=1 epoch=15 holds=-", nil
+		}}
+	d.heldCards = []HeldCard{{Card: "heavy.w1", Col: "ready", Kind: "work", Tier: "heavy"}, {Card: "pro.w1", Col: "ready", Kind: "work", Tier: "pro"}}
+	l := &loop{d: d, ctx: t.Context(), lanes: &laneSet{}}
+	ln := &lane{n: 1}
+	now := time.Now()
+	_, ok := l.laneAsk(ln, now)
+	assert.False(t, ok)
+	assert.Zero(t, takes, "the server must not take a mixed-tier row while any ready card lacks its configured model")
+	cx.ModelForTier = func(context.Context, string) (string, error) { return "gpt-5.6-sol", nil }
+	_, ok = l.laneAsk(ln, now.Add(LaneIdleAsk))
+	assert.False(t, ok, "the server answered that it holds no card")
+	assert.Equal(t, 1, takes, "a new applied route admits the row without restart")
 }
 
 // TestCodexReadAndRefusal keeps a reader on the named tier model and refuses a
@@ -89,20 +195,19 @@ func TestCodexReadAndRefusal(t *testing.T) {
 	}
 	cx := NewCodex("bob", root, run, nil)
 	cx.ConfigDir = func() string { return "relative" }
-	_, err := cx.RunRead(LaneContext(t.Context()), CodexReadModels["flash"], "read c1")
+	_, err := cx.RunRead(LaneContext(t.Context()), "gpt-5.6-luna", "read c1")
 	require.ErrorContains(t, err, "without an absolute config_dir")
 	assert.Zero(t, calls)
 	cx.ConfigDir = func() string { return filepath.Join(root, "account") }
 	_, err = cx.RunRead(LaneContext(t.Context()), "", "read c1")
 	require.ErrorContains(t, err, "no supported Codex tier")
 	assert.Zero(t, calls)
-	_, err = cx.RunRead(LaneContext(t.Context()), CodexReadModels["flash"], "read c1")
+	_, err = cx.RunRead(LaneContext(t.Context()), "gpt-5.6-luna", "read c1")
 	require.NoError(t, err)
 	assert.Equal(t, 1, calls)
 	assert.True(t, slices.Contains(gotArgs, "gpt-5.6-luna"), gotArgs)
 	assert.True(t, slices.Contains(gotArgs, "--model"), gotArgs)
 	assert.True(t, slices.Contains(gotArgs, "--skip-git-repo-check"), gotArgs)
-	assert.Equal(t, "gpt-6-astra", CodexReadModels["frontier"])
 	assert.True(t, RunsCards("codex"))
 }
 
@@ -118,7 +223,7 @@ func TestCodexCardRunnerReturnsTheProcessFailure(t *testing.T) {
 		return "turn failed", 1, errors.New("child stopped")
 	}, nil)
 	cx.ConfigDir = func() string { return root }
-	turn, err := cx.RunCard(LaneContext(t.Context()), Card{ID: "c1", Brief: brief, Outbox: root, Tier: "pro"})
+	turn, err := cx.RunCard(LaneContext(t.Context()), Card{ID: "c1", Brief: brief, Outbox: root, Tier: "pro", Model: "gpt-5.6-sol"})
 	require.ErrorContains(t, err, "child stopped")
 	assert.Equal(t, 1, turn.Exit)
 	assert.True(t, strings.Contains(cx.Refusal(), "config_dir") == false)
@@ -134,7 +239,7 @@ func TestCodexCardRunnerRefusesAnUnknownWorkTier(t *testing.T) {
 	}, nil)
 	cx.ConfigDir = func() string { return root }
 	_, err := cx.RunCard(LaneContext(t.Context()), Card{ID: "c1", Tier: "unexpected"})
-	require.ErrorContains(t, err, "no supported Codex tier")
+	require.ErrorContains(t, err, "no configured Codex route")
 	assert.Zero(t, calls)
 }
 
@@ -150,7 +255,7 @@ func TestCodexCardRunnerRefusesOutsideLaneBeforeAnyModelOrOutbox(t *testing.T) {
 	outbox := filepath.Join(root, "outbox", "c1")
 	_, err := cx.RunCard(t.Context(), Card{ID: "c1", Outbox: outbox, Tier: "pro"})
 	require.ErrorContains(t, err, "outside a nova-friend lane wall")
-	_, err = cx.RunRead(t.Context(), CodexReadModels["pro"], "read c1")
+	_, err = cx.RunRead(t.Context(), "gpt-5.6-sol", "read c1")
 	require.ErrorContains(t, err, "outside a nova-friend lane wall")
 	assert.Zero(t, calls)
 	_, err = os.Stat(outbox)
@@ -204,6 +309,12 @@ func TestCodexRefillsOneRealProcessAfterTheFirstCompletes(t *testing.T) {
 		}
 		cx := NewCodex("bob", root, run, nil)
 		cx.ConfigDir = func() string { return root }
+		cx.ModelForTier = func(_ context.Context, tier string) (string, error) {
+			if tier != "pro" {
+				return "", errors.New("no applied route")
+			}
+			return "gpt-5.6-sol", nil
+		}
 		r, _ := laneRig(t, &lanesHarness{dir: root, active: map[string]int{}}, 1)
 		r.d.Harness, r.d.Deliver = "codex", cx
 		r.d.heldCards = []HeldCard{{Job: "c1~15", Tier: "pro"}, {Job: "c2~15", Tier: "pro"}, {Job: "c3~15", Tier: "pro"}}

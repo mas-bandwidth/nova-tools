@@ -90,6 +90,24 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	assert.Equal(t, 0, count("card landed.w1 is not on her row"), "a job the daemon finished is not noted when its card leaves her row")
 }
 
+func TestTheDaemonFinishesAnEpochZeroBareSprintJob(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	row := &twinRow{}
+	r.d.Held = row.held
+	f := &finishes{}
+	r.d.Finish = f.finish
+	card := workCard("card.w1", "working")
+	card.Job, card.Epoch = "card.w1", 0 // StoredID omits ~0
+	card.Brief = "STATUS: nova-sprint card card.w1, epoch 0, attempt 1; push your work to the branch sprint/card.w1.g1.e0\n"
+	inboxJob(t, r.d.Dir, card.Job, card.Brief)
+	const head = "0123456789abcdef0123456789abcdef01234567"
+	outboxReport(t, r.d.Dir, card.Job, "Verdict: LAND\nHead: "+head+"\n\nDone.\n")
+	row.set(card)
+	r.run(t, 3)
+	require.Equal(t, [][]string{{"finish", "--as", "friend.bob", "card.w1@1", "--epoch", "0", "--head", head, "--branch", "sprint/card.w1.g1.e0", "--report", "friend bob LAND: Done."}}, f.got())
+}
+
 func TestReportVerdictReadsTheFriendsWords(t *testing.T) {
 	t.Parallel()
 	for report, want := range map[string][2]string{

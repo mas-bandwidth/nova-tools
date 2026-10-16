@@ -106,11 +106,16 @@ leaves admission unchanged.
     one-shot mode, the separate card runner starts a real `codex exec --json`
     model process for each lane card under the existing `nova-friend wall` and uses the
     account's `config_dir`, `CODEX_HOME` or `~/.codex` as its Codex home. The
-    server row's work or read tier selects an explicit Codex model (flash:
-    `gpt-5.6-luna`; pro/heavy: `gpt-5.6-sol`; frontier: `gpt-6-astra`);
-    an absent or unsupported tier starts no model. These model IDs were
-    verified with the ChatGPT-account Codex CLI; newer model names must be
-    verified on that CLI before replacing them. The runner refuses to start
+    server row's work or read tier selects exactly one enabled Codex model
+    from the applied `nova-config` subscription-plan routes exposed by
+    `nova-sprint routes --json`; no adapter model table or account default
+    chooses a model. A missing or ambiguous route starts no model or failed
+    card attempt; the lane waits for corrected configuration. Before taking a card, the runner
+    checks `codex login status` inside the same wall and requires a ChatGPT
+    login. Both the proof and model launch clear API-key environment variables
+    and force the ChatGPT login method, so an API-key account holds intake.
+    A configured model must also be available to the ChatGPT-account Codex
+    CLI. The runner refuses to start
     without a lane context and its `nova-friend` wall. Inside that outer OS
     sandbox, it uses Codex's externally sandboxed CLI mode and
     `--ignore-user-config`: a nested Codex Seatbelt cannot inspect the wall's

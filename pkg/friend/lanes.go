@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -72,6 +73,9 @@ type Card struct {
 	// Tier is the server row's tier for this job. A one-shot model runner must
 	// select that tier explicitly rather than inherit an account default.
 	Tier string `json:"tier,omitempty"`
+	// Model is the applied route's model selected for this turn, not saved
+	// desired configuration; the next card reads nova-config again.
+	Model string `json:"model,omitempty"`
 	// Lane, ServerEpoch and ServerGen are what the server's answer to a lane's ask named
 	// (lane_take.go): the lane that holds the card, the epoch and the generation it holds it
 	// at. A card a lane holds is reported by these, never by its directory's name.
@@ -109,12 +113,26 @@ func (c Card) Gen() int {
 	return 1
 }
 
+var bareSprintJob = regexp.MustCompile(`^[A-Za-z0-9_-]+\.(w[1-9][0-9]*|r[1-9][0-9]*\.[A-Za-z0-9_-]+)(\.g[1-9][0-9]*)?$`)
+
 // ParseJob reads a friend's job directory name, <id>~<epoch> with .g<gen> after it from
-// the card's second generation (nova-sprint friendJobOf); gen is 1 when it has none.
+// the card's second generation (nova-sprint friendJobOf). At epoch zero,
+// sprint StoredID leaves the suffix off. Gen is 1 when it has none.
 func ParseJob(job string) (id string, epoch, gen int, ok bool) {
 	id, rest, found := strings.Cut(job, "~")
-	if !found || id == "" {
+	if !validJob(job) || id == "" {
 		return "", 0, 0, false
+	}
+	if !found {
+		if !bareSprintJob.MatchString(job) {
+			return "", 0, 0, false
+		}
+		gen = 1
+		if i := strings.LastIndex(job, ".g"); i >= 0 {
+			gen, _ = strconv.Atoi(job[i+2:]) // bareSprintJob checked its digits
+			id = job[:i]
+		}
+		return id, 0, gen, true
 	}
 	gen = 1
 	if e, g, dotted := strings.Cut(rest, ".g"); dotted {
@@ -628,7 +646,29 @@ func (l *loop) laneStep(now time.Time, width int) {
 				continue
 			}
 			c.Tier = d.cardTier(c)
+			if codex, ok := d.Deliver.(*Codex); ok {
+				var err error
+				if codex.ModelForTier == nil {
+					err = fmt.Errorf("no canonical route reader")
+				} else {
+					c.Model, err = codex.ModelForTier(l.ctx, c.Tier)
+				}
+				if err != nil {
+					// A missing/unknown tier is admission metadata, not a failed
+					// model turn. Keep the server's lease and retry after the row
+					// supplies a supported tier; do not charge CardTurns.
+					why := fmt.Sprintf("card %s: %s; no model started", c.ID, err)
+					if s.refused[filepath.Base(c.Outbox)] != why {
+						s.refused[filepath.Base(c.Outbox)] = why
+						d.Record(fmt.Sprintf("%s lane %d: %s", now.UTC().Format(time.RFC3339), ln.n, why))
+					}
+					ln.askAt = now.Add(LaneIdleAsk)
+					continue
+				}
+			}
+			delete(s.refused, filepath.Base(c.Outbox))
 			job.Card.Tier = c.Tier
+			job.Card.Model = c.Model
 			ln.card, ln.attempts, ln.marked, ln.job = &c, 0, now, job
 			ln.renewed = 0 // the renewal is once per card (renew.go)
 			ln.tier = c.Tier

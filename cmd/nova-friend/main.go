@@ -1092,9 +1092,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	walledRaw := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		if w.wall == nil {
-			if friend.InLane(ctx) {
-				return "", 0, fmt.Errorf("a lane's %s cannot start: no nova-friend wall is available", prog)
-			}
 			return w.exec(ctx, d, prog, args, stdin)
 		}
 		wl := laneWall(c, w, dir,
@@ -1319,6 +1316,21 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(0) // a signal while the store was down
 	}
 	defer closeStore()
+	// The server's routes view is the applied nova-config projection. Read it
+	// for each new Codex turn, so an adapter never keeps a model/tier map.
+	codexModel := func(ctx context.Context, tier string) (string, error) {
+		if w.cards == nil {
+			return "", errors.New("no canonical sprint routes reader")
+		}
+		out, err := w.cards(ctx, server, []string{"routes", "--json"})
+		if err != nil {
+			return "", err
+		}
+		return friend.CodexModelForTier(out, tier)
+	}
+	if cx, ok := deliver.(*friend.Codex); ok {
+		cx.ModelForTier = codexModel
+	}
 	// every goroutine run starts after this point is counted in bg: cancel (stop)
 	// then join before returning, so nothing outlives run (the defers run LIFO,
 	// so this joins before closeStore and stdout.shut).
@@ -1555,7 +1567,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 				return friend.ReadModels[tier] // a tier with none is the account's own model
 			}
 			if c.Str("harness") == "codex" {
-				return friend.CodexReadModels[tier]
+				model, _ := codexModel(ctx, tier) // empty refuses the read; no account default
+				return model
 			}
 			return ""
 		},
@@ -1591,6 +1604,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if w.cards == nil {
 				return "", errors.New("this world sends no take") // a test's: d.Take is cleared below
 			}
+			if c.Str("harness") == "codex" {
+				routes, err := w.cards(ctx, server, []string{"routes", "--json"})
+				if err != nil {
+					return "", fmt.Errorf("the applied Codex routes cannot be read: %w", err)
+				}
+				if err := friend.CodexRoutesReady(routes); err != nil {
+					return "", err
+				}
+			}
 			return w.cards(ctx, server, argv) // the server's answer (a lane reads its LANE line), a refusal an error
 		}),
 		CardDone: func(card, to string) string {
@@ -1612,6 +1634,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	if w.holders != nil {
 		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
+	}
+	if cx, ok := deliver.(*friend.Codex); ok {
+		// The proof runs with the card's wall and account, before a take.
+		// A missing wall or an API-key login leaves the lane idle.
+		d.Prove = cx.ProofWhy
 	}
 	if perCard && c.Str("harness") == "claude" {
 		// a claude lane proves its harness before it takes: claude -p "ok"
