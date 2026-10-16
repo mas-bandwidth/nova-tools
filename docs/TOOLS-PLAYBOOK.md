@@ -377,3 +377,8 @@ base branch is absent, obtain the coordinator's carried base and stage fresh.
 The server's current brief fields supersede a stale local inbox brief. These
 steps run only while an active child Monitor is delivering events and the model
 is handling them; a hook proof or idle terminal does not perform queue refill.
+For a completed worker card, push the exact origin branch before publishing the
+atomic `REPORT.md`: its first lines are `Verdict: LAND` (or `HOLD`) and
+`Head: <full commit SHA>`, followed by the evidence the verdict uses. Read the
+full worker report and logs before deciding; a truncated delivery packet is
+not a source verdict.
