@@ -15,6 +15,7 @@
     checksum: "sha256:{{ nova_gjf_sha256 }}"
     mode: "0644"
   register: nova_gjf_jar
+  when: not ansible_check_mode  # check mode creates no directory, so there is nothing to download into
 
 - name: the SDK bin dir carries the google-java-format wrapper
   ansible.builtin.copy:
