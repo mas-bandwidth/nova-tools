@@ -348,6 +348,12 @@ relays user direction and gives short status replies.
    `nova-hook codex-owner --thread <exact-child-id>` checks native routing
    without changing the hook. If it reports `no-client-found`, do not bind
    `--harness codex` to that child or silently substitute the main chat.
+
+   The 2026-10-16 active-turn trial records a real `HOOK CHALLENGE
+   nonce=63319f871474a2ac` arriving through a bounded `notify` Monitor while
+   the child handles other work. The child model runs `nova-hook prove` at
+   16:56:58Z; the hook record remains epoch 82 with `bus` and `sprint` proven.
+   This establishes active-turn challenge handling, not idle wake.
 2. The main chat remains available for user messages. Forward a changed priority or
    stop request to the child through the agent facility. The child checks for steering
    before its next action, stops new work when asked, and reports what it actually
