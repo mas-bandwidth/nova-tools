@@ -209,3 +209,31 @@ func TestAnExplicitLanesZeroCarriesNoLanes(t *testing.T) {
 	assert.True(t, laneClientOf(t, "--lanes", "3"))
 	assert.False(t, laneClientOf(t, "--once"))
 }
+
+// serviceArgsOf parses args with the hook verb's own flags and answers the service's argv.
+func serviceArgsOf(t *testing.T, args ...string) []string {
+	t.Helper()
+	w := world{getenv: func(string) string { return "" }}
+	tl := hookTool(w)
+	var got []string
+	for i := range tl.Verbs {
+		if tl.Verbs[i].Name == "hook" {
+			tl.Verbs[i].Run = func(c *tool.Call) *tool.Out {
+				got = hookServiceArgs(c, "amy", hook.Friend, "")
+				return tool.Done()
+			}
+		}
+	}
+	var out, errb strings.Builder
+	require.Equal(t, 0, tl.Run(append([]string{"hook", "--as", "amy", "--role", "friend"}, args...), strings.NewReader(""), &out, &errb), errb.String())
+	return got
+}
+
+// An install keeps an explicit --lanes 0 in the service's argv, so the service it starts
+// carries no lanes; no --lanes, or any other value, is never written.
+func TestAnInstallKeepsAnExplicitLanesZero(t *testing.T) {
+	t.Parallel()
+	assert.Contains(t, strings.Join(serviceArgsOf(t, "--lanes", "0"), " "), "--lanes 0")
+	assert.NotContains(t, serviceArgsOf(t), "--lanes")
+	assert.NotContains(t, serviceArgsOf(t, "--lanes", "3"), "--lanes")
+}
