@@ -517,6 +517,12 @@ func holds(r hook.Role) []hook.Push {
 // hook is the verb: arm, hold, challenge, then stream until a signal or an unhook
 // (docs/SPEC-HOOK.md, the hook verb; tla/Hook.tla, Arm, Renew and Challenge).
 func (w world) hook(c *tool.Call) *tool.Out {
+	if c.Bool("claude-boundary") && w.getenv(notice.ClaudeChildEnv) != "" {
+		// a headless claude child's hook (a lane's card, read or proof, inside its
+		// wall, where the session's state is out of reach): no event of the
+		// session's, so nothing is read, written or said
+		return tool.Exit(0)
+	}
 	native, nativeErr := w.codexConfig(c)
 	if nativeErr != nil {
 		return tool.Refuse(nativeErr.Error())
@@ -547,13 +553,6 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		if claude.boundary {
 			if c.DryRun() {
 				return tool.Refuse("claude boundary writes the generation file; omit --dry-run")
-			}
-			if w.getenv(notice.ClaudeChildEnv) != "" {
-				n, err := notice.ClaudeGeneration(claude.state)
-				if err != nil {
-					return tool.Refuse("claude generation could not be read: " + err.Error())
-				}
-				return tool.Done().As("STATE").Fact("state", "boundary-skipped").Fact("generation", n).Note("a headless claude child's Stop (" + notice.ClaudeChildEnv + " set) is no turn of the session's")
 			}
 			n, err := notice.ClaudeBoundary(claude.state)
 			if err != nil {
