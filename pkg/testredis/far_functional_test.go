@@ -84,22 +84,33 @@ func TestFarThroughARealStore(t *testing.T) {
 	t.Cleanup(cancel)
 	c := farClient(ctx, t, link.Addr())
 
-	// own is a proxy and a warmed client of the subtest's own: the warming PING
-	// is farOneWrite in its ledger before the run starts.
-	own := func(t *testing.T) (*delayproxy.Proxy, *redis.Client) {
+	// warm is what warming a client costs in a ledger, the handshake (RESP3's
+	// HELLO) and the warming PING, read off a proxy of its own after Stop.
+	warm := func(t *testing.T) int {
 		t.Helper()
 		l := FarLink(t, store, farStoreDelay)
-		return l, farClient(ctx, t, l.Addr())
+		_ = farClient(ctx, t, l.Addr()).Close() // ignored: the client is done; Stop below ends its connection either way
+		l.Stop()
+		return l.Writes()
+	}
+
+	// own is a proxy and a warmed client of the subtest's own, and what the
+	// warming put in its ledger before the run starts.
+	own := func(t *testing.T) (*delayproxy.Proxy, *redis.Client, int) {
+		t.Helper()
+		before := warm(t)
+		l := FarLink(t, store, farStoreDelay)
+		return l, farClient(ctx, t, l.Addr()), before
 	}
 
 	// held stops the subtest's proxy, which waits for every record, then asserts
-	// what a run of n writes after the warming one left in the ledger: n writes,
+	// what a run of n writes after the warming left in the ledger: n writes,
 	// none held less than the distance.
-	held := func(t *testing.T, link *delayproxy.Proxy, c *redis.Client, n int, what string) {
+	held := func(t *testing.T, link *delayproxy.Proxy, c *redis.Client, before, n int, what string) {
 		t.Helper()
 		_ = c.Close() // ignored: the client is done; Stop below ends its connection either way
 		link.Stop()
-		if got := link.Writes() - farOneWrite; got != n {
+		if got := link.Writes() - before; got != n {
 			assert.Equal(t, n, got, "%s was %d writes at the proxy; want %d, one delay for each", what, got, n)
 		}
 		if got := link.Shortest(); got < farStoreDelay {
@@ -108,19 +119,19 @@ func TestFarThroughARealStore(t *testing.T) {
 	}
 
 	t.Run("one PING pays the delay once", func(t *testing.T) {
-		link, c := own(t)
+		link, c, before := own(t)
 		start := time.Now()
 		got, err := c.Ping(ctx).Result()
 		took := time.Since(start)
 		if err != nil || got != "PONG" {
 			require.Failf(t, "", "PING = %q, %v", got, err)
 		}
-		held(t, link, c, farOneWrite, "one PING")
+		held(t, link, c, before, farOneWrite, "one PING")
 		t.Logf("one PING through %v of distance: %v as the client saw it", farStoreDelay, took)
 	})
 
 	t.Run("a pipeline of a hundred PINGs pays it once", func(t *testing.T) {
-		link, c := own(t)
+		link, c, before := own(t)
 		start := time.Now()
 		pipe := c.Pipeline()
 		cmds := make([]*redis.StatusCmd, farPipelined)
@@ -137,12 +148,12 @@ func TestFarThroughARealStore(t *testing.T) {
 				require.Equal(t, "PONG", got, "command %d of the pipeline answered %q; want PONG", i, got)
 			}
 		}
-		held(t, link, c, farOneWrite, "a pipeline of a hundred PINGs")
+		held(t, link, c, before, farOneWrite, "a pipeline of a hundred PINGs")
 		t.Logf("a pipeline of %d PINGs through %v of distance: %v as the client saw it", farPipelined, farStoreDelay, took)
 	})
 
 	t.Run("three separate commands pay it three times", func(t *testing.T) {
-		link, c := own(t)
+		link, c, before := own(t)
 		start := time.Now()
 		for i := 0; i < farSeparate; i++ {
 			if got, err := c.Ping(ctx).Result(); err != nil || got != "PONG" {
@@ -150,7 +161,7 @@ func TestFarThroughARealStore(t *testing.T) {
 			}
 		}
 		took := time.Since(start)
-		held(t, link, c, farSeparate, "three separate commands")
+		held(t, link, c, before, farSeparate, "three separate commands")
 		t.Logf("%d separate PINGs through %v of distance: %v as the client saw it", farSeparate, farStoreDelay, took)
 	})
 
