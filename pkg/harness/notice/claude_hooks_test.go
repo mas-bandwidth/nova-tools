@@ -76,8 +76,9 @@ func TestTheClaudeStopBlocksOnceForAChallengeThenOnceForAWatcher(t *testing.T) {
 func TestTheClaudeStopLetsAProvedChallengeAndAWatchedSessionEnd(t *testing.T) {
 	t.Parallel()
 	state := t.TempDir()
-	pendingChallenge(t, state, "abc123")
+	path := pendingChallenge(t, state, "abc123")
 	require.NoError(t, ClaudeProved(state, "abc123"))
+	require.NoError(t, ClaudeShown(state, path))
 	l, err := ClaudeWatch(state)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, l.Unlock()) }()
@@ -122,17 +123,72 @@ func TestTheWatcherBlockNamesAnUnseenNotice(t *testing.T) {
 	assert.Contains(t, d.Reason, path)
 }
 
-// Messages without a challenge never block a watched session: the Monitor told them.
-func TestAPendingNoticeWithoutAChallengeNeverBlocks(t *testing.T) {
+// Messages without a challenge never block once a watcher showed them.
+func TestAShownNoticeWithoutAChallengeNeverBlocks(t *testing.T) {
 	t.Parallel()
 	state := t.TempDir()
 	l, err := ClaudeWatch(state)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, l.Unlock()) }()
-	pendingChallenge(t, state, "")
+	path := pendingChallenge(t, state, "")
+	require.NoError(t, ClaudeShown(state, path))
 	d, err := ClaudeStop(state, "w")
 	require.NoError(t, err)
 	assert.False(t, d.Block)
+}
+
+// A held lock is no delivery (NoticeSeen): a watcher armed, then its source
+// failed and a new notice arrived unprinted. The Stop blocks once naming the
+// notice before the turn's end consumes it, then ends the turn.
+func TestAWatcherLockIsNoProofOfDelivery(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	l, err := ClaudeWatch(state)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, l.Unlock()) }()
+	first := pendingChallenge(t, state, "")
+	require.NoError(t, ClaudeShown(state, first)) // the watcher printed it
+	// the source fails; the Core saves and pushes a new notice the watcher never prints
+	raw, err := os.ReadFile(first)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(first+".2", raw, 0o600))
+	_, err = (&Claude{State: state}).Push(context.Background(), Notice{Path: first + ".2"})
+	require.NoError(t, err)
+	d, err := ClaudeStop(state, "w")
+	require.NoError(t, err)
+	require.True(t, d.Block, "the new notice was never shown")
+	assert.Contains(t, d.Reason, first+".2")
+	assert.NotContains(t, d.Reason, "no watcher is armed")
+	d, err = ClaudeStop(state, "w")
+	require.NoError(t, err)
+	assert.False(t, d.Block, "once per notice")
+	assert.Equal(t, 1, d.Generation)
+}
+
+// A PUSH or PENDING line names its notice file; the watcher records it shown.
+func TestClaudeNoticePath(t *testing.T) {
+	t.Parallel()
+	n := Notice{Path: "/s/notices/n1.json"}
+	assert.Equal(t, "/s/notices/n1.json", ClaudeNoticePath(`HOOK PUSH push=claude id=n1 notice="`+n.Text()+`"`))
+	assert.Equal(t, "", ClaudeNoticePath("HOOK STATE state=live"))
+}
+
+// The route's event file takes each said line and is replaced, not grown,
+// past its bound.
+func TestTheClaudeEventFileIsBounded(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	c := &Claude{State: state}
+	require.NoError(t, c.Record("HOOK PUSH a\n"))
+	require.NoError(t, c.Record("HOOK PUSH b\n"))
+	raw, err := os.ReadFile(filepath.Join(state, ClaudeEvents))
+	require.NoError(t, err)
+	assert.Equal(t, "HOOK PUSH a\nHOOK PUSH b\n", string(raw))
+	require.NoError(t, os.WriteFile(filepath.Join(state, ClaudeEvents), make([]byte, claudeEventsMax), 0o600))
+	require.NoError(t, c.Record("HOOK PUSH c\n"))
+	raw, err = os.ReadFile(filepath.Join(state, ClaudeEvents))
+	require.NoError(t, err)
+	assert.Equal(t, "HOOK PUSH c\n", string(raw))
 }
 
 // PostToolUse (Tool) surfaces an unproved pending challenge once, never a
@@ -182,7 +238,8 @@ func TestTheClaudeStartTellsTheWatcherAndThePendingNotice(t *testing.T) {
 }
 
 // SessionStart clears a spent missing-watcher block, so the next stop with no
-// watcher is told again (Start resets nagged).
+// watcher is told again (Start resets nagged), and telling the pending notice
+// records it shown.
 func TestTheClaudeStartResetsTheWatcherBlock(t *testing.T) {
 	t.Parallel()
 	state := t.TempDir()

@@ -265,7 +265,9 @@ The install wires one boundary command to three hook events (tla/ClaudeHookNotic
 pending challenge into the running turn once; Stop blocks the turn's end once for it, then once while no watcher holds
 the watch lock, else ends the turn; SessionStart tells the model to arm the watcher and the pending notice. The watcher
 is <claude-settings>/nova-hook-claude-watch.sh (--claude-watch), run by the session's Monitor: it holds the lock and
-prints each HOOK line of the supervised service's log (--claude-log). nova-hook prove records the proved nonce in the
+prints each HOOK line of the route's own event file (events.log in --claude-state, written on every system; or
+--claude-log), recording each notice it prints as shown. A held lock is no delivery: the Stop hook blocks once for a
+pending notice no watcher showed before the turn's end consumes it. nova-hook prove records the proved nonce in the
 claude state directory, so no hook names it again. The hooks read files only and never prove.
 Every harness keeps one pending notice (pkg/harness/notice): a saved file rewritten in place with the newest valid
 challenge and the message count; a new push waits until the model consumed the last one; only the model proves.
@@ -299,7 +301,7 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("claude-settings", w.getenv("NOVA_HOOK_CLAUDE_SETTINGS"), "existing directory where the Claude Code Stop hook is installed")
 					f.Bool("claude-boundary", false, "answer one Claude Code hook event read from standard input (Stop, PostToolUse, SessionStart) and exit; the installed hooks run this, and a Stop advances the generation file")
 					f.Bool("claude-watch", false, "the watcher a Claude Code session's Monitor runs: hold the watch lock and print each HOOK line of the hook service's log as it lands")
-					f.String("claude-log", "", "the hook service's log --claude-watch follows (default: ~/.local/state/nova-hook/<as>.log, the supervised service's)")
+					f.String("claude-log", "", "the file --claude-watch follows (default: events.log in --claude-state, the claude route's own event file)")
 					f.Bool("once", false, "arm, renew once, print the state and exit (0 proven, 1 not); no loop")
 					laneFlags(w, f)
 					store(f)
@@ -887,8 +889,22 @@ func (w world) nativeShim(r *codexRoute) notice.Shim {
 // newCore wires one friend's pending notice: the store, the shim, the saved
 // files, and the one PUSH line a push prints.
 func (w world) newCore(c *tool.Call, s *session, role hook.Role, epoch int64, shim notice.Shim) *notice.Core {
+	say := func(o *tool.Out) { line(c, o) }
+	if cl, ok := shim.(*notice.Claude); ok {
+		// the claude route's own event file: what its watcher follows on every
+		// system, where the service's stdout may be a journal
+		say = func(o *tool.Out) {
+			o.Verb = "hook"
+			var b strings.Builder
+			o.Render(&b, false)
+			fmt.Fprint(c.Stdout, b.String())
+			if err := cl.Record(b.String()); err != nil {
+				line(c, tool.Done().As("STATE").Fact("state", "claude-event-unwritten").Note(err.Error()+"; a watcher reads no PUSH line until it is written"))
+			}
+		}
+	}
 	return &notice.Core{As: s.as, Role: role, Epoch: epoch, Redis: s.addr, Store: notice.Redis{Hooks: s.hooks, Bus: s.bus}, Shim: shim, Files: w.files,
-		NewID: func() string { return "notice-" + w.nonce() }, Say: func(o *tool.Out) { line(c, o) }}
+		NewID: func() string { return "notice-" + w.nonce() }, Say: say}
 }
 
 // cursor is the bus stream's last entry id when this process holds the bus

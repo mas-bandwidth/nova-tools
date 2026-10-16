@@ -147,23 +147,14 @@ func claudeJSON(c *tool.Call, v any) *tool.Out {
 	return tool.Exit(0)
 }
 
-// claudeLog is the hook service's log the watcher follows: --claude-log, else
-// the supervised service's own (service.go).
-func (w world) claudeLog(c *tool.Call, as string) (string, error) {
+// claudeLog is the file the watcher follows: --claude-log, else the claude
+// route's own event file in its state directory, written on every system
+// (newCore), where the service's stdout may be a journal.
+func (w world) claudeLog(c *tool.Call, r *claudeRoute) string {
 	if p := c.Str("claude-log"); p != "" {
-		return filepath.Clean(p), nil
+		return filepath.Clean(p)
 	}
-	home := ""
-	if w.home != nil {
-		home, _ = w.home()
-	}
-	if home == "" {
-		home = w.getenv("HOME")
-	}
-	if home == "" || !filepath.IsAbs(home) {
-		return "", errors.New("claude watch wants --claude-log: no home to find the hook service's log under")
-	}
-	return filepath.Join(home, ".local", "state", "nova-hook", as+".log"), nil
+	return filepath.Join(r.state, notice.ClaudeEvents)
 }
 
 // claudeWatch is the watcher a session's Monitor runs: it holds the watch
@@ -171,10 +162,7 @@ func (w world) claudeLog(c *tool.Call, as string) (string, error) {
 // each line of the hook service's log a model acts on, from the log's end,
 // until its Monitor ends it.
 func (w world) claudeWatch(c *tool.Call, r *claudeRoute) *tool.Out {
-	log, err := w.claudeLog(c, c.Str("as"))
-	if err != nil {
-		return tool.Refuse(err.Error())
-	}
+	log := w.claudeLog(c, r)
 	l, err := notice.ClaudeWatch(r.state)
 	if err != nil {
 		if _, held := filelock.AsHeldError(err); held {
@@ -193,6 +181,7 @@ func (w world) claudeWatch(c *tool.Call, r *claudeRoute) *tool.Out {
 	// is read from its end, so the pending one is told now.
 	if p, err := notice.ReadClaudePending(r.state); err == nil && p.Path != "" {
 		line(c, tool.Done().As("PENDING").Fact("nonce", cmpOr(p.Nonce, "-")).Fact("notice", tool.Text(notice.Notice{Path: p.Path}.Text())).Note("pushed before this watcher was armed; only the model proves"))
+		w.claudeShown(c, r, p.Path)
 	}
 	tick := time.NewTicker(claudeWatchEvery)
 	defer tick.Stop()
@@ -218,8 +207,19 @@ func (w world) claudeWatch(c *tool.Call, r *claudeRoute) *tool.Out {
 		for _, s := range lines {
 			if claudeWatched(s) {
 				fmt.Fprintln(c.Stdout, s)
+				if p := notice.ClaudeNoticePath(s); p != "" {
+					w.claudeShown(c, r, p)
+				}
 			}
 		}
+	}
+}
+
+// claudeShown records a notice the watcher just printed: its delivery to the
+// session, which the Stop hook reads before a turn's end consumes it.
+func (w world) claudeShown(c *tool.Call, r *claudeRoute, path string) {
+	if err := notice.ClaudeShown(r.state, path); err != nil {
+		line(c, tool.Done().As("STATE").Fact("state", "claude-shown-unwritten").Note(err.Error()+"; the Stop hook names this notice once more"))
 	}
 }
 

@@ -270,3 +270,4 @@ MCClaudeHookNoticeBrokenNoBlock.cfg	MCClaudeHookNotice.tla	action	IdleKnows	igno
 MCClaudeHookNoticeBrokenBlockProved.cfg	MCClaudeHookNotice.tla	action	BlockOnlyUnproved	ignore-terminal	claudehook	required	-
 MCClaudeHookNoticeBrokenChildAdvances.cfg	MCClaudeHookNotice.tla	action	ChildNoBoundary	ignore-terminal	claudehook	required	-
 MCClaudeHookNoticeBrokenNoWatchNag.cfg	MCClaudeHookNotice.tla	invariant	IdleArmed	ignore-terminal	claudehook	required	-
+MCClaudeHookNoticeBrokenNoReplay.cfg	MCClaudeHookNotice.tla	action	NoticeSeen	ignore-terminal	claudehook	required	-

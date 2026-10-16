@@ -41,6 +41,31 @@ func (c *Claude) Push(_ context.Context, n Notice) (string, error) {
 	return "monitor", nil
 }
 
+// ClaudeEvents is the claude route's event file in its state directory: each
+// PUSH line the Core says, which the watcher follows (claudeEventsMax bounds
+// it; the watcher reads a replaced file from its start).
+const ClaudeEvents = "events.log"
+
+const claudeEventsMax = 1 << 20
+
+// Record appends one said line to the event file.
+func (c *Claude) Record(text string) error {
+	path := filepath.Join(c.State, ClaudeEvents)
+	if fi, err := os.Stat(path); err == nil && fi.Size()+int64(len(text)) > claudeEventsMax {
+		return atomicfile.Write(path, []byte(text), 0o600, atomicfile.ExactMode())
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(text); err != nil {
+		// ignored: the write error is the one returned
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 // Clear ends the pending notice for the session's hooks once it is consumed.
 func (c *Claude) Clear(context.Context, Notice) error {
 	if err := os.Remove(filepath.Join(c.State, claudePending)); err != nil && !errors.Is(err, os.ErrNotExist) {

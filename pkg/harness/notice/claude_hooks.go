@@ -29,11 +29,13 @@ import (
 // They read and write only files in the claude state directory, never the
 // store, and never prove: only the model runs nova-hook prove.
 const (
-	claudePending  = "pending"  // the saved notice file of the pushed notice, while it is pending
-	claudeProved   = "proved"   // the newest nonce the model proved (nova-hook prove writes it)
-	claudeBlocked  = "blocked"  // the newest nonce a Stop was blocked for
-	claudeSurfaced = "surfaced" // the newest nonce PostToolUse put into a turn
-	claudeNagged   = "nagged"   // a Stop was blocked once for a missing watcher
+	claudePending  = "pending"   // the saved notice file of the pushed notice, while it is pending
+	claudeProved   = "proved"    // the newest nonce the model proved (nova-hook prove writes it)
+	claudeBlocked  = "blocked"   // the newest nonce a Stop was blocked for
+	claudeSurfaced = "surfaced"  // the newest nonce PostToolUse put into a turn
+	claudeNagged   = "nagged"    // a Stop was blocked once for a missing watcher
+	claudeShown    = "shown"     // the newest notice file put in front of the model (a watcher's print, a hook's text)
+	claudeNoteBlk  = "noteblock" // the newest notice file a Stop was blocked for
 
 	// ClaudeWatchLock is the watcher's lock: held while a Monitor runs it.
 	ClaudeWatchLock = "watch.lock"
@@ -118,6 +120,26 @@ func ClaudeProved(state, nonce string) error {
 	return writeWord(filepath.Join(state, claudeProved), nonce)
 }
 
+// ClaudeShown records that the notice at path was put in front of the model:
+// the watcher printed its line, or a hook named it (noteShown in the model).
+func ClaudeShown(state, path string) error {
+	return writeWord(filepath.Join(state, claudeShown), path)
+}
+
+// ClaudeNoticePath is the notice file a PUSH or PENDING line names, "" when
+// it names none.
+func ClaudeNoticePath(line string) string {
+	_, rest, ok := strings.Cut(line, "nova-hook notice: read ")
+	if !ok {
+		return ""
+	}
+	path, _, ok := strings.Cut(rest, " (it holds")
+	if !ok {
+		return ""
+	}
+	return path
+}
+
 // ClaudeWatched reports whether a watcher holds the watch lock.
 func ClaudeWatched(state string) (bool, error) {
 	l, err := filelock.TryLock(filepath.Join(state, ClaudeWatchLock), "claude-stop-check")
@@ -174,29 +196,56 @@ func ClaudeStop(state, watch string) (ClaudeStopDecision, error) {
 			if err := writeWord(filepath.Join(state, claudeBlocked), p.Nonce); err != nil {
 				return ClaudeStopDecision{}, err
 			}
+			if err := ClaudeShown(state, p.Path); err != nil {
+				return ClaudeStopDecision{}, err
+			}
 			return ClaudeStopDecision{Block: true, Reason: "nova-hook: hook challenge " + p.Nonce + " is pending and not proved. Before this turn ends, run: " + p.prove() + " (the notice: " + p.Path + ")"}, nil
 		}
+	}
+	// Ending the turn consumes the pending notice: one no watcher showed is
+	// named first, once (NoticeSeen), with the missing watcher, once (IdleArmed).
+	unseen := false
+	if p.Path != "" {
+		shown, err := readWord(filepath.Join(state, claudeShown))
+		if err != nil {
+			return ClaudeStopDecision{}, err
+		}
+		blockedNote, err := readWord(filepath.Join(state, claudeNoteBlk))
+		if err != nil {
+			return ClaudeStopDecision{}, err
+		}
+		unseen = shown != p.Path && blockedNote != p.Path
 	}
 	watched, err := ClaudeWatched(state)
 	if err != nil {
 		return ClaudeStopDecision{}, err
 	}
+	nag := false
 	if !watched {
 		nagged, err := exists(filepath.Join(state, claudeNagged))
 		if err != nil {
 			return ClaudeStopDecision{}, err
 		}
-		if !nagged {
+		nag = !nagged
+	}
+	if unseen || nag {
+		var reason []string
+		if unseen {
+			if err := writeWord(filepath.Join(state, claudeNoteBlk), p.Path); err != nil {
+				return ClaudeStopDecision{}, err
+			}
+			if err := ClaudeShown(state, p.Path); err != nil {
+				return ClaudeStopDecision{}, err
+			}
+			reason = append(reason, "nova-hook: a notice is pending that no watcher showed, and ending this turn consumes it: "+Notice{Path: p.Path}.Text()+".")
+		}
+		if nag {
 			if err := writeWord(filepath.Join(state, claudeNagged), "1"); err != nil {
 				return ClaudeStopDecision{}, err
 			}
-			reason := "nova-hook: no watcher is armed, so a push cannot wake this session once it is idle. Before this turn ends, arm it with the Monitor tool (the longest timeout; re-arm it each time it ends): " + watch
-			if p.Path != "" {
-				// ending the turn consumes the pending notice, which no watcher showed
-				reason += ". A notice is pending: " + Notice{Path: p.Path}.Text() + "."
-			}
-			return ClaudeStopDecision{Block: true, Reason: reason}, nil
+			reason = append(reason, "nova-hook: no watcher is armed, so a push cannot wake this session once it is idle. Before this turn ends, arm it with the Monitor tool (the longest timeout; re-arm it each time it ends): "+watch)
 		}
+		return ClaudeStopDecision{Block: true, Reason: strings.Join(reason, " ")}, nil
 	}
 	n, err := ClaudeBoundary(state)
 	return ClaudeStopDecision{Generation: n}, err
@@ -248,6 +297,9 @@ func ClaudeStart(state, watch string) (string, error) {
 		return "", err
 	}
 	if p.Path != "" {
+		if err := ClaudeShown(state, p.Path); err != nil {
+			return "", err
+		}
 		text += "\nA notice is pending: " + Notice{Path: p.Path}.Text() + "."
 		if p.Nonce != "" {
 			text += " It holds hook challenge " + p.Nonce + ": " + p.prove()
