@@ -165,7 +165,7 @@ SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS ?= 30
 schemawire-conformance:
 	@set -e; start=$$(date +%s); \
 	test -d schemas || { echo "schemawire-conformance: the schemas/ home is absent (nova-tools-schema-home-and-pin, schemas/README.md)" >&2; exit 2; }; \
-	pin=$$(sed -n 's@^//go:generate go run github.com/mas-bandwidth/schema/v2/cmd/schema@\(v[0-9][^ ]*\) generate.*@\1@p' pkg/*wire/generate.go 2>/dev/null | sort -u); \
+	pin=$$(sed -n 's|^//go:generate go run github.com/mas-bandwidth/schema/v2/cmd/schema@\(v[0-9][^ ]*\) generate.*|\1|p' pkg/*wire/generate.go 2>/dev/null | sort -u); \
 	if [ "$$(printf '%s\n' "$$pin" | grep -c .)" -gt 1 ]; then echo "schemawire-conformance: the pkg/*wire/generate.go pins disagree; one compiler writes the whole tree (schemas/README.md)" >&2; exit 2; fi; \
 	units=""; for d in schemas/*/; do ls "$$d"*.schema >/dev/null 2>&1 && units="$$units $${d%/}"; done; \
 	if [ -z "$$(printf '%s' "$$units" | tr -d ' ')" ]; then \
@@ -184,7 +184,8 @@ schemawire-conformance:
 		timeout $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS) $(GO) run github.com/mas-bandwidth/schema/v2/test/conformance/harness@$$pin wire-fuzz \
 			--manifest $$u/fuzz/MANIFEST.txt --json $$u/fuzz --vectors '' \
 			--driver "scratch/$${area}-driver wire-fuzz" --seed 24845619678 --n 100 \
-			|| { echo "schemawire-conformance: the wire fuzz over $$u failed or overran its $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS)s bound; a failing mutant is written where the harness's --failed flag names" >&2; exit 1; }; \
+			--failed scratch/$${area}-wire-fuzz-failed.bin \
+			|| { echo "schemawire-conformance: the wire fuzz over $$u failed or overran its $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS)s bound; the failing mutant is scratch/$${area}-wire-fuzz-failed.bin" >&2; exit 1; }; \
 	done; \
 	fi; \
 	elapsed=$$(($$(date +%s) - $$start)); \

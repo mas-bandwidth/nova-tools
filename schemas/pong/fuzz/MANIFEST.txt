@@ -1,0 +1,11 @@
+# The pong unit's wire-fuzz corpus (make schemawire-conformance), in the schema
+# conformance harness's manifest format (test/conformance/README.md in the
+# schema repository). Each instance is one pong in two forms that agree: the
+# wire file named here and the JSON text beside it, <name>.json. The wires are
+# what `schema pack` writes from the JSON (the recipe is in
+# pkg/pongwire/pong_test.go); TestLayer1Pong holds the generated Save and
+# ToJson to both, byte for byte.
+unit pong schemas/pong/pong.schema
+instance pong-typical pong Pong schemas/pong/fuzz/pong-typical.bin
+instance pong-bounds  pong Pong schemas/pong/fuzz/pong-bounds.bin
+instance pong-zeros   pong Pong schemas/pong/fuzz/pong-zeros.bin
