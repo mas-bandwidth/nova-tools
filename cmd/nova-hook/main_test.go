@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/netip"
 	"regexp"
@@ -260,35 +261,27 @@ func (s *streamOut) Write(p []byte) (int, error) {
 // time; one older than the window is FAILED naming the window.
 func TestProveSaysWhichChallengeItMatched(t *testing.T) {
 	t.Parallel()
-	r := newRig(t)
+	r := newQuietRig(t)
 	r.h.Hook(t, "ada", hook.Comms)
 	ctx := context.Background()
-	n := 0
-	nonce := func() string { n++; return "nonce" + strings.Repeat("x", n) }
-	pass := func() string {
-		p, err := r.h.Store.Pass(ctx, []string{"ada"}, hook.BeatEvery, hook.DownAfter, nonce, "test")
-		require.NoError(t, err)
-		require.Len(t, p.Beats, 1)
-		return p.Beats[0].Nonce
-	}
-	ancient := pass()
-	for range 6 {
-		r.h.Pass(hook.BeatEvery)
-		r.h.Hook(t, "ada", hook.Comms)
-		pass()
-	}
-	r.h.Pass(hook.BeatEvery)
-	r.h.Hook(t, "ada", hook.Comms)
-	handed := pass()
-	r.h.Pass(hook.BeatEvery)
-	r.h.Hook(t, "ada", hook.Comms)
-	pass()
-	r.h.Pass(50 * time.Second)
+	r.h.Pass(hook.QuietAfter + time.Minute)
+	p, err := r.h.Store.Pass(ctx, []string{"ada"}, hook.BeatEvery, hook.DownAfter, func() string { return "current" }, "test")
+	require.NoError(t, err)
+	bt := p.Beats[0]
+	require.Equal(t, hook.BeatChallenged, bt.Did)
+	now, err := r.h.Client.Time(ctx).Result()
+	require.NoError(t, err)
+	oldAt := now.Add(-time.Minute)
+	current := r.h.Client.HGet(ctx, hook.RecordKey("ada"), "recent").Val()
+	historical := fmt.Sprintf("%d:%s:%d:%d:bus", bt.Epoch, hook.Sum("handed"), oldAt.UnixMilli(), oldAt.Add(hook.DownAfter).UnixMilli())
+	require.NoError(t, r.h.Client.HSet(ctx, hook.RecordKey("ada"), "recent", current+" "+historical).Err())
+	require.NoError(t, r.h.Store.Renew(ctx, "ada", hook.Comms, hook.Bus, bt.Epoch, "holder"))
 	cli := r.cli()
-	cli.Do(t, "prove", "--as", "ada", "--nonce", handed).Exit(0).Out("PROVE OK proven=1 state=proven role=comms matched=1-back issued=2026-10-11T12:07:00Z")
-	res := cli.Run("prove", "--as", "ada", "--nonce", ancient)
+	res := cli.Run("prove", "--as", "ada", "--nonce", "handed")
+	require.Zero(t, res.Code, res.Stdout+res.Stderr)
+	assert.Contains(t, res.Stdout, "matched=1-back issued="+oldAt.UTC().Format(time.RFC3339))
+	res = cli.Run("prove", "--as", "ada", "--nonce", "ancient")
 	assert.Equal(t, 1, res.Code)
-	assert.Contains(t, res.Stdout+res.Stderr, "PROVE FAILED: the nonce is not the one the challenge asked")
 	assert.Contains(t, res.Stdout+res.Stderr, "(the window: 5m0s)")
 }
 

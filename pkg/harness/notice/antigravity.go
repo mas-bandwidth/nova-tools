@@ -3,10 +3,13 @@ package notice
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/dshdesktop"
 )
 
 // Antigravity is the Antigravity shim. Into a running turn and waking an
@@ -32,14 +35,40 @@ func (a *Antigravity) Dir() string { return a.Directory }
 // Push is one send; it is never retried.
 func (a *Antigravity) Push(ctx context.Context, n Notice) (string, error) {
 	turn, err := a.Deliver(ctx, n.ID, a.Directory)
-	if err != nil && a.Token != nil {
-		err = Redact(err, a.Token())
+	if err != nil {
+		if a.Token != nil {
+			err = Redact(err, a.Token())
+		}
+		return turn, err
 	}
-	return turn, err
+	if a.Directory != "" {
+		if _, statErr := os.Stat(a.Directory); statErr == nil {
+			if err := dshdesktop.MarkPending(a.Directory, n.ID); err != nil {
+				return turn, err
+			}
+			if _, err := dshdesktop.PruneResolvedNotices(a.Directory, n.ID); err != nil {
+				return turn, err
+			}
+		}
+	}
+	return turn, nil
 }
 
 // Consumed is false: the conversation has no boundary the client can read.
 func (a *Antigravity) Consumed(context.Context, Notice) (bool, error) { return false, nil }
+
+// Clear marks a consumed notice resolved and prunes resolved notice-*.json
+// files in Directory beyond dshdesktop.MaxResolvedNotices.
+func (a *Antigravity) Clear(_ context.Context, n Notice) error {
+	if a.Directory == "" {
+		return nil
+	}
+	if _, err := os.Stat(a.Directory); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	_, err := dshdesktop.ResolveNotice(a.Directory, n.ID)
+	return err
+}
 
 // Redact keeps a secret out of an error's text and keeps what it wraps.
 func Redact(err error, secret string) error {

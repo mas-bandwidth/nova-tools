@@ -223,6 +223,21 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 			}
 			var present []string
 			for _, tn := range tests {
+				// the make target must exist at the base (nova-sprint 94736cdb, landed 73b04e12)
+				if tn.runner == "make" && len(tn.scope) > 0 {
+					missingTarget := ""
+					for _, sc := range tn.scope {
+						sc = strings.TrimPrefix(sc, "./")
+						if _, err := baseGit(bc.Repo, "cat-file", "-e", "--end-of-options", full+":"+sc); err != nil {
+							missingTarget = sc
+							break
+						}
+					}
+					if missingTarget != "" {
+						add("donewhen-test-name", dwLine, fmt.Sprintf("DONE-WHEN make %s %s names target/file %s, and base-sha %s holds no such file at the base; the target must exist", tn.scope[0], tn.name, missingTarget, short12(full)))
+						return out
+					}
+				}
 				at, err := testDefinedAt(bc.Repo, full, tn)
 				if err != nil {
 					add("donewhen-test-name", dwLine, fmt.Sprintf("MISSING: could not search the tree at %s for %s: %v", short12(full), tn.name, err))
@@ -259,7 +274,7 @@ var doneWhenBodyRE = regexp.MustCompile(`^[ \t]*(?:[-*][ \t]+)?\**DONE-WHEN:?\**
 
 // doneTest is one literal test a DONE-WHEN names, and the runner that names it.
 type doneTest struct {
-	runner string // go, pytest, cargo
+	runner string // go, pytest, cargo, ctest, make, dotnet
 	name   string
 	// scope is the command's own targets, as written: go packages (`./pkg/decide`,
 	// `./x/...`, `<module>/x`), pytest files or directories (`tests/test_x.py`, `tests`).
@@ -277,6 +292,13 @@ var (
 	pytestKRE    = regexp.MustCompile(`\bpytest\b[^` + "`" + `]*?[ \t]-k(?:=|[ \t]+)["']?([A-Za-z_][A-Za-z0-9_]*)["']?(?:[ \t` + "`" + `]|$)`)
 	cargoTestRE  = regexp.MustCompile(`\bcargo[ \t]+test\b((?:[ \t]+-{1,2}[A-Za-z-]+(?:[ \t]+[^-\s` + "`" + `]\S*)?)*)[ \t]+([A-Za-z_][A-Za-z0-9_:]*)`)
 	pyTestNameRE = regexp.MustCompile(`^test[A-Za-z0-9_]*$`)
+	// runnerFormRE (nova-sprint 73b04e12, from de93ff0c) is the runner-form test a card names with `make`, `ctest`,
+	// `cargo`, `dotnet` or `pytest`: `<runner> <file or target> <case>`, the shape
+	// cardhdr test-named accepts (lintheader.go). The case is a test, fact, case or
+	// target name as that runner spells them, never a shell word. The target stops
+	// at a backtick: in "`pytest tests/x.py::test_y` passes" the word after the
+	// closing backtick is prose, not a case. An option (`--rootdir=.`) is no target.
+	runnerFormRE = regexp.MustCompile(`\b(make|ctest|cargo|dotnet|pytest)[ \t]+([^ \t` + "`" + `-][^ \t` + "`" + `]*)[ \t]+([A-Za-z_][A-Za-z0-9_.:]*)`)
 )
 
 // doneWhenTests is every literal test the DONE-WHEN names, or nil and why not. A go
@@ -322,6 +344,22 @@ func doneWhenTests(v string) ([]doneTest, string) {
 			out = append(out, doneTest{runner: "cargo", name: name})
 		}
 	}
+	for _, m := range runnerFormRE.FindAllStringSubmatch(v, -1) {
+		runner, target, name := m[1], m[2], m[3]
+		if runner == "cargo" && target == "test" {
+			continue // `cargo test <name>`: handled above
+		}
+		dup := false
+		for _, e := range out {
+			if e.runner == runner && e.name == name {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, doneTest{runner: runner, name: name, scope: []string{target}})
+		}
+	}
 	if len(out) > 0 {
 		return out, ""
 	}
@@ -331,7 +369,19 @@ func doneWhenTests(v string) ([]doneTest, string) {
 	return nil, "names no test runner and no test"
 }
 
-// testDefinedAt says whether the tree at sha defines the test, by its runner's
+// runnerDoneTest (nova-sprint 73b04e12) turns a `TEST: <runner> <file or target> <case>` value into the
+// doneTest it names. ok is false when the value is not in that shape (it is then the
+// Go form's or `none`, which cardhdr.ParseTest reads).
+func runnerDoneTest(v string) (doneTest, bool) {
+	f := strings.Fields(v)
+	if len(f) != 3 || !testRunners[f[0]] {
+		return doneTest{}, false
+	}
+	return doneTest{runner: f[0], name: f[2], scope: []string{f[1]}}, true
+}
+
+// testDefinedAt (the make, dotnet, ctest-scoped and cargo-scoped shapes are nova-sprint
+// 73b04e12) says whether the tree at sha defines the test, by its runner's
 // definition shape: `func Name(` in a `_test.go` file, `def name(` in a Python file,
 // `fn name(` in a Rust file. `git grep` exits 1 on no match, which is an answer
 // (absent), not an error.
@@ -351,9 +401,30 @@ func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
 	case "pytest":
 		pat, specs = `^[ \t]*(async[ \t]+)?def[ \t]+`+tn.name+`[ \t]*\(`, pytestPathspecs(repo, sha, tn.scope)
 	case "ctest":
-		// `add_test(NAME <name>` or `add_test(<name>`, in CMakeLists.txt or a
-		// `*.cmake` file at the base.
-		pat, specs = `add_test[ \t]*\([ \t]*(NAME[ \t]+)?`+regexp.QuoteMeta(tn.name)+`([ \t]|\))`, []string{":(glob)**/CMakeLists.txt", ":(glob)**/*.cmake"}
+		// `add_test(NAME <name>` or `add_test(<name>`: `ctest <file> <case>` reads
+		// the named file, `ctest <name>` every CMakeLists.txt and `*.cmake` file at
+		// the base.
+		pat = `add_test[ \t]*\([ \t]*(NAME[ \t]+)?` + regexp.QuoteMeta(tn.name) + `([ \t]|\))`
+		if len(tn.scope) > 0 {
+			specs = literalSpecs(tn.scope)
+		} else {
+			specs = []string{":(glob)**/CMakeLists.txt", ":(glob)**/*.cmake"}
+		}
+	case "make":
+		// a C/C++ test source registers its cases with REGISTER_UNIT_TEST; the named
+		// file at the base holds the registration, and the case must not be one of
+		// them.
+		pat, specs = `REGISTER_UNIT_TEST[ \t]*\([ \t]*`+regexp.QuoteMeta(tn.name)+`[ \t]*\)`, literalSpecs(tn.scope)
+	case "dotnet":
+		// a C# test is a method of a test class in the named file.
+		pat, specs = `(public|internal|private)[ \t]+void[ \t]+`+tn.name+`[ \t]*\(`, literalSpecs(tn.scope)
+	case "cargo":
+		pat = `fn[ \t]+` + tn.name + `[ \t]*[(<]`
+		if len(tn.scope) > 0 {
+			specs = literalSpecs(tn.scope)
+		} else {
+			specs = []string{"*.rs"}
+		}
 	default:
 		pat, specs = `fn[ \t]+`+tn.name+`[ \t]*[(<]`, []string{"*.rs"}
 	}
@@ -506,6 +577,20 @@ func pytestPathspecs(repo, sha string, scope []string) []string {
 	}
 	if len(specs) == 0 {
 		return []string{"*.py"}
+	}
+	return specs
+}
+
+// literalSpecs (nova-sprint 73b04e12) is the `:(literal)` pathspec of each named file, as written (no
+// leading ./): the file the runner-form TEST line names. A file absent at base is an
+// answer (no test there), not an error.
+func literalSpecs(scope []string) []string {
+	var specs []string
+	for _, s := range scope {
+		specs = append(specs, ":(literal)"+strings.TrimPrefix(s, "./"))
+	}
+	if len(specs) == 0 {
+		return []string{"."}
 	}
 	return specs
 }

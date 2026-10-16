@@ -99,10 +99,36 @@ leaves admission unchanged.
 - **Harness adapters** (the lanes, `nova-friend check --harness`, and `nova-friend reach`'s push step):
   - `opencode`: runs `opencode run --session <id> <text>` in `<dir>` without a
     `--dir` flag, after verifying `--session` and `--model` in `opencode run --help`.
-  - `codex`: requires an explicit watched-folder route
+  - `codex`: session delivery still requires an explicit watched-folder route
     (`--harness codex --session <id> --adapter folder --delivery-dir <dir>`),
     writing `<payload>.meta.json` and `FRIEND-*.md`. Implicit queue or
-    `exec resume` routes are refused before any side effect.
+    `exec resume` delivery routes are refused before any side effect. In
+    one-shot mode, the separate card runner starts a real `codex exec --json`
+    model process for each lane card under the existing `nova-friend wall` and uses the
+    account's `config_dir`, `CODEX_HOME` or `~/.codex` as its Codex home. The
+    server row's work or read tier selects exactly one enabled Codex model
+    from the applied `nova-config` subscription-backed routes exposed by
+    `nova-sprint routes --json`, respecting that tier's applied route array
+    (an empty array admits every enabled route). A sprint view without the
+    applied arrays refuses intake; no adapter model table or account default
+    chooses a model. A missing or ambiguous route starts no model or failed
+    card attempt; the lane waits for corrected configuration. Before taking a card, the runner
+    checks `codex login status` inside the same wall and requires a ChatGPT
+    login. Both the proof and model launch clear API-key environment variables
+    and force the ChatGPT login method, so an API-key account holds intake.
+    A configured model must also be available to the ChatGPT-account Codex
+    CLI. The runner refuses to start
+    without a lane context and its `nova-friend` wall. Inside that outer OS
+    sandbox, it uses Codex's externally sandboxed CLI mode and
+    `--ignore-user-config`: a nested Codex Seatbelt cannot inspect the wall's
+    denied coordinator root, so it cannot write the card outbox. The outer wall
+    still limits checkout, outbox, account directory, network and denied roots;
+    a failed wall setup starts no model. This is not a desktop session
+    delivery route or an idle-wake claim. `nova-hook` owns bus and challenge notices;
+    the lane loop owns refill and report collection. If the same friend is the
+    sprint coordinator, the daemon joins her existing coordinator hook epoch
+    and holds the optional work lease; it never changes her bus+sprint role or
+    starts a second bus reader. A different existing hook role still refuses.
   - `antigravity`: delivers into the conversation mailbox via
     `agentapi send-message --title=nova-friend <conversation> <text>`, tracks
     deliveries and `read.json` receipts in `antigravity-ledger.json`, waits when
@@ -147,10 +173,12 @@ the daemon runs `width` concurrent lanes (`ParseLaneHold` on `LANE` lines):
   `pkg/friend/tla/OneLane.tla`): claims `jobs/<job>/LANE` by exclusive hard link,
   renews every 30 s (`LaneMarkStale` = 2m30s), refuses a second lane on the same
   card, and cancels a lane whose card finished elsewhere or left her row.
-- **Claude and OpenCode lanes** (`pkg/friend/adapter_claude.go`,
-  `pkg/friend/adapter_opencode_lanes.go`, `pkg/friend/lane_parity.go`): run in
-  the job directory with all paths absolute (`LaneJobOf`, `WithLaneDir`) and the
-  brief inline (`CardText`), rescuing stray relative reports (`RescueStray`). A
+- **Claude, Codex and OpenCode lanes** (`pkg/friend/adapter_claude_lanes.go`,
+  `pkg/friend/adapter_codex_lanes.go`, `pkg/friend/adapter_opencode_lanes.go`,
+  `pkg/friend/lane_parity.go`): run in
+  the staged job directory with all paths absolute (`LaneJobOf`, `WithLaneDir`)
+  and the brief inline (a one-shot process receives the brief as its prompt),
+  rescuing stray relative reports (`RescueStray`). A
   zero-exit run that writes neither `REPORT.md` nor `RESULT.md` is a
   `harness-fault: no report` (retried without advancing `CardTurns`; three alike
   in 10 m pause the lanes for 15 m).
@@ -160,8 +188,11 @@ the daemon runs `width` concurrent lanes (`ParseLaneHold` on `LANE` lines):
   - Wall-time cap per tier (`DefaultLaneCaps`: flash 15 m, pro 45 m, heavy 90 m,
     frontier 150 m), writing a `Verdict: HOLD` report with `CappedWords` and the
     last 40 output lines.
-  - Per-card token cap (`row_token_cap`, default `6000000`, `0` uncapped) summed
-    across input, cache, output, and reasoning tokens.
+  - Claude's per-card token cap (`row_token_cap`, default `6000000`, `0`
+    uncapped) is summed across input, cache, output, and reasoning tokens.
+    The Codex runner enforces the lane's tier wall-time cap, but does not yet
+    enforce a stream-based token cap; its Codex usage is not included in the
+    Claude spend counter.
   - Daily/provider spend cap (`pkg/friend/spendcap.go`), subscription pacing
     (`pkg/friend/pacing.go`), rate-limit exponential backoff, and provider
     failure pause (`PAUSED` in the state directory, cleared only by a person via

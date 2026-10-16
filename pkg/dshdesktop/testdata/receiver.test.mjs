@@ -147,3 +147,15 @@ test('session.json target follows a new session without reload; the old hold is 
  assert.equal(agents.get('session-new').messages.length,1,'the new session is woken; the old ordinary hold does not carry over');
  assert.equal(agents.get('session-old').messages.length,1);
 });
+test('resolved notice-*.json files in eventsDir are pruned to maxResolvedNotices while the active notice stands',t=>{
+ const f=fixture(t);
+ for(let i=1;i<=40;i++){
+  f.publish(`notice-${String(i).padStart(4,'0')}`,true,`nonce-${i}`);
+  f.receiver.drain();
+ }
+ const notices=fs.readdirSync(f.directory).filter(name=>/^notice-.*\.json$/.test(name)).sort();
+ assert.equal(notices.length,17,'16 resolved notices plus 1 active notice');
+ assert.ok(notices.includes('notice-0040.json'),'active newest notice stands');
+ assert.ok(notices.includes('notice-0024.json'),'oldest retained resolved notice stands');
+ assert.ok(!notices.includes('notice-0001.json'),'older resolved notices are pruned');
+});

@@ -96,6 +96,14 @@ func main() {
 	if job != "" {
 		writeRecorded(filepath.Join(job, "argv"), []byte(strings.Join(os.Args[1:], " ")), 0o644)
 	}
+	// FAKE-SILENT is a harness that never starts work: no output, no session store, no
+	// tokens, and it never exits on its own. It is the run an idle watch ends, and it is
+	// silent from launch, so what the idle end names is decided by the run alone; the idle
+	// watch or a TERM ends it.
+	if _, ok := directive(prompt, "FAKE-SILENT"); ok {
+		time.Sleep(time.Hour)
+		os.Exit(0)
+	}
 	// FAKE-LAUNCHES records one line per real invocation, before any directive can exit,
 	// so a test can prove how many times the machinery retried a task.
 	// FAKE-DROP-CAPTURE unlinks the harness log the parent already opened. The

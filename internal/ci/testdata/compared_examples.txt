@@ -14,6 +14,8 @@
 # both. Moving a line from unexecuted_examples.txt to here is how that list
 # shrinks.
 
+cmd/nova-hook/codex_test.go:TestCodexOwnerHelpExampleThroughComparator example: nova-hook codex-owner --thread example-thread --dry-run
+
 cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table create demo --columns ready,working,done
 cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table row add demo build
 cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table cell add demo build ready b1
@@ -60,9 +62,9 @@ cmd/nova-secrets/dryrun_example_functional_test.go:TestTheHelpExampleIsWhatSealD
 cmd/nova-secrets/dryrun_example_functional_test.go:TestTheHelpExampleIsWhatSeatInjectDryRunPrints example: nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
 cmd/nova-secrets/dryrun_example_functional_test.go:TestTheHelpExampleIsWhatPlaceDryRunPrints example: nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
 cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis version
-cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
-cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
-cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
+cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis spill --dry-run --redis 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis spill --redis 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis recall --redis 127.0.0.1:6379 --owner ada --name note
 cmd/nova-secrets/examples_test.go:TestTheHelpExampleIsWhatKeygenPrints example: nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
 cmd/nova-secrets/examples_functional_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint example: nova-secrets names --store ./secrets --as ada
 cmd/nova-secrets/examples_functional_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint example: nova-secrets check --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops

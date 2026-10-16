@@ -67,6 +67,7 @@ func TestDeliverPublishesIndependentImmutableNotices(t *testing.T) {
 	}
 	_, err := Deliver(r, "ordinary-1", ChallengeNotice)
 	require.ErrorIs(t, err, ErrPreSend, "an existing immutable record must never be overwritten")
+	assert.FileExists(t, filepath.Join(r.EventsDir, pendingMarkerFile))
 }
 func TestDeliverRefusesExternalNoticeAndBadInputs(t *testing.T) {
 	t.Parallel()

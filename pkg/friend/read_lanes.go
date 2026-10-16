@@ -322,6 +322,11 @@ func (l *loop) readStep(now time.Time) {
 		if s.running[r.ID] || s.begun[r.ID] || d.machineStopped() {
 			continue
 		}
+		model := d.readModel(r.Packet.Tier)
+		if _, codex := d.Deliver.(*Codex); codex && model == "" {
+			d.Record(fmt.Sprintf("%s read %s: no applied Codex route for tier %s; no model or read begun", at, r.ID, dash(r.Packet.Tier)))
+			continue
+		}
 		out, err := d.Sprint(l.ctx, ReadBeginArgv(d.Friend, r))
 		if err != nil || !strings.Contains(out, "OK") {
 			why := out
@@ -333,7 +338,7 @@ func (l *loop) readStep(now time.Time) {
 			continue
 		}
 		s.running[r.ID], s.begun[r.ID] = true, true
-		l.startRead(r, now)
+		l.startRead(r, now, model)
 	}
 	// a read the queue no longer asks is forgotten, so a read asked again is begun again
 	for id := range s.begun {
@@ -354,10 +359,9 @@ func containsRead(asked []AskedRead, id string) bool {
 
 // startRead writes the read's job (BRIEF.md, WORKER-REPORT.txt, READ.md) under the friend's
 // directory and runs it as a one-shot of her harness in a goroutine.
-func (l *loop) startRead(r AskedRead, now time.Time) {
+func (l *loop) startRead(r AskedRead, now time.Time, model string) {
 	d, s := l.d, l.reads
 	dir := filepath.Join(d.Dir, "reads", r.ID)
-	model := d.readModel(r.Packet.Tier)
 	d.Record(fmt.Sprintf("%s read %s: begun tier=%s model=%s", now.UTC().Format(time.RFC3339), r.ID, dash(r.Packet.Tier), dash(model)))
 	rctx, cancel := context.WithCancel(l.ctx)
 	s.cancel[r.ID], s.active[r.ID] = cancel, r
@@ -465,6 +469,21 @@ func (l *loop) readLaneStep(now time.Time) {
 				}
 			}
 		}
+		if _, codex := d.Deliver.(*Codex); codex {
+			missing, unconfigured := "", false
+			for _, asked := range s.asked {
+				if d.readModel(asked.Packet.Tier) == "" {
+					missing = asked.Packet.Tier
+					unconfigured = true
+					break
+				}
+			}
+			if unconfigured {
+				s.askAt[n] = now.Add(LaneIdleAsk)
+				say(fmt.Sprintf("%s read lane %d: no applied Codex route for an asked tier %s; no server take", at, n, dash(missing)))
+				continue
+			}
+		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TakeWait)
 		out, err := d.Take(ctx, LaneTakeArgv(member, n))
 		cancel()
@@ -493,6 +512,12 @@ func (l *loop) readLaneStep(now time.Time) {
 			say(fmt.Sprintf("%s read lane %d: holds read %s@%d at epoch %d on the server; not begun yet: the reader queue has not given its packet", at, n, h.Card, h.Gen, h.Epoch))
 			continue
 		}
+		model := d.readModel(r.Packet.Tier)
+		if _, codex := d.Deliver.(*Codex); codex && model == "" {
+			s.askAt[n] = now.Add(LaneIdleAsk)
+			say(fmt.Sprintf("%s read lane %d: holds read %s; no applied Codex route for tier %s; no model or read begun", at, n, r.ID, dash(r.Packet.Tier)))
+			continue
+		}
 		say("")
 		r.Epoch, r.Gen, r.Lane = strconv.FormatUint(h.Epoch, 10), h.Gen, n
 		how := "holds"
@@ -501,6 +526,6 @@ func (l *loop) readLaneStep(now time.Time) {
 		}
 		d.Record(fmt.Sprintf("%s read lane %d: %s read %s@%d (epoch %d): the server says lane %d holds it", at, n, how, r.ID, r.Gen, h.Epoch, n))
 		s.running[r.ID], s.begun[r.ID] = true, true
-		l.startRead(r, now)
+		l.startRead(r, now, model)
 	}
 }

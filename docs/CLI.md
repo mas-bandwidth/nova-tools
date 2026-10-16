@@ -1480,6 +1480,23 @@ A session hooks in under its Monitor, and each line the hook prints is a push:
 nova-hook hook --as ada --role coordinator
 ```
 
+For a Codex desktop native route, `nova-hook codex-owner --thread <exact-chat-id>`
+checks whether that chat currently has a native input owner before moving a hook.
+Try its read-only form without a desktop connection:
+
+```sh
+nova-hook codex-owner --thread example-thread --dry-run
+```
+
+It does not send a turn or touch the bus, so it also works for a bus-only `comms`
+role with no sprint server. `CODEX-OWNER OK` with `native=available` is only a routing
+preflight; `CODEX-OWNER FAILED` with `native=unavailable` (including `no-client-found` for a
+child chat) means native delivery to that exact chat cannot be claimed. A
+`--dry-run` says `native=unchecked` and does not contact the desktop. Keep an
+existing hook route until a replacement has separate delivery and model-receipt
+proof. An active Codex child can instead monitor the hook's stdout through a
+bounded tool call as described in [TOOLS-PLAYBOOK](TOOLS-PLAYBOOK.md#13-codex-child-bus-communication-while-the-main-chat-stays-responsive).
+
 It prints `HOOK CHALLENGE nonce=<n>` at start and every 30 minutes; the session
 runs the `nova-hook prove --as ada --nonce <n>` line it carries within five
 minutes. A friend's daemon (`nova-friend run`) is her hook: it hooks her in at
@@ -1551,7 +1568,7 @@ from `nova-friend help`:
 flags:
   --harness <string>  claude: the harness whose PreToolUse JSON is on stdin (required)
   --json  print the result as one JSON object instead of lines
-exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 the hook answered: one Claude hook JSON object or nothing (malformed input is answered with a deny), 2 a word or flag other than --harness claude, or the answer could not be written.
 effect: inspection: reads, writes nothing: reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON
 ```
 

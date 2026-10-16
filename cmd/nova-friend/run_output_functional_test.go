@@ -1,4 +1,12 @@
-//go:build race
+//go:build functional
+
+// These two tests run the whole friend daemon with its lane and beat loops on
+// real goroutines and judge the order their writes land in. Their outcome
+// depends on the scheduler, not on the logic under test: on a hosted runner
+// (dev run 38968667637) the beat loop reached its twelfth beat and cancelled
+// the run before the lane had run at all. A unit test is not sensitive to
+// timing (Glenn, 2026-10-16), so they are functional tests. They were
+// `//go:build race` before: run only under the race detector.
 
 package main
 
@@ -139,7 +147,12 @@ func TestRunNeverWritesItsOutputFromTwoGoroutinesAtOnce(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
 	w.wall = func(_ friend.Wall, _ friend.Exec) friend.Exec {
-		return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+		return func(ctx context.Context, _, _ string, args []string, _ string) (string, int, error) {
+			if proofCall(args) {
+				// the harness proof runs inside the lane's wall as a card does
+				// (a6714d09c), and is no card's run
+				return `{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed"}` + "\n", 0, nil
+			}
 			if !friend.InLane(ctx) {
 				return "", 0, nil
 			}

@@ -1,15 +1,11 @@
 package dshdesktop
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/codexdesktop"
 )
 
@@ -49,35 +45,10 @@ func PendingPath(directory, eventID string) (string, error) {
 // Deliver publishes an immutable notification. Acceptance here means queued,
 // never native admission, a model answer, or hook proof. The native receiver
 // batches ordinary records; each current challenge bypasses an ordinary hold.
+// Resolved notice files in r.EventsDir are pruned to MaxResolvedNotices while
+// eventID remains the active pending notice.
 func Deliver(r Route, eventID, notice string) (string, error) {
-	if err := ValidateRoute(r); err != nil {
-		return "", fmt.Errorf("%w: %v", ErrPreSend, err)
-	}
-	if notice != BusNotice && notice != ChallengeNotice {
-		return "", fmt.Errorf("%w: wants a fixed package notice", ErrPreSend)
-	}
-	path, err := PendingPath(r.EventsDir, eventID)
-	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrPreSend, err)
-	}
-	if err := os.Mkdir(filepath.Dir(path), 0700); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", fmt.Errorf("%w: create queue: %v", ErrPreSend, err)
-	}
-	data, err := json.Marshal(notification{QueuedAt: fmt.Sprintf("%020d", time.Now().UnixNano()), Version: 1, EventID: eventID, Challenge: notice == ChallengeNotice})
-	if err == nil {
-		err = atomicfile.Write(path, data, 0600, atomicfile.NoReplace())
-	}
-	if err != nil {
-		kind := ErrOutcomeUnknown
-		if errors.Is(err, os.ErrExist) {
-			kind = ErrPreSend
-		}
-		// Atomic publication may already have succeeded when cleanup reports an
-		// error. The receiver can have observed it; never promise it was unsent.
-		return "", fmt.Errorf("%w: publish notice: %v", kind, err)
-	}
-	saved, _ := codexdesktop.SavedPath(r.EventsDir, eventID)
-	return notice + " Saved external event JSON: " + saved, nil
+	return DeliverAt(r, eventID, notice, time.Now())
 }
 
 func safeID(value string) bool {

@@ -1,0 +1,67 @@
+---
+# eslint under the login's SDK prefix: <sdk>/eslint-<version> is an npm prefix (never npm -g, never root), and
+# <sdk>/bin/eslint links to its bin. The SDK's node must be linked first (the archive tasks in main.yml, or a host that
+# already has it). The install runs with --ignore-scripts; npm verifies each tarball against the registry integrity.
+
+- name: the SDK has the node and npm that install eslint
+  ansible.builtin.stat:
+    path: "{{ nova_sdk_home }}/bin/npm"
+  register: nova_eslint_npm
+
+- name: eslint needs the SDK's npm
+  ansible.builtin.assert:
+    quiet: true
+    that: nova_eslint_npm.stat.exists or ansible_check_mode
+    fail_msg: >-
+      toolchains role: {{ nova_sdk_home }}/bin/npm is missing; run the node toolchain first
+      (ansible-playbook fleet/tools.yml --tags toolchains --limit {{ inventory_hostname }}).
+
+- name: the installed eslint
+  ansible.builtin.command:
+    cmd: "{{ nova_sdk_home }}/eslint-{{ nova_eslint_version }}/node_modules/.bin/eslint --version"
+  environment:
+    PATH: "{{ nova_sdk_home }}/bin:/usr/local/bin:/usr/bin:/bin"
+  register: nova_eslint_probe
+  failed_when: false  # ignored: a missing or older eslint is the probe's answer; the install task below acts on rc and stdout
+  changed_when: false
+  check_mode: false
+
+- name: eslint is installed into its versioned npm prefix
+  ansible.builtin.command:
+    argv:
+      - "{{ nova_sdk_home }}/bin/npm"
+      - install
+      - --prefix
+      - "{{ nova_sdk_home }}/eslint-{{ nova_eslint_version }}"
+      - --ignore-scripts
+      - --no-audit
+      - --no-fund
+      - --no-save
+      - "eslint@{{ nova_eslint_version }}"
+  environment:
+    PATH: "{{ nova_sdk_home }}/bin:/usr/local/bin:/usr/bin:/bin"
+  when: nova_eslint_probe.rc != 0 or (nova_eslint_probe.stdout | trim) != ('v' ~ nova_eslint_version)
+  register: nova_eslint_install
+  changed_when: true
+
+- name: the SDK bin dir links eslint
+  ansible.builtin.file:
+    src: "{{ nova_sdk_home }}/eslint-{{ nova_eslint_version }}/node_modules/.bin/eslint"
+    dest: "{{ nova_sdk_home }}/bin/eslint"
+    state: link
+    force: true
+
+- name: the login's eslint answers with the pinned version
+  ansible.builtin.command:
+    cmd: "{{ nova_sdk_home }}/bin/eslint --version"
+  environment:
+    PATH: "{{ nova_sdk_home }}/bin:/usr/local/bin:/usr/bin:/bin"
+  register: nova_eslint_version_out
+  changed_when: false
+  check_mode: false
+  failed_when: (nova_eslint_version_out.stdout | trim) != ('v' ~ nova_eslint_version)
+  when: not ansible_check_mode
+
+- name: eslint for the bench
+  ansible.builtin.debug:
+    msg: "TOOLCHAINS ESLINT host={{ inventory_hostname }} version={{ nova_eslint_version }} installed={{ nova_eslint_install is changed }}"
