@@ -56,3 +56,31 @@ func TestTheClaudeBoundarySkipsAHeadlessChild(t *testing.T) {
 	require.Zero(t, out.Code, out.Stdout+out.Stderr)
 	assert.Equal(t, "2\n", gen())
 }
+
+// The claude route's own challenge is the Core's notice, as a native route's
+// bootstrap is: pending for the hooks and said into the route's event file,
+// which is all a watcher follows. Dogfood 2026-10-16: the client printed its
+// challenges only to its stdout, so a watcher-only session never saw one.
+func TestTheClaudeRoutesChallengeIsANotice(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	w := r.world()
+	state, settings := t.TempDir(), t.TempDir()
+	w.claudeInstall = notice.InstallClaude
+	w.files = filesFunc(func(path string, data []byte, _ bool) error { return os.WriteFile(path, data, 0o600) })
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(ctx)
+		cancel()
+		return ctx, cancel
+	}
+	var out strings.Builder
+	code := run([]string{"hook", "--as", "ada", "--role", "friend", "--harness", "claude", "--claude-state", state, "--claude-settings", settings}, strings.NewReader(""), &out, io.Discard, w)
+	assert.Zero(t, code, out.String())
+	p, err := notice.ReadClaudePending(state)
+	require.NoError(t, err)
+	require.NotEmpty(t, p.Nonce, "the challenge is the pending notice's: "+out.String())
+	events, err := os.ReadFile(filepath.Join(state, notice.ClaudeEvents))
+	require.NoError(t, err)
+	assert.Contains(t, string(events), "HOOK PUSH push=claude")
+	assert.Contains(t, string(events), "nonce="+p.Nonce)
+}
