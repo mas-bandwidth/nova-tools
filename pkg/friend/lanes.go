@@ -69,6 +69,9 @@ type Card struct {
 	ID     string `json:"id"`
 	Brief  string `json:"brief"`
 	Outbox string `json:"outbox"`
+	// Tier is the server row's tier for this job. A one-shot model runner must
+	// select that tier explicitly rather than inherit an account default.
+	Tier string `json:"tier,omitempty"`
 	// Lane, ServerEpoch and ServerGen are what the server's answer to a lane's ask named
 	// (lane_take.go): the lane that holds the card, the epoch and the generation it holds it
 	// at. A card a lane holds is reported by these, never by its directory's name.
@@ -624,9 +627,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 				}
 				continue
 			}
+			c.Tier = d.cardTier(c)
+			job.Card.Tier = c.Tier
 			ln.card, ln.attempts, ln.marked, ln.job = &c, 0, now, job
 			ln.renewed = 0 // the renewal is once per card (renew.go)
-			ln.tier = d.cardTier(c)
+			ln.tier = c.Tier
 			ln.cap = d.laneCap(ln.tier)
 			ln.capped = false
 			ln.base, ln.baseOK = l.baseTokens(ln.session)

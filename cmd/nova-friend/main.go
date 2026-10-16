@@ -410,8 +410,10 @@ func friendTool(w world) *tool.Tool {
 			if c.Given("width") {
 				c.Problem(fmt.Sprintf("--width is refused: the width is the nova-config friend row's alone, read from each beat's answer, and the daemon has none of its own; remove --width from the loop row or plist and set the row: nova-config friend set %s --width %d", c.Str("as"), c.Int("width")))
 			}
-			if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
-				c.Problem(err.Error())
+			if !(c.Str("harness") == "codex" && c.Str("session") == "" && c.Str("adapter") == "" && c.Str("delivery-dir") == "") {
+				if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
+					c.Problem(err.Error())
+				}
 			}
 			if _, ok := friend.ParsePronouns(c.Str("pronouns")); !ok {
 				c.Problem(fmt.Sprintf("--pronouns %q wants one of %s", c.Str("pronouns"), friend.PronounList()))
@@ -985,7 +987,7 @@ func laneWall(c *tool.Call, w world, dir string, deny func() []string, rowConfig
 	if len(wall.Deny) == 0 {
 		wall.Deny = deny()
 	}
-	if wall.ConfigDir = c.Str("config-dir"); wall.ConfigDir == "" {
+	if wall.ConfigDir = c.Str("config-dir"); wall.ConfigDir == "" || (c.Str("harness") == "codex" && !c.Given("config-dir")) {
 		wall.ConfigDir = rowConfig()
 	}
 	wall.Profile = c.Str("profile")
@@ -1090,13 +1092,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	walledRaw := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		if w.wall == nil {
+			if friend.InLane(ctx) {
+				return "", 0, fmt.Errorf("a lane's %s cannot start: no nova-friend wall is available", prog)
+			}
 			return w.exec(ctx, d, prog, args, stdin)
 		}
 		wl := laneWall(c, w, dir,
 			func() []string { return friend.DefaultDenySelf(w.home, denySeat(ctx)) }, // none given: the seat's working root, never a wall that denies nothing
-			func() string { // --config-dir first is the shared rule; this closure is her row, then CLAUDE_CONFIG_DIR
+			func() string { // --config-dir first is the shared rule; this closure is her row, then the harness account home
 				if d := rowConfigDir.Load(); d != nil && *d != "" {
 					return *d
+				}
+				if c.Str("harness") == "codex" {
+					if home := w.getenv("CODEX_HOME"); home != "" {
+						return home
+					}
+					return filepath.Join(w.home, ".codex")
 				}
 				return w.getenv("CLAUDE_CONFIG_DIR")
 			},
@@ -1164,14 +1175,24 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// nothing writes after run returns.
 	stdout := &runOut{w: c.Stdout}
 	defer stdout.shut()
-	deliver, err := friend.SelectDeliverer(name, c.Str("harness"), dir, c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), watched, stdout)
+	var deliver friend.Deliverer
+	if c.Str("harness") == "codex" && c.Str("adapter") == "" && c.Str("delivery-dir") == "" {
+		if w.wall == nil && !c.DryRun() {
+			return tool.Refuse("the Codex one-shot runner needs a nova-friend lane wall; no model or card was started")
+		}
+		// The headless card runner starts actual Codex model processes. The
+		// separate nova-hook owns delivery to the friend's conversation.
+		deliver = friend.NewCodex(name, dir, watched, stdout)
+	} else {
+		deliver, err = friend.SelectDeliverer(name, c.Str("harness"), dir, c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), watched, stdout)
+	}
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved
 	}
 	if err != nil {
 		return tool.Refuse(err.Error()) // the skeleton renders a refusal with the verb's token, on stderr
 	}
-	if friend.RunsCards(c.Str("harness")) {
+	if c.Str("harness") == "claude" {
 		deliver = friend.NewClaude(name, dir, watched, stdout) // a card a process: the adapter with a lane
 	}
 	if ag, ok := deliver.(*friend.Antigravity); ok {
@@ -1227,6 +1248,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 				return *d
 			}
 			return ""
+		}
+	}
+	if cx, ok := deliver.(*friend.Codex); ok {
+		cx.ConfigDir = func() string {
+			if d := c.Str("config-dir"); d != "" && c.Given("config-dir") {
+				return d
+			}
+			if d := rowConfigDir.Load(); d != nil && *d != "" {
+				return *d
+			}
+			if home := w.getenv("CODEX_HOME"); home != "" {
+				return home
+			}
+			return filepath.Join(w.home, ".codex")
 		}
 	}
 	var recordMu sync.Mutex // the beat and delivery loop share one ordered native record
@@ -1519,6 +1554,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if c.Str("harness") == "claude" {
 				return friend.ReadModels[tier] // a tier with none is the account's own model
 			}
+			if c.Str("harness") == "codex" {
+				return friend.CodexReadModels[tier]
+			}
 			return ""
 		},
 		Progress: func(ctx context.Context, cards []friend.Card) error {
@@ -1575,7 +1613,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if w.holders != nil {
 		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
 	}
-	if perCard {
+	if perCard && c.Str("harness") == "claude" {
 		// a claude lane proves its harness before it takes: claude -p "ok"
 		// --output-format json --max-turns 1 with the row's CLAUDE_CONFIG_DIR,
 		// run by the daemon itself, never through the lane's wall (the proof is
@@ -1778,8 +1816,11 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), DenySelf: c.Str("deny-self"), WallReads: c.Str("wall-reads"),
 		Pronouns: c.Str("pronouns"),
 	}
-	if a.Harness == "claude" {
+	if friend.RunsCards(a.Harness) {
 		a.ConfigDir = c.Str("config-dir")
+		if a.Harness == "codex" && !c.Given("config-dir") {
+			a.ConfigDir = ""
+		}
 	}
 	if len(a.Secrets) > 0 {
 		for _, p := range []struct {
@@ -1912,8 +1953,12 @@ func undriven(harness, dir, session, adapter, deliveryDir, undone string) *tool.
 // harnessSettings is what install writes into the friend's harness and
 // check --settings compares (pkg/friend/settings.go).
 func (w world) harnessSettings(c *tool.Call) friend.HarnessSettings {
+	codexHome := w.getenv("CODEX_HOME")
+	if c.Str("harness") == "codex" && c.Given("config-dir") && c.Str("config-dir") != "" {
+		codexHome = c.Str("config-dir")
+	}
 	h := friend.HarnessSettings{Harness: c.Str("harness"), Friend: c.Str("as"), Dir: c.Str("dir"), Home: w.home, StateDir: c.Str("state-dir"),
-		ConfigDir: c.Str("config-dir"), Model: c.Str("model"), CodexHome: w.getenv("CODEX_HOME"), DSHHome: w.getenv("DSH_HOME"), FS: w.settings}
+		ConfigDir: c.Str("config-dir"), Model: c.Str("model"), CodexHome: codexHome, DSHHome: w.getenv("DSH_HOME"), FS: w.settings}
 	if h.Harness == "grok" {
 		h.Wake = c.Str("session") // for grok, --session names the wake file
 	}
