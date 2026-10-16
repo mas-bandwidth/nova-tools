@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -30,7 +31,8 @@ type Codex struct {
 // after admission; there is no adapter model table or shadow configuration.
 func codexRouteModels(raw string) (map[string]string, error) {
 	var view struct {
-		Routes []struct {
+		TierRoutes map[string][]string `json:"tier_routes"`
+		Routes     []struct {
 			Route struct {
 				Name, Tier, Provider, Model, Harness string
 				Enabled                              bool
@@ -41,10 +43,20 @@ func codexRouteModels(raw string) (map[string]string, error) {
 	if err := json.Unmarshal([]byte(raw), &view); err != nil {
 		return nil, fmt.Errorf("Codex routes: %w", err)
 	}
+	if view.TierRoutes == nil {
+		return nil, errors.New("the sprint routes view has no applied tier arrays; upgrade nova-sprint before starting Codex lanes")
+	}
 	models := map[string]string{}
 	for _, stat := range view.Routes {
 		r := stat.Route
 		if !r.Enabled || r.Harness != "codex" || r.Provider != "subscription-codex" || r.Prices.Billing != "plan" || r.Model == "" || r.Tier == "" {
+			continue
+		}
+		array, applied := view.TierRoutes[r.Tier]
+		if !applied {
+			continue
+		}
+		if len(array) > 0 && !slices.Contains(array, r.Name) {
 			continue
 		}
 		if _, found := models[r.Tier]; found {

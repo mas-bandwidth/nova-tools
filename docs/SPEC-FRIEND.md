@@ -108,7 +108,9 @@ leaves admission unchanged.
     account's `config_dir`, `CODEX_HOME` or `~/.codex` as its Codex home. The
     server row's work or read tier selects exactly one enabled Codex model
     from the applied `nova-config` subscription-plan routes exposed by
-    `nova-sprint routes --json`; no adapter model table or account default
+    `nova-sprint routes --json`, respecting that tier's applied route array
+    (an empty array admits every enabled route). A sprint view without the
+    applied arrays refuses intake; no adapter model table or account default
     chooses a model. A missing or ambiguous route starts no model or failed
     card attempt; the lane waits for corrected configuration. Before taking a card, the runner
     checks `codex login status` inside the same wall and requires a ChatGPT

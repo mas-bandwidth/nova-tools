@@ -110,18 +110,26 @@ func TestCodexProofRequiresChatGPTInTheLaneWall(t *testing.T) {
 func TestCodexModelForTierUsesOneAppliedSubscriptionRoute(t *testing.T) {
 	t.Parallel()
 	routes := func(extra string) string {
-		return `{"routes":[{"route":{"name":"pro-codex","tier":"pro","provider":"subscription-codex","model":"gpt-5.6-sol","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}` + extra + `]}`
+		return `{"tier_routes":{"pro":["pro-codex"]},"routes":[{"route":{"name":"pro-codex","tier":"pro","provider":"subscription-codex","model":"gpt-5.6-sol","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}` + extra + `]}`
 	}
 	model, err := CodexModelForTier(routes(`,{"route":{"name":"pro-other","tier":"pro","provider":"openrouter","model":"paid","harness":"opencode","enabled":true,"prices":{"billing":"metered"}}}`), "pro")
 	require.NoError(t, err)
 	assert.Equal(t, "gpt-5.6-sol", model)
+	model, err = CodexModelForTier(routes(`,{"route":{"name":"second","tier":"pro","provider":"subscription-codex","model":"another","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}`), "pro")
+	require.NoError(t, err, "a second enabled route excluded from the tier array is not ambiguous")
+	assert.Equal(t, "gpt-5.6-sol", model)
 	require.NoError(t, CodexRoutesReady(routes("")))
-	require.ErrorContains(t, CodexRoutesReady(`{"routes":[]}`), "no enabled Codex")
+	require.ErrorContains(t, CodexRoutesReady(`{"tier_routes":{"pro":[]},"routes":[]}`), "no enabled Codex")
+	_, err = CodexModelForTier(`{"tier_routes":{"pro":["pro-other"]},"routes":[{"route":{"name":"pro-codex","tier":"pro","provider":"subscription-codex","model":"gpt-5.6-sol","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}]}`, "pro")
+	require.ErrorContains(t, err, "tier \"pro\" has no enabled Codex subscription plan route")
+	_, err = CodexModelForTier(`{"tier_routes":{"pro":[]},"routes":[{"route":{"name":"pro-codex","tier":"pro","provider":"subscription-codex","model":"gpt-5.6-sol","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}]}`, "pro")
+	require.NoError(t, err, "an empty applied array includes every enabled route")
 	for _, raw := range []string{
+		`{"tier_routes":{"pro":[]},"routes":[]}`,
 		`{"routes":[]}`,
-		routes(`,{"route":{"name":"second","tier":"pro","provider":"subscription-codex","model":"another","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}`),
-		`{"routes":[{"route":{"tier":"pro","provider":"subscription-codex","model":"paid","harness":"codex","enabled":true,"prices":{"billing":"metered"}}}]}`,
-		`{"routes":[{"route":{"tier":"pro","provider":"subscription-codex","model":"off","harness":"codex","enabled":false,"prices":{"billing":"plan"}}}]}`,
+		`{"tier_routes":{"pro":[]},"routes":[{"route":{"name":"first","tier":"pro","provider":"subscription-codex","model":"a","harness":"codex","enabled":true,"prices":{"billing":"plan"}}},{"route":{"name":"second","tier":"pro","provider":"subscription-codex","model":"b","harness":"codex","enabled":true,"prices":{"billing":"plan"}}}]}`,
+		`{"tier_routes":{"pro":[]},"routes":[{"route":{"tier":"pro","provider":"subscription-codex","model":"paid","harness":"codex","enabled":true,"prices":{"billing":"metered"}}}]}`,
+		`{"tier_routes":{"pro":[]},"routes":[{"route":{"tier":"pro","provider":"subscription-codex","model":"off","harness":"codex","enabled":false,"prices":{"billing":"plan"}}}]}`,
 		`not json`,
 	} {
 		_, err := CodexModelForTier(raw, "pro")
