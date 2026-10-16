@@ -124,6 +124,7 @@ var secretOpeners = map[string]any{
 	"pkg/filelock.ParseStamp":                     filelock.ParseStamp,
 	"pkg/fleet.ParseWorkload":                     fleet.ParseWorkload,
 	"pkg/friend.NewClaude":                        friend.NewClaude,
+	"pkg/friend.NewCodex":                         friend.NewCodex,
 	"pkg/friend.NewDeliverer":                     friend.NewDeliverer,
 	"pkg/friend.NewestConversation":               friend.NewestConversation,
 	"pkg/friend.NewestDSHSession":                 friend.NewestDSHSession,
