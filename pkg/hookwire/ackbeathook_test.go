@@ -40,7 +40,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
@@ -426,7 +425,9 @@ func legacyStamp(epoch, atMs int64, by string) string {
 }
 
 // loadLegacyStamp reads the hook record's stamp strictly: exactly what the
-// scripts write for the values it carries, or legacy_shape.
+// scripts write for the values it carries, or the same keys with the time as
+// RFC 3339 text (the record's earlier writer, read as the same lease and
+// never written), or legacy_shape. It is the one rule hook.Judge applies too.
 func loadLegacyStamp(v *Stamp, text []byte) schemaread.Report {
 	var s struct {
 		Epoch int64  `json:"epoch"`
@@ -435,10 +436,29 @@ func loadLegacyStamp(v *Stamp, text []byte) schemaread.Report {
 	}
 	d := json.NewDecoder(bytes.NewReader(text))
 	d.DisallowUnknownFields()
-	if d.Decode(&s) != nil || legacyStamp(s.Epoch, s.At, s.By) != string(text) {
+	if d.Decode(&s) == nil && legacyStamp(s.Epoch, s.At, s.By) == string(text) {
+		*v = stamp(s.Epoch, s.At, s.By)
+		return schemaread.Report{}
+	}
+	var r struct {
+		Epoch int64  `json:"epoch"`
+		At    string `json:"at"`
+		By    string `json:"by"`
+	}
+	d = json.NewDecoder(bytes.NewReader(text))
+	d.DisallowUnknownFields()
+	if d.Decode(&r) != nil {
 		return schemaread.Report{Reason: "legacy_shape"}
 	}
-	*v = stamp(s.Epoch, s.At, s.By)
+	t, err := time.Parse(time.RFC3339, r.At)
+	if err != nil {
+		return schemaread.Report{Reason: "legacy_shape"}
+	}
+	by, err := json.Marshal(r.By)
+	if err != nil || fmt.Sprintf(`{"epoch":%d,"at":%q,"by":%s}`, r.Epoch, r.At, by) != string(text) {
+		return schemaread.Report{Reason: "legacy_shape"}
+	}
+	*v = stamp(r.Epoch, t.UnixMilli(), r.By)
 	return schemaread.Report{}
 }
 
@@ -769,13 +789,19 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			{"at_ms absent from the JSON text", edited(t, goodStampText, "  \"at_ms\": 1792000000000,\n", ""), "absent_required (at_ms)"},
 			{"a NUL in the holder", withStamp(func(v *Stamp) { v.By[2] = 0 }), "malformed"},
 			{"no stamp at all", []byte("hello stamp"), "malformed"},
-			// the record's stamp before this wire: an RFC 3339 time, an
-			// unknown key or spacing the scripts never write is refused by
-			// name, never read as no stamp
-			{"a legacy stamp with an RFC 3339 time", []byte(`{"epoch":7,"at":"2026-10-11T12:00:00Z","by":"x"}`), "legacy_shape"},
+			// an unknown key, spacing or time text the scripts never write is
+			// refused by name, never read as no stamp (an RFC 3339 time reads:
+			// see the RFC 3339 stamp read below)
+			{"a legacy stamp with a time that is no RFC 3339", []byte(`{"epoch":7,"at":"yesterday","by":"x"}`), "legacy_shape"},
 			{"a legacy stamp with a key it never writes", []byte(`{"epoch":7,"at":1792000000000,"by":"x","ttl":1}`), "legacy_shape"},
 			{"a legacy stamp spaced as the scripts never write it", []byte(`{"epoch":7, "at":1792000000000,"by":"x"}`), "legacy_shape"},
 		}, framing(goodStampWire, goodStampText)...))
+		// the record's stamp before this wire carried an RFC 3339 time: it reads
+		// as the same lease in milliseconds, as hook.Judge reads it
+		gotRFC, rfcRes, err := rs.Read([]byte(`{"epoch":7,"at":"2026-10-11T12:00:00Z","by":"x"}`))
+		require.NoError(t, err)
+		assert.Equal(t, schemaread.FormLegacy, rfcRes.Form)
+		assert.Equal(t, stamp(7, time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC).UnixMilli(), "x"), gotRFC)
 		gotStamp, res, err := rs.Read(writer(t, "newer-stamp"))
 		require.NoError(t, err, "a newer writer's stamp reads")
 		assert.Equal(t, 1, res.Unknown)
@@ -929,12 +955,8 @@ func TestLayer1AckBeatHook(t *testing.T) {
 		}
 		assert.Equal(t, uint64(4), rb.Counts().Reads(schemaread.FormLegacy))
 
-		// The stamp. The old writer is the hook record's scripts' JSON, the
-		// old reader hook.Judge: it reads the legacy stamp as a live lease of
-		// its holder. Through the switch it reads the JSON text form as the
-		// same lease (it keys on epoch and by, which the text form keeps, and
-		// skips at_ms), and a binary or base64 stamp as no lease: it never
-		// counts a stamp it cannot read, which is why readers go first.
+		// The stamp. The hook package reads every form since the reader cutover
+		// (hook.TestHookStampTyped pins it), so this test pins the table side.
 		rs := schemaread.NewReader(stampCodec(t))
 		for _, tc := range []struct {
 			epoch, at int64
@@ -945,11 +967,6 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			{math.MaxInt64, math.MaxInt64, `quote " and \ slash`},
 		} {
 			line := legacyStamp(tc.epoch, tc.at, tc.by)
-			rec := map[string]string{"role": string(hook.Friend), "state": "hooked", "epoch": strconv.FormatInt(tc.epoch, 10)}
-			old := hook.Judge("ada", rec, []hook.PushRead{{Live: line}})
-			require.Len(t, old.Pushes, 1)
-			assert.Equal(t, hook.PushArmed, old.Pushes[0].State, "the old reader reads the old writer: %s", line)
-			assert.Equal(t, tc.by, old.Pushes[0].By)
 
 			legacy, res, err := rs.Read([]byte(line))
 			require.NoError(t, err, line)
@@ -962,12 +979,6 @@ func TestLayer1AckBeatHook(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, form, res.Form)
 				assert.Equal(t, legacy, got, "the old form in and the new form in read identically (%s)", form)
-				meets := hook.Judge("ada", rec, []hook.PushRead{{Live: string(out)}})
-				if form == schemaread.FormJSON {
-					assert.Equal(t, old.Pushes[0], meets.Pushes[0], "the old reader reads the JSON text stamp as the legacy one")
-					continue
-				}
-				assert.Equal(t, hook.PushDown, meets.Pushes[0].State, "the old reader does not count a %s table stamp", form)
 			}
 		}
 		assert.Equal(t, uint64(3), rs.Counts().Reads(schemaread.FormLegacy))
