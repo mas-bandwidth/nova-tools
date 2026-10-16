@@ -33,7 +33,8 @@ func fakeClaude(t *testing.T, outbox string, write bool) (run Exec, rec string) 
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755))
 	return func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
-		return RealExec(ctx, dir, "/usr/bin/env", append([]string{"PATH=" + bin + ":/usr/bin:/bin", name}, args...), stdin)
+		// -u: a test run inside a lane inherits the marker; only the lane's own env may set it
+		return RealExec(ctx, dir, "/usr/bin/env", append([]string{"-u", "NOVA_HOOK_CLAUDE_CHILD", "PATH=" + bin + ":/usr/bin:/bin", name}, args...), stdin)
 	}, rec
 }
 

@@ -52,7 +52,7 @@ type HarnessFacts struct {
 	Failed         int    `json:"failed"`    // of those, the ones that failed (JSON only)
 	Broken         string `json:"broken"`    // RFC3339 or "-"
 	Reason         string `json:"reason"`    // one line or "-"
-	Proof          string `json:"proof"`     // the daemon's last harness proof: "ok", its failure, or "-" (JSON only)
+	Proof          string `json:"proof"`     // a fresh status's last harness proof: "ok" or its failure; "" when stale, absent or never run (JSON only)
 }
 
 // BusFacts carries facts about real messages on the bus.
@@ -244,7 +244,8 @@ func DefaultReadWork(dir string) (inboxCount, outboxCount int, newestName string
 // count and age is of the window (docs/SPEC-FRIEND.md "Check": the verdicts).
 // The facts decide first, in this order:
 //  1. broken when the session is marked broken, or deliveries in the window
-//     are all failures (delivered > 0 and failed == delivered)
+//     are all failures (delivered > 0 and failed == delivered), or a fresh
+//     status's harness proof failed (the daemon takes no card while it stands)
 //  2. down when her nova-hook record does not prove her there
 //  3. else ok
 //
