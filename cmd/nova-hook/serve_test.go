@@ -639,3 +639,25 @@ func TestAFriendWhoseServiceStopsIsDownAtItsLeaseLapse(t *testing.T) {
 	assert.Equal(t, hook.StateExpired, r.h.State(t, "bob").State)
 	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: hooked, not proven (expired)"))
 }
+
+// TestAHookedCoordinatorNotProvenIsCoordinatorDown pins the coordinator's own
+// down (tla/HookBeat.tla, CoordOf: the first coordinator up): a coordinator
+// still hooked whose hook service stopped is not proven, so she is down; the
+// other live names are asked who takes over, once, and she is sent no
+// FRIEND DOWN about herself.
+func TestAHookedCoordinatorNotProvenIsCoordinatorDown(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "carl", hook.Comms)
+	for range 5 {
+		r.step(t, []string{"bob"}, "bob", "carl")
+	}
+	require.Equal(t, hook.StateExpired, r.h.State(t, "ada").State, "still hooked")
+	for _, n := range []string{"bob", "carl"} {
+		assert.Equal(t, 1, r.count(t, n, "COORDINATOR DOWN ada: who takes over?"), n)
+	}
+	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN ada"), "no judgment about herself")
+}

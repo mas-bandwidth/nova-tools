@@ -172,8 +172,11 @@ Every line runs as printed:
 - **Durable challenge delivery.** A private `hook:delivery:<name>` outbox keeps the nonce, epoch and
   bus once-key. Failed or unknown sends retry that nonce without moving its deadline. A committed
   bus once-key recovers a crash before delivery acknowledgement. Expiry invalidates the old nonce
-  and recent entry. Failed renewal is latched: continued traffic cannot trigger another proof-expiry
-  challenge until the name is quiet or the model proves a fresh nonce. Activity never renews nonce or proof.
+  and recent entry. Failed renewal is latched against a challenge every pass, never against a retry: a hooked
+  name whose challenge expired unanswered, or whose leases stand with its proof lapsed, is asked again
+  once per `--down-after` from its last challenge by the store's `TIME`, and her own bus sends never
+  hold that off, so an active friend whose proof lapsed is never left down and deaf
+  (`tla/HookBeat.tla`, `Retry`, `AliveHookedEventuallyUp`; reversed witness `MCHookBeatBrokenLatch`). Activity never renews nonce or proof.
 - **Notice rollout.** Receivers accept both canonical body versions; the server emits the truthful
   silence wording. Returning older binaries update through the existing adopt/back-up flow. Their
   byte-for-byte parser does not understand the new body until updated.
@@ -198,8 +201,9 @@ Every line runs as printed:
   re-arms with no model running stays down: no `FRIEND BACK` for the arming, and no second
   `FRIEND DOWN` when its unanswered challenge unhooks it again. A name is back only once its model
   proves. A proven name whose lease or proof lapses is down (`hooked, not proven (<state>)`). The
-  other live names, who hear a broadcast, are the names up (proven); the coordinator stays the first
-  hooked name of its role, the recipient of the judgments and the status pushes. The model is
+  other live names, who hear a broadcast, are the names up (proven); the coordinator is the first
+  name of its role up: a coordinator hooked and not proven is down, and the other live names get
+  the `COORDINATOR DOWN <name>: who takes over?` judgment, as for an unhooked one. The model is
   `tla/HookBeat.tla` (Parts `proven`: `DaemonHook`, `NoBackWithoutProof`, `NoFlapWithoutProof`;
   the reversed witness `MCHookBeatBrokenArmedBack`, up as hooked, and `MCHookBeatWitnessArmedDown`).
 - **Coalesced telling, one write per audience.** Changes in the down set or coordinator are sent
