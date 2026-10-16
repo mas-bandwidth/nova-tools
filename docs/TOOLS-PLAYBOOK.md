@@ -320,19 +320,40 @@ cards again.
 earlier steps found no proof. Do not delete the PAUSED marker or the fault file by hand, because
 resume and lanes do it and say what they cleared.
 
-## 13. Coordinating from a Codex child while the main chat stays responsive
+## 13. Codex child bus communication while the main chat stays responsive
 
-**Situation.** A Codex chat must keep receiving user direction while sustained sprint
-coordination runs in a child agent. The child owns the coordinator's queue, judgments and
-work for that session; the main chat relays user direction and gives short status replies.
+**Situation.** A Codex chat must keep receiving user direction while a child owns
+ongoing bus communication. The core setup needs only nova-bus and Redis: use
+`--role comms` for a bus-only child, or `--role coordinator` when it also owns a
+sprint seat. Sprint queue dispatch is a separate integration. The main chat
+relays user direction and gives short status replies.
 
 1. Start the child through Codex's agent facility with the coordinator brief, current
    working directory and stop instructions. Keep one active owner of the coordinator
-   identity. In the child, run `nova-hook hook --as <name> --role coordinator` under a
-   monitored terminal, with the seat's Redis address. Read its `HOOK PUSH` lines and
-   answer `HOOK CHALLENGE` with `nova-hook prove` from the child's own turn. A plain
-   stdout hook delivers only while that terminal is monitored; it does not wake an
-   idle child agent.
+   identity. In the child, run `nova-hook hook --as <name> --role comms` (or
+   `coordinator` for a sprint seat) under a monitored terminal, with the bus
+   Redis address. Keep one reader of that terminal. In a Codex tool turn,
+   `functions.exec` can `await yield_control()` and then read bounded chunks
+   with `tools.write_stdin({session_id, chars:"", yield_time_ms:5000})`;
+   `notify(actualHookLine)` makes each received `HOOK PUSH` or `HOOK CHALLENGE`
+   visible to the child model while the tool cell continues. Bound the monitor's
+   lifetime, output and read rate; surface read failures and stop it when the
+   child stops. At the bound, end the old reader before starting a new reader
+   on the same terminal; then inspect hook status and pending bus messages for
+   a possible gap. Never run two readers of one terminal. The model answers a
+   challenge with `nova-hook prove` in its own
+   turn. A `notify` receipt is model-visible active-turn delivery, not a proof
+   that the model answered it. A plain stdout hook or a completed monitor does
+   not wake an idle or closed child chat.
+   `nova-hook codex-owner --thread <exact-child-id>` checks native routing
+   without changing the hook. If it reports `no-client-found`, do not bind
+   `--harness codex` to that child or silently substitute the main chat.
+
+   The 2026-10-16 active-turn trial records a real `HOOK CHALLENGE
+   nonce=63319f871474a2ac` arriving through a bounded `notify` Monitor while
+   the child handles other work. The child model runs `nova-hook prove` at
+   16:56:58Z; the hook record remains epoch 82 with `bus` and `sprint` proven.
+   This establishes active-turn challenge handling, not idle wake.
 2. The main chat remains available for user messages. Forward a changed priority or
    stop request to the child through the agent facility. The child checks for steering
    before its next action, stops new work when asked, and reports what it actually
@@ -350,3 +371,20 @@ The hook transports and proves messages; it does not create a child, propagate a
 user's stop request, or resume a closed child chat. The Codex agent facility must
 provide those lifecycle steps. If it exposes no supported child recipient or idle
 wake contract, report that limit and keep the monitored child active while work runs.
+
+When the child also runs a sprint worker or coordinator, queue control remains
+model-owned. Read the current queue and width, assign each `(epoch, card ID,
+generation)` to at most one actual working child, collect its full report and
+logs, then refill to current width. A worker takes a ready card with
+`nova-sprint take card.wN@gen --as friend.<name> --epoch E`; `nova-sprint friend
+take <name> <card>` is a coordinator withdrawal, not a worker pickup. Stage
+requires the canonical Postgres config and an exact base anchor: if the named
+base branch is absent, obtain the coordinator's carried base and stage fresh.
+The server's current brief fields supersede a stale local inbox brief. These
+steps run only while an active child Monitor is delivering events and the model
+is handling them; a hook proof or idle terminal does not perform queue refill.
+For a completed worker card, push the exact origin branch before publishing the
+atomic `REPORT.md`: its first lines are `Verdict: LAND` (or `HOLD`) and
+`Head: <full commit SHA>`, followed by the evidence the verdict uses. Read the
+full worker report and logs before deciding; a truncated delivery packet is
+not a source verdict.
