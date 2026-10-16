@@ -267,6 +267,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	cfg.Status = memberStatusFile(*as, *root)
 	if !*reader {
 		cfg.LoadUnmeasured = probeLoadUnmeasured(send)
+		// the machine's gate facts, measured once at start, ride every beat (facts.go)
+		cfg.Facts = machineFacts(localProbe())
 	}
 	// the attempt decision reads the decision key in this process when --pass names
 	// it and the environment does not hold it (keys.go)

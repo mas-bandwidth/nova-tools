@@ -480,6 +480,11 @@ type Config struct {
 	// a beat that carries 0 for want of a reading of the machine also says so; nil means the
 	// flag is never sent and the beat carries a plain --load 0.
 	LoadUnmeasured func() bool
+	// Facts are this machine's gate facts as the member measures them at start (its OS, its
+	// ISA, landlock, the TLA jar, its toolchains; nova-sprint FieldFacts): every beat carries
+	// them as fleet beat --facts, and the sprint writes them onto the member's control card,
+	// where the deal holds a card's GATE-NEEDS against them. nil sends none.
+	Facts []string
 	// Status marks this member's own status file with a word ("beat-refused" while a beat
 	// the server refused stands, "" once a beat is taken), so doctor and the dashboard row
 	// can show it (nova-sprint reads the status); nil writes nothing.
@@ -614,6 +619,10 @@ type Member struct {
 	// --load-unmeasured (Config.LoadUnmeasured, probed once at New), so a beat that carries 0
 	// for want of a reading also says so.
 	loadUnmeasuredFlag bool
+	// factsOffUntil is set when a sprint from before v1.4.3 refused a beat's --facts: the
+	// beat goes again at once without them, and they are sent again from this time (Beat),
+	// so a member never reads down for a word its sprint does not know yet.
+	factsOffUntil time.Time
 	// lastBeatRefusal is when the member last logged a beat the server refused (exit 2),
 	// so a refusal is logged at most once a minute (Beat)
 	lastBeatRefusal time.Time
@@ -1020,11 +1029,23 @@ func (m *Member) Beat() error {
 		}
 		args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
 	}
+	plain := args
+	withFacts := !m.cfg.Reader && len(m.cfg.Facts) > 0 && !m.clock().Before(m.factsOffUntil)
+	if withFacts {
+		args = append(slices.Clone(args), "--facts", strings.Join(m.cfg.Facts, ","))
+	}
 	run := m.sprint.Run
 	if m.cfg.Reader {
 		run = func(args ...string) (int, []byte) { return queueOf(m.sprint.Run, args) }
 	}
 	code, out := run(args...)
+	if withFacts && code == 2 && bytes.Contains(out, []byte("--facts")) {
+		// a sprint from before v1.4.3 does not know the word: the beat goes again without
+		// it, and the facts are offered again after FactsRetry
+		m.factsOffUntil = m.clock().Add(FactsRetry)
+		args = plain
+		code, out = run(args...)
+	}
 	if code == 0 && !m.cfg.Reader && m.cfg.Meter != nil {
 		m.beaten = total
 	}
@@ -1039,6 +1060,10 @@ func (m *Member) Beat() error {
 	}
 	return nil
 }
+
+// FactsRetry is how long a member whose sprint refused a beat's --facts beats without them
+// before it offers them again (Beat, Member.factsOffUntil).
+const FactsRetry = 10 * time.Minute
 
 // sayBeatRefused logs a beat the server refused (exit 2) with the exact argv the member
 // sent it, at most once a minute (Beat; docs/SPEC-SPRINT.md, the fleet, the beat): the
