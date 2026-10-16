@@ -87,7 +87,6 @@ func cairnTool() *tool.Tool {
 open starts a session and records its --publish policy; append keeps an entry's exact words.
 Same id, same words: duplicate (duplicate=true, exit 0); same id, other words: conflict (exit 1).
 --publish records your policy only: nothing is sent, and every line says published=false.
---publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append with no --publish carries the session's, and one that differs is a conflict naming both (exit 1).
 first run: the four examples are one sitting: the open makes ./cairns, the rest read it back.`,
 		ExitTable: "0 done, 2 usage or could not run, for every verb; by verb:\n" +
 			"  open: 0 the record stands (opened, or already matching); 1 a re-open naming\n" +
@@ -104,7 +103,8 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 				Example: "open --store ./cairns --session s1 --publish manual",
 				Effect:  tool.LocalWrite,
 				Detail: "A re-open naming the recorded policy (and source, when given) changes nothing; one naming\n" +
-					"another is a conflict, exit 1, and names the open that matches.",
+					"another is a conflict, exit 1, and names the open that matches.\n" +
+					"--publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append with no --publish carries the session's, and one that differs is a conflict naming both (exit 1).",
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					record(f)
