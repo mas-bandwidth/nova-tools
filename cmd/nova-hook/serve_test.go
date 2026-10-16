@@ -565,7 +565,7 @@ func TestServeDryRunPlansAPassAndWritesNothing(t *testing.T) {
 	require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State, "the real pass does what the plan said")
 }
 
-// TestAnArmedFriendIsBackOnlyWhenItsModelProves pins Glenn's ruling of
+// TestAnArmedFriendIsBackOnlyWhenItsModelProves pins the ruling of
 // 2026-10-16 (tla/HookBeat.tla, NoBackWithoutProof and NoFlapWithoutProof):
 // a friend is up only while its model has proven a challenge. Down once, its
 // supervised hook service re-arms it and renews its lease with no model

@@ -83,8 +83,8 @@
 \* head in hand) are the reversed witnesses.
 \*
 \* Up is proven (Parts "proven"; hook/redis.go beatLua, Passed.Unhooked and
-\* Passed.Live; Glenn, 2026-10-16: "make sure he is only live when he is
-\* really up"): what the friends hear as up is a name hooked AND proven in its
+\* Passed.Live; the ruling of 2026-10-16: a friend is live only when
+\* really up): what the friends hear as up is a name hooked AND proven in its
 \* epoch, never one merely hooked. proven is the bus push's proof of the
 \* record's epoch, which only the model's own answer writes (Answer,
 \* AnswerIssued); an arming clears it (a new epoch) and so does an unhook. A
@@ -268,6 +268,7 @@ Shown(n) ==
         ELSE Table[HookUp(n)][held[n]]
 
 Init ==
+    /\ proven = [n \in Names |-> TRUE] \* first: told and heard below read Cur
     /\ nonceVersion = [n \in Names |-> FALSE]
     /\ delivered = [n \in Names |-> FALSE]
     /\ busy = [n \in Names |-> FALSE]
@@ -310,7 +311,6 @@ Init ==
     /\ inbox = {}
     /\ shown = {}
     /\ want = {}
-    /\ proven = [n \in Names |-> TRUE]
 
 \* The interval ends: a standing challenge is late (past its until, still
 \* answered inside the window), an issued challenge ages and leaves the
@@ -903,7 +903,7 @@ NoExpiredRetryWhileTalking ==
     [][\A n \in Names : Silence /\ chal[n] \in {"late", "failed"} /\
        lastActivity[n] <= QuietLimit(n) => chal'[n] # "open"]_vars
 
-\* Up is proven (Glenn, 2026-10-16): a name leaves the down set the friends are
+\* Up is proven (2026-10-16): a name leaves the down set the friends are
 \* to hear only with the model's proof of its epoch standing. Under
 \* "armedback" (up is hooked) a service's re-arm with no model breaks it.
 NoBackWithoutProof ==

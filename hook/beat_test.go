@@ -598,8 +598,8 @@ func TestAFreshlyArmedNameIsChallengedAtTheNextPass(t *testing.T) {
 }
 
 // TestUpIsProvenNeverMerelyArmed pins who is up (tla/HookBeat.tla,
-// NoBackWithoutProof and NoFlapWithoutProof; Glenn, 2026-10-16: only live
-// when really up): a name its service arms and renews, with no model to
+// NoBackWithoutProof and NoFlapWithoutProof; the ruling of 2026-10-16:
+// only live when really up): a name its service arms and renews, with no model to
 // prove, is hooked and live but down, so it is never back and never hears a
 // broadcast; its lapse to unhooked changes nothing told; only the model's
 // proof brings it back, once.
