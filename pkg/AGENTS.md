@@ -10,6 +10,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `bounded/` | bounded readers and byte buffers | `go test ./pkg/bounded` | `go test ./pkg/bounded` |
 | `buildinfo/` | binary identity and version info | `go test ./pkg/buildinfo` | `go test ./pkg/buildinfo` |
 | `bus/` | the message bus over Redis streams: the rules (send, recv, ack, peek, log) over a Store of the few commands used, the Redis store and the in-memory fake | `go test ./pkg/bus` | `go test -tags functional ./pkg/bus` |
+| `buswire/` | the bus envelope's table wire, generated from schemas/bus by the pinned schema compiler: the Envelope, its Kind enum and Name element; read strictly through pkg/schemaread | `go test ./pkg/buswire` | `make schemawire-check` |
 | `cardcontract/` | the frame around a card's task: the frame file, JOB.md, the result shape, and the shims of each model family's profile | `go test ./pkg/cardcontract` | `go test -tags functional ./pkg/cardcontract` |
 | `cardcost/` | what a card cost: a route's price sheet, a run's tokens by class, the predicted cost and a consumer card's usage record, in exact decimal arithmetic | `go test ./pkg/cardcost` | `go test ./pkg/cardcost` |
 | `cardhdr/` | card header vocabulary and one-invariant lint | `go test ./pkg/cardhdr` | `go test ./pkg/cardhdr` |
