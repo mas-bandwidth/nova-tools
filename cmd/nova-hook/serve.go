@@ -405,7 +405,8 @@ func serverSent(m bus.Message, as string) bool {
 	}
 	switch m.Kind {
 	case bus.KindStatus:
-		return strings.HasPrefix(m.Subject, stateSubject)
+		// the bus stores a kind-less send (the challenge) as status (bus.Bus.check)
+		return strings.HasPrefix(m.Subject, stateSubject) || strings.HasPrefix(m.Subject, challengeSubject)
 	case bus.KindJudgment:
 		for _, p := range judgmentSubjects {
 			if strings.HasPrefix(m.Subject, p) {
@@ -414,12 +415,16 @@ func serverSent(m bus.Message, as string) bool {
 		}
 		return false
 	}
-	return strings.HasPrefix(m.Subject, "HOOK CHALLENGE ")
+	return strings.HasPrefix(m.Subject, challengeSubject)
 }
 
 // stateSubject starts a friend-status line's subject; judgmentSubjects start
 // the judgments the server raises (tell) and pushes again (judgments).
 const stateSubject = "FRIEND STATE "
+
+// challengeSubject starts the heartbeat's challenge, sent with no kind and
+// stored as status.
+const challengeSubject = "HOOK CHALLENGE "
 
 var judgmentSubjects = []string{"FRIEND DOWN ", "FRIEND BACK ", "COORDINATOR DOWN ", "OVERDUE "}
 

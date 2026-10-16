@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -189,6 +190,7 @@ func TestAMessageFromTheHooksOwnNameIsShownOnlyWhenTheServerSentIt(t *testing.T)
 		want bool
 	}{
 		{bus.Message{From: "ada", Subject: "HOOK CHALLENGE nonce=x"}, true},
+		{bus.Message{From: "ada", Kind: bus.KindStatus, Subject: "HOOK CHALLENGE nonce=x"}, true}, // as the bus stores it
 		{bus.Message{From: "ada", Kind: bus.KindStatus, Subject: "FRIEND STATE bob proven->unhooked at=2026-10-15T14:00:00Z"}, true},
 		{bus.Message{From: "ada", Kind: bus.KindJudgment, Subject: "FRIEND DOWN bob: no answer"}, true},
 		{bus.Message{From: "ada", Kind: bus.KindJudgment, Subject: "FRIEND BACK bob"}, true},
@@ -201,4 +203,36 @@ func TestAMessageFromTheHooksOwnNameIsShownOnlyWhenTheServerSentIt(t *testing.T)
 	} {
 		assert.Equal(t, c.want, serverSent(c.m, "ada"), "%s %q", c.m.Kind, c.m.Subject)
 	}
+}
+
+// The heartbeat server's challenge, as the bus stores it, passes the loop's
+// own-name filter. A send with no kind is stored as kind status (bus.Bus.check),
+// so the server's kind-less challenge reaches every stream as status, and a
+// filter that took challenges only when kind-less passed none of them.
+// Dogfood 2026-10-16: the claude route never saw the server's challenge
+// 01M52YTW63V92PTE140CEKHBJF (kind=status on the wire); only its own
+// bootstraps, which never cross the bus, became notices.
+func TestTheServersChallengeAsStoredIsShownUnderTheOwnName(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	w := r.world()
+	b := &bus.Bus{Store: bus.Redis{C: r.h.Client}}
+	// the message pass sends (serve.go), word for word
+	m := bus.Message{From: "ada", To: []string{"ada"}, Subject: "HOOK CHALLENGE nonce=e9c904dbf7557346",
+		Body: notice.ChallengeText("ada", "e9c904dbf7557346", hook.AnswerBound), Once: hook.DeliveryOnce("ada", 1, "e9c904dbf7557346")}
+	_, err := w.deliver(b, m)
+	require.NoError(t, err)
+	es, err := r.h.Client.XRange(context.Background(), bus.StreamOf("ada"), "-", "+").Result()
+	require.NoError(t, err)
+	require.Len(t, es, 1)
+	fields := map[string]string{}
+	for k, v := range es[0].Values {
+		fields[k], _ = v.(string)
+	}
+	got := bus.Parse(fields)
+	require.Equal(t, bus.KindStatus, got.Kind, "the bus stores a kind-less send as status")
+	assert.True(t, serverSent(got, "ada"), "the loop shows the server's challenge to the Core")
+	nonce, ok := notice.Canonical(got, "ada")
+	assert.True(t, ok, "and it is canonical, so the Core can hold it")
+	assert.Equal(t, "e9c904dbf7557346", nonce)
 }
