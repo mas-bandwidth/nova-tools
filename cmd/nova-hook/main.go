@@ -970,7 +970,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			var batch []bus.Message
 			for _, e := range got {
 				cursor = e.Entry
-				if m := e.Message(); m.From != s.as || serverSent(m, s.as) || laneSelf(m, s.as) { // a server may speak under its own name (serverSent); the lane client tells its own
+				if m := e.Message(); m.From != s.as || serverSent(m, s.as) || sprintSent(m, s.as) || laneSelf(m, s.as) { // the heartbeat and sprint servers, and the lane client, may speak under this name
 					if core != nil {
 						batch = append(batch, m)
 						continue
