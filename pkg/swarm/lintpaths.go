@@ -558,8 +558,7 @@ func reachesModelFile(e string) bool {
 // modelTouchLine is the line of the first PATHS or NEW header whose entries reach a .tla or
 // .cfg under tla/; 0 when neither does. Ported from nova-sprint 705fa0b1.
 func modelTouchLine(h map[string]headerField) int {
-	for _, key := range []string{"PATHS", "NEW"} {
-		f := h[key]
+	for _, f := range []headerField{h[cardhdr.KeyPaths], h["NEW"]} {
 		if !f.found {
 			continue
 		}
@@ -670,8 +669,7 @@ func spikeOutsideResearch(h map[string]headerField) (int, []string) {
 	}
 	var outside []string
 	line := 0
-	for _, key := range []string{"PATHS", "NEW"} {
-		f := h[key]
+	for _, f := range []headerField{h[cardhdr.KeyPaths], h["NEW"]} {
 		if !f.found {
 			continue
 		}
