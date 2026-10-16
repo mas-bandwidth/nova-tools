@@ -167,6 +167,29 @@ func (l *loop) laneAsk(ln *lane, now time.Time) (Card, bool) {
 	}
 	at := now.UTC().Format(time.RFC3339)
 	member := "friend." + d.Friend
+	if codex, ok := d.Deliver.(*Codex); ok {
+		// The server may take any unlaned working card before a ready one.
+		// Check every candidate's current tier before asking it to move one;
+		// one missing route parks intake without spending a card attempt.
+		seen := map[string]bool{}
+		for _, held := range d.heldCards {
+			if held.Kind == "read" || held.Lane != 0 || held.Col != "working" && held.Col != "ready" || seen[held.Tier] {
+				continue
+			}
+			seen[held.Tier] = true
+			var err error
+			if codex.ModelForTier == nil {
+				err = errors.New("no canonical route reader")
+			} else {
+				_, err = codex.ModelForTier(l.ctx, held.Tier)
+			}
+			if err != nil {
+				ln.askAt = now.Add(LaneIdleAsk)
+				l.laneSay(ln, fmt.Sprintf("%s lane %d: card %s tier %s has no applicable Codex route: %s; no server take", at, ln.n, held.Card, dash(held.Tier), oneLine(err.Error(), 300)))
+				return Card{}, false
+			}
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TakeWait)
 	out, err := d.Take(ctx, LaneTakeArgv(member, ln.n))
 	cancel()
