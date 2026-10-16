@@ -15,7 +15,8 @@
 // while the model proves (Round's proven). A dead client renews nothing, and neither does a
 // live client whose model stopped answering its challenges: the lease runs out and the
 // server returns the card. The model is tla/FriendLaneClient.tla (OneLanePerCard,
-// FinishedOnce, TakenStaysTaken, RestartResumes, DeadClientReleases, DeadModelReleases;
+// FinishedOnce, TakenStaysTaken, RestartResumes, DeadClientReleases, DeadModelReleases, and
+// for the width config.go applies NoLostCard, NoDuplicateHold, DrainNeverTakes, GrowTakes;
 // witnesses MCFriendLaneClientBroken*.cfg).
 package friend
 
@@ -38,17 +39,25 @@ const Subject = "SPRINT CARDS "
 // Ask sends one verb to the sprint server and answers what it printed, or its refusal.
 type Ask func(ctx context.Context, argv []string) (string, error)
 
-// Client is one friend's lane client. Name is her name (her row is friend.<name>), Width
-// her lanes (lanes 1..Width are asked), Ask the server, Dir the brief cache (a directory the
-// client may find empty at any start).
+// Client is one friend's lane client. Name is her name (her row is friend.<name>), Ask the
+// server, Fetch her canonical nova-config row (config.go), Dir the brief cache (a directory
+// the client may find empty at any start). It keeps no width of its own: the lanes that take
+// are the applied row's (Intake), read again every ConfigEvery.
 type Client struct {
 	Name  string
-	Width int
 	Ask   Ask
+	Fetch Fetch
 	Dir   string
 
 	told map[string]bool // the holds told this process's life: connection state, never decides
+	held []int           // the lanes the server last said hold a card: renewed next round even when friend cards does not answer
+	tier map[string]string
+	conf applied
 }
+
+// MaxLanes bounds one round's free-lane asks (the sprint server's MaxWidth): a bound on a
+// round against a server that never answers a free lane empty, never a width.
+const MaxLanes = 1024
 
 // Hold is one lane's card as the server's answer names it, and where its brief is cached.
 type Hold struct {
@@ -58,6 +67,9 @@ type Hold struct {
 	Epoch uint64
 	Kind  string
 	Job   string
+	Tier  string // the card's tier as the server names it (its packet, else friend cards), "" when unknown
+	Route string // the route and model the server drew for the card from nova-config's tiers, "" when none
+	Model string
 	Brief string // the cached BRIEF.md, "" when the server sent no brief
 }
 
@@ -76,36 +88,111 @@ type answer struct {
 	Packets []struct {
 		Card  string `json:"card"`
 		Brief string `json:"brief"`
+		Tier  string `json:"tier"`
+		Route string `json:"route"`
+		Model string `json:"model"`
 	} `json:"packets"`
 }
 
-// Round asks the server once for every lane, 1..Width, and answers every hold the server
-// names and, of them, the ones this client has not told the model yet (fresh), lane order.
+// Round is one round of the lanes: every lane the server says holds a card of hers is asked
+// (and so renewed), whatever the width now; then, while her held cards are fewer than the
+// applied width (Intake), free lanes are asked in order, each taking her next ready card,
+// until one answers empty (the server had none to give, or its own width bound held). It
+// answers every hold the server names and, of them, the ones this client has not told the
+// model yet (fresh), lane order.
+//
+// The held lanes are the server's answer to friend cards (each working card's lane); when it
+// does not answer, the lanes the last round found held, so no held lane goes unrenewed. Only
+// a lane the server says holds a card is asked as a renewal: a free lane's ask is a take. A lowered width therefore drains: no lane takes until the held cards are
+// under it, and the held ones finish where they are. A raised width takes on the next round.
 // Not proven, it asks nothing: an ask renews a lease, and only a proving model's lanes are
-// renewed. A lane whose ask fails is skipped this round, its error kept; the server's record
-// stands, and the next round asks again.
+// renewed. A lane whose ask fails is skipped this round, its error kept, and takes stop for
+// the round; the server's record stands, and the next round asks again.
 func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, errs []error) {
-	if !proven || c.Width <= 0 {
+	if !proven {
 		return nil, nil, nil
 	}
 	if c.told == nil {
 		c.told = map[string]bool{}
 	}
-	for n := 1; n <= c.Width; n++ {
+	asked := map[int]bool{}
+	lanes, err := c.serverHolds(ctx)
+	if err != nil {
+		// friend cards did not answer: the lanes the last round found held are asked again, so
+		// none goes unrenewed (a lane among them that finished since may take: the server's
+		// own take still holds her row to its width)
+		errs = append(errs, err)
+		lanes = slices.Clone(c.held)
+	}
+	slices.Sort(lanes)
+	lanes = slices.Compact(lanes)
+	failed := false
+	ask := func(n int) (Hold, bool) {
+		asked[n] = true
 		h, ok, err := c.ask(ctx, n)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("lane %d: %w", n, err))
+			failed = true
+			if slices.Contains(lanes, n) {
+				// asked again next round: a lane whose answer did not read still holds its card
+				holds = append(holds, Hold{Lane: n})
+			}
+			return Hold{}, false
+		}
+		return h, ok
+	}
+	for _, n := range lanes {
+		if h, ok := ask(n); ok {
+			holds = append(holds, h)
+		}
+	}
+	for n := 1; n <= MaxLanes && !failed && len(holds) < c.Intake(); n++ {
+		if asked[n] {
 			continue
 		}
+		h, ok := ask(n)
 		if !ok {
-			continue
+			break
 		}
 		holds = append(holds, h)
+	}
+	c.held = c.held[:0]
+	var known []Hold
+	for _, h := range holds {
+		c.held = append(c.held, h.Lane)
+		if h.Card == "" {
+			continue // a held lane whose ask failed: renewed again next round, told nothing
+		}
+		known = append(known, h)
 		if !c.told[h.key()] {
 			fresh = append(fresh, h)
 		}
 	}
-	return holds, fresh, errs
+	slices.SortFunc(known, func(x, y Hold) int { return x.Lane - y.Lane })
+	slices.SortFunc(fresh, func(x, y Hold) int { return x.Lane - y.Lane })
+	return known, fresh, errs
+}
+
+// serverHolds is the lanes of her row the server says hold a working card (friend cards, the
+// read verb the hook's heartbeat server already asks), and each card's tier.
+func (c *Client) serverHolds(ctx context.Context) ([]int, error) {
+	out, err := c.Ask(ctx, lane.FriendCardsArgv(c.Name))
+	if err != nil {
+		return nil, fmt.Errorf("friend cards: %w", err)
+	}
+	cards, err := lane.ParseHeld(c.Name, out)
+	if err != nil {
+		return nil, err
+	}
+	var lanes []int
+	c.tier = map[string]string{}
+	for _, h := range cards {
+		c.tier[h.Card] = h.Tier
+		if h.Col == "working" && h.Lane > 0 {
+			lanes = append(lanes, h.Lane)
+		}
+	}
+	return lanes, nil
 }
 
 // Told marks holds as told to the model (the notice was sent).
@@ -135,8 +222,11 @@ func (c *Client) ask(ctx context.Context, n int) (Hold, bool, error) {
 	if lh.Card == "" {
 		return Hold{}, false, nil
 	}
-	h := Hold{Lane: n, Card: lh.Card, Gen: lh.Gen, Epoch: lh.Epoch, Kind: lh.Kind, Job: lh.Job}
+	h := Hold{Lane: n, Card: lh.Card, Gen: lh.Gen, Epoch: lh.Epoch, Kind: lh.Kind, Job: lh.Job, Tier: c.tier[lh.Card]}
 	for _, p := range a.Packets {
+		if p.Card == h.Card {
+			h.Tier, h.Route, h.Model = cmpOr(p.Tier, h.Tier), p.Route, p.Model
+		}
 		if p.Card == h.Card && strings.TrimSpace(p.Brief) != "" && c.Dir != "" {
 			path := filepath.Join(c.Dir, h.Job, "BRIEF.md")
 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -166,11 +256,18 @@ func (c *Client) Notice(fresh, holds []Hold) (subject, body string) {
 	slices.SortFunc(sorted, func(x, y Hold) int { return x.Lane - y.Lane })
 	for _, h := range sorted {
 		at := fmt.Sprintf("%s@%d --epoch %d --lane %d", h.Card, h.Gen, h.Epoch, h.Lane)
+		tier := ""
+		if w := c.tierWord(h.Tier); w != "" {
+			tier = ", " + w
+		}
+		if h.Model != "" {
+			tier += ", route " + cmpOr(h.Route, "-") + " model " + h.Model
+		}
 		if h.Kind == "read" {
-			fmt.Fprintf(&b, "- lane %d %s (read, job %s): nova-sprint read --as %s (--ok | --broken) %s --epoch %d --lane %d\n", h.Lane, h.Card, h.Job, c.Row(), h.Card, h.Epoch, h.Lane)
+			fmt.Fprintf(&b, "- lane %d %s (read, job %s%s): nova-sprint read --as %s (--ok | --broken) %s --epoch %d --lane %d\n", h.Lane, h.Card, h.Job, tier, c.Row(), h.Card, h.Epoch, h.Lane)
 			continue
 		}
-		fmt.Fprintf(&b, "- lane %d %s (job %s): nova-sprint finish --as %s %s (--head <commit> | --failed) --report <text>; alive: nova-sprint progress --as %s %s\n", h.Lane, h.Card, h.Job, c.Row(), at, c.Row(), at)
+		fmt.Fprintf(&b, "- lane %d %s (job %s%s): nova-sprint finish --as %s %s (--head <commit> | --failed) --report <text>; alive: nova-sprint progress --as %s %s\n", h.Lane, h.Card, h.Job, tier, c.Row(), at, c.Row(), at)
 	}
 	return subject, b.String()
 }
