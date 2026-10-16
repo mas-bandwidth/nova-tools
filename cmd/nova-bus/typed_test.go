@@ -190,12 +190,12 @@ func TestNativeViewsRefuseDamage(t *testing.T) {
 	wire := fields[bus.EnvelopeField]
 	fields[bus.EnvelopeField] = wire[:len(wire)-1]
 	require.NoError(t, r.store.AddAll(context.Background(), []string{bus.StreamOf("bob"), bus.LogKey}, fields))
-	for _, args := range [][]string{{"peek", "--as", "bob"}, {"log", "--as", "bob"}, {"wait", "--as", "bob", "--after", "0-0", "--timeout", "1ms"}} {
+	for _, args := range [][]string{{"peek", "--as", "bob"}, {"log", "--as", "bob"}, {"show", "--as", "bob", "--id", "01JA2B3C4D5E6F7G8H9J0KMNPZ"}, {"wait", "--as", "bob", "--after", "0-0", "--timeout", "1ms"}} {
 		res := r.cli().Run(args...)
 		assert.Equal(t, 2, res.Code, "%v: stdout=%q stderr=%q", args, res.Stdout, res.Stderr)
 		assert.Contains(t, res.Stderr, "wire_damaged", "%v", args)
 	}
-	assert.Equal(t, uint64(3), r.envelopes.Snapshot()["refused_wire_damaged"], "each view counts the refusal")
+	assert.Equal(t, uint64(4), r.envelopes.Snapshot()["refused_wire_damaged"], "each view counts the refusal")
 }
 
 // TestRecvDualRead pins that nova-bus recv routes every stream entry through

@@ -589,9 +589,9 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:push ~bus2:sent:<f>:* ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:answers:<f> ~bus2:push ~bus2:sent:<f>:* ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
-  +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hdel +hget +hgetall
+  +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hsetnx +hdel +hget +hgetall
   +eval +evalsha (~bus2:sent:<f>:* +get +set)
 ```
 
