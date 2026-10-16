@@ -20,10 +20,12 @@ import (
 //   - width: the lanes that take. A round takes a free lane only while her held cards are
 //     fewer than the width. Raised, the next round takes into the new lanes; lowered, no
 //     lane takes until her held cards are under it, and every held card's lane is still
-//     asked (renewed) until it finishes: a shrink drains, never drops, returns or re-deals.
+//     asked (renewed) while friend cards answers, until it finishes: a shrink drains, never
+//     drops, returns or re-deals. A blind round (friend cards not answering) asks nothing
+//     while her held lanes are more than the width (client.go Round, the bound).
 //
 // A fetch that fails, or a row that names no width, closes intake (the held lanes are still
-// renewed) until a fetch answers again; the client never makes up a width. The sprint server
+// renewed while friend cards answers; a blind round asks nothing) until a fetch answers again; the client never makes up a width. The sprint server
 // holds the same bound on its side (its take is held to the row's width, which friend sync
 // copies from nova-config). The model is tla/FriendLaneClient.tla (SetWidth, ConfigLost:
 // NoLostCard, NoDuplicateHold, DrainNeverTakes, GrowTakes).
