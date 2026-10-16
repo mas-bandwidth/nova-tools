@@ -31,6 +31,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `goenv/` | Go environment scrubber for child processes | `go test ./pkg/goenv` | `go test ./pkg/goenv` |
 | `harness/` | the harness words: opencode and the headless subscription harnesses of the heavy tier | `go test ./pkg/harness` | `go test ./pkg/harness` |
 | `hookgate/` | the hook gate as a nova-tools verb meets it: the hook module's Gate over a bus store, its no as the verb's result | `go test ./pkg/hookgate` | `go test ./pkg/hookgate` |
+| `hookwire/` | the hook area's table wire, generated from schemas/hook: the send receipt (Ack), the beat's hot scalars (BeatPulse) and the hook lease stamp (HookStamp), with the wire-fuzz driver | `go test ./pkg/hookwire` | `make schemawire-check` |
 | `hostload/` | a machine's load: CPU busy percent of all its cores, else the load average over them | `go test ./pkg/hostload` | `go test ./pkg/hostload` |
 | `hygiene/` | clean checkout and leak assertions | `go test ./pkg/hygiene` | `go test ./pkg/hygiene` |
 | `keyshape/` | cryptographic key format verification | `go test ./pkg/keyshape` | `go test ./pkg/keyshape` |
