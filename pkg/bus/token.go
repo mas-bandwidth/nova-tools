@@ -94,6 +94,12 @@ func fingerprint(m Message) string {
 	if m.Wait != 0 { // an ask's wait; left out otherwise, so a token's record from before asks still matches
 		h.Write([]byte("wait:" + m.Wait.String() + ";"))
 	}
+	if m.Card != "" {
+		h.Write([]byte("card:" + strconv.Itoa(len(m.Card)) + ":" + m.Card + ";"))
+	}
+	if m.Head != "" {
+		h.Write([]byte("head:" + strconv.Itoa(len(m.Head)) + ":" + m.Head + ";"))
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 

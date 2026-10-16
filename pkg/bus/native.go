@@ -110,6 +110,19 @@ func envelopeBody(e *buswire.Envelope) string {
 	return string(v.Data[:v.Length])
 }
 
+func isHex40(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for i := range len(s) {
+		b := s[i]
+		if (b < '0' || b > '9') && (b < 'a' || b > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // envelopeConstraints are the envelope's bounds for the reader and the
 // writer: every field a sent message always has is required, because a
 // variable table reads an absent field as zero, and a missing stamp or kind
@@ -141,6 +154,9 @@ func envelopeConstraints(d *envelope, c *schemaread.Checker) {
 		{"token", envelopeText(e.Token[:], e.TokenLength)},
 	} {
 		c.Text(s.name, s.v, envelopeBound(s.name))
+	}
+	if e.HeadLength > 0 && !isHex40(envelopeText(e.Head[:], e.HeadLength)) {
+		c.Text("head", "\x00", envelopeBound("head"))
 	}
 	for i := range e.ToCount {
 		c.Text("to", envelopeText(e.To[i].S[:], e.To[i].SLength), MaxName)
@@ -259,11 +275,16 @@ func envelopeOf(m Message) (envelope, error) {
 		names("cc", e.Cc[:], &e.CcCount, m.CC),
 		set("re", e.Re[:], &e.ReLength, m.Re),
 		set("subject", e.Subject[:], &e.SubjectLength, m.Subject),
+		set("card", e.Card[:], &e.CardLength, m.Card),
+		set("head", e.Head[:], &e.HeadLength, m.Head),
 		set("token", e.Token[:], &e.TokenLength, m.Token),
 	} {
 		if err != nil {
 			return envelope{}, err
 		}
+	}
+	if m.Head != "" && !isHex40(m.Head) {
+		return envelope{}, envelopeRefusal("head %q is not 40 lowercase hex characters", m.Head)
 	}
 	if !m.At.IsZero() {
 		e.AtMs, e.AtMsPresent = m.At.UnixMilli(), true
@@ -297,6 +318,7 @@ func (d envelope) message() Message {
 		ID: envelopeText(e.Id[:], e.IdLength), From: envelopeText(e.From[:], e.FromLength),
 		To: list(e.To[:e.ToCount]), CC: list(e.Cc[:e.CcCount]),
 		Re: envelopeText(e.Re[:], e.ReLength), Subject: envelopeText(e.Subject[:], e.SubjectLength),
+		Card: envelopeText(e.Card[:], e.CardLength), Head: envelopeText(e.Head[:], e.HeadLength),
 		Token: envelopeText(e.Token[:], e.TokenLength),
 	}
 	if e.Kind != buswire.KindNone {
@@ -338,6 +360,12 @@ func EnvelopeWire(m Message) ([]byte, error) {
 	return writeEnvelope(m, schemaread.FormBinary)
 }
 
+// EnvelopeText is m in the schema's name-keyed text form (JSON), refused by
+// name before a byte is written when a value is past a bound.
+func EnvelopeText(m Message) ([]byte, error) {
+	return writeEnvelope(m, schemaread.FormJSON)
+}
+
 // NativeFields is m's entry with the native field: the legacy text fields
 // (Message.Fields), unchanged so a reader that has not learned the field
 // reads the entry as before, and EnvelopeField holding the binary wire of the
@@ -345,7 +373,7 @@ func EnvelopeWire(m Message) ([]byte, error) {
 // an entry).
 func NativeFields(m Message) (map[string]string, error) {
 	wire, err := EnvelopeWire(Message{ID: m.ID, From: m.From, To: m.To, CC: m.CC, Subject: m.Subject, Re: m.Re,
-		Kind: m.Kind, At: m.At, Due: m.Due, Body: m.Body})
+		Card: m.Card, Head: m.Head, Kind: m.Kind, At: m.At, Due: m.Due, Body: m.Body})
 	if err != nil {
 		return nil, err
 	}

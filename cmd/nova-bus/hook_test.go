@@ -40,6 +40,7 @@ var verbCalls = []struct {
 	{"receipts", []string{"receipts", "--as", "ada"}},
 	{"overdue", []string{"overdue", "--as", "ada"}},
 	{"log", []string{"log", "--as", "ada"}},
+	{"show", []string{"show", "--as", "ada", "--id", "01ARZ3NDEKTSV4RRFFQ69G5FAV"}},
 	{"names", []string{"names", "--as", "ada"}},
 }
 
