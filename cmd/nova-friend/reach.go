@@ -66,7 +66,7 @@ func (w world) reachVerb() tool.Verb {
 		Effect:    tool.Delivery + ": a bus message, then a push into the session, then the friend's window, stopping at the first proof",
 		DryRun:    true,
 		ExitTable: "0 a proof, 1 no proof, 2 could not run.",
-		Detail: `The ladder that gets a silent friend's attention, stopping at the first proof. The friend is --to: a verb other than the default takes no bare word. This verb is reach. see also: nova-hook serve's per-minute challenge is the periodic liveness check (nova-hook friends --json reads it); reach is this escalation ladder. Each step has one --step-timeout budget (default 60s), including delivery and waiting for a proof: a pong for the nonce the step carries, or any other message from the friend. A pong for another nonce, or a malformed pong, is not an ordinary-message proof.
+		Detail: `The ladder that gets a silent friend's attention, stopping at the first proof. The friend is --to: a verb other than the default takes no bare word. This verb is reach. see also: nova-hook serve's per-minute challenge is the periodic liveness check (nova-hook friends --json reads it); reach is this escalation ladder. Each step has one --step-timeout budget (default 60s), including delivery and waiting for a proof: a pong for the nonce the step carries, or any other message from the friend. A pong for another nonce, or a malformed pong, is not an ordinary-message proof. A pong is read in either form: the legacy line nova-friend pong writes, or the table pong as its binary wire, padded standard base64 of the wire, or its JSON text. A malformed, clamped or incomplete pong is no proof and is never dropped: each is a note, PONG REFUSED: <reason>; run: nova-friend pong -h. When the ladder read any pong, a note PONG READS base64=<n> binary=<n> json=<n> legacy=<n> unknown_fields=<n> [refused_<reason>=<n>] counts the reads per form.
 1. bus: a bus message to the friend carrying the nonce and the exact pong line (REACH STEP step=bus sent=<id> nonce=<n>).
 2. push: the harness's deliver command pushes the step's text into the session as a turn (REACH NONE step=push waited=<d>: <why> when the push fails).
 3. window: a tmux-hosted session is typed with send-keys only while the pane is idle. A GUI harness is the app's window, found by its bundle, the message typed into the composer and submitted. That needs the accessibility permission a person grants to this binary. When it is absent the step is refused and the tool does not ask: ` + friend.AccessibilityRemedy + `.
@@ -130,6 +130,8 @@ func (w world) reach(c *tool.Call) *tool.Out {
 		harness = status.Harness
 	}
 	var cursor string
+	pongs := friend.NewPongReader()
+	var refusals []string // each pong the ladder refused, by name
 	fx := reachFX{
 		coordinator: me,
 		Send: func(ctx context.Context, nonce, body string) (string, error) {
@@ -152,7 +154,7 @@ func (w world) reach(c *tool.Call) *tool.Out {
 			return nil
 		},
 		Proof: func(ctx context.Context, nonce string) (string, bool, error) {
-			return reachProof(ctx, b, &cursor, to, nonce)
+			return reachProof(ctx, b, &cursor, pongs, func(err error) { refusals = append(refusals, err.Error()) }, to, nonce)
 		},
 		Tell: func(ctx context.Context, line string) error {
 			_, err := b.Send(ctx, bus.Message{From: me, To: []string{me}, Subject: "reach failed", Body: line + "\n"})
@@ -162,7 +164,24 @@ func (w world) reach(c *tool.Call) *tool.Out {
 		Sleep: w.sleep,
 		Nonce: w.random,
 	}
-	return climb(ctx, fx, to, timeout, reachSteps(from))
+	o := climb(ctx, fx, to, timeout, reachSteps(from))
+	return reachPongNotes(o, pongs, refusals)
+}
+
+// reachPongNotes adds each refused pong and, when the ladder read any pong,
+// the per-form pong read counters: a malformed pong is named, never silence.
+func reachPongNotes(o *tool.Out, pongs *friend.PongReader, refusals []string) *tool.Out {
+	for _, r := range refusals {
+		o.Note(r)
+	}
+	var reads uint64
+	for _, v := range pongs.Counts().Snapshot() {
+		reads += v
+	}
+	if reads > 0 {
+		o.Note("PONG READS " + pongs.CountsLine())
+	}
+	return o
 }
 
 // reachState is the friend's state directory. --as is the coordinator, so the
@@ -367,11 +386,13 @@ func reachWith(res, acc *tool.Out) *tool.Out {
 }
 
 // reachProof is a proof from the friend since Arm: a pong for nonce, or any
-// other message. A pong for another nonce is none.
+// other message. A pong for another nonce is none. A pong is read in either
+// form by pongs (friend.PongReader); a malformed one is no proof, and its
+// refusal is handed to refused, never dropped.
 // cursor is the log tail Arm captured; each poll reads forward from it and
 // advances it, so a log longer than the oldest-window cap still yields a
 // fresh pong.
-func reachProof(ctx context.Context, b *bus.Bus, cursor *string, friendName, nonce string) (string, bool, error) {
+func reachProof(ctx context.Context, b *bus.Bus, cursor *string, pongs *friend.PongReader, refused func(error), friendName, nonce string) (string, bool, error) {
 	for {
 		es, next, more, err := b.LogForward(ctx, *cursor)
 		if err != nil {
@@ -383,15 +404,17 @@ func reachProof(ctx context.Context, b *bus.Bus, cursor *string, friendName, non
 			if m.From != friendName {
 				continue
 			}
-			subject := strings.ToLower(strings.TrimSpace(m.Subject))
-			if n, _, _, _, ok := friend.ParsePong(strings.TrimSpace(m.Body)); ok {
-				if n == nonce {
+			if friend.IsPong(m) {
+				p, _, err := pongs.Message(m)
+				switch {
+				case err != nil:
+					if refused != nil {
+						refused(err)
+					}
+				case p.Nonce == nonce:
 					return "pong", true, nil
 				}
-				continue
-			}
-			if subject == strings.ToLower(friend.PongSubject) {
-				continue // malformed pongs cannot become ordinary-message proof
+				continue // a pong for another nonce, or a refused one, is never an ordinary-message proof
 			}
 			return "message", true, nil
 		}

@@ -211,6 +211,35 @@ keystrokes via tmux or macOS Accessibility `AXIsProcessTrusted`) and stops at th
 first proof from the friend (`REACH PROOF` and `REACH OK`, exit 0; `REACH FAILED`
 after all steps, exit 1).
 
+## The pong (`pkg/friend/machine.go`, `schemas/pong`, `pkg/pongwire`)
+
+A pong is a session's answer to a reach step or a delivery check. It is read
+in both forms through the one strict read, `pkg/schemaread`, by
+`friend.PongReader`: the legacy line `PongLine` writes, `pong <nonce>
+queue=<n> working=<n> width=<n>` (the friend and the send time are the bus
+message's from and time), or the table pong `schemas/pong` defines (the
+generated `pkg/pongwire` Pong) as its binary wire, padded standard base64 of
+the wire, or its JSON text. Both read to the same `friend.Pong`. A message is
+a pong when its subject is `pong` (matched without case) or its body opens
+with `pong ` (`friend.IsPong`), and a pong is never an ordinary message.
+
+The legacy line is read strictly: single spaces, the three counts in that
+order, plain decimals, nothing after. A pong of either form that is damaged,
+clamped (a count past its schema bound, a nonce past 32 bytes) or incomplete
+(no friend, nonce, count or send time) is refused by the shared names
+(`malformed`, `clamped`, `kind_mismatch`, `unknown_form`, `wire_damaged`,
+`absent_required (<field>)`), as `PONG REFUSED: <reason>; run: nova-friend
+pong -h`, and is never read as no pong. Each read is counted once under its
+form (`binary`, `base64`, `json`, `legacy`) and each refusal under its reason;
+`reach` prints a refusal and the counters as notes (`PONG READS ...`).
+
+The writer stays legacy: readers change first, fleet-wide, and the per-form
+counter is the evidence a cutover reads before `PongLine` switches.
+`ParsePong`, the reader before this one, is kept as the old reader the
+switch must keep working; it reads no table pong as a pong. The delivery
+check (`check --harness`, `pkg/friend/conformance.go`) still matches its
+pong with `ParsePong`.
+
 ## Coordinator notice retries
 
 Each daemon fault detector emits one message on its episode transition. The

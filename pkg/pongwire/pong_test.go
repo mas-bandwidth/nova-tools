@@ -1,4 +1,4 @@
-package pongwire
+package pongwire_test
 
 // TestLayer1Pong is the golden test of the pong definitions (schemas/pong):
 // the generated Pong round-trips as the binary wire, as padded standard base64
@@ -32,6 +32,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/pongwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,15 +42,15 @@ const pongHelp = "nova-friend pong -h"
 
 // The bounds the schema declares, read from the generated descriptors so the
 // test and the definition cannot drift apart.
-func fieldOf(t *testing.T, name string) TableFieldInfo {
+func fieldOf(t *testing.T, name string) pongwire.TableFieldInfo {
 	t.Helper()
-	for _, f := range PongTableFields {
+	for _, f := range pongwire.PongTableFields {
 		if f.Name == name {
 			return f
 		}
 	}
 	t.Fatalf("Pong declares no field %s", name)
-	return TableFieldInfo{}
+	return pongwire.TableFieldInfo{}
 }
 
 // envelope is what the bus message around a legacy pong line carries: the
@@ -64,29 +65,33 @@ type envelope struct {
 // where zero is not a value (friend_name, nonce, sent_ms) and absence of an
 // optional a liveness count reads (queue, working, width), and validate before
 // writing because the generated writer checks no bound.
-func codec(t *testing.T, env envelope) *schemaread.Codec[Pong] {
+func codec(t *testing.T, env envelope) *schemaread.Codec[pongwire.Pong] {
 	friendMax := int(fieldOf(t, "friend_name").ArrayBound)
 	nonceMax := int(fieldOf(t, "nonce").ArrayBound)
 	queue, working, width := fieldOf(t, "queue"), fieldOf(t, "working"), fieldOf(t, "width")
-	return &schemaread.Codec[Pong]{
+	return &schemaread.Codec[pongwire.Pong]{
 		Name:  "PONG",
 		Help:  pongHelp,
-		Reset: PongReset,
+		Reset: pongwire.PongReset,
 		Measure: func(wire []byte) error {
-			_, err := PongLoadMeasureReason(wire)
+			_, err := pongwire.PongLoadMeasureReason(wire)
 			return err
 		},
-		LoadWire: func(v *Pong, wire []byte) schemaread.Report {
-			return viaBuilder(v, func(b *PongBuilder, rep *TableReport) bool { return PongLoadBuilder(b, wire, rep) })
+		LoadWire: func(v *pongwire.Pong, wire []byte) schemaread.Report {
+			return viaBuilder(v, func(b *pongwire.PongBuilder, rep *pongwire.TableReport) bool {
+				return pongwire.PongLoadBuilder(b, wire, rep)
+			})
 		},
-		LoadJSON: func(v *Pong, text []byte) schemaread.Report {
-			return viaBuilder(v, func(b *PongBuilder, rep *TableReport) bool { return PongFromJson(b, text, rep) })
+		LoadJSON: func(v *pongwire.Pong, text []byte) schemaread.Report {
+			return viaBuilder(v, func(b *pongwire.PongBuilder, rep *pongwire.TableReport) bool {
+				return pongwire.PongFromJson(b, text, rep)
+			})
 		},
 		Legacy: func(in []byte) bool { return bytes.HasPrefix(in, []byte("pong ")) },
-		LoadLegacy: func(v *Pong, in []byte) schemaread.Report {
+		LoadLegacy: func(v *pongwire.Pong, in []byte) schemaread.Report {
 			return loadLegacy(v, string(in), env)
 		},
-		Constraints: func(v *Pong, c *schemaread.Checker) {
+		Constraints: func(v *pongwire.Pong, c *schemaread.Checker) {
 			c.Required("friend_name", v.FriendNameLength > 0)
 			c.Text("friend_name", textOf(v.FriendName[:], v.FriendNameLength), friendMax)
 			c.Required("nonce", v.NonceLength > 0)
@@ -116,19 +121,19 @@ func textOf(buf []byte, n int32) string {
 	return string(buf[:n])
 }
 
-func viaBuilder(v *Pong, load func(*PongBuilder, *TableReport) bool) schemaread.Report {
-	var b PongBuilder
+func viaBuilder(v *pongwire.Pong, load func(*pongwire.PongBuilder, *pongwire.TableReport) bool) schemaread.Report {
+	var b pongwire.PongBuilder
 	if !b.Init() {
 		return schemaread.Report{Malformed: true}
 	}
 	defer b.Shutdown()
-	var rep TableReport
+	var rep pongwire.TableReport
 	ok := load(&b, &rep)
 	if root := b.GetRoot(); root != nil {
 		*v = *root
 	}
 	out := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped), Malformed: rep.Malformed || !ok}
-	if rep.Verdict == TableOpenRefused || rep.Verdict == TableOpenDamaged {
+	if rep.Verdict == pongwire.TableOpenRefused || rep.Verdict == pongwire.TableOpenDamaged {
 		out.Reason = rep.Err().Error()
 	}
 	return out
@@ -137,25 +142,25 @@ func viaBuilder(v *Pong, load func(*PongBuilder, *TableReport) bool) schemaread.
 // saveWire is the generated Measure and Save, unchecked: the facade checks
 // before it calls this, and the hostile cases call it directly to write what
 // a broken or older writer could write.
-func saveWire(v *Pong) []byte {
-	n := PongMeasure(v)
+func saveWire(v *pongwire.Pong) []byte {
+	n := pongwire.PongMeasure(v)
 	if n < 0 {
 		return nil
 	}
 	buf := make([]byte, n)
-	if PongSave(v, buf) != n {
+	if pongwire.PongSave(v, buf) != n {
 		return nil
 	}
 	return buf
 }
 
-func toJSON(v *Pong) []byte {
-	n := PongToJsonMeasure(v)
+func toJSON(v *pongwire.Pong) []byte {
+	n := pongwire.PongToJsonMeasure(v)
 	if n < 0 {
 		return nil
 	}
 	buf := make([]byte, n)
-	if PongToJson(v, buf) != n {
+	if pongwire.PongToJson(v, buf) != n {
 		return nil
 	}
 	return buf
@@ -165,7 +170,7 @@ func toJSON(v *Pong) []byte {
 // (pkg/friend PongLine), strictly: the line must be exactly what PongLine
 // writes for the values it carries, or it is refused as legacy_shape. The
 // friend and the send time come from the bus message around the line.
-func loadLegacy(v *Pong, text string, env envelope) schemaread.Report {
+func loadLegacy(v *pongwire.Pong, text string, env envelope) schemaread.Report {
 	var nonce string
 	var queue, working, width int
 	n, err := fmt.Sscanf(text, "pong %s queue=%d working=%d width=%d", &nonce, &queue, &working, &width)
@@ -178,8 +183,8 @@ func loadLegacy(v *Pong, text string, env envelope) schemaread.Report {
 }
 
 // set fills a pong with every field present.
-func set(v *Pong, friendName, nonce string, queue, working, width uint32, sentMs int64) {
-	PongReset(v)
+func set(v *pongwire.Pong, friendName, nonce string, queue, working, width uint32, sentMs int64) {
+	pongwire.PongReset(v)
 	v.FriendNameLength = int32(copy(v.FriendName[:len(v.FriendName)-1], friendName))
 	v.NonceLength = int32(copy(v.Nonce[:len(v.Nonce)-1], nonce))
 	v.Queue, v.QueuePresent = queue, true
@@ -188,8 +193,8 @@ func set(v *Pong, friendName, nonce string, queue, working, width uint32, sentMs
 	v.SentMs, v.SentMsPresent = sentMs, true
 }
 
-func pong(friendName, nonce string, queue, working, width uint32, sentMs int64) Pong {
-	var v Pong
+func pong(friendName, nonce string, queue, working, width uint32, sentMs int64) pongwire.Pong {
+	var v pongwire.Pong
 	set(&v, friendName, nonce, queue, working, width, sentMs)
 	return v
 }
@@ -228,7 +233,7 @@ func TestLayer1Pong(t *testing.T) {
 		t.Parallel()
 		r := schemaread.NewReader(codec(t, env))
 		names := []string{"pong-typical", "pong-bounds", "pong-zeros"}
-		want := map[string]Pong{
+		want := map[string]pongwire.Pong{
 			"pong-typical": pong("aurora", "abc123", 5, 0, 8, 1792000000000),
 			"pong-bounds":  pong(strings.Repeat("f", 64), strings.Repeat("z", 32), 100000, 10000, 1024, 1<<63-1),
 			"pong-zeros":   pong("f", "123456", 0, 0, 0, 1),
@@ -283,7 +288,7 @@ func TestLayer1Pong(t *testing.T) {
 		r := schemaread.NewReader(codec(t, env))
 		good := pong("aurora", "abc123", 5, 3, 8, 1792000000000)
 		goodWire := saveWire(&good)
-		with := func(edit func(*Pong)) []byte {
+		with := func(edit func(*pongwire.Pong)) []byte {
 			v := good
 			edit(&v)
 			return saveWire(&v)
@@ -305,22 +310,22 @@ func TestLayer1Pong(t *testing.T) {
 			// (TableReport carries a count only), so a read refusal names the
 			// reason alone; the writer, which checks the value itself, names
 			// the field too (the writer subtest below).
-			{"queue over 100000", with(func(v *Pong) { v.Queue = 100001 }), "clamped"},
-			{"working over 10000", with(func(v *Pong) { v.Working = 10001 }), "clamped"},
-			{"width over 1024", with(func(v *Pong) { v.Width = 1025 }), "clamped"},
+			{"queue over 100000", with(func(v *pongwire.Pong) { v.Queue = 100001 }), "clamped"},
+			{"working over 10000", with(func(v *pongwire.Pong) { v.Working = 10001 }), "clamped"},
+			{"width over 1024", with(func(v *pongwire.Pong) { v.Width = 1025 }), "clamped"},
 			{"queue over 100000 as JSON text", withJSON(`"queue": 5`, `"queue": 100001`), "clamped"},
-			{"queue over 100000 as base64 text", []byte(b64(with(func(v *Pong) { v.Queue = 100001 }))), "clamped"},
+			{"queue over 100000 as base64 text", []byte(b64(with(func(v *pongwire.Pong) { v.Queue = 100001 }))), "clamped"},
 			{"nonce over 32 bytes from a newer writer", readFile(t, "testdata/writers/wide.bin"), "clamped"},
 			{"a field that changed kind", readFile(t, "testdata/writers/changed.bin"), "kind_mismatch"},
 			// absence where zero is no answer
-			{"nonce absent", with(func(v *Pong) { v.NonceLength = 0 }), "absent_required (nonce)"},
-			{"friend absent", with(func(v *Pong) { v.FriendNameLength = 0 }), "absent_required (friend_name)"},
-			{"queue absent", with(func(v *Pong) { v.Queue, v.QueuePresent = 0, false }), "absent_required (queue)"},
-			{"working absent", with(func(v *Pong) { v.Working, v.WorkingPresent = 0, false }), "absent_required (working)"},
-			{"width absent", with(func(v *Pong) { v.Width, v.WidthPresent = 0, false }), "absent_required (width)"},
-			{"sent_ms absent", with(func(v *Pong) { v.SentMs, v.SentMsPresent = 0, false }), "absent_required (sent_ms)"},
+			{"nonce absent", with(func(v *pongwire.Pong) { v.NonceLength = 0 }), "absent_required (nonce)"},
+			{"friend absent", with(func(v *pongwire.Pong) { v.FriendNameLength = 0 }), "absent_required (friend_name)"},
+			{"queue absent", with(func(v *pongwire.Pong) { v.Queue, v.QueuePresent = 0, false }), "absent_required (queue)"},
+			{"working absent", with(func(v *pongwire.Pong) { v.Working, v.WorkingPresent = 0, false }), "absent_required (working)"},
+			{"width absent", with(func(v *pongwire.Pong) { v.Width, v.WidthPresent = 0, false }), "absent_required (width)"},
+			{"sent_ms absent", with(func(v *pongwire.Pong) { v.SentMs, v.SentMsPresent = 0, false }), "absent_required (sent_ms)"},
 			{"queue absent from the JSON text", withJSON("  \"queue\": 5,\n", ""), "absent_required (queue)"},
-			{"a NUL in the nonce", with(func(v *Pong) { v.Nonce[2] = 0 }), "malformed"},
+			{"a NUL in the nonce", with(func(v *pongwire.Pong) { v.Nonce[2] = 0 }), "malformed"},
 			// framing and form
 			{"truncated wire", goodWire[:len(goodWire)-1], "wire_damaged"},
 			{"trailing junk in the wire", append(append([]byte{}, goodWire...), 0, 1), "wire_damaged"},
@@ -339,7 +344,7 @@ func TestLayer1Pong(t *testing.T) {
 		for _, tc := range cases {
 			got, _, err := r.Read(tc.in)
 			assert.Equal(t, tc.reason, refusal(t, err), tc.name)
-			assert.Equal(t, Pong{}, got, "%s: a refused read returns nothing, never a partial pong", tc.name)
+			assert.Equal(t, pongwire.Pong{}, got, "%s: a refused read returns nothing, never a partial pong", tc.name)
 		}
 		// at each bound the pong reads
 		at := pong("aurora", "abc123", 100000, 10000, 1024, 1)
@@ -366,7 +371,7 @@ func TestLayer1Pong(t *testing.T) {
 		r := schemaread.NewReader(codec(t, env))
 		for _, tc := range []struct {
 			name   string
-			v      Pong
+			v      pongwire.Pong
 			reason string
 		}{
 			{"queue over 100000", pong("aurora", "abc123", 100001, 3, 8, 1), "clamped (queue)"},
@@ -463,14 +468,14 @@ func TestLayer1Pong(t *testing.T) {
 	})
 }
 
-func mustWriteBytes(t *testing.T, r *schemaread.Reader[Pong], v *Pong, form schemaread.Form) []byte {
+func mustWriteBytes(t *testing.T, r *schemaread.Reader[pongwire.Pong], v *pongwire.Pong, form schemaread.Form) []byte {
 	t.Helper()
 	out, err := r.Write(v, form)
 	require.NoError(t, err)
 	return out
 }
 
-func mustWrite(t *testing.T, r *schemaread.Reader[Pong], v *Pong, form schemaread.Form) string {
+func mustWrite(t *testing.T, r *schemaread.Reader[pongwire.Pong], v *pongwire.Pong, form schemaread.Form) string {
 	t.Helper()
 	return string(mustWriteBytes(t, r, v, form))
 }
