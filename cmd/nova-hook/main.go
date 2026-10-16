@@ -830,8 +830,10 @@ func (w world) hookVerb(c *tool.Call) *tool.Out {
 		if err != nil {
 			return tool.Refuse("the challenge could not be written: " + err.Error())
 		}
-		if core != nil && serverOwned {
+		if core != nil && (serverOwned || claude != nil) {
 			// The bootstrap is the Core's first notice: held as pending like any other.
+			// The claude route's own challenges are too: its watcher follows only
+			// what the Core says, and its hooks read only the pending notice.
 			if native != nil {
 				r := &notice.Recovery{Messages: recovery.messages}
 				if !cutover.IsZero() {
