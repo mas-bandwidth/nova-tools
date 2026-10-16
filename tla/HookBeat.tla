@@ -230,7 +230,7 @@ prv == <<proven, lapsed, sinceBeat>>
 server == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, tellv, judv, held, ask, expiries, issued, proof, prv>>
 client == <<elapsed, alarm>>
 vars == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
-          jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof,
+          jst, jkind, jto, jresent, ctold, cjudged, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof,
           pushed, pgen, pq, psent, pdups, inbox, shown, want, prv>>
 
 Cap3(x) == IF x < 3 THEN x ELSE 3
@@ -368,7 +368,7 @@ Tick ==
                /\ lapsed' = [n \in Names |-> lapsed[n] \/ (proven[n] /\ qtime'[n] > ProofLife)]
                /\ sinceBeat' = IF BeatClock THEN [n \in Names |-> IF sinceBeat[n] < BeatCap THEN sinceBeat[n] + 1 ELSE BeatCap] ELSE sinceBeat
           ELSE UNCHANGED prv
-    /\ UNCHANGED <<nonceVersion, delivered, busy, challengedWhileTalking, beatOwned, hooked, misses, events, hooks, tellv, jkind, jto, jresent, alive, quiet, client, held, expiries, proof>>
+    /\ UNCHANGED <<nonceVersion, delivered, busy, challengedWhileTalking, beatOwned, hooked, misses, events, hooks, tellv, jkind, jto, jresent, ctold, cjudged, alive, quiet, client, held, expiries, proof>>
 
 \* One server's pass (beatLua), atomic: the beat, the row stamped, and a tell
 \* prepared when what the friends are to hear differs from the row's told.
@@ -733,7 +733,7 @@ Expire(s, n) == /\ ask[n] = "due"
 
 \* Everything the push actions leave as it is: the heartbeat's and the tell's.
 nonpush == <<activity, nonceVersion, delivered, beatOwned, hooked, chal, misses, events, hooks, taken, passed, rowAge, told, tv, out, sent, dups, heard,
-             jst, jkind, jto, jresent, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof, prv>>
+             jst, jkind, jto, jresent, ctold, cjudged, alive, quiet, qtime, elapsed, alarm, held, ask, expiries, issued, proof, prv>>
 
 \* One transition of n, the oldest in hand, is sent as its own status message
 \* to the coordinator (serve.go push), its once-key and the row's pushed mark
