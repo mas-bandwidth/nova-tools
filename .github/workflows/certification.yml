@@ -11,12 +11,14 @@
 
 name: certification
 
+# Nightly and on demand only, never on a push and never a release gate: a push
+# run put 50 hosted shards and 17 minutes beside every dev commit (v1.4.6,
+# 2026-10-16). The owner: CI is one minute on average, two at most, end to end, no
+# exceptions; this tier is a nightly test.
 on:
   schedule:
     - cron: "17 7 * * *"
   workflow_dispatch:
-  push:
-    branches: [dev, release/**]
 
 
 permissions:

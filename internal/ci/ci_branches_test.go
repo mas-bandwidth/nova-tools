@@ -223,30 +223,17 @@ func TestIntegrationBranchesAreOneList(t *testing.T) {
 		}
 	}
 
-	// (4) The push triggers, which take no expression, hold exactly the list
-	// (ci.yml) or a subset of it (certification.yml runs on the branch merges
-	// land on; main is promoted, #778), plus the release branches certification
-	// also runs on so a release can certify a pinned sha. A release branch
-	// (`release/vX.Y.Z`) is not an integration branch — it is cut off dev for
-	// one release — so it is named by pattern in certification.yml's trigger and
-	// kept out of the one list. Nothing else may appear there.
-	inList := toSet(names)
+	// (4) ci.yml's push trigger, which takes no expression, holds exactly the
+	// list. certification.yml has none (below).
 	ciPush := pushTriggerBranches(src)
 	require.NotEmpty(t, ciPush, "%s: no push trigger branches parsed; the parser is looking in the wrong place", ciFile)
 	assert.True(t, sameSet(ciPush, names), "%s: push trigger branches %v do not match the integration branch list %v. `on: push: branches:` takes no expression, so it is the one spelling the list cannot reach: change it in the same edit", ciFile, ciPush, names)
+	// certification.yml has no push trigger at all: it is a nightly test, on its
+	// schedule and on demand, and gates nothing (the owner, 2026-10-16: CI is one
+	// minute on average and two at most, end to end; a 17-minute hosted run on
+	// every push to dev is verboten while point releases are regular).
 	certPush := pushTriggerBranches(readFile(t, filepath.Join(root, certFile)))
-	require.NotEmpty(t, certPush, "%s: no push trigger branches parsed; certification runs on a push to the integration branch", certFile)
-	for _, b := range certPush {
-		assert.True(t, inList[b] || isReleaseBranchPattern(b), "%s: certification triggers on a push to %q, which is neither in ci.yml's integration branch list %v nor a release branch", certFile, b, names)
-	}
-}
-
-// isReleaseBranchPattern reports whether a push-trigger branch names a release
-// branch: the branch a release is cut and certified from, `release/<version>`
-// (or the glob `release/**` that certification.yml writes). It is not an
-// integration branch, so it never joins the one list.
-func isReleaseBranchPattern(branch string) bool {
-	return branch == "release/**" || strings.HasPrefix(branch, "release/")
+	assert.Empty(t, certPush, "%s: certification triggers on a push to %v; it is a nightly test and never runs on a push", certFile, certPush)
 }
 
 // TestPullRequestConcurrencyKeysOnTheHead pins the cancellation fix

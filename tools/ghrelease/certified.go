@@ -11,10 +11,11 @@ import (
 func init() {
 	register(verb{
 		name:    "certified",
-		summary: "ask whether a green certification run vouches for a commit",
+		summary: "ask whether a green ci.yml run (ci-ok) vouches for a commit",
 		help: `usage: go run ./tools/ghrelease certified
 
-Does a green certification.yml run vouch for this exact commit? Exit 0 vouched;
+Does a green ci.yml run (the one-minute tier, ci-ok) vouch for this exact commit?
+Certification is a nightly test and gates no release (the owner, 2026-10-16). Exit 0 vouched;
 1 refused, with the remedy; 2 the environment is incomplete.
 
 Environment: GITHUB_REPOSITORY, SHA (the commit being built), REF (the ref, for
@@ -55,9 +56,9 @@ func doCertified(e env, args []string) int {
 	}
 	repo, sha, ref, runID := v["GITHUB_REPOSITORY"], v["SHA"], v["REF"], v["GITHUB_RUN_ID"]
 
-	out, rc := e.client().API("-i", fmt.Sprintf("repos/%s/actions/workflows/certification.yml/runs?head_sha=%s&per_page=100", repo, sha))
+	out, rc := e.client().API("-i", fmt.Sprintf("repos/%s/actions/workflows/ci.yml/runs?head_sha=%s&per_page=100", repo, sha))
 	if !hasStatus(out, "200") {
-		fmt.Fprintf(e.stdout, "asking GitHub for certification runs on %s did not answer 200 (gh exit %d):\n", sha, rc)
+		fmt.Fprintf(e.stdout, "asking GitHub for ci runs on %s did not answer 200 (gh exit %d):\n", sha, rc)
 		fmt.Fprintln(e.stdout, chomp(out))
 		return 1
 	}
@@ -67,20 +68,20 @@ func doCertified(e env, args []string) int {
 		Runs       []json.RawMessage `json:"workflow_runs"`
 	}
 	if err := json.Unmarshal([]byte(answerBody(out)), &doc); err != nil {
-		fmt.Fprintf(e.stdout, "refusing: the certification runs answer on %s is not the list GitHub documents: %v\n", sha, err)
+		fmt.Fprintf(e.stdout, "refusing: the ci runs answer on %s is not the list GitHub documents: %v\n", sha, err)
 		return 1
 	}
 	total := jqText(doc.TotalCount)
 	listed := strconv.Itoa(len(doc.Runs))
 	if total != listed {
-		fmt.Fprintf(e.stdout, "refusing: %s certification runs on %s but only %s listed; the selection would be ambiguous\n", total, sha, listed)
+		fmt.Fprintf(e.stdout, "refusing: %s ci runs on %s but only %s listed; the selection would be ambiguous\n", total, sha, listed)
 		return 1
 	}
 
 	runs := make([]map[string]any, len(doc.Runs))
 	for i, raw := range doc.Runs {
 		if err := decodeUseNumber(raw, &runs[i]); err != nil {
-			fmt.Fprintf(e.stdout, "refusing: a certification run on %s is not an object: %v\n", sha, err)
+			fmt.Fprintf(e.stdout, "refusing: a ci run on %s is not an object: %v\n", sha, err)
 			return 1
 		}
 	}
@@ -96,7 +97,7 @@ func doCertified(e env, args []string) int {
 		}
 	}
 	if inflight != 0 {
-		fmt.Fprintf(e.stdout, "refusing: %d certification run(s) on %s not yet completed; wait for certification-ok, then re-run this workflow: gh run rerun %s -R %s\n", inflight, sha, runID, repo)
+		fmt.Fprintf(e.stdout, "refusing: %d ci run(s) on %s not yet completed; wait for ci-ok, then re-run this workflow: gh run rerun %s -R %s\n", inflight, sha, runID, repo)
 		return 1
 	}
 
@@ -136,17 +137,17 @@ func doCertified(e env, args []string) int {
 			}
 		}
 	}
-	fmt.Fprintf(e.stdout, "certification runs on %s: %s completed; latest update %s shared by %d run(s), %d not green; receipt run %s attempt %s, concluded %s\n",
+	fmt.Fprintf(e.stdout, "ci runs on %s: %s completed; latest update %s shared by %d run(s), %d not green; receipt run %s attempt %s, concluded %s\n",
 		sha, total, maxu, len(group), red, orText(newest["id"], "none"), orText(newest["run_attempt"], "0"), orText(newest["conclusion"], "none"))
 
 	if total == "0" || red != 0 {
 		if total == "0" {
-			fmt.Fprintf(e.stdout, "refusing: no completed certification run on %s, so nothing vouches for this tree\n", sha)
+			fmt.Fprintf(e.stdout, "refusing: no completed ci run on %s, so nothing vouches for this tree\n", sha)
 		} else {
-			fmt.Fprintf(e.stdout, "refusing: the latest certification evidence on %s is not uniformly green (%d of %d in the latest-stamp group not success; see the receipt line), so nothing vouches for this tree\n", sha, red, len(group))
+			fmt.Fprintf(e.stdout, "refusing: the latest ci evidence on %s is not uniformly green (%d of %d in the latest-stamp group not success; see the receipt line), so nothing vouches for this tree\n", sha, red, len(group))
 		}
-		fmt.Fprintln(e.stdout, "certify it first (a run still in progress does not count; wait for certification-ok):")
-		fmt.Fprintf(e.stdout, "  gh workflow run certification.yml -R %s --ref %s\n", repo, ref)
+		fmt.Fprintln(e.stdout, "run ci on it first (a run still in progress does not count; wait for ci-ok):")
+		fmt.Fprintf(e.stdout, "  gh workflow run ci.yml -R %s --ref %s\n", repo, ref)
 		fmt.Fprintf(e.stdout, "then re-run this workflow: gh run rerun %s -R %s\n", runID, repo)
 		return 1
 	}
