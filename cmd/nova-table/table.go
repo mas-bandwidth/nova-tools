@@ -280,7 +280,7 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 	const verb = "show"
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
-	atEpoch := fs.String("at-epoch", "", "inspect a materialised epoch instead of the active one")
+	atEpoch := fs.String("at-epoch", "", "inspect the materialised epoch `n` instead of the active one")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -384,7 +384,7 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
 	view := fs.String("view", "", "render a stored view once, including its title and summary")
-	atEpoch := fs.String("at-epoch", "", "read a saved epoch snapshot (table targets only)")
+	atEpoch := fs.String("at-epoch", "", "read the saved epoch snapshot `n` (table targets only)")
 	rf := declareRenderFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {

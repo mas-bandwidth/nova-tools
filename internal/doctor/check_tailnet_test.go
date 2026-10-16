@@ -108,6 +108,8 @@ func TestDoctorTailnetCheckNamesTheMissingPeer(t *testing.T) {
 		assert.Equal(t, Fail, r.Status, r)
 		assert.Contains(t, r.Evidence, "m2")
 		assert.Contains(t, r.Evidence, "m3")
+		assert.Contains(t, r.Fix, "m2")
+		assert.Contains(t, r.Fix, "m3")
 	})
 	t.Run("every inventory machine on the tailnet is ok", func(t *testing.T) {
 		t.Parallel()

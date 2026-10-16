@@ -1556,7 +1556,7 @@ from `nova-friend help`:
 flags:
   --harness <string>  claude: the harness whose PreToolUse JSON is on stdin (required)
   --json  print the result as one JSON object instead of lines
-exit codes: 0 done, 1 the verb ran and said no (status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+exit codes: 0 the hook answered: one Claude hook JSON object or nothing (malformed input is answered with a deny), 2 a word or flag other than --harness claude, or the answer could not be written.
 effect: inspection: reads, writes nothing: reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON
 ```
 

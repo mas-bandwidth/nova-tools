@@ -105,7 +105,7 @@ func checkTailnet(ctx context.Context, env Env) Result {
 		}
 		return Result{Status: Fail,
 			Evidence: fmt.Sprintf("%d %s not on the tailnet: %s", len(missing), word, strings.Join(missing, ", ")),
-			Fix:      "run `tailscale up` on " + missing[0] + " and confirm it is in the same tailnet as this machine (" + tailnetDoc + ")"}
+			Fix:      "run `tailscale up` on each of " + strings.Join(missing, ", ") + " and confirm each is in the same tailnet as this machine (" + tailnetDoc + ")"}
 	}
 	return Result{Status: OK,
 		Evidence: fmt.Sprintf("tailscale is up as %s; all %d inventory machines answer on the tailnet", self, len(inv))}
