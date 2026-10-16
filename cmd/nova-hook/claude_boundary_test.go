@@ -158,6 +158,12 @@ func TestAClaudeHookErrorNeverBlocks(t *testing.T) {
 	out = claudeHookRun(t, state, settings, "not json", nil)
 	assert.Equal(t, 1, out.Code, out.Stdout+out.Stderr)
 
+	// another route's environment, inherited from the shell Claude Code runs in
+	out = claudeHookRun(t, state, settings, `{"hook_event_name":"Stop"}`, map[string]string{"NOVA_HOOK_ANTIGRAVITY_DIR": "/elsewhere"})
+	assert.Equal(t, 1, out.Code, out.Stdout+out.Stderr)
+	out = claudeHookRun(t, state, settings, `{"hook_event_name":"Stop"}`, map[string]string{"NOVA_HOOK_CODEX_SINCE": "not-a-time"})
+	assert.Equal(t, 1, out.Code, out.Stdout+out.Stderr)
+
 	bad := filepath.Join(state, "bad.json")
 	require.NoError(t, os.WriteFile(bad, []byte("{"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(state, "pending"), []byte(bad+"\n"), 0o600))

@@ -524,7 +524,18 @@ func holds(r hook.Role) []hook.Push {
 
 // hook is the verb: arm, hold, challenge, then stream until a signal or an unhook
 // (docs/SPEC-HOOK.md, the hook verb; tla/Hook.tla, Arm, Renew and Challenge).
+// Run as an installed Claude Code hook (--claude-boundary), a refusal on any
+// path (another route's environment, a flag) is a failure: Claude Code reads
+// exit 2 as a block, and one that stands would keep a Stop from ever ending.
 func (w world) hook(c *tool.Call) *tool.Out {
+	o := w.hookVerb(c)
+	if c.Bool("claude-boundary") && o != nil && o.Exit == 2 {
+		return claudeHookFail(strings.Join(o.Why, "; "))
+	}
+	return o
+}
+
+func (w world) hookVerb(c *tool.Call) *tool.Out {
 	native, nativeErr := w.codexConfig(c)
 	if nativeErr != nil {
 		return tool.Refuse(nativeErr.Error())
@@ -550,9 +561,6 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		var err error
 		claude, err = claudeConfig(c, native)
 		if err != nil {
-			if c.Bool("claude-boundary") {
-				return claudeHookFail(err.Error()) // a hook's error never blocks a Stop
-			}
 			return tool.Refuse(err.Error())
 		}
 		if claude.boundary {
