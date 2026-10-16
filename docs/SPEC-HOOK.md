@@ -172,8 +172,11 @@ Every line runs as printed:
 - **Durable challenge delivery.** A private `hook:delivery:<name>` outbox keeps the nonce, epoch and
   bus once-key. Failed or unknown sends retry that nonce without moving its deadline. A committed
   bus once-key recovers a crash before delivery acknowledgement. Expiry invalidates the old nonce
-  and recent entry. Failed renewal is latched: continued traffic cannot trigger another proof-expiry
-  challenge until the name is quiet or the model proves a fresh nonce. Activity never renews nonce or proof.
+  and recent entry. Failed renewal is latched against a challenge every pass, never against a retry: a hooked
+  name whose challenge expired unanswered, or whose leases stand with its proof lapsed, is asked again
+  once per `--down-after` from its last challenge by the store's `TIME`, and her own bus sends never
+  hold that off, so an active friend whose proof lapsed is never left down and deaf
+  (`tla/HookBeat.tla`, `Retry`, `AliveHookedEventuallyUp`; reversed witness `MCHookBeatBrokenLatch`). Activity never renews nonce or proof.
 - **Notice rollout.** Receivers accept both canonical body versions; the server emits the truthful
   silence wording. Returning older binaries update through the existing adopt/back-up flow. Their
   byte-for-byte parser does not understand the new body until updated.
@@ -191,7 +194,22 @@ Every line runs as printed:
   old issued-nonce compatibility and the delivery protocol; silence configurations check current
   scheduling. Each new hazard has a broken witness. Quiet policy cases explore one name per role;
   cross-name quiet interactions are not explored. Existing multi-name race and tell cases remain.
-- **Coalesced telling, one write per audience.** Changes in the unhooked set or coordinator are sent
+- **Up is proven, never merely hooked.** The set the telling carries is the names down: every
+  unhooked name, and every hooked name of a challenged role whose challenged pushes (`bus`) are not
+  live and proven in the record's epoch (`live`, `partial`, `expired`). Only the model's
+  `nova-hook prove` writes that proof, and an arming clears it, so a name a supervised hook service
+  re-arms with no model running stays down: no `FRIEND BACK` for the arming, and no second
+  `FRIEND DOWN` when its unanswered challenge unhooks it again. A name is back only once its model
+  proves. A proven name whose lease or proof lapses is down (`hooked, not proven (<state>)`). The
+  other live names, who hear a broadcast, are the names up (proven); the coordinator is the first
+  name of its role up: a coordinator hooked and not proven is down, and the other live names get
+  the `COORDINATOR DOWN <name>: who takes over?` judgment, as for an unhooked one. While no coordinator
+  is up, the coordinator audience is left unmarked: the changes pile up and are judged to the next
+  coordinator up, never marked told with no message; her own return is left out of her judgment
+  (`JudgeCoord`, `DownJudgedToCoordinator`; reversed witness `MCHookBeatBrokenMarkDrop`). The model is
+  `tla/HookBeat.tla` (Parts `proven`: `DaemonHook`, `NoBackWithoutProof`, `NoFlapWithoutProof`;
+  the reversed witness `MCHookBeatBrokenArmedBack`, up as hooked, and `MCHookBeatWitnessArmedDown`).
+- **Coalesced telling, one write per audience.** Changes in the down set or coordinator are sent
   once per audience (`hook:told:<audience>:<gen>`): one `judgment` to the coordinator (`FRIEND DOWN
   <name>: <reason>`, `FRIEND BACK <name>`) and one message (or `COORDINATOR DOWN` judgment) to the
   other live names. Open judgments in `hook:judgments` are re-pushed once as `OVERDUE` past

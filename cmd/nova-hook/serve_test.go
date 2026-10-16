@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -75,7 +76,9 @@ const stepDownAfter = "90s"
 
 // step is one interval: each server in turn runs one pass (the first takes
 // it), each name in answering proves its challenge, the store's clock moves
-// an interval on, and the answering names' holders renew.
+// an interval on, the answering names' holders renew, and each name in r.held
+// that is still hooked has its bus lease renewed with no answer (its service
+// runs, its model is silent).
 func (r *rig) step(t *testing.T, servers []string, answering ...string) string {
 	t.Helper()
 	cli := r.cli()
@@ -93,6 +96,11 @@ func (r *rig) step(t *testing.T, servers []string, answering ...string) string {
 	r.h.Pass(hook.BeatEvery)
 	for _, n := range answering {
 		r.h.Hook(t, n, r.h.State(t, n).Role)
+	}
+	for _, n := range r.held {
+		if !slices.Contains(answering, n) && r.h.State(t, n).State != hook.StateUnhooked {
+			r.renew(t, n)
+		}
 	}
 	return out
 }
@@ -141,6 +149,7 @@ func TestServeNeedsOnlyItsStore(t *testing.T) {
 func TestAFriendDownIsOneJudgmentToTheCoordinator(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
+	r.held = []string{"bob"} // its service renews its lease; its model goes silent
 	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
 	r.h.Hook(t, "ada", hook.Coordinator)
 	r.h.Hook(t, "bob", hook.Comms)
@@ -197,6 +206,7 @@ func TestAFriendDownIsOneJudgmentToTheCoordinator(t *testing.T) {
 func TestACoordinatorDownIsOneJudgmentToEveryFriend(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
+	r.held = []string{"ada"} // its service renews its lease; its model goes silent
 	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
 	r.h.Hook(t, "ada", hook.Coordinator)
 	r.h.Hook(t, "bob", hook.Comms)
@@ -343,6 +353,7 @@ func TestATickExpiresAnOverdueAskOnce(t *testing.T) {
 func TestAFailedTellIsToldAgainOnceAtTheNextPass(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
+	r.held = []string{"bob"} // its service renews its lease; its model goes silent
 	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
 	r.h.Hook(t, "ada", hook.Coordinator)
 	r.h.Hook(t, "bob", hook.Comms)
@@ -524,6 +535,7 @@ func upTo(after []hook.Status) []string {
 func TestServeDryRunPlansAPassAndWritesNothing(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
+	r.held = []string{"bob"} // its service renews its lease; its model goes silent
 	r.h.Hook(t, "ada", hook.Coordinator)
 	r.h.Hook(t, "bob", hook.Comms)
 	cli := r.cli()
@@ -551,4 +563,171 @@ func TestServeDryRunPlansAPassAndWritesNothing(t *testing.T) {
 	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN bob"), "the plan tells no one")
 	r.step(t, []string{"ada"}, "ada")
 	require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State, "the real pass does what the plan said")
+}
+
+// TestAnArmedFriendIsBackOnlyWhenItsModelProves pins the ruling of
+// 2026-10-16 (tla/HookBeat.tla, NoBackWithoutProof and NoFlapWithoutProof):
+// a friend is up only while its model has proven a challenge. Down once, its
+// supervised hook service re-arms it and renews its lease with no model
+// behind it: no FRIEND BACK, to the coordinator or anyone; its unanswered
+// challenge lapses and it is unhooked again: no second FRIEND DOWN; armed
+// again and proven by its model: one FRIEND BACK.
+func TestAnArmedFriendIsBackOnlyWhenItsModelProves(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	require.NoError(t, r.h.Client.SAdd(ctx, "friends", "carl").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "carl", hook.Comms)
+	r.held = []string{"bob"}
+	servers := []string{"ada"}
+	until := func(what string, done func() bool, answering ...string) {
+		t.Helper()
+		for i := 0; !done(); i++ {
+			require.Less(t, i, 40, what)
+			r.step(t, servers, answering...)
+		}
+	}
+	unhooked := func() bool { return r.h.State(t, "bob").State == hook.StateUnhooked }
+	until("bob's silence unhooks him", unhooked, "ada", "carl")
+	r.step(t, servers, "ada", "carl")
+	require.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob"))
+	require.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob"))
+
+	arm := func() { // the service, not the model: the identity's word, then its holder's lease
+		_, _, err := r.h.Store.HookAs(ctx, "bob", hook.Comms, "service")
+		require.NoError(t, err)
+		require.NoError(t, (&hook.Holder{Store: r.h.Store, Name: "bob", Role: hook.Comms, Pushes: hook.PushesOf(hook.Comms), By: "service"}).Start(ctx))
+		require.Equal(t, hook.StateLive, r.h.State(t, "bob").State)
+	}
+	arm()
+	r.step(t, servers, "ada", "carl")
+	assert.True(t, r.hasChallenge(t, "bob"), "armed: challenged at once")
+	until("bob's unanswered challenge unhooks him again", unhooked, "ada", "carl")
+	r.step(t, servers, "ada", "carl")
+	assert.Zero(t, r.count(t, "ada", "FRIEND BACK bob"), "armed by its service, never proven: not back")
+	assert.Zero(t, r.count(t, "carl", "FRIEND BACK bob"))
+	assert.Zero(t, r.count(t, "bob", "FRIEND DOWN"), "a down friend hears no broadcast")
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob"), "a lapse from live to unhooked while down is no second DOWN")
+	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob"))
+
+	arm()
+	r.step(t, servers, "ada", "carl")
+	assert.Zero(t, r.count(t, "ada", "FRIEND BACK bob"), "armed again: still down")
+	r.step(t, servers, "ada", "bob", "carl") // the model proves
+	r.step(t, servers, "ada", "bob", "carl")
+	r.step(t, servers, "ada", "bob", "carl")
+	assert.Equal(t, hook.StateProven, r.h.State(t, "bob").State)
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND BACK bob"), "proven: back, once")
+	assert.Equal(t, 1, r.count(t, "carl", "FRIEND BACK bob"))
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob"))
+}
+
+// TestAFriendWhoseServiceStopsIsDownAtItsLeaseLapse pins the other way out of
+// up (hook.Passed.Unhooked): a friend still hooked whose hook service stopped
+// renewing has no live lease, so no longer reads proven, and is told down
+// once with that reason, before any silence would unhook it.
+func TestAFriendWhoseServiceStopsIsDownAtItsLeaseLapse(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	for range 3 {
+		r.step(t, []string{"ada"}, "ada")
+	}
+	assert.Equal(t, hook.StateExpired, r.h.State(t, "bob").State)
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: hooked, not proven (expired)"))
+}
+
+// TestAHookedCoordinatorNotProvenIsCoordinatorDown pins the coordinator's own
+// down (tla/HookBeat.tla, CoordOf: the first coordinator up): a coordinator
+// still hooked whose hook service stopped is not proven, so she is down; the
+// other live names are asked who takes over, once, and she is sent no
+// FRIEND DOWN about herself.
+func TestAHookedCoordinatorNotProvenIsCoordinatorDown(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "carl", hook.Comms)
+	for range 5 {
+		r.step(t, []string{"bob"}, "bob", "carl")
+	}
+	require.Equal(t, hook.StateExpired, r.h.State(t, "ada").State, "still hooked")
+	for _, n := range []string{"bob", "carl"} {
+		assert.Equal(t, 1, r.count(t, n, "COORDINATOR DOWN ada: who takes over?"), n)
+	}
+	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN ada"), "no judgment about herself")
+}
+
+// TestADownWhileNoCoordinatorIsUpIsJudgedToTheNextOne pins that no change is
+// dropped for want of a coordinator (tla/HookBeat.tla, JudgeCoord and
+// DownJudgedToCoordinator): ada, the coordinator, reads down (her service
+// stopped), then carl does; nobody is up to judge it, so the change waits,
+// and when ada is back she gets the FRIEND DOWN carl judgment, once, and no
+// FRIEND BACK about herself.
+func TestADownWhileNoCoordinatorIsUpIsJudgedToTheNextOne(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "carl").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "carl", hook.Comms)
+	servers := []string{"bob"}
+	for range 3 { // ada's lease lapses: still hooked, not proven, down
+		r.step(t, servers, "bob", "carl")
+	}
+	require.Equal(t, hook.StateExpired, r.h.State(t, "ada").State)
+	require.Equal(t, 1, r.count(t, "carl", "COORDINATOR DOWN ada"))
+	for range 3 { // then carl's
+		r.step(t, servers, "bob")
+	}
+	require.Equal(t, hook.StateExpired, r.h.State(t, "carl").State)
+	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN carl"), "no coordinator up: nothing judged yet")
+	r.h.Hook(t, "ada", hook.Coordinator) // ada is back
+	for range 2 {
+		r.step(t, servers, "ada", "bob")
+	}
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN carl"), "the waiting change is judged to the coordinator up again")
+	var j msg
+	for _, m := range r.stream(t, "ada") {
+		if strings.Contains(m.subject, "FRIEND DOWN carl") {
+			j = m
+		}
+	}
+	assert.Equal(t, bus.KindJudgment, j.kind)
+	assert.Zero(t, r.count(t, "ada", "FRIEND BACK ada"), "her own return is no judgment for her")
+}
+
+// TestAReturningCoordinatorIsNotJudgedBackAboutHerself pins H2 with two
+// coordinator-role names (tla/HookBeat.tla, NoJudgmentNamesItsRecipientBack):
+// ada's lease lapses, dan becomes the coordinator and is judged FRIEND DOWN
+// ada, so the coordinator audience's mark holds ada; ada hooks in again and is
+// the first of the role up, the coordinator, with back = [ada]. Her own return
+// is left out of her judgment: the mark moves, and she is sent no FRIEND BACK
+// ada and no OVERDUE of one.
+func TestAReturningCoordinatorIsNotJudgedBackAboutHerself(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	require.NoError(t, r.h.Client.SAdd(context.Background(), "friends", "dan").Err())
+	r.h.Hook(t, "ada", hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Comms)
+	r.h.Hook(t, "dan", hook.Coordinator)
+	servers := []string{"bob"}
+	for range 3 { // ada's lease lapses: dan is the coordinator up
+		r.step(t, servers, "bob", "dan")
+	}
+	require.Equal(t, hook.StateExpired, r.h.State(t, "ada").State)
+	require.Equal(t, 1, r.count(t, "dan", "FRIEND DOWN ada"), "dan, the coordinator up, is judged ada down")
+	r.h.Hook(t, "ada", hook.Coordinator) // ada is back, the first of the role up
+	for range 5 {                        // past --judge-within: an open judgment would be pushed OVERDUE
+		r.step(t, servers, "ada", "bob", "dan")
+	}
+	assert.Zero(t, r.count(t, "ada", "FRIEND BACK ada"), "her own return is no judgment for her")
+	assert.Zero(t, r.count(t, "ada", "OVERDUE FRIEND BACK ada"), "no open judgment about herself to re-push")
+	n, err := r.h.Client.HGet(context.Background(), hook.ServeKey, "told:"+hook.ToCoordinator).Result()
+	require.NoError(t, err)
+	assert.Empty(t, n, "the mark moved: nothing waits")
 }

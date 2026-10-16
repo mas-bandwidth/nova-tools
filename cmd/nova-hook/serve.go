@@ -244,6 +244,9 @@ func (w world) tell(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, within 
 	why := map[string]string{}
 	for _, st := range sts {
 		why[st.Name] = cmp.Or(st.Reason, "unhooked")
+		if st.State != hook.StateUnhooked { // hooked and down: no proof from the model (hook.Passed.Unhooked)
+			why[st.Name] = "hooked, not proven (" + st.State + ")"
+		}
 	}
 	lines := func(down, back []string) []string {
 		var out []string
@@ -263,10 +266,15 @@ func (w world) tell(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, within 
 		}
 	}
 	if down, back, _ := p.Diff(hook.ToCoordinator); p.Changed(hook.ToCoordinator) {
-		ls := lines(down, back)
-		if p.Coord == "" || len(ls) == 0 {
+		// her own return is no judgment for her (tla/HookBeat.tla, JudgeCoord)
+		ls := lines(down, slices.DeleteFunc(slices.Clone(back), func(n string) bool { return n == p.Coord }))
+		switch {
+		case p.Coord == "":
+			// no coordinator up: the audience is left unmarked, so the change piles up and
+			// is judged to the next coordinator up (DownJudgedToCoordinator), never dropped
+		case len(ls) == 0:
 			nobody(hook.ToCoordinator)
-		} else {
+		default:
 			w.judge(c, s, b, p, hook.ToCoordinator, []string{p.Coord}, strings.Join(ls, "; "), "Answer with nova-bus send --re <this message's id> and one of: wait | reassign <name>'s work | tell the owner.", within)
 		}
 	}
