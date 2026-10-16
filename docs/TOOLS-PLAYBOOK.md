@@ -82,8 +82,8 @@ late.
 **The verbs, in order.**
 
 1. Send. usage: `nova-bus send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--kind ask --deadline <duration>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]`.
-   `--kind` is one of report, ack, status, request, blocker, ask or judgment, and readers filter
-   on it. An ask needs `--deadline <duration>`, its server-side wait for the answer
+   `--kind` is one of report, ack, status, request, blocker, ask, timeout or judgment (timeout is
+   the bus's own), and readers filter on it. An ask needs `--deadline <duration>`, its server-side wait for the answer
    (`nova-bus send -h`). Answer a message with `--re <id>`. Spec: SPEC-BUS.md, "bus-message-kinds.w1"
    and "asks: an ask has a server deadline; a timeout wakes the sender".
 2. Follow your asks. usage: `nova-bus asks [--as <me>] [--open | --timedout | --all] [--liveness [--window <duration>]] [--max <n>] [--timeout <duration>] [--redis <addr>]`.
@@ -109,11 +109,11 @@ Do not wait forever on a reply; give the ask a `--deadline`.
 1. Read first. usage: `nova-config <kind> show <name> [--json]` and usage
    `nova-config <kind> history <name> [--max <n>] [--json]` (who changed it, and when).
 2. Write one row. usage: `nova-config <kind> set <name> --<field> <value> ... --actor <name> [--dry-run] [--json]`.
-   For example, `nova-config friend set <friend> --width <n> --actor <me>`,
+   For example, `nova-config friend set <friend> --width <n> --actor <me> --reason <why>`,
    `nova-config route set <route> --note <why> --actor <me>`,
-   `nova-config tier set <tier> --routes <a,b> --actor <me>`,
-   `nova-config machine set <m> --width <n> --actor <me>`, or
-   `nova-config sprint set --max_attempts <n> --actor <me>` (fleet and sprint are one row each,
+   `nova-config tier set <tier> --routes <a,b> --actor <me> --reason <why>`,
+   `nova-config machine set <m> --width <n> --actor <me> --reason <why>`, or
+   `nova-config sprint set --max_attempts <n> --actor <me> --reason <why>` (fleet and sprint are one row each,
    with no name). Run it with `--dry-run` first: it prints `CONFIG DRY-RUN` from the same checks.
    Every write adds a history row naming who made it. Spec: SPEC-CONFIG.md, "Kinds" and "History".
 3. Apply it. usage: `nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--actor <name>] [--kind <kind>] [--dry-run] [--json]`.
@@ -121,8 +121,8 @@ Do not wait forever on a reply; give the ask a `--deadline`.
    committed route write applies its own copy (`nova-config route set -h`). Spec: SPEC-CONFIG.md,
    "Apply".
 
-**Success looks like.** `show` prints the new value, and `history` names you and your
-reason.
+**Success looks like.** `show` prints the new value, and `history` names you, with your
+`--reason` when you gave one.
 
 **Not by hand.** No edit of the PostgreSQL rows or the Redis copy by hand; a lost Redis comes back
 with `nova-config apply` (`nova-config help`). No password on the line: `NOVA_PG_PASSWORD_ENV`
