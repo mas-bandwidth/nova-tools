@@ -1,0 +1,34 @@
+schema-tables-baseline 7
+package buswire
+
+table Envelope
+    field id id=0x08b72e07b55c3ac0 kind=12 size=64
+    field from id=0x7f845078d7a5c0b5 kind=12 size=64
+    field to id=0x08c83907b56ac0a4 kind=14 elem=13 type=Name array=bounded bound=64
+    field cc id=0x08a24d07b54a1363 kind=14 elem=13 type=Name array=bounded bound=64
+    field re id=0x08dc4f07b57b8f10 kind=12 size=64
+    field kind id=0xef9c96d721673243 kind=7 enum=Kind
+    field subject id=0x9640735281e90c0f kind=12 size=200
+    field card id=0xb5614e90e87b455f kind=12 size=64
+    field head id=0x0a8f12cc5f9a0c03 kind=12 size=40
+    field token id=0x26c4b17d50b3c152 kind=12 size=128
+    field at_ms id=0x41fdbf81bf00fdc1 kind=5 optional=true
+    field due_ms id=0x26095ca7d9d66c8e kind=5 optional=true
+    field body id=0xcd4de79bc6c93295 kind=17 type=string
+
+table Name
+    field s id=0xaf63ee4c86020b22 kind=12 size=64
+
+enum Kind
+    variant status id=0xc4d5696d6cc12c2f
+    variant report id=0xadae49645df2840b
+    variant ack id=0xe723c21905457682
+    variant request id=0x6f4743b8bc5b4eb2
+    variant blocker id=0x7efc07594f610c95
+    variant ask id=0xe759a2190572cf92
+    variant timeout id=0x60827e549de65488
+    variant judgment id=0x26eb1fc00f756ad1
+
+## history
+### 2026-10-16 (UTC) — first baseline
+- baseline created over 2 tables — data written BEFORE this point is not covered by it

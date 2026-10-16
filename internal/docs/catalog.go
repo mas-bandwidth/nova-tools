@@ -58,6 +58,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/buildinfo", "binary identity and version info", "go test ./pkg/buildinfo", "go test ./pkg/buildinfo"),
 	E("pkg/hookgate", "the hook gate as a nova-tools verb meets it: the hook module's Gate over a bus store, its no as the verb's result", "go test ./pkg/hookgate", "go test ./pkg/hookgate"),
 	E("pkg/bus", "the message bus over Redis streams: the rules (send, recv, ack, peek, log) over a Store of the few commands used, the Redis store and the in-memory fake", "go test ./pkg/bus", "go test -tags functional ./pkg/bus"),
+	E("pkg/buswire", "the bus envelope's table wire, generated from schemas/bus by the pinned schema compiler: the Envelope, its Kind enum and Name element; read strictly through pkg/schemaread", "go test ./pkg/buswire", "make schemawire-check"),
 	E("internal/cairn", "the cairn store: session records, entries, the index and receipts, nested and flat", "go test ./internal/cairn", "go test ./internal/cairn"),
 	E("pkg/cardcontract", "the frame around a card's task: the frame file, JOB.md, the result shape, and the shims of each model family's profile", "go test ./pkg/cardcontract", "go test -tags functional ./pkg/cardcontract"),
 	E("pkg/cardcost", "what a card cost: a route's price sheet, a run's tokens by class, the predicted cost and a consumer card's usage record, in exact decimal arithmetic", "go test ./pkg/cardcost", "go test ./pkg/cardcost"),

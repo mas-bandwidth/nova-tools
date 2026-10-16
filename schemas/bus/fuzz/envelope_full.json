@@ -1,0 +1,26 @@
+{
+  "id": "01JA2B3C4D5E6F7G8H9J0KMNPQ",
+  "from": "sender",
+  "to": [
+    {
+      "s": "reader-a"
+    },
+    {
+      "s": "reader-b"
+    }
+  ],
+  "cc": [
+    {
+      "s": "reader-c"
+    }
+  ],
+  "re": "01JA2B3C4D5E6F7G8H9J0KMNPA",
+  "kind": "ask",
+  "subject": "#202 HOLD at 3f9c",
+  "card": "l1-defs-bus-envelope-2",
+  "head": "3f9c3f9c3f9c3f9c3f9c3f9c3f9c3f9c3f9c3f9c",
+  "token": "retry-1",
+  "at_ms": 1792098245000,
+  "due_ms": 1792098845000,
+  "body": "the reader found it broken:\n- a line\n"
+}
