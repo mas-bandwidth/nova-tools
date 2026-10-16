@@ -72,20 +72,28 @@
 (*   NoGrow         the client takes to the width it started with (a      *)
 (*                  width read once, at hook time): GrowTakes fails.       *)
 (*                                                                         *)
-(* The client's own view (nova-tools#5869 cold read): Renew asks the lanes *)
-(* the client believes hold, never srv directly. While friend cards        *)
+(* The client's own view (nova-tools#5869 cold reads): Renew asks the     *)
+(* lanes the client believes hold, never srv directly. While friend cards  *)
 (* answers (cardsOk), that answer is the server's (the lanes srv says      *)
-(* hold). When it fails (CardsReadFails, CardsReadBack), the client has    *)
-(* only held, the lanes its own last answers found holding (empty after a  *)
-(* restart), and asks every lane 1..max(width, max held), an empty one not *)
-(* ending the round (RenewBlind). Witness:                                 *)
-(*   BlindStops     the round before the fix: a failed cards read asks    *)
-(*                  only held, then free lanes in order, stopping at the  *)
-(*                  first empty one; a fresh client with lane 1 free never *)
-(*                  asks lane 2: LiveHoldNeverExpires fails.               *)
-(* A fresh client that reads neither friend cards nor its row (width       *)
-(* unread, held empty) knows no lane to ask; MCFriendLaneClientBlind.cfg  *)
-(* holds MaxLosses = 0 so that double failure is outside its bound.        *)
+(* hold). When it fails (CardsReadFails, CardsReadBack) the round is       *)
+(* blind: the client has only held, the lanes its own last round found     *)
+(* holding (empty after a restart), and the lane take is the only lane ask *)
+(* (no renew-only form: an ask of a lane that freed since is a take,       *)
+(* BlindAsk). A blind round asks the lanes of held, and only while the row *)
+(* reads and |held| is within the width (RenewBlind); else it asks nothing *)
+(* and takes no free-lane turn (Take needs cardsOk). Witness:              *)
+(*   BlindTakes     the round of 2a42a5d4a8: blind, every lane             *)
+(*                  1..max(width, max held), ungated; a freed lane takes   *)
+(*                  with the row unread or past a lowered width:           *)
+(*                  DrainNeverTakes fails.                                 *)
+(* The bound, checked as a witness of the design, not excluded             *)
+(* (MCFriendLaneClientBlindRestartLapses.cfg): a client that does not know *)
+(* a held lane (restarted, held empty), or that drains past a lowered      *)
+(* width or reads no row, renews nothing while friend cards keeps failing; *)
+(* the lease returns the card: LiveHoldNeverExpires fails there.           *)
+(* MCFriendLaneClientBlind.cfg (no restart) and                            *)
+(* MCFriendLaneClientBlindWidth.cfg (resizes and a failed row read under a *)
+(* failed cards read) hold everything else.                                *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -93,7 +101,7 @@ CONSTANTS Cards, Lanes, Bound, RenewTicks, MaxRestarts, MaxDeaths,
           TrustCache, RenewUnproven, TickUnstarts,
           Widths, InitWidth, MaxResizes, MaxLosses,
           ShrinkStopsRenew, ShrinkMoves, TakeOverWidth, NoGrow,
-          MaxCardFails, BlindStops
+          MaxCardFails, BlindTakes
 
 None == "none"
 NoHold == <<None, 0>>  \* a cache entry naming no card
@@ -101,7 +109,7 @@ ASSUME None \notin Cards /\ Bound > 0 /\ RenewTicks \in 1..Bound
 ASSUME TrustCache \in BOOLEAN /\ RenewUnproven \in BOOLEAN /\ TickUnstarts \in BOOLEAN
 ASSUME Lanes = 1..Cardinality(Lanes) /\ Widths \subseteq Lanes /\ InitWidth \in Widths
 ASSUME ShrinkStopsRenew \in BOOLEAN /\ ShrinkMoves \in BOOLEAN /\ TakeOverWidth \in BOOLEAN /\ NoGrow \in BOOLEAN
-ASSUME MaxCardFails \in Nat /\ BlindStops \in BOOLEAN
+ASSUME MaxCardFails \in Nat /\ BlindTakes \in BOOLEAN
 
 VARIABLES srv,       \* server: the card each lane holds, or None
           col,       \* server: each card ready, held or done
@@ -173,13 +181,13 @@ Renewing == up /\ (proven \/ RenewUnproven)
 MaxHeld == IF held = {} THEN 0 ELSE CHOOSE m \in held : \A k \in held : k <= m
 
 \* RenewBlind: the lanes a client whose friend cards read failed asks, from its own view
-\* alone: every lane 1..max(width, MaxHeld) (width 0 while the row is unread), an empty one
-\* not ending the round. The witness BlindStops asks held, then free lanes in order while
-\* under the width, stopping at the first empty one (a lane past a free one goes unasked).
+\* alone: the lanes of held, while the row reads and they are within the width. The witness
+\* BlindTakes asks every lane 1..max(width, MaxHeld) (width 0 while the row is unread),
+\* ungated.
 RenewBlind(l) ==
-  IF BlindStops
-    THEN l \in held \/ (cfgOk /\ l <= width /\ \A k \in 1..(l - 1) : k \in held \/ srv[k] # None)
-    ELSE l <= (IF cfgOk /\ width > MaxHeld THEN width ELSE MaxHeld)
+  IF BlindTakes
+    THEN l <= (IF cfgOk /\ width > MaxHeld THEN width ELSE MaxHeld)
+    ELSE l \in held /\ cfgOk /\ Cardinality(held) <= width
 
 \* The lanes a renewing client asks as renewals, from its own view: while friend cards answers,
 \* every lane that answer says holds a card (the server's own answer), whatever the width;
@@ -212,10 +220,35 @@ Forget(l) ==
   /\ UNCHANGED cfgVars
   /\ UNCHANGED <<cardsOk, cardFails>>
 
+\* BlindAsk(l): a blind round's ask of a lane it asks (RenewBlind) that the server says is
+\* free: the lane take has no renew-only form, so the ask takes her next ready card, else
+\* answers it free and the lane leaves the client's view.
+BlindAsk(l) ==
+  /\ Renewing /\ ~cardsOk /\ RenewBlind(l)
+  /\ srv[l] = None
+  /\ IF \E c \in Cards : col[c] = "ready"
+       THEN \E c \in Cards :
+              /\ col[c] = "ready"
+              /\ srv' = [srv EXCEPT ![l] = c]
+              /\ col' = [col EXCEPT ![c] = "held"]
+              /\ lease' = [lease EXCEPT ![l] = Bound]
+              /\ cache' = [cache EXCEPT ![l] = <<c, gen[c]>>]
+              /\ overTake' = (overTake \/ ~cfgOk \/ HeldN >= width)
+              /\ held' = held \cup {l}
+       ELSE /\ cache' = [cache EXCEPT ![l] = NoHold]
+            /\ held' = held \ {l}
+            /\ UNCHANGED <<srv, col, lease, overTake>>
+  /\ UNCHANGED <<gen, up, proven, told, finished, returned, lostLive, restarts, deaths>>
+  /\ UNCHANGED <<width, cfgOk, resizes, losses>>
+  /\ UNCHANGED <<cardsOk, cardFails>>
+
 \* CardsReadFails: friend cards does not answer (the client falls back to its own view);
-\* CardsReadBack: it answers again.
+\* CardsReadBack: it answers again. The read is a round's first step, so it fails between
+\* rounds: before this process's first round (held empty) or after a whole round, when held
+\* names every lane the server holds (code: c.held is a round's holds, set at its end).
 CardsReadFails ==
   /\ cardsOk /\ cardFails < MaxCardFails
+  /\ held = {} \/ \A l \in Lanes : srv[l] # None => l \in held
   /\ cardsOk' = FALSE /\ cardFails' = cardFails + 1
   /\ UNCHANGED <<srv, col, gen, lease, up, proven, cache, told, finished, returned, lostLive, restarts, deaths, held>>
   /\ UNCHANGED cfgVars
@@ -226,10 +259,11 @@ CardsReadBack ==
   /\ UNCHANGED cfgVars
 
 \* Take(l): the same verb on a free lane takes her next ready card, else nothing. The client
-\* asks a free lane only while the row reads and her held cards are under the width (the
-\* witness TakeOverWidth asks regardless).
+\* asks a free lane only while friend cards answers, the row reads and her held cards are
+\* under the width (the witness TakeOverWidth asks regardless of the width and the read; a
+\* blind round's asks are BlindAsk).
 Take(l) ==
-  /\ Renewing
+  /\ Renewing /\ cardsOk
   /\ srv[l] = None
   /\ TakeOverWidth \/ (cfgOk /\ HeldN < TakeWidth)
   /\ IF \E c \in Cards : col[c] = "ready"
@@ -386,7 +420,7 @@ Next ==
   \/ \E l \in Lanes : Renew(l) \/ Take(l) \/ Age(l) \/ Expire(l) \/ TickUnstart(l)
   \/ \E w \in Widths : SetWidth(w)
   \/ ConfigLost \/ ConfigBack
-  \/ CardsReadFails \/ CardsReadBack \/ \E l \in Lanes : Forget(l)
+  \/ CardsReadFails \/ CardsReadBack \/ \E l \in Lanes : Forget(l) \/ BlindAsk(l)
   \/ Notify
   \/ \E c \in Cards, g \in Gens, l \in Lanes : Finish(c, g, l) \/ Progress(c, g, l)
   \/ Crash \/ Restart \/ Die \/ Revive
