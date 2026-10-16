@@ -54,6 +54,33 @@ func TestRecoveryKeepsEarlierUnansweredWhenLaterMessageAnswered(t *testing.T) {
 	assert.True(t, plan.coverageUnknown, "a shorter stream does not prove trimming or complete coverage")
 }
 
+func TestRecoveryKeepsSprintCoordinatorSelfNotices(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	s := recoverySession(r)
+	b := &bus.Bus{Store: bus.Redis{C: r.h.Client}}
+	var want []string
+	for _, m := range []bus.Message{
+		{From: "ada", To: []string{"ada"}, Kind: bus.KindRequest, Subject: "nova-sprint: 1 new for the coordinator", Body: "x"},
+		{From: "ada", To: []string{"ada"}, Kind: bus.KindRequest, Subject: "nova-sprint: judgments waiting on the coordinator", Body: "x"},
+		{From: "ada", To: []string{"ada"}, Kind: bus.KindBlocker, Subject: "nova-sprint: decisions owed", Body: "x"},
+		{From: "ada", To: []string{"ada"}, Kind: bus.KindRequest, Subject: "note to self", Body: "x"},
+	} {
+		sent, err := b.Send(context.Background(), m)
+		require.NoError(t, err)
+		if m.Subject != "note to self" {
+			want = append(want, sent.ID)
+		}
+	}
+	plan, err := codexBacklog(s, recoveryTail(t, s), time.Time{})
+	require.NoError(t, err)
+	var got []string
+	for _, m := range plan.messages {
+		got = append(got, m.ID)
+	}
+	assert.Equal(t, want, got)
+}
+
 func TestRecoveryReplaysCurrentActualServerChallengeWithoutBusACK(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)

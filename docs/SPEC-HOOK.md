@@ -215,7 +215,11 @@ Every line runs as printed:
   `OVERDUE` messages are from the name that reads them. The hook's stream loop (and the Codex backlog
   recovery) passes over a message from its own name only when this session sent it (a `nova-bus send`);
   `serverSent` tells the server's by kind (`status`, `judgment`) and subject prefix, and the server's
-  challenges by theirs. Each is its own `HOOK PUSH` line.
+  challenges by theirs. The sprint server may also send under the coordinator's name: its `request`
+  subjects `nova-sprint: <positive count> new for the coordinator` and
+  `nova-sprint: judgments waiting on the coordinator`, and its `blocker` subject
+  `nova-sprint: decisions owed`, pass the same filter. Other messages to self stay suppressed.
+  Each passing message is its own `HOOK PUSH` line.
 - **Bootstrap and client timers.** A client's standalone `Challenge` (`tla/HookBeat.tla`, `Bootstrap`)
   writes only when no challenge stands and `beat_at` is `0` in the current epoch, so a client never
   overwrites a heartbeat challenge or an epoch the heartbeat already owns. A session's `nova-hook hook`

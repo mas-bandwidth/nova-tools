@@ -319,3 +319,34 @@ cards again.
 **Not by hand.** Do not type into her window; reach's window step does that only when the
 earlier steps found no proof. Do not delete the PAUSED marker or the fault file by hand, because
 resume and lanes do it and say what they cleared.
+
+## 13. Coordinating from a Codex child while the main chat stays responsive
+
+**Situation.** A Codex chat must keep receiving user direction while sustained sprint
+coordination runs in a child agent. The child owns the coordinator's queue, judgments and
+work for that session; the main chat relays user direction and gives short status replies.
+
+1. Start the child through Codex's agent facility with the coordinator brief, current
+   working directory and stop instructions. Keep one active owner of the coordinator
+   identity. In the child, run `nova-hook hook --as <name> --role coordinator` under a
+   monitored terminal, with the seat's Redis address. Read its `HOOK PUSH` lines and
+   answer `HOOK CHALLENGE` with `nova-hook prove` from the child's own turn. A plain
+   stdout hook delivers only while that terminal is monitored; it does not wake an
+   idle child agent.
+2. The main chat remains available for user messages. Forward a changed priority or
+   stop request to the child through the agent facility. The child checks for steering
+   before its next action, stops new work when asked, and reports what it actually
+   finished. Terminate the monitored hook on stop; its bus lease then lapses. Use
+   `nova-hook unhook --as <name>` when intentionally ending that identity's session.
+3. On restart or after the child chat closes, inspect `nova-hook status`, the sprint
+   queue and unresolved bus messages before starting a replacement child. Reuse the
+   Codex route's fixed `--codex-since` cutover or its saved `.cutover` file; resetting
+   it silently archives prior work. Bind `--codex-thread` only to a verified current
+   recipient. A native acceptance receipt establishes delivery to the desktop route;
+   a model acknowledgment or answer establishes its handling of that message. Neither establishes
+   that an idle child woke or that work continued after its chat closed.
+
+The hook transports and proves messages; it does not create a child, propagate a
+user's stop request, or resume a closed child chat. The Codex agent facility must
+provide those lifecycle steps. If it exposes no supported child recipient or idle
+wake contract, report that limit and keep the monitored child active while work runs.
