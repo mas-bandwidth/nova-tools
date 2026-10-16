@@ -212,19 +212,19 @@ func TestCoordinatorVerbsRefuseUntilHooked(t *testing.T) {
 }
 
 // TestTheDaemonNeverTakesARecordOver pins that a daemon started while its
-// friend is hooked as another role (a coordinator's own daemon) holds nothing
+// friend is hooked as a role other than friend or coordinator holds nothing
 // and takes nothing, and the record stays the other role's.
 func TestTheDaemonNeverTakesARecordOver(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newHookRig(t, hook.Friend)
-	_, _, err := r.h.Store.Arm(ctx, "bob", hook.Coordinator, "session", false)
+	_, _, err := r.h.Store.Arm(ctx, "bob", hook.Comms, "session", false)
 	require.NoError(t, err)
 	r.dh.step(ctx)
 	ok, why := r.dh.ok()
 	assert.False(t, ok)
 	assert.Contains(t, why, "bob is hooked as another role")
-	assert.Equal(t, hook.Coordinator, r.h.State(t, "bob").Role)
+	assert.Equal(t, hook.Comms, r.h.State(t, "bob").Role)
 	assert.Equal(t, int64(1), r.h.State(t, "bob").Epoch, "the record was not taken over")
 }
 
