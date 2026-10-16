@@ -142,3 +142,37 @@ func hasRole(raw any, want string) bool {
 	}
 	return false
 }
+
+// TestToolchainsInstallerArgvMatchesTheArchive pins the two installer defects a fresh Linux machine hit
+// (hulk, 2026-10-16): rust's install.sh accepts --prefix=<dir> only, and OTP's Install builds in place, so its
+// ERL_ROOT and install_root are the unpacked tree (archive root), never the bare prefix.
+func TestToolchainsInstallerArgvMatchesTheArchive(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("roles/toolchains/defaults/main.yml")
+	require.NoError(t, err)
+	var defaults struct {
+		Toolchains map[string]struct {
+			Platforms map[string]struct {
+				Root          string   `yaml:"root"`
+				InstallRoot   string   `yaml:"install_root"`
+				InstallerArgv []string `yaml:"installer_argv"`
+			} `yaml:"platforms"`
+		} `yaml:"nova_toolchains"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &defaults))
+	for name, tc := range defaults.Toolchains {
+		for platform, p := range tc.Platforms {
+			if len(p.InstallerArgv) == 0 {
+				continue
+			}
+			where := name + "/" + platform
+			for _, arg := range p.InstallerArgv {
+				assert.NotEqual(t, "--prefix", arg, "%s: install.sh takes --prefix=<dir>, one argument", where)
+			}
+			if p.InstallerArgv[0] == "./Install" {
+				assert.Equal(t, "{prefix}/"+p.Root, p.InstallerArgv[len(p.InstallerArgv)-1], "%s: OTP's ERL_ROOT is the unpacked tree", where)
+				assert.Equal(t, p.Root, p.InstallRoot, "%s: OTP installs in place, under the archive root", where)
+			}
+		}
+	}
+}
