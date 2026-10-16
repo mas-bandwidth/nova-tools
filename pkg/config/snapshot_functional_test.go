@@ -35,10 +35,18 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 	sprintRow, _, sprintErr := st.Get(ctx, KindSprint, KindSprint)
 	require.NoError(t, sprintErr)
 	applyKinds(t, st, ap, sprintRow.Fields["coordinator"])
+	fleetRow, _, fleetErr := st.Get(ctx, KindFleet, KindFleet)
+	require.NoError(t, fleetErr)
+	coordinationMachine := fleetRow.Fields["coordinator"]
+	_, _, err := st.Update(ctx, KindMachine, coordinationMachine, map[string]string{"roles": "bench,coordination,runner"}, "operator")
+	require.NoError(t, err)
 	machines, err := st.List(ctx, KindMachine)
 	require.NoError(t, err)
-	beatOf := machines[0].Name
-	require.NoError(t, c.HSet(ctx, BeatKey(beatOf), "os", "linux", "arch", "amd64", "ncpu", "8").Err())
+	applyKinds(t, st, ap, sprintRow.Fields["coordinator"])
+	beatOf := coordinationMachine
+	for _, machine := range machines {
+		require.NoError(t, c.HSet(ctx, BeatKey(machine.Name), "os", "linux", "arch", "amd64", "ncpu", "8").Err())
+	}
 
 	count := &pipeCounter{}
 	c.AddHook(count)
@@ -49,7 +57,9 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 	for _, m := range machines {
 		assert.Equal(t, m.Fields["slots"], snap.Machines[m.Name]["slots"], m.Name)
 		assert.Equal(t, m.Fields["user"], snap.Machines[m.Name]["user"], m.Name)
+		assert.Equal(t, m.Fields["roles"], snap.Machines[m.Name]["roles"], m.Name)
 	}
+	assert.Contains(t, snap.Machines[beatOf]["roles"], "runner")
 	assert.Equal(t, &Beat{OS: "linux", Arch: "amd64", Cores: "8"}, snap.Beats[beatOf])
 	_, applied := snap.Revs[KindLoop]
 	assert.Equal(t, applied, snap.Loops != nil, "loops are read exactly when rev:loop is stamped")
@@ -70,4 +80,14 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "linux", inv.Meta.Hostvars[beatOf]["nova_os"])
 	assert.Len(t, inv.Meta.Hostvars[beatOf]["nova_loops"], 1)
+
+	missing, err := ap.Snapshot(ctx)
+	require.NoError(t, err)
+	down := machines[len(machines)-1].Name
+	delete(missing.Beats, down)
+	inv, err = BuildInventory(missing, "")
+	require.NoError(t, err, "a machine with no beat is listed with a NOTE, never a refusal of the list")
+	assert.Contains(t, inv.All.Hosts, down)
+	assert.NotContains(t, inv.Meta.Hostvars[down], "nova_os")
+	assert.Contains(t, inv.Notes, "machine "+down+": no beat (the machine is down, or its member has never beaten); listed from its row; the play gathers os, arch and cores from its facts")
 }

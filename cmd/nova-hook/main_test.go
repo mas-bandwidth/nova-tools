@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/netip"
 	"regexp"
@@ -28,13 +29,44 @@ type rig struct {
 	clock  time.Time
 	cancel context.CancelFunc
 	nonces int
+	home   string // HOME as the tool reads it: a test's own directory
+	// failTells makes every judgment and told message fail to send, as a bus
+	// that does not answer would; challenges still go out.
+	failTells atomic.Bool
+	// loseAnswers sends every judgment and told message and then answers an
+	// error, as a send whose reply was lost after the store took it.
+	loseAnswers atomic.Bool
 }
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
 	h := hooktest.New(t)
 	require.NoError(t, h.Client.SAdd(context.Background(), "friends", "ada", "bob").Err())
-	return &rig{h: h, clock: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
+	return &rig{h: h, home: t.TempDir(), clock: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
+}
+
+// TestHookHelpClarifiesEnforcementScope pins the distinction between a strict
+// acting-identity gate and nova-bus's advisory mailbox proof, plus the limits
+// of what answering a hook challenge proves.
+func TestHookHelpClarifiesEnforcementScope(t *testing.T) {
+	t.Parallel()
+	cli := newRig(t).cli()
+
+	mainHelp := cli.Run("--help")
+	require.Zero(t, mainHelp.Code, mainHelp.Stdout+mainHelp.Stderr)
+	for _, want := range []string{
+		"strict gates require the acting name's role push to be live and proven.",
+		"nova-bus send/recv note unproven mailboxes unless --require-push or NOVA_BUS_REQUIRE_PUSH=1.",
+		"a hook proof is a protocol response only, not foreground presence or native idle-wake evidence.",
+	} {
+		assert.Contains(t, mainHelp.Stdout, want)
+	}
+
+	hookHelp := cli.Run("hook", "--help")
+	require.Zero(t, hookHelp.Code, hookHelp.Stdout+hookHelp.Stderr)
+	assert.Contains(t, hookHelp.Stdout, "nova-hook hook --as <me> --role <role> [--once]")
+	assert.Contains(t, hookHelp.Stdout, "This proof records a protocol response to the challenge")
+	assert.Contains(t, hookHelp.Stdout, "it does not establish foreground session presence or native idle-wake behavior.")
 }
 
 func (r *rig) now() time.Time {
@@ -54,6 +86,9 @@ func (r *rig) world() world {
 		getenv: func(k string) string {
 			if k == bus.RedisEnv {
 				return "127.0.0.1:6379"
+			}
+			if k == "HOME" {
+				return r.home
 			}
 			return ""
 		},
@@ -78,6 +113,19 @@ func (r *rig) world() world {
 		},
 		holder: "test",
 		tick:   time.Millisecond,
+		after:  func(time.Duration) <-chan time.Time { return nil }, // serve's tests run --once
+		deliver: func(b *bus.Bus, m bus.Message) (bus.Message, error) {
+			if r.failTells.Load() && !strings.HasPrefix(m.Subject, "HOOK CHALLENGE") {
+				return bus.Message{}, context.DeadlineExceeded
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), bus.CallTimeout)
+			defer cancel()
+			sent, err := b.Send(ctx, m)
+			if err == nil && r.loseAnswers.Load() && !strings.HasPrefix(m.Subject, "HOOK CHALLENGE") {
+				return bus.Message{}, context.DeadlineExceeded
+			}
+			return sent, err
+		},
 	}
 }
 
@@ -120,6 +168,7 @@ func TestHookProveStatusUnhook(t *testing.T) {
 	res = cli.Run("prove", "--as", "ada", "--nonce", m[1])
 	assert.Equal(t, 1, res.Code)
 	assert.Contains(t, res.Stdout+res.Stderr, "no challenge stands")
+	r.h.Evidence(t, "ada") // a heartbeat server passing and its answer (hook.Served.Down)
 	cli.Do(t, "status", "--as", "ada").Exit(0).Out("STATUS OK name=ada state=proven role=comms epoch=1 bus=proven")
 	cli.Do(t, "status").Exit(0).Out("STATUS OK count=1 proven=1", "STATUS NAME name=ada state=proven")
 
@@ -206,6 +255,36 @@ func (s *streamOut) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// TestProveSaysWhichChallengeItMatched pins prove's reply under the proof
+// window (tla/HookBeat.tla, AnswerIssued): a nonce handed late, after the
+// heartbeat issued a newer one, proves and says matched=1-back with its issue
+// time; one older than the window is FAILED naming the window.
+func TestProveSaysWhichChallengeItMatched(t *testing.T) {
+	t.Parallel()
+	r := newQuietRig(t)
+	r.h.Hook(t, "ada", hook.Comms)
+	ctx := context.Background()
+	r.h.Pass(hook.QuietAfter + time.Minute)
+	p, err := r.h.Store.Pass(ctx, []string{"ada"}, hook.BeatEvery, hook.DownAfter, func() string { return "current" }, "test")
+	require.NoError(t, err)
+	bt := p.Beats[0]
+	require.Equal(t, hook.BeatChallenged, bt.Did)
+	now, err := r.h.Client.Time(ctx).Result()
+	require.NoError(t, err)
+	oldAt := now.Add(-time.Minute)
+	current := r.h.Client.HGet(ctx, hook.RecordKey("ada"), "recent").Val()
+	historical := fmt.Sprintf("%d:%s:%d:%d:bus", bt.Epoch, hook.Sum("handed"), oldAt.UnixMilli(), oldAt.Add(hook.DownAfter).UnixMilli())
+	require.NoError(t, r.h.Client.HSet(ctx, hook.RecordKey("ada"), "recent", current+" "+historical).Err())
+	require.NoError(t, r.h.Store.Renew(ctx, "ada", hook.Comms, hook.Bus, bt.Epoch, "holder"))
+	cli := r.cli()
+	res := cli.Run("prove", "--as", "ada", "--nonce", "handed")
+	require.Zero(t, res.Code, res.Stdout+res.Stderr)
+	assert.Contains(t, res.Stdout, "matched=1-back issued="+oldAt.UTC().Format(time.RFC3339))
+	res = cli.Run("prove", "--as", "ada", "--nonce", "ancient")
+	assert.Equal(t, 1, res.Code)
+	assert.Contains(t, res.Stdout+res.Stderr, "(the window: 5m0s)")
+}
+
 // TestTheHookStreamsPushesUntilASignal pins the loop: it prints the challenge,
 // the session answers it from the stream, a message to the name is printed as
 // a push, and a signal stops it at exit 0 with the record proven.
@@ -260,7 +339,7 @@ func TestTheHookEndsWhenUnhookedUnderIt(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, out.all.String()+errb.String(), "ada was unhooked under this hook")
 	assert.Contains(t, out.all.String()+errb.String(), "; run: nova-hook hook --as ada --role coordinator")
-	assert.Contains(t, out.all.String(), "the sprint push is held by: nova-sprint hook --as ada")
+	assert.Contains(t, out.all.String(), "the sprint push is held by: the sprint's server (nova-sprint run), which holds it for the coordinator while it runs and reaches the bus")
 	assert.Equal(t, hook.StateUnhooked, r.h.State(t, "ada").State, "the hook wrote nothing after the unhook")
 }
 

@@ -3,8 +3,8 @@
 # alive with two secrets from its seat, and a periodic loop written disabled.
 # bench-b is a TLC record machine (tla: true), the tla group's one host.
 machines:
-  bench-a: {user: nova, seat: bench-a, slots: 2, runners: 0, os: darwin, arch: arm64}
-  bench-b: {user: nova, seat: bench-b, slots: 4, runners: 1, tla: true, os: linux, arch: amd64}
+  bench-a: {user: nova, seat: bench-a, slots: 2, runners: 0, roles: "bench,coordination", os: darwin, arch: arm64, cores: 2}
+  bench-b: {user: nova, seat: bench-b, slots: 4, runners: 1, roles: "bench,runner,services", tla: true, os: linux, arch: amd64, cores: 4}
 fleet: {store: bench-b, coordinator: bench-a, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova, loops_dir: "~/nova-bench/loops"}
 loops:
   member-bench-b:

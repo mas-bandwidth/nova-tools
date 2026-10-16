@@ -104,6 +104,23 @@ func (s *MirrorStage) Validate() error {
 // NoMirror is the stage line's own exit when the bench keeps no mirror at the path.
 const NoMirror = 3
 
+// NotStandalone is the stage line's own exit when the staged tree's .git is not a git
+// directory inside the tree: a .git file naming a worktree's gitdir (a path of the machine
+// the tree came from, or a worktree of the mirror), or no .git at all. Git exits 128 in
+// such a tree with nothing saying why; the check says what points where.
+const NotStandalone = 4
+
+// StandaloneLine is the remote check that the tree at dst is standalone: its .git is a
+// directory in it. A .git file is refused, naming the gitdir it points at and whether that
+// path exists on this host.
+func StandaloneLine(dst string) string {
+	return "d=" + Quote(dst) + "; if [ -f \"$d/.git\" ]; then gd=$(sed -n 's/^gitdir: //p' \"$d/.git\"); " +
+		"{ echo \"the staged tree $d is not standalone: its .git is a file pointing at the gitdir $gd\";" +
+		" [ -d \"$gd\" ] || echo \"that gitdir does not exist on this host\";" +
+		" echo \"a bench tree must be a clone made on the bench\"; } >&2; exit " + fmt.Sprint(NotStandalone) + "; fi;" +
+		" [ -d \"$d/.git\" ] || { echo \"the staged tree $d has no .git directory\" >&2; exit " + fmt.Sprint(NotStandalone) + "; }"
+}
+
 // StageLine is the remote line of the mirror stage into dst: the mirror must exist; the
 // commit is fetched from the mirror's origin (else Remote) by the temporary ref unless the
 // mirror holds it already, no ref or FETCH_HEAD written; then dst is a clone of the mirror
@@ -117,7 +134,8 @@ func StageLine(s MirrorStage, dst string) string {
 		"; GIT_TERMINAL_PROMPT=0 git -C " + m + " fetch --quiet --no-tags --no-write-fetch-head \"$src\" " + Quote(s.Ref) +
 		" && git -C " + m + " cat-file -e " + commit + "; }; }" +
 		" && git clone --quiet --shared --no-checkout " + m + " " + d +
-		" && git -C " + d + " checkout --quiet --detach " + Quote(s.Sha)
+		" && git -C " + d + " checkout --quiet --detach " + Quote(s.Sha) +
+		" && { " + StandaloneLine(dst) + "; }"
 }
 
 // RefGit is the lander's side of a mirror stage: the gated commit pushed to a temporary
@@ -225,7 +243,7 @@ func tailLines(s string) string {
 const SkipAfter = 2
 
 // StageSkips is one land pass's record of the benches whose stage failed. Safe for the
-// pass's streams at once.
+// pass's streams at once. tla/GateRing.tla fails, Skipped, AskedAtMostSkipAfter.
 type StageSkips struct {
 	mu    sync.Mutex
 	fails map[string]int

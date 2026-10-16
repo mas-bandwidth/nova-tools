@@ -241,15 +241,15 @@ const (
 )
 
 // UnaddressedLand is the one fix check of a LAND, the daemon's outbox pass's and friend
-// sync's (cmd/nova-sprint, friendFinish, the finish of friend sync, friend reconcile and
-// collect): held is UnaddressedText when report does not address the fix brief asks (BriefFix,
-// in either form), "" when it does or when brief asks none. A held LAND is finished as a
-// HOLD, its head kept.
+// sync's: held is UnaddressedText when report does not address the fix the brief asks
+// (BriefFix, in either form), "" when it does or when brief asks none. A held LAND is
+// finished as a HOLD, its head kept.
 func UnaddressedLand(by, report, brief string) (held string) {
 	return unaddressed(by, report, BriefFix(brief))
 }
 
-// unaddressed is UnaddressedLand of a fix already read.
+// unaddressed is the fix check of a LAND whose fix is already read: UnaddressedText
+// when report does not address fix, "" when it does or when fix is empty.
 func unaddressed(by, report, fix string) string {
 	if fix == "" {
 		return ""

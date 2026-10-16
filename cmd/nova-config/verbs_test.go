@@ -39,8 +39,9 @@ func words(line string) []string {
 }
 
 // Every kind's worked examples, the ones each verb's -h prints, run as
-// printed and in order on one --file store, each exiting 0; the rows another
-// row names are let go first, as a reader would.
+// printed and in order on one --file store. Route writes commit but exit 1
+// with NOT-APPLIED because this offline example has no fleet copy endpoint;
+// the other verbs exit 0. Referenced rows are let go first.
 func TestEveryKindsExamplesRunInOrder(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
@@ -50,8 +51,14 @@ func TestEveryKindsExamplesRunInOrder(t *testing.T) {
 		args := words(line)
 		require.Equal(t, "nova-config", args[0], line)
 		code, out, errs := h.run(t, args[1:]...)
-		assert.Equal(t, 0, code, "%s\nstdout: %s\nstderr: %s", line, out, errs)
-		assert.Empty(t, errs, line)
+		if args[1] == "route" && (args[2] == "add" || args[2] == "set" || args[2] == "remove") {
+			assert.Equal(t, 1, code, "%s\nstdout: %s\nstderr: %s", line, out, errs)
+			assert.Contains(t, errs, "CONFIG NOT-APPLIED kind=route")
+			assert.Contains(t, errs, "run: nova-config apply --kind route --actor a1 --file try.json")
+		} else {
+			assert.Zero(t, code, "%s\nstdout: %s\nstderr: %s", line, out, errs)
+			assert.Empty(t, errs, line)
+		}
 	}
 	step(toolExamples["migrate"])
 	clear := []string{
@@ -122,7 +129,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	code, out, errs := run("machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "8", "--dry-run")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG DRY-RUN op=add kind=machine name=m1 actor=a1 wrote=nothing note=- runners=0 seat=s slots=8 tla=false user=u width=-\nNOTE machine=m1 width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: nova-config machine set m1 --width <n> (0: no member) --actor a1 --file try.json\n", out)
+	assert.Equal(t, "CONFIG DRY-RUN op=add kind=machine name=m1 actor=a1 wrote=nothing note=- roles=bench runners=0 seat=s slots=8 tla=false user=u width=-\nNOTE machine=m1 width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: nova-config machine set m1 --width <n> (0: no member) --actor a1 --file try.json\n", out)
 	code, out, _ = h.run(t, "machine", "list", "--file", "try.json")
 	require.Equal(t, 0, code)
 	assert.Equal(t, "CONFIG LIST kind=machine rows=0\n", out, "the dry run added nothing")
@@ -167,7 +174,7 @@ func TestMigrateDryRunPrintsTheLedger(t *testing.T) {
 	assert.True(t, strings.HasSuffix(lines[n-3], " state=missing"), lines[n-3])
 	assert.True(t, strings.HasSuffix(lines[n-2], " state=applied"), lines[n-2])
 	assert.True(t, strings.HasSuffix(lines[n-1], " state=pending"), lines[n-1])
-	assert.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0 dry_run=true pending=1 missing=1 role=nova_config ready=yes owner=nova_config sessions=0", n-1, n), lines[n])
+	assert.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0 dry_run=true pending=1 missing=1 role=nova_config ready=yes owner=nova_config sessions=0", n-1, schemaTip()), lines[n])
 	assert.Equal(t, fmt.Sprintf("NOTE version(s) %d are not in the ledger and are below %d, the greatest recorded: migrate applies only versions above it, so it will not apply them", n-2, n-1), lines[n+1])
 	assert.Equal(t, n-1, h.store.version, "a dry run applies nothing")
 }
@@ -235,7 +242,7 @@ func TestAMistypedFlagIsAnsweredWithTheFlagsThereAre(t *testing.T) {
 	code, out, errs := h.run(t, "machine", "list", "--jsno")
 	assert.Equal(t, 2, code)
 	assert.Empty(t, out)
-	assert.Equal(t, "nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --pg, --redis, --seat; run: nova-config machine list -h\n", errs)
+	assert.Equal(t, "nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --max, --pg, --redis, --seat; run: nova-config machine list -h\n", errs)
 	code, _, errs = h.run(t, "machine", "list", "--pg")
 	assert.Equal(t, 2, code)
 	assert.Equal(t, "nova-config machine list REFUSED: --pg wants a value; run: nova-config machine list -h\n", errs)

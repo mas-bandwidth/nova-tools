@@ -67,9 +67,7 @@ func certifyRegistry(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "machines.tsv")
 	body := "hulk\thulk\tlinux/x64\tbench\tswarm-hulk\t64\t-\n"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	return path
 }
 
@@ -78,9 +76,7 @@ func certifyPaths(t *testing.T) (registry, certs, standard string) {
 	dir := t.TempDir()
 	certs = filepath.Join(dir, "certs.tsv")
 	standard = filepath.Join(dir, "standard.go")
-	if err := os.WriteFile(standard, []byte("echo STANDARD OK\n"), 0o644); err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, os.WriteFile(standard, []byte("echo STANDARD OK\n"), 0o644))
 	return certifyRegistry(t), certs, standard
 }
 
@@ -114,34 +110,20 @@ func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJust
 		"--dest", "/home/nova/nova-bench/build", "--platform", "linux-amd64",
 		"--certify", registry, "--certs", certs, "--standard", standard,
 	}, &o, &e, Deps{SSH: s})
-	if code != 0 {
-		require.Equal(t, 0, code, "code = %d\nstdout:%s\nstderr:%s", code, o.String(), e.String())
-	}
-	if !strings.Contains(o.String(), "CERTIFY hulk go-test OK") {
-		require.Contains(t, o.String(), "CERTIFY hulk go-test OK", "the adopted machine was not certified:\n%s", o.String())
-	}
-	if !strings.Contains(o.String(), "CERTIFY OK machines=1 ok=10 fail=0 warn=0") {
-		require.Contains(t, o.String(), "CERTIFY OK machines=1 ok=10 fail=0 warn=0", "no closing certification line:\n%s\n%s", o.String(), e.String())
-	}
+	require.Equal(t, 0, code, "code = %d\nstdout:%s\nstderr:%s", code, o.String(), e.String())
+	require.Contains(t, o.String(), "CERTIFY hulk go-test OK", "the adopted machine was not certified:\n%s", o.String())
+	require.Contains(t, o.String(), "CERTIFY OK machines=1 ok=10 fail=0 warn=0", "no closing certification line:\n%s\n%s", o.String(), e.String())
 	// An adopt has no runner list to read, so the forge classes are SKIPPED and left
 	// uncertified rather than failed: "this tool could not ask" is not "this machine is
 	// wrong", and the loop's own certify carries a forge.
-	if !strings.Contains(e.String(), "CERTIFY NOTE machine=hulk class=registry-truth skipped=no-forge") {
-		assert.Contains(t, e.String(), "CERTIFY NOTE machine=hulk class=registry-truth skipped=no-forge", "the forge class was not skipped with its reason:\n%s", e.String())
-	}
+	assert.Contains(t, e.String(), "CERTIFY NOTE machine=hulk class=registry-truth skipped=no-forge", "the forge class was not skipped with its reason:\n%s", e.String())
 	rows, err := fleet.ReadCertificates(certs)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
-	if len(rows) != 10 {
-		require.Len(t, rows, 10, "wrote %d certificate rows, want 10", len(rows))
-	}
+	require.NoError(t, err)
+	require.Len(t, rows, 10, "wrote %d certificate rows, want 10", len(rows))
 	for _, r := range rows {
 		// THE POINT: the build on the row is the one this verb just put there, not the one
 		// the machine was running when the run began.
-		if r.Build != "v0.16.0" {
-			assert.Equal(t, "v0.16.0", r.Build, "%s carries build %q, want the version just installed", r.Class, r.Build)
-		}
+		assert.Equal(t, "v0.16.0", r.Build, "%s carries build %q, want the version just installed", r.Class, r.Build)
 	}
 	// And the certification really did go through the wall for the classes that ask for it.
 	wall := false
@@ -150,9 +132,7 @@ func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJust
 			wall = true
 		}
 	}
-	if !wall {
-		assert.True(t, wall, "the go-test certification did not go through nova-sandbox")
-	}
+	assert.True(t, wall, "the go-test certification did not go through nova-sandbox")
 }
 
 // TestAdoptWithCertifyFailsTheMachineWhoseWorkloadFailed: a machine that installed and then
@@ -173,18 +153,10 @@ func TestAdoptWithCertifyFailsTheMachineWhoseWorkloadFailed(t *testing.T) {
 		"--dest", "/home/nova/nova-bench/build", "--platform", "linux-amd64",
 		"--certify", registry, "--certs", certs, "--standard", standard,
 	}, &o, &e, Deps{SSH: s})
-	if code != 1 {
-		require.Equal(t, 1, code, "code = %d, want 1", code)
-	}
-	if !strings.Contains(e.String(), "CERTIFY hulk go-test FAIL") {
-		require.Contains(t, e.String(), "CERTIFY hulk go-test FAIL", "the failure is not named:\n%s", e.String())
-	}
-	if !strings.Contains(e.String(), "go.mod requires go >= 1.26.5") {
-		require.Contains(t, e.String(), "go.mod requires go >= 1.26.5", "the failure does not carry what the machine said:\n%s", e.String())
-	}
-	if fleet.Certified(mustCerts(t, certs), "hulk", "go-test", "v0.16.0", "") {
-		assert.Fail(t, "a FAIL was written as a certificate")
-	}
+	require.Equal(t, 1, code, "code = %d, want 1", code)
+	require.Contains(t, e.String(), "CERTIFY hulk go-test FAIL", "the failure is not named:\n%s", e.String())
+	require.Contains(t, e.String(), "go.mod requires go >= 1.26.5", "the failure does not carry what the machine said:\n%s", e.String())
+	assert.False(t, fleet.Certified(mustCerts(t, certs), "hulk", "go-test", "v0.16.0", ""), "a FAIL was written as a certificate")
 }
 
 // TestAdoptRefusesHalfOfTheCertifyFlags names every missing one at once, the same law the
@@ -201,13 +173,9 @@ func TestAdoptRefusesHalfOfTheCertifyFlags(t *testing.T) {
 		"--dest", "/home/nova/nova-bench/build", "--platform", "linux-amd64",
 		"--certify", registry,
 	}, &o, &e, Deps{SSH: &fakeSSH{}})
-	if code != 2 {
-		require.Equal(t, 2, code, "code = %d, want 2", code)
-	}
+	require.Equal(t, 2, code, "code = %d, want 2", code)
 	for _, want := range []string{"--certs", "--standard"} { // named together or not at all
-		if !strings.Contains(e.String(), want) {
-			assert.Contains(t, e.String(), want, "the refusal does not name %s:\n%s", want, e.String())
-		}
+		assert.Contains(t, e.String(), want, "the refusal does not name %s:\n%s", want, e.String())
 	}
 }
 
@@ -228,15 +196,9 @@ func TestAdoptWaivedByNoCertifyCertifiesNothingAndSaysSo(t *testing.T) {
 	}, &o, &e, Deps{SSH: s}); code != 0 {
 		require.Equal(t, 0, code, "code = %d: %s", code, e.String())
 	}
-	if len(s.scripts) != 0 {
-		assert.Len(t, s.scripts, 0, "a waived adopt sent %d certification scripts", len(s.scripts))
-	}
-	if strings.Contains(o.String()+e.String(), "CERTIFY") {
-		assert.NotContains(t, o.String()+e.String(), "CERTIFY", "a waived adopt spoke about certification:\n%s%s", o.String(), e.String())
-	}
-	if !strings.Contains(o.String(), "certified=waived") {
-		assert.Contains(t, o.String(), "certified=waived", "the waiver is not on the verdict line:\n%s", o.String())
-	}
+	assert.Len(t, s.scripts, 0, "a waived adopt sent %d certification scripts", len(s.scripts))
+	assert.NotContains(t, o.String()+e.String(), "CERTIFY", "a waived adopt spoke about certification:\n%s%s", o.String(), e.String())
+	assert.Contains(t, o.String(), "certified=waived", "the waiver is not on the verdict line:\n%s", o.String())
 }
 
 // TestAdoptRefusesWhenNeitherCertifiedNorWaived is what "on by default" means where paths may
@@ -252,13 +214,9 @@ func TestAdoptRefusesWhenNeitherCertifiedNorWaived(t *testing.T) {
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/home/nova/.local/bin",
 		"--dest", "/home/nova/nova-bench/build", "--platform", "linux-amd64",
 	}, &o, &e, Deps{SSH: &certifySSH{}})
-	if code != 2 {
-		require.Equal(t, 2, code, "code = %d, want 2", code)
-	}
+	require.Equal(t, 2, code, "code = %d, want 2", code)
 	for _, want := range []string{"--certify", "--certs", "--standard", "--no-certify"} {
-		if !strings.Contains(e.String(), want) {
-			assert.Contains(t, e.String(), want, "the refusal does not name %s:\n%s", want, e.String())
-		}
+		assert.Contains(t, e.String(), want, "the refusal does not name %s:\n%s", want, e.String())
 	}
 }
 
@@ -275,20 +233,14 @@ func TestNoCertifyAndCertifyTogetherIsARefusal(t *testing.T) {
 		"--dest", "/home/nova/nova-bench/build", "--platform", "linux-amd64",
 		"--certify", registry, "--certs", certs, "--standard", standard, "--no-certify",
 	}, &o, &e, Deps{SSH: &certifySSH{}})
-	if code != 2 {
-		require.Equal(t, 2, code, "code = %d, want 2", code)
-	}
-	if !strings.Contains(e.String(), "--no-certify waives certification") {
-		assert.Contains(t, e.String(), "--no-certify waives certification", "the refusal does not say the two disagree:\n%s", e.String())
-	}
+	require.Equal(t, 2, code, "code = %d, want 2", code)
+	assert.Contains(t, e.String(), "--no-certify waives certification", "the refusal does not say the two disagree:\n%s", e.String())
 }
 
 func mustCerts(t *testing.T, path string) []fleet.Certificate {
 	t.Helper()
 	certs, err := fleet.ReadCertificates(path)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	return certs
 }
 
@@ -310,12 +262,9 @@ func TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard(t *testing.T) {
 	s := &certifySSH{perClass: map[string]string{"go": "ok\n"}}
 	r := scriptRemote{ssh: s, parent: context.Background()}
 	out, err := r.Run(context.Background(), "hulk", "# nova-certify workload go\ntrue\n")
-	if err != nil || out != "ok\n" {
-		require.FailNowf(t, "", "Run = %q, %v; want the fake's answer", out, err)
-	}
-	if len(s.scripts) != 1 {
-		require.Len(t, s.scripts, 1, "fake saw %d scripts, want 1", len(s.scripts))
-	}
+	require.NoError(t, err, "Run = %q, %v; want the fake's answer", out, err)
+	require.Equal(t, "ok\n", out, "Run = %q, %v; want the fake's answer", out, err)
+	require.Len(t, s.scripts, 1, "fake saw %d scripts, want 1", len(s.scripts))
 }
 
 // The real seam stays refused: the same adapter over ExecSSH panics at the edge that
@@ -328,9 +277,8 @@ func TestScriptRemoteOverTheRealSSHIsStillRefusedUnderTheHostGuard(t *testing.T)
 	defer func() {
 		v := recover()
 		msg, _ := v.(string)
-		if !strings.Contains(msg, testguard.EnvNoHost) || !strings.Contains(msg, "hulk") {
-			require.FailNowf(t, "", "recover() = %v; want the host guard's refusal naming the machine", v)
-		}
+		require.Contains(t, msg, testguard.EnvNoHost, "recover() = %v; want the host guard's refusal naming the machine", v)
+		require.Contains(t, msg, "hulk", "recover() = %v; want the host guard's refusal naming the machine", v)
 	}()
 	_, _ = r.Run(context.Background(), "hulk", "true\n")
 	require.FailNow(t, "Run over the real ssh returned under the host guard")

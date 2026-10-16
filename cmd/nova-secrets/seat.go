@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 )
 
@@ -48,19 +50,19 @@ func runSeatInjectCLI(args []string, s streams) int {
 	if err := parseFlags(fs, args); err != nil {
 		return s.refuse("seat inject", 2, err)
 	}
-
 	line, err := secrets.RunSeatInject(secrets.SeatInjectOptions{
-		StoreDir: *storeFlag,
-		AsName:   *asFlag,
-		From:     *fromFlag,
-		Only:     *onlyFlag,
-		KeyPath:  *keyFlag,
-		SopsPath: *sopsFlag,
-		GHPath:   *ghFlag,
-		GitPath:  *gitFlag,
-		NoPR:     *noPRFlag,
-		DryRun:   *dryRunFlag,
-		Progress: s.stderr,
+		StoreDir:     *storeFlag,
+		AsName:       *asFlag,
+		From:         *fromFlag,
+		Only:         *onlyFlag,
+		KeyPath:      *keyFlag,
+		SopsPath:     *sopsFlag,
+		GHPath:       *ghFlag,
+		ResolveGHEnv: func() ([]string, error) { return seatcred.ForgeCommandEnv(nil, os.Getenv) },
+		GitPath:      *gitFlag,
+		NoPR:         *noPRFlag,
+		DryRun:       *dryRunFlag,
+		Progress:     s.stderr,
 	})
 	if err != nil {
 		return s.refuse("seat inject", 2, err)

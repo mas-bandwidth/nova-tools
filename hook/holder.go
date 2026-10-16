@@ -79,6 +79,9 @@ func (h *Holder) beat(ctx context.Context, proven map[Push]bool) error {
 			return err
 		}
 	}
+	if proven == nil {
+		return nil
+	}
 	for _, p := range h.Pushes {
 		var err error
 		if proven[p] {

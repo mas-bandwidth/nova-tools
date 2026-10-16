@@ -10,10 +10,9 @@ import (
 )
 
 // The sprint row's git_identity and max_attempts are nova-config's to set: nova-sprint reads
-// both from the applied row (sprint:git_identity, which its lander refuses to commit without;
-// sprint:max_attempts, its attempt bound), and nova-config registers only the fields its kind
-// declares. Both fields match nova-sprint's pkg/config copy, and both repos carry the same
-// migrations 0037 (git_identity) and 0039 (max_attempts).
+// both from the applied row (sprint:git_identity, which its lander commits as, the default
+// when empty; sprint:max_attempts, its attempt bound), and nova-config registers only the
+// fields its kind declares, migrations 0037 (git_identity) and 0039 (max_attempts).
 
 func sprintKindOf(t *testing.T) *Kind {
 	t.Helper()

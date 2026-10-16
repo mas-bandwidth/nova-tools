@@ -24,6 +24,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
 	"github.com/mas-bandwidth/nova-tools/pkg/fleet"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 	nslog "github.com/mas-bandwidth/nova-tools/pkg/log"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
@@ -88,8 +89,10 @@ var secretOpeners = map[string]any{
 	"pkg/buildinfo.Parse":                         buildinfo.Parse,
 	"pkg/bus/bustest.NewFake":                     bustest.NewFake,
 	"pkg/cardcost.ParseSpend":                     cardcost.ParseSpend,
+	"pkg/cardcost.ParseSpendChecked":              cardcost.ParseSpendChecked,
 	"pkg/cardcost.ParseTotal":                     cardcost.ParseTotal,
 	"pkg/cardcost.ParseUsage":                     cardcost.ParseUsage,
+	"pkg/cardcost.ParseUsageChecked":              cardcost.ParseUsageChecked,
 	"pkg/cardhdr.ParseBase":                       cardhdr.ParseBase,
 	"pkg/cardhdr.ParseTest":                       cardhdr.ParseTest,
 	"pkg/cardtree.Parse":                          cardtree.Parse,
@@ -100,6 +103,7 @@ var secretOpeners = map[string]any{
 	"internal/ci/allowlist.Parse":                 ciallowlist.Parse,
 	"pkg/config.OpenFile":                         config.OpenFile,
 	"pkg/config.OpenPG":                           config.OpenPG,
+	"pkg/config.ParseGitIdentity":                 config.ParseGitIdentity,
 	"internal/converge.ParseCerts":                converge.ParseCerts,
 	"internal/converge.ParseRetired":              converge.ParseRetired,
 	"internal/converge.ParseSince":                converge.ParseSince,
@@ -120,15 +124,14 @@ var secretOpeners = map[string]any{
 	"pkg/filelock.ParseStamp":                     filelock.ParseStamp,
 	"pkg/fleet.ParseWorkload":                     fleet.ParseWorkload,
 	"pkg/friend.NewClaude":                        friend.NewClaude,
+	"pkg/friend.NewCodex":                         friend.NewCodex,
 	"pkg/friend.NewDeliverer":                     friend.NewDeliverer,
-	"pkg/friend.NewestCodexSession":               friend.NewestCodexSession,
 	"pkg/friend.NewestConversation":               friend.NewestConversation,
 	"pkg/friend.NewestDSHSession":                 friend.NewestDSHSession,
 	"pkg/friend.ParseHeld":                        friend.ParseHeld,
 	"pkg/friend.ParseJob":                         friend.ParseJob,
 	"pkg/friend.ParseLaneCaps":                    friend.ParseLaneCaps,
 	"pkg/friend.ParseLimit":                       friend.ParseLimit,
-	"pkg/friend.ParsePing":                        friend.ParsePing,
 	"pkg/friend.ParsePong":                        friend.ParsePong,
 	"pkg/friend.ParsePronouns":                    friend.ParsePronouns,
 	"pkg/friend.ParseProfile":                     friend.ParseProfile,
@@ -139,6 +142,7 @@ var secretOpeners = map[string]any{
 	"pkg/friend.ParseReadSlots":                   friend.ParseReadSlots,
 	"pkg/friend.ParseRow":                         friend.ParseRow,
 	"pkg/friend.ParseView":                        friend.ParseView,
+	"pkg/gitrun.ParseGitIdentity":                 gitrun.ParseGitIdentity,
 	"pkg/hostload.ParseProcStat":                  hostload.ParseProcStat,
 	"pkg/hostload.ParseTopCPU":                    hostload.ParseTopCPU,
 	"pkg/hostload.ParseTopCPUInterval":            hostload.ParseTopCPUInterval,
@@ -159,6 +163,7 @@ var secretOpeners = map[string]any{
 	"pkg/secretcheck.ParseAllowlist":              secretcheck.ParseAllowlist,
 	"pkg/secrets.NewSecret":                       secrets.NewSecret,
 	"pkg/secrets.OpenSeatFile":                    secrets.OpenSeatFile,
+	"pkg/secrets.ParseNameLine":                   secrets.ParseNameLine,
 	"pkg/secrets.ParseSopsConfig":                 secrets.ParseSopsConfig,
 	"pkg/secrets.ParseStoreFileWithoutDecrypting": secrets.ParseStoreFileWithoutDecrypting,
 	"pkg/swarm.NewWallReader":                     swarm.NewWallReader,
@@ -183,7 +188,6 @@ var secretExempt = map[string]string{
 	"pkg/hostload.ParseLsof":              "built on darwin only, so a test binary on another platform cannot name it",
 	"internal/cairn.Open":                 "writes a session record under the store directory its first string names; driving it would write into the working tree",
 	"pkg/nsprint/testutil.NewLocalRemote": "takes a *testing.T and builds a git remote on disk; it is a test fixture, not an opener of a secret",
-	"pkg/friend.DialCodexAppServer":       "takes the Codex home, a directory path, never a secret; it dials the app-server socket under it",
 	"pkg/bus.OpenRedis":                   "takes the bus store's host:port, never a secret, and dials it: driven, it would open a socket; the login's password is read from the environment by pkg/redisconn, never from the line",
 }
 
@@ -205,7 +209,6 @@ pkg/dogfood.ParseAuthors wraps the os.ReadFile error, which names the path argum
 pkg/dogfood.ParseCLI wraps the os.ReadFile error, which names the path argument (pkg/dogfood/cli.go:97)
 pkg/fleet.ParseWorkload echoes its source argument (pkg/fleet/certify.go:184)
 pkg/friend.NewDeliverer echoes an unknown harness with %q (pkg/friend/adapter.go:253)
-pkg/friend.NewestCodexSession wraps the lstat error, which names the dir argument (pkg/friend/codex_session.go:21)
 pkg/friend.NewestDSHSession echoes its dir argument (pkg/friend/adapter_dsh.go:65)
 pkg/ntable.ParseColumn echoes the rejected column name with %q (pkg/ntable/ntable.go:405)
 pkg/ntable.ParseColumns echoes the rejected column name with %q (pkg/ntable/ntable.go:405)

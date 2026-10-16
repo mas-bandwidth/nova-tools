@@ -26,9 +26,10 @@ import (
 func Check(t *testing.T, fleetRoot, scenario string) {
 	t.Helper()
 	require.Contains(t, []string{"idempotent", "drift", "bad-digest"}, scenario)
-	// Each isolated verification package performs a real install of all nine tools.
-	// Its verification play runs on that install under the existing 60-second bound.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// Each isolated verification package performs a real install of all nine
+	// tools and a second play. Measured Linux Ansible 2.16 runs can exceed 60s
+	// under load; stay within certification's 75-second package bound.
+	ctx, cancel := context.WithTimeout(context.Background(), 72*time.Second)
 	defer cancel()
 	ansible, err := exec.LookPath("ansible-playbook")
 	if err != nil {
@@ -107,6 +108,14 @@ func writeToolchainFixtureArchive(t *testing.T, path, label string) string {
 	for _, spec := range toolchainFixtureSpecs {
 		for _, name := range spec.paths {
 			body := []byte(fmt.Sprintf("#!/bin/sh\nprintf '%s-%s\\n'\n", label, name))
+			if name == "bin/java" {
+				body = []byte("#!/bin/sh\nprintf '1.0.0\\n'\n")
+			}
+			if name == "bin/npm" {
+				// The fixture's npm installs only the pinned eslint probe. The
+				// real play still runs its npm command and checks the result.
+				body = []byte("#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  case $1 in\n    --prefix) prefix=$2; shift 2;;\n    eslint@*) version=${1#eslint@}; shift;;\n    *) shift;;\n  esac\ndone\nmkdir -p \"$prefix/node_modules/.bin\"\nprintf '#!/bin/sh\\nprintf v%s\\n' \"$version\" > \"$prefix/node_modules/.bin/eslint\"\nchmod +x \"$prefix/node_modules/.bin/eslint\"\n")
+			}
 			err := tw.WriteHeader(&tar.Header{Name: filepath.ToSlash(filepath.Join("fixture", name)), Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg})
 			require.NoError(t, err)
 			_, err = tw.Write(body)
@@ -122,6 +131,10 @@ func writeToolchainFixtureArchive(t *testing.T, path, label string) string {
 func writeToolchainFixtureVars(t *testing.T, path, tmp, sha string) {
 	t.Helper()
 	url := "file://" + filepath.Join(tmp, "fixtures.tar.gz")
+	gjfPath := filepath.Join(tmp, "google-java-format.jar")
+	gjf := []byte("fixture google-java-format jar")
+	require.NoError(t, os.WriteFile(gjfPath, gjf, 0o600))
+	gjfDigest := sha256.Sum256(gjf)
 	toolchains := map[string]any{}
 	for name, spec := range toolchainFixtureSpecs {
 		executables := make([]map[string]string, 0, len(spec.paths))
@@ -142,6 +155,9 @@ func writeToolchainFixtureVars(t *testing.T, path, tmp, sha string) {
 		"nova_toolchains_allow_local_archives": true,
 		"nova_toolchains":                      toolchains,
 		"nova_adopt_canary":                    "none",
+		"nova_gjf_version":                     "1.0.0",
+		"nova_gjf_url":                         "file://" + gjfPath,
+		"nova_gjf_sha256":                      hex.EncodeToString(gjfDigest[:]),
 	}
 	b, err := json.Marshal(vars)
 	require.NoError(t, err)
@@ -150,7 +166,7 @@ func writeToolchainFixtureVars(t *testing.T, path, tmp, sha string) {
 
 func runToolchainsFixturePlay(t *testing.T, parent context.Context, ansible, fleetRoot, tmp, varsPath string, check, wantError bool) string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(parent, 40*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 45*time.Second)
 	defer cancel()
 	args := []string{"tools.yml", "--tags", "toolchains", "-i", "testdata/toolchains-inventory.ini", "--limit", "fixture-linux", "-e", "@" + varsPath}
 	if check {

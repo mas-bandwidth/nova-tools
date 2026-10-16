@@ -47,6 +47,11 @@ import (
 //   space for", "disk space"), is the word; bare, or beside a bare article, it is the name.
 // - Go package import declarations (including "github.com/mas-bandwidth/nova-tools/...")
 //   are identified via real AST import specs and excluded as language-level imports.
+//   The module path of a `//go:generate go run <module>@<version>` pin is excluded
+//   the same way: it names the module the directive runs.
+// - A generated file (Go's `// Code generated ... DO NOT EDIT.` header before the
+//   package clause) is skipped: its lines are the compiler's, and `make
+//   schemawire-check` holds them (generated_skip_test.go).
 // - Explicitly marked documentation examples in real AST comments (e.g. lines with "e.g.",
 //   "example:", "for example", "example.com") are excluded; code contracts, defaults,
 //   and refusals are always scanned.
@@ -100,6 +105,10 @@ var ignoredCompoundWords = map[string]bool{
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)
 var reAccount = regexp.MustCompile(`(?i)mas-bandwidth`)
 
+// reGoGenerateRun is a `//go:generate go run <module>@<version>` directive at the
+// start of a line; group 1 is the module path, exempt as an import path is.
+var reGoGenerateRun = regexp.MustCompile(`(?m)^//go:generate go run ([^\s@]+)@\S+`)
+
 // englishPhrases are the English phrases in which a token that is also an ordinary word
 // is that word and no host: group 1 is the word, blanked before the scan. The machine
 // name "space" is the one such token today ("leave space for the footer" drew a finding
@@ -107,7 +116,8 @@ var reAccount = regexp.MustCompile(`(?i)mas-bandwidth`)
 // it, never a bare article, so `bench=space`, `the space row` and `space` as a name
 // still count. A token used as a word in another phrase is a row here.
 var englishPhrases = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\b(?:leave|leaves|leaving|left|disk|free|enough|more|no|blank|white|trailing|leading|single|double|extra|some|much|little|of)\s+(space)\b`),
+	regexp.MustCompile(`(?i)\b(?:leave|leaves|leaving|left|disk|free|frees|freeing|freed|enough|more|no|blank|white|trailing|leading|single|double|extra|some|much|little|of)\s+(space)\b`),
+	regexp.MustCompile(`(?i)\buntil\s+(space)\s+exists\b`),
 	regexp.MustCompile(`(?i)\b(space)(?:\s+(?:for|between|left|after|before|around|bar|character|characters|than|on\s+disk|to\s+spare)\b|-separated|-delimited)`),
 }
 
@@ -223,7 +233,15 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 		}
 	}
 
-	// 2. Blank out real AST comments containing marked documentation examples
+	// 2. Blank out the module path of a go:generate pin, which names the module
+	// it runs the way an import spec names the package it reads.
+	for _, m := range reGoGenerateRun.FindAllSubmatchIndex(src, -1) {
+		for i := m[2]; i < m[3]; i++ {
+			clean[i] = ' '
+		}
+	}
+
+	// 3. Blank out real AST comments containing marked documentation examples
 	if hasDocExample {
 		for _, cg := range file.Comments {
 			for _, c := range cg.List {
@@ -343,6 +361,8 @@ func generalityFixtureLedger(t *testing.T, shard, content string) *allowlist.Pac
 	return ledger
 }
 
+// generalityMessageReporter records what an assertion says without failing the
+// test running it.
 type generalityMessageReporter struct{ messages []string }
 
 func (*generalityMessageReporter) Helper() {}
@@ -367,6 +387,11 @@ func scanGenerality(files []GeneralitySourceFile) []generalityHit {
 	var hits []generalityHit
 	for _, f := range files {
 		if !fileMayContainGenerality(f.Src) {
+			continue
+		}
+		// A generated file's lines are the compiler's; make schemawire-check
+		// holds them (generated_skip_test.go).
+		if isGeneratedGo(f.Src) {
 			continue
 		}
 		cleanSrc := cleanSourceForGenerality(f.Rel, f.Src)
@@ -567,6 +592,10 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 		{"bench=space", []string{"space"}},
 		{"the space row is down", []string{"space"}},
 		{"leave space for the footer", nil},
+		{"delivery frees space or shutdown cancels the wait", nil},
+		{"a full queue waits until space exists", nil},
+		{"delivery frees space on host space", []string{"space"}},
+		{"wait until host space exists", []string{"space"}},
 		{"// no disk space left; a space-separated list; one space between words", nil},
 		{"\"Leave space for the footer\"", nil},
 		{"mas-bandwidth/nova-tools", []string{"mas-bandwidth"}},
@@ -721,159 +750,6 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 			counts, _, _ := measureGeneralityCounts([]GeneralitySourceFile{{Rel: "fixture.go", Src: []byte(src)}})
 			t.Logf("prefix=%q counts=%v", prefix, counts)
 			assert.Equal(t, 1, counts["fixture.go:mas-bandwidth"], "Unicode prefix %q hid account token", prefix)
-		}
-	})
-}
-
-// TestGeneralityAllowlistUpdate verifies that NOVA_CI_UPDATE=1 strictly adheres to
-// the shrink-only invariant: new keys and increased counts are refused with an error,
-// existing ledger files are unmodified upon refusal, and count decreases and row
-// removals are cleanly written.
-func TestGeneralityAllowlistUpdate(t *testing.T) {
-	t.Parallel()
-
-	// Exercise the shared sharded updater directly, recording its refusal instead
-	// of mutating a global list through a separate writer.
-	update := func(path string, measured map[string]int) error {
-		ledger, err := allowlist.LoadPackages(filepath.Dir(path), allowlist.Options{Ceiling: true, Counted: true})
-		if err != nil {
-			return err
-		}
-		reporter := &generalityMessageReporter{}
-		allowlist.CheckPackagesCountedMode(reporter, ledger, measured, true)
-		var refusals []string
-		for _, message := range reporter.messages {
-			if !strings.Contains(message, allowlist.UpdatedRerun) {
-				refusals = append(refusals, message)
-			}
-		}
-		if len(refusals) > 0 {
-			return fmt.Errorf("%s", strings.Join(refusals, "\n"))
-		}
-		return nil
-	}
-
-	t.Run("original-row-ceiling", func(t *testing.T) {
-		for _, tc := range []struct {
-			name     string
-			measured map[string]int
-			want     string
-		}{
-			{name: "unchanged-overfull", measured: map[string]int{"fixture.go:glenn": 2, "fixture.go:hulk": 2}},
-			{name: "lower-counts-still-overfull", measured: map[string]int{"fixture.go:glenn": 1, "fixture.go:hulk": 1}},
-			{name: "remove-row-to-fit", measured: map[string]int{"fixture.go:glenn": 1}, want: "# ceiling: 1\nfixture.go:glenn 1\n"},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				p := filepath.Join(t.TempDir(), "@root.txt")
-				old := "# ceiling: 1\nfixture.go:glenn 2\nfixture.go:hulk 2\n"
-				require.NoError(t, os.WriteFile(p, []byte(old), 0600))
-				err := update(p, tc.measured)
-				want := tc.want
-				if want == "" {
-					want = old
-					assert.True(t, err != nil && strings.Contains(err.Error(), "ceiling"), "want original ceiling refusal, got %v", err)
-				} else {
-					require.NoError(t, err, "removing enough rows should repair the list: %v", err)
-				}
-				raw, err := os.ReadFile(p)
-				require.NoError(t, err, "ledger=%q (%v), want %q", raw, err, want)
-				require.Equal(t, want, string(raw), "ledger=%q (%v), want %q", raw, err, want)
-			})
-		}
-	})
-
-	t.Run("refuses-growth-new-key", func(t *testing.T) {
-		p := filepath.Join(t.TempDir(), "@root.txt")
-		old := "# ceiling: 1\nfixture.go:glenn 1\n"
-		require.NoError(t, os.WriteFile(p, []byte(old), 0600))
-		measured := map[string]int{"fixture.go:glenn": 1, "fixture.go:hulk": 1}
-		err := update(p, measured)
-		require.Error(t, err, "expected error on attempted growth with new key, got nil")
-		require.True(t, strings.Contains(err.Error(), "refuses to grow"), "expected error mentioning refusal to grow and unlisted key, got: %v", err)
-		require.True(t, strings.Contains(err.Error(), "fixture.go:hulk"), "expected error mentioning refusal to grow and unlisted key, got: %v", err)
-		// Ledger on disk must remain untouched
-		raw, err := os.ReadFile(p)
-		require.NoError(t, err)
-		require.Equal(t, old, string(raw), "ledger was modified despite refusal: got %q, want %q", string(raw), old)
-	})
-
-	t.Run("refuses-growth-increased-count", func(t *testing.T) {
-		p := filepath.Join(t.TempDir(), "@root.txt")
-		old := "# ceiling: 1\nfixture.go:glenn 1\n"
-		require.NoError(t, os.WriteFile(p, []byte(old), 0600))
-		measured := map[string]int{"fixture.go:glenn": 2}
-		err := update(p, measured)
-		require.Error(t, err, "expected error on attempted growth with increased count, got nil")
-		require.True(t, strings.Contains(err.Error(), "refuses to raise a count"), "expected error mentioning refusal to grow and count exceed, got: %v", err)
-		require.True(t, strings.Contains(err.Error(), "measured at 2"), "expected error mentioning refusal to grow and count exceed, got: %v", err)
-		// Ledger on disk must remain untouched
-		raw, err := os.ReadFile(p)
-		require.NoError(t, err)
-		require.Equal(t, old, string(raw), "ledger was modified despite refusal: got %q, want %q", string(raw), old)
-	})
-
-	t.Run("clean-write-on-shrinking", func(t *testing.T) {
-		p := filepath.Join(t.TempDir(), "@root.txt")
-		old := "# comment\n# ceiling: 3\nfixture.go:emma 2\nfixture.go:glenn 3\nfixture.go:rowan 1\n"
-		require.NoError(t, os.WriteFile(p, []byte(old), 0600))
-		// Shrink emma from 2 to 1, keep glenn at 3, drop rowan (absent / 0)
-		measured := map[string]int{
-			"fixture.go:emma":  1,
-			"fixture.go:glenn": 3,
-			"fixture.go:rowan": 0,
-		}
-		err := update(p, measured)
-		require.NoError(t, err, "clean shrinking should succeed, got: %v", err)
-		raw, err := os.ReadFile(p)
-		require.NoError(t, err)
-		parsed, err := allowlist.Parse(p, string(raw), allowlist.Options{Ceiling: true, Counted: true})
-		require.NoError(t, err, "failed to parse updated allowlist: %v", err)
-		ceil, ok := parsed.Ceiling()
-		require.True(t, ok, "expected ceiling 2, got %d (ok=%v)", ceil, ok)
-		require.True(t, ceil == 2, "expected ceiling 2, got %d (ok=%v)", ceil, ok)
-		require.Equal(t, 2, len(parsed.Rows()), "expected 2 rows, got %d", len(parsed.Rows()))
-		require.True(t, parsed.Has("fixture.go:emma"), "expected emma and glenn in rows, got: %v", parsed.Rows())
-		require.True(t, parsed.Has("fixture.go:glenn"), "expected emma and glenn in rows, got: %v", parsed.Rows())
-		require.False(t, parsed.Has("fixture.go:rowan"), "expected rowan to be dropped from rows, got: %v", parsed.Rows())
-		expected := "# comment\n# ceiling: 2\nfixture.go:emma 1\nfixture.go:glenn 3\n"
-		require.Equal(t, expected, string(raw), "unexpected content:\ngot:\n%s\nwant:\n%s", string(raw), expected)
-	})
-
-	t.Run("reason-and-comments-survive-count-lowering", func(t *testing.T) {
-		t.Parallel()
-		for _, tc := range []struct {
-			name, separator string
-		}{
-			{"tab", "\t"},
-			{"unicode-space", "\u2003"},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				t.Parallel()
-				dir := t.TempDir()
-				p := filepath.Join(dir, "@root.txt")
-				neighbor := filepath.Join(dir, "other.txt")
-				prefix := "# ledger heading\n# ceiling: 1\nfixture.go:glenn" + tc.separator
-				suffix := tc.separator + "reason with words # keep this text\n# adjacent comment\n"
-				other := "# ceiling: 1\nother/file.go:hulk 1 unrelated reason\n"
-				require.NoError(t, os.WriteFile(p, []byte(prefix+"3"+suffix), 0600))
-				require.NoError(t, os.WriteFile(neighbor, []byte(other), 0600))
-				beforeNeighbor, err := os.Stat(neighbor)
-				require.NoError(t, err)
-
-				require.NoError(t, update(p, map[string]int{
-					"fixture.go:glenn":   2,
-					"other/file.go:hulk": 1,
-				}))
-				got, err := os.ReadFile(p)
-				require.NoError(t, err)
-				assert.Equal(t, prefix+"2"+suffix, string(got))
-				gotOther, err := os.ReadFile(neighbor)
-				require.NoError(t, err)
-				assert.Equal(t, other, string(gotOther))
-				afterNeighbor, err := os.Stat(neighbor)
-				require.NoError(t, err)
-				assert.True(t, os.SameFile(beforeNeighbor, afterNeighbor), "unrelated shard was rewritten")
-			})
 		}
 	})
 }

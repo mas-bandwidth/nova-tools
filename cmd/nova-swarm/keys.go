@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/decide"
@@ -40,7 +41,16 @@ func prepareMemberKeysFrom(pass []string, getenv func(string) string, read func(
 	}
 	var file swarmKeyFile
 	haveFile := false
-	if p := strings.TrimSpace(getenv(swarmKeysEnv)); p != "" {
+	loginPath := strings.TrimSpace(getenv(swarmKeysEnv))
+	if loginPath == "" && getenv("HOME") != "" {
+		optional := filepath.Join(getenv("HOME"), ".config", "nova-swarm", "muse-keys.json")
+		if _, statErr := os.Stat(optional); statErr == nil {
+			loginPath = optional
+		} else if !os.IsNotExist(statErr) {
+			return nil, nil, fmt.Errorf("the Muse names login cannot be read; check %s permissions; run: nova-swarm member -h", optional)
+		}
+	}
+	if p := loginPath; p != "" {
 		b, rerr := os.ReadFile(p)
 		if rerr != nil {
 			return nil, nil, fmt.Errorf("NOVA_SWARM_KEYS %s is unreadable: %v; run: nova-swarm member --pass <NAME,...> with NOVA_SEAT set, or NOVA_SWARM_KEYS=<file> naming the seat (store, as, key, sops, names) and never a value", p, rerr)

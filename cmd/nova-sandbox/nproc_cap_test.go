@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -81,6 +82,17 @@ func endGroup(pgid int) {
 	}
 }
 
+// bombs makes the fork bombs of this package take turns. The wall's floor under the cap
+// is RLIMIT_NPROC (lowerNproc), which the kernel counts over every task of the USER, not
+// the tree: the limit is the machine's task total at the bomb's start plus twice the
+// cap. Two bombs run in parallel share that one count, so the later bomb's limit is
+// spent by the earlier bomb's children, and its shell is refused a fork below the cap
+// ("Cannot fork", exit 2, about 200 children on ubuntu-latest, run 38582864454). A tree
+// under the cap is no runaway, so the wall rightly leaves it, and the test failed on
+// another test's processes. Each bomb owns the user's task budget until its group is
+// ended.
+var bombs sync.Mutex
+
 // wallBomb runs script in the wall under the test's own deadline, with the tool started
 // in a group of the test's making, the way a supervisor starts a job (rule 12: the tree
 // stays in it). When the deadline fires the test ends what it started: that group.
@@ -90,6 +102,9 @@ func endGroup(pgid int) {
 func (j job) wallBomb(t *testing.T, script string) (int, string, int, bool) {
 	t.Helper()
 	tool := walledTool(t) // built before the deadline starts: the build is not the run
+	bombs.Lock()
+	// Registered before the group's end below, so it runs after it: cleanups run last first.
+	t.Cleanup(bombs.Unlock)
 	ctx, cancel := context.WithTimeout(context.Background(), capWait())
 	defer cancel()
 	cmd := exec.CommandContext(ctx, tool, "--read", j.read, "--write", j.write, "--", "/bin/sh", "-c", script)

@@ -108,22 +108,57 @@ func tailSince(path string, offset int64) []byte {
 	return raw
 }
 
-// endedOnATool is whether the run's last message in the session database is not a final
-// assistant message (an assistant message whose finish is a stop, a length or another
-// end of turn, never `tool-calls`), among the messages created at or after since. false
-// when the database or its reader is absent or holds no message of the run: an absence
-// says nothing.
-func endedOnATool(dataHome string, since time.Time) bool {
-	out, ok := sessionQuery(dataHome, `SELECT json_extract(data,'$.role'), COALESCE(json_extract(data,'$.finish'),'') FROM message WHERE time_created >= `+
-		strconv.FormatInt(since.UnixMilli(), 10)+` ORDER BY time_created DESC, id DESC LIMIT 1`)
-	if !ok {
-		return false
+// runEnd reads the newest message and newest cutoff of this run in one
+// query. A cutoff earlier than the final stop or tool message is still the
+// harness's fault (tla/CardContract.tla, LengthIsAHarnessFault).
+func runEnd(dataHome string, since time.Time) (endedTool bool, lengthWords string, ok bool) {
+	at := strconv.FormatInt(since.UnixMilli(), 10)
+	out, found := sessionQuery(dataHome, `WITH run AS (SELECT data,time_created,id FROM message WHERE time_created >= `+at+`), `+
+		`last AS (SELECT data FROM run ORDER BY time_created DESC,id DESC LIMIT 1), `+
+		`cut AS (SELECT data FROM run WHERE json_extract(data,'$.role') = 'assistant' AND json_extract(data,'$.finish') = 'length' ORDER BY time_created DESC,id DESC LIMIT 1) `+
+		`SELECT EXISTS(SELECT 1 FROM run), COALESCE((SELECT json_extract(data,'$.role') FROM last),''), COALESCE((SELECT json_extract(data,'$.finish') FROM last),''), `+
+		`COALESCE((SELECT json_extract(data,'$.role') FROM cut),''), COALESCE((SELECT json_extract(data,'$.finish') FROM cut),''), `+
+		`COALESCE((SELECT json_extract(data,'$.tokens.output') FROM cut),0), COALESCE((SELECT json_extract(data,'$.tokens.reasoning') FROM cut),0)`)
+	if !found {
+		return false, "", false
 	}
-	role, finish, ok := strings.Cut(out, "\t")
-	if !ok {
-		return false // no message of this run
+	return parseRunEnd(out)
+}
+
+// parseRunEnd is the pure decoder of runEnd's bounded row, for recorded
+// fixtures without a database or a clock (LengthIsAHarnessFault).
+func parseRunEnd(row string) (endedTool bool, lengthWords string, ok bool) {
+	parts := strings.Split(strings.TrimSuffix(row, "\n"), "\t")
+	if len(parts) != 7 || parts[0] != "1" {
+		return false, "", false
 	}
-	return role != "assistant" || finish == "" || finish == "tool-calls"
+	words, _ := parseLengthFinish(strings.Join(parts[3:], "\t"))
+	return parts[1] != "assistant" || parts[2] == "" || parts[2] == "tool-calls", words, true
+}
+
+// parseLengthFinish decodes the recorded role/finish/output/reasoning row;
+// only non-negative counts become diagnostic text (LengthIsAHarnessFault).
+func parseLengthFinish(row string) (string, bool) {
+	parts := strings.Split(strings.TrimSuffix(row, "\n"), "\t")
+	if len(parts) != 4 || parts[0] != "assistant" || parts[1] != "length" {
+		return "", false
+	}
+	output, err := strconv.ParseUint(parts[2], 10, 64)
+	if err != nil {
+		return "", false
+	}
+	reasoning, err := strconv.ParseUint(parts[3], 10, 64)
+	if err != nil {
+		return "", false
+	}
+	return fmt.Sprintf("finish length; output %d, reasoning %d", output, reasoning), true
+}
+
+// lengthFinish includes an intermediate cutoff in this invocation, never an
+// earlier run's message (tla/CardContract.tla, LengthIsAHarnessFault).
+func lengthFinish(dataHome string, since time.Time) (string, bool) {
+	_, words, ok := runEnd(dataHome, since)
+	return words, ok && words != ""
 }
 
 // sessionProviderError is the cause the session database recorded on the newest message of
@@ -174,7 +209,9 @@ func sessionQuery(dataHome, query string) (string, bool) {
 // provider error: the harness's printed output (capture: what the run appended to
 // `<job>/harness-output.log`, where OPENCODE_PRINT_LOGS puts its ERROR lines), then its log
 // in the data home; else when the run exited clean ending on a tool result (`ended without
-// a final message`, class other). The session's record of the failed message, when it has
+// a final message`, class other). An output-limit cutoff is diagnosed before
+// this provider path as a no-cost staging fault, not a provider failure.
+// The session's record of the failed message, when it has
 // one, then names the cause (it keeps the provider's status: a 402 is `statusCode 402`
 // there).
 //
@@ -195,7 +232,10 @@ func providerEnd(headless, dataHome string, offset int64, since time.Time, rc in
 		return swarm.HeadlessFailure(headless, capture)
 	}
 	if rc < 0 {
-		return swarm.ProviderCause{}, false // killed: the deadline's end, whatever the log says
+		// killed: the deadline's end, whatever the log says, EXCEPT the provider's refusal
+		// for credit, which a run killed by the idle watch or the deadline can hold as well
+		// as one that exited (killedCreditEnd)
+		return killedCreditEnd(dataHome, offset, since, capture)
 	}
 	session, recorded := sessionProviderError(dataHome, since)
 	if recorded && session.Class == swarm.CauseCredit {
@@ -206,8 +246,16 @@ func providerEnd(headless, dataHome string, offset int64, since time.Time, rc in
 		found = swarm.CauseFromText(line)
 	} else if line := providerLogError(dataHome, offset); line != "" {
 		found = swarm.CauseFromText(line)
-	} else if rc == 0 && endedOnATool(dataHome, since) {
-		found = swarm.ProviderCause{Class: swarm.CauseOther, Message: providerEndedNoMessage}
+	} else if rc == 0 {
+		endedTool, lengthWords, hasEnd := runEnd(dataHome, since)
+		if !hasEnd || lengthWords != "" {
+			return swarm.ProviderCause{}, false
+		} else if endedTool {
+			found = swarm.ProviderCause{Class: swarm.CauseOther, Message: providerEndedNoMessage}
+
+		} else {
+			return swarm.ProviderCause{}, false
+		}
 	} else {
 		return swarm.ProviderCause{}, false
 	}
@@ -215,6 +263,30 @@ func providerEnd(headless, dataHome string, offset int64, since time.Time, rc in
 		return session, true
 	}
 	return found, true
+}
+
+// killedCreditEnd is the provider's refusal for credit in the record of a run that was
+// KILLED (the idle watch's reap or the deadline, rc < 0), ok false when the record holds
+// none. A killed run is not a provider failure by its death, and no other cause is read
+// from it; but a harness that was refused for credit may sit silent until it is reaped
+// (an openrouter route out of funds, 2026-10-15: opencode printed nothing for 300s), and
+// calling that a harness fault counts a fault on a card whose route is simply out of
+// funds. So the session's record, the harness's printed output and its log are read for
+// the one class, swarm.CauseCredit, exactly as for a run that exited: the sprint then
+// rests the route and redeals the card elsewhere (nova-tools#5199).
+func killedCreditEnd(dataHome string, offset int64, since time.Time, capture []byte) (swarm.ProviderCause, bool) {
+	if session, recorded := sessionProviderError(dataHome, since); recorded && session.Class == swarm.CauseCredit {
+		return session, true
+	}
+	for _, line := range []string{printedHarnessError(capture), providerLogError(dataHome, offset)} {
+		if line == "" {
+			continue
+		}
+		if cause := swarm.CauseFromText(line); cause.Class == swarm.CauseCredit {
+			return cause, true
+		}
+	}
+	return swarm.ProviderCause{}, false
 }
 
 // providerLine is the NATIVE line of a provider failure:

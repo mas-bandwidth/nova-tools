@@ -36,34 +36,30 @@ func (c *limitClock) now() time.Time { return c.t }
 
 var edt = time.FixedZone("EDT", -4*3600)
 
-func TestALimitedHarnessIsDownUntilItsResetThenWoken(t *testing.T) {
+func TestALimitedHarnessIsDownUntilItsResetThenBack(t *testing.T) {
 	t.Parallel()
 	clock := &limitClock{t: time.Date(2026, 10, 4, 17, 40, 0, 0, edt)}
 	var downs []string
-	var woken []string
-	nonces := []string{"stale1", "wake22"}
+	ups := 0
 	l := &Limits{
-		Now:   clock.now,
-		Nonce: func() string { n := nonces[0]; nonces = nonces[1:]; return n },
+		Now: clock.now,
 		Down: func(until time.Time, reason string) {
 			downs = append(downs, until.Format(time.RFC3339)+" "+reason)
 		},
-		Up: func(nonce string) { woken = append(woken, nonce) },
+		Up: func() { ups++ },
 	}
 	se := &scriptExec{
 		outs: []string{
 			"working on it\nInsufficient AI Credits. Your credits will refresh 6:52 PM.\n", // the turn that hits the limit
-			"I am back: stale0\n", // the first wake answers no current nonce
-			"wake22\n",            // the second does
-			"I ran the card.\n",   // the message, delivered after the wake
+			"I ran the card.\n", // after the reset: no wake turn, the next turn itself
 		},
-		exits: []int{1, 0, 0, 0},
+		exits: []int{1, 0},
 	}
 	d := l.Gate(&OpenCode{Dir: "/w/bob", Session: "s1", Run: l.Watch(se.run)})
 
 	exit, err := d.Deliver(context.Background(), "hello")
 	var deferred Deferred
-	require.ErrorAs(t, err, &deferred, "a turn that hit the limit is deferred: the message stays in hand, counted toward nothing")
+	require.ErrorAs(t, err, &deferred, "a turn that hit the limit is deferred, counted toward nothing")
 	assert.Equal(t, 0, exit)
 	assert.Contains(t, deferred.Reason, "until 2026-10-04T18:52:00-04:00")
 	until, reason, limited := l.Limited()
@@ -76,24 +72,15 @@ func TestALimitedHarnessIsDownUntilItsResetThenWoken(t *testing.T) {
 	_, err = d.Deliver(context.Background(), "hello")
 	require.ErrorAs(t, err, &deferred, "before the reset nothing runs")
 	assert.Len(t, se.texts, 1, "the harness is not run while it is limited")
+	assert.Zero(t, ups)
 
 	clock.t = time.Date(2026, 10, 4, 18, 52, 30, 0, edt)
-	_, err = d.Deliver(context.Background(), "hello")
-	require.ErrorAs(t, err, &deferred, "a wake that answers no current nonce is no wake")
-	require.Len(t, se.texts, 2)
-	assert.Contains(t, se.texts[1], "stale1", "the wake turn carries its nonce")
-	assert.Empty(t, woken)
-	_, _, limited = l.Limited()
-	assert.True(t, limited, "still down until a wake answers the current nonce")
-
-	clock.t = time.Date(2026, 10, 4, 18, 53, 0, 0, edt)
 	exit, err = d.Deliver(context.Background(), "hello")
-	require.NoError(t, err)
+	require.NoError(t, err, "the limit lapses at its reset: nothing is pushed in to wake the session")
 	assert.Equal(t, 0, exit)
-	require.Len(t, se.texts, 4)
-	assert.Contains(t, se.texts[2], "wake22")
-	assert.Equal(t, "hello", se.texts[3], "after the wake the message itself is delivered")
-	assert.Equal(t, []string{"wake22"}, woken, "woken once, by the current nonce")
+	require.Len(t, se.texts, 2)
+	assert.Equal(t, "hello", se.texts[1], "the turn itself goes in after the reset")
+	assert.Equal(t, 1, ups, "back once, when the reset passed")
 	_, _, limited = l.Limited()
 	assert.False(t, limited)
 	assert.Len(t, downs, 1)
@@ -255,28 +242,19 @@ func TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset(t *testing.T) {
 		reason string
 	}
 	var downs []told
-	var ups []string
-	nonces := []string{"gone11", "back22"}
+	ups := 0
 	l := &Limits{
-		Now:   clock.now,
-		Nonce: func() string { n := nonces[0]; nonces = nonces[1:]; return n },
-		Down:  func(until time.Time, reason string) { downs = append(downs, told{until, reason}) },
-		Up:    func(nonce string) { ups = append(ups, nonce) },
+		Now:  clock.now,
+		Down: func(until time.Time, reason string) { downs = append(downs, told{until, reason}) },
+		Up:   func() { ups++ },
 	}
-	// the fake harness: out of credits, then not running, then back
-	running := true
+	// the fake harness: out of credits, then back
 	var texts []string
 	harness := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 		text := args[len(args)-1]
-		if !running {
-			return "", -1, errors.New("exec: the harness app is not running")
-		}
 		texts = append(texts, text)
-		switch {
-		case len(texts) == 1:
+		if len(texts) == 1 {
 			return "working on card c1\nError: Insufficient AI Credits. Your credits will refresh 6:52 PM.\n", 1, nil
-		case strings.Contains(text, "back22"):
-			return "back22\n", 0, nil
 		}
 		return "I ran card c1.\n", 0, nil
 	}
@@ -287,7 +265,7 @@ func TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset(t *testing.T) {
 	require.NoError(t, beat(context.Background()), "up before her harness says anything")
 	_, err := d.Deliver(context.Background(), "card c1")
 	var deferred Deferred
-	require.ErrorAs(t, err, &deferred, "the turn that hit the limit is deferred, the message in hand")
+	require.ErrorAs(t, err, &deferred, "the turn that hit the limit is deferred")
 	reset := time.Date(2026, 10, 4, 18, 52, 0, 0, edt)
 	require.Len(t, downs, 1, "told down once")
 	assert.True(t, reset.Equal(downs[0].until), "--until is the reset the harness said: %s", downs[0].until)
@@ -300,22 +278,13 @@ func TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset(t *testing.T) {
 	require.ErrorAs(t, err, &deferred)
 	assert.Len(t, texts, 1, "nothing runs before the reset")
 
-	// the reset passes while the harness is not running: no answer, no wake
-	clock.t, running = reset.Add(time.Minute), false
-	_, err = d.Deliver(context.Background(), "card c1")
-	require.ErrorAs(t, err, &deferred, "a wake into an absent harness is no wake")
-	assert.Empty(t, ups)
-	require.Error(t, beat(context.Background()), "still down after the reset until the session answers")
-	assert.Equal(t, 1, beats)
-
-	clock.t, running = reset.Add(2*time.Minute), true
+	clock.t = reset.Add(time.Minute)
+	require.NoError(t, beat(context.Background()), "she beats again once the reset passed")
+	assert.Equal(t, 1, ups, "back once")
 	_, err = d.Deliver(context.Background(), "card c1")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"back22"}, ups, "woken once, by the answered nonce")
-	require.Len(t, texts, 3)
-	assert.Contains(t, texts[1], "back22", "the wake carries its nonce")
-	assert.Equal(t, "card c1", texts[2], "then the message goes in")
-	require.NoError(t, beat(context.Background()), "she beats again once woken")
+	require.Len(t, texts, 2)
+	assert.Equal(t, "card c1", texts[1], "then the card goes in")
 	assert.Equal(t, 2, beats)
 	assert.Len(t, downs, 1)
 

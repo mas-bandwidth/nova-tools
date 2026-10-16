@@ -239,3 +239,59 @@ func TestPackagesMissingDirectoryIsEmptyAndCannotGrow(t *testing.T) {
 	_, err := os.Stat(dir)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
+
+// TestPackagesUpdateTable runs the shrink-only update over one @root.txt shard
+// (the cases internal/ci's generality test held): an overfull ceiling is refused
+// until rows go, a new key and a raised count are refused with the file left as it
+// was, and a lowered count keeps the heading, the comments, the row's reason and
+// its separator byte for byte while the ceiling falls with a dropped row.
+func TestPackagesUpdateTable(t *testing.T) {
+	t.Parallel()
+	const overfull = "# ceiling: 1\nfixture.go:glenn 2\nfixture.go:hulk 2\n"
+	const one = "# ceiling: 1\nfixture.go:glenn 1\n"
+	sep := func(s string) string {
+		return "# ledger heading\n# ceiling: 1\nfixture.go:glenn" + s + "3" + s + "reason with words # keep this text\n# adjacent comment\n"
+	}
+	for _, tc := range []struct {
+		name, old, want string
+		measured        map[string]int
+		refusals        []string // each must be in the refusal; none means the update succeeds
+	}{
+		{name: "overfull-unchanged", old: overfull, want: overfull, measured: map[string]int{"fixture.go:glenn": 2, "fixture.go:hulk": 2}, refusals: []string{"ceiling"}},
+		{name: "overfull-lowered-still-over", old: overfull, want: overfull, measured: map[string]int{"fixture.go:glenn": 1, "fixture.go:hulk": 1}, refusals: []string{"ceiling"}},
+		{name: "remove-row-to-fit", old: overfull, want: one, measured: map[string]int{"fixture.go:glenn": 1}},
+		{name: "refuses-new-key", old: one, want: one, measured: map[string]int{"fixture.go:glenn": 1, "fixture.go:hulk": 1}, refusals: []string{"refuses to grow", "fixture.go:hulk"}},
+		{name: "refuses-raised-count", old: one, want: one, measured: map[string]int{"fixture.go:glenn": 2}, refusals: []string{"refuses to raise a count", "measured at 2"}},
+		{
+			name:     "clean-write-on-shrinking",
+			old:      "# comment\n# ceiling: 3\nfixture.go:emma 2\nfixture.go:glenn 3\nfixture.go:rowan 1\n",
+			want:     "# comment\n# ceiling: 2\nfixture.go:emma 1\nfixture.go:glenn 3\n",
+			measured: map[string]int{"fixture.go:emma": 1, "fixture.go:glenn": 3, "fixture.go:rowan": 0},
+		},
+		{name: "tab-separator-survives", old: sep("\t"), want: strings.Replace(sep("\t"), "\t3\t", "\t2\t", 1), measured: map[string]int{"fixture.go:glenn": 2}},
+		{name: "unicode-space-separator-survives", old: sep(" "), want: strings.Replace(sep(" "), " 3 ", " 2 ", 1), measured: map[string]int{"fixture.go:glenn": 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			file := writePackageShard(t, dir, "@root.txt", tc.old)
+			r := &recorder{}
+			CheckPackagesCountedMode(r, loadPackageFixture(t, dir), tc.measured, true)
+			var refused []string
+			for _, line := range r.lines {
+				if !strings.Contains(line, UpdatedRerun) {
+					refused = append(refused, line)
+				}
+			}
+			joined := strings.Join(refused, "\n")
+			if len(tc.refusals) == 0 {
+				assert.Empty(t, refused, "the update should succeed: %v", refused)
+			}
+			for _, want := range tc.refusals {
+				assert.Contains(t, joined, want, "the refusal %q lacks %q", joined, want)
+			}
+			got := readBack(t, file)
+			assert.Equal(t, tc.want, got, "ledger=%q, want %q", got, tc.want)
+		})
+	}
+}

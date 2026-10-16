@@ -1,8 +1,18 @@
 # nova-up: one machine, from nothing to a first sprint
 
-`nova-up` sets up nova on one machine. Its first mode, `nova-up --local`, takes one machine with
-no config to the point where a coordinator runs a first sprint on it. The tool is `cmd/nova-up`
-over `internal/up`; its tests run every step on a fake machine (`internal/up/up_test.go`).
+`nova-up` sets up nova on one machine. Its `nova-up --local` mode takes one machine with no config
+to the point where a coordinator runs a first sprint on it. Its separate `nova-up --seat` mode
+writes a fleet seat environment profile from explicit endpoint flags or matching process
+environment values. The tool is `cmd/nova-up` over `internal/up`; its tests run every step on a
+fake machine (`internal/up/up_test.go`).
+
+`--seat` requires `NOVA_SPRINT_REDIS`, `NOVA_SPRINT_SERVER`, and `NOVA_BUS_REDIS`, supplied by
+`--sprint-redis`, `--server`, `--bus-redis` or the corresponding environment variables. It never
+uses `--local`'s `mem:` twin as a fleet endpoint. The writer accepts password-free `host:port`
+addresses and refuses credential-bearing URLs. It writes the versioned
+`seat-environment.json` under the user's `nova-sprint` config directory, preserves the legacy
+`seat.json` and `~/nova/seat.env`, and carries forward validated login and forge identity
+references without recording credentials.
 
 ## The root
 
@@ -19,6 +29,51 @@ but for one unit file in the service manager's own directory (step 6). The layou
 | `seat.env` | the coordinator's seat, as variables; mode 0600 | seat |
 | `logs/` | the Redis loop's log (Linux; on macOS it is `~/Library/Logs/nova-loop-redis-local.log`) | redis |
 | `smoke/` | the smoke's twin, its throwaway repository and its record `landed` | smoke |
+
+## The seat environment
+
+`$XDG_CONFIG_HOME/nova-sprint/seat-environment.json` is the optional, private
+version-1 record tools read for seat defaults. When `XDG_CONFIG_HOME` is not an
+absolute path, the file is `$HOME/.config/nova-sprint/seat-environment.json`;
+when neither location is absolute, the optional record is absent.
+This is separate from the legacy `seat.json` used by nova-sprint; neither reader
+rewrites or renames that file. The matching nova-sprint reader is a separate,
+pending change in [PR #256](https://github.com/mas-bandwidth/nova-sprint/pull/256).
+The standalone nova-bus command continues to read `NOVA_BUS_REDIS` from its
+process environment. The record is a regular file owned by the user,
+with no group or other permissions, under a real directory owned by the user
+that is not writable by group or other users. Unknown or duplicate keys are refused.
+
+The top-level `version` is `1`. `environment`, when present, contains only the
+`NOVA_SPRINT_REDIS`, `NOVA_SPRINT_SERVER` and `NOVA_BUS_REDIS` host:port
+endpoints (with a numeric port from 1 through 65535).
+`login`, when present, is complete and contains only the existing
+`redis`, `user`, `store`, `as`, `key`, `sops` and `secret` references; the
+password stays in nova-secrets. `forge_identity`, when present, is an absolute
+path to an existing GitHub CLI configuration directory. It is a reference, not
+a credential: tools validate that it names a directory but never read or list
+its contents, create it, log in, or infer it from a seat name.
+
+For a seat that uses a separate GitHub CLI identity, the setting is one field in
+that record:
+
+```json
+{
+  "version": 1,
+  "forge_identity": "/path/to/gh-profile"
+}
+```
+
+Forge commands preserve an explicit process `GH_CONFIG_DIR` first; when it is
+unset, an explicit `GH_CONFIG_DIR` composed for the child command takes
+precedence over the seat default. Otherwise, a seat-owned forge command passes
+`forge_identity` to that one `gh` child. It does not change the parent process
+environment. A missing setting leaves GitHub CLI's normal configuration
+choice in effect.
+This covers convergence, sandbox worktree, member pull-request and secrets
+carry operations. The `--gh` option still selects an executable and does not
+select an identity. CI, release automation and arbitrary children such as
+`nova-secrets exec -- gh ...` keep the environment their caller supplied.
 
 ## Plan, then apply
 

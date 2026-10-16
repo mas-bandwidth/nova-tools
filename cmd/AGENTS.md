@@ -11,7 +11,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-config/` | permanent configuration store (Postgres), friends and machines, applied into Redis | `go test ./cmd/nova-config` | `go test ./cmd/nova-config` |
 | `nova-decide/` | typed decisions with probabilities through a backend, recorded and calibrated against their outcomes | `go test ./cmd/nova-decide` | `go test ./cmd/nova-decide` |
 | `nova-doctor/` | one command that says what is missing and how to fix it: every registered dependency check, exit by the worst | `go test ./cmd/nova-doctor` | `go test ./cmd/nova-doctor` |
-| `nova-friend/` | what a friend runs to be part of the team: the wake loop over nova-bus, the beat to the sprint server, and the proof of life, as one launchd daemon | `go test ./cmd/nova-friend` | `go test -tags functional ./cmd/nova-friend` |
+| `nova-friend/` | what a friend runs to be part of the team: the lanes that work the friend's cards and their sprint metadata beat | `go test ./cmd/nova-friend` | `go test -tags functional ./cmd/nova-friend` |
 | `nova-fuse/` | the ingestion fuse: a recorded decision to stop reading an untrusted source, checked before each read | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |
 | `nova-hook/` | hooks an identity in: the pushes its role needs, live and proven; no bus, friend or sprint tool runs until they are | `go test ./cmd/nova-hook` | `go test -tags functional ./cmd/nova-hook` |
 | `nova-local/` | run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts | `go test ./cmd/nova-local` | `go test ./cmd/nova-local` |

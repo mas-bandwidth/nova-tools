@@ -16,7 +16,7 @@ A row's fields: `Path:` (the script, or the launchd label), `Replacement:` (a ve
 comma separated, or `none yet`), `Tool:` (only a retired row), `STATUS:`, then `Behaviours:`
 and a numbered list. The replacement names are cards of this stream: `claude-oneshot-lanesb`
 (headless claude one-shot lanes for the buds; the script headers call the earlier card
-claude-oneshot-lanes), `coordinator-wake-verb`, `coordinator-ping-verb` and `friend-token-cap`. The `sprint-dashboard` stopgap, retired into
+claude-oneshot-lanes), `coordinator-wake-verb` and `friend-token-cap`. The `friend-ping` row has no replacement: the ping verb it ran is retired (v1.3.5) and liveness is the nova-hook record's. The `sprint-dashboard` stopgap, retired into
 `nova-sprint dashboard` on 2026-10-07, left with nova-sprint for
 [mas-bandwidth/nova-sprint](https://github.com/mas-bandwidth/nova-sprint).
 
@@ -114,12 +114,12 @@ Behaviours:
 ## friend-ping
 
 Path: com.nova.loop.friend-ping-<coordinator> (~/Library/LaunchAgents/com.nova.loop.friend-ping-<coordinator>.plist, `zsh -c` while loop)
-Replacement: coordinator-ping-verb
+Replacement: none yet
 STATUS: live
 
 Behaviours:
 1. launchd keeps it alive (RunAtLoad, KeepAlive, 5 s throttle) with NOVA_BUS_REDIS=127.0.0.1:6381.
-2. Once per round it runs `nova-friend ping --as <coordinator> --to <friend>` for the six friends in alphabetical order, one after the other.
+2. Once per round it runs nova-friend's retired ping verb, as the coordinator, to each of the six friends in alphabetical order, one after the other.
 3. It sleeps 600 s between rounds.
 4. It appends each ping's output to ~/Library/Logs/friend-ping-<coordinator>.log and launchd's output to friend-ping-<coordinator>-launchd.log.
 

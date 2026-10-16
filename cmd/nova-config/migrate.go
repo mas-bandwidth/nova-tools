@@ -207,7 +207,11 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 		o.Status, o.Exit, o.Why, o.Remedy = tool.Failed, 1, []string{why}, remedy
 		lines = append(lines, "MIGRATE WOULD-REFUSE "+plain(why)+"; run: "+remedy)
 	}
-	o.Fact(key, value).Fact("from", have).Fact("to", len(all)).Fact("applied", 0).Fact("dry_run", true).Fact("pending", len(pending)).Fact("missing", len(missing)).Fact("role", owners.Role).Fact("ready", ready).Fact("owner", wholeOwner(owners)).Fact("sessions", len(held))
+	tip := 0
+	if len(all) > 0 {
+		tip = all[len(all)-1].Version
+	}
+	o.Fact(key, value).Fact("from", have).Fact("to", tip).Fact("applied", 0).Fact("dry_run", true).Fact("pending", len(pending)).Fact("missing", len(missing)).Fact("role", owners.Role).Fact("ready", ready).Fact("owner", wholeOwner(owners)).Fact("sessions", len(held))
 	if len(missing) > 0 {
 		o.Note(fmt.Sprintf("version(s) %s are not in the ledger and are below %d, the greatest recorded: migrate applies only versions above it, so it will not apply them", strings.Join(missing, ","), have))
 	}
@@ -217,7 +221,7 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 	for _, l := range lines {
 		fmt.Fprintln(stdout, l)
 	}
-	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d missing=%d role=%s ready=%s owner=%s sessions=%d\n", key, config.Value(value), have, len(all), len(pending), len(missing), config.Value(owners.Role), ready, config.Value(wholeOwner(owners)), len(held))
+	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d missing=%d role=%s ready=%s owner=%s sessions=%d\n", key, config.Value(value), have, tip, len(pending), len(missing), config.Value(owners.Role), ready, config.Value(wholeOwner(owners)), len(held))
 	printNotes(stdout, o.Notes)
 	return o.Exit
 }

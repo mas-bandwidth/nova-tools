@@ -33,7 +33,7 @@ import (
 
 // redisHelpers are the functions that start a redis-server, by import path.
 var redisHelpers = map[string][]string{
-	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil": {"Start", "Program"},
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil": {"Start", "StartRaw", "Program"},
 	"github.com/mas-bandwidth/nova-tools/pkg/testredis":        {"Start", "StartServer", "Program"},
 }
 
@@ -109,6 +109,7 @@ func TestStartsRedisSeesTheHelpersThroughTheirImport(t *testing.T) {
 	for src, want := range map[string]bool{
 		"package x\nimport \"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil\"\nvar a = testutil.Start(nil)\n":           true,
 		"package x\nimport tu \"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil\"\nvar a = tu.Program(nil)\n":            true,
+		"package x\nimport \"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil\"\nvar a = testutil.StartRaw(nil)\n":        true,
 		"package x\nimport \"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil\"\nvar a = testutil.StartGitHubStub(nil)\n": false,
 		"package x\nimport \"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil\"\nvar a = testutil.FreePort(nil)\n":        false,
 		"package x\n// testutil.Start(t) in prose, no import\n":                                                                   false,

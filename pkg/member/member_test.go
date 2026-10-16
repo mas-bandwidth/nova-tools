@@ -226,7 +226,7 @@ func pk(card string) Packet {
 // one child started for each packet it returns.
 func TestTickWithTwoReadyAndWidthTwoTakesTwoInOneVerb(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1"), ready("c2")))
 	g.s.set("take", 0, takeJSON(t, pk("c1"), pk("c2")))
 	acted, err := g.tick(t)
@@ -243,7 +243,7 @@ func TestTickWithTwoReadyAndWidthTwoTakesTwoInOneVerb(t *testing.T) {
 // for a child that ended ok, the gen from the queue (not the packet taken).
 func TestEndedOkCardIsFinishedWithItsHeadBranchAndEpoch(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
 	p := pk("c1")
@@ -267,7 +267,7 @@ func TestEndedOkCardIsFinishedWithItsHeadBranchAndEpoch(t *testing.T) {
 // and that a finish with nothing pushed names no --head and no --branch.
 func TestEndedNotOkCardIsFinishedFailed(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	p := pk("c1")
 	p.Gen = 2
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
@@ -286,7 +286,7 @@ func TestEndedNotOkCardIsFinishedFailed(t *testing.T) {
 // says; the sprint deals that card again (tla/CardContract.tla, ProviderFailure).
 func TestAProviderFailedRunIsFinishedFailedWithTheProvidersKindAndReason(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	p := pk("c1")
 	p.Gen = 2
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
@@ -346,7 +346,7 @@ func TestAProviderEndedRunThatIsTheCardsOwnFailureIsReportedAsFailedWork(t *test
 		"refused push":  {Result{Report: "r", Head: fullSha, End: EndProvider, Provider: "provider: x"}, Push{Refused: "rejected"}, "push refused: rejected; r"},
 		"shaped result": {Result{Report: "r", End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "not-done"}, Push{None: "no commit"}, "verdict not-done; r"},
 	} {
-		g := newRig(Config{As: "m", Width: 1})
+		g := newWidthRig(1, Config{As: "m"})
 		g.m.pusher = &fakePusher{def: c.pu}
 		p := pk("c1")
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
@@ -365,7 +365,7 @@ func TestAProviderEndedRunThatIsTheCardsOwnFailureIsReportedAsFailedWork(t *test
 // no commit, naming no head and no branch.
 func TestFinishWithoutABranchInThePacketCarriesNone(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1})
+	g := newWidthRig(1, Config{As: "m"})
 	p := pk("c1")
 	p.Branch = "" // the branch is the launch's packet's; none here
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
@@ -385,7 +385,7 @@ func TestFinishWithoutABranchInThePacketCarriesNone(t *testing.T) {
 // is run again from the packet the queue carries, and nothing is finished.
 func TestAWorkingCardWithNoChildOfOursIsRestartedFromItsPacket(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	p := pk("c9")
 	p.Attempt, p.Gen = 2, 4
 	g.s.set("queue", 0, queueJSON(t, 7, working("c9", 4, &p), working("c8", 4, nil)))
@@ -409,7 +409,7 @@ func TestAWorkingCardWithNoChildOfOursIsRestartedFromItsPacket(t *testing.T) {
 // excess cards remain queued and are recovered on subsequent passes as capacity opens.
 func TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	p1, p2, p3 := pk("c1"), pk("c2"), pk("c3")
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), working("c2", 1, &p2), working("c3", 1, &p3)))
 	acted, err := g.tick(t)
@@ -448,7 +448,7 @@ func TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
 // width clamping for a reader recovering reading packets.
 func TestReaderRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	r1 := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	r2 := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &r1), reading("r2", &r2)))
@@ -485,7 +485,7 @@ func TestNoTakeWhenWidthIsFullOrNothingIsReady(t *testing.T) {
 	t.Parallel()
 	t.Run("width full", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 1})
+		g := newWidthRig(1, Config{As: "m"})
 		p := pk("c1")
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p), ready("c2")))
 		_, err := g.tick(t)
@@ -494,7 +494,7 @@ func TestNoTakeWhenWidthIsFullOrNothingIsReady(t *testing.T) {
 	})
 	t.Run("nothing ready", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 4})
+		g := newWidthRig(4, Config{As: "m"})
 		g.s.set("queue", 0, queueJSON(t, 7))
 		acted, err := g.tick(t)
 		require.NoError(t, err, "acted=%d err=%v on an empty queue", acted, err)
@@ -508,7 +508,7 @@ func TestNoTakeWhenWidthIsFullOrNothingIsReady(t *testing.T) {
 // `read --as r --ok|--broken <id> --finding <line> --epoch <e>`, and no beat.
 func TestReaderLoopBeginsAskedCardsAndReportsEndedReads(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 2, Reader: true})
+	g := newWidthRig(2, Config{As: "r", Reader: true})
 	a1 := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	a2 := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h2"}
 	asked := func(id string, p *Packet) queueCard { return queueCard{ID: id, Col: "asked", Packet: p} }
@@ -542,7 +542,7 @@ func TestAStoreThatDoesNotAnswerStopsTheTickActingOnNothing(t *testing.T) {
 	t.Parallel()
 	t.Run("queue", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 2})
+		g := newWidthRig(2, Config{As: "m"})
 		// a body that would parse and act, with the exit that says the store never answered
 		g.s.set("queue", 2, queueJSON(t, 7, ready("c1")))
 		g.s.set("take", 0, takeJSON(t, pk("c1")))
@@ -556,7 +556,7 @@ func TestAStoreThatDoesNotAnswerStopsTheTickActingOnNothing(t *testing.T) {
 	})
 	t.Run("beat", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 2})
+		g := newWidthRig(2, Config{As: "m"})
 		g.s.set("beat", 2, "no route to the store")
 		err := g.m.Beat()
 		require.ErrorContains(t, err, "beat: exit 2: no route to the store")
@@ -568,7 +568,7 @@ func TestAStoreThatDoesNotAnswerStopsTheTickActingOnNothing(t *testing.T) {
 	})
 	t.Run("finish keeps the child for the next pass", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 2})
+		g := newWidthRig(2, Config{As: "m"})
 		p := pk("c1")
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 		_, err := g.tick(t)
@@ -591,7 +591,7 @@ func TestAStoreThatDoesNotAnswerStopsTheTickActingOnNothing(t *testing.T) {
 // returned, and the next pass takes.
 func TestARefusedTakeIsPrintedAndTheTickContinues(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1})
+	g := newWidthRig(1, Config{As: "m"})
 	p := pk("c1")
 	p.Gen = 1
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
@@ -627,10 +627,13 @@ func TestARefusedTakeIsPrintedAndTheTickContinues(t *testing.T) {
 // member's running over its width.
 func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ running, width int }{{0, 4}, {1, 3}, {2, 2}} {
+	for _, tc := range []struct {
+		running, width int
+		live           string
+	}{{0, 4, "-"}, {1, 3, "c0@1"}, {2, 2, "c0@1,c1@1"}} {
 		t.Run(fmt.Sprintf("%dof%d", tc.running, tc.width), func(t *testing.T) {
 			t.Parallel()
-			g := newRig(Config{As: "m", Width: tc.width})
+			g := newWidthRig(tc.width, Config{As: "m"})
 			var cards []queueCard
 			for i := 0; i < tc.running; i++ {
 				p := pk("c" + strconv.Itoa(i))
@@ -642,7 +645,7 @@ func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 			require.Equal(t, tc.running, g.m.Running())
 			g.s.reset()
 			require.NoError(t, g.m.Beat())
-			require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, g.s.lines("beat"))
+			require.Equal(t, []string{"fleet beat m --stop-returns 0 --live " + tc.live + " --load 0.0"}, g.s.lines("beat"))
 		})
 	}
 }
@@ -653,7 +656,7 @@ func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 // ended it is forgotten, and a still-running one is left alone.
 func TestACardTheQueueNoLongerListsIsReapedWhenItsChildEnds(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1})
+	g := newWidthRig(1, Config{As: "m"})
 	p := pk("c1")
 	p.Gen = 1
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
@@ -674,7 +677,7 @@ func TestACardTheQueueNoLongerListsIsReapedWhenItsChildEnds(t *testing.T) {
 // printed line and no place taken.
 func TestAStartThatFailsIsPrintedAndLeavesNoChild(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	g.r.failFor["c1"] = true
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1"), ready("c2")))
 	g.s.set("take", 0, takeJSON(t, pk("c1"), pk("c2")))
@@ -772,7 +775,7 @@ func TestAReadBeginThatIsRefusedOrUnansweredStartsNothing(t *testing.T) {
 	body := queueJSON(t, 7, queueCard{ID: "r1", Col: "asked", Packet: &a1})
 	t.Run("refused", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "r", Width: 1, Reader: true})
+		g := newWidthRig(1, Config{As: "r", Reader: true})
 		g.s.set("queue", 0, body)
 		g.s.set("begin", 1, "stale epoch")
 		acted, err := g.tick(t)
@@ -783,7 +786,7 @@ func TestAReadBeginThatIsRefusedOrUnansweredStartsNothing(t *testing.T) {
 	})
 	t.Run("unanswered", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "r", Width: 1, Reader: true})
+		g := newWidthRig(1, Config{As: "r", Reader: true})
 		g.s.set("queue", 0, body)
 		g.s.set("begin", 2, "no route")
 		_, err := g.tick(t)
@@ -808,7 +811,7 @@ func TestAMovedClaimIsReapedNotReported(t *testing.T) {
 	t.Parallel()
 	t.Run("a redeal: the generation moved", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 2})
+		g := newWidthRig(2, Config{As: "m"})
 		old := pk("c1") // gen 1, epoch 7
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
 		_, err := g.tick(t)
@@ -833,7 +836,7 @@ func TestAMovedClaimIsReapedNotReported(t *testing.T) {
 	})
 	t.Run("a clear: the epoch moved, the generation did not", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 2})
+		g := newWidthRig(2, Config{As: "m"})
 		old := pk("c1") // gen 1, epoch 7
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
 		_, err := g.tick(t)
@@ -858,7 +861,7 @@ func TestAMovedClaimIsReapedNotReported(t *testing.T) {
 	})
 	t.Run("a read re-asked: the attempt moved", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "r", Width: 2, Reader: true})
+		g := newWidthRig(2, Config{As: "r", Reader: true})
 		old := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &old)))
 		_, err := g.tick(t)
@@ -881,7 +884,7 @@ func TestAMovedClaimIsReapedNotReported(t *testing.T) {
 	})
 	t.Run("a child still running is left alone and not started over", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 2})
+		g := newWidthRig(2, Config{As: "m"})
 		old := pk("c1")
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
 		_, err := g.tick(t)
@@ -929,7 +932,7 @@ func TestAReadWithNoVerdictIsReturnedForTheSprintToAskAgain(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			g := newRig(Config{As: "r", Width: 1, Reader: true})
+			g := newWidthRig(1, Config{As: "r", Reader: true})
 			p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 			g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 			_, err := g.tick(t)
@@ -956,7 +959,7 @@ func TestAReadWithNoVerdictIsReturnedForTheSprintToAskAgain(t *testing.T) {
 // third return it holds none.
 func TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	ps := []Packet{}
 	for _, id := range []string{"r1", "r2", "r3"} {
 		ps = append(ps, Packet{Card: id, Kind: "read", As: "r", Attempt: 1, Epoch: 7})
@@ -996,7 +999,7 @@ func TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne(t *testing.T) {
 // it does not take and return the same read every pass.
 func TestAReadItReturnedIsNotBegunAgainBeforeTheRetry(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 	_, err := g.tick(t)
@@ -1024,7 +1027,7 @@ func TestAReadItReturnedIsNotBegunAgainBeforeTheRetry(t *testing.T) {
 // it printed the error and began the read again every pass, for the read's whole deadline.
 func TestAReaderHandsBackAReadItCannotStart(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 2, Reader: true})
+	g := newWidthRig(2, Config{As: "r", Reader: true})
 	p1 := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	p2 := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	g.r.failFor["r1"] = true
@@ -1070,7 +1073,7 @@ func TestAReadReportsOnlyItsVerdict(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			g := newRig(Config{As: "r", Width: 1, Reader: true})
+			g := newWidthRig(1, Config{As: "r", Reader: true})
 			p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 			g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 			_, err := g.tick(t)
@@ -1091,7 +1094,7 @@ func TestAReadReportsOnlyItsVerdict(t *testing.T) {
 // sorted order), with the epoch; only that packet is started.
 func TestReadBeginNamesTheCards(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	first := Packet{Card: "zr", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	second := Packet{Card: "ar", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	g.s.set("queue", 0, queueJSON(t, 7, asked("zr", &first), asked("ar", &second)))
@@ -1110,7 +1113,7 @@ func TestReadBeginNamesTheCards(t *testing.T) {
 // gen 2 and 0, room for one, and the verb names the first with @gen.
 func TestReadBeginNamesCardsWithGen(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	first := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	second := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	g.s.set("queue", 0, queueJSON(t, 7,
@@ -1139,7 +1142,7 @@ func TestTakeAsksForTheRoom(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			g := newRig(Config{As: "m", Width: tc.width})
+			g := newWidthRig(tc.width, Config{As: "m"})
 			var cards []queueCard
 			for i := 0; i < tc.running; i++ {
 				p := pk("w" + strconv.Itoa(i))
@@ -1167,7 +1170,7 @@ func TestTakeAsksForTheRoom(t *testing.T) {
 // the card would be restarted every tick.
 func TestASpentReadStaysSpentAcrossTicks(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 2, Reader: true})
+	g := newWidthRig(2, Config{As: "r", Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 	g.s.set("return", 1, "refused")
@@ -1198,7 +1201,7 @@ func TestAnEndedLaunchWhoseCardCameBackReadyIsReapedAndTheWidthFreed(t *testing.
 	t.Parallel()
 	t.Run("work: dealt again to this member's ready", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 1})
+		g := newWidthRig(1, Config{As: "m"})
 		old := pk("c1") // gen 1, epoch 7
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
 		_, err := g.tick(t)
@@ -1221,7 +1224,7 @@ func TestAnEndedLaunchWhoseCardCameBackReadyIsReapedAndTheWidthFreed(t *testing.
 	})
 	t.Run("read: asked again at the next attempt", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "r", Width: 1, Reader: true})
+		g := newWidthRig(1, Config{As: "r", Reader: true})
 		old := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &old)))
 		_, err := g.tick(t)
@@ -1245,7 +1248,7 @@ func TestAnEndedLaunchWhoseCardCameBackReadyIsReapedAndTheWidthFreed(t *testing.
 // in-flight card of no child of ours either.
 func TestADrainingMemberTakesNothingNewButReportsWhatEnded(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
 	g.s.set("take", 0, takeJSON(t, pk("c1")))
 	_, err := g.tick(t)
@@ -1276,7 +1279,7 @@ func (g *rig) tickAt(t *testing.T, sec int64) (int, error) {
 // like any no-verdict end fails it: the read is returned at the first failure.
 func TestAReadWhoseStageFailedOnceIsRunAgainThenReads(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 	_, err := g.tickAt(t, 0)
@@ -1315,7 +1318,7 @@ func TestAReadWhoseStageFailedOnceIsRunAgainThenReads(t *testing.T) {
 // the reader holds no place for it. Retrying in place for ever fails it.
 func TestAReadWhoseStageFailedTwiceIsReturned(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 	fail := Result{End: EndStaging, Staging: "staging refused: head h1 is in neither the mirror nor origin", Report: "no child ran"}
@@ -1352,7 +1355,7 @@ func TestAReadWhoseStageFailedTwiceIsReturned(t *testing.T) {
 // it like any no-verdict end fails this: the read is returned at the first refusal.
 func TestAReadTheReadersEnvironmentEndedIsRunAgainOnce(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 	_, err := g.tickAt(t, 0)
@@ -1393,7 +1396,7 @@ func TestAReadTheReadersEnvironmentEndedIsRunAgainOnce(t *testing.T) {
 // of another reader without counting the first reader as spent.
 func TestAReadTwiceEndedByTheReadersEnvironmentIsReturnedAsEnvironment(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 	fail := Result{End: EndEnvironment, Report: "the child ended without a result (see log)"}
@@ -1428,7 +1431,7 @@ func TestAReadTwiceEndedByTheReadersEnvironmentIsReturnedAsEnvironment(t *testin
 // recovered launch gets a retry of its own.
 func TestTheStageRetryIsRememberedAcrossAStartThatFails(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 	fail := Result{End: EndStaging, Staging: "git checkout failed", Report: "no child ran"}
@@ -1459,7 +1462,7 @@ func TestTheStageRetryIsRememberedAcrossAStartThatFails(t *testing.T) {
 // finish), never run again by the member.
 func TestAWorkCardWhoseStageFailedIsFinishedFailedAsBefore(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1})
+	g := newWidthRig(1, Config{As: "m"})
 	p := pk("c1")
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	_, err := g.tickAt(t, 0)
@@ -1502,7 +1505,7 @@ func secondsOfLoad(pcts ...float64) (s *hostload.Sampler, feed func(...float64))
 func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 	t.Parallel()
 	meter, feed := secondsOfLoad()
-	g := newRig(Config{As: "m", Width: 1, Meter: meter})
+	g := newWidthRig(1, Config{As: "m", Meter: meter})
 	g.s.set("queue", 0, queueJSON(t, 7))
 	beat := func() string {
 		t.Helper()
@@ -1540,7 +1543,7 @@ func TestABeatAlwaysCarriesItsLoad(t *testing.T) {
 		})
 		_, ok := meter.Step()
 		require.False(t, ok, "the source gave no sample")
-		g := newRig(Config{As: "m", Width: 1, Meter: meter})
+		g := newWidthRig(1, Config{As: "m", Meter: meter})
 		g.s.set("queue", 0, queueJSON(t, 7))
 		require.NoError(t, g.m.Beat())
 		require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 50.0"}, g.s.lines("beat"), "8 over 16 cores")
@@ -1548,7 +1551,7 @@ func TestABeatAlwaysCarriesItsLoad(t *testing.T) {
 	})
 	t.Run("no reading of the machine at all: 0, said once", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 1, Meter: hostload.NewSampler(hostload.Source{})})
+		g := newWidthRig(1, Config{As: "m", Meter: hostload.NewSampler(hostload.Source{})})
 		g.s.set("queue", 0, queueJSON(t, 7))
 		require.NoError(t, g.m.Beat())
 		require.NoError(t, g.m.Beat())
@@ -1557,7 +1560,7 @@ func TestABeatAlwaysCarriesItsLoad(t *testing.T) {
 	})
 	t.Run("no meter at all: 0", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "m", Width: 1})
+		g := newWidthRig(1, Config{As: "m"})
 		g.s.set("queue", 0, queueJSON(t, 7))
 		require.NoError(t, g.m.Beat())
 		require.Equal(t, []string{"fleet beat m --stop-returns 0 --load 0.0"}, g.s.lines("beat"))
@@ -1569,7 +1572,7 @@ func TestABeatAlwaysCarriesItsLoad(t *testing.T) {
 func TestAReaderBeatsNothing(t *testing.T) {
 	t.Parallel()
 	meter, _ := secondsOfLoad(40)
-	g := newRig(Config{As: "r", Width: 1, Reader: true, Meter: meter})
+	g := newWidthRig(1, Config{As: "r", Reader: true, Meter: meter})
 	g.s.set("queue", 0, queueJSON(t, 7))
 	_, err := g.tick(t)
 	require.NoError(t, err)
@@ -1602,7 +1605,7 @@ func TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			g := newRig(Config{As: "m", Width: 1, Reader: tc.reader})
+			g := newWidthRig(1, Config{As: "m", Reader: tc.reader})
 			g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
 			p := pk("c1")
 			card := working("c1", 1, &p)
@@ -1635,7 +1638,7 @@ func TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch(t *testing.T) {
 func TestNoRoomRefusesAtStagingWithTheReason(t *testing.T) {
 	t.Parallel()
 	room, why := false, "free disk 3.0 GiB under the floor of 10 GiB"
-	g := newRig(Config{As: "m", Width: 2, Room: func() (bool, string) { return room, why }})
+	g := newWidthRig(2, Config{As: "m", Room: func() (bool, string) { return room, why }})
 	p := pk("c2")
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1"), working("c2", 1, &p)))
 	g.s.set("take", 0, takeJSON(t, pk("c1")))
@@ -1650,7 +1653,7 @@ func TestNoRoomRefusesAtStagingWithTheReason(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, strings.Count(g.out.String(), "take REFUSED: "+why+"\n"), "said once, with the reason")
 
-	r := newRig(Config{As: "r", Width: 1, Reader: true, Room: func() (bool, string) { return false, why }})
+	r := newWidthRig(1, Config{As: "r", Reader: true, Room: func() (bool, string) { return false, why }})
 	a := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	r.s.set("queue", 0, queueJSON(t, 7, asked("r1", &a)))
 	_, err = r.tick(t)
@@ -1684,7 +1687,8 @@ func TestAMemberSpacesItsHarnessStarts(t *testing.T) {
 	now := time.Unix(1000, 0)
 	var waits []time.Duration
 	r := &fakeRunner{children: map[string]*fakeChild{}}
-	m := New(Config{As: "m1", Width: 8, Clock: func() time.Time { return now }, Sleep: func(d time.Duration) { waits = append(waits, d); now = now.Add(d) }}, nil, r, nil, &bytes.Buffer{})
+	m := New(Config{As: "m1", Clock: func() time.Time { return now }, Sleep: func(d time.Duration) { waits = append(waits, d); now = now.Add(d) }}, nil, r, nil, &bytes.Buffer{})
+	m.width = 8 // as the poll answered: start reads no queue
 	for _, id := range []string{"c1", "c2", "c3", "c4"} {
 		require.True(t, m.start(Packet{Card: id, Kind: "work", Gen: 1, Attempt: 1, Epoch: 1}))
 	}
@@ -1694,7 +1698,8 @@ func TestAMemberSpacesItsHarnessStarts(t *testing.T) {
 	require.True(t, m.start(Packet{Card: "c5", Kind: "read", Attempt: 1, Epoch: 1}))
 	assert.Len(t, waits, 3, "a start after the gap has passed waits nothing")
 
-	quick := New(Config{As: "m2", Width: 8}, nil, &fakeRunner{children: map[string]*fakeChild{}}, nil, &bytes.Buffer{})
+	quick := New(Config{As: "m2"}, nil, &fakeRunner{children: map[string]*fakeChild{}}, nil, &bytes.Buffer{})
+	quick.width = 8
 	for _, id := range []string{"c1", "c2"} {
 		require.True(t, quick.start(Packet{Card: id, Kind: "work", Gen: 1, Attempt: 1, Epoch: 1}))
 	}
@@ -1746,7 +1751,7 @@ func heldPass(t *testing.T) (*Member, *blockingSprint, func(time.Duration), func
 	at.Store(start.UnixNano())
 	bs := &blockingSprint{scriptSprint: newScript(), verb: "finish", entered: make(chan struct{}), released: make(chan struct{})}
 	r := newRunner()
-	m := New(Config{As: "m", Width: 2, Now: func() time.Time { return time.Unix(0, at.Load()) }}, bs, r, &fakePusher{def: Push{Sha: fullSha}}, &bytes.Buffer{})
+	m := New(Config{As: "m", Now: func() time.Time { return time.Unix(0, at.Load()) }}, rowWidth(bs, 2), r, &fakePusher{def: Push{Sha: fullSha}}, &bytes.Buffer{})
 	p := pk("c1")
 	bs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	_, err := m.Tick(start)
@@ -1831,7 +1836,7 @@ func TestAMemberWhosePassIsHungStopsBeating(t *testing.T) {
 // start, never waiting for the sprint's next tick.
 func TestALaneThatFinishesIsRefilledNextPass(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 1})
+	g := newWidthRig(1, Config{As: "m"})
 	g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
 	p1 := pk("c1")
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
@@ -1876,7 +1881,7 @@ func TestPassReportsCompletedChildWhenQueueReadFails(t *testing.T) {
 	r := newRunner()
 	pusher := &fakePusher{def: Push{Sha: fullSha}}
 	out := &bytes.Buffer{}
-	m := New(Config{As: "m", Width: 2}, bs, r, pusher, out)
+	m := New(Config{As: "m"}, rowWidth(bs, 2), r, pusher, out)
 	p := pk("c1")
 	p.Gen = 3
 	bs.set("queue", 0, queueJSON(t, 7, working("c1", 3, &p)))

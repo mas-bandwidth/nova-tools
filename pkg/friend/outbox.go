@@ -54,10 +54,10 @@ type outboxState struct {
 	said     map[string]bool
 }
 
-// reportVerdict is a report's verdict (the first word of its first Verdict: line, upper
+// ReportVerdict is a report's verdict (the first word of its first Verdict: line, upper
 // case, with markdown and punctuation trimmed; "" for none) and its head (the first word
 // of its first Head: line, lower case), read as friend sync reads them.
-func reportVerdict(report string) (verdict, head string) {
+func ReportVerdict(report string) (verdict, head string) {
 	var vok, hok bool
 	for _, l := range strings.Split(report, "\n") {
 		key, val := reportKey(l)
@@ -86,9 +86,9 @@ func reportKey(line string) (key, val string) {
 	return strings.ToLower(strings.Trim(key, "*_ \t")), val
 }
 
-// reportPara is a report's first line that is no Verdict or Head line and no heading, on
+// ReportPara is a report's first line that is no Verdict or Head line and no heading, on
 // one line.
-func reportPara(report string) string {
+func ReportPara(report string) string {
 	for _, l := range strings.Split(report, "\n") {
 		l = strings.TrimSpace(l)
 		if key, _ := reportKey(l); l == "" || strings.HasPrefix(l, "#") || key == "verdict" || key == "head" {
@@ -118,7 +118,7 @@ func OutboxFinishArgv(friend string, c Card, verdict, head, branch, report strin
 	var words string
 	switch {
 	case verdict == "LAND" && full:
-		words = "friend " + friend + " LAND: " + oneLine(reportPara(report), ReportChars)
+		words = "friend " + friend + " LAND: " + oneLine(ReportPara(report), ReportChars)
 	case verdict == "LAND":
 		argv = append(argv, "--failed")
 		words = "friend " + friend + " LAND with no Head: <full sha>; " + firstChars(report, ReportChars)
@@ -252,7 +252,7 @@ func (l *loop) outboxStep(now time.Time) {
 			note(job, "card "+id+" is a read, finished by its verdict, not by a report")
 			continue
 		}
-		verdict, head := reportVerdict(report)
+		verdict, head := ReportVerdict(report)
 		if verdict == "" {
 			note(job, "it has no Verdict line")
 			continue

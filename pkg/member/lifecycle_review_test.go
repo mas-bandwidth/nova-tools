@@ -40,7 +40,7 @@ func (h *heldRunner) Start(p Packet) (Child, error) {
 func TestReviewABackgroundStartHeldWhileItsCardLeavesTheQueueIsNeitherForgottenNorOrphaned(t *testing.T) {
 	t.Parallel()
 	s, hr := newScript(), newHeldRunner()
-	m := New(Config{As: "m", Width: 1, Background: true}, s, hr, &fakePusher{}, &bytes.Buffer{})
+	m := New(Config{As: "m", Background: true}, rowWidth(s, 1), hr, &fakePusher{}, &bytes.Buffer{})
 	p := pk("c1")
 	s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	acted, err := m.Tick(time.Unix(0, 0))
@@ -77,7 +77,7 @@ func TestReviewABackgroundStartHeldWhileItsCardLeavesTheQueueIsNeitherForgottenN
 func TestReviewAPostKeyedByCardGoesToTheLaunchItWasMadeForAcrossARedeal(t *testing.T) {
 	t.Parallel()
 	s, hr := newScript(), newHeldRunner()
-	m := New(Config{As: "m", Width: 2, Background: true}, s, hr, &fakePusher{}, &bytes.Buffer{})
+	m := New(Config{As: "m", Background: true}, rowWidth(s, 2), hr, &fakePusher{}, &bytes.Buffer{})
 	p1 := pk("c1")
 	s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1)))
 	_, err := m.Tick(time.Unix(0, 0))
@@ -126,7 +126,7 @@ func TestReviewAPostKeyedByCardGoesToTheLaunchItWasMadeForAcrossARedeal(t *testi
 // harness run, up to the read's whole deadline) instead of handing the read back.
 func TestReviewADrainingReaderRunsNoStageFailedReadAgain(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	g := newWidthRig(1, Config{As: "r", Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 	_, err := g.tickAt(t, 0)
@@ -170,7 +170,7 @@ func TestReviewAHungBackgroundPushStillStopsTheBeat(t *testing.T) {
 	s := newScript()
 	r := newRunner()
 	pu := &heldForeverPusher{began: make(chan struct{}), release: make(chan struct{})}
-	m := New(Config{As: "m", Width: 1, Background: true, Now: clock}, s, r, pu, &bytes.Buffer{})
+	m := New(Config{As: "m", Background: true, Now: clock}, rowWidth(s, 1), r, pu, &bytes.Buffer{})
 	t.Cleanup(func() { close(pu.release) })
 	p := pk("c1")
 	s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
@@ -268,7 +268,7 @@ func TestReviewABackgroundMemberRunsEveryCardOnceWithinItsWidth(t *testing.T) {
 	}
 	r := newRunner()
 	pu := &fakePusher{def: Push{Sha: fullSha}, yield: 50}
-	m := New(Config{As: "m", Width: 4, Background: true}, s, r, pu, &bytes.Buffer{})
+	m := New(Config{As: "m", Background: true}, rowWidth(s, 4), r, pu, &bytes.Buffer{})
 	most := 0
 	for i := 0; i < 200_000; i++ {
 		_, err := m.Tick(time.Unix(0, 0))

@@ -73,33 +73,60 @@ func CheckName(s string) string {
 
 // Message is one message of the bus: its fields on every stream it is on.
 type Message struct {
-	ID      string
-	From    string
-	To      []string
-	CC      []string
-	Subject string
-	Re      string
-	Kind    string // one of Kinds; "" is status
-	At      time.Time
-	Body    string
+	// ModelActivity is set only by the explicit send CLI for the model's own
+	// work messages. Library and daemon sends leave it false. This call-site
+	// attribution is not attestation and never creates or renews a nonce proof
+	// (tla/HookBeat.tla, BusSend and DaemonSend).
+	ModelActivity bool
+	ID            string
+	From          string
+	To            []string
+	CC            []string
+	Subject       string
+	Re            string
+	Kind          string // one of Kinds; "" is status
+	At            time.Time
+	Body          string
+	// Wait is how long an ask waits for its answer, the sender's word (ask
+	// only); Due is the deadline the store stamps from its own clock, At plus
+	// Wait, never the sender's clock (ask.go).
+	Wait time.Duration
+	Due  time.Time
 	// Token is the caller's word for this one logical send, the same on
 	// every retry of it (token.go); it is the sender's, never on the entry.
 	// Empty is a send with none: every call a new message.
 	Token string
+	// Once, when set, is a store key the caller names as this send's once-key
+	// in place of a token's record: written in the same atomic step as the
+	// entry, and a later send under it writes nothing and answers the first.
+	// Marks are the caller's own marks, written in that same step, so a
+	// caller's record of having sent (a told mark) and the message are one
+	// write: both or neither (tla/HookBeat.tla, NeverToldTwice and
+	// EveryTransitionToldAtLeastOnce).
+	Once  string
+	Marks []Mark
 }
 
 // The kinds of a message (SPEC-BUS.md, the kind of a message): the bus's own
-// vocabulary, which a reader filters on; the bus gives none of them a meaning.
+// vocabulary, which a reader filters on; the bus gives a meaning only to ask and timeout (ask.go).
 const (
 	KindReport  = "report"
 	KindAck     = "ack"
 	KindStatus  = "status"
 	KindRequest = "request"
 	KindBlocker = "blocker"
+	// KindAsk is a message that wants an answer by a deadline (ask.go);
+	// KindTimeout is the bus's own word that one went unanswered, which no
+	// sender may send.
+	KindAsk     = "ask"
+	KindTimeout = "timeout"
+	// KindJudgment is a decision raised for a reader to answer (--re its
+	// id), such as the hook heartbeat's FRIEND DOWN to the coordinator.
+	KindJudgment = "judgment"
 )
 
 // Kinds is every kind, in the order the help lists them.
-var Kinds = []string{KindReport, KindAck, KindStatus, KindRequest, KindBlocker}
+var Kinds = []string{KindReport, KindAck, KindStatus, KindRequest, KindBlocker, KindAsk, KindTimeout, KindJudgment}
 
 // CheckKinds says why ks are no kinds, "" when each is one.
 func CheckKinds(ks ...string) string {
@@ -136,18 +163,26 @@ func FilterKinds(es []Entry, kinds []string) []Entry {
 
 // Fields is the message as the stream entry holds it.
 func (m Message) Fields() map[string]string {
-	return map[string]string{
+	f := map[string]string{
 		"id": m.ID, "from": m.From, "to": strings.Join(m.To, ","), "cc": strings.Join(m.CC, ","),
 		"subject": m.Subject, "re": m.Re, "kind": m.Kind, "at": m.At.UTC().Format(time.RFC3339), "body": m.Body,
 	}
+	if m.ModelActivity {
+		f["model_activity"] = "1"
+	}
+	if !m.Due.IsZero() {
+		f["deadline"] = m.Due.UTC().Format(time.RFC3339) // an ask's only
+	}
+	return f
 }
 
 // Parse is the message an entry's fields hold. A field that is not there is
 // empty (a kind that is not there is read as status by KindName); an `at` that is no instant is the zero time, never a refusal, so a
 // log with one odd entry still reads.
 func Parse(fields map[string]string) Message {
-	at, _ := time.Parse(time.RFC3339, fields["at"]) // ignored: a bad stamp reads as the zero time, said above
-	return Message{
+	at, _ := time.Parse(time.RFC3339, fields["at"])        // ignored: a bad stamp reads as the zero time, said above
+	due, _ := time.Parse(time.RFC3339, fields["deadline"]) // ignored: as above; none on a message that is no ask
+	return Message{Due: due,
 		Kind: fields["kind"], ID: fields["id"], From: fields["from"], To: list(fields["to"]), CC: list(fields["cc"]),
 		Subject: fields["subject"], Re: fields["re"], At: at, Body: fields["body"],
 	}
@@ -328,10 +363,11 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		streams = append(streams, StreamOf(n))
 	}
 	streams = append(streams, LogKey)
-	if m.Token != "" {
-		return b.sendOnce(ctx, m, now, streams, owe(m, friends))
+	marks := slices.Concat(owe(m, friends), askMarks(m), answerMark(m), m.Marks)
+	if m.Token != "" || m.Once != "" {
+		return b.sendOnce(ctx, m, now, streams, marks)
 	}
-	if err := b.Store.AddAll(ctx, streams, m.Fields(), owe(m, friends)...); err != nil {
+	if err := b.Store.AddAll(ctx, streams, m.Fields(), marks...); err != nil {
 		return Message{}, err
 	}
 	return m, nil
@@ -369,6 +405,7 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, []strin
 	if p := CheckKinds(m.Kind); p != "" {
 		problems = append(problems, p)
 	}
+	problems = append(problems, checkAsk(m)...)
 	if strings.TrimSpace(m.Subject) == "" {
 		problems = append(problems, "the subject is empty; it wants one line saying what the message is")
 	}
@@ -392,6 +429,9 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, []strin
 		return Message{}, time.Time{}, nil, &Refusal{slices.Compact(problems)}
 	}
 	m.At = now.UTC().Truncate(time.Second) // the entry's at is RFC3339, to the second
+	if m.Kind == KindAsk {
+		m.Due = m.At.Add(m.Wait) // the store's clock, never the sender's
+	}
 	m.To, m.CC = slices.Compact(slices.Sorted(slices.Values(m.To))), slices.Compact(slices.Sorted(slices.Values(m.CC)))
 	return m, now, friends, nil
 }

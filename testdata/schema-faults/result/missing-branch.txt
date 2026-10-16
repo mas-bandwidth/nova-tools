@@ -1,0 +1,5 @@
+head: 0123456789abcdef0123456789abcdef01234567
+verdict: ok
+gate: g
+output: -
+report: r

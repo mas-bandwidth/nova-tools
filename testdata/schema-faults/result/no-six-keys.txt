@@ -1,0 +1,3 @@
+RESULT: main-report-schema-new-leg sha=121f606fb9d9 tier: pro
+DONE
+Attempt 1 had already ported 52a83b545 onto BASE in BASE's shape, but left commit 56920e7fd half-ported.

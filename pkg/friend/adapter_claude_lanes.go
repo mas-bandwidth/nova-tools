@@ -16,8 +16,8 @@ import (
 // of its own: no session to open or keep, the card's brief the whole prompt,
 // no bus message riding along, and the card's result read from its outbox,
 // never from the process's output (docs/SPEC-FRIEND.md, one-shot lanes; the
-// owner, 2026-10-04: four Claude accounts as heavy-tier friends). Claude is
-// one.
+// owner, 2026-10-04: four Claude accounts as heavy-tier friends). Claude and
+// Codex implement it.
 type CardRunner interface {
 	Deliverer
 	// RunCard runs card c to its end: its exit, and an error naming what the
@@ -29,11 +29,11 @@ type CardRunner interface {
 
 // RunsCards says harness runs each card as a process of its own (a
 // CardRunner) when its row is one-shot: it has no session to push a turn
-// into, so install and run owe it no deliver-command refusal; its session
-// check goes in by the folder (FolderCheck) for a live session to answer.
-// NewDeliverer answers its batch adapter, the wake file (ClaudeWake);
-// NewClaude is the one that runs cards.
-func RunsCards(harness string) bool { return harness == "claude" }
+// into, so install and run owe it no deliver-command refusal. The session's
+// nova-hook owns delivery and proof independently of these lane processes.
+// NewDeliverer answers a session delivery adapter; one-shot card runners are
+// constructed separately by nova-friend run.
+func RunsCards(harness string) bool { return harness == "claude" || harness == "codex" }
 
 // NewClaude is the claude harness's card runner over run, in the friend's
 // directory dir, its runs' output going to out when set.

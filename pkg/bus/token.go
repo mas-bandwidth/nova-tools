@@ -91,6 +91,9 @@ func fingerprint(m Message) string {
 	for _, f := range []string{m.From, strings.Join(m.To, ","), strings.Join(m.CC, ","), m.Subject, m.Re, m.KindName(), m.Body} {
 		h.Write([]byte(strconv.Itoa(len(f)) + ":" + f + ";"))
 	}
+	if m.Wait != 0 { // an ask's wait; left out otherwise, so a token's record from before asks still matches
+		h.Write([]byte("wait:" + m.Wait.String() + ";"))
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -102,7 +105,11 @@ func (b *Bus) sendOnce(ctx context.Context, m Message, now time.Time, streams []
 	if err != nil {
 		return Message{}, err
 	}
-	prior, found, err := b.Store.AddOnce(ctx, SentOf(m.From, m.Token), string(raw), b.tokenCleanup(), streams, m.Fields(), marks...)
+	key := m.Once
+	if key == "" {
+		key = SentOf(m.From, m.Token)
+	}
+	prior, found, err := b.Store.AddOnce(ctx, key, string(raw), b.tokenCleanup(), streams, m.Fields(), marks...)
 	if err != nil {
 		return Message{}, err
 	}
@@ -128,5 +135,8 @@ func (b *Bus) replay(m Message, fp, prior string, now time.Time) (Message, error
 		return Message{}, &Refusal{[]string{fmt.Sprintf("the token %q sent %s at %s, past its life of %s: the message went, and is not sent again; a new message wants a new token", m.Token, rec.ID, at, b.tokenLife())}}
 	}
 	m.ID, m.At = rec.ID, rec.At.UTC()
+	if m.Kind == KindAsk {
+		m.Due = m.At.Add(m.Wait)
+	}
 	return m, nil
 }

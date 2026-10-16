@@ -14,41 +14,71 @@ import (
 )
 
 // A friend's status, from evidence (docs/SPEC-FRIEND.md, "A friend's status,
-// from evidence"). The owner, 2026-10-04: "are friends actually doing work?"
-// The daemon's beat says only that the daemon's loop runs; the status is
-// decided by FriendStatus from what the friend did, in order, and the
-// evidence is shown beside it.
-
-// AnswerBound is how old the session's last answer may be while the friend
-// is up: two windows, a ping each window and a challenge open for less than
-// one, so a session answering every ping is never older than this.
-const AnswerBound = 2 * Window
+// from evidence"). Whether she is there is the nova-hook record's alone (its
+// per-minute challenge, which only her model answers); the daemon's status file
+// says only that the daemon's loop runs. The status is decided by FriendStatus
+// in order, and the evidence is shown beside it.
 
 // LimitFile is the friend's limit, in the state directory: the provider's
 // limit the session is at and when it resets. The daemon is its one writer;
 // no file is no limit.
 const LimitFile = "limit.json"
 
-// The harness evidence: whether the harness's process was seen in the
-// process table. Advisory, shown and never deciding: a session run from its
-// command line has no app to see, and an app that runs answers nothing.
-// HarnessNotSeen is defined in alive.go ("not-seen").
-const (
-	HarnessUnknown = ""
-	HarnessRunning = "running"
-)
+// The hook record's state a friend is up in (nova-tools hook.StateProven).
+const HookProven = "proven"
+
+// HookRecord is a friend's nova-hook record as status and check read it
+// (nova-tools hook.Status): its state, since when, the last answer to a
+// challenge, the challenges missed in a row, and why it reads down.
+type HookRecord struct {
+	State      string    // none, armed, proven, unhooked, ...; "" when not read
+	Since      time.Time // when it was hooked, or unhooked; zero when never
+	LastAnswer time.Time // when her model last answered a challenge; zero is never
+	Misses     int       // challenges in a row left unanswered
+	Down       string    // why it reads down whatever its state (unhooked, no server, no answer), "" when it stands
+	ReadError  string    // why the record could not be read; "" when it was
+}
+
+// Up says the record proves her there: proven, and nothing reads it down.
+func (h HookRecord) Up() bool { return h.State == HookProven && h.Down == "" && h.ReadError == "" }
+
+// Words is the record as a person reads it on one line.
+func (h HookRecord) Words(now time.Time) string {
+	if h.ReadError != "" {
+		return "hook record not read: " + h.ReadError
+	}
+	state := h.State
+	if state == "" {
+		state = "none"
+	}
+	out := "hook " + state
+	if !h.Since.IsZero() {
+		out += " since " + Ago(now.Sub(h.Since)) + " ago"
+	}
+	if h.LastAnswer.IsZero() {
+		out += ", never answered"
+	} else {
+		out += ", answer " + Ago(now.Sub(h.LastAnswer)) + " ago"
+	}
+	if h.Misses > 0 {
+		out += fmt.Sprintf(", %d missed", h.Misses)
+	}
+	if h.Down != "" {
+		out += ": " + h.Down
+	}
+	return out
+}
 
 // Evidence is what a friend's status is decided from.
 type Evidence struct {
-	Harness     string    // HarnessRunning, HarnessNotSeen or HarnessUnknown; shown, never deciding
-	DaemonUp    bool      // the daemon's status file is fresh; shown, never deciding up
-	LastAnswer  time.Time // the session's last pong; zero is never
-	Limit       string    // the limit's name, when the provider said one
-	LimitUntil  time.Time // the limit's reset; zero, or past, is no limit
-	Undelivered int       // messages waiting on the friend's stream; negative is not counted
-	BusBlocked  string    // why the bus cannot deliver to the friend; empty when it can
-	LastResult  time.Time // the end of the last turn; zero is none yet
-	LastExit    int       // that turn's exit
+	DaemonUp    bool       // the daemon's status file is fresh; shown, never deciding up
+	Hook        HookRecord // her nova-hook record: the one truth of whether she is there
+	Limit       string     // the limit's name, when the provider said one
+	LimitUntil  time.Time  // the limit's reset; zero, or past, is no limit
+	Undelivered int        // messages waiting on the friend's stream; negative is not counted
+	BusBlocked  string     // why the bus cannot deliver to the friend; empty when it can
+	LastResult  time.Time  // the end of the last turn; zero is none yet
+	LastExit    int        // that turn's exit
 }
 
 // Verdict is a friend's status, the one reason that decided it, and every
@@ -60,33 +90,15 @@ type Verdict struct {
 }
 
 // FriendStatus decides a friend's status from evidence, in order: at a limit
-// is down until the reset; no session answer within bound is down; a bus that
-// cannot deliver to her is down; otherwise up. The harness's process is shown
-// and decides nothing (the finding of 2026-10-05). Times are shown in loc.
-func FriendStatus(e Evidence, now time.Time, bound time.Duration, loc *time.Location) Verdict {
-	answer := "no session answer ever"
-	answered := !e.LastAnswer.IsZero() && now.Sub(e.LastAnswer) < bound
-	if !e.LastAnswer.IsZero() {
-		answer = "session answer " + Ago(now.Sub(e.LastAnswer))
-		if !answered {
-			answer = "no session answer " + Ago(now.Sub(e.LastAnswer))
-		}
-	}
+// is down until the reset; a hook record that does not prove her there is
+// down; a bus that cannot deliver to her is down; otherwise up. Times are shown
+// in loc.
+func FriendStatus(e Evidence, now time.Time, loc *time.Location) Verdict {
+	hook := e.Hook.Words(now)
 	limit := "no limit"
 	limited := e.LimitUntil.After(now)
 	if limited {
 		limit = strings.TrimSpace(e.Limit + " limit until " + e.LimitUntil.In(loc).Format("Mon 3:04 PM"))
-	}
-	harness := "harness unknown"
-	switch e.Harness {
-	case HarnessRunning:
-		harness = "harness running"
-	case HarnessNotSeen, "not running":
-		harness = "harness not seen"
-	case HarnessUnknown:
-		harness = "harness unknown"
-	default:
-		harness = "harness " + e.Harness
 	}
 	result := "no result yet"
 	if !e.LastResult.IsZero() {
@@ -96,16 +108,16 @@ func FriendStatus(e Evidence, now time.Time, bound time.Duration, loc *time.Loca
 	if e.Undelivered < 0 {
 		undelivered = "undelivered not counted"
 	}
-	v := Verdict{Status: "down", Evidence: []string{harness, answer, limit, undelivered, result}}
+	v := Verdict{Status: "down", Evidence: []string{hook, limit, undelivered, result}}
 	switch {
 	case limited:
 		v.Reason = limit
-	case !answered:
-		v.Reason = answer
+	case !e.Hook.Up():
+		v.Reason = hook
 	case e.BusBlocked != "":
 		v.Reason = fmt.Sprintf("bus cannot deliver: %s (%s)", e.BusBlocked, undelivered)
 	default:
-		v.Status, v.Reason = "up", answer
+		v.Status, v.Reason = "up", hook
 	}
 	return v
 }
@@ -181,7 +193,7 @@ func ClearLaneFault(stateDir string) (bool, error) {
 const resultTail = 64 << 10
 
 // LastResult is the newest turn's line of the daemon's log (the line a turn's
-// end writes, "<RFC3339> subject=... exit=<n>"): when it ended and its exit.
+// end writes, "<RFC3339> lane=<n> ... exit=<n>"): when it ended and its exit.
 // No log, or no turn in it, is the zero time.
 func LastResult(stateDir string) (at time.Time, exit int, err error) {
 	f, err := os.Open(LogPath(stateDir))
@@ -205,7 +217,7 @@ func LastResult(stateDir string) (at time.Time, exit int, err error) {
 	sc.Buffer(make([]byte, 0, 64<<10), resultTail)
 	for sc.Scan() {
 		stamp, rest, ok := strings.Cut(sc.Text(), " ")
-		if !ok || !strings.HasPrefix(rest, "subject=") {
+		if !ok || !strings.HasPrefix(rest, "subject=") && !strings.HasPrefix(rest, "lane=") { // a turn's line: a lane's, or one from before the lanes
 			continue
 		}
 		t, terr := time.Parse(time.RFC3339, stamp)

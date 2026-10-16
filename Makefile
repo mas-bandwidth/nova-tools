@@ -11,26 +11,19 @@
 GO ?= go
 PKGS ?= ./...
 export PKGS
-# MODULES is every nested Go module in this repository: the directories with
-# their own go.mod beside the root (hook/ and pkg/oneline/), named in go.work.
-# A directory with a go.mod of its own is NOT reached by `go list ./...`,
-# `go test ./...` or `go vet ./...` run at the root, with or without go.work
-# (measured with go 1.26.6). So every target that tests or vets the whole tree
-# loops over MODULES and runs each module's own `./...` inside it, and the
-# package set carries their packages too. A new nested module joins this list:
-# internal/ci's TestEveryNestedModuleIsTested reads go.work and fails when a
-# used module is missing from MODULES.
-MODULES ?= ./hook ./pkg/oneline
+# nova-tools is ONE Go module: hook/ and pkg/oneline/ are packages of it, not
+# modules of their own, so `go list ./...` at the root reaches every package and
+# an outside module can require nova-tools and import any of them.
+# internal/ci's TestOneModule fails on a go.mod or go.work beside the root.
 # CL_PKGS IS THE LIVING TREE, read the way ci.yml's test-packages job reads it:
 # `go run ./tools/ci select-packages --all` lists every package under cmd/,
 # internal/ and tools/ and drops the ones pkg/pkgselect/DEPRECATED names (a
 # deprecated package is never tested), or fails loudly when `go list` fails; it
-# never selects nothing in silence. The nested modules' packages are appended
-# (each listed from inside its own directory), so the unit tier tests them too.
+# never selects nothing in silence.
 # Recursive (`=`), and the `test` and `test-functional` lines that take it are
 # recursive too, so the go list runs when one of those targets runs and not on
 # every make call; `make test PKGS=<shard>` never runs it.
-CL_PKGS = $(shell $(GO) run ./tools/ci select-packages --all) $(shell for m in $(MODULES); do (cd $$m && $(GO) list ./...); done)
+CL_PKGS = $(shell $(GO) run ./tools/ci select-packages --all)
 
 # THE HOST GUARD, on for every target. pkg/testguard makes every ssh, scp
 # and rsync seam in this tree panic with its command line when this is 1, so a
@@ -87,15 +80,13 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint mod-tidy preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb clidoc roadmap
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint mod-tidy preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp check clean darwin-timeout map new-rule new-verb clidoc roadmap schemawire-check schemawire-conformance
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
 	@echo "make tlc-full    manual Linux TLC experiment (also explicit TLC_BUDGET; forbidden in CI)"
 	@echo "make tlc-groups  JSON list of required model groups"
 	@echo "make tlc-test    the runner and checker tests: no Java, no Redis, no network"
-	@echo "make test-hook   the hook module's own tests (hook/ is a nested module: ./... from the root never names it)"
-	@echo "make test-oneline the oneline module's own tests (pkg/oneline/ is a nested module: ./... from the root never names it)"
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
 	@echo "make fmt         report files that are not gofmt-clean"
@@ -119,18 +110,85 @@ help:
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
 	@echo "make test-prewarm-done run the exact #2498 S3 test manifest"
-	@echo "make test-lisp   go run ./tools/ci lisp-test (nothing to test while the live tree has no Lisp system)"
 	@echo "make compile-lisp nothing to compile while lisp/ holds no system; refuses if one appears"
-	@echo "make check       build, lint, test, test-e2e and test-lisp (CI's gates; the stream lander's batch test)"
+	@echo "make check       build, lint, test and test-e2e (CI's gates; the stream lander's batch test)"
 	@echo "make clean       remove ./bin and ./scratch"
 	@echo "make map         regenerate AGENTS.md and per-directory maps"
 	@echo "make new-rule    scaffold a class rule skeleton (ARGS=<name>)"
 	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
 	@echo "make clidoc      regenerate CLI.md reference blocks from tool help"
 	@echo "make roadmap     regenerate ROADMAP.md and FIXES.md from their sexp"
+	@echo "make schemawire-check go generate every pkg/*wire package, then git diff --exit-code -- pkg schemas (schemas/README.md)"
+	@echo "make schemawire-conformance run the pinned schema compiler's Go oracle and wire fuzz over every unit in schemas/, bounded, and print the elapsed seconds"
 
 map:
 	$(GO) run ./tools/agentsmap
+
+# schemawire-check is the one check of the generated wire packages
+# (schemas/README.md): a definition in schemas/<area>/ generates pkg/<area>wire/,
+# whose hand-written generate.go pins the schema compiler by its go:generate
+# line. A generated package is a pkg/*wire directory holding a generate.go; a
+# hand-written package whose name ends in wire (pkg/sprintwire) holds none and
+# is not one. The check regenerates every generated package, then refuses any
+# difference from what is committed under pkg/ and schemas/, and any generated
+# file left uncommitted. It is the generated files' only check: internal/ci's
+# line linters skip a file with Go's generated header. With no generated package
+# it says so and passes. A cold module cache fetches the pinned compiler once.
+schemawire-check:
+	@set -e; found=; \
+	for g in pkg/*wire/generate.go; do \
+		test -f "$$g" || continue; \
+		found=1; \
+		d=$${g%/generate.go}; \
+		echo "go generate ./$$d"; \
+		$(GO) generate "./$$d"; \
+	done; \
+	if [ -z "$$found" ]; then echo "schemawire-check: no generated pkg/*wire package yet (none holds a generate.go); nothing to regenerate"; exit 0; fi; \
+	git diff --exit-code -- pkg schemas || { echo "schemawire-check: the generated files differ from the committed ones; commit the output of go generate, never a hand edit (schemas/README.md)" >&2; exit 1; }; \
+	untracked=$$(git ls-files --others --exclude-standard -- pkg schemas); \
+	if [ -n "$$untracked" ]; then echo "schemawire-check: generated files are not committed: $$untracked; commit them (schemas/README.md)" >&2; exit 1; fi; \
+	echo "schemawire-check: OK"
+
+# schemawire-conformance is the schema wire's conformance gate: for every
+# unit in schemas/ (each schemas/<area>/ holding .schema files,
+# schemas/README.md), the pinned schema compiler's Go oracle reads the unit
+# (its check, the one per-unit invocation the bump recipe names), then the
+# compiler's own wire fuzz harness drives the unit's Go leg over every mutant
+# its fuzz corpus carries, under one time bound per unit, and any finding
+# fails the gate. The pin is read from the pkg/*wire/generate.go files, the
+# one place schemas/README.md keeps it, so there is no second copy of the
+# version to bump. A unit with no pinned compiler, no fuzz corpus or no leg
+# to drive refuses by name rather than pass empty; a schemas/ home with no
+# unit yet says so and passes, exactly as schemawire-check passes with no
+# generated package. A cold module cache fetches the pinned compiler once.
+SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS ?= 30
+schemawire-conformance:
+	@set -e; start=$$(date +%s); \
+	test -d schemas || { echo "schemawire-conformance: the schemas/ home is absent (nova-tools-schema-home-and-pin, schemas/README.md)" >&2; exit 2; }; \
+	pin=$$(sed -n 's@^//go:generate go run github.com/mas-bandwidth/schema/v2/cmd/schema@\(v[0-9][^ ]*\) generate.*@\1@p' pkg/*wire/generate.go 2>/dev/null | sort -u); \
+	if [ "$$(printf '%s\n' "$$pin" | grep -c .)" -gt 1 ]; then echo "schemawire-conformance: the pkg/*wire/generate.go pins disagree; one compiler writes the whole tree (schemas/README.md)" >&2; exit 2; fi; \
+	units=""; for d in schemas/*/; do ls "$$d"*.schema >/dev/null 2>&1 && units="$$units $${d%/}"; done; \
+	if [ -z "$$(printf '%s' "$$units" | tr -d ' ')" ]; then \
+		echo "schemawire-conformance: no unit in schemas/ yet (no schemas/*/*.schema; the first lands with the first area, schemas/README.md); nothing to run"; \
+	else \
+	for u in $$units; do \
+		area=$${u#schemas/}; \
+		if [ -z "$$pin" ]; then echo "schemawire-conformance: unit $$u has no pinned schema compiler (no pkg/*wire/generate.go; schemas/README.md)" >&2; exit 2; fi; \
+		echo "schemawire-conformance: the Go oracle over $$u (schema@$$pin check $$u)"; \
+		$(GO) run github.com/mas-bandwidth/schema/v2/cmd/schema@$$pin check $$u; \
+		test -f $$u/fuzz/MANIFEST.txt || { echo "schemawire-conformance: unit $$u carries no fuzz corpus (schemas/<area>/fuzz/MANIFEST.txt, the harness's manifest format, test/conformance/README.md in the schema repository)" >&2; exit 2; }; \
+		test -d pkg/$${area}wire/cmd/$${area}-driver || { echo "schemawire-conformance: unit $$u has no Go leg to fuzz (pkg/$${area}wire/cmd/$${area}-driver, the wire-fuzz driver contract, test/conformance/README.md in the schema repository)" >&2; exit 2; }; \
+		mkdir -p scratch; \
+		$(GO) build -o scratch/$${area}-driver ./pkg/$${area}wire/cmd/$${area}-driver; \
+		echo "schemawire-conformance: the wire fuzz over $$u, bounded at $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS)s"; \
+		timeout $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS) $(GO) run github.com/mas-bandwidth/schema/v2/test/conformance/harness@$$pin wire-fuzz \
+			--manifest $$u/fuzz/MANIFEST.txt --json $$u/fuzz --vectors '' \
+			--driver "scratch/$${area}-driver wire-fuzz" --seed 24845619678 --n 100 \
+			|| { echo "schemawire-conformance: the wire fuzz over $$u failed or overran its $(SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS)s bound; a failing mutant is written where the harness's --failed flag names" >&2; exit 1; }; \
+	done; \
+	fi; \
+	elapsed=$$(($$(date +%s) - $$start)); \
+	echo "schemawire-conformance: OK ($${elapsed}s)"
 
 # TLC runs on Linux benches with an explicit installed jar and owned output path.
 TLC_JAR ?=
@@ -152,22 +210,6 @@ tlc-test:
 
 tlc-groups:
 	@$(GO) run ./tools/tlacheck groups --root .
-
-# The hook module (hook/, docs/SPEC-HOOK.md) is a nested module of its own, so
-# `go list ./...` from the root never names it and no PKGS shard carries its
-# tests; ci.yml's test legs that test a package importing it run this target.
-.PHONY: test-hook
-test-hook:
-	cd hook && $(GO) test -count=1 -timeout 100s ./...
-
-# pkg/oneline is a nested module of its own (pkg/oneline/go.mod): `go list
-# ./...` from the root never names it and no PKGS shard carries its tests.
-# ci.yml's test legs run this target, sub-second, on the legs whose package
-# list imports it.
-.PHONY: test-oneline
-test-oneline:
-	cd pkg/oneline && $(GO) test -count=1 -timeout 100s ./...
-
 
 new-rule:
 	$(GO) run ./tools/newrule $(ARGS)
@@ -195,7 +237,6 @@ fmt:
 
 vet:
 	$(GO) vet $(PKGS)
-	@if [ "$(PKGS)" = "./..." ]; then for m in $(MODULES); do (cd $$m && $(GO) vet ./...); done; fi
 
 # THE FUNCTIONAL TIER is the redis-backed tests. Every test that starts a
 # redis-server is behind `//go:build functional`, so `vet` and `test` above do
@@ -384,7 +425,6 @@ test-functional-container:
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
-	@if [ "$(PKGS)" = "./..." ]; then for m in $(MODULES); do (cd $$m && $(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) ./...); done; fi
 
 # SHORT_TIMEOUT is test-short's `go test -timeout`, per test binary. The hosted
 # legs spend 55-75 s on setup before their test step (run 36367639661), and the
@@ -423,7 +463,6 @@ darwin-timeout:
 
 test-race:
 	$(GO) test -race $(PKGS)
-	@if [ "$(PKGS)" = "./..." ]; then for m in $(MODULES); do (cd $$m && $(GO) test -race ./...); done; fi
 
 test-e2e:
 	$(GO) test -count=1 -run TestFriendSequence ./cmd/...
@@ -432,28 +471,19 @@ test-prewarm-done:
 	$(GO) test -count=1 ./tools/testmanifest
 	$(GO) run ./tools/testmanifest --go "$(GO)" --package ./pkg/swarm -- TestASDFMappingReusesCompiledOutputAcrossFreshJobClone TestPrewarmFailedRerunInvalidatesPriorReceipt TestPrewarmGitChildrenDropSecrets
 
-# The Lisp tier. The old nova-work's Lisp kernel, the one Lisp system, lives in
-# the repository nova-work-old, for reference only (the deprecated/
-# folder that parked it was removed on 2026-10-01), so lisp/ holds no system: test-lisp runs CI's
-# verb (tools/ci lisp-test), which prints "nothing to test" and exits 0, and
-# compile-lisp (the swarm prewarm's lisp phase) prints "nothing to compile".
-# verify-roadmap and measure-roadmap ran cmd/nova-work's verification verb and went with it.
-test-lisp:
-	$(GO) run ./tools/ci lisp-test
-
+# The swarm prewarm Lisp phase has no system while the kernel is in nova-work-old.
 compile-lisp:
 	@if [ -e lisp ]; then echo "compile-lisp: lisp/ exists and no compile step names it; write one" >&2; exit 1; fi
 	@echo "compile-lisp: nothing to compile: lisp/ holds no system (the old nova-work kernel lives in the nova-work-old repository)"
 
 # What CI runs on a pull request: the self-hosted lint job, the sharded test
-# job, the friend sequences and the lisp tier (test-lisp; nothing to test while
-# nova-work is parked).
+# job and the friend sequences.
 # The stream lander's batch test lands a whole stream, so it runs the
 # functional tier too (#4328). Over the whole tree the times are printed
 # against the old 60 s package budget and a SLEEPS skip off the ledger is red;
 # the target variables ride into `test` as its prerequisite.
 check: SLOWTESTS_FLAGS := --budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt
-check: build lint test test-functional test-e2e test-lisp
+check: build lint test test-functional test-e2e schemawire-conformance
 
 # An explicit list, never a computed path: clean removes the two directories a
 # local build and a worker's notes land in, and nothing else.

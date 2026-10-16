@@ -1,0 +1,6 @@
+rev: 0123456789abcdef0123456789abcdef01234567
+verdict: ok
+
+## One line
+
+x

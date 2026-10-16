@@ -120,6 +120,9 @@ func verbExtra(verb string) string {
 		switch words[1] {
 		case "add", "set", "remove":
 			effect = effectStoreRow
+			if words[0] == config.KindRoute {
+				effect += "; a committed route write applies the fleet Redis copy; NOT-APPLIED exits 1 and preserves the write and history"
+			}
 		default:
 			effect = effectInspect
 		}
@@ -182,7 +185,7 @@ func requiredLine(k *config.Kind) string {
 
 // inventoryMore is inventory's own help: what it prints and how ansible
 // reads it.
-const inventoryMore = `prints an Ansible dynamic JSON inventory of the applied state (the Redis view apply writes, never Postgres): groups all and benches are every machine; coordinator, store and store_deployer (the coordinator machine) come from the fleet row; runners is every machine with at least one runner; every host's variables are under _meta.hostvars: ansible_user, nova_seat, slots, runners, nova_redis_port, nova_redis_addr and the explicit nova_pg_dsn, nova_os and nova_arch from the machine's beat when it has one, and nova_loops, its loop records (each argv as the loop was set, without a width: a member's width, and a reader's, is its machine's), once the loop kind has been applied; all.vars holds nova_store and nova_config_rev
+const inventoryMore = `prints an Ansible dynamic JSON inventory of the applied state (the Redis view apply writes, never Postgres): all retains every machine; benches, store and coordinator contain machines with the explicit bench, services and coordination roles; store_deployer still names the fleet coordinator; runners is every machine with a positive runners count; registry_roles exposes the explicit roles declared for each machine. A row applied before migration 0042 (no roles field) gets the roles 0042 derives; a machine with no beat, or a beat without os, arch or cores, is listed with the facts it has; each is one NOTE line on stderr, never a refusal. The store and coordinator role groups must match their fleet singleton references; inventory refuses a mismatch. Every host's variables are under _meta.hostvars: registry_roles is the canonical machine row role list; ansible_user, nova_seat, slots, runners, nova_redis_port, nova_redis_addr and the explicit nova_pg_dsn, nova_os and nova_arch from the machine's beat when it has one, and nova_loops, its loop records (each argv as the loop was set, without a width: a member's width, and a reader's, is its machine's), once the loop kind has been applied; all.vars holds nova_store and nova_config_rev
 first run, with no store: nova-config inventory --example > inv.yml; nova-config inventory --fixture inv.yml
 against the store: export NOVA_SPRINT_REDIS=127.0.0.1:6379; nova-config inventory
 ansible's -i wants an executable file whose first line is #!/bin/sh at column one; write it with these two commands, then run ansible with ANSIBLE_INVENTORY_UNPARSED_FAILED=true, because without it a failed inventory is an empty inventory and the play does nothing (ansible.cfg: [inventory] unparsed_is_failed = True):

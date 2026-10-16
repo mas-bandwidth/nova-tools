@@ -1,14 +1,14 @@
 package converge
 
 // forge_cover_test.go reaches the forge seam's small surface: the two pure
-// helpers in full, and the three reads' refusal paths. A read's success path
-// needs a real `gh` child, which a unit test does not start; that gap is named
-// in the card's report, never hidden. Nothing here sleeps, opens a socket or
-// starts a process: the missing binary makes exec's own lookup fail before a
-// child is forked.
+// helpers in full, the three reads' refusal paths, and the environment of one
+// hermetic fake `gh` child. Nothing here opens a socket or touches a real forge.
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -39,6 +39,69 @@ func TestForgeCoverParseForgeTimeReadsRFC3339AndAnswersZero(t *testing.T) {
 		got := parseForgeTime(tc.in)
 		assert.True(t, got.Equal(tc.want), "%s: parseForgeTime(%q) = %v, want %v", tc.name, tc.in, got, tc.want)
 		assert.Equal(t, time.UTC, got.Location(), "%s: parseForgeTime(%q) kept location %v, want UTC", tc.name, tc.in, got.Location())
+	}
+}
+
+// TestGHReadsOnlyTheSelectedForgeConfig pins the three caller-visible cases:
+// no identity keeps gh's normal choice, a seat reference is passed to this
+// child only, and explicit process GH_CONFIG_DIR wins (docs/SPEC-UP.md).
+func TestGHReadsOnlyTheSelectedForgeConfig(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	bin := filepath.Join(root, "gh")
+	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\nprintf '[]\\n'\nprintf '%s' \"$GH_CONFIG_DIR\" > \"$CAPTURE\"\n"), 0o700))
+
+	for _, tc := range []struct {
+		name      string
+		seat      bool
+		explicit  string
+		wantValue string
+	}{
+		{name: "no configured identity"},
+		{name: "seat default", seat: true, wantValue: "seat-config"},
+		{name: "explicit environment wins", seat: true, explicit: "caller-config", wantValue: "caller-config"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			configHome := filepath.Join(root, tc.name)
+			forge := filepath.Join(configHome, "forge")
+			require.NoError(t, os.MkdirAll(forge, 0o700))
+			if tc.seat {
+				path := filepath.Join(configHome, "nova-sprint", "seat-environment.json")
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+				body, err := json.Marshal(map[string]any{"version": 1, "forge_identity": forge})
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(path, body, 0o600))
+			}
+			capture := filepath.Join(configHome, "captured")
+			getenv := func(key string) string {
+				switch key {
+				case "XDG_CONFIG_HOME":
+					return configHome
+				case "HOME":
+					return root
+				case "GH_CONFIG_DIR":
+					return tc.explicit
+				default:
+					return ""
+				}
+			}
+			g := GH{Repo: "owner/repo", Timeout: time.Second, Bin: bin,
+				Env: []string{"CAPTURE=" + capture}, Getenv: getenv}
+			_, err := g.OpenPRs(context.Background())
+			require.NoError(t, err)
+			got, err := os.ReadFile(capture)
+			require.NoError(t, err)
+			if tc.wantValue == "" {
+				assert.Empty(t, string(got), "gh received an identity without a setting")
+			} else if tc.explicit != "" {
+				assert.Equal(t, tc.explicit, string(got), "gh did not receive the explicit process identity")
+			} else {
+				assert.Equal(t, forge, string(got), "gh did not receive the configured seat identity")
+			}
+		})
 	}
 }
 

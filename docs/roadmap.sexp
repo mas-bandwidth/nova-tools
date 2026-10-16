@@ -1,7 +1,7 @@
 ; The nova-tools roadmap: the data ROADMAP.md is generated from.
-; Read by internal/roadmap through internal/roadmap/sexp (data, never evaluated).
+; Read by pkg/roadmap through pkg/sexp (data, never evaluated).
 ; Edit this file, then run `make roadmap`; never edit ROADMAP.md by hand.
-; The shape is in internal/roadmap's package comment.
+; The shape is in pkg/roadmap's package comment.
 (roadmap "v1"
  :title "nova-tools roadmap"
  :text "This is the work after the point releases. The release plan (the owner, 2026-10-11) replaces the
@@ -24,13 +24,13 @@
   what exists and covers only the gap."
 
  :scheduled
- ((scheduled "nova-swarm-becomes-nova-worker" :release "v1.3"
+ ((scheduled "nova-swarm-becomes-nova-worker" :release "v1.5"
    :title "Rename nova-swarm to nova-worker"
    :text "The tool runs one-task AI workers, and its help already says so. The rename covers the binary
     and its cmd directory, help text, docs, the fleet's ansible plays and launchd units (in their own repository), seat names, and open cards. A nova-swarm shim keeps working for one release.
     No tool is named swarm after it."
    :date "2026-10-09")
-  (scheduled "docs-pass-v1-3" :release "v1.3"
+  (scheduled "docs-pass-v1-3" :release "v1.5"
    :title "Documentation pass with the rename"
    :text "Plain English throughout, every doc matching the renamed tool. They are called workers
     everywhere; the one exception is README.md, where the bees are pictured."
@@ -251,7 +251,7 @@
    :text "A set of small work steps adds the class tests that hold the CI spec rules and the socket
     behavior of the unit tier. Each step has its own paths, commit and verdict."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "tool-contract-tests" :group "tests"
    :title "Contract tests between the tools: bus, check, config, release, secrets, tokens, version"
@@ -259,7 +259,7 @@
     bus, nova-check in CI, config, dev release, memory and Redis, secrets, tokens with update, and
     version handling."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "dead-code-ledger-shrink" :group "quality"
    :title "Delete unreachable code and shrink the dead code ledger"
@@ -267,7 +267,7 @@
     code ledger drops the matching rows. Removals must keep the functional tests green, so call
     sites are checked first."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store
     (2026-10-10); issue #4312")
   (item "generality-ledger-name-removal" :group "quality"
@@ -275,7 +275,7 @@
    :text "Every row the generality ledger lists is replaced with a generic word, file by file, and the
     ledger shrinks to match."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store
     (2026-10-10); card moved out of the sprint (work record, 2026-10-04)")
   (item "named-paths-ledger-shrink" :group "quality"
@@ -283,28 +283,28 @@
    :text "The named-paths ledger lists names in the tree that look like repository paths but are not. Each
     row is fixed by rewording or by making the path real, then removed from the ledger."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "forge-merge-spelling-ledger-shrink" :group "quality"
    :title "Remove the last forge auto-merge spelling from the secrets seal"
    :text "One row in the forge-merge-spelling ledger remains for the secrets store's own pull request. It
     is replaced by the batch path so the ledger can empty."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "serial-tests-ledger-shrink" :group "tests"
    :title "Make serial tests parallel-safe and empty the serial-tests ledger"
    :text "Listed tests do not open with t.Parallel because they share an environment, clock or path. Each
     gets a per-test seam so it runs in parallel and leaves the ledger."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); PR #4698; PR #4729")
   (item "unit-tier-slow-test-budget" :group "tests"
    :title "Bring slow test packages under their time budget"
    :text "Unit-tier, class-test and functional CI packages that run over their budget are measured and
     sped up or split until their allowlist rows clear."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store
     (2026-10-10); PR #4621; PR #4627; PR #4632")
   (item "bus-store-independent-of-sprint" :group "ops"
@@ -321,13 +321,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
-  (item "friend-presence-from-the-session" :group "friends"
-   :title "Presence reflects the session, not the app or the sprint server"
-   :text "A friend reads up only when the session can take a turn, and presence does not depend on the
-    sprint server answering. Loops that beat on behalf of an open app are removed."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "friend-broken-session-and-limits-mean-down" :group "friends"
    :title "A broken session or a limit means down"
    :text "A provider refusal, a usage limit or an empty balance is noticed once, said once, and not fed
@@ -335,48 +328,40 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
-  (item "friend-delivery-batching-and-receipts" :group "friends"
-   :title "Friend messages are batched, receipted and never silently lost"
-   :text "Pending messages go as one turn, each carries a receipt from delivery to returned work, the
-    failed-delivery count survives a restart, and a deaf friend is detected."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "cards moved out of the sprint (work record, 2026-10-04); issue #5192; card from the sprint store
-    (2026-10-10); card moved out of the sprint (work record, 2026-10-04)")
   (item "package-test-harness-steps" :group "tests"
    :title "Per-package test harness steps"
    :text "Stepwise work cards add or repair tests and checks per package across the tools. Each step has
     its own paths, commit and verdict."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "release-status-grammar" :group "quality"
    :title "One status grammar for the release verbs"
    :text "nova-update release uses the standard's three status words, one cap flag and one refusal shape.
     The remaining FAIL sites are converted."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "model-tests-per-package" :group "tests"
    :title "Model-based tests for the bus and config packages"
    :text "Add model tests for the bus and config packages, one work step each, with the test checked
     against the package model."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "prose-pass-per-package" :group "quality"
    :title "Prose pass over each tool package"
    :text "Reword the help, comments and messages of each tool package for plain English and short
     sentences. Each package is a small tree of work steps with its own paths and commit."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "read-pass-per-package" :group "quality"
    :title "Read-through of each tool package for defects and debt"
    :text "Walk each tool package in order, read it against its rules, and record or fix what is found.
     Each package is a small tree of work steps with its own paths and commit."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "bench-run-verb" :group "ops"
    :title "A verb that runs a card or read on a remote bench machine"
@@ -399,21 +384,21 @@
    :text "Cold readers of config, fuse, memory, redis, self-talk, tokens and update found defects. Each is
     fixed as a small ordered step with its own check and commit."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "shrink-small-tool-packages" :group "quality"
    :title "Shrink every tool package in small ordered steps"
    :text "Each tool package loses dead code, duplicated helpers and lint findings in small checked steps,
     with behaviour and tests unchanged."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "sandbox-symlink-spelling-unreadable" :group "ops"
    :title "Make a symlink spelling of a granted path readable in the darwin sandbox"
    :text "On darwin the sandbox policy keeps only the resolved path, so reading a granted path by its
     symlink spelling fails inside the wall. Grant read on the link itself as well as on its target."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "fuse-box-write-and-parse-hardening" :group "ops"
    :title "Harden nova-fuse box writes, box parsing and refusal lines"
@@ -421,7 +406,7 @@
     success and be overwritten. The box reader accepts misspelled, duplicated or null keys as clear,
     and one refusal line echoes unescaped shell characters."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "bounded-work-on-large-input" :group "ops"
    :title "Bound the work done on very large or hostile input files"
@@ -429,14 +414,14 @@
     on a line of unclosed brackets. Add size limits and deadlines so one planted file cannot exhaust
     memory or time."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "table-reserved-key-families" :group "ops"
    :title "Reserve the view key family in table member and epoch keys"
    :text "The reservations for epoch keys and member prefixes cover table keys but not the view family
     that the view verbs own. Extend the reserved set so a user key cannot collide with view state."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "secrets-gate-hand-sealed-seats" :group "ops"
    :title "Make the secrets gate tell hand-sealed files from verb-made ones"
@@ -444,14 +429,14 @@
     prints the rule position instead of naming the rule. Mark verb-made files and name the failed
     rule in the refusal."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "adopt-testify-assertions" :group "tests"
    :title "Adopt the testify assertion library in tests"
    :text "Hand-written test assertions are replaced with the testify assertion library by a scripted,
     mechanical rewrite. The change is checked by running the tests."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "tests-hermetic-package-env" :group "tests"
    :title "Package tests run in a hermetic environment"
@@ -459,7 +444,7 @@
     temporary environment instead of reading the real one. This makes them repeatable on any
     machine."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store
     (2026-10-10); PR #5519")
   (item "tests-injected-clock" :group "tests"
@@ -467,7 +452,7 @@
    :text "A shared test clock replaces real sleeps, fixed waits and tight elapsed-time assertions, so
     timing tests are fast and do not redden on loaded runners."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store
     (2026-10-10); issue #4221; issue #2452; issue #2460")
   (item "docs-cli-reference-generated-and-checked" :group "docs"
@@ -475,7 +460,7 @@
    :text "The CLI reference is built from each tool's own usage text, and a test fails when the docs and
     the binaries drift apart."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store
     (2026-10-10); issue #3836")
   (item "docs-concept-and-onboarding-pages" :group "docs"
@@ -483,14 +468,14 @@
    :text "Write an architecture page, glossaries, a friend onboarding guide and a standalone readme for
     every tool, so a stranger can start from the docs alone."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "no-shell-scripts-in-shipped-tree" :group "quality"
    :title "No shell scripts in anything that ships"
    :text "The tree still tracks a few shell scripts (a notes script and test fixtures). Each becomes a Go
     verb or a Go test helper."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "bus-client-network-deadlines" :group "ops"
    :title "Bound every network wait in the bus client"
@@ -503,20 +488,20 @@
    :title "Check CI tool classes"
    :text "Make the CI checks that classify tools run and report per class."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "decide-help-smallest-example" :group "docs"
    :title "nova-decide help: small schema and one result line"
    :text "The help page shows a small schema, state and answers, and one result line saying exit 0 means
     recorded, not approved."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "goroutine-leak-checks-in-tests" :group "tests"
    :title "Goroutine leak checks in tests"
    :text "Add goleak checks to library tests so leaked goroutines fail the test."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "darwin-sandbox-directory-lookup" :group "ops"
    :title "Allow directory lookup in the darwin sandbox profile"
@@ -550,7 +535,7 @@
    :text "The friend daemon renews a session it marked broken, in the same harness, and exposes the
     renewal as a verb. No person has to renew it by hand."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "friend-back-up-detection-and-adopt" :group "friends"
    :title "Friends and machines noticed back up and made current"
@@ -564,7 +549,7 @@
    :text "Price every run, read and retry so recorded spend matches the provider's own account. Route
     prices are refreshed from the provider list instead of set once by hand."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04); issue #2171")
   (item "config-dsn-keyword-test-fix" :group "tests"
    :title "Fix the red DSN keyword flag test in config"
@@ -585,7 +570,7 @@
    :text "nova-tokens --bus reads the Redis bus log instead of the old note directories, and the spec,
     test transcript and dead fixtures are updated."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "bus-message-sender-authority" :group "friends"
    :title "Mark bus messages by sender authority in a friend's session"
@@ -599,28 +584,28 @@
    :text "A CI class test greps Go sources, scripts, workflows and card templates for force-push and
     history-rewrite patterns against shared refs, with a reasoned allowlist."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "secrets-never-in-errors-test" :group "tests"
    :title "Class test that secret-shaped inputs never appear in errors"
    :text "Drive secret-shaped strings through every exported Open, Parse, Dial and New function and fail
     if a marker appears in an error. A DSN parse error once printed a password."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "class-tests-duplicate-and-unused-surface" :group "quality"
    :title "Class tests for duplicate function bodies and unused verbs and flags"
    :text "One CI class test hashes normalised function bodies to find duplicate paths. Another finds verbs
     and flags no test, doc or caller uses."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "retire-stopgap-scripts" :group "quality"
    :title "Operator and stopgap scripts become tested verbs"
    :text "Every hand script that runs the fleet or the coordinator becomes a documented, tested verb, so a
     stranger can adopt the tools without private scripts."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); issue #1142; issue #2051; card moved
     out of the sprint (work record, 2026-10-04)")
   (item "friend-token-budgets" :group "friends"
@@ -636,7 +621,7 @@
     implemented but never wired into the worker, so it was removed as dead code. Re-land it and wire
     it."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "route-applies-to-executor-class" :group "ops"
    :title "A route says where it is applied: friends, fleet or local"
@@ -644,14 +629,6 @@
     everyone. Pro routes then serve friends and flash routes serve the fleet."
    :date "2026-10-10"
    :release "after v1.4"
-   :origin "card moved out of the sprint (work record, 2026-10-04)")
-  (item "friend-daemon-liveness" :group "friends"
-   :title "Show and alarm friend daemon state, and ping every friend each second"
-   :text "A test pins the installed service definition, and a view shows which binary each friend daemon
-    runs and alarms when one died or was not reinstalled. A nova-friend verb replaces the hand ping
-    loop and marks a friend down after ten seconds without a pong."
-   :date "2026-10-10"
-   :release "v1.3"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "friend-lane-wall-profile" :group "friends"
    :title "Run every friend lane inside a wall profile taken from its friend row"
@@ -665,7 +642,7 @@
    :text "nova-config and other tools open Redis through the shared connection package, which explains its
     own failures, and delete their wrappers."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "PR #4506; PR #4518")
   (item "tokens-daily-collate-verb" :group "ops"
    :title "nova-tokens gains the daily collate verb"
@@ -696,7 +673,7 @@
    :title "An install verification matrix runs across darwin, linux and wsl2"
    :text "Functional tests verify nova-update install on each bench platform."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "PR #4615")
   (item "table-batch-model-and-replay" :group "docs"
    :title "A TLA+ model of atomic table batches and a replay check against real Redis"
@@ -724,33 +701,33 @@
    :text "Open creates the session file in the store's own shape. An append is one critical section per
     store and empty words are refused."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "PR #4700; PR #4702")
   (item "ci-ledger-shard-diagnostics" :group "quality"
    :title "CI ledger failures name their shard and zero-debt shards stay clean"
    :text "Package-ledger failures name the owning shard file and a shard at zero debt needs no hand edit."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "PR #4956")
   (item "swarm-harness-error-cause-recorded" :group "friends"
    :title "The harness prints its error lines so an unknown error records its cause"
    :text "Every launch runs the harness with error lines printed so a failure reported only as an unknown
     error is recorded with its real cause."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "PR #5028")
   (item "pin-mutation-gaps-swarm-ci" :group "tests"
    :title "Tests pin the surviving mutation gaps in swarm and ci"
    :text "Added tests kill the mutants that survived in the swarm and ci packages."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "PR #5073")
   (item "docs-and-comments-present-tense" :group "quality"
    :title "Docs and code comments describe current behavior only"
    :text "History, names, dates and past-tense rationale are removed from docs and comments, broken
     comment fragments are repaired, and generality ledgers shrink."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "PR #5103; PR #5109; PR #5110; PR #5128; PR #5130; PR #5143; PR #5144; PR #5226")
   (item "ci-pinned-redis-server" :group "ops"
    :title "install-redis-server puts the pinned Redis first and testredis refuses others"
@@ -764,14 +741,14 @@
    :text "The default temp directory is checked against the write directories. Auth, job config and usage
     writes refuse a symlink at or below the data home."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "PR #5248; PR #5251")
   (item "kind-classification-single-source" :group "quality"
    :title "Read kind classification from the one name file"
    :text "The kind list's third field is the only gated or ungated classification, and the second name set
     is deleted. Acceptance stays unchanged."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "PR #5253")
   (item "swarm-child-instructions-job-profile" :group "docs"
    :title "Align child instructions with the staged job profile and name report destinations"
@@ -779,14 +756,14 @@
     attribution, and plain versus command finish. Plain profiles name the result file and PR body as
     report destinations."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "PR #5266; PR #5271")
   (item "functional-tier-darwin-pool-and-fixtures" :group "tests"
    :title "Run Darwin-only functional packages on the Mac pool and repair functional fixtures"
    :text "Darwin-only packages selected for functional tests are routed to the configured Mac pool instead
     of dropping out of the Linux matrix. Functional fixtures are repaired."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "PR #5272; PR #5503")
   (item "friend-foreground-wait-presence" :group "friends"
    :title "nova-friend scopes presence to a foreground harness wait"
@@ -807,21 +784,21 @@
    :text "Raise short wait bounds, merge similar tests into table-driven tests, and pass environment
     through parameters so tests run in parallel."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "PR #5310; PR #5328; PR #5345")
   (item "modernize-tree-with-go-fix" :group "quality"
    :title "Run go fix and the modernize analyzers over the tree"
    :text "Apply the standard library analyzers across the tree, one commit per analyzer, on all platforms
     and build tags."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "PR #5313")
   (item "loop-log-rotation" :group "ops"
    :title "Loop logs rotate by size and age"
    :text "Member and reader logs grow without bound today. A rule in the logs spec and the loop
     definitions bounds them."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "nova-sprint issue #41")
   (item "bench-hygiene-home-guard" :group "ops"
    :title "The bench hygiene script refuses an unsafe HOME"
@@ -842,21 +819,21 @@
    :text "The system indexer loads the machine while tests run, which skews measurements. Setup excludes
     the work tree and the temp dir from indexing."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #1432")
   (item "sandbox-cli-reporting-defects" :group "quality"
    :title "nova-sandbox reports the right cause and the right backend"
    :text "An ssh host alias origin is reported as an unreachable forge, and a dot repo is refused. The
     policy verb prints the darwin profile under the landlock backend."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #1452; issue #1469")
   (item "self-talk-first-person-absolutes" :group "quality"
    :title "nova-self-talk detects plain first person absolutes"
    :text "The three plainest absolute claims about what the writer permanently is or cannot do return no
     claims. The detector counts them."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #1468")
   (item "swarm-dispatcher-asks-ladder" :group "friends"
    :title "The pool dispatcher asks the model ladder"
@@ -878,14 +855,14 @@
     keys, and the input limit class comes from a structured signal instead of a transcript
     heuristic."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #1844; issue #1611; issue #163")
   (item "swarm-native-capture-spoofing" :group "ops"
    :title "A card cannot spoof the native result or the idle watch"
    :text "A card can rewrite the harness capture file to turn a denial into an OK, and write files the
     monitor reads as liveness. The supervisor reads these from places a card cannot write."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #1892; issue #1893")
   (item "ci-drop-hosted-windows-smoke" :group "ops"
    :title "The smoke job drops its hosted windows leg"
@@ -899,21 +876,21 @@
    :text "The per harness table states the non interactive run verb and whether a process can start a
     bounded run. Some harnesses cannot be woken and one is now refused."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #1519")
   (item "ci-wallclock-law-covers-all-units" :group "tests"
    :title "The wall clock bound law sees string flags and sub second units"
    :text "The test that bans short wall clock bounds only matches the literal seconds unit. Millisecond
     literals and string flag values slip past it."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #1604")
   (item "swarm-order-dependent-test" :group "tests"
    :title "TestARouteAtItsCapHoldsTheRestBack no longer depends on test order"
    :text "The test passes only in a full package run and fails alone or when any test is added. It is made
     independent."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #1927")
   (item "swarm-test-hang-capped-flags" :group "tests"
    :title "A swarm test hangs the whole package under the gate's capped flags"
@@ -927,42 +904,42 @@
    :text "The release workflow created a separate published release instead of uploading to the reviewed
     draft. Upload goes to the draft, then it is published."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #199")
   (item "swarm-provider-error-classify-requeue" :group "friends"
    :title "Classify provider errors and re-queue on another route"
    :text "A provider server error ends a card with no result after in-place retries. The verdict names
     PROVIDER and the card is re-queued on another route."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2001; issue #2011")
   (item "fleet-scripts-bash32-lint" :group "ops"
    :title "Fleet scripts run under bash 3.2 and are linted for it"
    :text "Launchers run under the old macOS bash and must not use newer builtins or rely on zsh word
     splitting. A lint rejects them."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2012")
   (item "secrets-seal-branch-and-bulk-add" :group "ops"
    :title "Secrets seal leaves the store on a branch; add a bulk-add verb"
    :text "Seal without a pull request leaves the store on a local branch and exec then refuses every card.
     Seal restores the store, and one verb adds a name to many seats."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2016; card from the sprint store (2026-10-10)")
   (item "fleet-sampler-never-reads-zero" :group "ops"
    :title "A missed or wedged fleet sample never reads as zero"
    :text "A partial or missed sample read as a full machine and a wedge froze the width table. The view
     reads slot stores directly and shows NA for unreachable hosts."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2017")
   (item "bench-standard-uniform-check" :group "ops"
    :title "Bench standard covers real differences and checks reliably"
    :text "The bench check gave different verdicts on one machine and missed ssh limits, toolchain
     versions, layout and users. The manifest covers them and the check builds its own environment."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2018; issue #2052; issue #2053; issue #2054; issue #2055; issue #3201")
   (item "update-adopt-at-frozen-sha" :group "ops"
    :title "Adopt levels the fleet at a frozen sha from the nearest bench"
@@ -976,21 +953,21 @@
    :text "Three landed commits can be reverted with no test going red. Each gets a test that fails when
     the change is reverted."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #2024; issue #2025; issue #2026")
   (item "harvest-refuse-stale-base" :group "ops"
    :title "Harvest refuses a returned branch based on a stale head"
    :text "A returned branch based on an old head would have reverted merged work. Harvest checks the diff
     against the current target and rebases, re-gates or refuses."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2032")
   (item "native-launch-capacity-ceiling" :group "ops"
    :title "Enforce the per-machine card ceiling before launch"
    :text "A machine reached extreme load and fell off the network before the guard acted. The slot store
     enforces a ceiling from measured memory and a process limit before launch."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2033")
   (item "bus-draft-no-overwrite" :group "ops"
    :title "Bus draft never overwrites a file and send refuses the template"
@@ -1011,21 +988,21 @@
    :text "The pre-model base clone exists only in Linux launchers, so a pinned base is silently absent on
     darwin. Both paths stage it."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2163")
   (item "fleet-capacity-central-config" :group "ops"
    :title "Fleet capacity lives in one config, applied without restarts"
    :text "Per-machine capacity is scattered in launcher constants and loop arguments, so raising it needs
     a restart under load. One config holds it and is read live."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2164")
   (item "swarm-native-no-wall-fake-harness" :group "tests"
    :title "Fake harness hangs inside the wall; document no-wall"
    :text "A local fake harness hangs silently until the deadline inside the wall, and the no-wall flag is
     missing from help. It fails fast and help lists the flag."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2168")
   (item "check-nocode-staged-verb" :group "ops"
    :title "nova-check nocode reads the staged index by destination"
@@ -1039,7 +1016,7 @@
    :text "Each tool's spec rules (refusals, ordering, bounds, edge cases) get a test that fails when the
     behaviour drifts."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #2304; issue #2298; issue #2299; issue #2300; issue #2301; issue #2303; issue #2305; issue
     #2306; issue #2307; issue #2293; issue #2309; issue #2310; issue #2311; issue #2313; issue
     #2297; issue #2376; issue #2377; issue #2172; issue #2173; issue #2174; issue #2257; issue
@@ -1049,14 +1026,14 @@
    :text "All demanded tests exist by name, but readings disagree whether some bodies assert the rule.
     Audit and strengthen those bodies."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #2314")
   (item "swarm-profile-catalog-validation-tests" :group "tests"
    :title "Test swarm profile catalog validation, paths, digest and read bounds"
    :text "Tests pin the catalog's strict JSON refusals, absolute path rules, whole-catalog digest and read
     size and time bounds."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #2365; issue #2367")
   (item "swarm-attempt-evidence-and-launch-record" :group "tests"
    :title "Implement and test attempt evidence publication and the protected launch record"
@@ -1070,35 +1047,35 @@
    :text "A card gets its repo from the local mirror at the base it names, the staged tree is checked
     against that base, and lint refuses a URL clone. Adopt refreshes the mirrors."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2378; issue #2383")
   (item "worker-startup-preflight-and-bench-readiness" :group "ops"
    :title "Preflight the worker start and mark a bench that cannot run cards as down"
    :text "A short startup check refuses with a named cause before any model call. A bench whose harness
     cannot start inside the wall is down for cards."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2384; issue #2388")
   (item "darwin-silent-harness-idle-kills" :group "friends"
    :title "Fix darwin cards that go silent under the wall and are idle-killed"
    :text "On macOS benches cards and their subagents go quiet after minutes and are killed as idle, while
     Linux benches succeed. The cause is found and fixed."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2533; issue #2535; issue #2058; issue #2328")
   (item "fleet-toolchain-pins-and-card-env" :group "ops"
    :title "Pin toolchains and declare a card environment on every bench"
    :text "The playbook pins one toolchain set on every bench and writes an allowlisted card environment.
     Benches then gate the same legs alike."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2415; issue #2553; issue #2554; issue #1500; issue #1948; issue #1993")
   (item "fleet-sshd-limits-and-loop-supervisors" :group "ops"
    :title "Set sshd limits and supervise coordinator loops on every host"
    :text "Setup raises the sshd session and startup limits on macOS benches, and every long-running loop
     runs under systemd or launchd with a durable wake instead of nohup."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2426; issue #2551; issue #2459")
   (item "central-log-shipper" :group "ops"
    :title "Ship bench and loop logs to one queryable place"
@@ -1119,21 +1096,21 @@
    :text "nova-bus inbox must report a bounded walk and open items, nova-bus check --full prints a capped
     list with a count, and empty swarm listings print a count line, never zero bytes."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2568; issue #2574; issue #2573; issue #2308")
   (item "check-hygiene-stray-coverage" :group "ops"
    :title "Hygiene checks share one source with the harvest lists"
    :text "The hygiene stray-name list and secret key shapes come from the same source the harvest uses, so
     they cannot drift."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2570; issue #1899")
   (item "sandbox-wrap-denial-notes" :group "ops"
    :title "The sandbox wrap verb prints denial lines and platform notes"
    :text "SANDBOX DENIED lines and the macOS sandbox note are wired into the wrap verb as well as run, so
     a contained command that fails names the path it was refused."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2581")
   (item "card-env-allowlist-exfil-fence" :group "ops"
    :title "Card environment is an allowlist and harvest refuses files from outside the job tree"
@@ -1169,7 +1146,7 @@
    :text "Every tool verb that reads GitHub uses REST calls with conditional requests and one shared
     per-tick cache of PR facts, so the GraphQL secondary limit stops nothing."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2732")
   (item "route-provider-pinning-and-logging" :group "measure"
    :title "Pin the upstream provider per route and log it in usage rows"
@@ -1191,14 +1168,14 @@
    :text "With no platform flag, adopt sends the wrong binary to machines of another platform. It reads
     each machine's OS and architecture from the registry so a mixed list adopts in one call."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #3225")
   (item "swarm-job-dir-removal-at-card-end" :group "ops"
    :title "Every card, lane and pool removes what it made when it ends"
    :text "Job directories, finished slots and small launch files are removed at card end by default, with
     results kept elsewhere, so disk is never cleaned by hand."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #3317; card from the sprint store (2026-10-10); PR #5125; nova-sprint issue #37;
     nova-sprint issue #39; nova-sprint issue #40")
   (item "ssh-exec-sites-onto-bench-runner" :group "quality"
@@ -1206,7 +1183,7 @@
    :text "Seventeen call sites still run ssh their own way. They move onto the one bench runner with its
     host guard."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #3350")
   (item "sandbox-socket-test-race" :group "tests"
    :title "Fix the sandbox unix-socket wall test racing its listener"
@@ -1220,7 +1197,7 @@
    :text "The documented Redis call authenticates as the default user and is refused. A user flag makes it
     work against the fleet store."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #3461")
   (item "tokens-ledger-publish-and-per-unit" :group "measure"
    :title "nova-tokens publishes day rows and reports cost per unit"
@@ -1248,7 +1225,7 @@
    :text "Each verb prints its own help for --help, usage matches what the parser accepts, example lines
     run when pasted, and a refusal points to the help."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #3508; issue #3509; issue #3517; issue #3549; issue #2575; issue #1451; issue #1656")
   (item "swarm-slots-list-summary-line" :group "ops"
    :title "nova-swarm slots list prints a summary line and the live leases"
@@ -1297,14 +1274,14 @@
    :text "Class tests and a testutil guard stop tests from writing into the repository, reaching the real
     fleet store, or leaving serial-only environment edits."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #4137; issue #4193; issue #4194")
   (item "unit-and-functional-test-suites" :group "tests"
    :title "Two suites: mocked parallel unit tests and isolated functional programs"
    :text "Unit tests mock all services and run in parallel under a minute. Functional tests are a few
     isolated long-lived programs safe to run in parallel."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #4182")
   (item "ci-hygiene-and-single-ci" :group "ops"
    :title "CI hygiene and one CI of record"
@@ -1318,7 +1295,7 @@
    :text "Whole-tree, nightly, certification and release jobs are split into parallel matrix legs or
     functional programs, each under two minutes."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #4216; issue #4218; issue #4219; issue #4220")
   (item "redis-acl-single-source" :group "ops"
    :title "Redis ACL rows have one source rendered by the play"
@@ -1331,14 +1308,14 @@
    :text "Creating or moving an unplaced member checks every cell, so hold time grows with table size.
     Index the placements so the check is constant time."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #4713")
   (item "ci-selection-covers-doc-readers" :group "ops"
    :title "CI package selection covers tests that read docs"
    :text "A docs-only change must run the Go tests that read those docs. Selection needs to know which
     tests depend on which doc files."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #4728")
   (item "secrets-age-remedy-per-platform" :group "ops"
    :title "The old-age remedy names the platform's own install path"
@@ -1352,7 +1329,7 @@
    :text "Fix the shrink rule in the day fold, a real-time wait in a test, names used as fixtures and a
     t.Setenv misuse."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #5088")
   (item "config-row-notes-and-reasons" :group "ops"
    :title "Config rows carry a note and history carries a reason"
@@ -1366,7 +1343,7 @@
    :text "Cap failed-launch retention and every Go build cache by bytes. Clean leftover clones in the temp
     directory. Give each machine a guard whose loop finds its tools."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #5116; issue #5119; issue #5120; issue #5123; issue #5198; issue #1139; PR #5244")
   (item "secrets-store-discovery-verbs" :group "ops"
    :title "Verbs list secrets stores and map a role to its secret"
@@ -1396,25 +1373,19 @@
    :date "2026-10-10"
    :release "v1.2.12"
    :origin "issue #5185")
-  (item "bus-inbox-fetch-before-read" :group "ops"
-   :title "nova-bus inbox fetches before it reads"
-   :text "A stale clone reads as silence. The inbox must fetch first or say how old its view is."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #5270")
   (item "contributing-stdlib-rule-mismatch" :group "docs"
    :title "The standard-library rule matches go.mod and is enforced"
    :text "The contributing guide says standard library only, while go.mod has direct third-party requires.
     Reword the rule to match, or add a check."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #5492")
   (item "check-links-ignore-quotes-and-code" :group "ops"
    :title "Link checks skip quotes and code and handle root-relative URLs"
    :text "nova-check links and nova-memory verify read link syntax inside quoted text, code spans and
     fences, and treat a root-relative URL as a missing file. Fix all six cases."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #5493")
   (item "check-timestamps-and-commitments-verbs" :group "ops"
    :title "nova-check gains timestamps and commitments verbs"
@@ -1435,7 +1406,7 @@
    :text "Help omits the snapshot verb, and the snapshot reports every copy on the path. Scope it to the
     adopted manifest and test help against dispatch."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #622")
   (item "decider-interface-and-classify" :group "far"
    :title "A decider interface with an untrusted frame and a generic classify verb"
@@ -1471,21 +1442,21 @@
    :text "A private writable tmp under the Landlock policy and the related open defects must close first.
     Until then a Linux machine certifies only legs that need no wall."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #1664; issue #1495; issue #1737; issue #2162")
   (item "job-clone-identity-staging" :group "ops"
    :title "Job clones get their git identity from the pool and cannot link outside the job root"
    :text "The launcher writes local git identity and disables signing and hooks from the pool's identity
     table, and a pool without one is refused. No symlink may leave the job root."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #1665")
   (item "spec-sections-move-home" :group "docs"
    :title "Move each toolwork spec section into the spec of the tool that holds it"
    :text "As each section is implemented its rules move into that tool's own spec, and the index file
     stays as a pointer."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #1668")
   (item "bench-power-and-sleep-policy" :group "ops"
    :title "Fleet machines sleep when idle and stay awake and reachable while leased"
@@ -1527,14 +1498,14 @@
    :text "Test that the report over the database ledger equals the folded day files to the token for every
     type, day, model and repo."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #2201")
   (item "toolwork-transcript-class-tests" :group "tests"
    :title "Every documented transcript is executed line for line"
    :text "One shared comparator runs each tool's documented transcript line for line, platform-specific
     sections name their CI leg, and the list of unexecuted examples only shrinks."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #2217; issue #2218; issue #2007; issue #1455; issue #1549; issue #1722; issue #1875; issue
     #1890; cards moved out of the sprint (work record, 2026-10-04); issue #1652; issue #1653; issue
     #1654; issue #1657; card from the sprint store (2026-10-10); issue #1667; issue #3536")
@@ -1557,7 +1528,7 @@
    :text "Prove that two pullers cannot take one card, that job requests carry the capacity line and load
     gate, and that a pull without a bench slot lease is refused."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #2233; issue #2238")
   (item "play-journal-view-and-memory-recall" :group "far"
    :title "Browse shared moments and recall original words with context"
@@ -1571,7 +1542,7 @@
    :text "Cards run in the idle CPU class and yield to CI shards, runner capacity is reserved, and dealing
     goes by load per core."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #2274; issue #4293; PR #5029")
   (item "redis-layer1-client-contract" :group "ops"
    :title "Redis Layer 1 client contract with file fallback and four named uses"
@@ -1622,7 +1593,7 @@
    :title "Parameterise the nova-check nocode classifier into one shared function"
    :text "The audit and a future staged mode call the same classifier function instead of two copies."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "issue #2294")
   (item "swarm-remote-bench-deadline-and-idle" :group "friends"
    :title "Worker benches: remote deadline and idle kill, one bench line per bench"
@@ -1630,7 +1601,7 @@
     a remote kill by process group. An unreachable bench abstains with a reason and each bench gets
     one line in the batch packet."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "issue #607")
   (item "swarm-shared-clone-per-job" :group "measure"
    :title "Worker efficiency: avoid a full repository clone for every job"
@@ -1660,14 +1631,14 @@
    :text "Every run on a bench (gate, reader lane, friend lane copy) is confined to its own directory and
     leaves nothing behind."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "bench-slot-lease-model" :group "docs"
    :title "TLA+ model of bench slot leases"
    :text "Model the bench slot lease store in TLA+ so a grant never exceeds capacity, and check it with
     TLC."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "friend-daemons-adopted-and-cold-setup" :group "ops"
    :title "Friend daemons run on nova-tools alone, proven by a cold setup"
@@ -1681,82 +1652,82 @@
    :text "A friend daemon with one-shot lanes also beats a reader queue and runs asked reads as one-shots
     within the row's tiers and read width."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "runner-one-lane-engine-at-width" :group "friends"
    :title "One lane engine keeps a one-shot friend at width"
    :text "A one-shot friend has exactly one lane engine, installed, upgraded and retired by the adopt, and
     nova-runner keeps it at its width."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "friend-unit-test-coverage" :group "tests"
    :title "Unit tests for the friend state directory choice and watch cursor"
    :text "Uncovered functions in the friend state file get unit tests to raise package coverage."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "config-write-applies-itself" :group "ops"
    :title "A nova-config write reaches the fleet copy by itself within seconds"
    :text "Every config write is applied to the Redis copy automatically, without a manual apply step."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "nova-delete-one-literal-path" :group "ops"
    :title "nova-delete moves one literal path to quarantine and refuses anything else"
    :text "The delete verb accepts a single literal path, moves it to quarantine, and refuses globs and
     trees."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "single-nova-root-layout" :group "ops"
    :title "Every default path derives from one nova root"
    :text "Defaults for friend, bud and coordinator working directories derive from one root set per
     machine in nova-config."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)")
   (item "swarm-job-lease-model" :group "docs"
    :title "TLA+ model: one live run holds a swarm job lease"
    :text "A model checks that only one live run holds the job lease, with the launcher pid and per-run
     nonce."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "text-scanner-speed-and-host-digit-fixes" :group "ops"
    :title "Fix the text scanners: large input speed and host names with digits"
    :text "The self-talk scanner must scan a megabyte of installation text within its time bound. The
     generality tokenizer must catch a host name that ends in digits."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "split-large-tool-files-by-verb" :group "quality"
    :title "Split the large bus and fuse tool files into verb files"
    :text "The bus and fuse tools move each verb handler into its own file, checked step by step. Behaviour
     and tests stay the same."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04)")
   (item "bus-trims-acknowledged-keepalives" :group "ops"
    :title "The bus trims acknowledged keepalive messages"
    :text "Keepalive messages that every reader has acknowledged are trimmed from the bus log, so the log
     stops growing without bound."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "core-module-tla-models" :group "docs"
    :title "TLA+ models for the core state packages"
    :text "Each package that owns state (bus, cairn, card tree, config, decision record, secrets, update,
     disk guard) gets a TLA+ model beside it, checked with TLC."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04)")
   (item "friend-lane-tla-models" :group "docs"
    :title "TLA+ models for friend lanes, delivery, presence and session checks"
    :text "Model the friend daemon's one-shot lanes, message delivery and acks, presence across batch
     turns, the session check file and the lane governor, and check them with TLC."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)")
   (item "friend-harness-version-pinned-under-the-wall" :group "friends"
    :title "Pin the friend harness version, including under the lane wall"
@@ -1771,14 +1742,14 @@
    :text "Raise the unit coverage of the TLA check tool by testing its bench runner, transport lines and
     fetch paths."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10)")
   (item "tools-adopt-shared-toolkit-packages" :group "quality"
    :title "Move each tool onto the shared toolkit packages"
    :text "Each tool (bus, check, dev, fuse, release, secrets, update, version) replaces its private
     helpers with the shared toolkit packages, one step at a time, with a check per step."
    :date "2026-10-10"
-   :release "v1.4"
+   :release "v1.5"
    :origin "card from the sprint store (2026-10-10); cards moved out of the sprint (work record,
     2026-10-04); card moved out of the sprint (work record, 2026-10-04)")
   (item "release-sums-origin-and-tag-check" :group "ops"
@@ -1786,12 +1757,12 @@
    :text "The sprint release sums come from the same directory as the binaries, which proves integrity but
     not origin, and the tag is not compared with --version or a pin."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "nova-tools PR #5571 cold read")
   (item "deadcode-covers-library-packages" :group "quality"
    :title "The dead-code check reaches library packages again"
    :text "TestDeadCode excludes pkg/ since the split; a reachability walk with library roots catches dead
     unexported code there, documented in SPEC-CI with a reversed witness."
    :date "2026-10-10"
-   :release "v1.3"
+   :release "v1.5"
    :origin "seat decision after the repository split")))

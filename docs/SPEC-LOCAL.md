@@ -39,11 +39,15 @@ are not restated. The command is `cmd/nova-local`, and the engines (`engine.go`,
 
 Every rule is normative and has a test (**Tests**, below).
 
-1. **No dependencies** (the owner: *"no deps"*). One Go binary whose imports are the
-   standard library and this module's own packages, and no shelling out to learn what
-   the standard library cannot read: the box's memory and load are `sysctl` on darwin
-   and `/proc` on linux, read in process. What the stranger installs (ollama, the
-   harness) is not this binary's dependency.
+ 1. **No dependencies** (the owner: *"no deps"*). One Go binary whose imports are the
+    standard library and this module's own packages, and no shelling out to learn what
+    the standard library cannot read: the box's memory and load are `sysctl` on darwin
+    and `/proc` on linux, read in process (load from `vm.loadavg` and `/proc/loadavg`; other
+    platforms report load unknown). Measured with `go list -deps` on darwin, linux and windows:
+    no package outside the standard library and this module, and none of `os/exec`,
+    `pkg/subproc` or `pkg/hostload` (the module's `pkg/tool` brings no module outside the
+    standard library). What the stranger installs (ollama, the
+    harness) is not this binary's dependency.
 
 2. **An engine is an adapter, and adding one changes nothing else.** An adapter
    (`Adapter`, `cmd/nova-local/engine.go`) declares its name, its default base URL, its health check,
@@ -59,7 +63,10 @@ Every rule is normative and has a test (**Tests**, below).
 
 4. **A model is named by `(engine, reference, digest)`, and the digest is printed, never
    ruled on.** `--expect-digest` is optional and, differing, is exit 1 naming both and
-   serving nothing; an engine reporting none prints `digest=none`. No lockfile, no
+   serving nothing. A reference with no tag is that engine's `:latest` listing (the
+   spelling ollama reports); with `--expect-digest` given, a reference that matches no
+   listing is exit 1 naming the reference and the digest asked, remedy `ollama pull <ref>`,
+   and nothing is served. An engine reporting none prints `digest=none`. No lockfile, no
    quarantine, no trust state: those belong with an evaluation tool.
 
 5. **`--num-ctx` has no default.** ollama's own is small and silently truncates a long
@@ -95,7 +102,8 @@ Every rule is normative and has a test (**Tests**, below).
 
 10. **The memory is read at the moment of the call, and printed — not judged.** `status`
     prints each model's weights and, on its first line, `mem_used`, `mem_free`,
-    `mem_total` and the live `wired_cap` (darwin's GPU wired limit, `unset` when none).
+    `mem_total` and the live `wired_cap` (darwin's GPU wired limit, `unset` when none,
+    including a platform with no wired limit). Unread memory is `unknown` for all three.
     No verdict, never cached.
 
 11. **Triage and report; never decide-and-act.** What a local model returns is untrusted
@@ -175,19 +183,21 @@ used it. `--harness-args` is split on `,` with no escape.
 
 ### `status`
 
-Reads each engine's health inside `--timeout`, its models (`/api/tags`, `/api/ps`), the
-store (`/api/show` of the first model) and the box. Writes nothing.
+Reads each engine's health inside `--timeout`. An engine that answers is read for its
+models (`/api/tags`, `/api/ps`) and its store (`/api/show` of the first model). One that
+is down or timed out does not answer, so its line is `store=unknown shared=unknown: the engine did not answer`, which is no verdict. The box is read either way. Writes nothing.
 
 ```
-STATUS OK engines=<n> answering=<n> loaded=<n> models=<n> mem_used=<n> mem_free=<n> mem_total=<n> wired_cap=<n|unset> load1=<f>
-STATUS ENGINE name=<e> state=<up|down|timeout> [status=<code>] base=<url> [loaded=<n> advertised=<n>] [num_ctx=<n>] [store=<dir|unknown> shared=<yes|no|unknown>][: <why>]
+STATUS OK engines=<n> answering=<n> loaded=<n> models=<n> mem_used=<n|unknown> mem_free=<n|unknown> mem_total=<n|unknown> wired_cap=<n|unset> load1=<f|unknown>
+STATUS ENGINE name=<e> state=<up|down|timeout> [status=<code>] base=<url> [loaded=<n> advertised=<n>] [num_ctx=<n>] store=<dir|unknown> shared=<yes|no|unknown>[: <why>]
 STATUS MODEL engine=<e> model=<ref> digest=<sha256:...|none> weights=<n> loaded=<yes|no> [num_ctx=<n>]
 STATUS MORE kind=model shown=<n> total=<n> ...
 STATUS FAILED: no engine answers (<n> asked); start one, such as the ollama daemon; run: ollama serve
 ```
 
 `state=up` is a 2xx on the health path inside `--timeout` and nothing weaker; a slow
-engine is `state=timeout` at exit 0.
+engine is `state=timeout` at exit 0. `store=unknown` is no verdict, and status does not
+refuse on it.
 
 ### `serve` (with `--stop`)
 
@@ -195,19 +205,22 @@ Reads the box (rule 8) **before** starting anything, then the parent's tags, the
 tag's four compared parameters, and the store; its own clock across the warm-up.
 
 ```
-SERVE OK engine=<e> model=<ref> serve_as=<tag> digest=<...> num_ctx=<n> keep_alive=<d> temperature=<0|unset> seed=<n|unset> created=<yes|no> load=<t> mem_used=<n> mem_free=<n> mem_total=<n> wired_cap=<...> load1=<f> engines=<n> store=<dir|unknown> shared=<yes|no|unknown>
+SERVE OK engine=<e> model=<ref> serve_as=<tag> digest=<...> num_ctx=<n> keep_alive=<d> temperature=<0|unset> seed=<n|unset> created=<yes|no> load=<t> mem_used=<n|unknown> mem_free=<n|unknown> mem_total=<n|unknown> wired_cap=<n|unset> load1=<f|unknown> engines=<n> store=<dir|unknown> shared=<yes|no|unknown>
 SERVE OK stopped=yes engine=<e> model=<tag>
 SERVE FAILED: <reason>; run: <command>
+SERVE REFUSED: <reason>; run: <command>
 ```
 
 Refuses at exit 1, each with its remedy: a parent the engine does not have (`ollama pull
-<ref>`); an `--expect-digest` that differs, naming both (`nova-local status --list`); an
-existing derived tag differing in parent, `num_ctx`, `temperature` or `seed`, naming
-both values (`ollama rm <tag>`); a load or free memory past a `--max-load` or
-`--min-free` the caller gave, naming measured and asked; a store outside the shared
-store, only under `--require-shared-store`. A missing `--num-ctx`, one with a remainder,
-and a `--base` outside rule 3 are exit 2. `--dry-run` reads all of it and creates and
-loads nothing.
+<ref>`); an `--expect-digest` that differs, naming both (`nova-local status --list`); a
+reference `--expect-digest` was given for that matches no listing, naming the reference
+and the digest asked (`ollama pull <ref>`); an existing derived tag differing in parent,
+`num_ctx`, `temperature` or `seed`, naming both values (`ollama rm <tag>`); a load or
+free memory past a `--max-load` or `--min-free` the caller gave, naming measured and
+asked; a store outside the shared store, only under `--require-shared-store`. A missing
+`--num-ctx`, one with a remainder, and a `--base` outside rule 3 are exit 2. An adapter
+refusal of code 2 is exit 2 through the usage refusal; code 1, and an unset code, stay
+exit 1. `--dry-run` reads all of it and creates and loads nothing.
 
 ### `worker`
 
@@ -231,16 +244,14 @@ because the caller can retry it: a `--model` the engine does not serve, remedy
 
 ## Fleet
 
-The owner's design, 2026-10-04: a local model is a provider like any other, and the
-sprint deals to it as it deals to any route. Whether a lane's calls go to a local model or
-to a remote one is route configuration, never a second count on the machine: a machine's
-lanes are its `width`, and a route says what serves them.
+Local is a provider per fleet machine, dealt like any route:
 
 **Status: designed, not built.** `cmd/nova-local` builds the store and the endpoint's
-serving-host rule (rules 3 and 15). The route, the concurrency, the deal and the launch
-below need nova-config's route fields `endpoint` and `concurrency`, the sprint's cap and
-`nova-swarm native --local-base`, none of which exists yet; until they do, `serve` prints
-no `nova-config route add` line and has no `--concurrency`.
+serving-host rule (rules 3 and 15). The deal lives in mas-bandwidth/nova-sprint. Owed:
+nova-config's provider field endpoint (card local-config-provider-endpoint), the deal's
+stamp and the routes view (card local-deal-stamps-the-endpoint, in mas-bandwidth/nova-sprint),
+the launch (card local-native-launches-at-the-endpoint), and serve's printed rows (card
+local-serve-prints-the-fleet-rows).
 
 - **The store.** Every machine keeps its weights under the shared directory of its AI
   root, `<ai-root>/shared/models/<engine>` (rule 15), never per account.
@@ -248,32 +259,11 @@ no `nova-config route add` line and has no `--concurrency`.
   served tag, and the most requests it takes at once. Over the tailnet its ollama listens
   on its tailnet address, and every caller reaches it there or on loopback (rule 3). The
   endpoint of a model served on host `h` is `http://h:11434/v1`.
-- **The route.** A route of `--provider local` names its endpoint and a concurrency
-  (nova-config's route fields `endpoint` and `concurrency`; only a local route names an
-  endpoint, and a local route wants a concurrency above 0), `--model` the served tag. Its
-  prices are 0 (`--price_input 0 --price_output 0`): its cost is $0 and its tokens are
-  recorded as any route's. `serve --base http://<host>:11434/v1 --concurrency <n>` prints
-  the row's `nova-config route add` line; its name is `local-<model>-<host>`.
-- **The concurrency.** The cap on how many lanes may use a route at once is the
-  endpoint's, so it is the route's: nova-config's route field `concurrency` (migration
-  0028), the cards using the route at once; 0, the default, is no cap, and any route may
-  carry one (a metered provider's limit is the same field). A host running N instances of
-  a model is N routes of the instances' concurrency each, or one route of concurrency N;
-  both are only configuration. A machine row holds no second count: `width` is its lanes,
-  and `--width 0` is a machine that runs no member, whatever its endpoints serve. A change
-  reaches the deal at the next `nova-config apply` of the routes.
-- **The deal** (`internal/sprint/route.go`, the cap). A local route is in its tier's
-  route set and is drawn like any route. A work card ready or working, or a read card
-  asked or reading, whose `route` names a capped route holds one of its slots; a draw
-  skips a route whose slots are all taken, as it skips a resting route, and the card
-  waits for a slot with no judgment, since the route serves the tier. The draw writes the
-  route's endpoint on the work card (`serve`), the packet hands it to the member, and
-  `nova-sprint routes` shows `endpoint=<url> concurrency=<busy>/<cap>`.
-- **The launch.** The member passes `--local-base <endpoint>` to
-  `nova-swarm native` for a card whose packet names an endpoint; native declares the
-  provider `local` at that endpoint in the job's harness config (OpenCode's
-  OpenAI-compatible provider, no key), the route's model under it, and stands its
-  read-deadline proxy in front of it; on loopback the wall opens that one port.
+- The provider: one nova-config provider row per serving machine, named local-<host>, with a new provider field endpoint, http://<host>:11434/v1. A provider whose name begins local- carries an endpoint and every other provider carries none. The endpoint obeys nova-local's rule 3 (loopback or the tailnet, 100.64.0.0/10, every address a name resolves to), and an endpoint whose host is a nova-config machine row holding the role coordination is refused: the coordinating machine serves no local model. Billing subscription, funded true, no key.
+- The route: --provider local-<host> --model <the served tag>, every price 0, named local-<model>-<host>; its tokens are recorded as any route's.
+- The concurrency: the provider concurrency budget nova-sprint already has (nova-sprint routes limit local-<host> --concurrent <n>; the sprint's rate_budget and RateBudget.tla): the deal falls back past a full provider and the card waits ready when none of its tier has room. No route field concurrency, no machine field, no new count on a machine row: a machine's width stays its lanes.
+- The deal stamps the provider's endpoint on the work or read card as the card field endpoint, the packet carries it as JSON endpoint, and nova-sprint routes prints endpoint=<url> concurrency=<busy>/<cap> on a local route.
+- The launch: the member passes --local-base <endpoint> to nova-swarm native for a packet naming an endpoint; native declares provider local-<host> at that base in the job's harness config (OpenCode's OpenAI-compatible provider, no key), the route's model under it, its read-deadline proxy in front.
 
 ## Deliberately not in this tool
 
@@ -295,11 +285,11 @@ Each runs against a fake engine through the injected transport (`cmd/nova-local`
 
 | rule | test |
 |---|---|
-| 1 | `go list -deps ./cmd/nova-local` names no package outside the standard library and this module (checked at the build; no in-process test) |
+| 1 | `go list -deps ./cmd/nova-local` names no package outside the standard library and this module (measured by hand on darwin, linux and windows: none; `x/sys` is not in the graph), and `TestNovaLocalShellsOutForNothing` pins that no non-test file imports `os/exec`, `pkg/subproc` or `pkg/hostload`; `TestLoadAvgParses` pins the in-process load decode |
 | all | `TestTheThreeVerbsOfTheSpec`: each verb against the fake engine, and the `--dry-run` of serve and worker creating, loading and writing nothing |
 | 2 | `TestOnlyThreeVerbs` (the tool's shape); the adapter set is `Adapters` |
 | 3 | `TestBaseIsLoopbackOrTheTailnet`, `TestTheServingHostRule` |
-| 4 | `TestServeRefusesOnlyPastTheCallersValues`, `TestStatusPrintsTheEngineAndTheBox` |
+| 4 | `TestServeRefusesOnlyPastTheCallersValues`, `TestStatusPrintsTheEngineAndTheBox`, `TestServeExpectDigestNeverSkipsSilently` |
 | 5 | `TestServeRefusesToGuessTheContext`, `TestDerivedTag` |
 | 6 | `TestServeMakesTheDerivedTagOnce` |
 | 7, 12 | `TestServeTimesOneWarmUpAndStops` |
@@ -307,9 +297,10 @@ Each runs against a fake engine through the injected transport (`cmd/nova-local`
 | 9, 11, 14 | `TestWorkerWritesADescriptionNovaSwarmAccepts` (decoded by `swarm.LoadWorker` with zero problems; one file written; the key file at mode 0000) |
 | 10 | `TestStatusReadsTheMemoryEachCall` |
 | 13 | `TestStatusListingIsBounded`, `TestStatusWithNothingAnsweringIsOneRemedyLine` |
+| serve exit | `TestServeRefusalExitsByItsCode` (an adapter refusal of code 2 exits 2, of code 1 exits 1) |
 | 14 | `TestWorkerRefusesEveryProblemAtOnce` |
 | 15 | `TestTheSharedStore`, `TestSharedAndResolve` |
-| Fleet | `TestALocalRouteNamesItsEndpointAndConcurrency` (config), `TestALocalRouteTakesItsConcurrencyOfCardsAndRecordsItsUsageAtNoCost` and `TestARouteAtItsConcurrencyDrawsTheNextRoute` (the sprint's twin), `TestRoutesAndWhereShowALocalRoute`, `TestAMemberLaunchesALocalRoutesCardAtItsEndpoint`, `TestNativeTakesALocalBaseOnlyWithALocalModel`, `TestAJobOnALocalRouteDeclaresTheProviderAtItsEndpoint`, `TestDeclareLocalProviderPointsTheHarnessAtTheEndpoint`, `TestServeOverTheTailnetNamesTheFleetRoute`: owed with the Fleet's build |
+| Fleet | `TestALocalProviderNamesItsEndpoint` (owed: local-config-provider-endpoint), `TestALocalEndpointOnTheCoordinatingMachineIsRefused` (owed: local-config-provider-endpoint); `TestADealOnALocalProviderStampsItsEndpoint` (owed: local-deal-stamps-the-endpoint, in mas-bandwidth/nova-sprint), `TestALocalProviderAtItsConcurrencyDrawsTheNextRoute` (owed: local-deal-stamps-the-endpoint, in mas-bandwidth/nova-sprint) and `TestRoutesShowsALocalRoutesEndpointAndConcurrency` (owed: local-deal-stamps-the-endpoint, in mas-bandwidth/nova-sprint); `TestAMemberPassesTheLocalBaseToNative` (owed: local-native-launches-at-the-endpoint), `TestNativeTakesALocalBaseOnlyWithALocalProvider` (owed: local-native-launches-at-the-endpoint), `TestDeclareLocalProviderPointsTheHarnessAtTheEndpoint` (owed: local-native-launches-at-the-endpoint); `TestServeOverTheTailnetNamesTheFleetRows` (owed: local-serve-prints-the-fleet-rows) |
 
 The first run (`docs/TESTS.md`) is executed by `TestTESTSFirstRunIsWhatTheToolPrints`,
 and the banner's examples by `TestUsageBannerExamplesRun`. The functional tier's

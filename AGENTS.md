@@ -146,7 +146,7 @@ The class-rule names come from **The class tests** in `docs/SPEC-CI.md`. `make m
 
 <!-- class-rules:start -->
 
-`aipaths`, `allowlist`, `cache`, `cap`, `cardtemplates`, `cert-perf-shards`, `cert-race-shards`, `ci-ok`, `ci-receipt`, `ciworkspace`, `classtests`, `darwin-gate`, `deadcode`, `discarded`, `drain-wait-exit`, `errcheck`, `fieldsindex`, `flag-usage`, `fleet-plays`, `functional`, `functional-image`, `generality`, `generality-text`, `gitoperand`, `goenv`, `hosted-shards`, `hostseam`, `make`, `member-units-drain`, `namedpaths`, `net`, `nightly-tags`, `no-hand-printing`, `no-ok-on-failure`, `onboarding`, `one section`, `one-member`, `onewriter`, `outputs`, `parallel`, `pathassert`, `pinned-actions`, `platforms`, `prmerge`, `redis-version`, `refusal-grammar`, `release-legs`, `remedy`, `removeall`, `script-hide`, `seatredis`, `seatwrap`, `selection`, `sharedtemp`, `silent`, `slowtests`, `slowwaits`, `sprint-paths`, `staticcheck`, `subproc`, `templates`, `testbins`, `testify`, `testoutpath`, `tiers`, `tlc`, `tool-answers`, `tool-standard`, `toolchainroots`, `transcripts`, `unit-rule`, `unit-sockets`, `unitwaits`, `version`, `waits`, `wall clock`, `walltoolchain`, `wholetree`.
+`aipaths`, `allowlist`, `cache`, `cap`, `cardtemplates`, `cert-perf-shards`, `cert-race-shards`, `ci-ok`, `ci-receipt`, `ciworkspace`, `classtests`, `darwin-gate`, `deadcode`, `discarded`, `drain-wait-exit`, `errcheck`, `fieldsindex`, `flag-usage`, `fleet-plays`, `functional`, `functional-image`, `generality`, `generality-text`, `gitoperand`, `goenv`, `hosted-shards`, `hostseam`, `make`, `member-units-drain`, `namedpaths`, `net`, `nightly-tags`, `no-hand-printing`, `no-ok-on-failure`, `onboarding`, `one section`, `one-member`, `onewriter`, `outputs`, `parallel`, `pathassert`, `pinned-actions`, `platforms`, `prmerge`, `redis-version`, `refusal-grammar`, `release-legs`, `remedy`, `removeall`, `retiredpresence`, `script-hide`, `seatredis`, `seatwrap`, `selection`, `sharedtemp`, `silent`, `slowtests`, `slowwaits`, `sprint-paths`, `staticcheck`, `subproc`, `templates`, `testbins`, `testify`, `testoutpath`, `tiers`, `tlc`, `tool-answers`, `tool-standard`, `toolchainroots`, `transcripts`, `unit-rule`, `unit-sockets`, `unitwaits`, `version`, `waits`, `wall clock`, `walltoolchain`, `wholetree`.
 
 <!-- class-rules:end -->
 
@@ -155,15 +155,16 @@ After a site is fixed, `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` lowers it
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
 | `.github/` | CI workflows | `go test ./internal/ci` | `make test` |
-| `assets/` | static assets and schemas | none | none |
+| `assets/` | images | none | none |
 | [cmd/](cmd/AGENTS.md) | 17 nova command-line tools | `nova-ci local` | `make build` |
 | [docs/](docs/AGENTS.md) | specs, guides, and proposals | `go test ./internal/docs` | `go test ./internal/docs` |
-| `fleet/` | fleet loop units and bench templates | none | none |
-| `hook/` | the hook module (own go.mod) | `cd hook && go test .` | `cd hook && go test .` |
+| `fleet/` | loop units, bench templates | none | none |
+| `hook/` | the hook package | `go test ./hook/...` | `make test` |
 | `infra/` | runner images and scripts | none | none |
 | [internal/](internal/AGENTS.md) | packages and libraries | `nova-ci local` | `make test` |
 | [pkg/](pkg/AGENTS.md) | public packages | `nova-ci local` | `make test` |
-| `profiles/` | pkg/sandbox's darwin profile and its check | `go test ./pkg/sandbox` | `go test ./pkg/sandbox` |
-| `testdata/` | shared test fixtures | `go test ./internal/ci` | `make test` |
-| `tla/` | the TLA+ models and their runners | `go test ./pkg/tlc` | `make tlc-test` |
+| `profiles/` | the sandbox's darwin profile | `go test ./pkg/sandbox` | `make test` |
+| `schemas/` | wire schemas | `make schemawire-check` | `go generate` |
+| `testdata/` | shared fixtures | `go test ./internal/ci` | `make test` |
+| `tla/` | TLA+ models, TLC records | `go test ./pkg/tlc` | `make tlc-test` |
 | [tools/](tools/AGENTS.md) | developer and bench tools | `nova-ci local` | `make map` |

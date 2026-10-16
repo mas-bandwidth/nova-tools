@@ -34,6 +34,27 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// newestVersion is the newest embedded migration's number, read from the
+// files, so adding a migration never edits the tests that migrate to the top.
+func newestVersion(t *testing.T, all []Migration) int {
+	t.Helper()
+	require.NotEmpty(t, all)
+	return all[len(all)-1].Version
+}
+
+// versionsFrom lists the embedded migration numbers from first through the
+// newest, in order: what Migrate applies to a store whose ledger ends just
+// before first.
+func versionsFrom(all []Migration, first int) []int {
+	var out []int
+	for _, m := range all {
+		if m.Version >= first {
+			out = append(out, m.Version)
+		}
+	}
+	return out
+}
+
 // migrated opens a fresh database and migrates it.
 func migrated(t *testing.T) *PG {
 	t.Helper()
@@ -61,26 +82,37 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 	}
 	all, err := Migrations()
 	require.NoError(t, err)
+	tip := all[len(all)-1].Version
 	from, to, applied, err := st.Migrate(ctx)
 	assertionMsg67 := []any{"first migrate: from %d to %d applied %v err %v", from, to, applied, err}
 	require.NoError(t, err, assertionMsg67...)
 	require.Equal(t, 0, from, assertionMsg67...)
-	require.Equal(t, len(all), to, assertionMsg67...)
+	require.Equal(t, tip, to, assertionMsg67...)
 	require.Len(t, applied, len(all), assertionMsg67...)
 	from, to, applied, err = st.Migrate(ctx)
 	assertionMsg69 := []any{"second migrate: from %d to %d applied %v err %v (idempotent: nothing applied twice)", from, to, applied, err}
 	require.NoError(t, err, assertionMsg69...)
-	require.Equal(t, len(all), from, assertionMsg69...)
-	require.Equal(t, len(all), to, assertionMsg69...)
+	require.Equal(t, tip, from, assertionMsg69...)
+	require.Equal(t, tip, to, assertionMsg69...)
 	require.Empty(t, applied, assertionMsg69...)
+	counts, err := st.Counts(ctx)
+	require.NoError(t, err)
+	machine, ok := Lookup(KindMachine)
+	require.True(t, ok)
+	row, err := machine.NewRow("fresh-machine", map[string]string{"user": "u", "seat": "fresh-machine", "slots": "2"})
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindMachine, row, "operator")
+	require.NoError(t, err)
+	rows, err := st.List(ctx, KindMachine)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "bench", rows[0].Fields["roles"], "a fresh migrated database reads the descriptor default through the ordinary store path")
 	{
 		v, err := st.Version(ctx)
 		assertionMsg72 := []any{"version after: %d %v", v, err}
 		require.NoError(t, err, assertionMsg72...)
-		require.Equal(t, len(all), v, assertionMsg72...)
+		require.Equal(t, tip, v, assertionMsg72...)
 	}
-	counts, err := st.Counts(ctx)
-	require.NoError(t, err)
 	fleet, found, err := st.Get(ctx, KindFleet, KindFleet)
 	require.NoError(t, err)
 	require.True(t, found)
@@ -188,8 +220,63 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 			assert.Equal(t, "3", widths()["m2"], "the file run again overwrote a width set since")
 			_, to, applied, err := st.Migrate(ctx)
 			require.NoError(t, err)
-			assert.Equal(t, len(all), to)
+			assert.Equal(t, all[len(all)-1].Version, to)
 			assert.NotContains(t, applied, 12, "migrate after the fill applied 0012 again")
+		})
+	}
+}
+
+func TestMachineRolesMigrationPreservesExistingGroups(t *testing.T) {
+	t.Parallel()
+	// The table is the one DeriveMachineRoles is held to
+	// (TestDeriveMachineRolesIsMigration0042): the SQL and the inventory's
+	// derivation of a pre-0042 row are one rule.
+	for _, tc := range machineRoleDerivationCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			st, err := OpenPG(ctx, server.Database(t))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, st.Close()) })
+			migrations, err := Migrations()
+			require.NoError(t, err)
+			for _, migration := range migrations {
+				if migration.Version >= 42 {
+					break
+				}
+				require.NoError(t, st.applyOne(ctx, migration), migration.Name)
+			}
+			_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('bench-a','u','bench-a',8,2),('store-a','u','store-a',8,0),('coord-a','u','coord-a',8,0),('shared','u','shared',8,0)`)
+			require.NoError(t, err)
+			_, err = st.db.ExecContext(ctx, `UPDATE config.fleet SET store = NULLIF($1, ''), coordinator = NULLIF($2, '') WHERE name = 'fleet'`, tc.store, tc.coordinator)
+			require.NoError(t, err)
+
+			from, to, applied, err := st.Migrate(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, 41, from)
+			assert.Equal(t, newestVersion(t, migrations), to)
+			assert.Equal(t, versionsFrom(migrations, 42), applied)
+			rows, err := st.List(ctx, KindMachine)
+			require.NoError(t, err)
+			got := make(map[string]string, len(rows))
+			for _, row := range rows {
+				got[row.Name] = row.Fields["roles"]
+			}
+			assert.Equal(t, tc.want, got, "migration uses only machine rows and fleet refs; runner count is not a role")
+			from, to, applied, err = st.Migrate(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, newestVersion(t, migrations), from)
+			assert.Equal(t, newestVersion(t, migrations), to)
+			assert.Empty(t, applied)
+
+			_, _, err = st.Update(ctx, KindMachine, "bench-a", map[string]string{"roles": "runner"}, "operator")
+			require.NoError(t, err)
+			_, err = st.db.ExecContext(ctx, migrations[41].SQL)
+			require.NoError(t, err, "the SQL is safe to rerun and keeps later declared roles")
+			declared, found, err := st.Get(ctx, KindMachine, "bench-a")
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.Equal(t, "runner", declared.Fields["roles"])
 		})
 	}
 }
@@ -273,7 +360,7 @@ func TestAppliedIsTheLedger(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, got, 11)
 	assert.Len(t, got, len(all)-1)
-	assert.Equal(t, len(all), got[len(got)-1])
+	assert.Equal(t, all[len(all)-1].Version, got[len(got)-1])
 }
 
 // 0017 makes a loop's width the machine's: the second reader rows of
@@ -518,4 +605,56 @@ func TestMigrationThirtyGivesEveryFriendTheBatchMode(t *testing.T) {
 	_, err = st.db.ExecContext(ctx, thirty.SQL)
 	require.NoError(t, err, "the file runs again")
 	assert.Equal(t, map[string]string{"f1": "batch", "f2": "one-shot"}, columnOf(t, st, "mode"), "a mode set since is kept")
+}
+
+// TestFriendPronounsUnstatedDropsTheConstraintAndRewritesNoRow applies every
+// migration before 0044, stores one they/them and one she/her, then lets
+// Migrate apply 0044 and every migration after it. Both values stay. The second Migrate applies nothing.
+// NULL is allowed and the column default is gone. The names are made up.
+func TestFriendPronounsUnstatedDropsTheConstraintAndRewritesNoRow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := OpenPG(ctx, server.Database(t))
+	require.NoError(t, err)
+	defer st.Close()
+	all, err := Migrations()
+	require.NoError(t, err)
+	for _, m := range all {
+		if m.Version >= 44 {
+			continue
+		}
+		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+	}
+	_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name) VALUES ('pat'), ('quinn')`)
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET pronouns = 'she/her' WHERE name = 'quinn'`)
+	require.NoError(t, err)
+	before := columnOf(t, st, "pronouns")
+	from, to, applied, err := st.Migrate(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 43, from)
+	assert.Equal(t, newestVersion(t, all), to)
+	assert.Equal(t, versionsFrom(all, 44), applied)
+	assert.Equal(t, map[string]string{"pat": "they/them", "quinn": "she/her"}, columnOf(t, st, "pronouns"), "0044 rewrites no row; before %+v", before)
+	var drop string
+	for _, m := range all {
+		if m.Version == 44 {
+			drop = m.SQL
+		}
+	}
+	require.NotEmpty(t, drop)
+	_, err = st.db.ExecContext(ctx, drop)
+	require.NoError(t, err, "0044 run again")
+	assert.Equal(t, map[string]string{"pat": "they/them", "quinn": "she/her"}, columnOf(t, st, "pronouns"), "0044 run again rewrites no row")
+	from, to, applied, err = st.Migrate(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, newestVersion(t, all), from)
+	assert.Equal(t, newestVersion(t, all), to)
+	assert.Empty(t, applied, "0044 applied twice applies nothing")
+	assert.Equal(t, map[string]string{"pat": "they/them", "quinn": "she/her"}, columnOf(t, st, "pronouns"))
+	var nullable string
+	var columnDefault *string
+	require.NoError(t, st.db.QueryRowContext(ctx, `SELECT is_nullable, column_default FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'friends' AND column_name = 'pronouns'`).Scan(&nullable, &columnDefault))
+	assert.Equal(t, "YES", nullable)
+	assert.Nil(t, columnDefault)
 }

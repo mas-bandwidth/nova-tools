@@ -20,6 +20,17 @@ type CardResult struct {
 	Report  string
 	Title   string
 	Body    string
+	// ReportDerived is whether Report was taken from the body's first prose line because the
+	// file had no `report:` line (a result whose every other key reads: head, branch,
+	// verdict, gate and output, with a body). Measured on a worker's own RESULT.md
+	// (fixed-cpp-appends-and-deprecations-read-clean.w1.g9.e20): the report line is the
+	// ledger's one-line summary and guards nothing; the head and the verdict still do.
+	ReportDerived bool
+	// Fault, on a result that is not Shaped, says what is wrong with it in words the
+	// next attempt can act on: the keys missing, a head that is no commit, a verdict
+	// that is none of the four. "" when the shape holds, when the file is empty (no result
+	// at all), and when the file is native's own (a card it ended wrote none).
+	Fault string
 }
 
 // CardResultKeys are the six keys a shaped card result carries.
@@ -71,6 +82,14 @@ func ParseCardResult(b []byte) CardResult {
 	r.Verdict = strings.ToLower(seen["verdict"])
 	r.Gate, r.Output, r.Report, r.Title = seen["gate"], seen["output"], seen["report"], seen["title"]
 	r.Body = strings.TrimSpace(strings.Join(body, "\n"))
+	_, hasReport := seen["report"]
+	if !hasReport && r.Body != "" {
+		// no report line, but the body says what was done: its first prose line is the report
+		if line := firstProse(r.Body); line != "" {
+			r.Report, r.ReportDerived = line, true
+			seen["report"] = line
+		}
+	}
 	r.Shaped = r.Report != "" && (r.Head == "-" || IsSha(r.Head))
 	for _, k := range CardResultKeys {
 		if _, ok := seen[k]; !ok {
@@ -82,8 +101,83 @@ func ParseCardResult(b []byte) CardResult {
 		known = known || r.Verdict == v
 	}
 	r.Shaped = r.Shaped && known
+	if !r.Shaped {
+		r.ReportDerived = false
+		if strings.TrimSpace(string(b)) != "" && !NativeWritten(b) {
+			r.Fault = shapeFault(seen, r.Head, r.Verdict, known)
+		}
+	}
 	if r.Head == "-" {
 		r.Head = ""
 	}
 	return r
+}
+
+// nativeMark opens the line native writes into a RESULT.md for a card it ended itself
+// (an idle reap, a deadline, a stage timeout): that file is native's word, not the
+// worker's, and has no shape to fault.
+const nativeMark = "written-by: nova-swarm native"
+
+// NativeWritten is whether a RESULT.md is native's own, written for a card that
+// published none.
+func NativeWritten(b []byte) bool {
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), nativeMark) {
+			return true
+		}
+	}
+	return false
+}
+
+// maxDerivedReport bounds a report taken from a body, the length a report line keeps.
+const maxDerivedReport = 300
+
+// firstProse is the first line of a body that is prose: not blank, not a heading, not a
+// fence, cut to maxDerivedReport.
+func firstProse(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "```") {
+			continue
+		}
+		if len(t) > maxDerivedReport {
+			t = t[:maxDerivedReport]
+		}
+		return t
+	}
+	return ""
+}
+
+// shapeFault is what keeps a result from being shaped, in the card contract's own words
+// (docs/SPEC-CARD-CONTRACT.md section 3). The first fault a worker should fix comes first.
+func shapeFault(seen map[string]string, head, verdict string, knownVerdict bool) string {
+	var missing []string
+	for _, k := range CardResultKeys {
+		if _, ok := seen[k]; !ok {
+			missing = append(missing, k+":")
+		}
+	}
+	var faults []string
+	if len(missing) == len(CardResultKeys) {
+		faults = append(faults, "none of the six `key: value` lines is present; the file must open with `head: <full sha>` on line 1, then branch:, verdict:, gate:, output:, report: (not a `RESULT:` line, not DONE or BLOCKED words)")
+	} else if len(missing) > 0 {
+		faults = append(faults, "no "+strings.Join(missing, ", ")+" line")
+	}
+	if _, ok := seen["head"]; ok && head != "-" && !IsSha(head) {
+		faults = append(faults, "head is `"+clip(head)+"`, not a commit sha (7 or more lowercase hex digits) or -")
+	}
+	if _, ok := seen["verdict"]; ok && !knownVerdict {
+		faults = append(faults, "verdict is `"+clip(verdict)+"`, not one of "+strings.Join(CardVerdicts, ", "))
+	}
+	if v, ok := seen["report"]; ok && v == "" {
+		faults = append(faults, "report: is empty")
+	}
+	return strings.Join(faults, "; ")
+}
+
+func clip(s string) string {
+	if len(s) > 40 {
+		return s[:40]
+	}
+	return s
 }

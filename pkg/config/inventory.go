@@ -30,7 +30,7 @@ const loopField = "nova_loops"
 // Snapshot is the applied state the inventory is built from: one read of
 // the Redis view (RedisApplier.Snapshot), or a fixture file (LoadFixture).
 type Snapshot struct {
-	// Machines are the machine views by name: user, seat, slots, runners.
+	// Machines are the machine views by name: user, seat, slots, runners and roles.
 	Machines map[string]View
 	// Fleet is the fleet row's view: store, coordinator, redis_port, pg_dsn, bus.
 	Fleet View
@@ -76,6 +76,12 @@ type AnsibleInventory struct {
 	StoreDeployer AnsibleGroup `json:"store_deployer"`
 	Runners       AnsibleGroup `json:"runners"`
 	TLA           AnsibleGroup `json:"tla"`
+	// Notes are what the inventory derived or left out rather than refused:
+	// a roles field derived as migration 0042 derives it, a host with no beat
+	// or a beat missing facts. They are never part of the JSON (ansible reads
+	// every top-level key as a group); the verb prints each as a NOTE line on
+	// stderr.
+	Notes []string `json:"-"`
 }
 
 // InventoryLoop is one loop record as a host variable: the loop kind's
@@ -120,21 +126,106 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 
 	hostvars := make(map[string]map[string]any, len(names))
 	runnerHosts, tlaHosts := []string{}, []string{}
+	benchHosts, serviceHosts, coordinatorHosts := []string{}, []string{}, []string{}
+	notes := []string{}
+	machineKind, _ := Lookup(KindMachine)
+	rolesField, _ := machineKind.Field("roles")
 	for _, m := range names {
 		v := snap.Machines[m]
-		slots, _ := strconv.Atoi(v["slots"])
+		rolesRaw, hasRoles := v["roles"]
+		if !hasRoles {
+			// A row applied before migration 0042 has no roles field: the
+			// previous release's store. Its roles are derived as 0042 derives
+			// them, and said so; only a row with nothing to derive from (no
+			// applied fleet row) is refused.
+			if snap.Revs[KindFleet] == 0 {
+				return nil, fmt.Errorf("machine %s: registry_roles is missing from applied machine row field roles and cannot be derived: the fleet row was never applied; run: nova-config apply", m)
+			}
+			rolesRaw = DeriveMachineRoles(m, snap.Fleet)
+			notes = append(notes, fmt.Sprintf("machine %s: the applied row has no roles field (applied before migration 0042); derived %s as 0042 does (bench; coordination from the fleet coordinator; services from the fleet store); to store it: nova-config apply --kind machine", m, rolesRaw))
+		}
+		roles, roleErr := rolesField.Canonical(rolesRaw)
+		if roleErr != nil || roles != rolesRaw {
+			return nil, fmt.Errorf("machine %s: registry_roles in applied machine row field roles is invalid; want a canonical comma list of %s; correct the config row if needed, then run: nova-config apply --kind machine", m, strings.Join(MachineRoles, ", "))
+		}
+		for _, role := range strings.Split(roles, ",") {
+			switch role {
+			case "bench":
+				benchHosts = append(benchHosts, m)
+			case "services":
+				serviceHosts = append(serviceHosts, m)
+			case "coordination":
+				coordinatorHosts = append(coordinatorHosts, m)
+			}
+		}
+		seat := v["seat"]
+		if seat == "" {
+			return nil, fmt.Errorf("machine %s: registry_seat is unset in machine row field seat; run: nova-config machine show %s", m, m)
+		}
+		slots, err := inventoryCount(m, "slots_capacity", "machine row field slots", v["slots"])
+		if err != nil {
+			return nil, err
+		}
+		if slots == 0 {
+			return nil, fmt.Errorf("machine %s: slots_capacity must be greater than 0 from machine row field slots; run: nova-config machine show %s", m, m)
+		}
 		runners, _ := strconv.Atoi(v["runners"])
+		// The measured facts are optional: a machine that is down, or one whose
+		// beat predates a fact, is listed from its row and the facts it has,
+		// never refused (one down host never takes the whole fleet's inventory
+		// with it). The play gathers os, arch and cores from its own facts for
+		// any host whose beat lacks them (fleet/tools.yml).
+		beat := snap.Beats[m]
+		if beat == nil {
+			beat = &Beat{}
+			notes = append(notes, fmt.Sprintf("machine %s: no beat (the machine is down, or its member has never beaten); listed from its row; the play gathers os, arch and cores from its facts", m))
+		} else if missing := missingBeatFacts(beat); len(missing) > 0 {
+			notes = append(notes, fmt.Sprintf("machine %s: its beat has no %s; listed with the facts it has; the play gathers the rest from its facts", m, strings.Join(missing, ", ")))
+		}
+		cores, hasCores := 0, beat.Cores != ""
+		if hasCores {
+			if cores, err = inventoryCount(m, "cores", "beat field ncpu", beat.Cores); err != nil {
+				return nil, err
+			}
+		}
+		width, hasWidth := 0, false
+		if v["width"] != "" {
+			width, err = inventoryCount(m, "slots_share", "machine row field width", v["width"])
+			if err != nil {
+				return nil, err
+			}
+			hasWidth = true
+		} else if hasCores {
+			width, hasWidth = cores/2, true // The machine row's nullable width defaults to half its beat cores.
+		}
+		if hasWidth && width > slots {
+			return nil, fmt.Errorf("machine %s: slots_share %d from machine row field width exceeds slots_capacity %d from machine row field slots; run: nova-config machine show %s", m, width, slots, m)
+		}
 		// ansible_user is the name ansible reads for the login; nova_seat
 		// carries the row's seat under a namespaced name that cannot collide
 		// with a play's own variable. An empty value is left out, never
 		// emitted as "".
 		hv := map[string]any{
-			"ansible_host": m,
-			"slots":        slots,
-			"runners":      runners,
-			"kind":         KindMachine,
+			"ansible_host":   m,
+			"slots":          slots,
+			"slots_capacity": slots,
+			"runners":        runners,
+			"kind":           KindMachine,
 			// a view written before the field existed has no tla: none
-			"nova_tla": v["tla"] == "true",
+			"nova_tla":      v["tla"] == "true",
+			"registry_seat": seat,
+		}
+		if hasWidth {
+			hv["slots_share"] = width
+		}
+		if beat.OS != "" {
+			hv["bench_os"], hv["nova_os"] = beat.OS, beat.OS
+		}
+		if beat.Arch != "" {
+			hv["nova_arch"] = beat.Arch
+		}
+		if hasCores {
+			hv["cores"] = cores
 		}
 		if u := v["user"]; u != "" {
 			hv["ansible_user"] = u
@@ -142,22 +233,24 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if seat := v["seat"]; seat != "" {
 			hv["nova_seat"] = seat
 		}
-		// The measured platform, when the machine's beat carries it; the
-		// plays read the gathered facts for a machine without one.
-		if b := snap.Beats[m]; b != nil && b.OS != "" && b.Arch != "" {
-			hv["nova_os"], hv["nova_arch"] = b.OS, b.Arch
-		}
 		if loops != nil {
 			hv[loopField] = loops[m]
 		}
 		if store := snap.Fleet["store"]; store != "" {
 			hv["nova_redis_addr"] = store + ":" + strconv.Itoa(redisPort)
 		}
+		// An empty bus is left out. The loop templates render NOVA_BUS_REDIS
+		// only when nova_bus_addr is defined and not empty, so a fleet with
+		// no bus still renders the units as it does today.
+		if bus := snap.Fleet["bus"]; bus != "" {
+			hv["nova_bus_addr"] = bus
+		}
 		hv["nova_redis_port"] = redisPort
 		hv["nova_pg_dsn"] = snap.Fleet["pg_dsn"]
 		if localHost != "" && m == localHost {
 			hv["ansible_connection"] = "local"
 		}
+		hv["registry_roles"] = roles
 		hostvars[m] = hv
 		if runners > 0 {
 			runnerHosts = append(runnerHosts, m)
@@ -165,6 +258,12 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if v["tla"] == "true" {
 			tlaHosts = append(tlaHosts, m)
 		}
+	}
+	if err := matchRoleReference("services", serviceHosts, "store", snap.Fleet["store"]); err != nil {
+		return nil, err
+	}
+	if err := matchRoleReference("coordination", coordinatorHosts, "coordinator", snap.Fleet["coordinator"]); err != nil {
+		return nil, err
 	}
 
 	one := func(name string) []string {
@@ -184,13 +283,58 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		Meta:          AnsibleMeta{Hostvars: hostvars},
 		All:           AnsibleGroup{Hosts: append([]string{}, names...), Vars: vars},
 		Adopt:         AnsibleGroup{Hosts: adoptOrder(names, snap.Fleet["coordinator"])},
-		Benches:       AnsibleGroup{Hosts: append([]string{}, names...)},
-		Coordinator:   AnsibleGroup{Hosts: one(snap.Fleet["coordinator"])},
-		Store:         AnsibleGroup{Hosts: one(snap.Fleet["store"])},
+		Benches:       AnsibleGroup{Hosts: benchHosts},
+		Coordinator:   AnsibleGroup{Hosts: coordinatorHosts},
+		Store:         AnsibleGroup{Hosts: serviceHosts},
 		StoreDeployer: AnsibleGroup{Hosts: one(snap.Fleet["coordinator"])},
 		Runners:       AnsibleGroup{Hosts: runnerHosts},
 		TLA:           AnsibleGroup{Hosts: tlaHosts},
+		Notes:         notes,
 	}, nil
+}
+
+// missingBeatFacts names the facts a beat lacks, in the order the play reads
+// them: os, arch, ncpu.
+func missingBeatFacts(b *Beat) []string {
+	missing := []string{}
+	if b.OS == "" {
+		missing = append(missing, "os")
+	}
+	if b.Arch == "" {
+		missing = append(missing, "arch")
+	}
+	if b.Cores == "" {
+		missing = append(missing, "ncpu")
+	}
+	return missing
+}
+
+// matchRoleReference keeps the explicit inventory role and fleet singleton
+// reference in agreement: plays consume the role group while nova_store,
+// Redis routing and adoption consume the fleet row (docs/FLEET.md).
+func matchRoleReference(role string, hosts []string, field, reference string) error {
+	want := []string{}
+	if reference != "" {
+		want = []string{reference}
+	}
+	if slices.Equal(hosts, want) {
+		return nil
+	}
+	return fmt.Errorf("inventory: machine roles role %s selects hosts %v, but fleet row field %s selects %q; align them with nova-config machine set <machine> --roles <roles> and nova-config fleet set --%s <machine>", role, hosts, field, reference, field)
+}
+
+// inventoryCount reads a non-negative integer from the applied row or beat,
+// naming both the host variable and its source when the inventory cannot
+// provide the value a play would otherwise discover as undefined.
+func inventoryCount(host, variable, source, raw string) (int, error) {
+	if raw == "" {
+		return 0, fmt.Errorf("machine %s: %s is unset in %s; run: nova-config machine show %s", host, variable, source, host)
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("machine %s: %s from %s is not a non-negative integer; run: nova-config machine show %s", host, variable, source, host)
+	}
+	return n, nil
 }
 
 // adoptOrder is the fleet in the order the install play adopts it: the canary
@@ -402,16 +546,23 @@ type fixture struct {
 // the row the inventory reads.
 type fixtureMachines map[string]fixtureMachine
 
-// fixtureMachine is one machine the fixture names; OS and Arch stand in for
-// the machine's beat.
+// fixtureMachine is one machine the fixture names; OS, Arch and Cores stand
+// in for the machine's beat, while Width is the nullable machine-row field.
+//
+// Roles is a pointer so a machine without the key stands for a row applied
+// before migration 0042 (fleet/testdata/inventory-fixture-n-1.yml is one),
+// and `roles: ""` for a row that carries no role.
 type fixtureMachine struct {
-	User    string `yaml:"user"`
-	Seat    string `yaml:"seat"`
-	Slots   int    `yaml:"slots"`
-	Runners int    `yaml:"runners"`
-	TLA     bool   `yaml:"tla"`
-	OS      string `yaml:"os"`
-	Arch    string `yaml:"arch"`
+	User    string  `yaml:"user"`
+	Seat    string  `yaml:"seat"`
+	Slots   int     `yaml:"slots"`
+	Runners int     `yaml:"runners"`
+	Roles   *string `yaml:"roles"`
+	TLA     bool    `yaml:"tla"`
+	OS      string  `yaml:"os"`
+	Arch    string  `yaml:"arch"`
+	Cores   *int    `yaml:"cores"`
+	Width   *int    `yaml:"width"`
 }
 
 // fixtureFleet is the fixture's one fleet row.
@@ -459,16 +610,30 @@ func LoadFixture(path string) (*Snapshot, error) {
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil {
-		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, tla, os, arch), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, fixtureShapeError(err))
+		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, roles, tla, os, arch, cores and width), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, fixtureShapeError(err))
 	}
 	snap := &Snapshot{Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{}}
 	for m, r := range f.Machines {
 		if !NamePattern.MatchString(m) {
 			return nil, fmt.Errorf("--fixture %s: machine %q is not a row name (lower-case letters, digits and dashes)", path, m)
 		}
-		snap.Machines[m] = View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners), "tla": strconv.FormatBool(r.TLA)}
-		if r.OS != "" || r.Arch != "" {
-			snap.Beats[m] = &Beat{OS: r.OS, Arch: r.Arch}
+		machine := View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners), "tla": strconv.FormatBool(r.TLA)}
+		// A machine with no roles key is a row applied before migration
+		// 0042, as the previous release's store holds it: the field stays
+		// absent, and the inventory derives it as 0042 does, with a NOTE.
+		if r.Roles != nil {
+			machine["roles"] = *r.Roles
+		}
+		if r.Width != nil {
+			machine["width"] = strconv.Itoa(*r.Width)
+		}
+		snap.Machines[m] = machine
+		if r.OS != "" || r.Arch != "" || r.Cores != nil {
+			beat := &Beat{OS: r.OS, Arch: r.Arch}
+			if r.Cores != nil {
+				beat.Cores = strconv.Itoa(*r.Cores)
+			}
+			snap.Beats[m] = beat
 		}
 	}
 	redisPort := ""
@@ -506,7 +671,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 var fixtureShapeWords = map[string]string{
 	"config.fixture":         "the document is a map with machines, fleet and loops",
 	"config.fixtureMachines": "machines is a map of name to machine",
-	"config.fixtureMachine":  "a machine is a map of user, seat, slots, runners, tla, os and arch",
+	"config.fixtureMachine":  "a machine is a map of user, seat, slots, runners, roles, tla, os, arch, cores and width",
 	"config.fixtureFleet":    "fleet is a map of store, coordinator, redis_port, pg_dsn and loops_dir",
 	"config.fixtureLoops":    "loops is a map of name to loop",
 	"config.fixtureLoop":     "a loop is a map of machine, argv, seat, keys, every, keepalive and enabled",
@@ -522,7 +687,7 @@ var fixtureShapeWords = map[string]string{
 // field's refusal says what that block wants.
 var fixtureFields = map[string]string{
 	"config.fixture":        "machines, fleet or loops",
-	"config.fixtureMachine": "user, seat, slots, runners, tla, os or arch",
+	"config.fixtureMachine": "user, seat, slots, runners, roles, tla, os, arch, cores or width",
 	"config.fixtureFleet":   "store, coordinator, redis_port, pg_dsn or loops_dir",
 	"config.fixtureLoop":    "machine, argv, seat, keys, every, keepalive or enabled",
 }

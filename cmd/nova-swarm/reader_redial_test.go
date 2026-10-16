@@ -81,7 +81,7 @@ func TestReaderResumesAfterServerRefusal(t *testing.T) {
 	s := &readerRedialSprint{downLeft: 5}
 	rn := &readerRedialRunner{}
 	var out, errb bytes.Buffer
-	m := member.New(member.Config{As: "reader-1", Reader: true, Width: 1}, s, rn, noPush{}, &out)
+	m := member.New(member.Config{As: "reader-1", Reader: true}, rowWidth(s, 1), rn, noPush{}, &out)
 	at := func(time.Duration) <-chan time.Time {
 		c := make(chan time.Time, 1)
 		c <- time.Unix(0, 0)
@@ -114,7 +114,7 @@ func TestReaderRedialsThroughTheDialer(t *testing.T) {
 		return []sprintwire.Result{{Code: code, Stdout: string(printed)}}, nil
 	}
 	w := &sprintwire.Worker{Send: d.do}
-	m := member.New(member.Config{As: "reader-1", Reader: true, Width: 1}, w, rn, noPush{}, &out)
+	m := member.New(member.Config{As: "reader-1", Reader: true}, rowWidth(w, 1), rn, noPush{}, &out)
 	at := func(time.Duration) <-chan time.Time {
 		c := make(chan time.Time, 1)
 		c <- time.Unix(0, 0)
@@ -136,7 +136,7 @@ func TestReaderResumesAfterADroppedHeldWait(t *testing.T) {
 	s := &readerRedialSprint{dropBegins: 3}
 	rn := &readerRedialRunner{}
 	var out, errb bytes.Buffer
-	m := member.New(member.Config{As: "reader-1", Reader: true, Width: 1}, s, rn, noPush{}, &out)
+	m := member.New(member.Config{As: "reader-1", Reader: true}, rowWidth(s, 1), rn, noPush{}, &out)
 	at := func(time.Duration) <-chan time.Time {
 		c := make(chan time.Time, 1)
 		c <- time.Unix(0, 0)

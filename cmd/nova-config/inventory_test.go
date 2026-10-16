@@ -27,7 +27,9 @@ func inventoryHarness(t *testing.T, n int) *harness {
 	h.env["NOVA_SPRINT_REDIS"] = storeAddr
 	h.redis.views[config.KindMachine] = map[string]config.View{}
 	for i := 1; i <= n; i++ {
-		h.redis.views[config.KindMachine][fmt.Sprintf("bench-%02d", i)] = config.View{"user": "user-a", "seat": "seat-a", "slots": "8", "runners": "0"}
+		name := fmt.Sprintf("bench-%02d", i)
+		h.redis.views[config.KindMachine][name] = config.View{"user": "user-a", "seat": "seat-a", "slots": "8", "runners": "0", "roles": "bench"}
+		h.redis.beats[name] = &config.Beat{OS: "linux", Arch: "amd64", Cores: "4"}
 	}
 	h.redis.revs[config.KindMachine] = 1
 	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}
@@ -56,13 +58,15 @@ func TestInventoryPrintsTheAppliedState(t *testing.T) {
 	t.Parallel()
 	h := inventoryHarness(t, 2)
 	h.env["NOVA_MACHINE"] = "bench-01"
+	h.redis.views[config.KindMachine]["bench-01"]["roles"] = "bench,coordination"
+	h.redis.views[config.KindMachine]["bench-02"]["roles"] = "bench,services"
 	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}
 	h.redis.views["loop"] = map[string]config.View{"member-02": {
 		"name": "member-02", "machine": "bench-02", "argv": `["nova-swarm","member"]`, "seat": "seat-a", "keys": "API_KEY",
 		"every": "0", "keepalive": "true", "enabled": "true", "log": "~/nova-bench/loops/member-02.log",
 	}}
 	h.redis.revs["loop"] = 1
-	h.redis.beats["bench-02"] = &config.Beat{OS: "linux", Arch: "amd64"}
+	h.redis.beats["bench-02"] = &config.Beat{OS: "linux", Arch: "amd64", Cores: "4"}
 
 	code, out, errs := h.run(t, "inventory")
 	require.Equal(t, 0, code, errs)
@@ -310,6 +314,7 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		"-i wants an executable", "column one", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "a failed inventory is an empty inventory", "unparsed_is_failed = True",
 		"_meta.hostvars", "ansible never calls --host", "the default when neither --list nor --host is given",
 		"store_deployer", "nova_loops", "nova_os", "nova_redis_port", "nova_redis_addr", "nova_pg_dsn", "never Postgres",
+		"roles", "registry_roles",
 		"matched by exact machine name", "lower-cased first label", "nothing is marked local", "an empty value counts as unset",
 		"this verb exits 0 when it printed, 1 when the applied state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)",
 		"exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run: ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer); machine self: 2 not a row, 3 unreadable",

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
@@ -18,7 +20,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	const verb = "apply"
 	fs := verbflag.New(verb)
 	c := seatStoreFlags(fs)
-	redisFlag := fs.String("redis", "", "the Redis `host:port` to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
+	redisFlag := fs.String("redis", "", "the Redis `host:port` to write; --kind route otherwise uses the fleet endpoint, other kinds use NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the seat")
 	as := actorFlag(fs)
 	kind := fs.String("kind", "", "one `kind` to apply ("+strings.Join(config.KindNames(), ", ")+"); every kind, in order, when unset")
 	check := fs.Bool("check", false, "the same as --dry-run")
@@ -33,9 +35,11 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		return refuse(stderr, verb, "apply takes no arguments; flags only")
 	}
 	var problems []string
+	var invalidKind bool
 	kinds := config.KindNames()
 	if *kind != "" {
 		if _, ok := config.Lookup(*kind); !ok {
+			invalidKind = true
 			problems = append(problems, fmt.Sprintf("--kind %s: want one of %s", *kind, strings.Join(config.KindNames(), ", ")))
 		}
 		kinds = []string{*kind}
@@ -56,11 +60,17 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
-	addr, err := redisAddress(*redisFlag, d.getenv)
-	if err != nil {
-		problems = append(problems, err.Error())
+	var addr string
+	if *kind != config.KindRoute || *redisFlag != "" {
+		addr, err = redisAddress(*redisFlag, d.getenv)
+		if err != nil {
+			problems = append(problems, err.Error())
+		}
 	}
 	if len(problems) > 0 {
+		if invalidKind {
+			return refuseOptions(stderr, verb, strings.Join(problems, "; "), config.KindNames())
+		}
 		return refuse(stderr, verb, strings.Join(problems, "; "))
 	}
 	st, err := d.openStore(ctx, dsn)
@@ -70,6 +80,12 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 		return code
+	}
+	if *kind == config.KindRoute && *redisFlag == "" {
+		addr, err = routeRedisAddress(ctx, st)
+		if err != nil {
+			return refused(stderr, verb, err.Error(), toolName+" fleet show"+c.again())
+		}
 	}
 	// The fleet's endpoints and the routes' price sheets are each their own
 	// kind's check (config.ApplyInRun): a problem refuses that kind only and
@@ -248,4 +264,81 @@ func refusalRemedy(kind, name string, err error) (string, string) {
 		return why, "resolve the row refused earlier in this run (its CONFIG REFUSED line above), then " + apply
 	}
 	return why, fmt.Sprintf("%s %s show %s, fix it with %s %s set %s, then %s", toolName, kind, name, toolName, kind, name, apply)
+}
+
+// routeRedisAddress selects the copy the sprint reads, never an ambient
+// endpoint (ConfigApply.tla NoSilentUnappliedWrite; SPEC-CONFIG Apply).
+func routeRedisAddress(ctx context.Context, st config.Store) (string, error) {
+	fleet, found, err := st.Get(ctx, config.KindFleet, config.KindFleet)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("fleet row is missing; migrate and declare its store and redis_port before applying")
+	}
+	host, port := fleet.Fields["store"], fleet.Fields["redis_port"]
+	n, err := strconv.ParseUint(port, 10, 16)
+	if host == "" || err != nil || n == 0 {
+		return "", fmt.Errorf("fleet store and redis_port must name the sprint copy; set the missing endpoint before applying")
+	}
+	return net.JoinHostPort(host, port), nil
+}
+
+// copyRouteWrite uses the existing apply path after the store commits. Its
+// stamp must reach this command's revision (ConfigApply.tla RouteResult).
+func copyRouteWrite(ctx context.Context, st config.Store, actor string, rev int64, c conn, d deps) (config.Result, string, error) {
+	res := config.Result{RedisRev: -1}
+	remedy := toolName + " apply --kind route --actor " + shq(actor) + c.again()
+	addr, err := routeRedisAddress(ctx, st)
+	if err != nil {
+		return res, remedy, err
+	}
+	remedy += " --redis " + shq(addr)
+	rs, err := d.openRedis(ctx, addr)
+	if err != nil {
+		return res, remedy, err
+	}
+	defer func() { _ = rs.Close() }() // ignored: the apply result is already read; a close error cannot change it
+	res, err = config.Apply(ctx, st, rs, config.KindRoute, actor, false, func(config.Op) {})
+	if res.Kind == "" {
+		res.RedisRev = -1
+	}
+	if res.Stamped {
+		res.RedisRev = res.Rev
+	}
+	if err == nil && res.RedisRev < rev {
+		err = fmt.Errorf("copy revision %d is below committed revision %d", res.RedisRev, rev)
+	}
+	return res, remedy, err
+}
+
+// finishKindWrite completes a committed write. Only routes synchronously
+// apply; text and JSON report the same failure, without undoing history
+// (ConfigApply.tla NoSilentUnappliedWrite and RouteResult).
+func finishKindWrite(ctx context.Context, st config.Store, kind, actor string, rev int64, c conn, d deps, stdout, stderr io.Writer, o *tool.Out) int {
+	if kind != config.KindRoute {
+		if o != nil {
+			return emit(stdout, o)
+		}
+		return 0
+	}
+	res, remedy, err := copyRouteWrite(ctx, st, actor, rev, c, d)
+	word, code := "APPLY", 0
+	if err != nil {
+		word, code = "NOT-APPLIED", 1
+	}
+	if o != nil {
+		o.Fact("apply_status", word).Fact("applied", res.RedisRev).Fact("apply_rev", res.Rev)
+		if err != nil {
+			o.Status, o.Exit, o.Remedy = tool.Refused, 1, remedy
+			o.Why = append(o.Why, plain(err.Error()))
+		}
+		return emit(stdout, o)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "CONFIG NOT-APPLIED kind=route rev=%d applied=%d why=%s; run: %s\n", rev, res.RedisRev, oneLine(err.Error()), remedy)
+	} else {
+		fmt.Fprintf(stdout, "CONFIG APPLY kind=route add=%d set=%d remove=%d rev=%d applied=%d\n", res.Add, res.Set, res.Remove, res.Rev, res.RedisRev)
+	}
+	return code
 }

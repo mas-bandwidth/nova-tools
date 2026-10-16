@@ -23,7 +23,7 @@ import (
 // packet once the member names it in --have.
 func TestAReadWhoseStageFailedIsRunAgainNotHeldAsAGhost(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	p := Packet{Card: "p1.r1.m", Kind: "read", As: "m", Primary: "p1", Attempt: 1, Gen: 1, Epoch: 7, Head: fullSha}
 	g.s.set("queue", 0, queueJSON(t, 7, ready(p.Card)))
 	g.s.set("take", 0, takeJSON(t, p))

@@ -92,6 +92,10 @@ type Tool struct {
 	// A topic's name is none of the tool's verbs, since `help <name>` is one
 	// door (Problems).
 	Topics []Topic
+	// GroupNotes are notes a verb group's help prints under its examples
+	// (`<tool> <group> -h`), keyed by the group's word: what a reader of only
+	// that group needs, such as where an older set of its verbs went.
+	GroupNotes map[string]string
 }
 
 // Topic is one help topic: `<tool> help <name>` prints Text on stdout at exit
@@ -295,6 +299,20 @@ func (t *Tool) inGroup(args, members []string, asJSON bool, stdout, stderr io.Wr
 			}
 		}
 		fmt.Fprintf(stdout, "`%s %s <verb> -h` lists a verb's flags.\nexit codes: %s\n", t.Name, g, t.ExitTable)
+		var examples []string
+		for _, v := range t.verbs() {
+			if slices.Contains(members, v.Name) {
+				for _, l := range lines(v.Example) {
+					examples = append(examples, "  "+t.Name+" "+l)
+				}
+			}
+		}
+		if len(examples) > 0 {
+			fmt.Fprintf(stdout, "\nexample:\n%s\n", strings.Join(examples, "\n"))
+		}
+		if note := strings.TrimSpace(t.GroupNotes[g]); note != "" {
+			fmt.Fprintf(stdout, "\n%s\n", note)
+		}
 		return 0
 	}
 	why := g + " wants one of its verbs;"
@@ -586,8 +604,15 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 	}
 	if c.Given("dry-run") && c.Bool("dry-run") {
 		switch {
-		case !c.dryRead: // a tool bug its own tests meet: the verb ran as if for real
-			o = Fail("--dry-run was given and the verb never read it (Call.DryRun); it may have written")
+		case !c.dryRead:
+			// A non-OK result keeps its underlying error and remedy. It does not
+			// prove that the verb wrote nothing, so the safety diagnostic stays.
+			why := "--dry-run was given and the verb never read it (Call.DryRun); it may have written"
+			if o.Status == OK {
+				o = Fail(why)
+			} else {
+				o.Note(why)
+			}
 		case o.Status == OK && !hasFact(o, "dry_run"):
 			o.Fact("dry_run", true)
 		}

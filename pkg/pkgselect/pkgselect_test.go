@@ -62,14 +62,14 @@ func (f *fake) called(prefix string) bool {
 
 const (
 	mod         = "example.com/m"
-	listTree    = "go list ./cmd/... ./internal/... ./pkg/... ./tools/..."
-	listDeps    = "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./pkg/... ./tools/..."
+	listTree    = "go list ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/..."
+	listDeps    = "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/..."
 	diffCmd     = "git diff --name-only base HEAD"
 	catFileCmd  = "git cat-file -e base^{commit}"
 	shallowCmd  = "git rev-parse --is-shallow-repository"
 	fetchCmd    = "git fetch -q origin base"
 	fetchDeep   = "git fetch -q --depth=1 origin base"
-	lsFilesCmd  = "git ls-files -z -- cmd/*.go internal/*.go pkg/*.go tools/*.go"
+	lsFilesCmd  = "git ls-files -z -- cmd/*.go hook/*.go internal/*.go pkg/*.go tools/*.go"
 	cacheErr    = "open /home/u/.cache/go-build/5e/5e1f-d: no such file or directory\n"
 	wholeTreeIs = "./cmd/foo\n./internal/bar\n./internal/ci\n./internal/docs\n"
 )
@@ -890,4 +890,54 @@ func TestAPullRequestKeepsNovaSwarmOffTheMacLegs(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 2, pushed, "a push deals both to macOS")
+}
+
+// hook/ is a package of the module (it was a nested module, tested only by a
+// make target that is gone), so it must reach every selection: the whole tree
+// from go list and from the tracked files, a change under it, and a non-Go
+// file under its testdata. Before hook joined Roots, go list never named it,
+// the whole-tree fallback never read it, and its tests ran in no CI leg.
+func TestTheHookPackagesAreSelected(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	for name, body := range map[string]string{
+		"hook/hook.go":              "package hook\n",
+		"hook/hooktest/hooktest.go": "package hooktest\n",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+	}
+	listing := imports("cmd/foo", "hook", "hook/hooktest", "internal/bar", "internal/ci", "internal/docs")
+	deps := depsListing + mod + "/hook fmt\n" + mod + "/hook/hooktest " + mod + "/hook fmt\n"
+
+	t.Run("the full selection holds the hook packages", func(t *testing.T) {
+		t.Parallel()
+		out, err := Select(newFake(map[string]Result{listTree: {Stdout: listing}}).run, Options{Root: root, All: true})
+		require.NoError(t, err)
+		assert.Subset(t, out.Packages, []string{"./hook", "./hook/hooktest"})
+	})
+	t.Run("the whole tree from the tracked files holds hook", func(t *testing.T) {
+		t.Parallel()
+		dep, err := LoadDeprecated(root)
+		require.NoError(t, err)
+		s := &selector{run: newFake(map[string]Result{lsFilesCmd: {Stdout: tracked() + "hook/hook.go\x00hook/hooktest/hooktest.go\x00"}}).run, o: Options{Root: root}, dep: dep}
+		got, err := s.treeFromFiles()
+		require.NoError(t, err)
+		assert.Subset(t, got, []string{"./hook", "./hook/hooktest"})
+	})
+	t.Run("a hook-only change selects hook and its dependents", func(t *testing.T) {
+		t.Parallel()
+		f := newFake(map[string]Result{diffCmd: {Stdout: "hook/hook.go\n"}, listTree: {Stdout: listing}, listDeps: {Stdout: deps}})
+		out, err := Select(f.run, Options{Root: root, Base: "base"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"./hook", "./hook/hooktest", "./internal/ci", "./internal/docs"}, out.Packages)
+	})
+	t.Run("a file under hook's testdata selects hook", func(t *testing.T) {
+		t.Parallel()
+		f := newFake(map[string]Result{diffCmd: {Stdout: "hook/testdata/rec.txt\n"}, listTree: {Stdout: listing}, listDeps: {Stdout: deps}})
+		out, err := Select(f.run, Options{Root: root, Base: "base"})
+		require.NoError(t, err)
+		assert.Contains(t, out.Packages, "./hook")
+	})
 }

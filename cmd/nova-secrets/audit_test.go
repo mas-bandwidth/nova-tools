@@ -55,6 +55,9 @@ var secretsAudit = audit.Config{
 		`"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/pkg/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/pkg/secrets"`,
+		// seatcred only reads and validates the private seat environment, then
+		// returns a child-process setting; it does not print or write a value.
+		`"github.com/mas-bandwidth/nova-tools/pkg/seatcred"`,
 	},
 	MinClassified: 20,
 }

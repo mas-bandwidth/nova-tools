@@ -1,0 +1,6 @@
+head: 0123456789abcdef0123456789abcdef01234567
+branch: b
+verdict: ok
+gate: g
+output: -
+report:

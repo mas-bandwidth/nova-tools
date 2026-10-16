@@ -100,7 +100,7 @@ func TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead(t *testing.T) {
 
 	t.Run("a head that is the program's output is an ok script read and no model starts", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "r", Width: 1, Reader: true, ScriptVerify: verifier.Verify})
+		g := newWidthRig(1, Config{As: "r", Reader: true, ScriptVerify: verifier.Verify})
 		tick(t, g, read(made))
 		assert.Empty(t, g.r.started(), "no model child: %s", g.out.String())
 		lines := g.s.lines("report")
@@ -116,7 +116,7 @@ func TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			g := newRig(Config{As: "r", Width: 1, Reader: true, ScriptVerify: verifier.Verify})
+			g := newWidthRig(1, Config{As: "r", Reader: true, ScriptVerify: verifier.Verify})
 			tick(t, g, read(tc.head))
 			assert.Equal(t, []string{"r1"}, g.r.started(), "the model read starts: %s", g.out.String())
 			assert.Contains(t, g.out.String(), "read r1: script read gave no verdict (")
@@ -150,10 +150,10 @@ func TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead(t *testing.T) {
 
 	t.Run("a reader with no script verifier and a model card start a model child as today", func(t *testing.T) {
 		t.Parallel()
-		g := newRig(Config{As: "r", Width: 1, Reader: true})
+		g := newWidthRig(1, Config{As: "r", Reader: true})
 		tick(t, g, read(made))
 		assert.Equal(t, []string{"r1"}, g.r.started())
-		g = newRig(Config{As: "r", Width: 1, Reader: true, ScriptVerify: verifier.Verify})
+		g = newWidthRig(1, Config{As: "r", Reader: true, ScriptVerify: verifier.Verify})
 		p := read(made)
 		p.Brief = "STATUS: x\n\nTHE TASK. model work.\n"
 		tick(t, g, p)

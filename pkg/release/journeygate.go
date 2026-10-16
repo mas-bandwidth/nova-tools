@@ -1,29 +1,8 @@
 package release
 
-// THE RECOVERY JOURNEYS, IN FRONT OF THE TAG.
-//
-// A review of the release lane (item 5): the chaos suite (internal/sprint/friend_chaos_functional_test.go:
-// friend against the sprint's store, so it lives with the sprint)
-// turns every check the landed code cannot yet meet into a named skip, so that a
-// red-by-design test does not block the merge queue -- and `go test` calls a run
-// whose subtests all skipped green. A green run was being read as proof that a
-// friend whose harness closed, whose session went silent, who hit a usage limit or
-// whose bus credential was revoked is found, has his cards dealt elsewhere and
-// comes back. It proved none of that.
-//
-// So a release that PROMISES those journeys is cut only on evidence: a `go test
-// -json` run of each promised journey, under a header that binds it to the revision
-// being tagged, to the build installed where it ran, and to the function and schema
-// versions it ran against. Each promised journey is read off that run one by one --
-// never off the parent's verdict -- and anything but a pass is incomplete: owed
-// (the suite's own "OWED <card>: ..." skip), skipped, failed, or not run at all.
-// One skip is not a broken promise: a journey that names a platform as optional
-// may say PLATFORM UNAVAILABLE for it, and the line says so rather than counting it.
-//
-// The way past is the dogfood gate's: --no-journey-gate --reason <why>, and every
-// incomplete journey is then written into the CHANGELOG section under the reason,
-// because a release that shipped a promise it had not kept says so where a person
-// reads what shipped.
+// Recovery journeys bind a release to individual passing tests and installed
+// build receipts. A green package or parent test never proves skipped, failed
+// or absent journeys. The explicit waiver records every incomplete promise.
 
 import (
 	"bufio"
@@ -41,9 +20,11 @@ import (
 // at the release revision.
 type Journey struct {
 	// Package is the test's package, relative to the module root, such as
-	// internal/sprint. A checkout without it does not ship the capability, and
-	// does not promise its journeys.
+	// hook. Evidence names this package even when a consumer imports it.
 	Package string
+	// ShipsWith also selects the journey when the checkout ships this capability
+	// through a dependency instead of containing the test package itself.
+	ShipsWith string
 	// Test is the test's name as the source spells it, Parent/subtest, with the
 	// spaces `go test` turns into underscores.
 	Test string
@@ -53,16 +34,14 @@ type Journey struct {
 	Optional []string
 }
 
-// PromisedJourneys are the recovery journeys a release that ships the sprint
-// package promises (the chaos suite, friend against the sprint's store, lives with
-// the sprint): each way a friend fails, detected within its bound, his cards
-// dealt elsewhere, recovered (docs/SPEC-FRIEND.md, "Chaos").
+// PromisedJourneys are the hook recovery promises of nova-tools and the
+// deduplicated sprint. Sprint imports the hook rather than copying its tests.
 var PromisedJourneys = []Journey{
-	{Package: "internal/sprint", Test: "TestEveryFriendFailureShowsWithinItsBound/harness closed: down within 1 minute"},
-	{Package: "internal/sprint", Test: "TestEveryFriendFailureShowsWithinItsBound/session silent: down within 15 minutes of bus silence"},
-	{Package: "internal/sprint", Test: "TestEveryFriendFailureShowsWithinItsBound/usage limit: down until the reset, woken after"},
-	{Package: "internal/sprint", Test: "TestEveryFriendFailureShowsWithinItsBound/bus credential revoked: an alarm on the first failed send"},
-	{Package: "internal/sprint", Test: "TestEveryFriendFailureShowsWithinItsBound/hold: no card left on him, his cards dealt elsewhere"},
+	{Package: "hook", ShipsWith: "internal/sprint", Test: "TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce"},
+	{Package: "hook", ShipsWith: "internal/sprint", Test: "TestNoServerOrNoAnswerIsNoEvidence"},
+	{Package: "hook", ShipsWith: "internal/sprint", Test: "TestTheGateRefusesEveryoneWhileTheServerIsStale"},
+	{Package: "hook", ShipsWith: "internal/sprint", Test: "TestAStaleAnswerIsDownWithAFreshServer"},
+	{Package: "cmd/nova-hook", ShipsWith: "internal/sprint", Test: "TestALostAnswerIsNeverToldTwice"},
 }
 
 // EvidenceKind is what the evidence header's "evidence" field says, so a file of
@@ -74,8 +53,7 @@ const EvidenceKind = "release-journeys"
 // It counts only for a platform the journey names as Optional.
 const PlatformUnavailable = "PLATFORM UNAVAILABLE "
 
-// owedMark is how the chaos suite names a part the landed code cannot meet yet
-// (owed.check in internal/sprint/friend_chaos_functional_test.go).
+// owedMark names a journey whose promised behavior remains unimplemented.
 const owedMark = "OWED "
 
 // EvidenceHeader is the evidence file's first line. Every field is required: a
@@ -112,7 +90,7 @@ const (
 )
 
 // JourneyNote is the gate said where a person meets it.
-var JourneyNote = "cut runs the journey gate once the head is known: a checkout that ships internal/sprint PROMISES its recovery journeys, and the cut refuses unless --journeys names a `go test -json` run of each, " +
+var JourneyNote = "cut runs the journey gate once the head is known: a checkout that ships hook or the deduplicated sprint PROMISES its hook recovery journeys, and the cut refuses unless --journeys names a `go test -json` run of each, " +
 	"under a first line {\"evidence\":\"" + EvidenceKind + "\",\"revision\":<the sha being tagged>,\"functions\":<v>,\"schema\":<v>,\"installed\":[{\"machine\",\"build\",\"revision\"}]}. " +
 	"Each journey is read on its own and only a pass proves it: owed, skipped, failed and not-run are incomplete, and a green parent over skipped subtests proves nothing. " +
 	"A skip saying `" + PlatformUnavailable + "<platform>` is named, and is not incomplete only for a platform the journey names as optional. " +
@@ -155,7 +133,8 @@ func promisedJourneys(deps Deps, checkout string) []Journey {
 	}
 	var out []Journey
 	for _, j := range PromisedJourneys {
-		if checkout != "" && exists(filepath.Join(checkout, filepath.FromSlash(j.Package))) {
+		if checkout != "" && (exists(filepath.Join(checkout, filepath.FromSlash(j.Package))) ||
+			j.ShipsWith != "" && exists(filepath.Join(checkout, filepath.FromSlash(j.ShipsWith)))) {
 			out = append(out, j)
 		}
 	}

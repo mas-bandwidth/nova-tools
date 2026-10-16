@@ -137,7 +137,7 @@ func TestReviewABoundedMemberLoopDoesNotReturnWithAStartInFlight(t *testing.T) {
 	rn := &lcrHeldRunner{entered: make(chan struct{}), release: make(chan struct{}), returned: make(chan struct{})}
 	sp := &lcrSprint{}
 	var out, errb bytes.Buffer
-	m := member.New(member.Config{As: "m1", Width: 1, Background: true}, sp, rn, lcrShaPusher{}, &out)
+	m := member.New(member.Config{As: "m1", Background: true}, rowWidth(sp, 1), rn, lcrShaPusher{}, &out)
 	// the loop waits for the start it began (WaitLong), so it runs beside the test, which
 	// lets the start go once it is in flight
 	type result struct {

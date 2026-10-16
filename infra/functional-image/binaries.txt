@@ -35,6 +35,7 @@ log	absent	macOS unified logging; only the darwin sandbox tests read it
 lsof	apt	lsof
 make	apt	make
 mkdir	base	coreutils
+node	apt	nodejs
 nc	absent	only the darwin sandbox socket test dials with it and that test skips on Linux
 nova-check	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
 nova-config	absent	only tlacheck run --bench any reads the fleet's machine rows with it, on a working machine; its tests hand in the rows

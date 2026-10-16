@@ -4799,7 +4799,7 @@ func TestAReadAgainstATagOrAShaNeedsNoFetch(t *testing.T) {
 // (reader-<m> is the reader on m), read with its queue every tick as a member
 // reads its own (the owner, 2026-10-02: "why not just have as many readers as
 // workers per-machine"). Nothing here names width as missing; the run fails
-// only at the server no test has, and the start line says width=row.
+// only at the server no test has, and the start line says width=config.
 func TestAReaderNeedsNoWidth(t *testing.T) {
 	t.Parallel()
 	var args []string
@@ -4815,5 +4815,60 @@ func TestAReaderNeedsNoWidth(t *testing.T) {
 	var out, errb bytes.Buffer
 	run(args, strings.NewReader(""), &out, &errb, time.Now())
 	assert.NotContains(t, errb.String(), "--width", "a reader without --width is refused:\n%s", errb.String())
-	assert.Contains(t, out.String(), "MEMBER reader as=reader-m1 width=row ", "the start line:\n%s", out.String())
+	assert.Contains(t, out.String(), "MEMBER reader as=reader-m1 width=config ", "the start line:\n%s", out.String())
+}
+
+// TestAPlumbingRewriteCannotPassThePushBoundary pins RewriteKeptIsPushed in
+// tla/CardContract.tla through real Git, outside every shim and command parser.
+func TestAPlumbingRewriteCannotPassThePushBoundary(t *testing.T) {
+	t.Parallel()
+	for _, keepStage := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stage-on-child-ref=%t", keepStage), func(t *testing.T) {
+			t.Parallel()
+			b := newPushBench(t)
+			staged := b.commit(t, "staged work\n")
+			b.staged(t, staged)
+			gitAs(t, b.checkout, "push", "-q", "origin", staged+":refs/heads/main")
+			tree := gitAs(t, b.checkout, "rev-parse", "HEAD^{tree}")
+			rewritten := gitAs(t, b.checkout, "commit-tree", tree, "-p", b.base, "-m", "rewritten below staged")
+			if keepStage {
+				gitAs(t, b.checkout, "branch", "kept-stage", staged)
+			}
+			branch := gitAs(t, b.checkout, "symbolic-ref", "HEAD")
+			gitAs(t, b.checkout, "update-ref", branch, rewritten, staged)
+			originRefs := gitAs(t, b.origin, "for-each-ref", "--format=%(refname) %(objectname)")
+			sourceRefs := gitAs(t, b.checkout, "for-each-ref", "--format=%(refname) %(objectname)")
+			slot := filepath.Join(b.slots, launchName(b.p), cardcontract.StagedName)
+			stageRecord, err := os.ReadFile(slot)
+			require.NoError(t, err)
+			record := &recordGitRun{}
+			g := b.pusher()
+			g.git = record.run
+			r := member.Result{Head: rewritten}
+			first := g.Push(b.p, r)
+			assert.Empty(t, first.Sha)
+			assert.Contains(t, first.Refused, "does not descend from the staged commit "+staged)
+			assert.Equal(t, first, g.Push(b.p, r), "a second refusal says the same thing")
+			assert.Equal(t, originRefs, gitAs(t, b.origin, "for-each-ref", "--format=%(refname) %(objectname)"))
+			assert.Equal(t, rewritten, gitAs(t, b.checkout, "rev-parse", "HEAD"))
+			assert.Equal(t, sourceRefs, gitAs(t, b.checkout, "for-each-ref", "--format=%(refname) %(objectname)"))
+			after, err := os.ReadFile(slot)
+			require.NoError(t, err)
+			assert.Equal(t, stageRecord, after)
+			assert.Equal(t, staged, gitAs(t, b.origin, "rev-parse", "main"), "origin keeps the exact staged commit")
+			for _, args := range record.argv {
+				assert.NotEqual(t, "push", args[0], "the ancestry guard stops before any push, not at origin's fast-forward check")
+			}
+			assert.Empty(t, b.originHas(t, b.p.Branch), "the absent target branch makes a missing guard observable")
+
+			repaired := gitAs(t, b.checkout, "commit-tree", tree, "-p", staged, "-m", "work on top of stage")
+			gitAs(t, b.checkout, "update-ref", branch, repaired, rewritten)
+			want := member.Push{Sha: repaired}
+			assert.Equal(t, want, g.Push(b.p, member.Result{Head: repaired}))
+			assert.Equal(t, want, g.Push(b.p, member.Result{Head: repaired}), "the same accepted head is pushed idempotently")
+			assert.Equal(t, repaired, b.originHas(t, b.p.Branch))
+			gitAs(t, b.origin, "merge-base", "--is-ancestor", staged, b.originHas(t, b.p.Branch))
+			assert.Equal(t, staged, gitAs(t, b.origin, "rev-parse", "main"))
+		})
+	}
 }

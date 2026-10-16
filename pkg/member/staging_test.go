@@ -13,7 +13,7 @@ import (
 // (tla/CardContract.tla, StageRefused).
 func TestAStagingRefusedLaunchIsFinishedWithTheStagingKindAndReason(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	p := pk("c1")
 	p.Gen = 2
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
@@ -45,7 +45,7 @@ func TestJudgeNamesAStagingRefusalByItsKind(t *testing.T) {
 // routes ended so together, and each end was judged as its card's.
 func TestALaunchTheUsageSourceEndedIsTheMembersFailureAndRestsTheMember(t *testing.T) {
 	t.Parallel()
-	g := newRig(Config{As: "m", Width: 2})
+	g := newWidthRig(2, Config{As: "m"})
 	p := pk("c1")
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	_, err := g.tickAt(t, 100)

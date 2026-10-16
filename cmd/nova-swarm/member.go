@@ -23,6 +23,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
 	"github.com/mas-bandwidth/nova-tools/pkg/binstamp"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
@@ -54,7 +55,6 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	fs.SetOutput(io.Discard)
 	f := &flags{verb: "member", fs: fs}
 	as := fs.String("as", "", "required: this machine's `name`, its row in the fleet table (with --reader, its row in the readers table, reader-<machine>)")
-	width := fs.Int("width", 0, "an override of the most cards it runs at once, a twin's; a worker runs its fleet row's width, read every tick: a member its own row's, a reader its machine's (reader-<m> runs at m's width)")
 	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards, at its machine's width; a flash card's first read is a decide read, asked with JEV_API_KEY from this environment (docs/SPEC-SPRINT.md section 6)")
 	harness := fs.String("harness", "", "required: the harness binary `path` each card's child runs under (native --harness)")
 	model := fs.String("model", "", "the `provider/model` a card with no route runs on; a reader given it runs every read on it")
@@ -79,17 +79,21 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	warnLoad := fs.Float64("warn-load", 0, "the one-minute host `load` at which a local child start warns, at or below --max-load (default 0: no warning)")
 	gocacheGiB := fs.Int("gocache-limit", int(gocache.Limit/gib), "the `GiB` the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
+	prompt := fs.String("prompt", "", "an identity prompt `file` prepended to every card's prompt, work and read alike: a one-shot friend's name, pronouns and voice, the member run --as friend.<name> (nova-config friend --session one-shot); read once at start, refused when unreadable or empty")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
+	// a worker runs the width its queue answers on every pass, which the server reads from
+	// nova-config: a member its own machine row's, a reader its machine's (reader-<m>,
+	// sprint.ReaderMachine). It has no width of its own and no --width flag: a loop row or
+	// plist that still passes one is refused before the parse, naming the remedy
+	// (docs/SPEC-SWARM.md, the width; tla/FriendLane.tla RowWidth)
+	if why := widthRefusal(args); why != "" {
+		refuse(stderr, " member", why)
+		return 2
+	}
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.want(*as, "as", "the member's name in the fleet table (a reader's in the readers table with --reader)")
-	// a worker runs the width its fleet row names (fleet up --width, fleet sync), read with
-	// its queue every tick: a member its own row's, a reader its machine's (reader-<m>,
-	// sprint.ReaderMachine); --width is a twin's override
-	if *width < 0 {
-		f.add("--width is an override of the fleet row's width and is at least 1; leave it out to run the row's")
-	}
 	f.want(*server, "server", "the sprint server's host:port, the run loop started with nova-sprint run --listen on the coordinator's machine: the member sends every sprint verb there and opens no store")
 	f.want(*harness, "harness", "the harness binary path a card runs under (nova-swarm native --harness)")
 	// the card decides its model: the deal (a read: the ask) writes the route it drew
@@ -152,6 +156,16 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *identity != "" {
 		if _, err := swarm.ParseIdentity(*identity); err != nil {
 			f.add(err.Error())
+		}
+	}
+	// a one-shot friend's identity prompt, read here so a file that cannot carry one is a
+	// refusal before any card is taken (member.ReadIdentityPrompt); each launch reads it again
+	// through native --prompt
+	if _, err := member.ReadIdentityPrompt(*prompt); err != nil {
+		f.add(err.Error())
+	} else if *prompt != "" {
+		if abs, aerr := filepath.Abs(*prompt); aerr == nil {
+			*prompt = abs // each launch reads it, wherever it runs from
 		}
 	}
 	pass := splitNames(*passFlag)
@@ -217,7 +231,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity, prompt: *prompt,
 		server: *server, as: *as,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
@@ -246,13 +260,15 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	cfg := memberConfig(*as, *width, *reader, meter, room, *root, *noWall)
+	cfg := memberConfig(*as, *reader, meter, room, *root, *noWall)
 	cfg.Sleep = time.Sleep // harness starts StartGap apart
 	// a beat the server refuses marks this member's own status file, read by doctor
 	// (member.Config.Status); the --load-unmeasured probe is asked once at start
 	cfg.Status = memberStatusFile(*as, *root)
 	if !*reader {
 		cfg.LoadUnmeasured = probeLoadUnmeasured(send)
+		// the machine's gate facts, measured once at start, ride every beat (facts.go)
+		cfg.Facts = machineFacts(localProbe())
 	}
 	// the attempt decision reads the decision key in this process when --pass names
 	// it and the environment does not hold it (keys.go)
@@ -262,11 +278,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *reader {
 		kind = "reader"
 	}
-	widthWord := "row" // the fleet row's, read every tick
-	if *width > 0 {
-		widthWord = "override:" + strconv.Itoa(*width)
-	}
-	modelWord := "card" // each card's route, from its packet
+	widthWord := "config" // nova-config's, answered with the queue every pass
+	modelWord := "card"   // each card's route, from its packet
 	if *model != "" {
 		modelWord = "card,override:" + *model
 	}
@@ -306,8 +319,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 // the member's wall, so a script card whose head is its program's output needs no model
 // read (docs/SPEC-SPRINT.md, the script read); a worker's is nil. cmdMember sets Sleep,
 // so its pass loop's clock stays where the push table names it.
-func memberConfig(as string, width int, reader bool, meter *hostload.Sampler, room func() (bool, string), root string, noWall bool) member.Config {
-	cfg := member.Config{As: as, Width: width, Reader: reader, Meter: meter, Room: room, Background: true, Attempt: workAttempt(reader, os.Getenv)}
+func memberConfig(as string, reader bool, meter *hostload.Sampler, room func() (bool, string), root string, noWall bool) member.Config {
+	cfg := member.Config{As: as, Reader: reader, Meter: meter, Room: room, Background: true, Attempt: workAttempt(reader, os.Getenv)}
 	if reader {
 		cfg.ScriptVerify = scriptVerify(root, "", noWall)
 	}
@@ -544,6 +557,7 @@ type nativeRunner struct {
 	self, harness, model, root, slots, resultsRoot string
 	deadline, stageWall                            time.Duration
 	tokens, auth, config, worker, identity         string
+	prompt                                         string // the identity prompt file handed to each launch (native --prompt); "" for none
 	noWall                                         bool
 	// server and as are the sprint's server and this worker's name: a limited route's
 	// child takes its global rate budget there (--budget-server, nativebudget.go)
@@ -701,11 +715,15 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	pidPath := filepath.Join(r.slots, name+".pid")
 	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
+		launchBilling, readErr := restoreLaunchBilling(slot, p.Billing)
+		if readErr != nil {
+			return nil, readErr
+		}
 		proc, started, why := adoptLane(pidPath, slot, pid)
 		if why != nil {
 			return nil, why
 		}
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", adopted: true, started: started, mark: slot}
+		c := &nativeChild{billing: launchBilling, muse: r.runsMuse(p), card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc, read: p.Kind == "read", adopted: true, started: started, mark: slot}
 		r.addLane(name, c)
 		go func() {
 			defer proc.Release() // ignored: the adopted process handle, after its final observation
@@ -762,9 +780,15 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if err := cardcontract.WriteFrame(framePath, frameOf(p, model, r.root)); err != nil {
 		return nil, err
 	}
+	if err := os.WriteFile(filepath.Join(slot, "receipt-billing"), []byte(p.Billing+"\n"), 0644); err != nil {
+		return nil, fmt.Errorf("cannot record launch receipt contract: %w", err)
+	}
 	args := []string{"native", "--harness", bin, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
 		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results,
 		"--stage-timeout", r.stageTimeout().String()}
+	if p.Billing != "" {
+		args = append(args, "--billing", p.Billing)
+	}
 	if p.USD != "" {
 		// the route's dollar budget, beside its token budget (#5094); a reader's override
 		// names tokens, not dollars, so an overridden read keeps the route's
@@ -784,6 +808,9 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	}
 	if r.identity != "" {
 		args = append(args, "--identity", r.identity)
+	}
+	if r.prompt != "" {
+		args = append(args, "--prompt", r.prompt)
 	}
 	if (p.RateRPM > 0 || p.RateConcurrent > 0) && r.server != "" {
 		// a limited route (nova-sprint routes limit): every model request of the child takes
@@ -821,7 +848,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read", started: swarm.LaneStartStamp(cmd.Process.Pid), mark: slot}
+	c := &nativeChild{billing: p.Billing, muse: harness.KindOf(bin) == harness.Muse, card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process, read: p.Kind == "read", started: swarm.LaneStartStamp(cmd.Process.Pid), mark: slot}
 	r.addLane(name, c)
 	go func() {
 		c.err = cmd.Wait()
@@ -899,6 +926,12 @@ func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline ti
 // harnesses) that program on this member's PATH. A headless program this machine has not
 // got refuses the launch, so the sprint deals the card to a member that has.
 func (r *nativeRunner) harnessFor(p member.Packet) (string, error) {
+	if p.Harness == harness.Muse {
+		museKey, _ := harness.MuseInput(r.childEnv("meta/"))
+		if strings.TrimSpace(museKey) == "" {
+			return "", fmt.Errorf("card %s route %s needs META_API_KEY for muse; add the key to this member seat and --pass META_API_KEY or NOVA_SWARM_KEYS names, or deal the card to a member with the key", p.Card, p.Route)
+		}
+	}
 	if !harness.IsHeadless(p.Harness) {
 		return r.harness, nil
 	}
@@ -911,6 +944,15 @@ func (r *nativeRunner) harnessFor(p member.Packet) (string, error) {
 		return "", fmt.Errorf("card %s's route %s runs under %s, which is on no PATH entry of this member: install it and log in, or deal the card to a member that has it", p.Card, p.Route, p.Harness)
 	}
 	return bin, nil
+}
+
+// runsMuse is whether a packet runs under Muse on this member: its route names Muse, or it
+// names no headless harness and the member's own --harness is Muse (harnessFor).
+func (r *nativeRunner) runsMuse(p member.Packet) bool {
+	if harness.IsHeadless(p.Harness) {
+		return p.Harness == harness.Muse
+	}
+	return harness.KindOf(r.harness) == harness.Muse
 }
 
 // launchName is the name of one launch: the card at its generation (a read:
@@ -951,7 +993,11 @@ func processAlive(pid int) bool {
 }
 
 type nativeChild struct {
+	billing                     string // immutable launch declaration, restored from the generation slot on adoption
 	card, logPath, results, job string
+	// muse is whether the launch runs under Muse (the route's harness, or the member's own):
+	// the sprint takes a Muse receipt of contract 2 only with its raw_usage provenance.
+	muse bool
 	// read is whether this launch is a READ (member.Packet.Kind): a wall refusal on a read
 	// is the reader's own environment, never the work's (member.EndEnvironment).
 	read   bool
@@ -1034,6 +1080,7 @@ func mergeReceiptSpend(line string, recovered cardcost.Usage) string {
 	// The receipt is authoritative when the summary is absent or disagrees. Its
 	// empty actual is unknown, and must clear any partial summary price.
 	u.Actual, u.ActualBy = recovered.Actual, recovered.ActualBy
+	u.Billing, u.ReceiptVersion, u.Raw = recovered.Billing, recovered.ReceiptVersion, recovered.Raw
 	return u.String()
 }
 
@@ -1041,17 +1088,25 @@ func mergeReceiptSpend(line string, recovered cardcost.Usage) string {
 // durable receipt rows independently report. A disagreement marks a truncated summary.
 func spendMatchesReceipt(summary string, recovered cardcost.Usage) bool {
 	u := cardcost.ParseSpend(summary)
+	if u.Billing != recovered.Billing || u.ReceiptVersion != recovered.ReceiptVersion {
+		return false
+	}
+	a, aErr := cardcost.EncodeRaw(u.Raw)
+	b, bErr := cardcost.EncodeRaw(recovered.Raw)
+	if aErr != nil || bErr != nil || a != b {
+		return false
+	}
 	counts := [][2]int64{
 		{u.Tokens.Input, recovered.Tokens.Input}, {u.Tokens.CacheRead, recovered.Tokens.CacheRead},
 		{u.Tokens.CacheWrite, recovered.Tokens.CacheWrite}, {u.Tokens.Output, recovered.Tokens.Output},
 		{u.Tokens.Reasoning, recovered.Tokens.Reasoning},
 	}
 	for _, pair := range counts {
-		if pair[1] >= 0 && pair[0] != pair[1] {
+		if pair[0] != pair[1] && (u.ReceiptVersion == cardcost.ReceiptVersion || pair[1] >= 0) {
 			return false
 		}
 	}
-	if recovered.Model != "" && u.Model != recovered.Model {
+	if u.ReceiptVersion != cardcost.ReceiptVersion && recovered.Model != "" && u.Model != recovered.Model {
 		return false
 	}
 	if recovered.Actual != "" {
@@ -1151,6 +1206,10 @@ var nativeGateLine = regexp.MustCompile(`(?m)^NATIVE GATE \S.*? route=(\S+) test
 // before any child ran (native.go; tla/CardContract.tla, StageRefused).
 var nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*\breason=(.+)$`)
 
+// nativeHarnessFault is a cutoff the harness owns: staging, with no card cost
+// (tla/CardContract.tla, LengthIsAHarnessFault).
+var nativeHarnessFault = regexp.MustCompile(`(?m)^NATIVE HARNESS-FAULT .* reason=(.+)$`)
+
 // nativeRefusedWhy is native's NATIVE REFUSED line's reason (refuseNative): a launch
 // native would not run, such as one that could not step behind CI (yieldNative). It is
 // the report of a launch that left no result of its own, so the reason reaches the
@@ -1175,8 +1234,11 @@ var (
 	// states idle reaping, and the finish names the reaping and never the deadline,
 	// which never fired for it (docs/roadmap.sexp, swarm-idle-reap-verdict)
 	nativeIdleReap = regexp.MustCompile(`\breason=idle-reap\b`)
-	nativeKilled   = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
-	nativeTermed   = regexp.MustCompile(`\breason=terminated\b`)
+	// nativeIdleCause is the cause an idle reap names beside its mark (idleSuffix):
+	// `reason=idle-reap cause=harness-never-started`
+	nativeIdleCause = regexp.MustCompile(`\breason=idle-reap cause=(\S+)`)
+	nativeKilled    = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
+	nativeTermed    = regexp.MustCompile(`\breason=terminated\b`)
 	// nativeWall is native's WALL line: the harness's own fence or the OS wall refused a
 	// write outside the job, so the run ended the card for it (swarm.WallLine's `WALL
 	// task=` and swarm.WallRefusedLine's `WALL REFUSED`). On a read it is the reader's own
@@ -1195,9 +1257,14 @@ func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
 		exit := 0
-		var end, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
+		var end, endCause, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
 		var wall time.Duration
 		nativeHasSpend := false
+		// noChild: native refused the launch before it opened the harness output log, so
+		// no harness ran and nothing was spent (native.go, the refusals ahead of the child's
+		// start: the pool identity, the harness binary, the slot). Its missing receipt is
+		// the truth, not a lost one: the finish records the usage unknown and lands.
+		noChild := false
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			carry = cardcontract.ParseCarryLine(b)
 			if m := nativeGateLine.FindSubmatch(b); m != nil {
@@ -1205,6 +1272,9 @@ func (c *nativeChild) Result() member.Result {
 			}
 			if m := nativeRefusedWhy.FindSubmatch(b); m != nil {
 				refused = strings.TrimSpace(string(m[1]))
+				if _, statErr := os.Lstat(filepath.Join(c.job, "harness-output.log")); c.job != "" && !nativeRC.Match(b) && errors.Is(statErr, os.ErrNotExist) {
+					noChild = true
+				}
 			}
 			if m := nativeStageFail.FindSubmatch(b); m != nil {
 				// refused at staging: no child ran, so no result of this launch exists to read
@@ -1217,6 +1287,12 @@ func (c *nativeChild) Result() member.Result {
 				// the machine's fault, never the card's, so it ends as a staging refusal does
 				// and the sprint deals the card to another member (StageRefused)
 				c.result = member.Result{End: member.EndStaging, Staging: strings.TrimSpace(string(m[1])), Report: "no child ran (see " + c.logPath + ")"}
+				return
+			}
+			if m := nativeHarnessFault.FindSubmatch(b); m != nil {
+				// Return before reading spend= or usage.tsv: this harness fault spends
+				// no card attempt, redeal or cost (LengthIsAHarnessFault).
+				c.result = member.Result{End: member.EndStaging, Staging: strings.TrimSpace(string(m[1])), Report: "harness cutoff (see " + c.logPath + ")"}
 				return
 			}
 			if m := nativeRC.FindSubmatch(b); m != nil {
@@ -1233,7 +1309,11 @@ func (c *nativeChild) Result() member.Result {
 				// and what the job spent by token class with the harness's cost (spend=)
 				u := cardcost.NoUsage()
 				if s := nativeSpend.FindSubmatch(b); s != nil {
-					u = cardcost.ParseSpend(string(s[1]))
+					var spendErr error
+					u, spendErr = cardcost.ParseSpendChecked(string(s[1]))
+					if spendErr != nil {
+						usageError = "invalid native receipt: " + spendErr.Error()
+					}
 				}
 				u.Wall, u.Budget = string(m[1]), string(m[2])
 				wall, _ = time.ParseDuration(string(m[1])) // ignored: a wall that does not parse leaves 0, Judge's unknown
@@ -1244,6 +1324,11 @@ func (c *nativeChild) Result() member.Result {
 				nativeSpendLine = string(s[1])
 			}
 			end = nativeEnd(b)
+			if end == member.EndIdleReap {
+				if m := nativeIdleCause.FindSubmatch(b); m != nil {
+					endCause = string(m[1])
+				}
+			}
 			if c.read && nativeWall.Match(b) {
 				// the wall refused a write outside the job: on a read that is the reader's
 				// own environment, not the work's verdict (member.EndEnvironment)
@@ -1262,6 +1347,13 @@ func (c *nativeChild) Result() member.Result {
 			recovered, found, receiptErr := receiptSpend(c.job)
 			if receiptErr != nil {
 				usageError = receiptErr.Error()
+				if recovered.ReceiptVersion != 0 && !strings.Contains(usage, "receipt_version=") {
+					usage += " receipt_version=2"
+				}
+			} else if !found && !noChild && (c.billing != "" || strings.Contains(usage, "receipt_version=")) {
+				usageError = "typed launch has no authoritative durable receipt"
+			} else if found && nativeHasSpend && (c.billing != "" || recovered.ReceiptVersion != 0) && !spendMatchesReceipt(nativeSpendLine, recovered) {
+				usageError = "typed summary disagrees with authoritative durable receipt; preserve all attempt files"
 			} else if found && (usage == "" || !nativeHasSpend || !spendMatchesReceipt(nativeSpendLine, recovered)) {
 				if usage == "" {
 					usage = recovered.String()
@@ -1309,10 +1401,30 @@ func (c *nativeChild) Result() member.Result {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
+		if cr.Fault != "" && !c.read {
+			// the worker of a WORK card wrote a RESULT.md not in the contract's shape: the
+			// failed finish says what is wrong with it, so the next attempt (and the seat
+			// reading the judgment) can fix that and not guess. A read's report is its
+			// reader's own words (the older shapes still carry it): left as they are
+			report = oneline.Cap("RESULT.md shape fault: "+cr.Fault+"; "+report, 600)
+		}
 		if usageError != "" {
 			// Keep the missing receipt visible in the stored cost record and the finish
 			// words; never turn an unreadable snapshot into a measured zero.
 			u := cardcost.ParseUsage(usage)
+			if c.billing != "" || u.ReceiptVersion != 0 || strings.Contains(usage, "receipt_version=") {
+				billing := u.Billing
+				if billing == "" {
+					billing = c.billing
+				}
+				wall, budget := u.Wall, u.Budget
+				u = cardcost.NoUsage()
+				u.ReceiptVersion = cardcost.ReceiptVersion
+				u.Billing = billing
+				u.Wall = wall
+				u.Budget = budget
+				u.Extra = append(u.Extra, "raw_usage=INVALID")
+			}
 			u.Extra = append(u.Extra, "usage_source_error=receipt-unreadable")
 			usage = u.String()
 			report = oneline.Cap(report+"; usage receipt unreadable: "+oneline.Escape(usageError), 300)
@@ -1322,14 +1434,36 @@ func (c *nativeChild) Result() member.Result {
 			// still carries --usage, saying so (noUsageReported), so a routed read's
 			// verdict is kept and recorded unpriced=no-tokens, never refused for a
 			// missing --usage (docs/SPEC-SPRINT.md, "Reads are priced like work")
-			usage = noUsageReported
+			if c.billing != "" {
+				u := cardcost.NoUsage()
+				u.ReceiptVersion = cardcost.ReceiptVersion
+				u.Billing = c.billing
+				u.Extra = []string{"raw_usage=INVALID", "usage_source_error=receipt-missing"}
+				if noChild {
+					// no harness ran (noChild): nothing was spent, so the receipt is not
+					// missing. The usage is recorded unknown, with no raw_usage the paired
+					// parser refuses: raw_usage=INVALID here made every finish of a launch
+					// native refused before its start a receipt-contract refusal, and the
+					// member ran the card again at once (hetzner1, 2026-10-15).
+					u.Extra = []string{"usage_source_error=no-launch"}
+					if c.muse {
+						// the sprint takes a Muse receipt only with raw_usage provenance: one
+						// record of this member's build with no counters (absent, never zero),
+						// the original usage of a Muse that never started
+						u.Raw = &cardcost.RawUsage{Version: cardcost.RawVersion, Records: []cardcost.RawRecord{{Harness: harness.Muse, Execution: "fleet", SourceSchema: "muse-jsonl-v1", ProducerVersion: buildinfo.Version(version), Billing: c.billing, Tokens: map[string]int64{}}}}
+					}
+				}
+				usage = u.String()
+			} else {
+				usage = noUsageReported
+			}
 		}
 		if verdict == "not-done" && gate == member.GateGreen {
 			// the child's gate was red only on failures the gate decision classed flaky, and
 			// their rerun passed: the work is done as far as its gate says; the readers read it
 			verdict, report = "ok", "gate: "+gateTests+" flaky, green on the rerun; "+report
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry, Wall: wall, Exit: exit, HarnessOutput: harnessOutputTail(c.job)}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, EndCause: endCause, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry, Wall: wall, Exit: exit, HarnessOutput: harnessOutputTail(c.job)}
 	})
 	return c.result
 }
@@ -1680,4 +1814,80 @@ func scriptRun(base, sandbox string, noWall bool) func(context.Context, string, 
 		cmd.Dir, cmd.Env = dir, wall.Env(os.Environ())
 		return cmd.Run()
 	}
+}
+
+// restoreLaunchBilling never infers an old launch's contract from its current route.
+func restoreLaunchBilling(slot, declared string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(slot, "receipt-billing"))
+	if errors.Is(err, os.ErrNotExist) && declared == "" {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("launch receipt stamp unavailable; preserve files and finish with original member or start a fresh paired-binary attempt: %w", err)
+	}
+	billing := strings.TrimSpace(string(b))
+	if billing == "" && declared != "" {
+		return "", fmt.Errorf("typed launch receipt stamp empty; preserve files and start a fresh paired-binary attempt")
+	}
+	if billing != "" && billing != cardcost.BillingMetered && billing != cardcost.BillingPlan && billing != cardcost.BillingSubscription {
+		return "", fmt.Errorf("unsupported launch receipt billing; preserve files and start a fresh paired-binary attempt")
+	}
+	if declared != "" && billing != declared {
+		return "", fmt.Errorf("launch receipt billing disagrees with immutable packet; preserve files and start a fresh paired-binary attempt")
+	}
+	return billing, nil
+}
+
+// widthRefusal is why an argv that names --width is refused, "" when it names none. A
+// worker has no width of its own (the width is nova-config's alone, answered with the queue
+// every pass), so a loop row or plist that still passes one fails loudly with its remedy,
+// never run and never read as a width (docs/SPEC-SWARM.md, the width).
+func widthRefusal(args []string) string {
+	as, reader, width, given := "", false, "<n>", false
+	for i := 0; i < len(args); i++ {
+		name, value, hasValue := strings.Cut(strings.TrimLeft(args[i], "-"), "=")
+		if !strings.HasPrefix(args[i], "-") || args[i] == "--" {
+			continue
+		}
+		next := func() string {
+			if hasValue {
+				return value
+			}
+			if i+1 < len(args) {
+				i++
+				return args[i]
+			}
+			return ""
+		}
+		switch name {
+		case "width":
+			given = true
+			if v := next(); v != "" {
+				width = v
+			}
+		case "as":
+			as = next()
+		case "reader":
+			reader = !hasValue || value == "true"
+		}
+	}
+	if !given {
+		return ""
+	}
+	return "--width is refused: the width is nova-config's alone, answered with the queue every pass, and a worker has none of its own; remove --width from the loop row or plist and set the machine row: nova-config machine set " +
+		oneline.Field(machineOfWorker(as, reader)) + " --width " + oneline.Field(width)
+}
+
+// machineOfWorker is the machine row whose width a worker runs: a member's own, a reader
+// named reader-<m> machine m's (sprint.ReaderMachine).
+func machineOfWorker(as string, reader bool) string {
+	if reader {
+		if m, ok := strings.CutPrefix(as, "reader-"); ok && m != "" {
+			return m
+		}
+	}
+	if as == "" {
+		return "<m>"
+	}
+	return as
 }

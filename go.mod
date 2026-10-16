@@ -2,10 +2,10 @@ module github.com/mas-bandwidth/nova-tools
 
 go 1.26.6
 
-// golang.org/x/exp is honnef.co/go/tools' requirement, and the root module
-// builds the linters in the workspace (go.work) alongside the nested modules,
-// so its checksum must stay in go.sum where the workspace build reads it;
-// naming a command from it keeps the module required and the checksum tidy.
+// nova-tools is one module: hook/ and pkg/oneline/ are packages of it, so an
+// outside module that requires nova-tools resolves every package from this one
+// go.mod. golang.org/x/exp is honnef.co/go/tools' requirement; naming a command
+// from it keeps the module required and its checksum tidy in go.sum.
 tool (
 	github.com/kisielk/errcheck
 	golang.org/x/exp/cmd/txtar
@@ -18,8 +18,6 @@ require (
 	github.com/client9/misspell v0.3.4
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/kisielk/errcheck v1.20.0
-	github.com/mas-bandwidth/nova-tools/hook v0.1.0
-	github.com/mas-bandwidth/nova-tools/pkg/oneline v0.0.0-00010101000000-000000000000
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/rogpeppe/go-internal v1.16.0
 	github.com/stretchr/testify v1.12.1
@@ -48,13 +46,3 @@ require (
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260908163034-4bcc4b2ee518 // indirect
 )
-
-// The hook module lives in this repository (hook/, its own go.mod) and is
-// tagged hook/vX.Y.Z for the repositories that require it; here it is the tree.
-replace github.com/mas-bandwidth/nova-tools/hook => ./hook
-
-// The oneline formatter lives in this repository (pkg/oneline/, its own
-// go.mod, no imports beyond the standard library) and is tagged
-// pkg/oneline/vX.Y.Z for the repositories that require it; here it is
-// ./pkg/oneline.
-replace github.com/mas-bandwidth/nova-tools/pkg/oneline => ./pkg/oneline

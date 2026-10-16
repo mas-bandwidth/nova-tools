@@ -107,7 +107,7 @@ const GoCacheLine = "GOCACHE is already set to the machine's shared build cache 
 // share (docs/FRIENDS.md, the working directory; docs/SPEC-CARD-CONTRACT.md section 2).
 // cmd/nova-sprint's friendBrief writes it into the working-directory line it delivers.
 func FriendGoCacheLine(name string) string {
-	return "GOCACHE=~/ai/" + name + "/working/.cache/go-build is your own build cache, warm across your cards: keep it"
+	return fmt.Sprintf("GOCACHE=~/%s-working/.cache/go-build is your own build cache, warm across your cards: keep it", name)
 }
 
 // GateNamesWhoseFile is the sentence the gate step of a card ends with (docs/SPEC-CARD-CONTRACT.md,

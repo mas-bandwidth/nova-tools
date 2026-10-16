@@ -32,6 +32,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 )
 
 // Type is a field's type. It decides the SQL column, the flag's parsing and
@@ -185,6 +186,15 @@ const (
 // still sees exactly one coordinator.
 var FriendRoles = []string{"builder", "may-hold", "reader"}
 
+// MachineRoles are the explicit roles a machine carries into the workshop
+// inventory: bench, services, coordination, or runner. They are read from
+// the machine row and never inferred from other machine facts.
+var MachineRoles = []string{"bench", "coordination", "runner", "services"}
+
+// DefaultMachineRoles gives a new machine the current inventory's bench
+// membership until its other roles are explicitly declared.
+const DefaultMachineRoles = "bench"
+
 // DefaultFriendWidth is a friend's width when her row names none: the jobs
 // she works at once (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to
 // setup width for friends? Start at 8 for each?"). Migration 0018 fills every
@@ -228,6 +238,34 @@ func FriendMode(r Row) string {
 		return m
 	}
 	return FriendModeOneShot
+}
+
+// FriendSessionWords are whether a friend has a live session between cards
+// (docs/SPEC-CONFIG.md, friend; the owner, 2026-10-14: "just make one shot friends,
+// exactly the same code that already works in the fleet, just with an extra prompt at
+// the front"). A live friend (the default) has a session, is on the psychic link
+// and is worked by her friend lane. A one-shot friend has none: she runs as an
+// ordinary fleet member lane on her row (nova-swarm member --as friend.<name>
+// --prompt <file>, the identity prompt prepended to each card brief), has no daemon,
+// hook, lease or presence record, and a bus send naming her is refused at once with
+// the remedy to put it in her next card's brief. Not the mode field: mode is how a
+// lane hands a card (one-shot for every friend), session is whether she has one.
+var FriendSessionWords = []string{FriendSessionLive, FriendSessionOneShot}
+
+// The session words and the default a row without one has.
+const (
+	FriendSessionLive    = "live"
+	FriendSessionOneShot = "one-shot"
+	DefaultFriendSession = FriendSessionLive
+)
+
+// FriendSession is a friend row's session: its session field, live when it names
+// none.
+func FriendSession(r Row) string {
+	if s := r.Fields["session"]; s != "" {
+		return s
+	}
+	return DefaultFriendSession
 }
 
 // FriendPronounSets are the pronoun sets a friend row may name, in the order they
@@ -363,7 +401,7 @@ const FieldAnswerRulesOff = "answer_rules_off"
 // coordinator. Every attempt counts, whatever ended it. Only a coordinator decision on the
 // card opens a fresh window of as many attempts. Apply writes it to SprintKey(FieldMaxAttempts),
 // which the sprint's routes read takes; a stream's own `nova-sprint stream set <s> --attempts
-// <n>` still overrides it for that stream. The same field as nova-sprint's pkg/config copy.
+// <n>` still overrides it for that stream.
 const FieldMaxAttempts = "max_attempts"
 
 // DefaultMaxAttempts is the attempt bound when the sprint row names none: 4.
@@ -373,14 +411,20 @@ const DefaultMaxAttempts = 4
 const MaxAttemptsCeiling = 100
 
 // FieldGitIdentity is the sprint row's author and committer for every commit the sprint
-// machine makes, as "Name <email>". Apply writes it to SprintKey(FieldGitIdentity), which
-// nova-sprint's lander reads; the landing refuses to commit when it is empty, so nova-config
-// must be able to set it (the same field as nova-sprint's pkg/config copy, migration 0037).
+// machine makes (land, merge, rework-at-tip, ledger and roadmap writes), as "Name <email>".
+// Apply writes it to SprintKey(FieldGitIdentity), which the lander reads; an empty or
+// unapplied field is read as DefaultGitIdentity (nova-sprint's working defaults), so the
+// machine commits as its own identity, never the host's global git config.
 const FieldGitIdentity = "git_identity"
 
-// DefaultGitIdentity is the identity the sprint machine commits as when the sprint row
-// names none: a generic machine identity, which the coordinator sets to the fleet's own.
-const DefaultGitIdentity = "nova-sprint <nova-sprint@example.invalid>"
+// DefaultGitIdentity, GitIdentity and ParseGitIdentity live in pkg/gitrun (a leaf with
+// no store dependency, so a worker reaches the identity without opening the store through
+// pkg/config); they are re-exported here for the sprint row's readers.
+const DefaultGitIdentity = gitrun.DefaultGitIdentity
+
+type GitIdentity = gitrun.GitIdentity
+
+func ParseGitIdentity(v string) (GitIdentity, bool) { return gitrun.ParseGitIdentity(v) }
 
 // AnswerRules is every rule the sprint answers a mechanical judgment by (internal/sprint,
 // RuleNames, which a test holds equal): work came back failed, a card at its bound, a work
@@ -473,12 +517,13 @@ var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, the sprint member's width on it, and whether it is a TLC record machine",
+		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, its explicit inventory roles, the sprint member's width on it, and whether it is a TLC record machine",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
 			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which a bench's share on it fits under; never a cap on a friend, whose width is the friend's own; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
+			{Name: "roles", Type: TypeList, Enum: MachineRoles, Default: DefaultMachineRoles, Help: "comma list of explicit inventory roles: " + strings.Join(MachineRoles, ", ") + "; bench by default, other roles are never inferred"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
@@ -506,7 +551,7 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: the friend's width, the jobs the friend works at once and the friend's one capacity number (no slots, no ceiling), which tiers the friend can do, the friend's roles, the delivery mode, the config directory the claude lanes run with, the per-card token cap the one-shot lanes hold a card at, the pronouns the friend goes by, and the optional streams and kinds restrictions on the work the friend may be dealt",
+		Doc:   "an AI friend: the friend's width, the jobs the friend works at once and the friend's one capacity number (no slots, no ceiling), which tiers the friend can do, the friend's roles, the delivery mode, whether the friend has a live session or runs one-shot as a member lane, the config directory the claude lanes run with, the per-card token cap the one-shot lanes hold a card at, the pronouns the friend goes by (a stated value, or unstated, which reads they/them), and the optional streams and kinds restrictions on the work the friend may be dealt",
 		Fields: []Field{
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers the friend can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
@@ -516,7 +561,8 @@ var Kinds = []*Kind{
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
 			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns over stream names this friend may be dealt work on; empty means any stream"},
 			{Name: "kinds", Type: TypeNames, Help: "optional comma-separated card KIND values this friend may be dealt; empty means any kind"},
-			{Name: "pronouns", Type: TypeEnum, Enum: FriendPronounSets, Default: DefaultFriendPronouns, Help: "the pronouns the friend goes by, one of " + strings.Join(FriendPronounSets, ", ") + "; they/them when not stated, and never \"it\": the daemon's texts about the friend say them"},
+			{Name: "pronouns", Type: TypeEnum, Enum: FriendPronounSets, Default: DefaultFriendPronouns, Nullable: true, Help: "the pronouns the friend goes by, one of " + strings.Join(FriendPronounSets, ", ") + "; an empty value is unstated and reads and prints as they/them(unstated); a stated value prints as itself; a set that names other fields leaves the stored value; never \"it\": the daemon's texts about the friend say them"},
+			{Name: "session", Type: TypeEnum, Enum: FriendSessionWords, Default: DefaultFriendSession, Help: "whether the friend has a live session between cards: live (the default: on the psychic link, worked by the friend lane) or one-shot (no session: a fleet member lane runs the friend row, nova-swarm member --as friend.<name> --prompt <identity file>, never on the link, and a bus send naming the friend is refused with the remedy to put it in the next card's brief)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
@@ -545,7 +591,7 @@ var Kinds = []*Kind{
 			{Name: FieldDecideJudgment, Type: TypeDecimal, Help: "the judgment bar: nova-sprint answer applies the verb the judgment decision chose when its probability is at or above it, and lists it for the coordinator below it; a probability; empty (the default) applies nothing: every decision is recorded and what a bar would apply is listed; 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration"},
 			{Name: FieldDecideBriefBar, Type: TypeDecimal, Help: "the brief bar: nova-sprint add asks the brief decision of each card and refuses a card whose p(converges) is under it, naming the questions it failed; a probability; empty (the default) asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels, docs/SPEC-NOVA-DECIDE.md section 14): leave it empty until calibrate on the brief record's own outcomes supports a bar"},
 			{Name: FieldAnswerRulesOff, Type: TypeList, Enum: AnswerRules, Help: "the rules the machine does not answer judgments by: comma list of " + strings.Join(AnswerRules, ", ") + "; empty (the default) answers by every rule: failed and no-result work redealt then raised a tier, a card at its bound raised a tier (heavy to a friend), a late card waited once or returned and redealt, a conflict in a file no ledger owns returned, redone on the tip and resumed, the same finding twice marked a brief defect, the base tree gate retried before a stream stops, a friend's card the friend has not started past its bound taken back and dealt again, failed work whose report HOLDs for a card not landed waiting for it, a reader's first finding reworked as the fix, and a late read asked of another reader once an attempt (docs/SPEC-SPRINT.md section 8, answered by rule)"},
-			{Name: FieldGitIdentity, Type: TypeText, Default: DefaultGitIdentity, Help: "the author and committer every commit the sprint machine makes carries, as 'Name <email>'; the landing refuses to commit when it is empty, and doctor fails when its email equals the host's global user.email; " + DefaultGitIdentity + " (the default)"},
+			{Name: FieldGitIdentity, Type: TypeText, Default: DefaultGitIdentity, Help: "the author and committer every commit the sprint machine makes carries, as 'Name <email>'; an unapplied or empty one reads as the default (doctor warns), a value that does not parse is refused by the landing, and doctor fails when its email equals the host's global user.email; " + DefaultGitIdentity + " (the default)"},
 			{Name: FieldMaxAttempts, Type: TypeInt, Default: strconv.Itoa(DefaultMaxAttempts), Help: fmt.Sprintf("the attempt bound: how many attempts one card runs, every attempt counted whatever ended it, before the sprint stops dealing it and raises one judgment to the coordinator, who decides (brief, rework --tier, rework --carry, drop) and so opens a fresh window of as many attempts; a whole number from 1 to %d; %d (the default); a stream's own nova-sprint stream set <s> --attempts <n> still overrides it for that stream", MaxAttemptsCeiling, DefaultMaxAttempts)},
 		},
 		Check: checkSprint,
@@ -578,7 +624,7 @@ var Kinds = []*Kind{
 		Table: "providers",
 		Doc:   "a model provider's declared funding and billing: every route names one; migration seeds unfunded rows until the owner declares the facts",
 		Fields: []Field{
-			{Name: "billing", Type: TypeEnum, Enum: []string{"metered", "plan", "both"}, Required: true, Help: "how it is paid: metered (usage), plan (subscription), or both"},
+			{Name: "billing", Type: TypeEnum, Enum: []string{"metered", "plan", "both", "subscription"}, Required: true, Help: "how it is paid: metered (usage), plan (metered reference value), both, or subscription (zero marginal card cost)"},
 			{Name: "funded", Type: TypeBool, Required: true, Help: "whether it is funded, explicitly true or false; migration's false means the owner has not declared funding yet (see note)"},
 			{Name: "balance_usd", Type: TypeDecimal, Help: "the last known USD balance, a non-negative decimal; empty when unknown, with --balance_as_of when set"},
 			{Name: "balance_as_of", Type: TypeText, Help: "the balance's observation date, YYYY-MM-DD; required when --balance_usd is set"},
@@ -599,7 +645,7 @@ var Kinds = []*Kind{
 			{Name: "tier", Type: TypeEnum, Enum: Tiers, Required: true, Help: "the tier it serves: one of " + strings.Join(Tiers, ", ")},
 			{Name: "provider", Type: TypeRef, Ref: KindProvider, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
-			{Name: "harness", Type: TypeEnum, Enum: harness.Kinds, Default: harness.OpenCode, Help: "the harness a card on this route runs under: opencode (the default: the providers table launches it with the provider's key) or a headless program of the machine's own subscription login, " + strings.Join(harness.Headless, ", ") + " (the heavy tier), whose --provider is " + harness.ProviderPrefix + "<harness>, one word per harness so one login's failure rests only its own routes"},
+			{Name: "harness", Type: TypeEnum, Enum: harness.Kinds, Default: harness.OpenCode, Help: "the harness a card on this route runs under: opencode (the default: the providers table launches it with the provider's key), muse (a headless provider-key program on meta) or a headless program of the machine's own subscription login, " + strings.Join(harness.Headless, ", ") + " (the heavy tier), whose --provider is " + harness.ProviderPrefix + "<harness>, one word per harness so one login's failure rests only its own routes"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
 			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
@@ -617,7 +663,7 @@ var Kinds = []*Kind{
 			{Name: cardcost.FieldInputLong, Type: TypeDecimal, Help: "USD per million input tokens of a request above --" + cardcost.FieldLongContext},
 			{Name: cardcost.FieldOutputLong, Type: TypeDecimal, Help: "USD per million output tokens of a request above --" + cardcost.FieldLongContext},
 			{Name: cardcost.FieldRequest, Type: TypeDecimal, Help: "USD per request, on top of the tokens; empty when there is no fee"},
-			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: metered (the default: per token) or plan (a subscription, so the predicted cost is the metered price of the same tokens)"},
+			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: metered (the default: per token) plan (metered reference value), or subscription (zero marginal card cost)"},
 			{Name: cardcost.FieldGateway, Type: TypeDecimal, Help: "the percent a gateway adds on top of the prices, a decimal like 5.5; empty when none"},
 			{Name: cardcost.FieldSource, Type: TypeText, Help: "where the prices were read, free text (a URL)"},
 			{Name: cardcost.FieldAsOf, Type: TypeText, Help: "the date the prices were read, YYYY-MM-DD"},
@@ -1240,14 +1286,16 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 	return row, nil
 }
 
-// zero is the canonical value add stores for a field it is not given:
-// Default when the field has one, else the type's zero.
+// zero is the canonical value add stores for a field it is not given.
+// An omitted Nullable field stays unset, including when Default names the
+// value a reader substitutes for that empty store. Otherwise Default, else
+// the type's zero.
 func (f Field) zero() string {
 	switch {
-	case f.Default != "":
-		return f.Default
 	case f.Nullable:
 		return ""
+	case f.Default != "":
+		return f.Default
 	case f.Type == TypeInt:
 		return "0"
 	case f.Type == TypeBool:

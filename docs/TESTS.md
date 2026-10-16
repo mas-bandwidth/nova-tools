@@ -84,9 +84,7 @@ The ledger ratchet (`TestClassRuleLedgersOnlyShrinkAgainstMergeBase`, `internal/
 
 Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
-rows), each with a proven inbox push on `bus2:push` (what each one's friend
-daemon writes when its session answers the SESSION CHECK; without it every send
-and recv carries a `push=none` NOTE and lands all the same), its address in `NOVA_BUS_REDIS`, so the lines
+rows), each hooked in with its bus push proven on the hook record, its address in `NOVA_BUS_REDIS`, so the lines
 read as a reader types them.
 The sitting is the loop: bob first waits on his own empty stream and, nothing
 coming within the second he gave it, is told `WAIT NONE` at exit 1 (the wait
@@ -126,15 +124,16 @@ LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-0
 
 $ nova-bus names --as bob
 NAMES OK count=2 proven=2
-NAMES NAME name=ada push=proven age=0s harness=claude
-NAMES NAME name=bob push=proven age=0s harness=claude
+NAMES NAME name=ada state=proven role=comms reason=-
+NAMES NAME name=bob state=proven role=comms reason=-
 ```
 
 ## nova-hook
 
 Run by `cmd/nova-hook/firstrun_test.go` on a throwaway redis-server, its address
 in `NOVA_BUS_REDIS`, so the lines read as a reader types them. The sitting is a
-machine's record: m1 is not hooked in, so `status` refuses with the command of
+machine's record: `codex-owner --dry-run` plans the Codex desktop owner probe
+and sends nothing; m1 is not hooked in, so `status` refuses with the command of
 each role that hooks it in; `hook --once` as a member arms the record, holds no
 push (a member's work push is its loop's) and says so, naming the holder; and
 `unhook` ends it, its epoch moved on. Nothing in it is run-owned.
@@ -142,6 +141,10 @@ push (a member's work push is its loop's) and says so, naming the holder; and
 ### First run
 
 ```
+$ nova-hook codex-owner --thread example-thread --dry-run
+CODEX-OWNER DRY-RUN thread=example-thread native=unchecked dry_run=true
+CODEX-OWNER NOTE no native owner discovery was sent
+
 $ nova-hook status --as m1
 ! STATUS FAILED name=m1 state=none role=- epoch=0 reason=unhooked: m1 is not hooked in: no hook record (never hooked); nothing on the bus, friend comms or the sprint works until it is; run: nova-hook status --as m1
 ! STATUS NOTE hook in as comms (on the bus, taking no sprint work): nova-hook hook --as m1 --role comms
@@ -168,22 +171,12 @@ rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types
 them. The sitting is the canary by hand, with no daemon running: a dry-run
 install prints the plan for bob's agent, OpenCode's project config first; a
 dry-run uninstall the plan to undo it; a dry-run host the tmux line that would
-host bob's terminal harness; ada, as the coordinator, pings bob with a nonce; bob's session answers
-with `pong` (one note to ada, and the pong file under the home directory,
-`./home/.nova-friend/bob`); `wait-pong` finds it on the log from bob's own
-stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, with bob's directory `./bob` made in it
+host bob's terminal harness; bob's session answers a reach step's nonce with `pong` (one note to ada on
+the bus, from bob's own stream); `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, with bob's directory `./bob` made in it
 first (install, `--dry-run` too, refuses a `--dir` that is not a real
 directory and never makes one), and so are the
 home directory and the uid the plan names. The run-owned values are the
-message `id=` (a ULID from the store's time), `at=`, and `took=`.
-
-`serve`, the coordinator's ping loop, is not a step of this sitting: it runs
-until a signal, so the banner has no example of it to run here. What it prints
-is pinned in `cmd/nova-friend/serve_test.go` on the in-memory store with an
-injected clock: `SERVE OK friends= every= down_after=` once (with `dry_run=true`
-and nothing sent under `--dry-run`), then one `SERVE UP` or `SERVE DOWN` line
-per state change, and `SERVE STOP interrupted` at a signal (docs/CLI.md, "The
-coordinator's ping loop").
+message `id=` (a ULID from the store's time) and `at=`.
 
 `watch`, the coordinator's wake, is not a step either: it waits for a message
 or a wake line that arrives after it starts, or for `--timeout`, so the banner
@@ -204,18 +197,7 @@ and no live session launches no turn),
 `TestSpendCapStopsWhenTheLimitGateReadsAFundsRefusal` (the real gate chain —
 the limit gate under the spend cap — reads the incident's wording and a 402
 from a harness turn, hands the funds refusal to the spend cap, and stops with
-the one judgment before the limit's Rest retry). The daemon's wiring (the
-`--spend-cap` flag, the harness's usage report as `Spent`, the judgment to the
-seat) is pinned by `TestTheDaemonStopsTurnsPastTheCapAndRaisesOneJudgment` and
-`TestTheDaemonLaunchesNothingWhenIdle` (`pkg/friend/spendcap_daemon_test.go`):
-a fake harness reports usage past the cap over the daemon's in-process bus
-store, the daemon's own loop drives it, and the gate stops the turn and raises
-one judgment; with the cap reading idle no turn launches and the message stays
-pending. `TestTheDaemonOnAPrivateServerStopsTurnsPastTheCapAndRaisesOneJudgment`
-(`pkg/friend/spendcap_redis_functional_test.go`, the functional tier) runs that
-loop over its own throwaway redis-server (loopback only, nothing kept) with a
-fake harness that reports its usage and no provider secret in the environment,
-so the cap is measured from the harness's own report on the real store.
+the one judgment before the limit's Rest retry). The daemon delivers nothing into a session (v1.3.6), so the cap stands in front of the lanes alone.
 
 ### First run
 
@@ -227,7 +209,7 @@ INSTALL PLAN command="write ./bob/opencode.json model=deepseek/deepseek-v4"
 INSTALL PLAN command="write ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
 INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
 INSTALL PLAN command="launchctl bootstrap gui/501 ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
-INSTALL NOTE the agent runs: nova-friend run --as bob --harness opencode --dir ./bob --width 0, with --redis and --server as given here
+INSTALL NOTE the agent runs: nova-friend run --as bob --harness opencode --dir ./bob, with --redis and --server as given here
 
 $ nova-friend uninstall --as bob --dry-run
 UNINSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist dry_run=true
@@ -237,15 +219,8 @@ UNINSTALL PLAN command="rm ./home/Library/LaunchAgents/com.nova.friend-bob.plist
 $ nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
 HOST DRY-RUN session=friend-bob dir=./bob dry_run=true command="tmux new-session -d -s friend-bob -c ./bob -- aider"
 
-$ nova-friend ping --as ada --to bob --nonce abc123
-PING OK nonce=abc123 id=01M42EJZ1D4JEFR6ESF1YJ3YJA to=bob at=2026-10-04T03:40:12Z
-PING NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123
-
 $ nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 PONG OK nonce=abc123 to=ada id=01M42EJZ1F8FXB5T0F6EXJCRS1 at=2026-10-04T03:40:12Z
-
-$ nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
-WAIT-PONG OK nonce=abc123 from=bob at=2026-10-04T03:40:12Z took=1ms queue=2 working=1 width=4 daemon=false
 
 $ nova-friend status --as bob --dir ./bob
 ! STATUS NONE: no daemon has run as bob (no status file in ./home/.nova-friend/bob); run: nova-friend install --as bob --harness <h> --dir ./bob
@@ -822,7 +797,7 @@ source are pinned by `cmd/nova-config/seat_login_redis_test.go`
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=41 applied=41
+CONFIG MIGRATE file=try.json from=0 to=45 applied=45
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -831,11 +806,11 @@ $ nova-config machine set m1 --width 6 --actor a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
-MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6 tla=false note=-
+MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 roles=bench width=6 tla=false note=-
 CONFIG LIST kind=machine rows=1
 
 $ nova-config machine history m1 --file try.json
-HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z note=- runners=0 seat=s1 slots=8 tla=false user=nova width=4
+HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z note=- roles=bench runners=0 seat=s1 slots=8 tla=false user=nova width=4
 HISTORY id=2 kind=machine name=m1 op=set actor=a1 at=2026-10-02T03:18:20Z width=4>6
 CONFIG HISTORY kind=machine name=m1 changes=2
 ```
@@ -893,9 +868,27 @@ so it needs no network and no key; `cmd/nova-decide/firstrun_test.go` runs each
 the test's own directory. The ids come from `--op`, so every line reads the same
 twice.
 
+The extracted fixture supports a complete offline decision and calibration
+loop:
+
+```text
+$ nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-wrong
+$ nova-decide ask --schema ./decide-example/schema.json --state ./decide-example/state.txt --backend fixed --answers ./decide-example/answers.json --record ./decide-example/decisions.jsonl --op example-ok
+$ nova-decide outcome --record ./decide-example/decisions.jsonl --id example-wrong --label wrong
+$ nova-decide outcome --record ./decide-example/decisions.jsonl --id example-ok --label ok
+$ nova-decide calibrate --record ./decide-example/decisions.jsonl --decision example --question clear --positive wrong --negative ok --bars 0.5
+```
+
 ### First run
 
 ```text
+$ nova-decide example --dir ./decide-example
+EXAMPLE OK files=4
+EXAMPLE FILE name=answers.json
+EXAMPLE FILE name=sample.diff
+EXAMPLE FILE name=schema.json
+EXAMPLE FILE name=state.txt
+
 $ nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 ASK OK id=first decision=reply backend=fixed tokens_in=0 tokens_out=0 recorded=new
 ASK ANSWER question=asks_something type=noul value=yes p=yes:0.94
@@ -1046,6 +1039,7 @@ transcript was produced by running the built binary, not written by hand.
 $ nova-ci slowtests --example --budget 60 --load 4 --cpus 16
 CI-SLOW package=github.com/mas-bandwidth/nova-tools/internal/example seconds=65.1s budget=60s slowest=TestSlowThing:63.4s,TestAlsoSlow:1.5s
 CI-LOAD load=4.00 cpus=16 per-cpu=0.25: measured, not a verdict
+CI-SLOW WARN within_budget=false enforce=false: budget exceeded without enforcement; reuse the same event stream; run: nova-ci slowtests '--example' '--budget' '60' '--load' '4' '--cpus' '16' --enforce
 
 $ nova-ci slowtests --example --budget 120 --load 4 --cpus 16
 CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s
@@ -1133,7 +1127,7 @@ UP seat create /home/you/nova-try/seat.env seat=coordinator
 UP smoke create one card on /home/you/nova-try/smoke/sprint.twin beside the throwaway repository /home/you/nova-try/smoke/repo
 
 $ nova-up --dry-run --root ./nova-try
-! UP REFUSED: --local is required; it wants nothing after it: the mode that sets up this one machine with no config; run: nova-up help
+! UP REFUSED: choose exactly one mode: --local sets up this machine; --seat writes the per-user seat environment; run: nova-up help
 ```
 
 ## nova-doctor
@@ -1152,7 +1146,7 @@ $ nova-doctor run --check harness --json
 {"exit":0,"results":[{"check":"harness","dependency":"the friend harnesses","status":"ok","evidence":"no friend rows at /home/you/.nova/friends"}]}
 
 $ nova-doctor run --check nosuch
-! RUN REFUSED: no check named "nosuch"; the checks are dashboard, friend-live, friend-login, friend-row, friend-seat, friend-wall, gosdk, harness, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
+! RUN REFUSED: no check named "nosuch"; the checks are dashboard, friend-login, friend-row, friend-seat, friend-wall, gosdk, harness, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
 ```
 
 ## One-shot lanes at parity (pkg/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
