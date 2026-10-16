@@ -1368,20 +1368,31 @@ standard error at exit 1. `--json` prints one object when the wait ends:
 each message `{"id":<id>,"from":<name>,"subject":<s>,"bytes":<n>}` and the wake
 `{"file":<path>,"line":<text>}`.
 
-`send` prints `SEND OK id= to= cc= at= bytes= sha256=`: the id is the message's for ever, the
+`send` constructs and validates its `buswire.Envelope` through the generated
+`EnvelopeBuilder` (`--card <id>` and `--head <sha>` set the optional work card id
+and 40-character lowercase hex commit SHA) before writing anything to Redis,
+refusing any constraint failure on stderr at exit 2 (`SEND REFUSED: ENVELOPE REFUSED: <what>; run: nova-bus send -h`), and prints `SEND OK id= to= cc= at= bytes= sha256=`: the id is the message's for ever, the
 count and the digest are the body's as the store holds it (check a file against `shasum -a 256`). Who you
 are is the user the connection logged in as (`NOVA_SPRINT_REDIS_USER`): `--as`
 may repeat it or be left out, and another name is refused; on a store with no
 users (this first run) `--as` is your word and every write says `login=none`. `peek`
 prints `PEEK OK pending= new=` and one `PEEK MESSAGE state= id= from= at=
-subject=` line per message waiting, moving nothing. `recv` prints the oldest
+subject=` line per message waiting, moving nothing. `peek`, `log`, and `wait`
+also read native entries strictly, refusing damage by name and counting each
+form. `recv` reads each claimed or
+new stream entry through `EnvelopeReader.ReadEntry` (accepting both the native
+binary `envelope` field and legacy stream fields, counting each form, and
+refusing a damaged native `envelope` field by name) and prints the oldest
 message a reader lost (delivered, not acked, idle fifteen minutes), else the
 oldest new one: a `RECV OK id= from= to= cc= re= at= subject=` line, a blank
 line, the body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the
 message for fifteen minutes. With `--exec '<command>'` the command reads that same text on its
 stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
 non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
-answers `acked=false` for an id that is not pending, at exit 0. `names` prints
+answers `acked=false` for an id that is not pending, at exit 0. `show` reads one
+message by `--id <id>` from every bounded window of `bus2:log` or one envelope from `--stdin` (binary
+wire, base64 or JSON text form) and prints its name-keyed schema text form on
+stdout (`{"schema":"bus/envelope","version":1,...}`), never raw binary bytes. `names` prints
 each name's push (`push=proven|stale|down|none age= harness=`). What a first run
 gets wrong: a name that is not a nova-config friend or machine row (`send` and
 `recv` refuse it with the `nova-config friend add` line that adds one); a deaf
@@ -1422,14 +1433,15 @@ file, so the next turn of the session is the message that arrived.
 | Command | What it does |
 | --- | --- |
 | `wait [--as <me>] [--after <id>] [--timeout <d>] [--skip-subject <p,...>] [--wake-file <path>]` | Watches your stream without taking anything, past a cursor; up to 5 `WAIT MESSAGE id= from= subject= bytes=` lines, then `WAIT OK after=<last id seen>`, or `WAIT WAKE` on a line appended to the wake file, or `WAIT NONE after= waited=` at exit 1 when `--timeout` runs out |
-| `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction; refused while the sender or a recipient is deaf (no proven inbox push) |
+| `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>] [--card <id>] [--head <sha>]` | Validates through the generated `EnvelopeBuilder` and writes one entry on every recipient's stream and the log, in one transaction; refuses any schema bound failure at exit 2 without writing |
 | `peek [--as <me>]` | What waits: pending and new, moving nothing |
-| `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0; refused while the reader is deaf |
+| `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | Dual-reads native binary `envelope` and legacy entries: the oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0 |
 | `send ... --kind ask --deadline <d>` | An ask: the store stamps its deadline from its own clock (`deadline=` on the line); an ask wants a deadline and only an ask takes one. A recipient's reply with `--re <ask id>` answers it |
 | `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |
 | `overdue [--older <d>]` | The alarm the coordinator's loop runs: messages short of delivered past `--older`, at exit 1; first, every ask past its deadline unanswered gets its one timeout, a message of kind `timeout`, `re=<ask id>`, to its sender (`OVERDUE TIMEOUT` lines) |
 | `asks [--as <me>] [--open \| --timedout \| --all] [--liveness [--window <d>]] [--max <n>]` | Your asks, newest first, each open, answered or timedout by the store's clock, with its deadline, age and who answered; `--liveness` is each friend up, deaf, unreached or down from the asks to it |
 | `log [--bodies] [--max <n>]` | The log, oldest first |
+| `show [--as <me>] (--id <id> \| --stdin)` | Prints one message by `--id` from the log, or one binary/base64/JSON envelope on `--stdin`, in its name-keyed schema text form on stdout |
 | `names` | The known names (nova-config's friend and machine rows), each with its inbox push: proven, stale, down or none, and its age |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
