@@ -1,0 +1,33 @@
+// beat.schema: the beat's hot scalars, the pulse a member or a friend sends on
+// every beat. The stored presence record keeps everything the store carries
+// from beat to beat (the live set, its unbounded live_seen map, the load
+// samples and the measuring state); the pulse carries only what one beat says.
+// A VARIABLE table: friends send it, so an older reader may meet it.
+package hookwire
+
+table BeatPulse
+{
+    // the member or friend the beat is for
+    name         string(64)
+    // when the beat was taken, in Unix milliseconds. Optional by the schema's
+    // rule so that absent is not zero: the reader refuses a pulse without it.
+    at_ms        ?int64
+    // the highest load within the load window, a percent of all the machine's
+    // cores. Unranged here because a ranged float is a compressed float32 on
+    // the wire; the reader and the writer hold it to [0, 100].
+    load_pct     float64
+    // the machine's logical cores; 0 when the beat does not know them
+    cores        uint32 | min = 0, max = 65536
+    // how the load was measured (given, cpu, ...); empty when not measured
+    how          string(16)
+    // the session's last proof, in Unix milliseconds; absent when the beat
+    // carried none
+    pong_ms      ?int64
+    // the stop-returns the lanes still owe; start waits for zero, so absent is
+    // refused rather than read as zero
+    stop_returns ?uint32 | min = 0, max = 10000
+    // the word that the member starts no card, and why; empty while it starts cards
+    no_room      string(200)
+    // the member drains: its binary was replaced under it
+    draining     bool
+}

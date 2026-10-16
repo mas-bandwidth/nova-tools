@@ -1,0 +1,17 @@
+# The hook area's wire-fuzz seed corpus (make schemawire-conformance): one
+# instance per line, its table wire beside it as <name>.bin and its JSON text
+# as <name>.json, in the harness's manifest format (testdata/conformance/tables/
+# MANIFEST.txt in the schema repository). Paths are from the repository root.
+# Regenerated values are written by the generated Save and ToJson, never by hand.
+
+unit hook schemas/hook/ack.schema schemas/hook/beat.schema schemas/hook/stamp.schema
+
+instance hook-ack-pushed hook Ack schemas/hook/fuzz/hook-ack-pushed.bin
+instance hook-ack-queued-down hook Ack schemas/hook/fuzz/hook-ack-queued-down.bin
+instance hook-ack-bounds hook Ack schemas/hook/fuzz/hook-ack-bounds.bin
+instance hook-beat-bare hook BeatPulse schemas/hook/fuzz/hook-beat-bare.bin
+instance hook-beat-full hook BeatPulse schemas/hook/fuzz/hook-beat-full.bin
+instance hook-beat-bounds hook BeatPulse schemas/hook/fuzz/hook-beat-bounds.bin
+instance hook-stamp-lease hook HookStamp schemas/hook/fuzz/hook-stamp-lease.bin
+instance hook-stamp-first hook HookStamp schemas/hook/fuzz/hook-stamp-first.bin
+instance hook-stamp-bounds hook HookStamp schemas/hook/fuzz/hook-stamp-bounds.bin

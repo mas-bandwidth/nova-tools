@@ -114,6 +114,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/sandbox", "OS isolation primitives (seatbelt/landlock)", "go test ./pkg/sandbox", "go test ./pkg/sandbox"),
 	E("internal/scaffold", "scaffolding engine for class rules and CLI verbs", "go test ./internal/scaffold", "go test ./internal/scaffold"),
 	E("pkg/schemaread", "the one strict read of a generated table: binary, padded base64 and JSON forms, refusals by name, a per-form read counter, and the writer-side check", "go test ./pkg/schemaread", "go test ./pkg/schemaread"),
+	E("pkg/hookwire", "the hook area's table wire, generated from schemas/hook: the send receipt (Ack), the beat's hot scalars (BeatPulse) and the hook lease stamp (HookStamp), with the wire-fuzz driver", "go test ./pkg/hookwire", "make schemawire-check"),
 	E("pkg/secretcheck", "the harness of the rule that no secret reaches an error: secret-shaped inputs, a driver, and the table and allowlist comparisons", "go test ./pkg/secretcheck", "go test ./pkg/secretcheck"),
 	E("pkg/secrets", "zero-leak memory and file vault", "go test ./pkg/secrets", "go test ./pkg/secrets"),
 	E("pkg/seatcred", "a seat's Redis login read through the secrets library (--seat, NOVA_SEAT)", "go test ./pkg/seatcred/...", "go test ./pkg/seatcred/..."),

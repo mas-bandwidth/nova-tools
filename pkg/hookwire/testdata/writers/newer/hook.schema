@@ -1,0 +1,36 @@
+package hookv2
+
+// a newer writer: each table carries one field the reader has never seen
+enum Stage { Queued, Claimed, Pushed, Acted }
+enum PushState { Up, Down, Stale }
+
+table Ack
+{
+    id      string(64)
+    stage   Stage
+    push    PushState
+    reason  string(152)
+    sent_ms int64
+}
+
+table BeatPulse
+{
+    name         string(64)
+    at_ms        ?int64
+    load_pct     float64
+    cores        uint32 | min = 0, max = 65536
+    how          string(16)
+    pong_ms      ?int64
+    stop_returns ?uint32 | min = 0, max = 10000
+    no_room      string(200)
+    draining     bool
+    pacing       uint32
+}
+
+table HookStamp
+{
+    epoch ?int64 | min = 0, max = 9007199254740991
+    at_ms ?int64 | min = 0, max = 9007199254740991
+    by    string(128)
+    push  string(16)
+}

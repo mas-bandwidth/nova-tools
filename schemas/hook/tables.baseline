@@ -1,0 +1,39 @@
+schema-tables-baseline 7
+package hookwire
+
+table Ack
+    field id id=0x08b72e07b55c3ac0 kind=12 size=64
+    field stage id=0xee9dbaad45e3448d kind=7 enum=Stage
+    field push id=0x6c80030e2762459d kind=7 enum=PushState
+    field reason id=0x65e8d7f3474f2639 kind=12 size=152
+
+table BeatPulse
+    field name id=0xc4bcadba8e631b86 kind=12 size=64
+    field at_ms id=0x41fdbf81bf00fdc1 kind=5 optional=true
+    field load_pct id=0xe5f1ed4363ea5da1 kind=11
+    field cores id=0xce57648e554861b7 kind=8 min=0 max=65536
+    field how id=0x335f27192ff5d5ed kind=12 size=16
+    field pong_ms id=0xcedbf52a5907a034 kind=5 optional=true
+    field stop_returns id=0xea14e391abc0c981 kind=8 optional=true min=0 max=10000
+    field no_room id=0x90ab055b72415078 kind=12 size=200
+    field draining id=0x445341bdde0ebac7 kind=1
+
+table HookStamp
+    field epoch id=0xfc9697d1196e6ba6 kind=5 optional=true min=0 max=9007199254740991
+    field at_ms id=0x41fdbf81bf00fdc1 kind=5 optional=true min=0 max=9007199254740991
+    field by id=0x08a64b07b54df8d4 kind=12 size=128
+
+enum PushState
+    variant Up id=0x09313a07b5c3ab60
+    variant Down id=0x032c13736048bf35
+    variant Stale id=0xae3e8213b7ddaffe
+
+enum Stage
+    variant Queued id=0x3ec4da71c1a62754
+    variant Claimed id=0xd3e5a2416925d46e
+    variant Pushed id=0x1ea2a003ee111244
+    variant Acted id=0xf887924470beb30a
+
+## history
+### 2026-10-16 (UTC) — first baseline
+- baseline created over 3 tables — data written BEFORE this point is not covered by it

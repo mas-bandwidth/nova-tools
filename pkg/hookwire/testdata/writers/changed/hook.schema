@@ -1,0 +1,33 @@
+package hookv3
+
+// a writer whose fields changed kind: Ack.stage to a string, BeatPulse.cores
+// to a string, HookStamp.epoch to a string
+enum PushState { Up, Down, Stale }
+
+table Ack
+{
+    id     string(64)
+    stage  string(16)
+    push   PushState
+    reason string(152)
+}
+
+table BeatPulse
+{
+    name         string(64)
+    at_ms        ?int64
+    load_pct     float64
+    cores        string(8)
+    how          string(16)
+    pong_ms      ?int64
+    stop_returns ?uint32 | min = 0, max = 10000
+    no_room      string(200)
+    draining     bool
+}
+
+table HookStamp
+{
+    epoch string(20)
+    at_ms ?int64 | min = 0, max = 9007199254740991
+    by    string(128)
+}

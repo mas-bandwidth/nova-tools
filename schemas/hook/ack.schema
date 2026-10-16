@@ -1,0 +1,28 @@
+// ack.schema: the send receipt, as nova-bus answers a send (the SEND OK line
+// and its NOTE push= line today, read by substring match, where a refused send
+// and a stale push look alike). A VARIABLE table: friends exchange it, so an
+// older reader may meet it, and it skips and counts a newer writer's fields
+// instead of refusing the receipt. Generated Go lives in pkg/hookwire
+// (go generate ./pkg/hookwire).
+package hookwire
+
+// Stage is how far a sent message has gone. An enum's implicit None (0) is
+// what an absent stage reads as, and the reader refuses it: a receipt that
+// does not say how far the message went proves nothing.
+enum Stage { Queued, Claimed, Pushed, Acted }
+
+// PushState is the recipient's push when the message was sent: up, down (no
+// live lease) or stale (a lease whose holder stopped answering). None is
+// absent, and refused.
+enum PushState { Up, Down, Stale }
+
+table Ack
+{
+    // the message id the send wrote; a ULID today, 64 is the bus bound for an id
+    id     string(64)
+    stage  Stage
+    push   PushState
+    // why the push is not up, or why the stage stopped; empty when there is
+    // nothing to say
+    reason string(152)
+}

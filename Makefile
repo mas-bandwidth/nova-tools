@@ -165,7 +165,7 @@ SCHEMAWIRE_CONFORMANCE_FUZZ_SECONDS ?= 30
 schemawire-conformance:
 	@set -e; start=$$(date +%s); \
 	test -d schemas || { echo "schemawire-conformance: the schemas/ home is absent (nova-tools-schema-home-and-pin, schemas/README.md)" >&2; exit 2; }; \
-	pin=$$(sed -n 's@^//go:generate go run github.com/mas-bandwidth/schema/v2/cmd/schema@\(v[0-9][^ ]*\) generate.*@\1@p' pkg/*wire/generate.go 2>/dev/null | sort -u); \
+	pin=$$(sed -n 's|^//go:generate go run github.com/mas-bandwidth/schema/v2/cmd/schema@\(v[0-9][^ ]*\) generate.*|\1|p' pkg/*wire/generate.go 2>/dev/null | sort -u); \
 	if [ "$$(printf '%s\n' "$$pin" | grep -c .)" -gt 1 ]; then echo "schemawire-conformance: the pkg/*wire/generate.go pins disagree; one compiler writes the whole tree (schemas/README.md)" >&2; exit 2; fi; \
 	units=""; for d in schemas/*/; do ls "$$d"*.schema >/dev/null 2>&1 && units="$$units $${d%/}"; done; \
 	if [ -z "$$(printf '%s' "$$units" | tr -d ' ')" ]; then \

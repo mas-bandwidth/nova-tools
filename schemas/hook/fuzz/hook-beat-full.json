@@ -1,0 +1,11 @@
+{
+  "name": "ada",
+  "at_ms": 1760000000000,
+  "load_pct": 42.5,
+  "cores": 16,
+  "how": "cpu",
+  "pong_ms": 1759999990000,
+  "stop_returns": 2,
+  "no_room": "disk under its floor",
+  "draining": true
+}

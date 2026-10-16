@@ -1,0 +1,34 @@
+package hookv4
+
+// a writer with wider bounds than the reader's: a longer id, more cores and
+// stop-returns, a longer holder, a negative time
+enum Stage { Queued, Claimed, Pushed, Acted }
+enum PushState { Up, Down, Stale }
+
+table Ack
+{
+    id     string(128)
+    stage  Stage
+    push   PushState
+    reason string(152)
+}
+
+table BeatPulse
+{
+    name         string(64)
+    at_ms        ?int64
+    load_pct     float64
+    cores        uint32 | min = 0, max = 1000000
+    how          string(16)
+    pong_ms      ?int64
+    stop_returns ?uint32 | min = 0, max = 1000000
+    no_room      string(200)
+    draining     bool
+}
+
+table HookStamp
+{
+    epoch ?int64 | min = 0, max = 9007199254740991
+    at_ms ?int64
+    by    string(256)
+}

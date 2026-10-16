@@ -1,0 +1,10 @@
+{
+  "name": "ada",
+  "at_ms": 1760000000000,
+  "load_pct": 100,
+  "cores": 65536,
+  "how": "",
+  "stop_returns": 10000,
+  "no_room": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+  "draining": false
+}

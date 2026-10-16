@@ -1,0 +1,18 @@
+// stamp.schema: the hook lease stamp, the value of a push's lease or proof
+// (hook.LiveKey, hook.ProofKey): the record's epoch it was written under, the
+// store's time in Unix milliseconds, and who wrote it. Times are int64
+// milliseconds, never RFC3339 text, so no time parse can fail closed. A
+// VARIABLE table: friends' seats read it, so an older reader may meet it.
+package hookwire
+
+table HookStamp
+{
+    // the record's epoch; epochs start at 1 (HINCRBY), so absent is refused,
+    // never read as epoch 0. The range reaches zero because an optional takes
+    // no declared default; the reader and the writer refuse an epoch under 1.
+    epoch ?int64 | min = 0, max = 9007199254740991
+    // the store's TIME when the stamp was written, Unix milliseconds; absent is refused
+    at_ms ?int64 | min = 0, max = 9007199254740991
+    // the holder (a lease) or how it proved (a proof)
+    by    string(128)
+}
