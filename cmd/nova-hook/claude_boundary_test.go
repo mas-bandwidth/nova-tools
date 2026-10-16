@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
@@ -49,7 +52,7 @@ func TestTheClaudeBoundarySkipsAHeadlessChild(t *testing.T) {
 
 	out = boundary(map[string]string{notice.ClaudeChildEnv: "1"})
 	require.Zero(t, out.Code, out.Stdout+out.Stderr)
-	assert.Contains(t, out.Stdout, "state=boundary-skipped generation=1")
+	assert.Contains(t, out.Stdout, "state=boundary-skipped")
 	assert.Equal(t, "1\n", gen(), "a child's Stop leaves the session's generation alone")
 
 	out = boundary(nil)
@@ -57,10 +60,10 @@ func TestTheClaudeBoundarySkipsAHeadlessChild(t *testing.T) {
 	assert.Equal(t, "2\n", gen())
 }
 
-// The claude route's own challenge is the Core's notice, as a native route's
-// bootstrap is: pending for the hooks and said into the route's event file,
-// which is all a watcher follows. Dogfood 2026-10-16: the client printed its
-// challenges only to its stdout, so a watcher-only session never saw one.
+// The claude route's own challenge is the Core's notice: held pending in the
+// notices directory and said as a PUSH line on the stdout its Monitor follows.
+// Dogfood 2026-10-16: the client printed its challenges as bare CHALLENGE lines,
+// so a session that follows only PUSH lines never saw one.
 func TestTheClaudeRoutesChallengeIsANotice(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -76,11 +79,10 @@ func TestTheClaudeRoutesChallengeIsANotice(t *testing.T) {
 	var out strings.Builder
 	code := run([]string{"hook", "--as", "ada", "--role", "friend", "--harness", "claude", "--claude-state", state, "--claude-settings", settings}, strings.NewReader(""), &out, io.Discard, w)
 	assert.Zero(t, code, out.String())
-	p, err := notice.ReadClaudePending(state)
+	nonce := regexp.MustCompile(`HOOK CHALLENGE nonce=(\S+)`).FindStringSubmatch(out.String())
+	require.Len(t, nonce, 2, "the route issues a challenge: "+out.String())
+	assert.Regexp(t, `HOOK PUSH push=claude .*nonce=`+nonce[1], out.String())
+	held, err := filepath.Glob(filepath.Join(state, "notices", "notice-*.json"))
 	require.NoError(t, err)
-	require.NotEmpty(t, p.Nonce, "the challenge is the pending notice's: "+out.String())
-	events, err := os.ReadFile(filepath.Join(state, notice.ClaudeEvents))
-	require.NoError(t, err)
-	assert.Contains(t, string(events), "HOOK PUSH push=claude")
-	assert.Contains(t, string(events), "nonce="+p.Nonce)
+	assert.NotEmpty(t, held, "the challenge is the pending notice's")
 }

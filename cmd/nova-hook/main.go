@@ -522,8 +522,8 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	if c.Bool("claude-boundary") && w.getenv(notice.ClaudeChildEnv) != "" {
 		// a headless claude child's hook (a lane's card, read or proof, inside its
 		// wall, where the session's state is out of reach): no event of the
-		// session's, so nothing is read, written or said
-		return tool.Exit(0)
+		// session's, so nothing of the session's is read or written
+		return tool.Done().As("STATE").Fact("state", "boundary-skipped").Note("a headless claude child's Stop (" + notice.ClaudeChildEnv + " set) is no turn of the session's")
 	}
 	native, nativeErr := w.codexConfig(c)
 	if nativeErr != nil {
