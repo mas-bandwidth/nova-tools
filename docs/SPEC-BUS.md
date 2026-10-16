@@ -19,7 +19,9 @@ nova-bus on 2026-10-04, when the git bus was removed.
   bits are the microsecond, so ids sort by the store's time), `from`, `to`
   (comma list), `cc` (comma list, may be empty), `subject`, `re` (the id it
   answers, may be empty), `at` (RFC 3339 UTC from `TIME`, to the second) and
-  `body` (UTF-8, at most 1 MiB).
+  `body` (UTF-8, at most 1 MiB). A writer that has switched to the native form
+  adds one field more, `envelope`, the typed envelope as its binary wire
+  (below, the native form).
 - A name is lowercase letters, digits and hyphens, at most 64 bytes, and one of
   nova-config's friend or machine rows as `apply` wrote them into the store
   (the sets `friends` and `machines`).
@@ -42,6 +44,49 @@ nova-bus on 2026-10-04, when the git bus was removed.
   streams, groups and pending lists under these names, and renaming a live key
   is a migration (every reader stopped, every stream copied, every group
   re-made with its pending entries), bought for nothing but a spelling.
+
+## The native form
+
+The typed bus envelope (`schemas/bus/envelope.schema`, generated into
+`pkg/buswire`) rides the bus in its native binary form: the stream field
+`envelope` holds the envelope's binary wire as raw bytes, with no base64 and no
+text decode. A Redis stream field is a byte string, so the bytes `XADD` writes
+are the bytes `XRANGE` and `XREADGROUP` hand back. `pkg/bus/native.go` holds
+the writer (`EnvelopeWire`, `NativeFields`) and the reader (`EnvelopeReader`).
+
+- The wire's first byte is its form byte, `1` (`bus.EnvelopeForm`): the table
+  wire's first form. A reader refuses a wire led by any other byte as
+  `unknown_form`, so a newer form is refused by name, never misread.
+- The field carries the message as its entry holds it: `id`, `from`, `to`,
+  `cc`, `subject`, `re`, `kind`, `at_ms` and, on an ask, `due_ms` (the store's
+  stamps, in milliseconds since the epoch), and `body`. The token is the
+  sender's and is never on an entry, in this field or in the text fields.
+- While writers switch, the field is written beside the legacy text fields,
+  which are unchanged: a reader that has not learned the field reads the entry
+  as it did, the field ignored. `Bus.Native` is the writer switch; off, a send
+  writes the legacy fields alone. Switched, a send also holds the message to
+  the envelope's bounds (a subject of at most 200 bytes, at most 64 names in
+  `to` and in `cc`, UTF-8 with no NUL in every text) and refuses one past them
+  by name (`ENVELOPE REFUSED: <what>; run: nova-bus send -h`) before anything
+  is written; its dry run names the same refusal. The timeout the bus writes
+  for an unanswered ask stays in the legacy fields.
+- The cutover is readers first, then writers (the owner's rule S4): every
+  reader learns the field, then the writers switch in a short window.
+  `EnvelopeReader` counts each read under the form it arrived in (`binary` for
+  the field, `legacy` for an entry without it, `base64` and `json` for the text
+  forms), and the `legacy` count standing still is the evidence that every
+  writer has switched.
+- `EnvelopeReader.ReadEntry` reads an entry: with the field there, the field
+  is the message, read strictly through `pkg/schemaread`. A truncated wire,
+  trailing bytes, an unknown form byte, an empty field, a text form in the
+  field (the bus carries none), a value past a bound and a field a sent message
+  always has gone missing are each refused by name (`ENVELOPE REFUSED: <reason>; run: nova-bus send -h`), never read as a shorter envelope and never
+  patched from the legacy fields beside it. Without the field the entry reads
+  as `Parse` reads it.
+- The text forms are for text transports (the owner's rule S2), never for the
+  bus itself: padded standard base64 of the same wire, form byte first, and
+  the schema JSON text form. `EnvelopeReader.ReadText` reads either, and the
+  wire, and `WriteText` writes them under the same bounds.
 
 ## The semantics
 
