@@ -391,6 +391,30 @@ func TestAHeldLaneIsRenewedWhenFriendCardsDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, []int{1, 2}, srv.renewed())
 }
 
+// A client started fresh (it has found no held lane yet) whose friend cards read fails still
+// asks every lane up to her width: lane 1 answering free and empty does not stop the round
+// before lane 2, whose card's lease is renewed (tla/FriendLaneClient.tla CardsReadFails,
+// RenewBlind; witness MCFriendLaneClientBrokenBlindStops.cfg).
+func TestAFreshClientWhoseCardsReadFailsStillRenewsAHeldLane(t *testing.T) {
+	t.Parallel()
+	srv := newFake()
+	srv.held[2] = "s1-9.w1"
+	srv.ready = nil
+	srv.cardsDown = true
+	c := client(t, srv, &row{width: 2})
+	holds, _, errs := c.Round(context.Background(), true)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), "friend cards")
+	assert.Equal(t, []int{1, 2}, srv.renewed(), "lane 1 free and empty, lane 2 still asked")
+	assert.Equal(t, []int{2}, lanesOf(holds))
+	assert.Zero(t, srv.takes)
+
+	// the next round, still blind, renews it again from what this one found
+	holds, _, _ = c.Round(context.Background(), true)
+	assert.Equal(t, []int{1, 2}, srv.renewed())
+	assert.Equal(t, []int{2}, lanesOf(holds))
+}
+
 // The one notice: how many were taken, the briefs, and the server's finish verb for each
 // card she holds, by the ids, epoch and lane the server gave.
 func TestTheNoticeNamesTheBriefsAndTheServersVerbs(t *testing.T) {

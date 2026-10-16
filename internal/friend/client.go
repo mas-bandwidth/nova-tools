@@ -95,7 +95,9 @@ type answer struct {
 // model yet (fresh), lane order.
 //
 // The held lanes are the server's answer to friend cards (each working card's lane); when it
-// does not answer, the lanes the last round found held, so no held lane goes unrenewed. Only
+// does not answer, every lane 1..max(width, the highest lane the last round found held) is
+// asked, an empty one not ending the round, so no held lane goes unrenewed (a fresh client
+// has found none yet). Only
 // a lane the server says holds a card is asked as a renewal: a free lane's ask is a take. A lowered width therefore drains: no lane takes until the held cards are
 // under it, and the held ones finish where they are. A raised width takes on the next round.
 // Not proven, it asks nothing: an ask renews a lease, and only a proving model's lanes are
@@ -110,7 +112,8 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 	}
 	asked := map[int]bool{}
 	lanes, err := c.serverHolds(ctx)
-	if err != nil {
+	blind := err != nil
+	if blind {
 		// friend cards did not answer: the lanes the last round found held are asked again, so
 		// none goes unrenewed (a lane among them that finished since may take: the server's
 		// own take still holds her row to its width)
@@ -139,7 +142,24 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 			holds = append(holds, h)
 		}
 	}
-	for n := 1; n <= MaxLanes && !failed && len(holds) < c.Intake(); n++ {
+	if blind {
+		// which lanes hold is unknown (a fresh client has found none yet): every lane up to
+		// the larger of her width and the highest lane last found held is asked, an empty one
+		// not stopping the round, so a lane holding a card past a free one is still renewed
+		top := c.Intake()
+		if len(lanes) > 0 {
+			top = max(top, lanes[len(lanes)-1])
+		}
+		for n := 1; n <= min(top, MaxLanes); n++ {
+			if asked[n] {
+				continue
+			}
+			if h, ok := ask(n); ok {
+				holds = append(holds, h)
+			}
+		}
+	}
+	for n := 1; n <= MaxLanes && !blind && !failed && len(holds) < c.Intake(); n++ {
 		if asked[n] {
 			continue
 		}
