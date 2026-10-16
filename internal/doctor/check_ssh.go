@@ -64,7 +64,7 @@ func checkBenchReach(ctx context.Context, env Env) Result {
 	return Result{
 		Status:   Fail,
 		Evidence: strings.Join(failures, "; "),
-		Fix:      "add the bench's host key with `ssh-keyscan <bench> >> ~/.ssh/known_hosts`, and install the key that logs in to it (`ssh-copy-id <bench>`) (" + sshDoc + ")",
+		Fix:      "if the bench is down (the tailnet check names it), bring it up first; otherwise add the bench's host key with `ssh-keyscan <bench> >> ~/.ssh/known_hosts`, and install the key that logs in to it (`ssh-copy-id <bench>`) (" + sshDoc + ")",
 	}
 }
 

@@ -14,7 +14,9 @@ fails the build. nova-card, nova-work and nova-sprint are built in nova-sprint, 
 holds their lines there.
 
 `<tool> <verb> -h` prints a verb's usage, every flag and its effect, and runs nothing, so it is
-always a safe first question ([CLI.md](CLI.md)). Notation: `<me>` is your own name, `<friend>` is
+always a safe first question ([CLI.md](CLI.md)); nova-fuse is the one exception: its verbs refuse
+-h at exit 2 so that exit 0 always means CLEAR, so ask nova-fuse help with the verb instead.
+Notation: `<me>` is your own name, `<friend>` is
 another friend's name, `<seat>` is a nova-secrets seat.
 
 ## Before you do anything by hand
@@ -155,7 +157,7 @@ cannot see.
 
 **The verbs, in order.**
 
-1. usage: `nova-doctor [run] [--check <name>]... [--dir <path>] [--local] [--strict] [--json]`.
+1. usage: `nova-doctor run [--check <name>]... [--dir <path>] [--local] [--strict] [--json]`.
    Run `nova-doctor run`. Each check prints one `DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]`
    line, every check runs, and nothing is changed or fixed for you. `--check <name>` runs one
    (the names are in `nova-doctor help run`), `--local` skips the checks only a fleet needs, and

@@ -98,13 +98,13 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 			"  receipt: 0 read; 2 usage, or no such session or entry",
 		Verbs: []tool.Verb{
 			{
-				Name: "open",
-				Usage: "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]\n" +
-					"NOTE: --publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append with no --publish carries the session's, and one that differs is a conflict naming both (exit 1).",
+				Name:    "open",
+				Usage:   "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]",
 				Example: "open --store ./cairns --session s1 --publish manual",
 				Effect:  tool.LocalWrite,
 				Detail: "A re-open naming the recorded policy (and source, when given) changes nothing; one naming\n" +
-					"another is a conflict, exit 1, and names the open that matches.",
+					"another is a conflict, exit 1, and names the open that matches.\n" +
+					"--publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append with no --publish carries the session's, and one that differs is a conflict naming both (exit 1).",
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					record(f)

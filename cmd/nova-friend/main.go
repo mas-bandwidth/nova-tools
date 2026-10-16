@@ -440,10 +440,11 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
 			{
-				Name:   "hook",
-				Usage:  "hook --harness claude",
-				Effect: tool.Inspection + ": reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON",
-				Detail: "An opt-in project hook for interactive Claude Code sessions (docs/CLAUDE-ASYNC-BASH-CANDIDATE.md). No settings are installed by this verb. Bash input is changed to run_in_background=true without approving the command; malformed input is denied.",
+				Name:      "hook",
+				Usage:     "hook --harness claude",
+				Effect:    tool.Inspection + ": reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON",
+				ExitTable: "0 the hook answered: one Claude hook JSON object or nothing (malformed input is answered with a deny), 2 a word or flag other than --harness claude, or the answer could not be written.",
+				Detail:    "An opt-in project hook for interactive Claude Code sessions (docs/CLAUDE-ASYNC-BASH-CANDIDATE.md). No settings are installed by this verb. Bash input is changed to run_in_background=true without approving the command; malformed input is denied.",
 				Flags: func(f *tool.Flags) {
 					f.Required("harness", "claude: the harness whose PreToolUse JSON is on stdin")
 				},
