@@ -1,4 +1,6 @@
 ---------------------------- MODULE MCHookBeat ----------------------------
 EXTENDS HookBeat
-\* Two names, two servers, down after DownAfter intervals with no answer; the clock is unbounded (every count is bounded).
+\* Quiet cases use store-time activity and role-specific silence; legacy
+\* cadence cases overapproximate issued-nonce compatibility and delivery.
+\* The clock is unbounded; every age and count is bounded.
 =============================================================================

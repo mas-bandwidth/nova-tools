@@ -45,6 +45,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	// (SPEC-TOOLWORK.md documents rule 6) reads the command text in this test;
 	// the transcript runs the same lines.
 	documentedExamples := []string{
+		"nova-hook codex-owner --thread example-thread --dry-run",
 		"nova-hook status --as m1",
 		"nova-hook hook --as m1 --role member --once",
 		"nova-hook unhook --as m1",

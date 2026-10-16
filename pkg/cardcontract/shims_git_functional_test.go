@@ -1,3 +1,12 @@
+//go:build functional
+
+// The shim tests render the git shims and run them through /bin/sh against a
+// real git on bare repositories under t.TempDir(). That is two subprocesses
+// per step, not logic: a functional test (Glenn, 2026-10-16: a unit test tests
+// basic logic and code, is not sensitive to timing, and calls no program).
+// On 2026-10-16 TestShimRefusesRewriteAtOrBelowStaged failed once on a hosted
+// runner (dev run 38968667637) in a way no bench reproduced in 25 runs.
+
 package cardcontract
 
 import (

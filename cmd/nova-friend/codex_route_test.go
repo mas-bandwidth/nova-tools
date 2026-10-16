@@ -16,6 +16,9 @@ func TestCodexImplicitDeliveryRefusesBeforeAnySideEffect(t *testing.T) {
 	t.Parallel()
 	for _, verb := range []string{"install", "run", "check"} {
 		for _, mode := range []string{"default", "named"} {
+			if mode == "default" && verb != "check" {
+				continue // a one-shot CardRunner needs no session route
+			}
 			for _, dry := range []bool{false, true} {
 				t.Run(verb+"/"+mode+map[bool]string{true: "/dry", false: "/real"}[dry], func(t *testing.T) {
 					t.Parallel()
@@ -56,8 +59,35 @@ func TestCodexImplicitDeliveryRefusesBeforeAnySideEffect(t *testing.T) {
 	}
 }
 
-// The install/run preflight refuses even without the CLI flag check; an explicit
-// folder remains a supported route (SPEC-FRIEND.md, Codex).
+// A Codex one-shot runner is a supported daemon path without a desktop
+// session route. The dry run accepts it without opening the bus or starting a
+// model; the separate check verb still refuses implicit session delivery.
+func TestCodexOneShotDryRunNeedsNoSessionRoute(t *testing.T) {
+	t.Parallel()
+	for _, verb := range []string{"run", "install"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t, "ada", "bob")
+			r.env["CODEX_HOME"] = "/w/codex"
+			w := r.world()
+			w.open = func(context.Context, string) (bus.Store, func(), error) {
+				t.Fatal("dry run opened the bus")
+				return nil, nil, nil
+			}
+			var out, errs strings.Builder
+			dir := t.TempDir()
+			if verb == "install" {
+				dir = "/w/bob" // the install rig's settings filesystem
+			}
+			code := run([]string{verb, "--as", "bob", "--harness", "codex", "--dir", dir, "--dry-run"}, strings.NewReader(""), &out, &errs, w)
+			assert.Equal(t, 0, code, errs.String())
+			assert.Empty(t, r.launchctl)
+		})
+	}
+}
+
+// Session delivery still refuses implicitly without the CLI flag check; an
+// explicit folder remains a supported route (SPEC-FRIEND.md, Codex).
 func TestCodexUndrivenPreflightRefusesImplicitRoute(t *testing.T) {
 	t.Parallel()
 	assert.NotNil(t, undriven("codex", "/work", "real-thread", "", "", "nothing was written"))

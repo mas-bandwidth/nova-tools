@@ -327,8 +327,8 @@ func TestHelpBannerLineLedByAnotherToolIsCounted(t *testing.T) {
 	repo, err := HelpBannerExamples(repoRoot(t))
 	require.NoError(t, err)
 	for _, w := range []string{
-		"example: nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi",
-		"example: nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note",
+		"example: nova-redis spill --redis 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi",
+		"example: nova-redis recall --redis 127.0.0.1:6379 --owner ada --name note",
 	} {
 		assert.Equal(t, "cmd/nova-redis/main.go", repo[w], "HelpBannerExamples(repo)[%q] = %q; want cmd/nova-redis/main.go", w, repo[w])
 	}

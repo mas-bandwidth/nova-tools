@@ -76,8 +76,8 @@ func runOneShotLane(t *testing.T, dir, beatReply string, extra ...string) (frien
 	var mu sync.Mutex
 	var runWall friend.Wall
 	w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
-		return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
-			if friend.InLane(ctx) {
+		return func(ctx context.Context, _, _ string, args []string, _ string) (string, int, error) {
+			if friend.InLane(ctx) && !proofCall(args) {
 				mu.Lock()
 				runWall = wl
 				mu.Unlock()

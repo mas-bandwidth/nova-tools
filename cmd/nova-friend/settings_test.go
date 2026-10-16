@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Codex delivery refusal precedes settings writes; read-only settings checks
-// still name drift (docs/SPEC-FRIEND.md, Codex).
-func TestCodexRefusedInstallPreservesSettingsAndInspectionNamesDrift(t *testing.T) {
+// A Codex one-shot install may plan settings without a session route; an
+// incomplete named session route still refuses before settings writes.
+func TestCodexOneShotInstallAndRefusedSessionPreserveSettingsInspection(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	r.env["CODEX_HOME"] = "/w/codex"
@@ -21,10 +21,12 @@ func TestCodexRefusedInstallPreservesSettingsAndInspectionNamesDrift(t *testing.
 	cli.Do(t, "check", "--settings", "--as", "bob", "--harness", "codex", "--dir", "/w/bob").Exit(1).
 		Err("CHECK DRIFT harness=codex settings=3 drift=1",
 			`CHECK DRIFT harness=codex file=`+config+` name=sandbox_workspace_write.writable_roots want="/w/bob" have="[]"`,
-			"settings repair requires an already watched folder", "--adapter folder --session <real-session> --delivery-dir <existing-watched-folder>")
-	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob", "--dry-run").Exit(2).
+			"one-shot card runner", "--adapter folder --session <real-session> --delivery-dir <existing-watched-folder>")
+	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob", "--dry-run").Exit(0).
+		Out("INSTALL PLAN")
+	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob", "--session", "real-thread", "--dry-run").Exit(2).
 		Err("codex native push is unavailable")
-	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob").Exit(2).
+	cli.Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", "/w/bob", "--session", "real-thread").Exit(2).
 		Err("codex native push is unavailable")
 	_, err := r.fs.ReadFile(config)
 	require.ErrorIs(t, err, os.ErrNotExist, "a refused install writes no harness settings")

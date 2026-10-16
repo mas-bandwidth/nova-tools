@@ -201,6 +201,7 @@ func (f *Fake) Sent(_ context.Context, key string) (string, bool, error) {
 
 // add is one entry on every stream and every mark, f.mu held.
 func (f *Fake) add(streams []string, fields map[string]string, marks []bus.Mark) {
+
 	f.seq++
 	id := strconv.FormatInt(f.now.UnixMilli(), 10) + "-" + strconv.FormatInt(f.seq, 10)
 	for _, s := range streams {
@@ -229,6 +230,15 @@ func (f *Fake) add(streams []string, fields map[string]string, marks []bus.Mark)
 		}
 		f.hashes[m.Key][m.Field] = m.Value
 	}
+	// A committed model send stamps activity; retries and background traffic
+	// do not (tla/HookBeat.tla, BusSend and DaemonSend).
+	if fields["model_activity"] == "1" && len(streams) > 0 {
+		rec := f.hashes["hook:rec:"+fields["from"]]
+		if rec["state"] == "hooked" {
+			rec["bus_sent_at"] = strconv.FormatInt(f.now.UnixMilli(), 10)
+		}
+	}
+
 }
 
 func (f *Fake) Unmark(_ context.Context, key string, fields ...string) (int64, error) {

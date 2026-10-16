@@ -84,7 +84,18 @@ func (h *daemonHook) step(ctx context.Context) {
 	}
 	var err error
 	if h.holder.Epoch() == 0 {
-		err = h.holder.Start(ctx)
+		// The coordinator can also work cards on her own friend row. Join her
+		// existing role and epoch; the daemon holds only its optional work
+		// lease, while nova-hook and the sprint server keep bus+sprint.
+		// Every other existing role still refuses rather than being changed.
+		var status []hook.Status
+		status, _, err = h.holder.Store.Read(ctx, h.holder.Name)
+		if err == nil {
+			if len(status) == 1 && status[0].Role == hook.Coordinator {
+				h.holder.Role = hook.Coordinator
+			}
+			err = h.holder.Start(ctx)
+		}
 	}
 	if err == nil {
 		err = h.holder.Beat(ctx, nil)

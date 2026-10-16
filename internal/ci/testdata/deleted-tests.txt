@@ -2346,7 +2346,6 @@ pkg/friend/notifications_test.go the notification receiver (Daemon.runNotificati
 pkg/friend/present_test.go the PRESENT turn and the backlog supersede were the daemon's session delivery, retired in v1.3.6; the daemon reads nothing off her stream
 pkg/friend/daemon_e2e_test.go the batch envelope, the daemon's PING answer and its batch-turn broken streak are retired with the daemon's session delivery (v1.3.6); the lanes keep their own silent-stop and refusal tests
 pkg/friend/idle_wake_test.go the idle wake turn was a batch session delivery, retired in v1.3.6
-pkg/friend/ping_text_test.go the daemon's PING path is retired (v1.3.6): nothing sends or answers a PING
 pkg/friend/alive_test.go the harness process check (WatchHarness, SessionTurns, Alive) is retired in v1.3.6: liveness is the nova-hook record's alone
 pkg/friend/adapter_codex_test.go the Codex queue adapter no factory built (CodexPushUnavailable) is retired with the daemon's session delivery (v1.3.6)
 pkg/friend/codex_queue_test.go the Codex app-server queue was the retired Codex adapter's (v1.3.6)

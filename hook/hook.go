@@ -96,17 +96,17 @@ const (
 	// bound outlives the whole bound of the next (a session answering every
 	// challenge inside its bound is never unproven between them).
 	ProofTTL = ChallengeEvery + 2*AnswerBound
-	// BeatEvery is the heartbeat's default interval: nova-hook serve challenges
-	// every hooked name whose role carries the bus push once an interval, and
-	// the answer is due within the same interval (tla/HookBeat.tla).
+	// BeatEvery is the server's pass interval, not its challenge cadence
+	// (tla/HookBeat.tla, Pass).
 	BeatEvery = time.Minute
-	// DownAfter is the heartbeat's default silence before a name goes down:
-	// nova-hook serve unhooks a name only once its last answer (or its
-	// hooking in, whichever is later) is older than DownAfter by the store's TIME
-	// and the challenge of the last pass still stands unanswered; challenges
-	// still go out every interval (2026-10-14: a harness that cannot
-	// answer mid-turn needs more than two one-minute intervals). The readers'
-	// up (Served.Down) uses the same window (tla/HookBeat.tla, DownAfter).
+	// BusyQuietAfter applies to a friend with ready or working sprint cards.
+	BusyQuietAfter = 5 * time.Minute
+	// QuietAfter applies to an idle friend or comms name.
+	QuietAfter = 10 * time.Minute
+	// CoordinatorEvery is the coordinator's quiet window.
+	CoordinatorEvery = 30 * time.Minute
+	// DownAfter is silence required in addition to an outstanding challenge
+	// past AnswerBound before the server unhooks a name (tla/HookBeat.tla).
 	DownAfter = 5 * time.Minute
 )
 
@@ -134,6 +134,15 @@ func ProofKey(name string, p Push) string { return prefix + "proof:" + name + ":
 
 // ChallengeKey is name's outstanding challenge: a hash of epoch, sum, pushes, with a TTL.
 func ChallengeKey(name string) string { return prefix + "chal:" + name }
+
+// DeliveryKey holds the private pending challenge payload until bus delivery
+// is confirmed (tla/HookBeat.tla, delivery obligation).
+func DeliveryKey(name string) string { return prefix + "delivery:" + name }
+
+// DeliveryOnce is the bus once-key of this challenge, stable across retries.
+func DeliveryOnce(name string, epoch int64, nonce string) string {
+	return fmt.Sprintf("%s:%d:%s", DeliveryKey(name), epoch, Sum(nonce))
+}
 
 // The record's states and a push's (docs/SPEC-HOOK.md, the states).
 const (
@@ -192,15 +201,19 @@ type PushStatus struct {
 
 // Status is one identity's record, judged at the store's now.
 type Status struct {
-	Name     string
-	Role     Role
-	State    string // StateNone .. StateProven
-	Epoch    int64
-	Armed    time.Time // when the record was last hooked, zero when never
-	Unhooked time.Time // when it was unhooked, zero when it is not
-	Reason   string    // why it was unhooked, when the heartbeat did it ("no answer in 5m0s (5 challenges missed)")
-	BeatAt   time.Time // when the heartbeat server last challenged it, zero when never
-	AnswerAt time.Time // when the session last answered a challenge, zero when never
+	Name         string
+	Role         Role
+	State        string // StateNone .. StateProven
+	Epoch        int64
+	Armed        time.Time     // when the record was last hooked, zero when never
+	Unhooked     time.Time     // when it was unhooked, zero when it is not
+	Reason       string        // why it was unhooked, when the heartbeat did it ("no answer in 5m0s (5 challenges missed)")
+	BeatAt       time.Time     // when the heartbeat server last challenged it, zero when never
+	ActivityAt   time.Time     // latest explicit model bus send, at store TIME
+	PendingSent  bool          // the bus committed this challenge, not merely prepared it
+	PendingUntil time.Time     // outstanding server challenge deadline, even after its key expires
+	QuietAfter   time.Duration // policy selected from the authoritative sprint row at the last pass
+	AnswerAt     time.Time     // when the session last answered a challenge, zero when never
 	// Down is why the record reads down at this read whatever its state says
 	// (Served.Down: no server, a stale one, or no answer), "" when the evidence
 	// stands. No reader trusts the last written state then, and the gate refuses.
@@ -223,6 +236,11 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 	st.Armed = msTime(rec["armed"])
 	st.BeatAt = msTime(rec["beat_at"])
 	st.AnswerAt = msTime(rec["answered_at"])
+	st.ActivityAt = msTime(rec["bus_sent_at"])
+	st.PendingUntil = msTime(rec["pending_until"])
+	st.PendingSent = rec["pending_sent"] == "1"
+	quiet, _ := strconv.ParseInt(rec["quiet_after"], 10, 64) // ignored: an old record uses the role default
+	st.QuietAfter = time.Duration(quiet) * time.Millisecond
 	st.Misses, _ = strconv.Atoi(rec["misses"]) // ignored: no count reads as none missed
 	st.Reason = rec["reason"]
 	if rec["state"] != "hooked" {
@@ -271,6 +289,30 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 		st.State = StateExpired
 	}
 	return st
+}
+
+// LastActivity is actual model activity or the initial arm, never a holder's
+// lease renewal (tla/HookBeat.tla, lastActivity).
+func (st Status) LastActivity() time.Time {
+	at := st.AnswerAt
+	if st.ActivityAt.After(at) {
+		at = st.ActivityAt
+	}
+	if st.Armed.After(at) {
+		at = st.Armed
+	}
+	return at
+}
+
+// QuietWindow is the policy selected by the last pass, or the role's default.
+func (st Status) QuietWindow() time.Duration {
+	if st.QuietAfter > 0 {
+		return st.QuietAfter
+	}
+	if st.Role == Coordinator {
+		return CoordinatorEvery
+	}
+	return QuietAfter
 }
 
 // msTime is the instant a record field of ms since the epoch names, zero when none.

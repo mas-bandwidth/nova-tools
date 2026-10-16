@@ -183,7 +183,7 @@ func codexBacklog(s *session, tail string, since time.Time) (codexRecovery, erro
 		entries = trimmed
 		plan.cutover = now.UTC().Truncate(time.Second)
 	}
-	observed := func(m bus.Message) bool { return m.From != s.as || strings.HasPrefix(m.Subject, "HOOK CHALLENGE ") }
+	observed := func(m bus.Message) bool { return m.From != s.as || serverSent(m, s.as) || sprintSent(m, s.as) }
 	senderNames := make([]string, 0)
 	seenSenders := map[string]bool{}
 	for _, entry := range entries {
