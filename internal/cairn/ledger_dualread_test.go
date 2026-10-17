@@ -2,257 +2,261 @@ package cairn_test
 
 import (
 	"encoding/base64"
+	"math/rand/v2"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/ledgerwire"
+	"github.com/mas-bandwidth/nova-tools/internal/cairn"
+	"github.com/mas-bandwidth/nova-tools/internal/record"
+	_ "github.com/mas-bandwidth/nova-tools/internal/record/ledgerread"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestRecordLedgerAndCairnDualRead is the reader half of the record ledger and
-// cairn records' table adoption (v1.5 aspect 13, part 1; the owner's rules S2
-// and S4, and the reader-first order C13): every record the record ledger's
-// entries and keys and the cairn record lines read back is read alike from its
-// fixed binary image, the padded standard base64 of that image and the legacy
-// form its writer writes today; every malformed value of each form is refused
-// by name (`<RECORD> REFUSED: <reason>; run: <help>`) and never read as
-// absent, empty or zero; a clamped value is refused; and each read is counted
+// cairn records' table adoption (v1.5 aspect 13, part 1; the owner's S2 and
+// S4, readers first): the ledger's hash fields and values (record.ReadLedgerDay,
+// the read LedgerReport makes of each day hash) and the cairn log lines
+// (cairn.ReadOpen) read alike from the table wire, the padded standard base64
+// of it, the schema JSON text and the legacy form the writers write today;
+// every cut of every form, and a seeded run of random images, is refused by
+// name (`<RECORD> REFUSED: <reason>; run: <help>`), never read as a row, an
+// empty value or zero; a clamped value is refused; and each read is counted
 // under its record and its form.
 //
-// Unit tier: no clock, no socket, no program, no store. The Redis and log
-// reads are tested through their table reads on fixed inputs; the files are
-// read from a t.TempDir() this test writes.
+// Unit tier: no clock (the test's clock starts at 1000 s), no socket, no
+// store; the log files are written into a t.TempDir().
 func TestRecordLedgerAndCairnDualRead(t *testing.T) {
 	t.Parallel()
-	for name, tb := range recordTables() {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			roundTrip(t, tb)
-			refuseDamage(t, tb)
-		})
-	}
+	t.Run("ledger", func(t *testing.T) { ledgerDualRead(t) })
+	t.Run("cairn log", func(t *testing.T) { cairnDualRead(t) })
 }
 
-type builder[T any] interface {
-	Init(...ledgerwire.TableAllocator) bool
-	GetRoot() *T
-	AsConst() *T
-	Region() []byte
-	Lock() bool
-	Shutdown()
+var testClock = time.Unix(1000, 0).UTC()
+
+const day = "2026-10-17"
+
+var ledgerRow = record.LedgerEntry{
+	Day: day, Card: "a13-ledgers.w3", Model: "model-1", Repo: "mas-bandwidth/nova-tools", Provider: "provider-1",
+	Tokens: [5]int64{100, 0, 3, 0, 5}, Known: [5]bool{true, false, true, false, true}, Rough: 132, Sources: "fixture",
 }
 
-// table is one generated ledger table wired to a schemaread codec: binary,
-// padded base64 and JSON text, each refused by name when damaged (S2).
-type table struct {
-	name string
-	codec *schemaread.Codec[any]
-	read  func([]byte, bool) (any, schemaread.Report)
-	wire  func(any) []byte
-	json  func(any) []byte
-}
+// The legacy field and value exactly as ReplaceLedgerDays writes them.
+const (
+	legacyField = `["a13-ledgers.w3","model-1","mas-bandwidth/nova-tools"]`
+	legacyValue = `{"provider":"provider-1","tokens":[100,null,3,null,5],"rough":132,"sources":"fixture"}`
+)
 
-func reportOf(rep *ledgerwire.TableReport, ok bool) schemaread.Report {
-	out := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped), Malformed: rep.Malformed || !ok}
-	if rep.Reason != "" {
-		out.Reason = rep.Reason
-	}
-	return out
-}
+var tableForms = []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON}
 
-func newTable[T any, B any, PB interface {
-	*B
-	builder[T]
-}](name string, fromJSON, loadWire func(PB, []byte, *ledgerwire.TableReport) bool, reset func(*T), measureWire func([]byte) (int64, error),
-	measure func(*T, ...ledgerwire.TableWriteContext) int64, save func(*T, []byte, ...ledgerwire.TableWriteContext) int64,
-	jsonMeasure func(*T, ...ledgerwire.TableAllocator) int64, jsonSave func(*T, []byte, ...ledgerwire.TableAllocator) int64) *table {
-	load := func(data []byte, isJSON bool) (any, schemaread.Report) {
-		b := PB(new(B))
-		if !b.Init() {
-			return nil, schemaread.Report{Malformed: true}
-		}
-		var rep ledgerwire.TableReport
-		var ok bool
-		if isJSON {
-			ok = fromJSON(b, data, &rep)
-		} else {
-			ok = loadWire(b, data, &rep)
-		}
-		if !ok || !b.Lock() {
-			return nil, reportOf(&rep, ok)
-		}
-		p := b.AsConst()
-		if p == nil {
-			return nil, schemaread.Report{Malformed: true}
-		}
-		return &held[T]{root: p, owner: b}, reportOf(&rep, ok)
-	}
-	wire := func(v any) []byte {
-		h := v.(*held[T])
-		n := measure(h.root)
-		if n < 0 {
-			return nil
-		}
-		out := make([]byte, n)
-		if save(h.root, out) != n {
-			return nil
-		}
-		return out
-	}
-	text := func(v any) []byte {
-		h := v.(*held[T])
-		n := jsonMeasure(h.root)
-		if n < 0 {
-			return nil
-		}
-		out := make([]byte, n)
-		if jsonSave(h.root, out) != n {
-			return nil
-		}
-		return out
-	}
-	c := &schemaread.Codec[any]{Name: name, Help: "nova-tools help", Reset: func(v *any) {},
-		Measure: func(w []byte) error { _, err := measureWire(w); return err },
-		LoadWire: func(v *any, data []byte) schemaread.Report {
-			p, r := load(data, false)
-			*v = p
-			return r
-		},
-		LoadJSON: func(v *any, data []byte) schemaread.Report {
-			p, r := load(data, true)
-			*v = p
-			return r
-		},
-		SaveWire: func(v *any) []byte {
-			if *v == nil {
-				return nil
-			}
-			return wire(*v)
-		},
-		SaveJSON: func(v *any) []byte {
-			if *v == nil {
-				return nil
-			}
-			return text(*v)
-		}}
-	return &table{name: name, codec: c, read: load, wire: wire, json: text}
-}
-
-type held[T any] struct {
-	root  *T
-	owner any
-}
-
-func recordTables() map[string]*table {
-	return map[string]*table{
-		"LedgerKey": newTable("LEDGER_KEY", ledgerwire.LedgerKeyFromJson, ledgerwire.LedgerKeyLoadBuilder, ledgerwire.LedgerKeyReset, ledgerwire.LedgerKeyLoadMeasureReason, ledgerwire.LedgerKeyMeasure, ledgerwire.LedgerKeySave, ledgerwire.LedgerKeyToJsonMeasure, ledgerwire.LedgerKeyToJson),
-		"LedgerValue": newTable("LEDGER_VALUE", ledgerwire.LedgerValueFromJson, ledgerwire.LedgerValueLoadBuilder, ledgerwire.LedgerValueReset, ledgerwire.LedgerValueLoadMeasureReason, ledgerwire.LedgerValueMeasure, ledgerwire.LedgerValueSave, ledgerwire.LedgerValueToJsonMeasure, ledgerwire.LedgerValueToJson),
-		"CairnLogRecord": newTable("CAIRN_LOG_RECORD", ledgerwire.CairnLogRecordFromJson, ledgerwire.CairnLogRecordLoadBuilder, ledgerwire.CairnLogRecordReset, ledgerwire.CairnLogRecordLoadMeasureReason, ledgerwire.CairnLogRecordMeasure, ledgerwire.CairnLogRecordSave, ledgerwire.CairnLogRecordToJsonMeasure, ledgerwire.CairnLogRecordToJson),
-	}
-}
-
-var recordFixtures = map[string]string{
-	"LEDGER_KEY":           `{"day":"2026-10-17","card":"c1","model":"m1","repo":"r1"}`,
-	"LEDGER_VALUE":         `{"provider":"p1","tokens":[{"amount":100},{"amount":200}],"rough":3,"sources":"sz"}`,
-	"CAIRN_LOG_RECORD":    `{"event":"open","session":"s1","entry":"e1","stamp":"2026-10-17T12:00:00Z","publish":"manual","source":"sr"}`,
-}
-
-// subset reports whether every leaf of want is present and equal in got; a leaf
-// of the zero value may be absent, since a variable table reads an absent field
-// as zero.
-func subset(want, got any) bool {
-	switch w := want.(type) {
-	case map[string]any:
-		g, _ := got.(map[string]any)
-		for k, v := range w {
-			if !subset(v, g[k]) {
-				return false
-			}
-		}
-		return true
-	case []any:
-		g, ok := got.([]any)
-		if !ok || len(g) != len(w) {
-			return len(w) == 0 && got == nil
-		}
-		for i := range w {
-			if !subset(w[i], g[i]) {
-				return false
-			}
-		}
-		return true
-	case nil:
-		return got == nil
-	case string:
-		g, _ := got.(string)
-		return g == w
-	case bool:
-		g, _ := got.(bool)
-		return g == w
-	case float64:
-		g, _ := got.(float64)
-		return g == w
-	}
-	return false
-}
-
-// roundTrip reads a fixture as JSON, writes it in each form, reads each back
-// equal and counted under the form it arrived in (S2, S4, the per-form counter).
-func roundTrip(t *testing.T, tb *table) {
+// refusedByName asserts err is the named refusal of record pointing at help.
+func refusedByName(t *testing.T, err error, record, help, what string) {
 	t.Helper()
-	r := schemaread.NewReader(tb.codec)
-	var want any
-	rep := tb.codec.LoadJSON(&want, []byte(recordFixtures[tb.name]))
-	require.False(t, rep.Malformed, "%s fixture is read", tb.name)
-	require.Zero(t, rep.Clamped, "%s fixture is within its bounds", tb.name)
-	wantWire := tb.wire(want)
-	require.NotEmpty(t, wantWire)
-	for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
-		out, err := r.Write(&want, form)
+	if assert.Error(t, err, "%s: want a refusal, got a read", what) {
+		assert.Contains(t, err.Error(), record+" REFUSED: ", "%s", what)
+		assert.Contains(t, err.Error(), "; run: "+help, "%s", what)
+	}
+}
+
+func ledgerDualRead(t *testing.T) {
+	counts := func(rec, form string) uint64 { return record.LedgerReadCounts()[rec][form] }
+
+	// Legacy: the writer's own field and value.
+	rows, err := record.ReadLedgerDay(day, map[string]string{legacyField: legacyValue})
+	require.NoError(t, err, "the legacy row reads")
+	assert.Equal(t, []record.LedgerEntry{ledgerRow}, rows)
+	assert.Equal(t, uint64(1), counts("LEDGER_KEY", "legacy"))
+	assert.Equal(t, uint64(1), counts("LEDGER_VALUE", "legacy"))
+
+	// Each table form reads to the same row, counted under its form.
+	images := map[schemaread.Form][2][]byte{}
+	for _, form := range tableForms {
+		f, v, err := record.LedgerFieldText(ledgerRow, form)
 		require.NoError(t, err, "write %s", form)
-		got, result, err := r.Read(out)
+		images[form] = [2][]byte{f, v}
+		rows, err := record.ReadLedgerDay(day, map[string]string{string(f): string(v)})
 		require.NoError(t, err, "read %s", form)
-		assert.Equal(t, form, result.Form)
-		assert.Equal(t, string(wantWire), string(tb.wire(got)), "%s wire from %s", tb.name, form)
+		assert.Equal(t, []record.LedgerEntry{ledgerRow}, rows, "%s reads as the legacy row reads", form)
+		assert.Equal(t, uint64(1), counts("LEDGER_KEY", form.String()), "%s key counted", form)
+		assert.Equal(t, uint64(1), counts("LEDGER_VALUE", form.String()), "%s value counted", form)
 	}
-	assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBinary))
-	assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBase64))
-	assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormJSON))
-}
 
-// refuseDamage: a damaged image of each form is refused by name, never read as
-// absent, empty or zero; a clamped value is refused.
-func refuseDamage(t *testing.T, tb *table) {
-	t.Helper()
-	var want any
-	tb.codec.LoadJSON(&want, []byte(recordFixtures[tb.name]))
-	wire := tb.wire(want)
-	b64 := base64.StdEncoding.EncodeToString(wire)
-	text := tb.json(want)
-	flipped := append([]byte(nil), wire...)
-	flipped[0] ^= 0xff
-	bad := map[string][]byte{
-		"binary cut after one byte":  wire[:1],
-		"binary cut in half":         wire[:len(wire)/2],
-		"binary one byte short":      wire[:len(wire)-1],
-		"binary form byte flipped":   flipped,
-		"base64 cut at three":        []byte(b64[:3]),
-		"base64 not padded":          []byte(strings.TrimRight(b64, "=") + "A"),
-		"base64 with a foreign byte": []byte(b64[:4] + "!" + b64[5:]),
-		"json cut after one byte":    text[:1],
-		"json cut in half":           text[:len(text)/2],
-		"empty":                      {},
-		"text not a table":           []byte("not a table"),
-	}
-	for name, image := range bad {
-		r := schemaread.NewReader(tb.codec)
-		_, _, err := r.Read(image)
-		var refusal *schemaread.Refusal
-		if assert.ErrorAs(t, err, &refusal, "%s: %s: want a named refusal", tb.name, name) {
-			assert.Equal(t, tb.name, refusal.Name, "%s: the refusal names the table", name)
-			assert.NotEmpty(t, refusal.Reason, "%s: the refusal names its reason", name)
+	// One hash holding every form at once (a day mid-cutover) reads every row.
+	other := ledgerRow
+	other.Card = "card-2"
+	mixed := map[string]string{legacyField: legacyValue}
+	of, ov, err := record.LedgerFieldText(other, schemaread.FormBase64)
+	require.NoError(t, err)
+	mixed[string(of)] = string(images[schemaread.FormBinary][1])
+	rows, err = record.ReadLedgerDay(day, mixed)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	mixed[string(of)] = string(ov)
+	rows, err = record.ReadLedgerDay(day, mixed)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []record.LedgerEntry{ledgerRow, other}, rows)
+
+	// Every cut of every form of the field, and of the value, is refused by
+	// name; nothing reads as a row.
+	images[schemaread.FormLegacy] = [2][]byte{[]byte(legacyField), []byte(legacyValue)}
+	for form, img := range images {
+		for n := 0; n < len(img[0]); n++ {
+			_, err := record.ReadLedgerDay(day, map[string]string{string(img[0][:n]): string(img[1])})
+			refusedByName(t, err, "LEDGER_KEY", record.LedgerHelp, form.String()+" field cut at "+itoa(n))
+		}
+		for n := 0; n < len(img[1]); n++ {
+			_, err := record.ReadLedgerDay(day, map[string]string{string(img[0]): string(img[1][:n])})
+			refusedByName(t, err, "LEDGER_VALUE", record.LedgerHelp, form.String()+" value cut at "+itoa(n))
 		}
 	}
+	// A wire led by a form byte this reader does not know, and its base64.
+	bad := append([]byte{0x7f}, images[schemaread.FormBinary][1][1:]...)
+	for _, image := range []string{string(bad), base64.StdEncoding.EncodeToString(bad)} {
+		_, err := record.ReadLedgerDay(day, map[string]string{legacyField: image})
+		refusedByName(t, err, "LEDGER_VALUE", record.LedgerHelp, "an unknown form byte")
+	}
+	// A seeded run of random images (no clock): each is refused by name or,
+	// when it happens to be a whole record, read; never a panic or a silent row.
+	rnd := rand.New(rand.NewPCG(1000, 17))
+	for i := range 2000 {
+		img := images[tableForms[i%len(tableForms)]][1]
+		mut := append([]byte(nil), img...)
+		mut[rnd.IntN(len(mut))] ^= byte(1 + rnd.IntN(255))
+		_, err := record.ReadLedgerDay(day, map[string]string{legacyField: string(mut)})
+		if err != nil {
+			var ref *schemaread.Refusal
+			require.ErrorAs(t, err, &ref, "random image %d: an unnamed error", i)
+		}
+	}
+
+	// Clamped: a day past string(10), six token slots past [..5], a legacy key
+	// of four parts, a table key naming another day than its hash.
+	clampedKey := `{"day":"2026-10-170","card":"c","model":"m","repo":"r"}`
+	_, err = record.ReadLedgerDay(day, map[string]string{clampedKey: legacyValue})
+	refusedByName(t, err, "LEDGER_KEY", record.LedgerHelp, "a day past its bound")
+	clampedValue := `{"provider":"p","tokens":[{"amount":1},{"amount":1},{"amount":1},{"amount":1},{"amount":1},{"amount":1}],"rough":1,"sources":"s"}`
+	_, err = record.ReadLedgerDay(day, map[string]string{legacyField: clampedValue})
+	refusedByName(t, err, "LEDGER_VALUE", record.LedgerHelp, "six token slots")
+	_, err = record.ReadLedgerDay(day, map[string]string{`["c","m","r","x"]`: legacyValue})
+	refusedByName(t, err, "LEDGER_KEY", record.LedgerHelp, "a legacy key of four parts")
+	_, err = record.ReadLedgerDay(day, map[string]string{`["c","","r"]`: legacyValue})
+	refusedByName(t, err, "LEDGER_KEY", record.LedgerHelp, "a legacy key with no model")
+	elsewhere := ledgerRow
+	elsewhere.Day = "2026-10-18"
+	ef, _, err := record.LedgerFieldText(elsewhere, schemaread.FormJSON)
+	require.NoError(t, err)
+	_, err = record.ReadLedgerDay(day, map[string]string{string(ef): legacyValue})
+	refusedByName(t, err, "LEDGER_KEY", record.LedgerHelp, "a key of another day")
+	assert.Positive(t, counts("LEDGER_KEY", "refused_clamped"), "the clamp is counted")
+	assert.Positive(t, counts("LEDGER_VALUE", "refused_clamped"), "the clamp is counted")
+	assert.Positive(t, counts("LEDGER_VALUE", "refused_malformed"), "the cuts are counted")
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// writeLog makes a store whose log.jsonl holds lines.
+func writeLog(t *testing.T, lines ...string) string {
+	t.Helper()
+	store := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(store, "log.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o644))
+	return store
+}
+
+func cairnDualRead(t *testing.T) {
+	counts := func(k string) uint64 { return cairn.LogReadCounts()[k] }
+	stamp := testClock.Format(time.RFC3339Nano)
+	want := cairn.OpenRecord{Source: "session:x", Publish: cairn.PublishManual, Opened: testClock, Found: true}
+
+	// Legacy: the line Open writes.
+	store := t.TempDir()
+	legacyBefore := counts("legacy")
+	require.NoError(t, cairn.Open(store, "s1", "session:x", testClock, cairn.PublishManual))
+	got, err := cairn.ReadOpen(store, "s1")
+	require.NoError(t, err)
+	assert.Equal(t, want, got, "the legacy open line reads")
+	assert.GreaterOrEqual(t, counts("legacy")-legacyBefore, uint64(1))
+	legacyLine := strings.TrimSpace(readFile(t, filepath.Join(store, "log.jsonl")))
+
+	// Each table form of the same record reads to the same open record. The
+	// wire rides a line only when it holds no newline byte, so the fixture is
+	// checked for one.
+	images := map[schemaread.Form]string{schemaread.FormLegacy: legacyLine}
+	for _, form := range tableForms {
+		line, err := cairn.LogLineText("open", "s1", "", stamp, cairn.PublishManual, "session:x", form)
+		require.NoError(t, err, "write %s", form)
+		require.NotContains(t, string(line), "\n", "%s rides one line", form)
+		images[form] = string(line)
+		before := counts(form.String())
+		if form == schemaread.FormJSON {
+			before = counts("legacy") // the record's JSON text is the legacy line's shape
+		}
+		got, err := cairn.ReadOpen(writeLog(t, string(line)), "s1")
+		require.NoError(t, err, "read %s", form)
+		assert.Equal(t, want, got, "%s reads as the legacy line reads", form)
+		if form == schemaread.FormJSON {
+			assert.GreaterOrEqual(t, counts("legacy")-before, uint64(1))
+		} else {
+			assert.Equal(t, uint64(1), counts(form.String())-before, "%s counted", form)
+		}
+	}
+
+	// Every cut of the session's open line, in every form, is refused by name
+	// naming the log. The one exception is SPEC-CAIRN line 30's: a cut legacy
+	// line that no longer names this session and the open event could be
+	// another session's, so it is skipped and counted, never read as this
+	// session's open.
+	for form, line := range images {
+		for n := 1; n < len(line); n++ {
+			cut := line[:n]
+			store := writeLog(t, cut)
+			refusedBefore := counts("refused_malformed") + counts("refused_unknown_form") + counts("refused_wire_damaged") + counts("refused_clamped") + counts("refused_absent_required")
+			got, err := cairn.ReadOpen(store, "s1")
+			what := form.String() + " line cut at " + itoa(n)
+			if err != nil {
+				assert.Contains(t, err.Error(), filepath.Join(store, "log.jsonl"), "%s: the refusal names the log", what)
+				refusedByName(t, err, "CAIRN_LOG_RECORD", cairn.LogHelp, what)
+				continue
+			}
+			// The record's JSON text reads as the legacy line it shares a shape with.
+			assert.Contains(t, []schemaread.Form{schemaread.FormLegacy, schemaread.FormJSON}, form, "%s: only a text cut may be another session's", what)
+			assert.False(t, strings.Contains(cut, `"s1"`) && strings.Contains(cut, `"open"`), "%s: a cut naming this session's open is refused", what)
+			assert.False(t, got.Found, "%s: never read as an open", what)
+			refusedAfter := counts("refused_malformed") + counts("refused_unknown_form") + counts("refused_wire_damaged") + counts("refused_clamped") + counts("refused_absent_required")
+			assert.Greater(t, refusedAfter, refusedBefore, "%s: the skipped line is counted", what)
+		}
+	}
+
+	// Clamped: a policy outside Policies, an event outside open and append,
+	// and a session past 128 bytes, read; and the writer refuses the long id.
+	long := "s1" + strings.Repeat("x", 128)
+	for name, c := range map[string]struct{ line, session string }{
+		"policy":  {`{"entry":"","event":"open","publish":"bogus","session":"s1","source":"x","stamp":""}`, "s1"},
+		"event":   {`{"entry":"","event":"close","publish":"manual","session":"s1","source":"x","stamp":"","note":"open"}`, "s1"},
+		"session": {`{"entry":"","event":"open","publish":"manual","session":"` + long + `","source":"x","stamp":""}`, long},
+	} {
+		_, err := cairn.ReadOpen(writeLog(t, c.line), c.session)
+		refusedByName(t, err, "CAIRN_LOG_RECORD", cairn.LogHelp, name)
+		assert.Contains(t, err.Error(), "clamped", name)
+	}
+	_, err = cairn.LogLineText("open", strings.Repeat("s", 129), "", stamp, cairn.PublishManual, "x", schemaread.FormBase64)
+	refusedByName(t, err, "CAIRN_LOG_RECORD", cairn.LogHelp, "a writer's long session")
+
+	// Another session's open, in a table form, is not this one's.
+	other, err := cairn.LogLineText("open", "s2", "", stamp, cairn.PublishNever, "session:y", schemaread.FormBase64)
+	require.NoError(t, err)
+	got, err = cairn.ReadOpen(writeLog(t, string(other), legacyLine), "s1")
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+func readFile(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(name)
+	require.NoError(t, err)
+	return string(b)
 }

@@ -44,8 +44,10 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/mas-bandwidth/nova-tools/internal/record/tablejson"
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // Publish policies name who publishes a checkpoint and when. This package
@@ -466,28 +468,126 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		var rec map[string]string
-		if json.Unmarshal([]byte(line), &rec) != nil {
-			// Not a record this reader can decode. It is only this
-			// session's business if it could be this session's open.
-			if strings.Contains(line, string(quotedSession)) && strings.Contains(line, `"open"`) {
-				return OpenRecord{}, fmt.Errorf("%s:%d may be the open record of session %q and does not decode as one; refusing to read its source as none", name, i+1, session)
+		rec, res, err := logRecords.Read([]byte(line))
+		if err != nil {
+			// Corrupt provenance never reads as none (SPEC-CAIRN line 30). A
+			// refused text line is only this session's business if it could
+			// be this session's open; another session's is skipped on purpose,
+			// counted under its refusal reason (LogReadCounts). A refused table
+			// image (the wire or its base64) names no session a reader can
+			// trust, so it is refused for every session.
+			table := res.Form == schemaread.FormBinary || res.Form == schemaread.FormBase64
+			if table || (strings.Contains(line, string(quotedSession)) && strings.Contains(line, `"open"`)) {
+				return OpenRecord{}, fmt.Errorf("%s:%d may be the open record of session %q and does not read as one (%v); refusing to read its source as none", name, i+1, session, err)
 			}
 			continue
 		}
-		if rec["event"] == "open" && rec["session"] == session {
+		if rec.Event == "open" && rec.Session == session {
 			var opened time.Time
-			if rec["stamp"] != "" {
+			if rec.Stamp != "" {
 				var perr error
-				opened, perr = time.Parse(time.RFC3339Nano, rec["stamp"])
+				opened, perr = time.Parse(time.RFC3339Nano, rec.Stamp)
 				if perr != nil {
-					return OpenRecord{}, fmt.Errorf("%s:%d open record of session %q has an invalid stamp %q", name, i+1, session, rec["stamp"])
+					return OpenRecord{}, fmt.Errorf("%s:%d open record of session %q has an invalid stamp %q", name, i+1, session, rec.Stamp)
 				}
 			}
-			return OpenRecord{Source: rec["source"], Publish: rec["publish"], Opened: opened, Found: true}, nil
+			return OpenRecord{Source: rec.Source, Publish: rec.Publish, Opened: opened, Found: true}, nil
 		}
 	}
 	return OpenRecord{}, nil
+}
+
+// The cairn log's typed read (v1.5 aspect 13; the owner's S2 and S4, readers
+// first). A log.jsonl line is the CairnLogRecord table of schemas/ledger, read
+// from the padded standard base64 of its wire (or the wire itself) or the
+// legacy JSON line appendLog writes today. The schema JSON text of the record
+// is the legacy line's own shape, so it reads, and is counted, as legacy.
+// Writers stay legacy. pkg/ledgerwire's golden test imports this package, so
+// the generated table is wired in by internal/record/ledgerread.
+var (
+	// LogRecordWire holds the generated table an installer
+	// (internal/record/ledgerread) wires in; until then a table image is
+	// refused as unknown_form and the legacy line alone reads.
+	LogRecordWire tablejson.Slot
+
+	logRecords = schemaread.NewReader(tablejson.Codec("CAIRN_LOG_RECORD", LogHelp, &LogRecordWire, logIsLegacy, logLoadLegacy, logConstraints))
+)
+
+// LogHelp is the command a log refusal points at.
+const LogHelp = "nova-cairn open -h"
+
+// logRecord is one log line in the shape of the CairnLogRecord table's JSON
+// text (event_kind keeps the line's key "event").
+type logRecord struct {
+	Event   string `json:"event,omitempty"`
+	Session string `json:"session"`
+	Entry   string `json:"entry"`
+	Stamp   string `json:"stamp,omitempty"`
+	Publish string `json:"publish,omitempty"`
+	Source  string `json:"source,omitempty"`
+}
+
+// logEvents are the events appendLog records, in the table's enum order.
+var logEvents = []string{"open", "append"}
+
+// logIsLegacy: the legacy line is a JSON object.
+func logIsLegacy(in []byte) bool {
+	t := strings.TrimSpace(string(in))
+	return strings.HasPrefix(t, "{")
+}
+
+// logLoadLegacy reads a legacy line: a JSON object of strings, as appendLog
+// writes it. A value that is not a string is malformed (SPEC-CAIRN line 30);
+// a key the record does not name is tolerated and counted.
+func logLoadLegacy(v *logRecord, in []byte) schemaread.Report {
+	var m map[string]string
+	if err := json.Unmarshal(in, &m); err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	*v = logRecord{Event: m["event"], Session: m["session"], Entry: m["entry"], Stamp: m["stamp"], Publish: m["publish"], Source: m["source"]}
+	known := 0
+	for _, k := range []string{"event", "session", "entry", "stamp", "publish", "source"} {
+		if _, ok := m[k]; ok {
+			known++
+		}
+	}
+	return schemaread.Report{Unknown: len(m) - known}
+}
+
+// logConstraints: the event is open or append and the policy one of Policies
+// or absent (schemas/ledger CairnEvent and PublishPolicy); the session and
+// entry are ids of at most 128 bytes (ValidID).
+func logConstraints(v *logRecord, c *schemaread.Checker) {
+	c.Required("event", v.Event != "")
+	c.Enum("event", slices.Index(logEvents, v.Event), len(logEvents))
+	if v.Publish != "" {
+		c.Enum("publish", slices.Index(Policies, v.Publish), len(Policies))
+	}
+	c.Required("session", v.Session != "")
+	c.Text("session", v.Session, 128)
+	c.Text("entry", v.Entry, 128)
+	c.Text("stamp", v.Stamp, unbounded)
+	c.Text("source", v.Source, unbounded)
+}
+
+// unbounded is the length check of a text the schema bounds by no count
+// (schemas/ledger CairnLogRecord stamp and source): UTF-8 with no NUL only.
+const unbounded = int(^uint(0) >> 1)
+
+// LogReadCounts is the log reader's counters: the reads per form and the
+// refusals per reason, the evidence a cutover reads before the writer
+// switches (S4).
+func LogReadCounts() map[string]uint64 { return logRecords.Counts().Snapshot() }
+
+// LogLineText is one log record in a table form (the wire, its base64 or the
+// schema JSON text), as appendLog will write it after the switch; it refuses
+// what the reader refuses, before a byte is written.
+func LogLineText(event, session, entry, stamp, publish, source string, form schemaread.Form) ([]byte, error) {
+	out, err := logRecords.Write(&logRecord{Event: event, Session: session, Entry: entry, Stamp: stamp, Publish: publish, Source: source}, form)
+	if err == nil && len(out) == 0 {
+		err = errors.New("the cairn log table is not installed: import internal/record/ledgerread")
+	}
+	return out, err
 }
 
 // Open starts one session record, or re-opens it: a re-open naming the
