@@ -4,7 +4,6 @@ package tablemodel
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -135,10 +134,8 @@ func TestReplayCapturesTheRecordedTraceAndReplaysItsReceipts(t *testing.T) {
 
 	// What this capture saw is what the one recorded on a bench saw: the same
 	// states, refusals and model actions for the same 32 calls.
-	var got Trace
-	raw, err := os.ReadFile(filepath.Join(dir, "trace.json"))
+	got, err := ReadTraceFile(filepath.Join(dir, "trace.json"))
 	require.NoError(t, err, "trace.json: %v", err)
-	require.NoError(t, json.Unmarshal(raw, &got), "trace.json: %v", err)
 	wantTrace := loadTrace(t)
 	require.Equal(t, wantTrace.Initial, got.Initial, "the initial state or the number of steps differs from the recorded trace")
 	require.Equal(t, len(wantTrace.Steps), len(got.Steps), "the initial state or the number of steps differs from the recorded trace")

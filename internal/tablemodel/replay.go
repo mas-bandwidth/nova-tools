@@ -129,10 +129,17 @@ func RunReplay(o ReplayOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "trace.json"), append(raw, '\n'), 0o644); err != nil {
+	tracePath := filepath.Join(dir, "trace.json")
+	if err := os.WriteFile(tracePath, append(raw, '\n'), 0o644); err != nil {
 		return err
 	}
-	emit(ReplayEvent{"capture", VerdictPass, []string{"transitions=" + strconv.Itoa(len(trace.Steps)), "trace=" + filepath.Join(dir, "trace.json")}})
+	// The replay runs from the retained trace as its reader reads it back
+	// (records_dualread.go, S4 readers first): a trace.json the reader refuses
+	// fails the capture by name instead of passing to the next reader.
+	if trace, err = ReadTraceFile(tracePath); err != nil {
+		return err
+	}
+	emit(ReplayEvent{"capture", VerdictPass, []string{"transitions=" + strconv.Itoa(len(trace.Steps)), "trace=" + tracePath}})
 
 	err = WithStore(ctx, o.Server, func(r *Store) {
 		load(r)
