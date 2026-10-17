@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x10')
+[]byte("{\n  \"name\": null,\n  \"observed\": {\n    \"raw\": null,\n    \"status\": null,\n    \"at\": null\n  }\n}\n")
