@@ -59,31 +59,6 @@ func fuzzImage(n int64, save func([]byte) int64) []byte {
 	return b
 }
 
-// BEGIN builder
-// fuzzBuilder is a variable table read through its Builder (Lock packs it).
-func fuzzBuilder[B any, PB interface {
-	*B
-	Init(...any) bool
-	Shutdown()
-	Lock() bool
-	AsConst() *R
-}, R any](name string, loadWire, fromJSON func(PB, []byte, *TableReport) bool, wire, text func(*R) []byte) fuzzRoot {
-	return fuzzRoot{name, func(f fuzzForm, in []byte, rep *TableReport) ([]byte, []byte, bool) {
-		var b B
-		pb := PB(&b)
-		if !pb.Init() {
-			return nil, nil, false
-		}
-		defer pb.Shutdown()
-		ok := f == fuzzEmpty || (f == fuzzJSON && fromJSON(pb, in, rep)) || (f != fuzzJSON && loadWire(pb, in, rep))
-		if ok && pb.Lock() {
-			return wire(pb.AsConst()), text(pb.AsConst()), true
-		}
-		return nil, nil, false
-	}}
-}
-
-// END builder
 // fuzzValue is a fixed table, read into a plain value.
 func fuzzValue[R any](name string, loadWire, fromJSON func(*R, []byte, *TableReport) bool, wire, text func(*R) []byte) fuzzRoot {
 	return fuzzRoot{name, func(f fuzzForm, in []byte, rep *TableReport) ([]byte, []byte, bool) {
