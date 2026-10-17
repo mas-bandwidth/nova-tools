@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x15')
+[]byte("{\n  \"step\": {\n    \"name\": null,\n    \"module\": null,\n    \"workers\": 0,\n    \"kind\": null,\n    \"property\": null,\n    \"met\": null\n  },\n  \"verdict\": null,\n  \"ok\": false,\n  \"code\": 0,\n  \"seconds\": 0,\n  \"outcome\": {\n    \"completed\": false,\n    \"generated\": null,\n    \"distinct\": null,\n    \"violations\": [],\n    \"initialState\": false\n  },\n  \"log\": null\n}\n")
