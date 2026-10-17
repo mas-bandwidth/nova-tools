@@ -127,6 +127,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/sprintwire", "how a worker talks to the sprint's server (nova-sprint run --listen): the request and reply of a batch of verbs, the client, and the member's sprint over it", "go test ./pkg/sprintwire", "go test ./pkg/sprintwire"),
 	E("pkg/subproc", "the one door a child process goes through: a named deadline per kind, WaitDelay, and a cancellable context for long-lived children", "go test ./pkg/subproc", "go test ./pkg/subproc"),
 	E("pkg/swarm", "the native card runner: staging, the wall, budgets, slot leases and card lint", "go test ./pkg/swarm", "go test ./pkg/swarm"),
+	E("pkg/tablemodelwire", "the table model's and the convergence verb's fixed-table wire, generated from schemas/tablemodel by the pinned schema compiler (generate.go)", "go test ./pkg/tablemodelwire", "make schemawire-check"),
 	E("pkg/testbin", "places a built program into a test dir", "go test ./pkg/testbin", "go test ./pkg/testbin"),
 	E("pkg/testgit", "the one git identity for tests that commit in a scratch repository, and the hosted runner's identity-less git for reproducing it", "go test ./pkg/testgit", "go test ./pkg/testgit"),
 	E("pkg/testguard", "host seam and leak interception", "go test ./pkg/testguard", "go test ./pkg/testguard"),
