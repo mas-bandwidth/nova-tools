@@ -757,7 +757,7 @@ func definitionPayload(t Table, now time.Time) (map[string]string, error) {
 	fields["created_at"] = now.UTC().Format(time.RFC3339)
 	return fields, nil
 }
-func payload(v any) (string, error) { return encodeRowValues(v) }
+func payload(v any) (string, error) { b, err := json.Marshal(v); return string(b), err }
 
 // Create checks the definition and writes it atomically in one round trip.
 func Create(ctx context.Context, c redis.Cmdable, t Table, now time.Time, opts ...WriteOptions) error {
@@ -1525,7 +1525,7 @@ func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 		Props         map[string]string `json:"props"`
 	}
 	var raw rawBatchDelta
-	if err := decodeRowValues(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 	b.OperationID = raw.OperationID
@@ -1537,7 +1537,7 @@ func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	b.Props = raw.Props
 	if len(raw.Members) > 0 && string(raw.Members) != "{}" && string(raw.Members) != "null" {
 		var m []BatchMemberDelta
-		if err := decodeRowValues(raw.Members, &m); err != nil {
+		if err := json.Unmarshal(raw.Members, &m); err != nil {
 			return err
 		}
 		b.Members = m
@@ -1606,7 +1606,7 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 		Fields      json.RawMessage `json:"fields"`
 	}
 	var raw rawMemberDelta
-	if err := decodeRowValues(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 	b.ID = raw.ID
@@ -1625,7 +1625,7 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 
 	if len(raw.FieldsSet) > 0 && string(raw.FieldsSet) != "[]" && string(raw.FieldsSet) != "null" {
 		var fs map[string]string
-		if err := decodeRowValues(raw.FieldsSet, &fs); err != nil {
+		if err := json.Unmarshal(raw.FieldsSet, &fs); err != nil {
 			return err
 		}
 		b.FieldsSet = fs
@@ -1635,7 +1635,7 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 
 	if len(raw.FieldsUnset) > 0 && string(raw.FieldsUnset) != "{}" && string(raw.FieldsUnset) != "null" {
 		var fu []string
-		if err := decodeRowValues(raw.FieldsUnset, &fu); err != nil {
+		if err := json.Unmarshal(raw.FieldsUnset, &fu); err != nil {
 			return err
 		}
 		b.FieldsUnset = fu
@@ -1645,7 +1645,7 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 
 	if len(raw.Fields) > 0 && string(raw.Fields) != "[]" && string(raw.Fields) != "null" {
 		var flds map[string]FieldChange
-		if err := decodeRowValues(raw.Fields, &flds); err != nil {
+		if err := json.Unmarshal(raw.Fields, &flds); err != nil {
 			return err
 		}
 		b.Fields = flds

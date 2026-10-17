@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -989,32 +990,23 @@ func (a *RedisApplier) Beats(ctx context.Context, names []string) (map[string]*B
 	return out, nil
 }
 
+// memberBeat is the part of the nova-sprint member's beat record
+// (MemberBeatKey) the inventory reads; every other field is the sprint's.
+type memberBeat struct {
+	At    time.Time `json:"at"`
+	Cores int       `json:"cores"`
+}
+
 // mergeBeat is a machine's one beat from its two records. Cores and the
 // time are the member's record's (MemberBeatKey, the source of truth, written
 // on every beat); the bench hash (BeatKey) is read for them only when the
 // member's record has none, so a stale hash never overrides a live beat. os,
 // arch and memory are only ever in the hash; the play gathers them from its
-// facts when they are not. It is nil when neither record has anything.
-//
-// Each record is read in every form (records.go, S2). An unreadable record is
-// no record on purpose: the measured facts are optional, and one machine's
-// damaged beat never takes the fleet's inventory with it (BuildInventory); the
-// refusal is counted under MEMBER_BEAT or BENCH_BEAT, never silent.
+// facts when they are not. It is nil when neither record has anything; an
+// unreadable member record is no record.
 func mergeBeat(h map[string]string, memberRaw string) *Beat {
-	var mb MemberBeat
-	hasMember := false
-	if memberRaw != "" {
-		if v, err := records.ReadMemberBeat(memberRaw); err == nil {
-			mb, hasMember = v, v.Cores > 0 || v.AtMS > 0
-		}
-	}
-	if len(h) > 0 {
-		if v, err := records.ReadBenchBeat(h); err == nil {
-			h = v
-		} else {
-			h = nil
-		}
-	}
+	var mb memberBeat
+	hasMember := memberRaw != "" && json.Unmarshal([]byte(memberRaw), &mb) == nil && (mb.Cores > 0 || !mb.At.IsZero())
 	if len(h) == 0 && !hasMember {
 		return nil
 	}
@@ -1024,8 +1016,8 @@ func mergeBeat(h map[string]string, memberRaw string) *Beat {
 	} else {
 		b.Cores = h["ncpu"]
 	}
-	if hasMember && mb.AtMS > 0 {
-		b.At = time.UnixMilli(mb.AtMS).UTC().Format(time.RFC3339)
+	if hasMember && !mb.At.IsZero() {
+		b.At = mb.At.UTC().Format(time.RFC3339)
 	} else if ms, err := strconv.ParseInt(h["at"], 10, 64); err == nil && ms > 0 {
 		b.At = time.UnixMilli(ms).UTC().Format(time.RFC3339)
 	}

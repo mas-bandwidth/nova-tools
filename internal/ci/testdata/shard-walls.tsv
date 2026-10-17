@@ -55,7 +55,6 @@ pkg/bounded	0.0	@run37411066588	self-hosted
 pkg/buildinfo	0.0	@run37411066588	self-hosted
 pkg/bus	0.0	@run37517528825	self-hosted
 pkg/bus/bustest	0.0	@local	-
-pkg/buswire	0.2	@local	-
 internal/cairn	0.0	@run37411066588	self-hosted
 pkg/cardcontract	1.2	@local	-
 pkg/cardcost	0.1	@local	-
@@ -73,10 +72,8 @@ internal/cireceipt	0.0	@run37411066588	self-hosted
 pkg/codexdesktop	0.004	@b2	-
 pkg/dshdesktop	0.2	@local	-
 pkg/config	0.7	@run37518625834	self-hosted
-pkg/configwire	0.1	@local	-
 internal/converge	0.0	@run37411066588	self-hosted
 pkg/decide	0.3	@run37518625834	self-hosted
-pkg/decidewire	0.5	@local	-
 pkg/delayproxy	0.2	@local	-
 pkg/diffcheck	0.1	@local	-
 internal/docs	1.2	@run37518625834	self-hosted
@@ -86,7 +83,6 @@ pkg/filelock	0.5	@run37411066588	self-hosted
 pkg/fleet	0.0	@run37411066588	self-hosted
 internal/friend	0.3	@local	-
 pkg/friend	2.6	@run37518625834	self-hosted
-pkg/friendfilewire	1.0	@local	-
 internal/fuse	0.0	@run37411066588	self-hosted
 internal/ghevent	0.0	@run37411066588	self-hosted
 internal/ghevent/wire	0.0	@local	-
@@ -96,11 +92,9 @@ pkg/goenv	0.0	@run37411066588	self-hosted
 pkg/harness	0.1	@local	-
 pkg/harness/notice	0.6	@local	-
 pkg/hookgate	0.0	@local	-
-pkg/hookwire	0.2	@local	-
 pkg/hostload	1.1	@local	-
 pkg/hygiene	0.5	@run37411066588	self-hosted
 pkg/keyshape	0.0	@run37411066588	self-hosted
-pkg/ledgerwire	0.3	@local	-
 pkg/log	0.0	@run37411066588	self-hosted
 pkg/member	1.3	@local	-
 internal/memindex	0.0	@run37411066588	self-hosted
@@ -117,7 +111,6 @@ pkg/oneline	0.2	@local	-
 pkg/oneline/audit	0.1	@local	-
 pkg/pathcase	0.0	@local	-
 pkg/pkgselect	0.2	@local	-
-pkg/pongwire	0.5	@local	-
 pkg/provbalance	0.0	@run37518625834	self-hosted
 pkg/readregular	0.2	@local	-
 internal/record	0.0	@run37411066588	self-hosted
@@ -127,7 +120,6 @@ pkg/redisacl	0.2	@local	-
 pkg/redisconn	0.6	@run37411066588	self-hosted
 pkg/redisfn	0.3	@run37411066588	self-hosted
 pkg/release	0.1	@run37411066588	self-hosted
-pkg/releasewire	0.5	@local	-
 pkg/safepath	0.0	@run37411066588	self-hosted
 pkg/sandbox	0.3	@local	-
 pkg/sandbox/darwincheck	0.2	@local	-
@@ -135,16 +127,13 @@ internal/scaffold	0.0	@run37411066588	self-hosted
 pkg/schemaread	0.2	@local	-
 pkg/seatcred	0.4	@run37411066588	self-hosted
 pkg/seatcred/seattest	0.0	@local	-
-pkg/seatrecwire	0.5	@local	-
 pkg/secrets	0.7	@run37411066588	self-hosted
 internal/selftalk	0.0	@run37411066588	self-hosted
 internal/shippedsmoke	0.0	@local	-
 pkg/sprintwire	0.2	@local	-
 pkg/subproc	0.6	@local	-
 pkg/swarm	5.1	@run37518625834	self-hosted
-pkg/swarmwire	0.5	@local	-
 internal/tablemodel	0.3	@local	-
-pkg/tablemodelwire	0.5	@local	-
 pkg/testbin	0.0	@run37411066588	self-hosted
 pkg/testgit	0.3	@local	-
 pkg/testguard	0.0	@run37411066588	self-hosted

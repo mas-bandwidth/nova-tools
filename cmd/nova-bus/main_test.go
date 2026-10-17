@@ -42,12 +42,11 @@ type rig struct {
 	hooks func(ctx context.Context, st bus.Store, names ...string) ([]hook.Status, time.Time, error)
 	// oneShot are the one-shot friends the applied rows name (nova-config friend
 	// --session one-shot); none by default.
-	oneShot   []string
-	envelopes *bus.EnvelopeReader
+	oneShot []string
 }
 
 func newRig(names ...string) *rig {
-	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}, clock: start, now: start, envelopes: bus.NewEnvelopeReader()}
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}, clock: start, now: start}
 }
 
 // advance moves the store's clock by d so the idle time of the messages grows.
@@ -142,7 +141,6 @@ func (r *rig) world() world {
 			}
 			return line, c, nil
 		},
-		envelopes: r.envelopes,
 	}
 }
 

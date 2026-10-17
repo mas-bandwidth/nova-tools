@@ -1,18 +1,5 @@
 # nova-tools changelog
 
-## v1.5.0 — 2026-10-17
-
-Schema-table adoption, read side: the tools now read their records in both the legacy form and the new schema-table form, and count each read by form, so the legacy form can be retired once the counts show no legacy reads.
-
-- Readers in both forms, counted per form: the bus envelope (`nova-bus recv`, and the new `nova-bus show`), the friend pong, the hook's ack, beat and lease/proof stamps, the seat hook, and the nova-config rows and their Redis view.
-- New table definitions with generated wire code and golden tests: bus envelope, pong, ack/beat/hook stamp, config rows, friend files, decide, ledgers, models, release, seat and tokens, and swarm records.
-- The store's row values pass through one codec seam (`pkg/ntable`), and the function library's `table.lua` carries row values as opaque bytes.
-- The generated wires are pinned to the schema text-transport release.
-- Writers still write the legacy form. The binary bus envelope writer (`Bus.Native`) exists but is off by default, and nothing turns it on.
-- Behaviour change: `nova-bus send` now builds its envelope through the schema and refuses a message that breaks a schema bound, with exit 2 and the reason on stderr, before writing anything. It has new `--card` and `--head` flags.
-
-Cards: a10-defs-friend-files, a13-defs-decide, a13-defs-ledgers, a13-defs-models, a13-defs-release, a13-defs-seat-and-tokens, a13-defs-swarm, a8-lua-row-values-opaque, a8-ntable-row-value-seam, a9-config-rows-dual-read, a9-defs-config-rows, l1-defs-ack-beat-hook-stamp-2, l1-defs-bus-envelope-2, l1-defs-pong-2, l1-hook-stamp-typed-2, l1-nova-bus-native-binary-form-2, l1-nova-bus-reader-builder-and-show-2, l1-pong-dual-read-2, l1-seat-hook-typed-reader-2, v15-wires-bump-to-the-text-transport-pin.
-
 ## v1.2.3 — unreleased
 
 - split (layer L5): the sprint's TLA+ models and docs move to mas-bandwidth/nova-sprint. 24 modules that model only nova-sprint, nova-card and nova-work code leave `tla/` with their MC modules, 328 configurations, `CASES.tsv` and `RUNS.tsv` rows, 15 `COVERAGE.tsv` rows, READMEs and benches (CardMachine, CardContract, the Friend* models and StopReturn stay beside the code they model). SPEC-SPRINT.md, SPRINT-COORDINATOR.md, SPRINT-COORDINATOR-SEAT.md, SPEC-WORK-V1.md, SPEC-WORKLANG.md, docs/sprint/GLOSSARY.md and the sprint and work ratings move; links to them point at nova-sprint. SPEC-SPRINT-DASHBOARD.md stays until internal/sprintdash, whose test holds the page to it, leaves. The "Push, not poll" loop table, which covers every nova-tools loop, stays here as docs/PUSH-NOT-POLL.md.

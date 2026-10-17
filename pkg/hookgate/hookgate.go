@@ -10,9 +10,7 @@ import (
 	"errors"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
-	"github.com/mas-bandwidth/nova-tools/hook/seatstamp"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
-	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
@@ -23,20 +21,10 @@ const Reason = "unhooked"
 // can be read from it, so nothing runs.
 var ErrNoRecord = errors.New("this bus store keeps no hook record (it is no Redis store), so nothing runs: fail closed")
 
-// stamps is the one seat reader every store this package makes reads its
-// leases and proofs through: the typed stamp and the legacy JSON stamp alike
-// (hook/seatstamp), its per-form counters accumulating for the process.
-var stamps = seatstamp.New()
-
-// StampCounts are the per-form read counters of the stamps every store made
-// here has read, and the refusals by reason: the evidence of a cutover.
-func StampCounts() *schemaread.Counts { return stamps.Counts() }
-
-// Store is the hook record's store over the bus store st: the same Redis,
-// reading stamps through the shared seat reader.
+// Store is the hook record's store over the bus store st: the same Redis.
 func Store(st bus.Store) (hook.Store, error) {
 	if r, ok := st.(bus.Redis); ok && r.C != nil {
-		return hook.Store{C: r.C, Stamps: stamps}, nil
+		return hook.Store{C: r.C}, nil
 	}
 	return hook.Store{}, ErrNoRecord
 }

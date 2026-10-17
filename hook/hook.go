@@ -164,58 +164,21 @@ const (
 	PushProven = "proven" // a live lease and a proof
 )
 
-// Stamp is the value of a lease or a proof: the record's epoch it was written
+// stamp is the value of a lease or a proof: the record's epoch it was written
 // under, the store's time in ms, and who wrote it.
-type Stamp struct {
-	Epoch int64
-	AtMS  int64
-	By    string
+type stamp struct {
+	Epoch int64  `json:"epoch"`
+	At    int64  `json:"at"`
+	By    string `json:"by"`
 }
 
-// StampReader reads the raw value of a lease or a proof key. It answers a
-// stamp, or an error naming why the value is no stamp; a value that is no
-// stamp proves nothing, so JudgeWith counts it for nothing and says why in
-// PushStatus.Refused. The reader is the seam where the typed stamp is read:
-// hook/seatstamp reads the typed wire, its base64 and JSON text, and the
-// legacy JSON the record's scripts write, each counted by form. This package
-// imports no generated table (pkg/hookwire's own tests import this package),
-// so the typed reader is handed in, never imported.
-type StampReader interface {
-	ReadStamp(raw string) (Stamp, error)
-}
-
-// JSONStamps is the reader of the JSON the record's scripts write today,
-// the one JudgeWith uses when no reader is handed in: lenient, and it names a value
-// that is no JSON stamp.
-type JSONStamps struct{}
-
-// ReadStamp is the stamp raw holds as JSON, an error when it holds none.
-func (JSONStamps) ReadStamp(raw string) (Stamp, error) {
-	var s struct {
-		Epoch int64  `json:"epoch"`
-		At    int64  `json:"at"`
-		By    string `json:"by"`
+// parseStamp is the stamp raw holds, ok false when it holds none.
+func parseStamp(raw string) (stamp, bool) {
+	var s stamp
+	if raw == "" || json.Unmarshal([]byte(raw), &s) != nil {
+		return stamp{}, false // ignored: a value that is no stamp proves nothing
 	}
-	if err := json.Unmarshal([]byte(raw), &s); err != nil {
-		return Stamp{}, errors.New("STAMP REFUSED: malformed; run: nova-hook status -h")
-	}
-	return Stamp{Epoch: s.Epoch, AtMS: s.At, By: s.By}, nil
-}
-
-// stampsOr is r, or the JSON reader when r is nil.
-func stampsOr(r StampReader) StampReader {
-	if r == nil {
-		return JSONStamps{}
-	}
-	return r
-}
-
-// readStamp is the stamp raw holds, empty for none (no key: not a refusal).
-func readStamp(rd StampReader, raw string) (Stamp, error) {
-	if raw == "" {
-		return Stamp{}, nil
-	}
-	return rd.ReadStamp(raw)
+	return s, true
 }
 
 // PushRead is one push's keys as one read found them: the lease and the proof
@@ -230,7 +193,6 @@ type PushStatus struct {
 	Push      Push
 	State     string // PushDown, PushArmed, PushProven
 	By        string // the lease's holder, "" when down
-	Refused   string // why a lease or proof value was refused as no stamp, "" when none was
 	LiveLeft  time.Duration
 	ProofLeft time.Duration
 }
@@ -258,14 +220,11 @@ type Status struct {
 	Pushes []PushStatus
 }
 
-// JudgeWith is the status a record and its pushes reads say: the state machine,
+// Judge is the status a record and its pushes' reads say: the state machine,
 // a pure function (tla/Hook.tla, GateOK). rec is the record hash (empty: no
 // record); reads holds one PushRead per push of Pushes, in that order. A lease
-// or proof whose epoch is not the record counts for nothing. Each lease and
-// proof is read through r (nil: JSONStamps); a value r refuses counts for
-// nothing and its refusal is kept on the push.
-func JudgeWith(r StampReader, name string, rec map[string]string, reads []PushRead) Status {
-	rd := stampsOr(r)
+// or proof whose epoch is not the record's counts for nothing.
+func Judge(name string, rec map[string]string, reads []PushRead) Status {
 	st := Status{Name: name, State: StateNone}
 	if len(rec) == 0 {
 		return st
@@ -298,18 +257,10 @@ func JudgeWith(r StampReader, name string, rec map[string]string, reads []PushRe
 		ps := PushStatus{Push: p, State: PushDown}
 		if i < len(reads) {
 			r := reads[i]
-			l, lerr := readStamp(rd, r.Live)
-			if lerr != nil {
-				ps.Refused = lerr.Error()
-			}
-			if lerr == nil && r.Live != "" && l.Epoch == st.Epoch {
+			if l, ok := parseStamp(r.Live); ok && l.Epoch == st.Epoch {
 				ps.State, ps.By, ps.LiveLeft = PushArmed, l.By, r.LiveLeft
 				live++
-				pr, perr := readStamp(rd, r.Proof)
-				if perr != nil {
-					ps.Refused = perr.Error()
-				}
-				if perr == nil && r.Proof != "" && pr.Epoch == st.Epoch {
+				if pr, ok := parseStamp(r.Proof); ok && pr.Epoch == st.Epoch {
 					ps.State, ps.ProofLeft = PushProven, r.ProofLeft
 					proven++
 				}
@@ -447,11 +398,7 @@ func (st Status) because() string {
 func (st Status) pushWords() string {
 	var out []string
 	for _, p := range st.Pushes {
-		w := string(p.Push) + "=" + p.State
-		if p.Refused != "" {
-			w += " [" + p.Refused + "]" // a stamp refused by name is said, never read as no stamp
-		}
-		out = append(out, w)
+		out = append(out, string(p.Push)+"="+p.State)
 	}
 	return strings.Join(out, " ")
 }

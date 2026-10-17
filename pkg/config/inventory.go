@@ -113,12 +113,9 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 	names := slices.Sorted(maps.Keys(snap.Machines))
 	// A hostile or stale Redis write cannot shape the hosts the plays act
 	// on: only a row name passes (docs/SPEC-CONFIG.md; security#69 finding 4).
-	if len(names) > MaxHosts {
-		return nil, fmt.Errorf("%d machines, over the maximum of %d hosts an inventory lists (MaxHosts)", len(names), MaxHosts)
-	}
 	for _, m := range names {
-		if err := checkHostName(m); err != nil {
-			return nil, err
+		if !NamePattern.MatchString(m) {
+			return nil, fmt.Errorf("machine %q is not a row name (lower-case letters, digits and dashes)", m)
 		}
 	}
 
@@ -172,13 +169,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if slots == 0 {
 			return nil, fmt.Errorf("machine %s: slots_capacity must be greater than 0 from machine row field slots; run: nova-config machine show %s", m, m)
 		}
-		// an unset runners is none; one that is not a count is refused by name
-		runners := 0
-		if v["runners"] != "" {
-			if runners, err = inventoryCount(m, "runners", "machine row field runners", v["runners"]); err != nil {
-				return nil, err
-			}
-		}
+		runners, _ := strconv.Atoi(v["runners"])
 		// The measured facts are optional: a machine that is down, or one whose
 		// beat predates a fact, is listed from its row and the facts it has,
 		// never refused (one down host never takes the whole fleet's inventory
@@ -409,11 +400,7 @@ func hostLoops(snap *Snapshot) (map[string][]InventoryLoop, error) {
 		out[m] = []InventoryLoop{}
 	}
 	for _, n := range slices.Sorted(maps.Keys(snap.Loops)) {
-		// the view is read in every form and refused by name (records.go, S2)
-		v, err := records.ReadLoop(snap.Loops[n])
-		if err != nil {
-			return nil, fmt.Errorf("loop %s: %w", n, err)
-		}
+		v := snap.Loops[n]
 		m := v["machine"]
 		if _, ok := out[m]; !ok {
 			return nil, fmt.Errorf("loop %s names machine %q, which has no machine row; run: nova-config apply", n, m)
@@ -427,19 +414,6 @@ func hostLoops(snap *Snapshot) (map[string][]InventoryLoop, error) {
 	return out, nil
 }
 
-// checkHostName refuses a machine name that is not a row name: the shape
-// NamePattern names and at most MaxName bytes. Only a row name shapes the
-// hosts the plays act on.
-func checkHostName(m string) error {
-	if len(m) > MaxName {
-		return fmt.Errorf("machine name of %d bytes is over the maximum of %d bytes (MaxName)", len(m), MaxName)
-	}
-	if !NamePattern.MatchString(m) {
-		return fmt.Errorf("machine %q is not a row name (lower-case letters, digits and dashes)", m)
-	}
-	return nil
-}
-
 // parseLoop reads one loop view: argv the JSON text of a list of strings,
 // keys a comma list, every decimal text, keepalive and enabled
 // "true" or "false", exactly one of every above 0 and keepalive.
@@ -448,9 +422,6 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 		return InventoryLoop{}, fmt.Errorf("loop %s: %s %q %s; run: nova-config loop show %s", name, field, v[field], why, name)
 	}
 	// The name becomes a unit's file name and label: only a row name passes.
-	if len(name) > MaxName {
-		return InventoryLoop{}, fmt.Errorf("loop name of %d bytes is over the maximum of %d bytes (MaxName); run: nova-config loop list", len(name), MaxName)
-	}
 	if !NamePattern.MatchString(name) {
 		return InventoryLoop{}, fmt.Errorf("loop %q is not a row name (lower-case letters, digits and dashes); run: nova-config loop list", name)
 	}
@@ -465,14 +436,6 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 	for _, k := range strings.Split(v["keys"], ",") {
 		if k = strings.TrimSpace(k); k != "" {
 			l.Keys = append(l.Keys, k)
-		}
-	}
-	if len(l.Keys) > MaxKeys {
-		return bad("keys", fmt.Sprintf("names %d secrets, over the maximum of %d (MaxKeys)", len(l.Keys), MaxKeys))
-	}
-	for _, k := range l.Keys {
-		if len(k) > MaxEnvName {
-			return bad("keys", fmt.Sprintf("names a secret of %d bytes, over the maximum of %d bytes (MaxEnvName)", len(k), MaxEnvName))
 		}
 	}
 	if len(l.Keys) > 0 && l.Seat == "" {
@@ -650,12 +613,9 @@ func LoadFixture(path string) (*Snapshot, error) {
 		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, roles, tla, os, arch, cores and width), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, fixtureShapeError(err))
 	}
 	snap := &Snapshot{Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{}}
-	if len(f.Machines) > MaxHosts {
-		return nil, fmt.Errorf("--fixture %s: %d machines, over the maximum of %d hosts an inventory lists (MaxHosts)", path, len(f.Machines), MaxHosts)
-	}
 	for m, r := range f.Machines {
-		if err := checkHostName(m); err != nil {
-			return nil, fmt.Errorf("--fixture %s: %v", path, err)
+		if !NamePattern.MatchString(m) {
+			return nil, fmt.Errorf("--fixture %s: machine %q is not a row name (lower-case letters, digits and dashes)", path, m)
 		}
 		machine := View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners), "tla": strconv.FormatBool(r.TLA)}
 		// A machine with no roles key is a row applied before migration

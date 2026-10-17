@@ -37,7 +37,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
-	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
@@ -96,21 +95,12 @@ type world struct {
 	// --session one-shot, applied to friend:<name>:desired): a friend with no live
 	// session, never on the psychic link, so a send naming one is refused at once
 	// (the v1.3 comms spec, guarantee 19); a test passes its own.
-	oneShots  func(ctx context.Context, st bus.Store, names ...string) ([]string, error)
-	envelopes *bus.EnvelopeReader
-}
-
-func (w world) reader() *bus.EnvelopeReader {
-	if w.envelopes != nil {
-		return w.envelopes
-	}
-	return bus.NewEnvelopeReader()
+	oneShots func(ctx context.Context, st bus.Store, names ...string) ([]string, error)
 }
 
 func realWorld() world {
 	w := world{getenv: os.Getenv, run: runShell, now: time.Now,
 		wakeArm: realWakeArm, wakeLine: realWakeLine, gate: hookgate.Gate, hooks: realHooks, oneShots: realOneShots,
-		envelopes: bus.NewEnvelopeReader(),
 		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
@@ -290,7 +280,7 @@ example: nova-bus wait --as bob --timeout 1s`,
 			},
 			{
 				Name:    "send",
-				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--card <id>] [--head <sha>] [--kind <k>] [--kind ask --deadline <duration>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--kind ask --deadline <duration>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
 				DryRun:  true,
@@ -301,10 +291,6 @@ You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may 
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
 are, and the line says login=none. --dry-run checks the message as send does (every problem named)
 and prints the line with no id, writing nothing.
-Every send constructs its typed buswire.Envelope through the generated builder before writing and refuses
-a value past any of the envelope's bounds (a subject over 200 bytes, a body over 1 MiB, more than 64 names
-in --to or --cc, a --re or --card over 64 bytes, a --token over 128 bytes, or a --head that is not 40
-lowercase hex characters) on stderr at exit 2, writing nothing.
 --token <t> makes the send safe to retry: the same token and the same arguments within --token-life
 (default 24h) print the first send's SEND OK line again (its id and at) and write nothing, so a send
 whose answer was lost after the store took it is retried without a second message; the same token with
@@ -324,8 +310,6 @@ re=<its id>, subject "ASK TIMEOUT <id> <recipients> after <age>: <subject>" (nov
 					f.String("body", "", "the message's text (or --stdin; at most 1 MiB)")
 					f.Bool("stdin", false, "read the message's text from stdin")
 					f.String("re", "", "the id of the message this one answers")
-					f.String("card", "", "the work card id this message is about (at most 64 bytes)")
-					f.String("head", "", "the 40-character lowercase hex commit SHA this message names")
 					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on (timeout is the bus's own)")
 					f.Duration("deadline", 0, "an ask's wait for its answer, a Go duration (10m, 1h); wants --kind ask, and an ask wants it")
 					f.String("token", "", "your word for this one send, the same on every retry of it (letters, digits, . _ : -; at most 128 bytes)")
@@ -555,32 +539,6 @@ example: nova-bus asks --as ada --timedout`,
 				Run: w.log,
 			},
 			{
-				Name:   "show",
-				Usage:  "show [--as <me>] (--id <id> | --stdin) [--timeout <duration>] [--redis <addr>]",
-				Effect: tool.Inspection,
-				Detail: `Prints one message's typed envelope in the schema's name-keyed text form (schemas/bus/envelope.schema):
-each field keyed by its name, kind by its enum name, each recipient in to and cc as {"s": "<name>"}, and
-at_ms and due_ms in milliseconds since the epoch. --id <id> reads the message from the log (from the native
-envelope field when written, or the legacy fields before the writer switches) after the hook gate; --stdin
-reads an envelope from stdin in any of its forms (the binary wire, padded standard base64 of the wire, or
-the JSON text form) without dialling the store. Damage or a value past a bound is refused on stderr at exit 2.
-example: nova-bus show --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV`,
-				Flags: func(f *tool.Flags) {
-					f.String("as", "", "your name: the login user when there is one (then it may be left out); it must be hooked in (nova-hook status --as <you>)")
-					f.String("id", "", "the message id to render from the log, as send or recv printed it")
-					f.Bool("stdin", false, "read an envelope from stdin (binary wire, base64, or JSON text) without dialling the store")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
-					callTimeoutFlag(f)
-					f.Check(func(c *tool.Call) {
-						refuseNonPositiveTimeout(c)
-						if (c.Str("id") != "") == c.Bool("stdin") {
-							c.Problem("give exactly one of --id <id> or --stdin")
-						}
-					})
-				},
-				Run: w.show,
-			},
-			{
 				Name:    "names",
 				Usage:   "names [--as <me>] [--timeout <duration>] [--redis <addr>]",
 				Example: "names --as bob",
@@ -645,7 +603,7 @@ func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(
 		r.Timeout = timeout
 		st = r
 	}
-	return &bus.Bus{Store: st, Builder: true, Envelopes: w.reader()}, login, closeStore, nil
+	return &bus.Bus{Store: st}, login, closeStore, nil
 }
 
 // identity is who the verb acts as: the user the connection logged in as,
@@ -697,22 +655,8 @@ func loginFact(o *tool.Out, login string) *tool.Out {
 // answer renders an error of the bus: a Refusal names the input (exit 2),
 // anything else is the store (exit 2, with redisconn's words).
 func answer(err error) *tool.Out {
-	var sr *schemaread.Refusal
-	if errors.As(err, &sr) {
-		p, rem, _ := strings.Cut(sr.Error(), "; run: ")
-		o := tool.Refuse(p)
-		o.Remedy = rem
-		return o
-	}
 	var r *bus.Refusal
 	if errors.As(err, &r) {
-		if len(r.Problems) == 1 {
-			if p, rem, ok := strings.Cut(r.Problems[0], "; run: "); ok {
-				o := tool.Refuse(p)
-				o.Remedy = rem
-				return o
-			}
-		}
 		return tool.Refuse(r.Problems...)
 	}
 	return tool.Refuse("the store did not answer: " + err.Error())
@@ -739,7 +683,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 			return tool.Refuse("--stdin: " + err.Error())
 		}
 		if len(raw) > bus.MaxBody {
-			return answer(&bus.Refusal{Problems: []string{fmt.Sprintf("ENVELOPE REFUSED: body over %d bytes (the body on stdin is over 1 MiB; at most %d bytes); run: %s", bus.MaxBody, bus.MaxBody, bus.EnvelopeHelp)}})
+			return tool.Refuse(fmt.Sprintf("the body on stdin is over 1 MiB; at most %d bytes", bus.MaxBody))
 		}
 		body = string(raw)
 	}
@@ -754,8 +698,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 	}
 	draft := bus.Message{
 		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
-		Subject: c.Str("subject"), Re: c.Str("re"), Card: c.Str("card"), Head: c.Str("head"),
-		Kind: c.Str("kind"), Body: body, Token: c.Str("token"),
+		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body, Token: c.Str("token"),
 		Wait: c.Dur("deadline"),
 	}
 	// Explicit send is model activity for every allowed kind and subject.
@@ -1127,56 +1070,6 @@ func (w world) log(c *tool.Call) *tool.Out {
 	return o
 }
 
-func (w world) show(c *tool.Call) *tool.Out {
-	if c.Bool("stdin") {
-		raw, err := io.ReadAll(io.LimitReader(c.Stdin, 2*bus.MaxBody))
-		if err != nil {
-			return tool.Refuse("--stdin: " + err.Error())
-		}
-		m, _, err := w.reader().ReadText(raw)
-		if err != nil {
-			return answer(err)
-		}
-		text, err := bus.EnvelopeText(m)
-		if err != nil {
-			return answer(err)
-		}
-		return tool.Payload(string(text))
-	}
-	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
-	if refused != nil {
-		return refused
-	}
-	defer closeStore()
-	if _, refused := w.acting(c, b, login); refused != nil {
-		return refused
-	}
-	want := c.Str("id")
-	cursor := "0-0"
-	for {
-		got, next, more, err := b.LogForward(context.Background(), cursor)
-		if err != nil {
-			return answer(err)
-		}
-		for _, e := range got {
-			m := e.Message()
-			if m.ID != want {
-				continue
-			}
-			text, err := bus.EnvelopeText(m)
-			if err != nil {
-				return answer(err)
-			}
-			return tool.Payload(string(text))
-		}
-		if !more {
-			break
-		}
-		cursor = next
-	}
-	return tool.Fail("no message " + want).As("NONE")
-}
-
 func (w world) names(c *tool.Call) *tool.Out {
 	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
@@ -1515,10 +1408,6 @@ func (w world) wait(c *tool.Call) *tool.Out {
 			}
 		}
 		got, err := waiter.BlockRead(ctx, bus.StreamOf(as), cursor, block, bus.WaitRead)
-		if err != nil {
-			return answer(err)
-		}
-		got, err = b.ReadEntries(got)
 		if err != nil {
 			return answer(err)
 		}

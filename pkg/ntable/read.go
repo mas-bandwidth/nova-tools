@@ -119,11 +119,7 @@ func flatHash(raw any) (map[string]string, error) {
 	}
 	h := map[string]string{}
 	for i := 0; i < len(a); i += 2 {
-		value := fmt.Sprint(a[i+1])
-		if err := rowValueText(value); err != nil {
-			return nil, err
-		}
-		h[fmt.Sprint(a[i])] = value
+		h[fmt.Sprint(a[i])] = fmt.Sprint(a[i+1])
 	}
 	return h, nil
 }
@@ -138,11 +134,7 @@ func flatMembers(raw any) ([]Member, error) {
 		if err != nil {
 			return nil, err
 		}
-		value := fmt.Sprint(a[i])
-		if err := rowValueText(value); err != nil {
-			return nil, err
-		}
-		ms = append(ms, Member{value, score})
+		ms = append(ms, Member{fmt.Sprint(a[i]), score})
 	}
 	return ms, nil
 }

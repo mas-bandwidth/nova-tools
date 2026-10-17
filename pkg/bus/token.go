@@ -94,19 +94,12 @@ func fingerprint(m Message) string {
 	if m.Wait != 0 { // an ask's wait; left out otherwise, so a token's record from before asks still matches
 		h.Write([]byte("wait:" + m.Wait.String() + ";"))
 	}
-	if m.Card != "" {
-		h.Write([]byte("card:" + strconv.Itoa(len(m.Card)) + ":" + m.Card + ";"))
-	}
-	if m.Head != "" {
-		h.Write([]byte("head:" + strconv.Itoa(len(m.Head)) + ":" + m.Head + ";"))
-	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// sendOnce writes m under its token as the entry fields, or answers the
-// message an earlier send under it wrote. now is the store's time the send was
-// checked at.
-func (b *Bus) sendOnce(ctx context.Context, m Message, now time.Time, streams []string, fields map[string]string, marks []Mark) (Message, error) {
+// sendOnce writes m under its token, or answers the message an earlier send
+// under it wrote. now is the store's time the send was checked at.
+func (b *Bus) sendOnce(ctx context.Context, m Message, now time.Time, streams []string, marks []Mark) (Message, error) {
 	fp := fingerprint(m)
 	raw, err := json.Marshal(sentRecord{Fingerprint: fp, ID: m.ID, At: m.At})
 	if err != nil {
@@ -116,7 +109,7 @@ func (b *Bus) sendOnce(ctx context.Context, m Message, now time.Time, streams []
 	if key == "" {
 		key = SentOf(m.From, m.Token)
 	}
-	prior, found, err := b.Store.AddOnce(ctx, key, string(raw), b.tokenCleanup(), streams, fields, marks...)
+	prior, found, err := b.Store.AddOnce(ctx, key, string(raw), b.tokenCleanup(), streams, m.Fields(), marks...)
 	if err != nil {
 		return Message{}, err
 	}
