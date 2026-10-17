@@ -51,23 +51,23 @@ const configHelp = "nova-config help"
 // wirePins is the SHA-256 of the binary wire of each table's sample. A pin
 // that moves is a change of the wire: read schemas/config/schema.lock first.
 var wirePins = map[string]string{
-	"FieldPair": "59ec5e459a5a3377c269748d98e140640f3a5461d331bfc05e45872eb0b15406",
-	"RowFields": "647cb1d7faf107cced57aefe3a0567256f69827ed5f7eab3ebcfb21599cf8b90",
-	"ConfigRow": "6786bc07b0ccd60373ae1d191a98a81498fd264a39d3794c7463f460197c8c1f",
-	"ConfigChange": "e69ca43f301434c866c94935985cfd67797f98e44c9d73b48aebeb6e39cc9a39",
-	"FileHeader": "c5452e2d4faf77df5075a9bd48bf45034dfc3b56eccd727494dd79d4a2cac554",
+	"FieldPair":     "59ec5e459a5a3377c269748d98e140640f3a5461d331bfc05e45872eb0b15406",
+	"RowFields":     "647cb1d7faf107cced57aefe3a0567256f69827ed5f7eab3ebcfb21599cf8b90",
+	"ConfigRow":     "6786bc07b0ccd60373ae1d191a98a81498fd264a39d3794c7463f460197c8c1f",
+	"ConfigChange":  "e69ca43f301434c866c94935985cfd67797f98e44c9d73b48aebeb6e39cc9a39",
+	"FileHeader":    "c5452e2d4faf77df5075a9bd48bf45034dfc3b56eccd727494dd79d4a2cac554",
 	"CanonicalWord": "b06b0463c43169dbad127b595d81e5c0a99c4172fb0304b759d2d5bb152dbafb",
-	"MachineView": "8222283aba4b227f5c1905584e4f1b35da9eb090feeb2a4b7b63a3697c5734dd",
-	"HostName": "d34eadb68d2b9a0a360745151d917044841806588a1bdd713472e9e883db76e7",
-	"EnvName": "23f58cf1b88876c7e39d5bb6adc6e2431a2ae0a86ecc496135f4e2ebce81bf97",
+	"MachineView":   "8222283aba4b227f5c1905584e4f1b35da9eb090feeb2a4b7b63a3697c5734dd",
+	"HostName":      "d34eadb68d2b9a0a360745151d917044841806588a1bdd713472e9e883db76e7",
+	"EnvName":       "23f58cf1b88876c7e39d5bb6adc6e2431a2ae0a86ecc496135f4e2ebce81bf97",
 	"InventoryLoop": "cf1fd316831ae5842ba36963544eee7384c113c8aa00b79262c1d42b6494eee1",
-	"HostView": "ba9509014a35642b8d78d76b5923284b0530f3d982fa69cd09e9e7517a8a890a",
-	"HostGroup": "eb29166e44c1ca320a1d2656f928b34b61ebf33f5753e5586dc157bf2a70012a",
-	"KindRev": "0c43208b58796410cbd73d20c3df86c4b599ae8be84dd14abc85b60fb2ce5bd5",
-	"Inventory": "d6398656d76dae005b7d86fb906dd99584c5f43d57de6dd6bf2a13cf28e66065",
-	"BenchBeat": "f53027e39a737e94cda9b8be21058c5f3ce433c46de86132a3ecce70d3481b07",
-	"MemberBeat": "8f068e4810f770546de7a1bcb3e25e693016ef97b3c7510c8226458e7e11d70f",
-	"MachineBeat": "9f99b37f396f18f7ca7b4a8ee643e73c29f01f20e6d3615e5434e889da106f6e",
+	"HostView":      "ba9509014a35642b8d78d76b5923284b0530f3d982fa69cd09e9e7517a8a890a",
+	"HostGroup":     "eb29166e44c1ca320a1d2656f928b34b61ebf33f5753e5586dc157bf2a70012a",
+	"KindRev":       "0c43208b58796410cbd73d20c3df86c4b599ae8be84dd14abc85b60fb2ce5bd5",
+	"Inventory":     "d6398656d76dae005b7d86fb906dd99584c5f43d57de6dd6bf2a13cf28e66065",
+	"BenchBeat":     "f53027e39a737e94cda9b8be21058c5f3ce433c46de86132a3ecce70d3481b07",
+	"MemberBeat":    "8f068e4810f770546de7a1bcb3e25e693016ef97b3c7510c8226458e7e11d70f",
+	"MachineBeat":   "9f99b37f396f18f7ca7b4a8ee643e73c29f01f20e6d3615e5434e889da106f6e",
 }
 
 // ---- samples -----------------------------------------------------------
