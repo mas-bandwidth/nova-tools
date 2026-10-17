@@ -288,6 +288,19 @@ that stops the work it exists to protect.
 
 *Test: `TestAdoptRefusesWhenTheLocalToolPredatesTheRelease`.*
 
+### Adopting one machine
+
+`release.OneMachine` runs the existing adopt path for one fleet machine and one
+episode. It performs a dry run to read the installed version, adopts the
+coordinator's stamped release with a machine list containing only that
+machine, then performs a second dry run to verify the installed version. The
+tick starts the work beside itself and does not start a second adoption of a
+machine while one is running or repeat an episode that already ran. The flags
+are the coordinator's release adopt flags other than `--machines`, `--version`
+and `--dry-run`, so the existing release validation and certification rules
+still apply. Tests: `TestOneMachineAdoptsOneAtATime`,
+`TestOneMachineRefusesANameAdoptRefuses`.
+
 ## 9. No path is guessed
 
 `nova-version snapshot --bin <dir> --out <file.tsv>` requires both flags and defaults neither:

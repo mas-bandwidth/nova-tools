@@ -2456,6 +2456,37 @@ by selection without `--as` is refused. A finish that arrives first moves the ca
 the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
 
+### Back from down: adopt the latest
+
+With a release adopter installed, a member whose status is down and whose beat
+returns alive is held by the tick in the same presence plan that sees the beat.
+Its control card records `status=adopting`, `held_by=adopt`, the hold reason,
+the adoption episode and the coordinator's release. A member held adopting is
+not up and receives no work; the fleet table shows `adopting` and orders it
+with held members. The adopter starts the existing `nova-update release adopt`
+path with a machine list containing only that member, reads its installed
+version before and after the adoption, and allows at most one run per machine.
+
+While adoption is running, the member remains held. When the version read back
+matches the coordinator's release, the tick clears the adoption hold, preserves
+the member's width, and writes one happened note to the coordinator:
+`<machine> is back: <old> -> <new>`. If adoption fails or the read-back version
+does not match, the failure is kept as the hold reason and one judgment stays
+open for that member, with `fleet up <machine>` and `wait` as its decisions.
+The tick does not retry a failed adoption; `fleet up` releases the member as it
+is. Without `NOVA_SPRINT_ADOPT_FLAGS`, or without a valid release stamp, a
+returning member stays held as adopting with a configuration failure reason
+and one judgment; it is never dealt at its stale version. Configure the flags
+and install a release-stamped coordinator before an operator releases it with
+`fleet up <machine>`.
+
+`NOVA_SPRINT_ADOPT_FLAGS` is set on the coordinator to the release adopt flags
+other than `--machines`, `--version` and `--dry-run`; the binary supplies its
+own release stamp and the one-machine list. `sprint.FleetBackPresence` holds
+the tick's transition, and `release.OneMachine` runs the release package's
+existing dry-run, adopt and read-back path. Test:
+`TestAMachineBackFromDownAdoptsTheLatestBeforeItIsDealt`.
+
 ## 6. The readers
 
 - A reader row has a state, as a fleet member has: up, away or down. The rows
