@@ -3,284 +3,278 @@
 // wire and padded standard base64 text. Its Go is generated into
 // pkg/tablemodelwire (go generate ./pkg/tablemodelwire).
 //
-// Every record here is a FIXED table (schema owner rule S1: a struct, small,
-// bounded, stable layout), and a unit holding a fixed table holds no variable
-// one (the compiler emits the fixed form only for a unit that is fixed
-// throughout), so ModelTrace, whose head carries a list that grows with the
-// repository, is the VARIABLE table of the sibling area schemas/tablemodeltrace.
-// The layout of a fixed table is a promise to every image already written, so
-// schema.lock sits beside this file and tables.baseline records the tables. A
-// fixed record is at most 65536 bytes (docs/SPEC-TABLES.md §3.4), so a whole
-// retained trace is one ModelTrace head (tablemodeltrace), then the initial
-// ModelState, then its steps as a batch of ModelTraceStep records (a fixed
-// save and load take a batch).
+// Every record here is a VARIABLE table (schema owner rule S1): a record is a
+// FIXED table only where every bound it declares is one the code enforces, and
+// none of these is. The Go structs declare no length or count, and no writer
+// of them checks one, so a fixed capacity would silently narrow what the code
+// accepts today. Two examples that decided it (both measured, not guessed):
+//
+//   - ModelTrace.ModelSHA256 holds one hash per .tla file: replay.go hashModels
+//     (lines 170-184) globs every *.tla in the models directory and inserts each
+//     result with no count limit (replay.go:37-41 declares the map). tla/ holds
+//     77 modules today, the shipped capture 34, and a module name has no length
+//     bound either. So the list is open and the text unbounded.
+//   - converge.go State.Streams (lines 250-252) is a map keyed by stream name
+//     that LoadState (converge.go:256-277) reads whole, bounded only by the
+//     size of the file (readregular.DefaultMax), never per stream or per field.
+//
+// So every list below is open (a variable table's []T) and every text is
+// unbounded. The one bound the code does enforce on a record's value is
+// declared: ModelStep.workers is at least 1 (steps.go:109, MemberSteps refuses
+// a plan with fewer). Integers that Go declares as int are int64, the width of
+// int on the platforms the tools build for, so nothing narrows. No fixed table
+// remains, so there is no schema.lock; tables.baseline records the tables.
 //
 // Every field is a field of the Go struct it replaces and keeps its meaning.
-// The Go structs declare no length or count themselves; the bound of each
-// field here is the bound of the thing it holds, and the comment on it names
-// the rule:
-//
-//   - the model universe: capture.go's tables, epochs, rowKeys, cols, writers
-//     and members (two tables, two epochs, two rows, three columns, two
-//     writers, three members) fix how many physical tables, rows, cells,
-//     bindings, data and placements a State can hold, and each name is at
-//     most 16 bytes (t1, r1, c1, m1, w1, "external");
-//   - the fixture: capture.go's Actions() (32 calls, at most 5 arguments, the
-//     longest a JSON object of about 300 bytes) fixes a step and a trace;
-//   - the change stream: table.lua's XADD (line 1098) writes at most 12
-//     fields beside the id, so an Event holds 16;
-//   - the verb set: steps.go's Step fields and witnesses.go's findings are
-//     short names;
-//   - converge.go's seven streams (LANDING, CLASSES, SCRIPTS, PRS, EDGES,
-//     FLEET, LEDGER) fix the convergence state.
-//
-// A value past a bound is refused by name on save and on load; nothing is
-// clamped. Maps (Event, State.Seen, Trace.ModelSHA256, converge State.Streams)
-// are bounded arrays of key and value entries in the key's sorted order, the
-// order the JSON form writes them.
+// Maps (Event, State.Seen, Trace.ModelSHA256, converge State.Streams) are open
+// lists of key and value entries in the key's sorted order, the order the JSON
+// form writes them. Absent reads as zero in a variable table, and the runtime
+// clamps an over-bound value and counts it; a reader refuses every clamp.
 package tablemodelwire
 
-// ModelArg is one argument of a call: a name or a JSON object, 512 bytes (the
-// longest in the fixture, bind's options with its fields, is about 300). The
-// schema compiler takes no array of string(N), so the string is wrapped in a
-// type.
-fixed table ModelArg
+// ModelArg is one argument of a call: a name or a JSON object (capture.go
+// Action.Args is a []string). The schema compiler takes no list of text, so the
+// string is wrapped in a table.
+table ModelArg
 {
-    text string(512)
+    text *string
 }
 
-// ModelDetail is one key=value detail of a replay event (an element of Fields).
-fixed table ModelDetail
+// ModelDetail is one key=value detail of a replay event (an element of
+// ReplayEvent.Fields, replay.go:62).
+table ModelDetail
 {
-    text string(256)
+    text *string
 }
 
 // ModelPhys is one physical table: a table name at an epoch (state.go Phys,
 // JSON [table, epoch]). The field is table_name because table is a keyword of
-// the schema language. table_name: capture.go tables are t1 and t2, 16 bytes.
-// epoch: a counter that starts at 1.
-fixed table ModelPhys
+// the schema language.
+table ModelPhys
 {
-    table_name string(16)
-    epoch      int32 | min = 0, max = 1000000
+    table_name *string
+    epoch      int64
 }
 
 // ModelCell is a cell of a physical table, or one of the two sentinels
-// (state.go Cell, JSON [[table, epoch], row, column]). row and col:
-// capture.go rowKeys and cols are two characters; the sentinels are "external"
-// and "none", 16 bytes.
-fixed table ModelCell
+// (state.go Cell, JSON [[table, epoch], row, column]).
+table ModelCell
 {
     p   ModelPhys
-    row string(16)
-    col string(16)
+    row *string
+    col *string
 }
 
 // ModelRowAt is a row present in a physical table (state.go RowAt).
-fixed table ModelRowAt
+table ModelRowAt
 {
     p   ModelPhys
-    row string(16)
+    row *string
 }
 
 // ModelBind is a cell bound to a target (state.go Bind).
-fixed table ModelBind
+table ModelBind
 {
     cell   ModelCell
     target ModelCell
 }
 
-// ModelDatum is a member of a cell with its score (state.go Datum). member:
-// capture.go members m1..m3, 16 bytes. score: a sorted-set score the fixture
-// sets to a small integer; capture.go atoi reads it into an int.
-fixed table ModelDatum
+// ModelDatum is a member of a cell with its score (state.go Datum).
+table ModelDatum
 {
     cell   ModelCell
-    member string(16)
-    score  int32
+    member *string
+    score  int64
 }
 
 // ModelLocation is where a member is in one physical table (state.go Location).
-fixed table ModelLocation
+table ModelLocation
 {
     p    ModelPhys
     cell ModelCell
 }
 
 // ModelPlacement is the place of one member in every physical table (state.go
-// Placement). locations: one per live physical table, at most the universe's
-// tables times epochs (2 x 2 = 4).
-fixed table ModelPlacement
+// Placement).
+table ModelPlacement
 {
-    member    string(16)
-    locations [..4]ModelLocation
+    member    *string
+    locations []ModelLocation
 }
 
-// ModelSeen is one entry of State.Seen: the epoch a writer last read. writer:
-// capture.go writers are w1 and w2, 16 bytes.
-fixed table ModelSeen
+// ModelSeen is one entry of State.Seen, a map[string]int: the epoch a writer
+// last read, in the writer name's sorted order.
+table ModelSeen
 {
-    writer string(16)
-    epoch  int32 | min = 0, max = 1000000
+    writer *string
+    epoch  int64
 }
 
 // ModelState is everything the model observes of the store at one moment
-// (state.go State). The bounds are the universe's: live is tables x epochs
-// (4); rows is live x rowKeys (8); binds is the cells (live x rowKeys x cols =
-// 24, plus the external cell) a cell can be bound from: 25; data is cells x
-// members (25 x 3): 75; place is one entry per member: 3; seen is one entry per
-// writer: 2. active: the active epoch.
-fixed table ModelState
+// (state.go State). active: the active epoch.
+table ModelState
 {
-    live   [..4]ModelPhys
-    rows   [..8]ModelRowAt
-    binds  [..25]ModelBind
-    data   [..75]ModelDatum
-    place  [..3]ModelPlacement
-    active int32 | min = 0, max = 1000000
-    seen   [..2]ModelSeen
+    live   []ModelPhys
+    rows   []ModelRowAt
+    binds  []ModelBind
+    data   []ModelDatum
+    place  []ModelPlacement
+    active int64
+    seen   []ModelSeen
 }
 
-// ModelAction is one controlled call of the trace (capture.go Action): a verb
-// of table.lua, its arguments and the writer making it. verb: a table.lua verb
-// name or one of the two model-only steps (24 bytes). args: at most 5 in the
-// fixture (cell_move). actor: w1 or w2, 16 bytes.
-fixed table ModelAction
+// ModelAction is one controlled call of the trace (capture.go Action:40-44): a
+// verb of table.lua, its arguments and the writer making it.
+table ModelAction
 {
-    verb  string(24)
-    args  [..5]ModelArg
-    actor string(16)
+    verb  *string
+    args  []ModelArg
+    actor *string
 }
 
-// ModelEventField is one field of a committed receipt (capture.go Event, a
-// map[string]string): an entry of a table's change stream. key: table.lua's
-// field names (verb, args, epoch, rev_before, rev_after, actor, fence, idem,
-// cells, members, outcome, renamed_keys, id), 24 bytes. value: the longest is
-// the JSON of the arguments, about 400 bytes with its escapes, 512 here.
-fixed table ModelEventField
+// ModelEventField is one field of a committed receipt (capture.go:217 Event, a
+// map[string]string): an entry of a table's change stream, in the key's sorted
+// order.
+table ModelEventField
 {
-    key   string(24)
-    value string(512)
+    key   *string
+    value *string
 }
 
 // ModelEvent is a committed receipt: the fields of one entry of a table's
-// change stream, and its id (capture.go Event). At most 16 fields: the stream
-// entry carries 12, and the id is added.
-fixed table ModelEvent
+// change stream, and its id (capture.go Event).
+table ModelEvent
 {
-    fields [..16]ModelEventField
+    fields []ModelEventField
 }
 
-// ModelTraceStep is one step of the retained trace (replay.go TraceStep): the
-// call, whether it was refused, its receipt, the model action that performs it
-// and the store state after it. refused: absent when the step was one of the
+// ModelTraceStep is one step of the retained trace (replay.go:23-31 TraceStep):
+// the call, whether it was refused, its receipt, the model action that performs
+// it and the store state after it. refused: absent when the step was one of the
 // two model-only steps (the Go pointer is nil), present true or false
 // otherwise. hasReceipt is true when the step carries a receipt (the Go map is
-// not nil); a refusal has none. model: ActionTLA's output, 512 bytes for the
-// longest row_add or bind in the fixture.
-fixed table ModelTraceStep
+// not nil); a refusal has none. model: ActionTLA's output.
+table ModelTraceStep
 {
-    verb       string(24)
-    args       [..5]ModelArg
-    actor      string(16)
+    verb       *string
+    args       []ModelArg
+    actor      *string
     refused    ?bool
     hasReceipt bool
     receipt    ModelEvent
-    model      string(512)
+    model      *string
     state      ModelState
 }
 
-// ModelFinding is one replayed witness or control (witnesses.go Finding).
-// name: a finding's short name; result: "confirmed" or "pass"; text: one
-// sentence, 512 bytes.
-fixed table ModelFinding
+// ModelHash is one entry of Trace.ModelSHA256 (replay.go:39, a
+// map[string]string): a model file name and the hex SHA-256 of its text.
+// replay.go hashModels (lines 170-184) writes one entry per *.tla file in the
+// models directory, with no bound on the count or on a name's length.
+table ModelHash
 {
-    name   string(64)
-    result string(32)
-    text   string(512)
+    module *string
+    sha256 *string
 }
 
-// ModelReplayEvent is one completed part of the replay (replay.go
+// ModelTrace is the retained trace (replay.go:37-42 Trace, the trace.json a
+// capture writes): the source and model hashes it was taken from, the initial
+// state and the steps. modelSha256 is one entry per *.tla file in the module
+// name's sorted order: an open list (77 modules in tla/ today, 34 in the
+// shipped capture, 200 in the golden test).
+table ModelTrace
+{
+    sourceSha256 *string
+    modelSha256  []ModelHash
+    initial      ModelState
+    steps        []ModelTraceStep
+}
+
+// ModelFinding is one replayed witness or control (witnesses.go:14-18 Finding).
+table ModelFinding
+{
+    name   *string
+    result *string
+    text   *string
+}
+
+// ModelReplayEvent is one completed part of the replay (replay.go:59-63
 // ReplayEvent). step: capture, receipt-replay, mutation-controls,
 // tlc-execution or tlc-mutated-observation; verdict: pass or
-// expected-mutation-failure; fields: key=value details, at most 8 of 256 bytes.
-fixed table ModelReplayEvent
+// expected-mutation-failure; fields: key=value details.
+table ModelReplayEvent
 {
-    step    string(64)
-    verdict string(64)
-    fields  [..8]ModelDetail
+    step    *string
+    verdict *string
+    fields  []ModelDetail
 }
 
 // ModelStep is one configuration of a suite and the result it must reach
-// (steps.go Step). name and module: a configuration base name and its .tla
-// file; kind: pass, invariant or action; property: the violated invariant's
-// name, empty for a pass; met: one of the Verdict constants (at most 32
-// bytes). workers: TLC workers, 1 to 1024.
-fixed table ModelStep
+// (steps.go:25-32 Step). workers: TLC workers, at least 1: MemberSteps refuses
+// a plan with fewer (steps.go:109-111), the one bound of these records the
+// code enforces. The compiler takes no min without a max (SPEC §4.6), so max is
+// the largest int64: no upper bound is declared; the compiler also wants a
+// default in range, so an absent workers reads as 1.
+table ModelStep
 {
-    name     string(64)
-    module   string(96)
-    workers  int32 | min = 0, max = 1024
-    kind     string(16)
-    property string(64)
-    met      string(32)
+    name     *string
+    module   *string
+    workers  int64 = 1 | min = 1, max = 9223372036854775807
+    kind     *string
+    property *string
+    met      *string
 }
 
-// ModelViolation is one property TLC said is violated (pkg/tlc Violation).
-// kind: "Invariant", "Action property" or "Temporal property"; name: empty when
-// TLC does not name a temporal property.
-fixed table ModelViolation
+// ModelViolation is one property TLC said is violated (pkg/tlc Violation,
+// outcome.go:19-22).
+table ModelViolation
 {
-    kind string(32)
-    name string(128)
+    kind *string
+    name *string
 }
 
-// ModelOutcome is what one TLC output says (pkg/tlc Outcome). generated and
-// distinct: the state counts as digits only, or "-" when TLC printed none
-// (a count past 2^64 is 20 digits). violations: one per violated property, at
-// most 16.
-fixed table ModelOutcome
+// ModelOutcome is what one TLC output says (pkg/tlc Outcome, outcome.go:25-34).
+// generated and distinct: the state counts as digits only, or "-" when TLC
+// printed none.
+table ModelOutcome
 {
     completed    bool
-    generated    string(24)
-    distinct     string(24)
-    violations   [..16]ModelViolation
+    generated    *string
+    distinct     *string
+    violations   []ModelViolation
     initialState bool
 }
 
-// ModelStepResult is what one step did (steps.go StepResult). verdict: one of
-// the Verdict constants (at most 32 bytes). code: TLC's exit status (0 to 255).
-// seconds: the step wall time in nanoseconds, a time.Duration, at most one day. log: the
-// path of the step's TLC log (at most 1024 bytes, the longest path the
-// disposable directory allows).
-fixed table ModelStepResult
+// ModelStepResult is what one step did (steps.go:130-138 StepResult). code:
+// TLC's exit status. seconds: the step wall time in nanoseconds, a
+// time.Duration. log: the path of the step's TLC log.
+table ModelStepResult
 {
     step    ModelStep
-    verdict string(32)
+    verdict *string
     ok      bool
-    code    int32 | min = 0, max = 255
-    seconds int64 | min = 0, max = 86400000000000
+    code    int64
+    seconds int64
     outcome ModelOutcome
-    log     string(1024)
+    log     *string
 }
 
-// ConvergeStreamEntry is one stream the verb remembers (converge.go State.Streams
-// is a map keyed by stream name, written here in the key's sorted order):
-// StreamState is the value it read (now), when it read it (at, an RFC 3339
-// instant of at most 40 bytes) and how many consecutive ticks that stream has
-// been widening (widening, JSON widening_ticks). name: LANDING, CLASSES,
-// SCRIPTS, PRS, EDGES, FLEET or LEDGER, 32 bytes leaves room.
-fixed table ConvergeStreamEntry
+// ConvergeStreamEntry is one stream the verb remembers (converge.go:242-246
+// StreamState, the value of State.Streams, a map keyed by stream name written
+// here in the key's sorted order): the value it read (now), when it read it
+// (at, an RFC 3339 instant) and how many consecutive ticks that stream has been
+// widening (widening, JSON widening_ticks).
+table ConvergeStreamEntry
 {
-    name     string(32)
+    name     *string
     now      float64
-    at       string(40)
-    widening int32 | min = 0, max = 1000000
+    at       *string
+    widening int64
 }
 
-// ConvergeState is the whole memory of the convergence verb (converge.go
-// State): one entry per stream, 7 today and 16 here.
-fixed table ConvergeState
+// ConvergeState is the whole memory of the convergence verb (converge.go:250-252
+// State): one entry per stream, 7 today (LANDING, CLASSES, SCRIPTS, PRS, EDGES,
+// FLEET, LEDGER) and no count the code enforces.
+table ConvergeState
 {
-    streams [..16]ConvergeStreamEntry
+    streams []ConvergeStreamEntry
 }

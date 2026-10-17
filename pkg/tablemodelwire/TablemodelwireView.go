@@ -67,7 +67,7 @@ func init() {
 
 var tableUnitView = UnitViewInfo{Package: "tablemodelwire", ProtocolId: 0x0f7960ef3c060de6,
 	NumTypes: 0, Types: []ViewType{},
-	NumTables: 23, Tables: []ViewType{
+	NumTables: 25, Tables: []ViewType{
 		{Name: "ConvergeState", File: "tablemodel.schema", Table: true, Type: &ConvergeStateTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ConvergeStreamEntry", File: "tablemodel.schema", Table: true, Type: &ConvergeStreamEntryTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ModelAction", File: "tablemodel.schema", Table: true, Type: &ModelActionTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
@@ -79,6 +79,7 @@ var tableUnitView = UnitViewInfo{Package: "tablemodelwire", ProtocolId: 0x0f7960
 		{Name: "ModelEvent", File: "tablemodel.schema", Table: true, Type: &ModelEventTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ModelEventField", File: "tablemodel.schema", Table: true, Type: &ModelEventFieldTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ModelFinding", File: "tablemodel.schema", Table: true, Type: &ModelFindingTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
+		{Name: "ModelHash", File: "tablemodel.schema", Table: true, Type: &ModelHashTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ModelLocation", File: "tablemodel.schema", Table: true, Type: &ModelLocationTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ModelOutcome", File: "tablemodel.schema", Table: true, Type: &ModelOutcomeTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ModelPhys", File: "tablemodel.schema", Table: true, Type: &ModelPhysTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
@@ -89,6 +90,7 @@ var tableUnitView = UnitViewInfo{Package: "tablemodelwire", ProtocolId: 0x0f7960
 		{Name: "ModelState", File: "tablemodel.schema", Table: true, Type: &ModelStateTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ModelStep", File: "tablemodel.schema", Table: true, Type: &ModelStepTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ModelStepResult", File: "tablemodel.schema", Table: true, Type: &ModelStepResultTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
+		{Name: "ModelTrace", File: "tablemodel.schema", Table: true, Type: &ModelTraceTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ModelTraceStep", File: "tablemodel.schema", Table: true, Type: &ModelTraceStepTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ModelViolation", File: "tablemodel.schema", Table: true, Type: &ModelViolationTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 	},
