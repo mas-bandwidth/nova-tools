@@ -1,7 +1,6 @@
 package decide
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -158,17 +157,12 @@ func judgmentItems(dir, logFile string) ([]importItem, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	var export struct {
-		Lines []struct {
-			Verb    string   `json:"verb"`
-			Answers []string `json:"answers"`
-		} `json:"lines"`
-	}
-	if err := json.Unmarshal(raw, &export); err != nil {
+	exp, _, err := ParseExportReader.Read(raw)
+	if err != nil {
 		return nil, 0, fmt.Errorf("--log %s is not a nova-sprint log --json export ({\"lines\": [...]}): %w", logFile, err)
 	}
 	verb := map[string]string{}
-	for _, l := range export.Lines {
+	for _, l := range exp.Lines {
 		for _, id := range l.Answers {
 			if l.Verb != "" {
 				verb[id] = l.Verb
