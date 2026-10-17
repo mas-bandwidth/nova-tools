@@ -172,7 +172,13 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if slots == 0 {
 			return nil, fmt.Errorf("machine %s: slots_capacity must be greater than 0 from machine row field slots; run: nova-config machine show %s", m, m)
 		}
-		runners, _ := strconv.Atoi(v["runners"])
+		// an unset runners is none; one that is not a count is refused by name
+		runners := 0
+		if v["runners"] != "" {
+			if runners, err = inventoryCount(m, "runners", "machine row field runners", v["runners"]); err != nil {
+				return nil, err
+			}
+		}
 		// The measured facts are optional: a machine that is down, or one whose
 		// beat predates a fact, is listed from its row and the facts it has,
 		// never refused (one down host never takes the whole fleet's inventory
@@ -403,7 +409,11 @@ func hostLoops(snap *Snapshot) (map[string][]InventoryLoop, error) {
 		out[m] = []InventoryLoop{}
 	}
 	for _, n := range slices.Sorted(maps.Keys(snap.Loops)) {
-		v := snap.Loops[n]
+		// the view is read in every form and refused by name (records.go, S2)
+		v, err := records.ReadLoop(snap.Loops[n])
+		if err != nil {
+			return nil, fmt.Errorf("loop %s: %w", n, err)
+		}
 		m := v["machine"]
 		if _, ok := out[m]; !ok {
 			return nil, fmt.Errorf("loop %s names machine %q, which has no machine row; run: nova-config apply", n, m)
