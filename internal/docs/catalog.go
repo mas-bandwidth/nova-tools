@@ -95,6 +95,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/hostload", "a machine's load: CPU busy percent of all its cores, else the load average over them", "go test ./pkg/hostload", "go test ./pkg/hostload"),
 	E("pkg/hygiene", "clean checkout and leak assertions", "go test ./pkg/hygiene", "go test ./pkg/hygiene"),
 	E("pkg/keyshape", "cryptographic key format verification", "go test ./pkg/keyshape", "go test ./pkg/keyshape"),
+	E("pkg/ledgerwire", "the ledger area's table wire, generated from schemas/ledger by the pinned schema compiler (generate.go); strict binary, base64 and JSON reads", "go test ./pkg/ledgerwire", "make schemawire-check"),
 	E("pkg/log", "structured logging helpers", "go test ./pkg/log", "go test ./pkg/log"),
 	E("internal/memindex", "memory vector and text index", "go test ./internal/memindex", "go test ./internal/memindex"),
 	E("internal/nsprint", "the shared Redis store and login, its Functions, and the verb flags the living tools use", "go test ./internal/nsprint/...", "go test ./internal/nsprint/..."),

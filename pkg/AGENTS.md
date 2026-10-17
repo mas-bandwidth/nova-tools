@@ -37,6 +37,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `hostload/` | a machine's load: CPU busy percent of all its cores, else the load average over them | `go test ./pkg/hostload` | `go test ./pkg/hostload` |
 | `hygiene/` | clean checkout and leak assertions | `go test ./pkg/hygiene` | `go test ./pkg/hygiene` |
 | `keyshape/` | cryptographic key format verification | `go test ./pkg/keyshape` | `go test ./pkg/keyshape` |
+| `ledgerwire/` | the ledger area's table wire, generated from schemas/ledger by the pinned schema compiler (generate.go); strict binary, base64 and JSON reads | `go test ./pkg/ledgerwire` | `make schemawire-check` |
 | `log/` | structured logging helpers | `go test ./pkg/log` | `go test ./pkg/log` |
 | `member/` | a sprint fleet member's loop: beat, queue, push and judge the finish, take to width, each card a child | `go test ./pkg/member` | `go test ./pkg/member` |
 | `nsprint/` | the shared Redis store and login, its Functions, and the verb flags the living tools use | `go test ./pkg/nsprint/...` | `go test ./pkg/nsprint/...` |
