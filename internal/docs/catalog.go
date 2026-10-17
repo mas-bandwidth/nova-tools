@@ -116,6 +116,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/redisacl", "the fleet store's ACL users rendered from the function library and the key families, and compared with a store's live ACL", "go test ./pkg/redisacl", "go test ./pkg/redisacl"),
 	E("pkg/redisfn", "build, load and check a Redis function library from embedded Lua source", "go test ./pkg/redisfn", "go test ./pkg/redisfn"),
 	E("pkg/release", "release packaging and manifest gates", "go test ./pkg/release", "go test ./pkg/release"),
+	E("pkg/releasewire", "the release area's variable-table wire, generated from schemas/release by the pinned schema compiler (generate.go): the cycle's build arguments, the journey evidence, the spend receipts, the update snapshot and manifest, the adoption ledger and checks, the machines file, the build record, the path list and the release digest", "go test ./pkg/releasewire", "make schemawire-check"),
 	E("pkg/roadmap", "docs/roadmap.sexp and docs/fixes.sexp read through pkg/sexp into typed records, and the ROADMAP.md and FIXES.md they render; nova-sprint imports it", "go test ./pkg/roadmap", "make roadmap"),
 	E("pkg/safepath", "path sanitization and sandboxing", "go test ./pkg/safepath", "go test ./pkg/safepath"),
 	E("pkg/sandbox", "OS isolation primitives (seatbelt/landlock)", "go test ./pkg/sandbox", "go test ./pkg/sandbox"),

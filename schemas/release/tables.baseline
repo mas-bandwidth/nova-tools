@@ -1,0 +1,152 @@
+schema-tables-baseline 7
+package releasewire
+
+table AdoptCheckEntry
+    field check_name id=0x27c0236fdb03178b kind=17 type=string
+    field command id=0x66655dca2c3e8a12 kind=14 elem=13 type=Word array=unbounded
+    field owner id=0xa692f75ab08b8cf4 kind=17 type=string
+
+table AdoptChecks
+    field checks id=0xd5085fdfb5a31ffc kind=14 elem=13 type=AdoptCheckEntry array=unbounded
+
+table AdoptionChoice
+    field tool id=0x2fe3f0ef38a252c7 kind=17 type=string
+    field friend_name id=0x2bcee2fac7bb6eb5 kind=17 type=string
+    field state id=0xee63aaad45b1b116 kind=7 enum=AdoptionState
+    field version id=0xbb62c62c9808ea37 kind=17 type=string
+    field detail id=0xa8a74aa141250df4 kind=17 type=string
+
+table AdoptionLedger
+    field rows id=0xa3a7061ff10a8138 kind=14 elem=13 type=AdoptionChoice array=unbounded
+
+table BuildRecord
+    field commit id=0x7da7727ca39ddcdc kind=17 type=string
+    field go_version id=0xbec0eee0a6048a10 kind=17 type=string
+    field ldflags id=0x94d87e8c251418a4 kind=17 type=string
+    field base_ref id=0xd46f4a3ebed65022 kind=17 type=string
+    field gate id=0x8af97972044b8af2 kind=17 type=string
+    field reason id=0x65e8d7f3474f2639 kind=17 type=string
+    field rebuilt id=0xb8e2d36bdf2660c0 kind=14 elem=13 type=Word array=unbounded
+    field reused id=0xd26ec98ea10753f5 kind=14 elem=13 type=Word array=unbounded
+
+table CycleBuildArgs
+    field nova_release_build_args id=0x2a82ec3342ba0cc6 kind=14 elem=13 type=Word array=unbounded
+
+table JourneyEvent
+    field action id=0x6568640b035a56df kind=17 type=string
+    field pkg id=0x77a85f195659c591 kind=17 type=string
+    field test id=0xf9e6e6ef197c2b25 kind=17 type=string
+    field output id=0x150f53f8651b4384 kind=17 type=string
+
+table JourneyEvidence
+    field header id=0x3a506cb501761960 kind=13 type=JourneyHeader
+    field events id=0xdd63d0cec6bb7d04 kind=14 elem=13 type=JourneyEvent array=unbounded
+
+table JourneyHeader
+    field evidence id=0xae70fc8f5906c564 kind=17 type=string
+    field revision id=0xd6a4dbc46c8e8658 kind=17 type=string
+    field functions id=0x644a5c2163bc65ce kind=17 type=string
+    field schema id=0x758d17ff764667b6 kind=17 type=string
+    field installed id=0x15176350a5299dc1 kind=14 elem=13 type=JourneyInstalled array=unbounded
+
+table JourneyInstalled
+    field machine id=0x385157cb98d7be6e kind=17 type=string
+    field build id=0x802517e298c70b03 kind=17 type=string
+    field revision id=0xd6a4dbc46c8e8658 kind=17 type=string
+
+table MachineEntry
+    field name id=0xc4bcadba8e631b86 kind=17 type=string
+    field bin id=0x00541819134fde3e kind=17 type=string
+    field dest id=0xa5eb0667427cce95 kind=17 type=string
+
+table MachineList
+    field machines id=0x89f64bf4b6980b47 kind=14 elem=13 type=MachineEntry array=unbounded
+
+table PathsFile
+    field range_name id=0x5ec087c4054ea9b4 kind=17 type=string
+    field digest id=0xc771fca99beaeafd kind=12 size=64
+    field files id=0x69f800801812a5f0 kind=14 elem=13 type=Word array=unbounded
+
+table ReleaseDigest
+    field digest id=0xc771fca99beaeafd kind=12 size=64
+
+table SnapshotDelivery
+    field observed id=0x6a15c2158aa39ba1 kind=14 elem=13 type=SnapshotObservedEntry array=unbounded
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field at id=0x089c4e07b545a968 kind=17 type=string
+
+table SnapshotDeliveryEntry
+    field scope id=0xc1074ffbe7efe44b kind=17 type=string
+    field delivery id=0x6469724ad3f534b5 kind=13 type=SnapshotDelivery
+
+table SnapshotObserved
+    field raw id=0x89f6c11960ff5191 kind=17 type=string
+    field status id=0xc4d5696d6cc12c2f kind=17 type=string
+    field at id=0x089c4e07b545a968 kind=17 type=string
+
+table SnapshotObservedEntry
+    field name id=0xc4bcadba8e631b86 kind=17 type=string
+    field observed id=0x6a15c2158aa39ba1 kind=13 type=SnapshotObserved
+
+table SnapshotScope
+    field as_name id=0x8e5c9519cf8cfeb5 kind=17 type=string
+    field to id=0x08c83907b56ac0a4 kind=17 type=string
+    field host id=0x4077f8cc7eaf4d6f kind=17 type=string
+
+table SpendReceiptFriend
+    field friend_name id=0x2bcee2fac7bb6eb5 kind=17 type=string
+    field tokens id=0x93fab8f021712b13 kind=5
+
+table SpendReceipts
+    field evidence id=0xae70fc8f5906c564 kind=17 type=string
+    field from_time id=0xe42ef43e1e31bd37 kind=17 type=string
+    field to_time id=0x21211f39c111b0f8 kind=17 type=string
+    field friends id=0x82a6b14733b2685a kind=14 elem=13 type=SpendReceiptFriend array=unbounded
+
+table UpdateManifest
+    field entries id=0xc5b2a72c0845a253 kind=14 elem=13 type=UpdateManifestEntry array=unbounded
+
+table UpdateManifestEntry
+    field name id=0xc4bcadba8e631b86 kind=17 type=string
+    field kind id=0xef9c96d721673243 kind=7 enum=ManifestKind
+    field installed id=0x15176350a5299dc1 kind=14 elem=13 type=Word array=unbounded
+    field latest id=0x376e34638197a4a6 kind=17 type=string
+    field apply id=0xf74a76a458bf1fbb kind=14 elem=13 type=Word array=unbounded
+    field owner id=0xa692f75ab08b8cf4 kind=17 type=string
+
+table UpdateSnapshot
+    field observed id=0x6a15c2158aa39ba1 kind=14 elem=13 type=SnapshotObservedEntry array=unbounded
+    field delivered id=0x943906262985ba0f kind=14 elem=13 type=SnapshotDeliveryEntry array=unbounded
+
+table VersionSnapEntry
+    field name id=0xc4bcadba8e631b86 kind=17 type=string
+    field stamp id=0xee7ba9ad45c64144 kind=17 type=string
+    field revision id=0xd6a4dbc46c8e8658 kind=17 type=string
+    field platform id=0x3e4bd4e31c5c3ad2 kind=17 type=string
+
+table VersionSnapshot
+    field rows id=0xa3a7061ff10a8138 kind=14 elem=13 type=VersionSnapEntry array=unbounded
+
+table Word
+    field text id=0xfa04f4ef1995407e kind=17 type=string
+
+enum AdoptionState
+    variant evaluated id=0x02dfce225d6a428a
+    variant useful_now id=0xffe5ad9eeb891668
+    variant tried id=0x240ab3a6ec25d93f
+    variant adopted id=0x6ba524b6269a70e8
+    variant declined id=0xec3be484d6dd1ec7
+    variant deferred id=0xdbbcbbece325734a
+    variant unknown id=0x498865c7bd1f3959
+    variant equivalent id=0xd07d572a5ea1f335
+
+enum ManifestKind
+    variant harness id=0x211fcbbafe5331ab
+    variant engine id=0x3dacd07fc0cad3db
+    variant model id=0x9de543933e6e703a
+    variant tool id=0x2fe3f0ef38a252c7
+    variant pin id=0x77af761956600b54
+
+## history
+### 2026-10-17 (UTC) — first baseline
+- baseline created over 27 tables — data written BEFORE this point is not covered by it
