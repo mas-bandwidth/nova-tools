@@ -547,6 +547,9 @@ func sqlState(err error) string {
 }
 
 func (p *PG) Insert(ctx context.Context, kind string, row Row, actor string) (int64, error) {
+	if err := ValidateChangeMeta(actor, ReasonFrom(ctx)); err != nil {
+		return 0, err
+	}
 	k, err := kindOf(kind)
 	if err != nil {
 		return 0, err
@@ -586,6 +589,9 @@ func (p *PG) Insert(ctx context.Context, kind string, row Row, actor string) (in
 }
 
 func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]string, actor string) (Row, int64, error) {
+	if err := ValidateChangeMeta(actor, ReasonFrom(ctx)); err != nil {
+		return Row{}, 0, err
+	}
 	k, err := kindOf(kind)
 	if err != nil {
 		return Row{}, 0, err
@@ -641,6 +647,9 @@ func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]s
 }
 
 func (p *PG) Delete(ctx context.Context, kind, name string, actor string) (int64, error) {
+	if err := ValidateChangeMeta(actor, ReasonFrom(ctx)); err != nil {
+		return 0, err
+	}
 	k, err := kindOf(kind)
 	if err != nil {
 		return 0, err

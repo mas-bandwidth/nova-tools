@@ -121,7 +121,8 @@ var tableUnitView = UnitViewInfo{Package: "configwire", ProtocolId: 0x367dceb63e
 	},
 	NumFlags: 0, Flags: []ViewVocabulary{},
 	NumUnions: 0, Unions: []ViewVocabulary{},
-	NumConstants: 9, Constants: []ViewConstant{
+	NumConstants: 11, Constants: []ViewConstant{
+		{Name: "MaxActor", File: "config.schema", TypeName: "int64", IsFloat: false, IntValue: 128, FloatValue: 0.0, Doc: "MaxActor is the longest actor of a change, in bytes (pkg/config MaxActor,\nrefused by ValidateChangeMeta in the CLI verbs and in every store write):\nit is the name bound; the longest live actor is 14 bytes.", NumTags: 0, Tags: nil},
 		{Name: "MaxArgvBytes", File: "config.schema", TypeName: "int64", IsFloat: false, IntValue: 4096, FloatValue: 0.0, Doc: "MaxArgvBytes is the longest argv in its canonical JSON spelling\n(pkg/config MaxArgvBytes: at most 64 words and 4096 bytes).", NumTags: 0, Tags: nil},
 		{Name: "MaxEnvName", File: "config.schema", TypeName: "int64", IsFloat: false, IntValue: 128, FloatValue: 0.0, Doc: "MaxEnvName is the longest environment variable name in a loop keys list\n(pkg/config MaxEnvName, the same two refusals): the longest live name is 31\nbytes.", NumTags: 0, Tags: nil},
 		{Name: "MaxFieldName", File: "config.schema", TypeName: "int64", IsFloat: false, IntValue: 32, FloatValue: 0.0, Doc: "MaxFieldName is the longest field name: the longest today is 28 bytes\n(the sprint kind).", NumTags: 0, Tags: nil},
@@ -129,6 +130,7 @@ var tableUnitView = UnitViewInfo{Package: "configwire", ProtocolId: 0x367dceb63e
 		{Name: "MaxHosts", File: "config.schema", TypeName: "int64", IsFloat: false, IntValue: 48, FloatValue: 0.0, Doc: "MaxHosts is the most hosts an inventory group lists (pkg/config MaxHosts,\nrefused by BuildInventory and the fixture reader): the fleet has 11\nmachines. Eight groups of 48 names of 128 bytes stay under the record\nlimit.", NumTags: 0, Tags: nil},
 		{Name: "MaxKeys", File: "config.schema", TypeName: "int64", IsFloat: false, IntValue: 32, FloatValue: 0.0, Doc: "MaxKeys is the most secret names a loop lists (pkg/config MaxKeys, refused\nby Field.Canonical for a keys field and by the inventory's loop parse): the\nmost a live loop lists is 5.", NumTags: 0, Tags: nil},
 		{Name: "MaxName", File: "config.schema", TypeName: "int64", IsFloat: false, IntValue: 128, FloatValue: 0.0, Doc: "MaxName is the longest row, machine, host and friend name, in bytes\n(pkg/config MaxName, refused by ValidateName and the inventory's name\nchecks): the shape is NamePattern (lower-case letters, digits and dashes)\nand the length is at most 128; the longest live name is 29 bytes.", NumTags: 0, Tags: nil},
+		{Name: "MaxReason", File: "config.schema", TypeName: "int64", IsFloat: false, IntValue: 4608, FloatValue: 0.0, Doc: "MaxReason is the longest reason of a change, in bytes (pkg/config\nMaxReason, the same two refusals): the longest live reason is about 1050\nbytes, so the bound is over four times that.", NumTags: 0, Tags: nil},
 		{Name: "MaxRevs", File: "config.schema", TypeName: "int64", IsFloat: false, IntValue: 8, FloatValue: 0.0, Doc: "MaxRevs is the most kinds config:decl carries a revision for (one per kind,\neight today).", NumTags: 0, Tags: nil},
 		{Name: "MaxRowFields", File: "config.schema", TypeName: "int64", IsFloat: false, IntValue: 24, FloatValue: 0.0, Doc: "MaxRowFields is the most fields a row carries: the widest kind today is the\nroute kind with 23 fields (pkg/config Kinds); one slot is spare.", NumTags: 0, Tags: nil},
 	}}

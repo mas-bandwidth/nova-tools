@@ -43,6 +43,16 @@ const MaxFieldValue = 2304
 // (pkg/config MaxArgvBytes: at most 64 words and 4096 bytes).
 const MaxArgvBytes = 4096
 
+// MaxActor is the longest actor of a change, in bytes (pkg/config MaxActor,
+// refused by ValidateChangeMeta in the CLI verbs and in every store write):
+// it is the name bound; the longest live actor is 14 bytes.
+const MaxActor = 128
+
+// MaxReason is the longest reason of a change, in bytes (pkg/config
+// MaxReason, the same two refusals): the longest live reason is about 1050
+// bytes, so the bound is over four times that.
+const MaxReason = 4608
+
 // MaxKeys is the most secret names a loop lists (pkg/config MaxKeys, refused
 // by Field.Canonical for a keys field and by the inventory's loop parse): the
 // most a live loop lists is 5.

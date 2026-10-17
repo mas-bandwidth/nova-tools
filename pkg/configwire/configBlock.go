@@ -258,7 +258,7 @@ type ConfigChangeBlockProjection struct {
 	HasAfter     bool
 	Actor        [129]byte // string(128): max length, used length beside it
 	ActorLength  int32
-	Reason       [2305]byte // string(2304): max length, used length beside it
+	Reason       [4609]byte // string(4608): max length, used length beside it
 	_            [3]byte    // generated padding
 	ReasonLength int32
 	At           [33]byte // string(32): max length, used length beside it
@@ -635,7 +635,7 @@ func init() {
 	tableBlockLayoutOffset("CanonicalWordBlockProjection.FieldType", unsafe.Offsetof(CanonicalWordBlockProjection{}.FieldType), 25)
 	tableBlockLayoutOffset("CanonicalWordBlockProjection.Op", unsafe.Offsetof(CanonicalWordBlockProjection{}.Op), 26)
 	tableBlockLayoutOffset("CanonicalWordBlockProjection.Singleton", unsafe.Offsetof(CanonicalWordBlockProjection{}.Singleton), 27)
-	tableBlockLayoutSize("ConfigChangeBlockProjection", unsafe.Sizeof(ConfigChangeBlockProjection{}), 2656)
+	tableBlockLayoutSize("ConfigChangeBlockProjection", unsafe.Sizeof(ConfigChangeBlockProjection{}), 4960)
 	tableBlockLayoutSize("ConfigChangeBlockProjection alignment", unsafe.Alignof(ConfigChangeBlockProjection{}), 8)
 	tableBlockLayoutOffset("ConfigChangeBlockProjection.Magic", unsafe.Offsetof(ConfigChangeBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("ConfigChangeBlockProjection.BuildVersion", unsafe.Offsetof(ConfigChangeBlockProjection{}.BuildVersion), 8)
@@ -648,7 +648,7 @@ func init() {
 	tableBlockLayoutOffset("ConfigChangeBlockProjection.HasAfter", unsafe.Offsetof(ConfigChangeBlockProjection{}.HasAfter), 170)
 	tableBlockLayoutOffset("ConfigChangeBlockProjection.Actor", unsafe.Offsetof(ConfigChangeBlockProjection{}.Actor), 171)
 	tableBlockLayoutOffset("ConfigChangeBlockProjection.Reason", unsafe.Offsetof(ConfigChangeBlockProjection{}.Reason), 304)
-	tableBlockLayoutOffset("ConfigChangeBlockProjection.At", unsafe.Offsetof(ConfigChangeBlockProjection{}.At), 2616)
+	tableBlockLayoutOffset("ConfigChangeBlockProjection.At", unsafe.Offsetof(ConfigChangeBlockProjection{}.At), 4920)
 	tableBlockLayoutSize("ConfigRowBlockProjection", unsafe.Sizeof(ConfigRowBlockProjection{}), 60800)
 	tableBlockLayoutSize("ConfigRowBlockProjection alignment", unsafe.Alignof(ConfigRowBlockProjection{}), 8)
 	tableBlockLayoutOffset("ConfigRowBlockProjection.Magic", unsafe.Offsetof(ConfigRowBlockProjection{}.Magic), 0)
@@ -859,7 +859,7 @@ func init() {
 		},
 	}
 	tableBlockRecords[2] = TableBlockInfo{
-		Name: "ConfigChange", BuildVersion: BuildVersion, Size: 2656, Align: 8, NumFields: 9,
+		Name: "ConfigChange", BuildVersion: BuildVersion, Size: 4960, Align: 8, NumFields: 9,
 		Fields: []TableBlockFieldInfo{
 			{Name: "id", Offset: 24, Size: 8, Kind: 5, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: nil},
@@ -875,9 +875,9 @@ func init() {
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "actor", Offset: 171, Size: 133, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 300, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "reason", Offset: 304, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2612, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "at", Offset: 2616, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2652, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "reason", Offset: 304, Size: 4616, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4916, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 4608, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "at", Offset: 4920, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4956, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
@@ -1633,7 +1633,7 @@ func (b *ConfigRowBlock) Type() *TableBlockInfo { return &tableBlockRecords[3] }
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const ConfigChangeBlockMaxBytes int64 = 2688
+const ConfigChangeBlockMaxBytes int64 = 4992
 
 // ConfigChangeBlock is ConfigChange's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -1663,10 +1663,10 @@ func (block *ConfigChangeBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 2656 {
+	if bytes < 4960 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 2656)
+	header := unsafe.Slice((*byte)(base), 4960)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -1680,7 +1680,7 @@ func (block *ConfigChangeBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(2656)
+	used := int64(4960)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -1747,7 +1747,7 @@ func ConfigChangeBlockBegin(b *ConfigChangeBlock, s *ConfigChangeBlockStorage, c
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(2656)
+	offset := int64(4960)
 	*b = ConfigChangeBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -1756,7 +1756,7 @@ func ConfigChangeBlockBytes(b *ConfigChangeBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(2656)
+	used := int64(4960)
 	return (used + 63) &^ int64(63)
 }
 

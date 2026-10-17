@@ -69,9 +69,9 @@ type ConfigChange struct {
 	Op           ChangeOp
 	HasBefore    bool
 	HasAfter     bool
-	Actor        [128]byte // string(MaxName): max length, used length beside it
+	Actor        [128]byte // string(MaxActor): max length, used length beside it
 	ActorLength  int32
-	Reason       [2304]byte // string(MaxFieldValue): max length, used length beside it
+	Reason       [4608]byte // string(MaxReason): max length, used length beside it
 	ReasonLength int32
 	At           [32]byte // string(32): max length, used length beside it
 	AtLength     int32
@@ -1918,14 +1918,14 @@ func ConfigChangeSaveBody(w *TableWriter, value *ConfigChange) bool {
 		}
 	}
 	{
-		if value.ReasonLength < 0 || value.ReasonLength > 2304 {
+		if value.ReasonLength < 0 || value.ReasonLength > 4608 {
 			return false
 		}
 		if value.ReasonLength > 0 {
 			if ref := w.Ids.refAtHit(45, 0x65e8d7f3474f2639); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.ReasonLength < 0 || value.ReasonLength > 2304 {
+			if value.ReasonLength < 0 || value.ReasonLength > 4608 {
 				return false
 			}
 			{
@@ -2250,8 +2250,8 @@ func ConfigChangeLoadBody(r *TableReader, value *ConfigChange) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 2304 {
-				keep = tableUtf8Clamp(sub.Buffer, 2304)
+			if keep > 4608 {
+				keep = tableUtf8Clamp(sub.Buffer, 4608)
 				r.Report.Clamped++
 			}
 			clear(value.Reason[:])
@@ -9545,9 +9545,9 @@ func ConfigChangeFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLin
 	}
 	out[n] = TableFixedEntry{Src: src + 144, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.ActorLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.Actor)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // actor
 	n++
-	out[n] = TableFixedEntry{Src: src + 276, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.ReasonLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.Reason)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // reason
+	out[n] = TableFixedEntry{Src: src + 276, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.ReasonLength)), Size: 4608, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.Reason)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // reason
 	n++
-	out[n] = TableFixedEntry{Src: src + 2584, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.AtLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.At)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // at
+	out[n] = TableFixedEntry{Src: src + 4888, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.AtLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.At)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // at
 	n++
 	return n
 }
@@ -9575,9 +9575,9 @@ func ConfigChangeFixedWriteBody(b []byte, value *ConfigChange) {
 	tableFixedPut32(b[144:], uint32(value.ActorLength))
 	copy(b[144:][4:], value.Actor[:min(uint32(value.ActorLength), 128)])
 	tableFixedPut32(b[276:], uint32(value.ReasonLength))
-	copy(b[276:][4:], value.Reason[:min(uint32(value.ReasonLength), 2304)])
-	tableFixedPut32(b[2584:], uint32(value.AtLength))
-	copy(b[2584:][4:], value.At[:min(uint32(value.AtLength), 32)])
+	copy(b[276:][4:], value.Reason[:min(uint32(value.ReasonLength), 4608)])
+	tableFixedPut32(b[4888:], uint32(value.AtLength))
+	copy(b[4888:][4:], value.At[:min(uint32(value.AtLength), 32)])
 }
 
 func FileHeaderFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
@@ -10752,7 +10752,7 @@ func ConfigChangeFixedCheckBody(value *ConfigChange) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.ReasonLength); uint(n) > 2304 {
+	if n := int(value.ReasonLength); uint(n) > 4608 {
 		return false
 	} else {
 		p := value.Reason[:n]
@@ -10833,7 +10833,7 @@ func ConfigChangeFixedCheckBodyExact(value *ConfigChange) bool {
 	if uint32(value.ActorLength) > 128 || !tableFixedUtf8Ok(value.Actor[:value.ActorLength]) {
 		return false
 	}
-	if uint32(value.ReasonLength) > 2304 || !tableFixedUtf8Ok(value.Reason[:value.ReasonLength]) {
+	if uint32(value.ReasonLength) > 4608 || !tableFixedUtf8Ok(value.Reason[:value.ReasonLength]) {
 		return false
 	}
 	if uint32(value.AtLength) > 32 || !tableFixedUtf8Ok(value.At[:value.AtLength]) {
@@ -13081,12 +13081,12 @@ func ConfigChangeFixedClamp(value *ConfigChange, report *TableReport) {
 
 // ---- ConfigChange, the fixed form ----
 
-const ConfigChangeFixedBodyBytes = 2620
+const ConfigChangeFixedBodyBytes = 4924
 const ConfigChangeFixedRecordBytes = 8 + ConfigChangeFixedBodyBytes
-const ConfigChangeFixedHash = 0x9d151fbf35f717b1
+const ConfigChangeFixedHash = 0x43fd6b70156eec19
 
 var ConfigChangeFixedLayout = []byte{
-	0x15, 0x00, 0x00, 0x00, 0xa3, 0xd3, 0x35, 0x4b, 0x72, 0x52, 0x8e, 0xe2, 0x0d, 0x3c, 0x0a, 0x00,
+	0x15, 0x00, 0x00, 0x00, 0xa3, 0xd3, 0x35, 0x4b, 0x72, 0x52, 0x8e, 0xe2, 0x0d, 0x3c, 0x13, 0x00,
 	0x00, 0x09, 0x00, 0x00, 0x00, 0xc0, 0x3a, 0x5c, 0xb5, 0x07, 0x2e, 0xb7, 0x08, 0x05, 0x08, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x43, 0x32, 0x67, 0x21, 0xd7, 0x96, 0x9c, 0xef, 0x1e, 0x01,
 	0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0xce, 0x46, 0xc6, 0x6b, 0x87, 0x22, 0xd6, 0x5d, 0x20,
@@ -13107,7 +13107,7 @@ var ConfigChangeFixedLayout = []byte{
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x1e, 0xd4, 0x21, 0xf2, 0x9a, 0x52, 0x0f, 0x0b, 0x01, 0x01, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xda, 0xd4, 0x47, 0x1c, 0x39, 0xc5, 0xcc, 0xdc, 0x0c, 0x84,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x39, 0x26, 0x4f, 0x47, 0xf3, 0xd7, 0xe8, 0x65, 0x0c,
-	0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0xa9, 0x45, 0xb5, 0x07, 0x4e, 0x9c, 0x08,
+	0x04, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0xa9, 0x45, 0xb5, 0x07, 0x4e, 0x9c, 0x08,
 	0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
@@ -13139,11 +13139,11 @@ var ConfigChangeFixedPlan = tableFixedBuildPlan(ConfigChangeFixedLeaves, 9)
 
 var ConfigChangeFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x9d151fbf35f717b1,
+		Hash:        0x43fd6b70156eec19,
 		LayoutBytes: 361,
-		Record:      2628,
+		Record:      4932,
 		Layout: []byte{
-			0x15, 0x00, 0x00, 0x00, 0xa3, 0xd3, 0x35, 0x4b, 0x72, 0x52, 0x8e, 0xe2, 0x0d, 0x3c, 0x0a, 0x00,
+			0x15, 0x00, 0x00, 0x00, 0xa3, 0xd3, 0x35, 0x4b, 0x72, 0x52, 0x8e, 0xe2, 0x0d, 0x3c, 0x13, 0x00,
 			0x00, 0x09, 0x00, 0x00, 0x00, 0xc0, 0x3a, 0x5c, 0xb5, 0x07, 0x2e, 0xb7, 0x08, 0x05, 0x08, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x43, 0x32, 0x67, 0x21, 0xd7, 0x96, 0x9c, 0xef, 0x1e, 0x01,
 			0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0xce, 0x46, 0xc6, 0x6b, 0x87, 0x22, 0xd6, 0x5d, 0x20,
@@ -13164,7 +13164,7 @@ var ConfigChangeFixedKnown = []TableFixedKnownLayout{
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x1e, 0xd4, 0x21, 0xf2, 0x9a, 0x52, 0x0f, 0x0b, 0x01, 0x01, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xda, 0xd4, 0x47, 0x1c, 0x39, 0xc5, 0xcc, 0xdc, 0x0c, 0x84,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x39, 0x26, 0x4f, 0x47, 0xf3, 0xd7, 0xe8, 0x65, 0x0c,
-			0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0xa9, 0x45, 0xb5, 0x07, 0x4e, 0x9c, 0x08,
+			0x04, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0xa9, 0x45, 0xb5, 0x07, 0x4e, 0x9c, 0x08,
 			0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
 	},
@@ -17203,8 +17203,8 @@ var ConfigChangeTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "reason", Json: "reason", TypeName: "string", DeclaredTypeName: "string", Id: 0x65e8d7f3474f2639, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(ConfigChange{}.Reason)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.Reason)), CountOffset: uint32(unsafe.Offsetof(ConfigChange{}.ReasonLength)), PresentOffset: 0xffffffff,
-		CookOffset: 280, CookElemSize: 1, CookCountOffset: 2588, CookPresentOffset: 4294967295,
+		ArrayBound: 4608, Offset: uint32(unsafe.Offsetof(ConfigChange{}.Reason)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.Reason)), CountOffset: uint32(unsafe.Offsetof(ConfigChange{}.ReasonLength)), PresentOffset: 0xffffffff,
+		CookOffset: 280, CookElemSize: 1, CookCountOffset: 4892, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17215,7 +17215,7 @@ var ConfigChangeTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "at", Json: "at", TypeName: "string", DeclaredTypeName: "string", Id: 0x89c4e07b545a968, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(ConfigChange{}.At)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.At)), CountOffset: uint32(unsafe.Offsetof(ConfigChange{}.AtLength)), PresentOffset: 0xffffffff,
-		CookOffset: 2592, CookElemSize: 1, CookCountOffset: 2628, CookPresentOffset: 4294967295,
+		CookOffset: 4896, CookElemSize: 1, CookCountOffset: 4932, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17230,7 +17230,7 @@ var ConfigChangeTableFields = []TableFieldInfo{
 var ConfigChangeTableInfo TableTypeInfo
 
 func init() {
-	ConfigChangeTableInfo = TableTypeInfo{Name: "ConfigChange", Size: uint32(unsafe.Sizeof(ConfigChange{})), NumFields: 9, Fields: ConfigChangeTableFields, Reset: func(storage unsafe.Pointer) { ConfigChangeReset((*ConfigChange)(storage)) }, Doc: "One history row (pkg/config Change, written pg.go record, read pg.go\nHistory): the write's kind, name and op, which sides of the change ride\n(an add has no before and a remove has no after: the has_ flags say which),\nwho made it, why (the --reason, empty when none), and when (RFC 3339 UTC).\nThe reason rides here, apart from the fields, as Change.Reason does. The\nbefore and the after are RowFields records that follow this header, the\nbefore first, as pg.go keeps them in two columns: two rows at the field\nbound do not fit one 65536 byte record, so each side is a record of its own.", NumTags: 0, Tags: nil, Id: 0xe28e52724b35d3a3, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ConfigChangeSaveBody(w, (*ConfigChange)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ConfigChangeLoadBody(&r, (*ConfigChange)(p)) }, CookSize: 2632, CookAlign: 8}
+	ConfigChangeTableInfo = TableTypeInfo{Name: "ConfigChange", Size: uint32(unsafe.Sizeof(ConfigChange{})), NumFields: 9, Fields: ConfigChangeTableFields, Reset: func(storage unsafe.Pointer) { ConfigChangeReset((*ConfigChange)(storage)) }, Doc: "One history row (pkg/config Change, written pg.go record, read pg.go\nHistory): the write's kind, name and op, which sides of the change ride\n(an add has no before and a remove has no after: the has_ flags say which),\nwho made it, why (the --reason, empty when none), and when (RFC 3339 UTC).\nThe reason rides here, apart from the fields, as Change.Reason does. The\nbefore and the after are RowFields records that follow this header, the\nbefore first, as pg.go keeps them in two columns: two rows at the field\nbound do not fit one 65536 byte record, so each side is a record of its own.", NumTags: 0, Tags: nil, Id: 0xe28e52724b35d3a3, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ConfigChangeSaveBody(w, (*ConfigChange)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ConfigChangeLoadBody(&r, (*ConfigChange)(p)) }, CookSize: 4936, CookAlign: 8}
 }
 
 // ConfigChangeTableType returns ConfigChange's reflection descriptor.

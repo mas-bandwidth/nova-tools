@@ -122,7 +122,7 @@ type ConfigChangeRow struct {
 	HasAfter     bool
 	Actor        [129]byte // string(128): buffer, used length beside it
 	ActorLength  int32
-	Reason       [2305]byte // string(2304): buffer, used length beside it
+	Reason       [4609]byte // string(4608): buffer, used length beside it
 	_            [3]byte    // generated padding
 	ReasonLength int32
 	At           [33]byte // string(32): buffer, used length beside it
@@ -300,7 +300,7 @@ type MemberBeatRow struct {
 // BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
 // one digest a block carries and BlockOpen compares, and the fact §3.3's
 // announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0xf9a1a135e5b2825f
+const BuildVersion uint64 = 0xb5cd24f03d11f6e6
 
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema

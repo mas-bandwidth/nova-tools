@@ -894,15 +894,15 @@ func ConfigChangeSaveMessageBody(w *TableMessageWriter, value *ConfigChange) boo
 		}
 	}
 	{
-		if value.ReasonLength < 0 || value.ReasonLength > 2304 {
+		if value.ReasonLength < 0 || value.ReasonLength > 4608 {
 			return false
 		}
 		if value.ReasonLength > 0 {
 			w.Put(18, TableMessageRefBitsHere)
-			if value.ReasonLength < 0 || value.ReasonLength > 2304 {
+			if value.ReasonLength < 0 || value.ReasonLength > 4608 {
 				return false
 			}
-			w.Put(uint64(value.ReasonLength), 12)
+			w.Put(uint64(value.ReasonLength), 13)
 			w.Raw(value.Reason[:value.ReasonLength])
 		}
 	}
@@ -1277,7 +1277,7 @@ func ConfigChangeLoadMessageBody(r *TableMessageReader, value *ConfigChange) boo
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(4608)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}

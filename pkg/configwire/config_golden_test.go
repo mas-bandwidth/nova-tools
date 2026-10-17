@@ -28,6 +28,7 @@ package configwire
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -856,6 +857,10 @@ func TestConfigRowsGolden(t *testing.T) {
 		assert.EqualValues(t, config.MaxKeys, MaxKeys)
 		assert.EqualValues(t, config.MaxEnvName, MaxEnvName)
 		assert.EqualValues(t, config.MaxHosts, MaxHosts)
+		assert.EqualValues(t, config.MaxActor, MaxActor)
+		assert.EqualValues(t, config.MaxReason, MaxReason)
+		assert.Equal(t, int32(MaxActor), fieldInfo(t, ConfigChangeTableFields, "actor").ArrayBound)
+		assert.Equal(t, int32(MaxReason), fieldInfo(t, ConfigChangeTableFields, "reason").ArrayBound)
 		assert.Equal(t, int32(MaxName), fieldInfo(t, ConfigRowTableFields, "name").ArrayBound)
 		assert.Equal(t, int32(MaxFieldValue), fieldInfo(t, FieldPairTableFields, "value").ArrayBound)
 		assert.Equal(t, int32(MaxKeys), fieldInfo(t, InventoryLoopTableFields, "keys").ArrayBound)
@@ -1149,6 +1154,30 @@ func TestConfigInventoryHostNameBound(t *testing.T) {
 	}
 	assert.NoError(t, build(strings.Repeat("h", config.MaxName)), "a host name at the bound")
 	refusedFor(t, build(strings.Repeat("h", config.MaxName+1)), "MaxName")
+}
+
+func TestConfigChangeActorBound(t *testing.T) {
+	t.Parallel()
+	assert.NoError(t, config.ValidateChangeMeta(strings.Repeat("a", config.MaxActor), ""), "an actor at the bound")
+	refusedFor(t, config.ValidateChangeMeta(strings.Repeat("a", config.MaxActor+1), ""), "MaxActor")
+	// the store refuses it too, before any write
+	st := config.NewMem()
+	_, err := st.Insert(context.Background(), config.KindProvider, config.Row{Name: "p1", Fields: map[string]string{}}, strings.Repeat("a", config.MaxActor+1))
+	refusedFor(t, err, "MaxActor")
+}
+
+func TestConfigChangeReasonBound(t *testing.T) {
+	t.Parallel()
+	assert.NoError(t, config.ValidateChangeMeta("rowan", strings.Repeat("r", config.MaxReason)), "a reason at the bound")
+	refusedFor(t, config.ValidateChangeMeta("rowan", strings.Repeat("r", config.MaxReason+1)), "MaxReason")
+	st := config.NewMem()
+	ctx := config.WithReason(context.Background(), strings.Repeat("r", config.MaxReason+1))
+	_, err := st.Insert(ctx, config.KindProvider, config.Row{Name: "p1", Fields: map[string]string{}}, "rowan")
+	refusedFor(t, err, "MaxReason")
+	_, _, err = st.Update(ctx, config.KindProvider, "p1", map[string]string{}, "rowan")
+	refusedFor(t, err, "MaxReason")
+	_, err = st.Delete(ctx, config.KindProvider, "p1", "rowan")
+	refusedFor(t, err, "MaxReason")
 }
 
 func TestConfigLoopNameBound(t *testing.T) {

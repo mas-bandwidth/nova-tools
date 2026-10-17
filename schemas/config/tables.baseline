@@ -25,7 +25,7 @@ table ConfigChange
     field has_before id=0x511f33ef09c3af2f kind=1
     field has_after id=0x0b0f529af221d41e kind=1
     field actor id=0xdcccc5391c47d4da kind=12 size=128
-    field reason id=0x65e8d7f3474f2639 kind=12 size=2304
+    field reason id=0x65e8d7f3474f2639 kind=12 size=4608
     field at id=0x089c4e07b545a968 kind=12 size=32
 
 table ConfigRow

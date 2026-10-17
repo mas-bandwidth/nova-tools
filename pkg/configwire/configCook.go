@@ -150,7 +150,7 @@ func init() {
 	tableCookLayoutOffset("CanonicalWordRow.FieldType", unsafe.Offsetof(CanonicalWordRow{}.FieldType), 1)
 	tableCookLayoutOffset("CanonicalWordRow.Op", unsafe.Offsetof(CanonicalWordRow{}.Op), 2)
 	tableCookLayoutOffset("CanonicalWordRow.Singleton", unsafe.Offsetof(CanonicalWordRow{}.Singleton), 3)
-	tableCookLayoutSize("ConfigChangeRow", unsafe.Sizeof(ConfigChangeRow{}), 2632)
+	tableCookLayoutSize("ConfigChangeRow", unsafe.Sizeof(ConfigChangeRow{}), 4936)
 	tableCookLayoutSize("ConfigChangeRow alignment", unsafe.Alignof(ConfigChangeRow{}), 8)
 	tableCookLayoutOffset("ConfigChangeRow.Id", unsafe.Offsetof(ConfigChangeRow{}.Id), 0)
 	tableCookLayoutOffset("ConfigChangeRow.Kind", unsafe.Offsetof(ConfigChangeRow{}.Kind), 8)
@@ -160,7 +160,7 @@ func init() {
 	tableCookLayoutOffset("ConfigChangeRow.HasAfter", unsafe.Offsetof(ConfigChangeRow{}.HasAfter), 146)
 	tableCookLayoutOffset("ConfigChangeRow.Actor", unsafe.Offsetof(ConfigChangeRow{}.Actor), 147)
 	tableCookLayoutOffset("ConfigChangeRow.Reason", unsafe.Offsetof(ConfigChangeRow{}.Reason), 280)
-	tableCookLayoutOffset("ConfigChangeRow.At", unsafe.Offsetof(ConfigChangeRow{}.At), 2592)
+	tableCookLayoutOffset("ConfigChangeRow.At", unsafe.Offsetof(ConfigChangeRow{}.At), 4896)
 	tableCookLayoutSize("ConfigRowRow", unsafe.Sizeof(ConfigRowRow{}), 60772)
 	tableCookLayoutSize("ConfigRowRow alignment", unsafe.Alignof(ConfigRowRow{}), 4)
 	tableCookLayoutOffset("ConfigRowRow.Kind", unsafe.Offsetof(ConfigRowRow{}.Kind), 0)
@@ -317,7 +317,7 @@ func init() {
 		},
 	}
 	tableCookRecords[2] = TableCookInfo{
-		Name: "ConfigChange", Size: 2632, Align: 8, NumFields: 9,
+		Name: "ConfigChange", Size: 4936, Align: 8, NumFields: 9,
 		Fields: []TableCookFieldInfo{
 			{Name: "id", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
 			{Name: "kind", Offset: 8, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
@@ -326,8 +326,8 @@ func init() {
 			{Name: "has_before", Offset: 145, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
 			{Name: "has_after", Offset: 146, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
 			{Name: "actor", Offset: 147, Size: 133, ElemSize: 133, IsArray: false, ArrayBound: 128, IsPointer: false, CountOffset: 276, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "reason", Offset: 280, Size: 2312, ElemSize: 2312, IsArray: false, ArrayBound: 2304, IsPointer: false, CountOffset: 2588, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "at", Offset: 2592, Size: 40, ElemSize: 40, IsArray: false, ArrayBound: 32, IsPointer: false, CountOffset: 2628, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "reason", Offset: 280, Size: 4616, ElemSize: 4616, IsArray: false, ArrayBound: 4608, IsPointer: false, CountOffset: 4892, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "at", Offset: 4896, Size: 40, ElemSize: 40, IsArray: false, ArrayBound: 32, IsPointer: false, CountOffset: 4932, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
 	tableCookRecords[3] = TableCookInfo{
@@ -804,7 +804,7 @@ type ConfigChangeCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c ConfigChangeCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c ConfigChangeCook) RootSize() int64        { return 2632 }
+func (c ConfigChangeCook) RootSize() int64        { return 4936 }
 func (c ConfigChangeCook) RootAlign() int64       { return 8 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
@@ -851,7 +851,7 @@ func (cook *ConfigChangeCook) Open(base unsafe.Pointer, length int64) error {
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 2632 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 4936 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -2183,7 +2183,7 @@ func MachineBeatAt(slot *int64) *MachineBeatRow {
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 func (c MachineBeatCook) Type() *TableCookInfo { return &tableCookRecords[13] }
 
-const tableCookBuildVersion uint64 = 0xf9a1a135e5b2825f
+const tableCookBuildVersion uint64 = 0xb5cd24f03d11f6e6
 
 // TableByteOrder selects the target order, independently of the writing host.
 type TableByteOrder uint8
@@ -2364,7 +2364,7 @@ func ConfigRowCookMeasureReason(value *ConfigRow) (int64, error) {
 func ConfigRowCookFrom(value *ConfigRow, buffer []byte, order TableByteOrder) bool {
 	return tableCookFixed(unsafe.Pointer(value), ConfigRowTableType(), buffer, order)
 }
-func ConfigChangeCookMeasure(value *ConfigChange) int64 { return 2712 }
+func ConfigChangeCookMeasure(value *ConfigChange) int64 { return 5016 }
 func ConfigChangeCookMeasureReason(value *ConfigChange) (int64, error) {
 	return ConfigChangeCookMeasure(value), nil
 }
