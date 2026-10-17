@@ -154,7 +154,8 @@ const FieldLeveled = "leveled"
 // ReadsNeeded is how many different readers' ok reads at its head make the
 // primary acceptable, and so how many readers the ask asks at an attempt: one
 // when the tier the card is on (cardTier) is flash, and two at any stronger tier
-// (pro, or frontier, read on pro); each read is drawn on a route of the card's
+// (pro, or frontier). A frontier card is not asked of a machine: friend_read.go asks
+// a friend whose tiers include frontier. Each machine read is drawn on a route of the card's
 // read tier (readTierOf) (the owner,
 // 2026-10-02, cost rule 4, nova-tools#5174: "Reads: one cold read per flash
 // card on a flash route; two per pro card; readers still equal workers per
