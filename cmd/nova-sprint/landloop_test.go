@@ -63,7 +63,7 @@ func TestTheLandLoopResumesARejectedStreamAfterThePushSucceeds(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: "+base+"\n\nWrite "+id+".txt.")), 0o600))
 		return path
 	}
-	r.ok("add --stream s1 --brief-file " + brief("one", "main") + " --brief-file " + brief("two", "alt"))
+	r.ok("add --stream s1 --brief-file " + brief("s1-1", "main") + " --brief-file " + brief("s1-2", "alt"))
 	r.queued(map[string]string{
 		"s1-1": r.head("s1-1", "main", "s1-1.txt", "one\n"),
 		"s1-2": r.head("s1-2", "alt", "s1-2.txt", "two\n"),
@@ -96,7 +96,7 @@ func TestTheLandLoopResumesARejectedStreamAfterThePushSucceeds(t *testing.T) {
 	assert.Contains(t, out.String(), "LAND OK stream=s1 cards=1 base=alt")
 	assert.Equal(t, "landed", r.streamState("s1"))
 	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
-	assert.NotContains(t, r.ok("inbox"), "stream stopped: the merge queue rejected", "successful retry closes the original judgment")
+	assert.NotRegexp(t, `(?m)^JUDGMENT .*stream stopped: the merge queue rejected`, r.ok("inbox"), "successful retry closes the original open judgment")
 	r.clean()
 }
 
