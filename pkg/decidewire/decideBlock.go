@@ -191,81 +191,6 @@ type UsageBlockProjection struct {
 	OutputTokens int32
 }
 
-// OptionPBlockProjection — the block PROJECTION: the table's own instance as it
-// sits at the front of a block, opening with the generated PROLOGUE and
-// carrying, per out-of-line array, the triple that says where its rows are.
-// It is a record like any other and follows the same C ABI rule (§19.3).
-//
-// It is a SEPARATE record from OptionPRow: a table can be both a block root and
-// another block's row, and the two differ by the prologue.
-type OptionPBlockProjection struct {
-	Magic        uint64   // generated: identifies a schema block
-	BuildVersion uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder    uint64   // generated: 1 little, 2 big
-	Option       [49]byte // string(48): max length, used length beside it
-	_            [3]byte  // generated padding
-	OptionLength int32
-	P            float64
-}
-
-// AnswerBlockProjection — the block PROJECTION: the table's own instance as it
-// sits at the front of a block, opening with the generated PROLOGUE and
-// carrying, per out-of-line array, the triple that says where its rows are.
-// It is a record like any other and follows the same C ABI rule (§19.3).
-//
-// It is a SEPARATE record from AnswerRow: a table can be both a block root and
-// another block's row, and the two differ by the prologue.
-type AnswerBlockProjection struct {
-	Magic        uint64 // generated: identifies a schema block
-	BuildVersion uint64 // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder    uint64 // generated: 1 little, 2 big
-	Kind         AnswerType
-	Value        [49]byte // string(48): max length, used length beside it
-	_            [2]byte  // generated padding
-	ValueLength  int32
-	P            TableBlockTriple // [..8]OptionP, laid out of line
-	Confidence   float64
-	Method       [25]byte // string(24): max length, used length beside it
-	_            [3]byte  // generated padding
-	MethodLength int32
-}
-
-// NamedAnswerBlockProjection — the block PROJECTION: the table's own instance as it
-// sits at the front of a block, opening with the generated PROLOGUE and
-// carrying, per out-of-line array, the triple that says where its rows are.
-// It is a record like any other and follows the same C ABI rule (§19.3).
-//
-// It is a SEPARATE record from NamedAnswerRow: a table can be both a block root and
-// another block's row, and the two differ by the prologue.
-type NamedAnswerBlockProjection struct {
-	Magic          uint64   // generated: identifies a schema block
-	BuildVersion   uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder      uint64   // generated: 1 little, 2 big
-	Question       [33]byte // string(32): max length, used length beside it
-	_              [3]byte  // generated padding
-	QuestionLength int32
-	Answer         AnswerRow
-}
-
-// InputBlockProjection — the block PROJECTION: the table's own instance as it
-// sits at the front of a block, opening with the generated PROLOGUE and
-// carrying, per out-of-line array, the triple that says where its rows are.
-// It is a record like any other and follows the same C ABI rule (§19.3).
-//
-// It is a SEPARATE record from InputRow: a table can be both a block root and
-// another block's row, and the two differ by the prologue.
-type InputBlockProjection struct {
-	Magic        uint64   // generated: identifies a schema block
-	BuildVersion uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder    uint64   // generated: 1 little, 2 big
-	Key          [33]byte // string(32): max length, used length beside it
-	_            [3]byte  // generated padding
-	KeyLength    int32
-	Value        [1025]byte // string(1024): max length, used length beside it
-	_            [3]byte    // generated padding
-	ValueLength  int32
-}
-
 // DecidedBlockProjection — the block PROJECTION: the table's own instance as it
 // sits at the front of a block, opening with the generated PROLOGUE and
 // carrying, per out-of-line array, the triple that says where its rows are.
@@ -284,40 +209,6 @@ type DecidedBlockProjection struct {
 	Op           [257]byte // string(256): max length, used length beside it
 	_            [3]byte   // generated padding
 	OpLength     int32
-}
-
-// DecisionBlockProjection — the block PROJECTION: the table's own instance as it
-// sits at the front of a block, opening with the generated PROLOGUE and
-// carrying, per out-of-line array, the triple that says where its rows are.
-// It is a record like any other and follows the same C ABI rule (§19.3).
-//
-// It is a SEPARATE record from DecisionRow: a table can be both a block root and
-// another block's row, and the two differ by the prologue.
-type DecisionBlockProjection struct {
-	Magic              uint64    // generated: identifies a schema block
-	BuildVersion       uint64    // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder          uint64    // generated: 1 little, 2 big
-	Id                 [257]byte // string(256): max length, used length beside it
-	_                  [3]byte   // generated padding
-	IdLength           int32
-	DecisionName       [65]byte // string(64): max length, used length beside it
-	_                  [3]byte  // generated padding
-	DecisionNameLength int32
-	Schema             [65]byte // string(64): max length, used length beside it
-	_                  [3]byte  // generated padding
-	SchemaLength       int32
-	Backend            [65]byte // string(64): max length, used length beside it
-	_                  [3]byte  // generated padding
-	BackendLength      int32
-	At                 [33]byte // string(32): max length, used length beside it
-	_                  [3]byte  // generated padding
-	AtLength           int32
-	Inputs             TableBlockTriple // [..8]Input, laid out of line
-	State              [40961]byte      // string(40960): max length, used length beside it
-	_                  [3]byte          // generated padding
-	StateLength        int32
-	Answers            TableBlockTriple // [..10]NamedAnswer, laid out of line
-	Usage              UsageRow
 }
 
 // OutcomeBlockProjection — the block PROJECTION: the table's own instance as it
@@ -368,30 +259,6 @@ type ActBlockProjection struct {
 	At           [33]byte // string(32): max length, used length beside it
 	_            [3]byte  // generated padding
 	AtLength     int32
-}
-
-// RecordLineBlockProjection — the block PROJECTION: the table's own instance as it
-// sits at the front of a block, opening with the generated PROLOGUE and
-// carrying, per out-of-line array, the triple that says where its rows are.
-// It is a record like any other and follows the same C ABI rule (§19.3).
-//
-// It is a SEPARATE record from RecordLineRow: a table can be both a block root and
-// another block's row, and the two differ by the prologue.
-type RecordLineBlockProjection struct {
-	Magic             uint64 // generated: identifies a schema block
-	BuildVersion      uint64 // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder         uint64 // generated: 1 little, 2 big
-	Kind              LineKind
-	_                 [7]byte // generated padding
-	AsDecision        DecisionRow
-	AsDecisionPresent bool    // ?Decision: one byte, in Go's model as in C++
-	_                 [3]byte // generated padding
-	AsOutcome         OutcomeRow
-	AsOutcomePresent  bool    // ?Outcome: one byte, in Go's model as in C++
-	_                 [3]byte // generated padding
-	AsAct             ActRow
-	AsActPresent      bool    // ?Act: one byte, in Go's model as in C++
-	_                 [7]byte // generated padding
 }
 
 // JudgmentIdBlockProjection — the block PROJECTION: the table's own instance as it
@@ -486,22 +353,6 @@ type RawRecordBlockProjection struct {
 	Tokens                RawTokensRow
 }
 
-// RawUsageBlockProjection — the block PROJECTION: the table's own instance as it
-// sits at the front of a block, opening with the generated PROLOGUE and
-// carrying, per out-of-line array, the triple that says where its rows are.
-// It is a record like any other and follows the same C ABI rule (§19.3).
-//
-// It is a SEPARATE record from RawUsageRow: a table can be both a block root and
-// another block's row, and the two differ by the prologue.
-type RawUsageBlockProjection struct {
-	Magic        uint64 // generated: identifies a schema block
-	BuildVersion uint64 // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder    uint64 // generated: 1 little, 2 big
-	Version      uint32
-	_            [4]byte          // generated padding
-	Records      TableBlockTriple // [..240]RawRecord, laid out of line
-}
-
 // StagePathBlockProjection — the block PROJECTION: the table's own instance as it
 // sits at the front of a block, opening with the generated PROLOGUE and
 // carrying, per out-of-line array, the triple that says where its rows are.
@@ -591,59 +442,9 @@ type FrameBlockProjection struct {
 // model disagrees with the one the compiler derived stops the program where
 // it starts, rather than pointing at a row and reading the wrong bytes.
 func init() {
-	tableBlockLayoutSize("ActRow", unsafe.Sizeof(ActRow{}), 592)
-	tableBlockLayoutSize("ActRow alignment", unsafe.Alignof(ActRow{}), 4)
-	tableBlockLayoutOffset("ActRow.Id", unsafe.Offsetof(ActRow{}.Id), 0)
-	tableBlockLayoutOffset("ActRow.Step", unsafe.Offsetof(ActRow{}.Step), 264)
-	tableBlockLayoutOffset("ActRow.Op", unsafe.Offsetof(ActRow{}.Op), 288)
-	tableBlockLayoutOffset("ActRow.At", unsafe.Offsetof(ActRow{}.At), 552)
-	tableBlockLayoutSize("AnswerRow", unsafe.Sizeof(AnswerRow{}), 616)
-	tableBlockLayoutSize("AnswerRow alignment", unsafe.Alignof(AnswerRow{}), 8)
-	tableBlockLayoutOffset("AnswerRow.Kind", unsafe.Offsetof(AnswerRow{}.Kind), 0)
-	tableBlockLayoutOffset("AnswerRow.Value", unsafe.Offsetof(AnswerRow{}.Value), 1)
-	tableBlockLayoutOffset("AnswerRow.P", unsafe.Offsetof(AnswerRow{}.P), 56)
-	tableBlockLayoutOffset("AnswerRow.Confidence", unsafe.Offsetof(AnswerRow{}.Confidence), 576)
-	tableBlockLayoutOffset("AnswerRow.Method", unsafe.Offsetof(AnswerRow{}.Method), 584)
-	tableBlockLayoutSize("DecisionRow", unsafe.Sizeof(DecisionRow{}), 56648)
-	tableBlockLayoutSize("DecisionRow alignment", unsafe.Alignof(DecisionRow{}), 8)
-	tableBlockLayoutOffset("DecisionRow.Id", unsafe.Offsetof(DecisionRow{}.Id), 0)
-	tableBlockLayoutOffset("DecisionRow.DecisionName", unsafe.Offsetof(DecisionRow{}.DecisionName), 264)
-	tableBlockLayoutOffset("DecisionRow.Schema", unsafe.Offsetof(DecisionRow{}.Schema), 336)
-	tableBlockLayoutOffset("DecisionRow.Backend", unsafe.Offsetof(DecisionRow{}.Backend), 408)
-	tableBlockLayoutOffset("DecisionRow.At", unsafe.Offsetof(DecisionRow{}.At), 480)
-	tableBlockLayoutOffset("DecisionRow.Inputs", unsafe.Offsetof(DecisionRow{}.Inputs), 520)
-	tableBlockLayoutOffset("DecisionRow.State", unsafe.Offsetof(DecisionRow{}.State), 9100)
-	tableBlockLayoutOffset("DecisionRow.Answers", unsafe.Offsetof(DecisionRow{}.Answers), 50072)
-	tableBlockLayoutOffset("DecisionRow.Usage", unsafe.Offsetof(DecisionRow{}.Usage), 56636)
-	tableBlockLayoutSize("InputRow", unsafe.Sizeof(InputRow{}), 1072)
-	tableBlockLayoutSize("InputRow alignment", unsafe.Alignof(InputRow{}), 4)
-	tableBlockLayoutOffset("InputRow.Key", unsafe.Offsetof(InputRow{}.Key), 0)
-	tableBlockLayoutOffset("InputRow.Value", unsafe.Offsetof(InputRow{}.Value), 40)
 	tableBlockLayoutSize("JudgmentIdRow", unsafe.Sizeof(JudgmentIdRow{}), 136)
 	tableBlockLayoutSize("JudgmentIdRow alignment", unsafe.Alignof(JudgmentIdRow{}), 4)
 	tableBlockLayoutOffset("JudgmentIdRow.Id", unsafe.Offsetof(JudgmentIdRow{}.Id), 0)
-	tableBlockLayoutSize("NamedAnswerRow", unsafe.Sizeof(NamedAnswerRow{}), 656)
-	tableBlockLayoutSize("NamedAnswerRow alignment", unsafe.Alignof(NamedAnswerRow{}), 8)
-	tableBlockLayoutOffset("NamedAnswerRow.Question", unsafe.Offsetof(NamedAnswerRow{}.Question), 0)
-	tableBlockLayoutOffset("NamedAnswerRow.Answer", unsafe.Offsetof(NamedAnswerRow{}.Answer), 40)
-	tableBlockLayoutSize("OptionPRow", unsafe.Sizeof(OptionPRow{}), 64)
-	tableBlockLayoutSize("OptionPRow alignment", unsafe.Alignof(OptionPRow{}), 8)
-	tableBlockLayoutOffset("OptionPRow.Option", unsafe.Offsetof(OptionPRow{}.Option), 0)
-	tableBlockLayoutOffset("OptionPRow.P", unsafe.Offsetof(OptionPRow{}.P), 56)
-	tableBlockLayoutSize("OutcomeRow", unsafe.Sizeof(OutcomeRow{}), 1408)
-	tableBlockLayoutSize("OutcomeRow alignment", unsafe.Alignof(OutcomeRow{}), 4)
-	tableBlockLayoutOffset("OutcomeRow.Id", unsafe.Offsetof(OutcomeRow{}.Id), 0)
-	tableBlockLayoutOffset("OutcomeRow.Label", unsafe.Offsetof(OutcomeRow{}.Label), 264)
-	tableBlockLayoutOffset("OutcomeRow.Note", unsafe.Offsetof(OutcomeRow{}.Note), 336)
-	tableBlockLayoutOffset("OutcomeRow.At", unsafe.Offsetof(OutcomeRow{}.At), 1368)
-	tableBlockLayoutSize("RawRecordRow", unsafe.Sizeof(RawRecordRow{}), 264)
-	tableBlockLayoutSize("RawRecordRow alignment", unsafe.Alignof(RawRecordRow{}), 8)
-	tableBlockLayoutOffset("RawRecordRow.Harness", unsafe.Offsetof(RawRecordRow{}.Harness), 0)
-	tableBlockLayoutOffset("RawRecordRow.Execution", unsafe.Offsetof(RawRecordRow{}.Execution), 24)
-	tableBlockLayoutOffset("RawRecordRow.SourceSchema", unsafe.Offsetof(RawRecordRow{}.SourceSchema), 48)
-	tableBlockLayoutOffset("RawRecordRow.ProducerVersion", unsafe.Offsetof(RawRecordRow{}.ProducerVersion), 88)
-	tableBlockLayoutOffset("RawRecordRow.Billing", unsafe.Offsetof(RawRecordRow{}.Billing), 160)
-	tableBlockLayoutOffset("RawRecordRow.Tokens", unsafe.Offsetof(RawRecordRow{}.Tokens), 168)
 	tableBlockLayoutSize("RawTokensRow", unsafe.Sizeof(RawTokensRow{}), 96)
 	tableBlockLayoutSize("RawTokensRow alignment", unsafe.Alignof(RawTokensRow{}), 8)
 	tableBlockLayoutOffset("RawTokensRow.InputTokens", unsafe.Offsetof(RawTokensRow{}.InputTokens), 0)
@@ -655,10 +456,6 @@ func init() {
 	tableBlockLayoutSize("StagePathRow", unsafe.Sizeof(StagePathRow{}), 264)
 	tableBlockLayoutSize("StagePathRow alignment", unsafe.Alignof(StagePathRow{}), 4)
 	tableBlockLayoutOffset("StagePathRow.Path", unsafe.Offsetof(StagePathRow{}.Path), 0)
-	tableBlockLayoutSize("UsageRow", unsafe.Sizeof(UsageRow{}), 8)
-	tableBlockLayoutSize("UsageRow alignment", unsafe.Alignof(UsageRow{}), 4)
-	tableBlockLayoutOffset("UsageRow.InputTokens", unsafe.Offsetof(UsageRow{}.InputTokens), 0)
-	tableBlockLayoutOffset("UsageRow.OutputTokens", unsafe.Offsetof(UsageRow{}.OutputTokens), 4)
 	tableBlockLayoutSize("ActBlockProjection", unsafe.Sizeof(ActBlockProjection{}), 616)
 	tableBlockLayoutSize("ActBlockProjection alignment", unsafe.Alignof(ActBlockProjection{}), 8)
 	tableBlockLayoutOffset("ActBlockProjection.Magic", unsafe.Offsetof(ActBlockProjection{}.Magic), 0)
@@ -668,17 +465,6 @@ func init() {
 	tableBlockLayoutOffset("ActBlockProjection.Step", unsafe.Offsetof(ActBlockProjection{}.Step), 288)
 	tableBlockLayoutOffset("ActBlockProjection.Op", unsafe.Offsetof(ActBlockProjection{}.Op), 312)
 	tableBlockLayoutOffset("ActBlockProjection.At", unsafe.Offsetof(ActBlockProjection{}.At), 576)
-	tableBlockLayoutSize("AnswerBlockProjection", unsafe.Sizeof(AnswerBlockProjection{}), 136)
-	tableBlockLayoutSize("AnswerBlockProjection alignment", unsafe.Alignof(AnswerBlockProjection{}), 8)
-	tableBlockLayoutOffset("AnswerBlockProjection.Magic", unsafe.Offsetof(AnswerBlockProjection{}.Magic), 0)
-	tableBlockLayoutOffset("AnswerBlockProjection.BuildVersion", unsafe.Offsetof(AnswerBlockProjection{}.BuildVersion), 8)
-	tableBlockLayoutOffset("AnswerBlockProjection.ByteOrder", unsafe.Offsetof(AnswerBlockProjection{}.ByteOrder), 16)
-	tableBlockLayoutOffset("AnswerBlockProjection.Kind", unsafe.Offsetof(AnswerBlockProjection{}.Kind), 24)
-	tableBlockLayoutOffset("AnswerBlockProjection.Value", unsafe.Offsetof(AnswerBlockProjection{}.Value), 25)
-	tableBlockLayoutOffset("AnswerBlockProjection.P", unsafe.Offsetof(AnswerBlockProjection{}.P), 80)
-	tableBlockLayoutOffset("AnswerBlockProjection.Confidence", unsafe.Offsetof(AnswerBlockProjection{}.Confidence), 96)
-	tableBlockLayoutOffset("AnswerBlockProjection.Method", unsafe.Offsetof(AnswerBlockProjection{}.Method), 104)
-	tableBlockLayoutSize("Answer.P stride", unsafe.Sizeof(OptionPRow{}), 64)
 	tableBlockLayoutSize("DecidedBlockProjection", unsafe.Sizeof(DecidedBlockProjection{}), 368)
 	tableBlockLayoutSize("DecidedBlockProjection alignment", unsafe.Alignof(DecidedBlockProjection{}), 8)
 	tableBlockLayoutOffset("DecidedBlockProjection.Magic", unsafe.Offsetof(DecidedBlockProjection{}.Magic), 0)
@@ -687,22 +473,6 @@ func init() {
 	tableBlockLayoutOffset("DecidedBlockProjection.Value", unsafe.Offsetof(DecidedBlockProjection{}.Value), 24)
 	tableBlockLayoutOffset("DecidedBlockProjection.P", unsafe.Offsetof(DecidedBlockProjection{}.P), 96)
 	tableBlockLayoutOffset("DecidedBlockProjection.Op", unsafe.Offsetof(DecidedBlockProjection{}.Op), 104)
-	tableBlockLayoutSize("DecisionBlockProjection", unsafe.Sizeof(DecisionBlockProjection{}), 41552)
-	tableBlockLayoutSize("DecisionBlockProjection alignment", unsafe.Alignof(DecisionBlockProjection{}), 8)
-	tableBlockLayoutOffset("DecisionBlockProjection.Magic", unsafe.Offsetof(DecisionBlockProjection{}.Magic), 0)
-	tableBlockLayoutOffset("DecisionBlockProjection.BuildVersion", unsafe.Offsetof(DecisionBlockProjection{}.BuildVersion), 8)
-	tableBlockLayoutOffset("DecisionBlockProjection.ByteOrder", unsafe.Offsetof(DecisionBlockProjection{}.ByteOrder), 16)
-	tableBlockLayoutOffset("DecisionBlockProjection.Id", unsafe.Offsetof(DecisionBlockProjection{}.Id), 24)
-	tableBlockLayoutOffset("DecisionBlockProjection.DecisionName", unsafe.Offsetof(DecisionBlockProjection{}.DecisionName), 288)
-	tableBlockLayoutOffset("DecisionBlockProjection.Schema", unsafe.Offsetof(DecisionBlockProjection{}.Schema), 360)
-	tableBlockLayoutOffset("DecisionBlockProjection.Backend", unsafe.Offsetof(DecisionBlockProjection{}.Backend), 432)
-	tableBlockLayoutOffset("DecisionBlockProjection.At", unsafe.Offsetof(DecisionBlockProjection{}.At), 504)
-	tableBlockLayoutOffset("DecisionBlockProjection.Inputs", unsafe.Offsetof(DecisionBlockProjection{}.Inputs), 544)
-	tableBlockLayoutOffset("DecisionBlockProjection.State", unsafe.Offsetof(DecisionBlockProjection{}.State), 560)
-	tableBlockLayoutOffset("DecisionBlockProjection.Answers", unsafe.Offsetof(DecisionBlockProjection{}.Answers), 41528)
-	tableBlockLayoutOffset("DecisionBlockProjection.Usage", unsafe.Offsetof(DecisionBlockProjection{}.Usage), 41544)
-	tableBlockLayoutSize("Decision.Inputs stride", unsafe.Sizeof(InputRow{}), 1072)
-	tableBlockLayoutSize("Decision.Answers stride", unsafe.Sizeof(NamedAnswerRow{}), 656)
 	tableBlockLayoutSize("FrameBlockProjection", unsafe.Sizeof(FrameBlockProjection{}), 15880)
 	tableBlockLayoutSize("FrameBlockProjection alignment", unsafe.Alignof(FrameBlockProjection{}), 8)
 	tableBlockLayoutOffset("FrameBlockProjection.Magic", unsafe.Offsetof(FrameBlockProjection{}.Magic), 0)
@@ -738,33 +508,12 @@ func init() {
 	tableBlockLayoutOffset("ImportLogLineBlockProjection.Verb", unsafe.Offsetof(ImportLogLineBlockProjection{}.Verb), 24)
 	tableBlockLayoutOffset("ImportLogLineBlockProjection.Answers", unsafe.Offsetof(ImportLogLineBlockProjection{}.Answers), 96)
 	tableBlockLayoutSize("ImportLogLine.Answers stride", unsafe.Sizeof(JudgmentIdRow{}), 136)
-	tableBlockLayoutSize("InputBlockProjection", unsafe.Sizeof(InputBlockProjection{}), 1096)
-	tableBlockLayoutSize("InputBlockProjection alignment", unsafe.Alignof(InputBlockProjection{}), 8)
-	tableBlockLayoutOffset("InputBlockProjection.Magic", unsafe.Offsetof(InputBlockProjection{}.Magic), 0)
-	tableBlockLayoutOffset("InputBlockProjection.BuildVersion", unsafe.Offsetof(InputBlockProjection{}.BuildVersion), 8)
-	tableBlockLayoutOffset("InputBlockProjection.ByteOrder", unsafe.Offsetof(InputBlockProjection{}.ByteOrder), 16)
-	tableBlockLayoutOffset("InputBlockProjection.Key", unsafe.Offsetof(InputBlockProjection{}.Key), 24)
-	tableBlockLayoutOffset("InputBlockProjection.Value", unsafe.Offsetof(InputBlockProjection{}.Value), 64)
 	tableBlockLayoutSize("JudgmentIdBlockProjection", unsafe.Sizeof(JudgmentIdBlockProjection{}), 160)
 	tableBlockLayoutSize("JudgmentIdBlockProjection alignment", unsafe.Alignof(JudgmentIdBlockProjection{}), 8)
 	tableBlockLayoutOffset("JudgmentIdBlockProjection.Magic", unsafe.Offsetof(JudgmentIdBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("JudgmentIdBlockProjection.BuildVersion", unsafe.Offsetof(JudgmentIdBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("JudgmentIdBlockProjection.ByteOrder", unsafe.Offsetof(JudgmentIdBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("JudgmentIdBlockProjection.Id", unsafe.Offsetof(JudgmentIdBlockProjection{}.Id), 24)
-	tableBlockLayoutSize("NamedAnswerBlockProjection", unsafe.Sizeof(NamedAnswerBlockProjection{}), 680)
-	tableBlockLayoutSize("NamedAnswerBlockProjection alignment", unsafe.Alignof(NamedAnswerBlockProjection{}), 8)
-	tableBlockLayoutOffset("NamedAnswerBlockProjection.Magic", unsafe.Offsetof(NamedAnswerBlockProjection{}.Magic), 0)
-	tableBlockLayoutOffset("NamedAnswerBlockProjection.BuildVersion", unsafe.Offsetof(NamedAnswerBlockProjection{}.BuildVersion), 8)
-	tableBlockLayoutOffset("NamedAnswerBlockProjection.ByteOrder", unsafe.Offsetof(NamedAnswerBlockProjection{}.ByteOrder), 16)
-	tableBlockLayoutOffset("NamedAnswerBlockProjection.Question", unsafe.Offsetof(NamedAnswerBlockProjection{}.Question), 24)
-	tableBlockLayoutOffset("NamedAnswerBlockProjection.Answer", unsafe.Offsetof(NamedAnswerBlockProjection{}.Answer), 64)
-	tableBlockLayoutSize("OptionPBlockProjection", unsafe.Sizeof(OptionPBlockProjection{}), 88)
-	tableBlockLayoutSize("OptionPBlockProjection alignment", unsafe.Alignof(OptionPBlockProjection{}), 8)
-	tableBlockLayoutOffset("OptionPBlockProjection.Magic", unsafe.Offsetof(OptionPBlockProjection{}.Magic), 0)
-	tableBlockLayoutOffset("OptionPBlockProjection.BuildVersion", unsafe.Offsetof(OptionPBlockProjection{}.BuildVersion), 8)
-	tableBlockLayoutOffset("OptionPBlockProjection.ByteOrder", unsafe.Offsetof(OptionPBlockProjection{}.ByteOrder), 16)
-	tableBlockLayoutOffset("OptionPBlockProjection.Option", unsafe.Offsetof(OptionPBlockProjection{}.Option), 24)
-	tableBlockLayoutOffset("OptionPBlockProjection.P", unsafe.Offsetof(OptionPBlockProjection{}.P), 80)
 	tableBlockLayoutSize("OutcomeBlockProjection", unsafe.Sizeof(OutcomeBlockProjection{}), 1432)
 	tableBlockLayoutSize("OutcomeBlockProjection alignment", unsafe.Alignof(OutcomeBlockProjection{}), 8)
 	tableBlockLayoutOffset("OutcomeBlockProjection.Magic", unsafe.Offsetof(OutcomeBlockProjection{}.Magic), 0)
@@ -796,23 +545,6 @@ func init() {
 	tableBlockLayoutOffset("RawTokensBlockProjection.CacheWriteTokens", unsafe.Offsetof(RawTokensBlockProjection{}.CacheWriteTokens), 72)
 	tableBlockLayoutOffset("RawTokensBlockProjection.CacheReadTokens", unsafe.Offsetof(RawTokensBlockProjection{}.CacheReadTokens), 88)
 	tableBlockLayoutOffset("RawTokensBlockProjection.ReasoningTokens", unsafe.Offsetof(RawTokensBlockProjection{}.ReasoningTokens), 104)
-	tableBlockLayoutSize("RawUsageBlockProjection", unsafe.Sizeof(RawUsageBlockProjection{}), 48)
-	tableBlockLayoutSize("RawUsageBlockProjection alignment", unsafe.Alignof(RawUsageBlockProjection{}), 8)
-	tableBlockLayoutOffset("RawUsageBlockProjection.Magic", unsafe.Offsetof(RawUsageBlockProjection{}.Magic), 0)
-	tableBlockLayoutOffset("RawUsageBlockProjection.BuildVersion", unsafe.Offsetof(RawUsageBlockProjection{}.BuildVersion), 8)
-	tableBlockLayoutOffset("RawUsageBlockProjection.ByteOrder", unsafe.Offsetof(RawUsageBlockProjection{}.ByteOrder), 16)
-	tableBlockLayoutOffset("RawUsageBlockProjection.Version", unsafe.Offsetof(RawUsageBlockProjection{}.Version), 24)
-	tableBlockLayoutOffset("RawUsageBlockProjection.Records", unsafe.Offsetof(RawUsageBlockProjection{}.Records), 32)
-	tableBlockLayoutSize("RawUsage.Records stride", unsafe.Sizeof(RawRecordRow{}), 264)
-	tableBlockLayoutSize("RecordLineBlockProjection", unsafe.Sizeof(RecordLineBlockProjection{}), 58696)
-	tableBlockLayoutSize("RecordLineBlockProjection alignment", unsafe.Alignof(RecordLineBlockProjection{}), 8)
-	tableBlockLayoutOffset("RecordLineBlockProjection.Magic", unsafe.Offsetof(RecordLineBlockProjection{}.Magic), 0)
-	tableBlockLayoutOffset("RecordLineBlockProjection.BuildVersion", unsafe.Offsetof(RecordLineBlockProjection{}.BuildVersion), 8)
-	tableBlockLayoutOffset("RecordLineBlockProjection.ByteOrder", unsafe.Offsetof(RecordLineBlockProjection{}.ByteOrder), 16)
-	tableBlockLayoutOffset("RecordLineBlockProjection.Kind", unsafe.Offsetof(RecordLineBlockProjection{}.Kind), 24)
-	tableBlockLayoutOffset("RecordLineBlockProjection.AsDecision", unsafe.Offsetof(RecordLineBlockProjection{}.AsDecision), 32)
-	tableBlockLayoutOffset("RecordLineBlockProjection.AsOutcome", unsafe.Offsetof(RecordLineBlockProjection{}.AsOutcome), 56684)
-	tableBlockLayoutOffset("RecordLineBlockProjection.AsAct", unsafe.Offsetof(RecordLineBlockProjection{}.AsAct), 58096)
 	tableBlockLayoutSize("StagePathBlockProjection", unsafe.Sizeof(StagePathBlockProjection{}), 288)
 	tableBlockLayoutSize("StagePathBlockProjection alignment", unsafe.Alignof(StagePathBlockProjection{}), 8)
 	tableBlockLayoutOffset("StagePathBlockProjection.Magic", unsafe.Offsetof(StagePathBlockProjection{}.Magic), 0)
@@ -849,7 +581,7 @@ func tableBlockLayoutOffset(what string, got, want uintptr) {
 // data, so a reflective read costs a lookup and not a parse. Every record
 // hangs off the element column rather than taking a name of its own, so a
 // walker reaches the whole graph from any block's Type (§8, §19.2).
-var tableBlockRecords = make([]TableBlockInfo, 29)
+var tableBlockRecords = make([]TableBlockInfo, 13)
 
 // The graph is FILLED HERE rather than in the slice's own initializer, and
 // the reason is a language fact: a field's element column names another
@@ -873,21 +605,6 @@ func init() {
 		},
 	}
 	tableBlockRecords[1] = TableBlockInfo{
-		Name: "Answer", BuildVersion: BuildVersion, Size: 136, Align: 8, NumFields: 5,
-		Fields: []TableBlockFieldInfo{
-			{Name: "kind", Offset: 24, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "value", Offset: 25, Size: 55, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 76, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 48, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "p", Offset: 80, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 80, CountOffset: 88, StrideOffset: 92, Stride: 64,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[23] }},
-			{Name: "confidence", Offset: 96, Size: 8, Kind: 11, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "method", Offset: 104, Size: 32, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 132, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 24, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[2] = TableBlockInfo{
 		Name: "Decided", BuildVersion: BuildVersion, Size: 368, Align: 8, NumFields: 3,
 		Fields: []TableBlockFieldInfo{
 			{Name: "value", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
@@ -898,30 +615,7 @@ func init() {
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[3] = TableBlockInfo{
-		Name: "Decision", BuildVersion: BuildVersion, Size: 41552, Align: 8, NumFields: 9,
-		Fields: []TableBlockFieldInfo{
-			{Name: "id", Offset: 24, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 284, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "decision_name", Offset: 288, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 356, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "schema", Offset: 360, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 428, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "backend", Offset: 432, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 500, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "at", Offset: 504, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 540, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "inputs", Offset: 544, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 544, CountOffset: 552, StrideOffset: 556, Stride: 1072,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[20] }},
-			{Name: "state", Offset: 560, Size: 40968, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 41524, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 40960, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "answers", Offset: 41528, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 41528, CountOffset: 41536, StrideOffset: 41540, Stride: 656,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 10, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[22] }},
-			{Name: "usage", Offset: 41544, Size: 8, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
-		},
-	}
-	tableBlockRecords[4] = TableBlockInfo{
+	tableBlockRecords[2] = TableBlockInfo{
 		Name: "Frame", BuildVersion: BuildVersion, Size: 15880, Align: 8, NumFields: 21,
 		Fields: []TableBlockFieldInfo{
 			{Name: "kind", Offset: 24, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
@@ -955,7 +649,7 @@ func init() {
 			{Name: "review_base", Offset: 14472, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 14732, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "stage", Offset: 14736, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 14736, CountOffset: 14744, StrideOffset: 14748, Stride: 264,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[27] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[12] }},
 			{Name: "recipes", Offset: 14752, Size: 1032, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 15780, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 1024, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "decide_bounce", Offset: 15784, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 15804, StrideOffset: 0xffffffff, Stride: 0,
@@ -968,50 +662,23 @@ func init() {
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[5] = TableBlockInfo{
+	tableBlockRecords[3] = TableBlockInfo{
 		Name: "ImportLogLine", BuildVersion: BuildVersion, Size: 112, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "verb", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "answers", Offset: 96, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 96, CountOffset: 104, StrideOffset: 108, Stride: 136,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[21] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[10] }},
 		},
 	}
-	tableBlockRecords[6] = TableBlockInfo{
-		Name: "Input", BuildVersion: BuildVersion, Size: 1096, Align: 8, NumFields: 2,
-		Fields: []TableBlockFieldInfo{
-			{Name: "key", Offset: 24, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "value", Offset: 64, Size: 1032, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 1092, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 1024, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[7] = TableBlockInfo{
+	tableBlockRecords[4] = TableBlockInfo{
 		Name: "JudgmentId", BuildVersion: BuildVersion, Size: 160, Align: 8, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
 			{Name: "id", Offset: 24, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 156, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[8] = TableBlockInfo{
-		Name: "NamedAnswer", BuildVersion: BuildVersion, Size: 680, Align: 8, NumFields: 2,
-		Fields: []TableBlockFieldInfo{
-			{Name: "question", Offset: 24, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "answer", Offset: 64, Size: 616, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 616, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[18] }},
-		},
-	}
-	tableBlockRecords[9] = TableBlockInfo{
-		Name: "OptionP", BuildVersion: BuildVersion, Size: 88, Align: 8, NumFields: 2,
-		Fields: []TableBlockFieldInfo{
-			{Name: "option", Offset: 24, Size: 56, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 76, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 48, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "p", Offset: 80, Size: 8, Kind: 11, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[10] = TableBlockInfo{
+	tableBlockRecords[5] = TableBlockInfo{
 		Name: "Outcome", BuildVersion: BuildVersion, Size: 1432, Align: 8, NumFields: 4,
 		Fields: []TableBlockFieldInfo{
 			{Name: "id", Offset: 24, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 284, StrideOffset: 0xffffffff, Stride: 0,
@@ -1024,7 +691,7 @@ func init() {
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[11] = TableBlockInfo{
+	tableBlockRecords[6] = TableBlockInfo{
 		Name: "RawRecord", BuildVersion: BuildVersion, Size: 288, Align: 8, NumFields: 6,
 		Fields: []TableBlockFieldInfo{
 			{Name: "harness", Offset: 24, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 44, StrideOffset: 0xffffffff, Stride: 0,
@@ -1038,10 +705,10 @@ func init() {
 			{Name: "billing", Offset: 184, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "tokens", Offset: 192, Size: 96, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 96, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 96, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[11] }},
 		},
 	}
-	tableBlockRecords[12] = TableBlockInfo{
+	tableBlockRecords[7] = TableBlockInfo{
 		Name: "RawTokens", BuildVersion: BuildVersion, Size: 120, Align: 8, NumFields: 6,
 		Fields: []TableBlockFieldInfo{
 			{Name: "input_tokens", Offset: 24, Size: 9, Kind: 5, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
@@ -1058,36 +725,14 @@ func init() {
 				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 8, PresentOffset: 112, Element: nil},
 		},
 	}
-	tableBlockRecords[13] = TableBlockInfo{
-		Name: "RawUsage", BuildVersion: BuildVersion, Size: 48, Align: 8, NumFields: 2,
-		Fields: []TableBlockFieldInfo{
-			{Name: "version", Offset: 24, Size: 4, Kind: 8, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "records", Offset: 32, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 32, CountOffset: 40, StrideOffset: 44, Stride: 264,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 240, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[25] }},
-		},
-	}
-	tableBlockRecords[14] = TableBlockInfo{
-		Name: "RecordLine", BuildVersion: BuildVersion, Size: 58696, Align: 8, NumFields: 4,
-		Fields: []TableBlockFieldInfo{
-			{Name: "kind", Offset: 24, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "as_decision", Offset: 32, Size: 56649, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 56648, PresentOffset: 56680, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
-			{Name: "as_outcome", Offset: 56684, Size: 1409, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 1408, PresentOffset: 58092, Element: func() *TableBlockInfo { return &tableBlockRecords[24] }},
-			{Name: "as_act", Offset: 58096, Size: 593, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 592, PresentOffset: 58688, Element: func() *TableBlockInfo { return &tableBlockRecords[17] }},
-		},
-	}
-	tableBlockRecords[15] = TableBlockInfo{
+	tableBlockRecords[8] = TableBlockInfo{
 		Name: "StagePath", BuildVersion: BuildVersion, Size: 288, Align: 8, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
 			{Name: "path", Offset: 24, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 284, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[16] = TableBlockInfo{
+	tableBlockRecords[9] = TableBlockInfo{
 		Name: "Usage", BuildVersion: BuildVersion, Size: 32, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "input_tokens", Offset: 24, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
@@ -1096,122 +741,14 @@ func init() {
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[17] = TableBlockInfo{
-		Name: "Act", BuildVersion: BuildVersion, Size: 592, Align: 4, NumFields: 4,
-		Fields: []TableBlockFieldInfo{
-			{Name: "id", Offset: 0, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 260, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "step", Offset: 264, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 284, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "op", Offset: 288, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 548, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "at", Offset: 552, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 588, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[18] = TableBlockInfo{
-		Name: "Answer", BuildVersion: BuildVersion, Size: 616, Align: 8, NumFields: 5,
-		Fields: []TableBlockFieldInfo{
-			{Name: "kind", Offset: 0, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "value", Offset: 1, Size: 55, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 52, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 48, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "p", Offset: 56, Size: 516, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 568, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 64, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[23] }},
-			{Name: "confidence", Offset: 576, Size: 8, Kind: 11, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "method", Offset: 584, Size: 32, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 612, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 24, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[19] = TableBlockInfo{
-		Name: "Decision", BuildVersion: BuildVersion, Size: 56648, Align: 8, NumFields: 9,
-		Fields: []TableBlockFieldInfo{
-			{Name: "id", Offset: 0, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 260, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "decision_name", Offset: 264, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 332, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "schema", Offset: 336, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 404, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "backend", Offset: 408, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 476, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "at", Offset: 480, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 516, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "inputs", Offset: 520, Size: 8580, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 9096, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 1072, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[20] }},
-			{Name: "state", Offset: 9100, Size: 40968, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 50064, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 40960, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "answers", Offset: 50072, Size: 6564, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 56632, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 10, ElemSize: 656, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[22] }},
-			{Name: "usage", Offset: 56636, Size: 8, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
-		},
-	}
-	tableBlockRecords[20] = TableBlockInfo{
-		Name: "Input", BuildVersion: BuildVersion, Size: 1072, Align: 4, NumFields: 2,
-		Fields: []TableBlockFieldInfo{
-			{Name: "key", Offset: 0, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 36, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "value", Offset: 40, Size: 1032, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 1068, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 1024, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[21] = TableBlockInfo{
+	tableBlockRecords[10] = TableBlockInfo{
 		Name: "JudgmentId", BuildVersion: BuildVersion, Size: 136, Align: 4, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
 			{Name: "id", Offset: 0, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 132, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[22] = TableBlockInfo{
-		Name: "NamedAnswer", BuildVersion: BuildVersion, Size: 656, Align: 8, NumFields: 2,
-		Fields: []TableBlockFieldInfo{
-			{Name: "question", Offset: 0, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 36, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "answer", Offset: 40, Size: 616, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 616, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[18] }},
-		},
-	}
-	tableBlockRecords[23] = TableBlockInfo{
-		Name: "OptionP", BuildVersion: BuildVersion, Size: 64, Align: 8, NumFields: 2,
-		Fields: []TableBlockFieldInfo{
-			{Name: "option", Offset: 0, Size: 56, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 52, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 48, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "p", Offset: 56, Size: 8, Kind: 11, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[24] = TableBlockInfo{
-		Name: "Outcome", BuildVersion: BuildVersion, Size: 1408, Align: 4, NumFields: 4,
-		Fields: []TableBlockFieldInfo{
-			{Name: "id", Offset: 0, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 260, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "label", Offset: 264, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 332, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "note", Offset: 336, Size: 1032, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 1364, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 1024, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "at", Offset: 1368, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 1404, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[25] = TableBlockInfo{
-		Name: "RawRecord", BuildVersion: BuildVersion, Size: 264, Align: 8, NumFields: 6,
-		Fields: []TableBlockFieldInfo{
-			{Name: "harness", Offset: 0, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 20, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "execution", Offset: 24, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 44, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "source_schema", Offset: 48, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 84, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "producer_version", Offset: 88, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 156, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "billing", Offset: 160, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "tokens", Offset: 168, Size: 96, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 96, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
-		},
-	}
-	tableBlockRecords[26] = TableBlockInfo{
+	tableBlockRecords[11] = TableBlockInfo{
 		Name: "RawTokens", BuildVersion: BuildVersion, Size: 96, Align: 8, NumFields: 6,
 		Fields: []TableBlockFieldInfo{
 			{Name: "input_tokens", Offset: 0, Size: 9, Kind: 5, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
@@ -1228,20 +765,11 @@ func init() {
 				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 8, PresentOffset: 88, Element: nil},
 		},
 	}
-	tableBlockRecords[27] = TableBlockInfo{
+	tableBlockRecords[12] = TableBlockInfo{
 		Name: "StagePath", BuildVersion: BuildVersion, Size: 264, Align: 4, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
 			{Name: "path", Offset: 0, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 260, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[28] = TableBlockInfo{
-		Name: "Usage", BuildVersion: BuildVersion, Size: 8, Align: 4, NumFields: 2,
-		Fields: []TableBlockFieldInfo{
-			{Name: "input_tokens", Offset: 0, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "output_tokens", Offset: 4, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 }
@@ -1384,638 +912,23 @@ func UsageBlockBytes(b *UsageBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *UsageBlock) Type() *TableBlockInfo { return &tableBlockRecords[16] }
+func (b *UsageBlock) Type() *TableBlockInfo { return &tableBlockRecords[9] }
 
-// OptionPBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
-// from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
-// not allocate a block — the bytes are handed to it — but it caps by this: a
-// playback buffer, a recording, a scratch copy all size from the generated
-// constant rather than from a number a person wrote down beside it.
-const OptionPBlockMaxBytes int64 = 128
+// table OptionP has NO block form: it is VARIABLE-LENGTH: a pointer or a map in its by-value closure means no fixed pitch anywhere in it (mas-bandwidth/schema docs/SPEC-TABLES.md §19).
+// Its wire (§3) is unaffected — only this projection is absent, and it is
+// absent by construction rather than by refusal.
 
-// OptionPBlock is OptionP's block: a pointer and a length, and then rows in place.
-// Opening one is ONE check and no copy; reading a row is one add (§19.2).
-//
-// The bytes belong to the CONSUMER — a []byte it owns, an mmap, or memory a
-// producer handed across. Nothing here allocates.
-//
-// A block is valid until the next fill over the SAME storage, which
-// invalidates every block over it and every row pointer taken from one.
-type OptionPBlock struct {
-	Base       unsafe.Pointer          // the extent's base, 64-byte aligned
-	Projection *OptionPBlockProjection // the projection, at offset 0
-	Bytes      int64                   // the extent in use
-}
+// table Answer has NO block form: it is VARIABLE-LENGTH: a pointer or a map in its by-value closure means no fixed pitch anywhere in it (mas-bandwidth/schema docs/SPEC-TABLES.md §19).
+// Its wire (§3) is unaffected — only this projection is absent, and it is
+// absent by construction rather than by refusal.
 
-// ---- block fill path: begin ----
-// ---- block fill path: end ----
-// OptionPBlockOpen is the bool convenience for the handle's typed Open error.
-func OptionPBlockOpen(block *OptionPBlock, base unsafe.Pointer, bytes int64) bool {
-	return block.Open(base, bytes) == nil
-}
+// table NamedAnswer has NO block form: it is VARIABLE-LENGTH: a pointer or a map in its by-value closure means no fixed pitch anywhere in it (mas-bandwidth/schema docs/SPEC-TABLES.md §19).
+// Its wire (§3) is unaffected — only this projection is absent, and it is
+// absent by construction rather than by refusal.
 
-// Open reads all prologue and layout words bytewise before the final base
-// alignment check. Every refusal names the first failed clause in SPEC §19.2.
-func (block *OptionPBlock) Open(base unsafe.Pointer, bytes int64) error {
-	*block = OptionPBlock{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if bytes < 88 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 88)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableBlockMagic {
-		if magic == 0x5343484d41424c4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableBlockByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	used := int64(88)
-	padding := (64 - (used % 64)) % 64
-	if padding > bytes-used {
-		return TableRefuseTruncated
-	}
-	used += padding
-	if uintptr(base)%64 != 0 {
-		return TableRefuseUnalignedBase
-	}
-	block.Base = base
-	block.Projection = (*OptionPBlockProjection)(base)
-	block.Bytes = used
-	return nil
-}
-
-// OptionPCounts is gathered before Begin; clamping is the caller's policy.
-type OptionPCounts struct {
-}
-
-// OptionPBlockStorage owns a maximum-sized extent. Do not copy an initialized storage.
-type OptionPBlockStorage struct {
-	base       unsafe.Pointer
-	allocation []byte
-	allocator  TableBlockAllocator
-}
-
-func (s *OptionPBlockStorage) Create(a TableBlockAllocator) bool {
-	if s == nil || s.allocation != nil || a.Alloc == nil || a.Free == nil {
-		return false
-	}
-	raw := a.Alloc(OptionPBlockMaxBytes + 63)
-	if int64(len(raw)) < OptionPBlockMaxBytes+63 {
-		if raw != nil {
-			a.Free(raw)
-		}
-		return false
-	}
-	s.allocation = raw
-	s.allocator = a
-	offset := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	s.base = unsafe.Pointer(&raw[offset])
-	return true
-}
-func (s *OptionPBlockStorage) Destroy() {
-	if s != nil && s.allocation != nil {
-		s.allocator.Free(s.allocation)
-		*s = OptionPBlockStorage{}
-	}
-}
-
-// ---- block fill path: begin ----
-// OptionPBlockBegin writes only the prologue and triples, never rows or padding.
-// Storage and all counts are checked before any byte of the extent changes.
-func OptionPBlockBegin(b *OptionPBlock, s *OptionPBlockStorage, c OptionPCounts, refusal *TableBlockRefusal) bool {
-	if refusal != nil {
-		*refusal = TableBlockRefusal{}
-	}
-	if b == nil {
-		return false
-	}
-	if s == nil || s.base == nil {
-		return false
-	}
-	p := (*OptionPBlockProjection)(s.base)
-	p.Magic = TableBlockMagic
-	p.BuildVersion = BuildVersion
-	p.ByteOrder = TableBlockByteOrder
-	offset := int64(88)
-	*b = OptionPBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
-	return true
-}
-
-func OptionPBlockBytes(b *OptionPBlock) int64 {
-	if b == nil || b.Projection == nil {
-		return 0
-	}
-	used := int64(88)
-	return (used + 63) &^ int64(63)
-}
-
-// ---- block fill path: end ----
-
-// Type is this block's descriptors: constant data, so a reflective read costs
-// a lookup and not a parse. The row layouts hang off the element column
-// rather than taking names of their own, so a walker reaches every record
-// through the graph.
-func (b *OptionPBlock) Type() *TableBlockInfo { return &tableBlockRecords[9] }
-
-// AnswerBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
-// from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
-// not allocate a block — the bytes are handed to it — but it caps by this: a
-// playback buffer, a recording, a scratch copy all size from the generated
-// constant rather than from a number a person wrote down beside it.
-const AnswerBlockMaxBytes int64 = 704
-
-// AnswerBlock is Answer's block: a pointer and a length, and then rows in place.
-// Opening one is ONE check and no copy; reading a row is one add (§19.2).
-//
-// The bytes belong to the CONSUMER — a []byte it owns, an mmap, or memory a
-// producer handed across. Nothing here allocates.
-//
-// A block is valid until the next fill over the SAME storage, which
-// invalidates every block over it and every row pointer taken from one.
-type AnswerBlock struct {
-	Base       unsafe.Pointer         // the extent's base, 64-byte aligned
-	Projection *AnswerBlockProjection // the projection, at offset 0
-	Bytes      int64                  // the extent in use
-}
-
-// ---- block fill path: begin ----
-// PStride, PMax and PProjectionOffset are the constants this build
-// asserts against. A consumer INDEXES with what it read from the instance,
-// never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
-// package constants because §11 gives a language whose accessors are members
-// exactly that latitude: a member claims nothing at file scope.
-func (b *AnswerBlock) PStride() int64           { return 64 }
-func (b *AnswerBlock) PMax() int64              { return 8 }
-func (b *AnswerBlock) PProjectionOffset() int64 { return 80 }
-
-// P is ITERATED, not indexed by hand: the accessor points at each row where
-// it lies, at the pitch the INSTANCE gives, for the count the instance gives.
-func (b *AnswerBlock) P() TableBlockRows[OptionPRow] {
-	return TableBlockRows[OptionPRow]{
-		Base:   unsafe.Add(b.Base, uintptr(b.Projection.P.OffsetOf)),
-		Count:  int32(b.Projection.P.Count),
-		Stride: int32(b.Projection.P.Stride),
-	}
-}
-
-// PSpan is the CONTIGUOUS view, available because the pitch IS the
-// element's size (§2.7), which is how the per-frame fast path is written.
-func (b *AnswerBlock) PSpan() []OptionPRow {
-	return unsafe.Slice((*OptionPRow)(unsafe.Add(b.Base, uintptr(b.Projection.P.OffsetOf))), b.Projection.P.Count)
-}
-
-// ---- block fill path: end ----
-// AnswerBlockOpen is the bool convenience for the handle's typed Open error.
-func AnswerBlockOpen(block *AnswerBlock, base unsafe.Pointer, bytes int64) bool {
-	return block.Open(base, bytes) == nil
-}
-
-// Open reads all prologue and layout words bytewise before the final base
-// alignment check. Every refusal names the first failed clause in SPEC §19.2.
-func (block *AnswerBlock) Open(base unsafe.Pointer, bytes int64) error {
-	*block = AnswerBlock{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if bytes < 136 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 136)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableBlockMagic {
-		if magic == 0x5343484d41424c4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableBlockByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	used := int64(136)
-	{
-		// EVERY NUMBER BELOW COMES FROM THE INSTANCE, so the arithmetic is
-		// unsigned and each term is BOUNDED BEFORE IT IS ADDED. A forged
-		// OffsetOf near 2^63 must refuse, and an addition that wrapped past the
-		// top of the type would be what the check after it was supposed to
-		// catch. The C++ side holds the same shape for the same reason.
-		triple := header[unsafe.Offsetof(AnswerBlockProjection{}.P):]
-		offsetOf := binary.NativeEndian.Uint64(triple)
-		count := uint64(binary.NativeEndian.Uint32(triple[8:]))
-		stride := uint64(binary.NativeEndian.Uint32(triple[12:]))
-		if stride != uint64(unsafe.Sizeof(OptionPRow{})) {
-			return TableRefuseBadLayout
-		}
-		// past the DECLARED MAXIMUM: the producer side refuses this too, because
-		// a consumer that sizes anything by the maximum would overflow on a
-		// count the maximum does not bound
-		if count > 8 {
-			return TableRefuseBadLayout
-		}
-		if offsetOf < 136 || offsetOf%64 != 0 {
-			return TableRefuseBadLayout
-		}
-		if offsetOf > uint64(bytes) {
-			return TableRefuseBadLayout
-		}
-		rows := count * stride // both bounded above: this cannot carry
-		if rows > uint64(bytes)-offsetOf {
-			return TableRefuseBadLayout
-		}
-		if end := int64(offsetOf + rows); end > used {
-			used = end
-		}
-	}
-	padding := (64 - (used % 64)) % 64
-	if padding > bytes-used {
-		return TableRefuseTruncated
-	}
-	used += padding
-	if uintptr(base)%64 != 0 {
-		return TableRefuseUnalignedBase
-	}
-	block.Base = base
-	block.Projection = (*AnswerBlockProjection)(base)
-	block.Bytes = used
-	return nil
-}
-
-// AnswerCounts is gathered before Begin; clamping is the caller's policy.
-type AnswerCounts struct {
-	P int32
-}
-
-// AnswerBlockStorage owns a maximum-sized extent. Do not copy an initialized storage.
-type AnswerBlockStorage struct {
-	base       unsafe.Pointer
-	allocation []byte
-	allocator  TableBlockAllocator
-}
-
-func (s *AnswerBlockStorage) Create(a TableBlockAllocator) bool {
-	if s == nil || s.allocation != nil || a.Alloc == nil || a.Free == nil {
-		return false
-	}
-	raw := a.Alloc(AnswerBlockMaxBytes + 63)
-	if int64(len(raw)) < AnswerBlockMaxBytes+63 {
-		if raw != nil {
-			a.Free(raw)
-		}
-		return false
-	}
-	s.allocation = raw
-	s.allocator = a
-	offset := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	s.base = unsafe.Pointer(&raw[offset])
-	return true
-}
-func (s *AnswerBlockStorage) Destroy() {
-	if s != nil && s.allocation != nil {
-		s.allocator.Free(s.allocation)
-		*s = AnswerBlockStorage{}
-	}
-}
-
-// ---- block fill path: begin ----
-// AnswerBlockBegin writes only the prologue and triples, never rows or padding.
-// Storage and all counts are checked before any byte of the extent changes.
-func AnswerBlockBegin(b *AnswerBlock, s *AnswerBlockStorage, c AnswerCounts, refusal *TableBlockRefusal) bool {
-	if refusal != nil {
-		*refusal = TableBlockRefusal{}
-	}
-	if b == nil {
-		return false
-	}
-	if c.P < 0 || c.P > 8 {
-		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "p", Count: int64(c.P), Maximum: 8}
-		}
-		return false
-	}
-	if s == nil || s.base == nil {
-		return false
-	}
-	p := (*AnswerBlockProjection)(s.base)
-	p.Magic = TableBlockMagic
-	p.BuildVersion = BuildVersion
-	p.ByteOrder = TableBlockByteOrder
-	offset := int64(136)
-	offset = (offset + 63) &^ int64(63)
-	p.P = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.P), Stride: 64}
-	offset += int64(c.P) * 64
-	*b = AnswerBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
-	return true
-}
-
-func AnswerBlockBytes(b *AnswerBlock) int64 {
-	if b == nil || b.Projection == nil {
-		return 0
-	}
-	used := int64(136)
-	if end := int64(b.Projection.P.OffsetOf) + int64(b.Projection.P.Count)*int64(b.Projection.P.Stride); end > used {
-		used = end
-	}
-	return (used + 63) &^ int64(63)
-}
-
-// ---- block fill path: end ----
-
-// Type is this block's descriptors: constant data, so a reflective read costs
-// a lookup and not a parse. The row layouts hang off the element column
-// rather than taking names of their own, so a walker reaches every record
-// through the graph.
-func (b *AnswerBlock) Type() *TableBlockInfo { return &tableBlockRecords[1] }
-
-// NamedAnswerBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
-// from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
-// not allocate a block — the bytes are handed to it — but it caps by this: a
-// playback buffer, a recording, a scratch copy all size from the generated
-// constant rather than from a number a person wrote down beside it.
-const NamedAnswerBlockMaxBytes int64 = 704
-
-// NamedAnswerBlock is NamedAnswer's block: a pointer and a length, and then rows in place.
-// Opening one is ONE check and no copy; reading a row is one add (§19.2).
-//
-// The bytes belong to the CONSUMER — a []byte it owns, an mmap, or memory a
-// producer handed across. Nothing here allocates.
-//
-// A block is valid until the next fill over the SAME storage, which
-// invalidates every block over it and every row pointer taken from one.
-type NamedAnswerBlock struct {
-	Base       unsafe.Pointer              // the extent's base, 64-byte aligned
-	Projection *NamedAnswerBlockProjection // the projection, at offset 0
-	Bytes      int64                       // the extent in use
-}
-
-// ---- block fill path: begin ----
-// ---- block fill path: end ----
-// NamedAnswerBlockOpen is the bool convenience for the handle's typed Open error.
-func NamedAnswerBlockOpen(block *NamedAnswerBlock, base unsafe.Pointer, bytes int64) bool {
-	return block.Open(base, bytes) == nil
-}
-
-// Open reads all prologue and layout words bytewise before the final base
-// alignment check. Every refusal names the first failed clause in SPEC §19.2.
-func (block *NamedAnswerBlock) Open(base unsafe.Pointer, bytes int64) error {
-	*block = NamedAnswerBlock{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if bytes < 680 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 680)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableBlockMagic {
-		if magic == 0x5343484d41424c4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableBlockByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	used := int64(680)
-	padding := (64 - (used % 64)) % 64
-	if padding > bytes-used {
-		return TableRefuseTruncated
-	}
-	used += padding
-	if uintptr(base)%64 != 0 {
-		return TableRefuseUnalignedBase
-	}
-	block.Base = base
-	block.Projection = (*NamedAnswerBlockProjection)(base)
-	block.Bytes = used
-	return nil
-}
-
-// NamedAnswerCounts is gathered before Begin; clamping is the caller's policy.
-type NamedAnswerCounts struct {
-}
-
-// NamedAnswerBlockStorage owns a maximum-sized extent. Do not copy an initialized storage.
-type NamedAnswerBlockStorage struct {
-	base       unsafe.Pointer
-	allocation []byte
-	allocator  TableBlockAllocator
-}
-
-func (s *NamedAnswerBlockStorage) Create(a TableBlockAllocator) bool {
-	if s == nil || s.allocation != nil || a.Alloc == nil || a.Free == nil {
-		return false
-	}
-	raw := a.Alloc(NamedAnswerBlockMaxBytes + 63)
-	if int64(len(raw)) < NamedAnswerBlockMaxBytes+63 {
-		if raw != nil {
-			a.Free(raw)
-		}
-		return false
-	}
-	s.allocation = raw
-	s.allocator = a
-	offset := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	s.base = unsafe.Pointer(&raw[offset])
-	return true
-}
-func (s *NamedAnswerBlockStorage) Destroy() {
-	if s != nil && s.allocation != nil {
-		s.allocator.Free(s.allocation)
-		*s = NamedAnswerBlockStorage{}
-	}
-}
-
-// ---- block fill path: begin ----
-// NamedAnswerBlockBegin writes only the prologue and triples, never rows or padding.
-// Storage and all counts are checked before any byte of the extent changes.
-func NamedAnswerBlockBegin(b *NamedAnswerBlock, s *NamedAnswerBlockStorage, c NamedAnswerCounts, refusal *TableBlockRefusal) bool {
-	if refusal != nil {
-		*refusal = TableBlockRefusal{}
-	}
-	if b == nil {
-		return false
-	}
-	if s == nil || s.base == nil {
-		return false
-	}
-	p := (*NamedAnswerBlockProjection)(s.base)
-	p.Magic = TableBlockMagic
-	p.BuildVersion = BuildVersion
-	p.ByteOrder = TableBlockByteOrder
-	offset := int64(680)
-	*b = NamedAnswerBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
-	return true
-}
-
-func NamedAnswerBlockBytes(b *NamedAnswerBlock) int64 {
-	if b == nil || b.Projection == nil {
-		return 0
-	}
-	used := int64(680)
-	return (used + 63) &^ int64(63)
-}
-
-// ---- block fill path: end ----
-
-// Type is this block's descriptors: constant data, so a reflective read costs
-// a lookup and not a parse. The row layouts hang off the element column
-// rather than taking names of their own, so a walker reaches every record
-// through the graph.
-func (b *NamedAnswerBlock) Type() *TableBlockInfo { return &tableBlockRecords[8] }
-
-// InputBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
-// from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
-// not allocate a block — the bytes are handed to it — but it caps by this: a
-// playback buffer, a recording, a scratch copy all size from the generated
-// constant rather than from a number a person wrote down beside it.
-const InputBlockMaxBytes int64 = 1152
-
-// InputBlock is Input's block: a pointer and a length, and then rows in place.
-// Opening one is ONE check and no copy; reading a row is one add (§19.2).
-//
-// The bytes belong to the CONSUMER — a []byte it owns, an mmap, or memory a
-// producer handed across. Nothing here allocates.
-//
-// A block is valid until the next fill over the SAME storage, which
-// invalidates every block over it and every row pointer taken from one.
-type InputBlock struct {
-	Base       unsafe.Pointer        // the extent's base, 64-byte aligned
-	Projection *InputBlockProjection // the projection, at offset 0
-	Bytes      int64                 // the extent in use
-}
-
-// ---- block fill path: begin ----
-// ---- block fill path: end ----
-// InputBlockOpen is the bool convenience for the handle's typed Open error.
-func InputBlockOpen(block *InputBlock, base unsafe.Pointer, bytes int64) bool {
-	return block.Open(base, bytes) == nil
-}
-
-// Open reads all prologue and layout words bytewise before the final base
-// alignment check. Every refusal names the first failed clause in SPEC §19.2.
-func (block *InputBlock) Open(base unsafe.Pointer, bytes int64) error {
-	*block = InputBlock{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if bytes < 1096 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 1096)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableBlockMagic {
-		if magic == 0x5343484d41424c4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableBlockByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	used := int64(1096)
-	padding := (64 - (used % 64)) % 64
-	if padding > bytes-used {
-		return TableRefuseTruncated
-	}
-	used += padding
-	if uintptr(base)%64 != 0 {
-		return TableRefuseUnalignedBase
-	}
-	block.Base = base
-	block.Projection = (*InputBlockProjection)(base)
-	block.Bytes = used
-	return nil
-}
-
-// InputCounts is gathered before Begin; clamping is the caller's policy.
-type InputCounts struct {
-}
-
-// InputBlockStorage owns a maximum-sized extent. Do not copy an initialized storage.
-type InputBlockStorage struct {
-	base       unsafe.Pointer
-	allocation []byte
-	allocator  TableBlockAllocator
-}
-
-func (s *InputBlockStorage) Create(a TableBlockAllocator) bool {
-	if s == nil || s.allocation != nil || a.Alloc == nil || a.Free == nil {
-		return false
-	}
-	raw := a.Alloc(InputBlockMaxBytes + 63)
-	if int64(len(raw)) < InputBlockMaxBytes+63 {
-		if raw != nil {
-			a.Free(raw)
-		}
-		return false
-	}
-	s.allocation = raw
-	s.allocator = a
-	offset := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	s.base = unsafe.Pointer(&raw[offset])
-	return true
-}
-func (s *InputBlockStorage) Destroy() {
-	if s != nil && s.allocation != nil {
-		s.allocator.Free(s.allocation)
-		*s = InputBlockStorage{}
-	}
-}
-
-// ---- block fill path: begin ----
-// InputBlockBegin writes only the prologue and triples, never rows or padding.
-// Storage and all counts are checked before any byte of the extent changes.
-func InputBlockBegin(b *InputBlock, s *InputBlockStorage, c InputCounts, refusal *TableBlockRefusal) bool {
-	if refusal != nil {
-		*refusal = TableBlockRefusal{}
-	}
-	if b == nil {
-		return false
-	}
-	if s == nil || s.base == nil {
-		return false
-	}
-	p := (*InputBlockProjection)(s.base)
-	p.Magic = TableBlockMagic
-	p.BuildVersion = BuildVersion
-	p.ByteOrder = TableBlockByteOrder
-	offset := int64(1096)
-	*b = InputBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
-	return true
-}
-
-func InputBlockBytes(b *InputBlock) int64 {
-	if b == nil || b.Projection == nil {
-		return 0
-	}
-	used := int64(1096)
-	return (used + 63) &^ int64(63)
-}
-
-// ---- block fill path: end ----
-
-// Type is this block's descriptors: constant data, so a reflective read costs
-// a lookup and not a parse. The row layouts hang off the element column
-// rather than taking names of their own, so a walker reaches every record
-// through the graph.
-func (b *InputBlock) Type() *TableBlockInfo { return &tableBlockRecords[6] }
+// table Input has NO block form: it is VARIABLE-LENGTH: a pointer or a map in its by-value closure means no fixed pitch anywhere in it (mas-bandwidth/schema docs/SPEC-TABLES.md §19).
+// Its wire (§3) is unaffected — only this projection is absent, and it is
+// absent by construction rather than by refusal.
 
 // DecidedBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -2155,289 +1068,11 @@ func DecidedBlockBytes(b *DecidedBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *DecidedBlock) Type() *TableBlockInfo { return &tableBlockRecords[2] }
+func (b *DecidedBlock) Type() *TableBlockInfo { return &tableBlockRecords[1] }
 
-// DecisionBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
-// from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
-// not allocate a block — the bytes are handed to it — but it caps by this: a
-// playback buffer, a recording, a scratch copy all size from the generated
-// constant rather than from a number a person wrote down beside it.
-const DecisionBlockMaxBytes int64 = 56768
-
-// DecisionBlock is Decision's block: a pointer and a length, and then rows in place.
-// Opening one is ONE check and no copy; reading a row is one add (§19.2).
-//
-// The bytes belong to the CONSUMER — a []byte it owns, an mmap, or memory a
-// producer handed across. Nothing here allocates.
-//
-// A block is valid until the next fill over the SAME storage, which
-// invalidates every block over it and every row pointer taken from one.
-type DecisionBlock struct {
-	Base       unsafe.Pointer           // the extent's base, 64-byte aligned
-	Projection *DecisionBlockProjection // the projection, at offset 0
-	Bytes      int64                    // the extent in use
-}
-
-// ---- block fill path: begin ----
-// InputsStride, InputsMax and InputsProjectionOffset are the constants this build
-// asserts against. A consumer INDEXES with what it read from the instance,
-// never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
-// package constants because §11 gives a language whose accessors are members
-// exactly that latitude: a member claims nothing at file scope.
-func (b *DecisionBlock) InputsStride() int64           { return 1072 }
-func (b *DecisionBlock) InputsMax() int64              { return 8 }
-func (b *DecisionBlock) InputsProjectionOffset() int64 { return 544 }
-
-// Inputs is ITERATED, not indexed by hand: the accessor points at each row where
-// it lies, at the pitch the INSTANCE gives, for the count the instance gives.
-func (b *DecisionBlock) Inputs() TableBlockRows[InputRow] {
-	return TableBlockRows[InputRow]{
-		Base:   unsafe.Add(b.Base, uintptr(b.Projection.Inputs.OffsetOf)),
-		Count:  int32(b.Projection.Inputs.Count),
-		Stride: int32(b.Projection.Inputs.Stride),
-	}
-}
-
-// InputsSpan is the CONTIGUOUS view, available because the pitch IS the
-// element's size (§2.7), which is how the per-frame fast path is written.
-func (b *DecisionBlock) InputsSpan() []InputRow {
-	return unsafe.Slice((*InputRow)(unsafe.Add(b.Base, uintptr(b.Projection.Inputs.OffsetOf))), b.Projection.Inputs.Count)
-}
-
-// AnswersStride, AnswersMax and AnswersProjectionOffset are the constants this build
-// asserts against. A consumer INDEXES with what it read from the instance,
-// never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
-// package constants because §11 gives a language whose accessors are members
-// exactly that latitude: a member claims nothing at file scope.
-func (b *DecisionBlock) AnswersStride() int64           { return 656 }
-func (b *DecisionBlock) AnswersMax() int64              { return 10 }
-func (b *DecisionBlock) AnswersProjectionOffset() int64 { return 41528 }
-
-// Answers is ITERATED, not indexed by hand: the accessor points at each row where
-// it lies, at the pitch the INSTANCE gives, for the count the instance gives.
-func (b *DecisionBlock) Answers() TableBlockRows[NamedAnswerRow] {
-	return TableBlockRows[NamedAnswerRow]{
-		Base:   unsafe.Add(b.Base, uintptr(b.Projection.Answers.OffsetOf)),
-		Count:  int32(b.Projection.Answers.Count),
-		Stride: int32(b.Projection.Answers.Stride),
-	}
-}
-
-// AnswersSpan is the CONTIGUOUS view, available because the pitch IS the
-// element's size (§2.7), which is how the per-frame fast path is written.
-func (b *DecisionBlock) AnswersSpan() []NamedAnswerRow {
-	return unsafe.Slice((*NamedAnswerRow)(unsafe.Add(b.Base, uintptr(b.Projection.Answers.OffsetOf))), b.Projection.Answers.Count)
-}
-
-// ---- block fill path: end ----
-// DecisionBlockOpen is the bool convenience for the handle's typed Open error.
-func DecisionBlockOpen(block *DecisionBlock, base unsafe.Pointer, bytes int64) bool {
-	return block.Open(base, bytes) == nil
-}
-
-// Open reads all prologue and layout words bytewise before the final base
-// alignment check. Every refusal names the first failed clause in SPEC §19.2.
-func (block *DecisionBlock) Open(base unsafe.Pointer, bytes int64) error {
-	*block = DecisionBlock{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if bytes < 41552 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 41552)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableBlockMagic {
-		if magic == 0x5343484d41424c4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableBlockByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	used := int64(41552)
-	{
-		// EVERY NUMBER BELOW COMES FROM THE INSTANCE, so the arithmetic is
-		// unsigned and each term is BOUNDED BEFORE IT IS ADDED. A forged
-		// OffsetOf near 2^63 must refuse, and an addition that wrapped past the
-		// top of the type would be what the check after it was supposed to
-		// catch. The C++ side holds the same shape for the same reason.
-		triple := header[unsafe.Offsetof(DecisionBlockProjection{}.Inputs):]
-		offsetOf := binary.NativeEndian.Uint64(triple)
-		count := uint64(binary.NativeEndian.Uint32(triple[8:]))
-		stride := uint64(binary.NativeEndian.Uint32(triple[12:]))
-		if stride != uint64(unsafe.Sizeof(InputRow{})) {
-			return TableRefuseBadLayout
-		}
-		// past the DECLARED MAXIMUM: the producer side refuses this too, because
-		// a consumer that sizes anything by the maximum would overflow on a
-		// count the maximum does not bound
-		if count > 8 {
-			return TableRefuseBadLayout
-		}
-		if offsetOf < 41552 || offsetOf%64 != 0 {
-			return TableRefuseBadLayout
-		}
-		if offsetOf > uint64(bytes) {
-			return TableRefuseBadLayout
-		}
-		rows := count * stride // both bounded above: this cannot carry
-		if rows > uint64(bytes)-offsetOf {
-			return TableRefuseBadLayout
-		}
-		if end := int64(offsetOf + rows); end > used {
-			used = end
-		}
-	}
-	{
-		// EVERY NUMBER BELOW COMES FROM THE INSTANCE, so the arithmetic is
-		// unsigned and each term is BOUNDED BEFORE IT IS ADDED. A forged
-		// OffsetOf near 2^63 must refuse, and an addition that wrapped past the
-		// top of the type would be what the check after it was supposed to
-		// catch. The C++ side holds the same shape for the same reason.
-		triple := header[unsafe.Offsetof(DecisionBlockProjection{}.Answers):]
-		offsetOf := binary.NativeEndian.Uint64(triple)
-		count := uint64(binary.NativeEndian.Uint32(triple[8:]))
-		stride := uint64(binary.NativeEndian.Uint32(triple[12:]))
-		if stride != uint64(unsafe.Sizeof(NamedAnswerRow{})) {
-			return TableRefuseBadLayout
-		}
-		// past the DECLARED MAXIMUM: the producer side refuses this too, because
-		// a consumer that sizes anything by the maximum would overflow on a
-		// count the maximum does not bound
-		if count > 10 {
-			return TableRefuseBadLayout
-		}
-		if offsetOf < 41552 || offsetOf%64 != 0 {
-			return TableRefuseBadLayout
-		}
-		if offsetOf > uint64(bytes) {
-			return TableRefuseBadLayout
-		}
-		rows := count * stride // both bounded above: this cannot carry
-		if rows > uint64(bytes)-offsetOf {
-			return TableRefuseBadLayout
-		}
-		if end := int64(offsetOf + rows); end > used {
-			used = end
-		}
-	}
-	padding := (64 - (used % 64)) % 64
-	if padding > bytes-used {
-		return TableRefuseTruncated
-	}
-	used += padding
-	if uintptr(base)%64 != 0 {
-		return TableRefuseUnalignedBase
-	}
-	block.Base = base
-	block.Projection = (*DecisionBlockProjection)(base)
-	block.Bytes = used
-	return nil
-}
-
-// DecisionCounts is gathered before Begin; clamping is the caller's policy.
-type DecisionCounts struct {
-	Inputs  int32
-	Answers int32
-}
-
-// DecisionBlockStorage owns a maximum-sized extent. Do not copy an initialized storage.
-type DecisionBlockStorage struct {
-	base       unsafe.Pointer
-	allocation []byte
-	allocator  TableBlockAllocator
-}
-
-func (s *DecisionBlockStorage) Create(a TableBlockAllocator) bool {
-	if s == nil || s.allocation != nil || a.Alloc == nil || a.Free == nil {
-		return false
-	}
-	raw := a.Alloc(DecisionBlockMaxBytes + 63)
-	if int64(len(raw)) < DecisionBlockMaxBytes+63 {
-		if raw != nil {
-			a.Free(raw)
-		}
-		return false
-	}
-	s.allocation = raw
-	s.allocator = a
-	offset := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	s.base = unsafe.Pointer(&raw[offset])
-	return true
-}
-func (s *DecisionBlockStorage) Destroy() {
-	if s != nil && s.allocation != nil {
-		s.allocator.Free(s.allocation)
-		*s = DecisionBlockStorage{}
-	}
-}
-
-// ---- block fill path: begin ----
-// DecisionBlockBegin writes only the prologue and triples, never rows or padding.
-// Storage and all counts are checked before any byte of the extent changes.
-func DecisionBlockBegin(b *DecisionBlock, s *DecisionBlockStorage, c DecisionCounts, refusal *TableBlockRefusal) bool {
-	if refusal != nil {
-		*refusal = TableBlockRefusal{}
-	}
-	if b == nil {
-		return false
-	}
-	if c.Inputs < 0 || c.Inputs > 8 {
-		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "inputs", Count: int64(c.Inputs), Maximum: 8}
-		}
-		return false
-	}
-	if c.Answers < 0 || c.Answers > 10 {
-		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "answers", Count: int64(c.Answers), Maximum: 10}
-		}
-		return false
-	}
-	if s == nil || s.base == nil {
-		return false
-	}
-	p := (*DecisionBlockProjection)(s.base)
-	p.Magic = TableBlockMagic
-	p.BuildVersion = BuildVersion
-	p.ByteOrder = TableBlockByteOrder
-	offset := int64(41552)
-	offset = (offset + 63) &^ int64(63)
-	p.Inputs = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Inputs), Stride: 1072}
-	offset += int64(c.Inputs) * 1072
-	offset = (offset + 63) &^ int64(63)
-	p.Answers = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Answers), Stride: 656}
-	offset += int64(c.Answers) * 656
-	*b = DecisionBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
-	return true
-}
-
-func DecisionBlockBytes(b *DecisionBlock) int64 {
-	if b == nil || b.Projection == nil {
-		return 0
-	}
-	used := int64(41552)
-	if end := int64(b.Projection.Inputs.OffsetOf) + int64(b.Projection.Inputs.Count)*int64(b.Projection.Inputs.Stride); end > used {
-		used = end
-	}
-	if end := int64(b.Projection.Answers.OffsetOf) + int64(b.Projection.Answers.Count)*int64(b.Projection.Answers.Stride); end > used {
-		used = end
-	}
-	return (used + 63) &^ int64(63)
-}
-
-// ---- block fill path: end ----
-
-// Type is this block's descriptors: constant data, so a reflective read costs
-// a lookup and not a parse. The row layouts hang off the element column
-// rather than taking names of their own, so a walker reaches every record
-// through the graph.
-func (b *DecisionBlock) Type() *TableBlockInfo { return &tableBlockRecords[3] }
+// table Decision has NO block form: it is VARIABLE-LENGTH: Decision.inputs is an unbounded array, and its elements are an extent inside the holder's own node, so there is no fixed pitch anywhere in it (mas-bandwidth/schema docs/SPEC-TABLES.md §19).
+// Its wire (§3) is unaffected — only this projection is absent, and it is
+// absent by construction rather than by refusal.
 
 // OutcomeBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -2577,7 +1212,7 @@ func OutcomeBlockBytes(b *OutcomeBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *OutcomeBlock) Type() *TableBlockInfo { return &tableBlockRecords[10] }
+func (b *OutcomeBlock) Type() *TableBlockInfo { return &tableBlockRecords[5] }
 
 // ActBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -2719,145 +1354,9 @@ func ActBlockBytes(b *ActBlock) int64 {
 // through the graph.
 func (b *ActBlock) Type() *TableBlockInfo { return &tableBlockRecords[0] }
 
-// RecordLineBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
-// from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
-// not allocate a block — the bytes are handed to it — but it caps by this: a
-// playback buffer, a recording, a scratch copy all size from the generated
-// constant rather than from a number a person wrote down beside it.
-const RecordLineBlockMaxBytes int64 = 58752
-
-// RecordLineBlock is RecordLine's block: a pointer and a length, and then rows in place.
-// Opening one is ONE check and no copy; reading a row is one add (§19.2).
-//
-// The bytes belong to the CONSUMER — a []byte it owns, an mmap, or memory a
-// producer handed across. Nothing here allocates.
-//
-// A block is valid until the next fill over the SAME storage, which
-// invalidates every block over it and every row pointer taken from one.
-type RecordLineBlock struct {
-	Base       unsafe.Pointer             // the extent's base, 64-byte aligned
-	Projection *RecordLineBlockProjection // the projection, at offset 0
-	Bytes      int64                      // the extent in use
-}
-
-// ---- block fill path: begin ----
-// ---- block fill path: end ----
-// RecordLineBlockOpen is the bool convenience for the handle's typed Open error.
-func RecordLineBlockOpen(block *RecordLineBlock, base unsafe.Pointer, bytes int64) bool {
-	return block.Open(base, bytes) == nil
-}
-
-// Open reads all prologue and layout words bytewise before the final base
-// alignment check. Every refusal names the first failed clause in SPEC §19.2.
-func (block *RecordLineBlock) Open(base unsafe.Pointer, bytes int64) error {
-	*block = RecordLineBlock{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if bytes < 58696 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 58696)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableBlockMagic {
-		if magic == 0x5343484d41424c4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableBlockByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	used := int64(58696)
-	padding := (64 - (used % 64)) % 64
-	if padding > bytes-used {
-		return TableRefuseTruncated
-	}
-	used += padding
-	if uintptr(base)%64 != 0 {
-		return TableRefuseUnalignedBase
-	}
-	block.Base = base
-	block.Projection = (*RecordLineBlockProjection)(base)
-	block.Bytes = used
-	return nil
-}
-
-// RecordLineCounts is gathered before Begin; clamping is the caller's policy.
-type RecordLineCounts struct {
-}
-
-// RecordLineBlockStorage owns a maximum-sized extent. Do not copy an initialized storage.
-type RecordLineBlockStorage struct {
-	base       unsafe.Pointer
-	allocation []byte
-	allocator  TableBlockAllocator
-}
-
-func (s *RecordLineBlockStorage) Create(a TableBlockAllocator) bool {
-	if s == nil || s.allocation != nil || a.Alloc == nil || a.Free == nil {
-		return false
-	}
-	raw := a.Alloc(RecordLineBlockMaxBytes + 63)
-	if int64(len(raw)) < RecordLineBlockMaxBytes+63 {
-		if raw != nil {
-			a.Free(raw)
-		}
-		return false
-	}
-	s.allocation = raw
-	s.allocator = a
-	offset := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	s.base = unsafe.Pointer(&raw[offset])
-	return true
-}
-func (s *RecordLineBlockStorage) Destroy() {
-	if s != nil && s.allocation != nil {
-		s.allocator.Free(s.allocation)
-		*s = RecordLineBlockStorage{}
-	}
-}
-
-// ---- block fill path: begin ----
-// RecordLineBlockBegin writes only the prologue and triples, never rows or padding.
-// Storage and all counts are checked before any byte of the extent changes.
-func RecordLineBlockBegin(b *RecordLineBlock, s *RecordLineBlockStorage, c RecordLineCounts, refusal *TableBlockRefusal) bool {
-	if refusal != nil {
-		*refusal = TableBlockRefusal{}
-	}
-	if b == nil {
-		return false
-	}
-	if s == nil || s.base == nil {
-		return false
-	}
-	p := (*RecordLineBlockProjection)(s.base)
-	p.Magic = TableBlockMagic
-	p.BuildVersion = BuildVersion
-	p.ByteOrder = TableBlockByteOrder
-	offset := int64(58696)
-	*b = RecordLineBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
-	return true
-}
-
-func RecordLineBlockBytes(b *RecordLineBlock) int64 {
-	if b == nil || b.Projection == nil {
-		return 0
-	}
-	used := int64(58696)
-	return (used + 63) &^ int64(63)
-}
-
-// ---- block fill path: end ----
-
-// Type is this block's descriptors: constant data, so a reflective read costs
-// a lookup and not a parse. The row layouts hang off the element column
-// rather than taking names of their own, so a walker reaches every record
-// through the graph.
-func (b *RecordLineBlock) Type() *TableBlockInfo { return &tableBlockRecords[14] }
+// table RecordLine has NO block form: it is VARIABLE-LENGTH: RecordLine.as_decision is a pointer, and a pointer in the by-value closure means no fixed pitch anywhere in it (mas-bandwidth/schema docs/SPEC-TABLES.md §19).
+// Its wire (§3) is unaffected — only this projection is absent, and it is
+// absent by construction rather than by refusal.
 
 // JudgmentIdBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -2997,7 +1496,7 @@ func JudgmentIdBlockBytes(b *JudgmentIdBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *JudgmentIdBlock) Type() *TableBlockInfo { return &tableBlockRecords[7] }
+func (b *JudgmentIdBlock) Type() *TableBlockInfo { return &tableBlockRecords[4] }
 
 // ImportLogLineBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -3208,7 +1707,7 @@ func ImportLogLineBlockBytes(b *ImportLogLineBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ImportLogLineBlock) Type() *TableBlockInfo { return &tableBlockRecords[5] }
+func (b *ImportLogLineBlock) Type() *TableBlockInfo { return &tableBlockRecords[3] }
 
 // RawTokensBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -3348,7 +1847,7 @@ func RawTokensBlockBytes(b *RawTokensBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *RawTokensBlock) Type() *TableBlockInfo { return &tableBlockRecords[12] }
+func (b *RawTokensBlock) Type() *TableBlockInfo { return &tableBlockRecords[7] }
 
 // RawRecordBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -3488,218 +1987,11 @@ func RawRecordBlockBytes(b *RawRecordBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *RawRecordBlock) Type() *TableBlockInfo { return &tableBlockRecords[11] }
+func (b *RawRecordBlock) Type() *TableBlockInfo { return &tableBlockRecords[6] }
 
-// RawUsageBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
-// from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
-// not allocate a block — the bytes are handed to it — but it caps by this: a
-// playback buffer, a recording, a scratch copy all size from the generated
-// constant rather than from a number a person wrote down beside it.
-const RawUsageBlockMaxBytes int64 = 63424
-
-// RawUsageBlock is RawUsage's block: a pointer and a length, and then rows in place.
-// Opening one is ONE check and no copy; reading a row is one add (§19.2).
-//
-// The bytes belong to the CONSUMER — a []byte it owns, an mmap, or memory a
-// producer handed across. Nothing here allocates.
-//
-// A block is valid until the next fill over the SAME storage, which
-// invalidates every block over it and every row pointer taken from one.
-type RawUsageBlock struct {
-	Base       unsafe.Pointer           // the extent's base, 64-byte aligned
-	Projection *RawUsageBlockProjection // the projection, at offset 0
-	Bytes      int64                    // the extent in use
-}
-
-// ---- block fill path: begin ----
-// RecordsStride, RecordsMax and RecordsProjectionOffset are the constants this build
-// asserts against. A consumer INDEXES with what it read from the instance,
-// never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
-// package constants because §11 gives a language whose accessors are members
-// exactly that latitude: a member claims nothing at file scope.
-func (b *RawUsageBlock) RecordsStride() int64           { return 264 }
-func (b *RawUsageBlock) RecordsMax() int64              { return 240 }
-func (b *RawUsageBlock) RecordsProjectionOffset() int64 { return 32 }
-
-// Records is ITERATED, not indexed by hand: the accessor points at each row where
-// it lies, at the pitch the INSTANCE gives, for the count the instance gives.
-func (b *RawUsageBlock) Records() TableBlockRows[RawRecordRow] {
-	return TableBlockRows[RawRecordRow]{
-		Base:   unsafe.Add(b.Base, uintptr(b.Projection.Records.OffsetOf)),
-		Count:  int32(b.Projection.Records.Count),
-		Stride: int32(b.Projection.Records.Stride),
-	}
-}
-
-// RecordsSpan is the CONTIGUOUS view, available because the pitch IS the
-// element's size (§2.7), which is how the per-frame fast path is written.
-func (b *RawUsageBlock) RecordsSpan() []RawRecordRow {
-	return unsafe.Slice((*RawRecordRow)(unsafe.Add(b.Base, uintptr(b.Projection.Records.OffsetOf))), b.Projection.Records.Count)
-}
-
-// ---- block fill path: end ----
-// RawUsageBlockOpen is the bool convenience for the handle's typed Open error.
-func RawUsageBlockOpen(block *RawUsageBlock, base unsafe.Pointer, bytes int64) bool {
-	return block.Open(base, bytes) == nil
-}
-
-// Open reads all prologue and layout words bytewise before the final base
-// alignment check. Every refusal names the first failed clause in SPEC §19.2.
-func (block *RawUsageBlock) Open(base unsafe.Pointer, bytes int64) error {
-	*block = RawUsageBlock{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if bytes < 48 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 48)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableBlockMagic {
-		if magic == 0x5343484d41424c4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableBlockByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	used := int64(48)
-	{
-		// EVERY NUMBER BELOW COMES FROM THE INSTANCE, so the arithmetic is
-		// unsigned and each term is BOUNDED BEFORE IT IS ADDED. A forged
-		// OffsetOf near 2^63 must refuse, and an addition that wrapped past the
-		// top of the type would be what the check after it was supposed to
-		// catch. The C++ side holds the same shape for the same reason.
-		triple := header[unsafe.Offsetof(RawUsageBlockProjection{}.Records):]
-		offsetOf := binary.NativeEndian.Uint64(triple)
-		count := uint64(binary.NativeEndian.Uint32(triple[8:]))
-		stride := uint64(binary.NativeEndian.Uint32(triple[12:]))
-		if stride != uint64(unsafe.Sizeof(RawRecordRow{})) {
-			return TableRefuseBadLayout
-		}
-		// past the DECLARED MAXIMUM: the producer side refuses this too, because
-		// a consumer that sizes anything by the maximum would overflow on a
-		// count the maximum does not bound
-		if count > 240 {
-			return TableRefuseBadLayout
-		}
-		if offsetOf < 48 || offsetOf%64 != 0 {
-			return TableRefuseBadLayout
-		}
-		if offsetOf > uint64(bytes) {
-			return TableRefuseBadLayout
-		}
-		rows := count * stride // both bounded above: this cannot carry
-		if rows > uint64(bytes)-offsetOf {
-			return TableRefuseBadLayout
-		}
-		if end := int64(offsetOf + rows); end > used {
-			used = end
-		}
-	}
-	padding := (64 - (used % 64)) % 64
-	if padding > bytes-used {
-		return TableRefuseTruncated
-	}
-	used += padding
-	if uintptr(base)%64 != 0 {
-		return TableRefuseUnalignedBase
-	}
-	block.Base = base
-	block.Projection = (*RawUsageBlockProjection)(base)
-	block.Bytes = used
-	return nil
-}
-
-// RawUsageCounts is gathered before Begin; clamping is the caller's policy.
-type RawUsageCounts struct {
-	Records int32
-}
-
-// RawUsageBlockStorage owns a maximum-sized extent. Do not copy an initialized storage.
-type RawUsageBlockStorage struct {
-	base       unsafe.Pointer
-	allocation []byte
-	allocator  TableBlockAllocator
-}
-
-func (s *RawUsageBlockStorage) Create(a TableBlockAllocator) bool {
-	if s == nil || s.allocation != nil || a.Alloc == nil || a.Free == nil {
-		return false
-	}
-	raw := a.Alloc(RawUsageBlockMaxBytes + 63)
-	if int64(len(raw)) < RawUsageBlockMaxBytes+63 {
-		if raw != nil {
-			a.Free(raw)
-		}
-		return false
-	}
-	s.allocation = raw
-	s.allocator = a
-	offset := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	s.base = unsafe.Pointer(&raw[offset])
-	return true
-}
-func (s *RawUsageBlockStorage) Destroy() {
-	if s != nil && s.allocation != nil {
-		s.allocator.Free(s.allocation)
-		*s = RawUsageBlockStorage{}
-	}
-}
-
-// ---- block fill path: begin ----
-// RawUsageBlockBegin writes only the prologue and triples, never rows or padding.
-// Storage and all counts are checked before any byte of the extent changes.
-func RawUsageBlockBegin(b *RawUsageBlock, s *RawUsageBlockStorage, c RawUsageCounts, refusal *TableBlockRefusal) bool {
-	if refusal != nil {
-		*refusal = TableBlockRefusal{}
-	}
-	if b == nil {
-		return false
-	}
-	if c.Records < 0 || c.Records > 240 {
-		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "records", Count: int64(c.Records), Maximum: 240}
-		}
-		return false
-	}
-	if s == nil || s.base == nil {
-		return false
-	}
-	p := (*RawUsageBlockProjection)(s.base)
-	p.Magic = TableBlockMagic
-	p.BuildVersion = BuildVersion
-	p.ByteOrder = TableBlockByteOrder
-	offset := int64(48)
-	offset = (offset + 63) &^ int64(63)
-	p.Records = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Records), Stride: 264}
-	offset += int64(c.Records) * 264
-	*b = RawUsageBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
-	return true
-}
-
-func RawUsageBlockBytes(b *RawUsageBlock) int64 {
-	if b == nil || b.Projection == nil {
-		return 0
-	}
-	used := int64(48)
-	if end := int64(b.Projection.Records.OffsetOf) + int64(b.Projection.Records.Count)*int64(b.Projection.Records.Stride); end > used {
-		used = end
-	}
-	return (used + 63) &^ int64(63)
-}
-
-// ---- block fill path: end ----
-
-// Type is this block's descriptors: constant data, so a reflective read costs
-// a lookup and not a parse. The row layouts hang off the element column
-// rather than taking names of their own, so a walker reaches every record
-// through the graph.
-func (b *RawUsageBlock) Type() *TableBlockInfo { return &tableBlockRecords[13] }
+// table RawUsage has NO block form: it is VARIABLE-LENGTH: a pointer or a map in its by-value closure means no fixed pitch anywhere in it (mas-bandwidth/schema docs/SPEC-TABLES.md §19).
+// Its wire (§3) is unaffected — only this projection is absent, and it is
+// absent by construction rather than by refusal.
 
 // StagePathBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -3839,7 +2131,7 @@ func StagePathBlockBytes(b *StagePathBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *StagePathBlock) Type() *TableBlockInfo { return &tableBlockRecords[15] }
+func (b *StagePathBlock) Type() *TableBlockInfo { return &tableBlockRecords[8] }
 
 // FrameBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -4050,4 +2342,4 @@ func FrameBlockBytes(b *FrameBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *FrameBlock) Type() *TableBlockInfo { return &tableBlockRecords[4] }
+func (b *FrameBlock) Type() *TableBlockInfo { return &tableBlockRecords[2] }

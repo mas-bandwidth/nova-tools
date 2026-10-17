@@ -1,8 +1,17 @@
 // decide.schema: the decide area's records, as FIXED tables. The Go is
 // generated into pkg/decidewire (go generate ./pkg/decidewire).
 //
-// A FIXED table (S1): small, bounded, tool-owned records whose reader is always
-// the same version or newer. Each table replaces the Go struct named at it and
+// Two classes (S1). A FIXED table is a struct: small, bounded, tool-owned, a
+// stable layout whose reader is always the same version or newer (Usage,
+// Outcome, Act, Decided, the import log line, the raw token counters and
+// records, Frame). A VARIABLE table is a document held by pointer, sized by
+// its content and open-ended (Decision, its answers and inputs, RecordLine,
+// RawUsage): its readers may meet a newer writer and it has a JSON text form.
+// Both read the same way through pkg/schemaread, in three forms: binary wire,
+// padded standard base64 of it, and the JSON text. A unit that declares a
+// variable table gets no separate fixed-form wire for its fixed tables at this
+// pin (the compiler emits form 3 only when every table in the unit is fixed),
+// so the fixed tables keep their class and ride form 1. Each table replaces the Go struct named at it and
 // keeps every field the struct serialises today, with the meaning it has today.
 // Every bound is the bound the code enforces today, with the rule named at it;
 // where the code enforces none, the comment says so and the bound is the
@@ -33,21 +42,21 @@ fixed table Usage
 // probability outside [0, 1] or not a number. A float64 has no declared range
 // in v1 (the compressed float is float32), so the reader holds [0, 1] and
 // refuses NaN; the table declares the type only.
-fixed table OptionP
+table OptionP
 {
     option string(48)
     p      float64
 }
 
-// Answer: pkg/decide Answer. P is at most 8 options (a choice names its
-// options in criteria; the code bounds the count by no rule, 8 is this
-// table's capacity). Confidence and Method are the choice answered with no
+// Answer: pkg/decide Answer, a VARIABLE table (a document). P is at most 14
+// options: the widest choice in the code is brief.go's minutes (twelve steps,
+// none and unnumbered). Confidence and Method are the choice answered with no
 // probabilities (SPEC-NOVA-DECIDE section 3); Check holds neither to [0, 1].
-fixed table Answer
+table Answer
 {
     kind       AnswerType
     value      string(48)
-    p          [..8]OptionP
+    p          [..14]OptionP
     confidence float64
     method     string(24)
 }
@@ -55,7 +64,7 @@ fixed table Answer
 // NamedAnswer: one entry of a Decision's Answers map, the question's name and
 // its answer. Schema.Check refuses an answer to a question not asked, and a
 // question with none.
-fixed table NamedAnswer
+table NamedAnswer
 {
     question string(32)
     answer   Answer
@@ -63,7 +72,7 @@ fixed table NamedAnswer
 
 // Input: one entry of a Decision's Inputs map, an input's name and its text
 // (a hash, a path, or the member's reason line).
-fixed table Input
+table Input
 {
     key   string(32)
     value string(1024)
@@ -85,24 +94,21 @@ fixed table Decided
 // a member does not share its table's name (C# forbids it). The folded-in Outcome and Acts are never written on this line, so they are
 // not fields here (record.go: "never written on this line"). The attempt
 // decision (attempt.go ParseAttempt) is this table with decision "attempt".
-// state is the exact text asked over; an attempt's state carries a 16 KiB
-// result cut (attempt.go MaxResultBytes) and the brief (16 KiB, the card's
-// brief), so 40960 holds one with its headings; the record's reader accepts a line up to
-// 64 MiB (record.go parse), which a fixed table cannot hold (the fixed form
-// stops at 65536 bytes a record). answers holds the ten questions of the
-// widest schema in the code (brief.go), inputs the eight of the widest
-// (judgment.go), and an answer's p its options up to eight; the code bounds
-// none of these counts.
-fixed table Decision
+// state is the exact text asked over, held as a blob at its own size: the code
+// bounds it only by the record reader's 64 MiB line (record.go parse), so the
+// table declares no smaller bound. inputs and answers are open-ended lists
+// (the code fixes neither count: judgment.go writes ten inputs, brief.go asks
+// nine questions).
+table Decision
 {
     id            string(256)
     decision_name string(64)
     schema        string(64)
     backend       string(64)
     at            string(32)
-    inputs        [..8]Input
-    state         string(40960)
-    answers       [..10]NamedAnswer
+    inputs        []Input
+    state         *string
+    answers       []NamedAnswer
     usage         Usage
 }
 
@@ -132,10 +138,10 @@ enum LineKind { Decision, Outcome, Act }
 // RecordLine: the record's line (record.go line). A line is one record
 // (record.go parse refuses a line holding more than one): kind names the one
 // that is present, and the reader refuses a line whose other two are set.
-fixed table RecordLine
+table RecordLine
 {
     kind        LineKind
-    as_decision ?Decision
+    as_decision *Decision
     as_outcome  ?Outcome
     as_act      ?Act
 }
@@ -190,13 +196,11 @@ fixed table RawRecord
 
 // RawUsage: cardcost RawUsage. Validate holds version to 1 and at least one
 // record; MaxRawBytes (32768) bounds the JSON envelope, and the smallest valid
-// record is 120 bytes of JSON, so a valid envelope holds at most 270 records. The fixed form caps a table's
-// identity plan at 4096 leaves, which holds 240 records; the 30 between are not
-// representable and are reported, not clamped.
-fixed table RawUsage
+// record is 120 bytes of JSON, so a valid envelope holds at most 270 records.
+table RawUsage
 {
     version uint32           | min = 0, max = 4294967295
-    records [..240]RawRecord
+    records [..270]RawRecord
 }
 
 // ---- the card contract file (pkg/cardcontract/contract.go) ----
