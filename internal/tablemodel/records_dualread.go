@@ -280,6 +280,281 @@ func stateFromModel(m *tablemodelwire.ModelState) (State, error) {
 	return stateFromCanon(buf)
 }
 
+func argsCanon(args []string) []any {
+	out := []any{}
+	for _, a := range args {
+		out = append(out, obj{"text": a})
+	}
+	return out
+}
+
+func eventCanon(e Event) obj {
+	fields := []any{}
+	for _, k := range sortedKeys(e) {
+		fields = append(fields, obj{"key": k, "value": e[k]})
+	}
+	return obj{"fields": fields}
+}
+
+func traceStepCanon(s TraceStep) obj {
+	o := obj{"verb": s.Verb, "args": argsCanon(s.Args), "actor": s.Actor, "hasReceipt": s.Receipt != nil, "receipt": eventCanon(s.Receipt), "model": s.Model, "state": stateCanon(s.State)}
+	if s.Refused != nil {
+		o["refused"] = *s.Refused
+	}
+	return o
+}
+
+func traceCanon(tr Trace) obj {
+	hashes := []any{}
+	for _, k := range sortedKeys(tr.ModelSHA256) {
+		hashes = append(hashes, obj{"module": k, "sha256": tr.ModelSHA256[k]})
+	}
+	steps := []any{}
+	for _, s := range tr.Steps {
+		steps = append(steps, traceStepCanon(s))
+	}
+	return obj{"sourceSha256": tr.SourceSHA256, "modelSha256": hashes, "initial": stateCanon(tr.Initial), "steps": steps}
+}
+
+func argsFromAny(x any) ([]string, error) {
+	arr, ok := x.([]any)
+	if !ok {
+		return nil, errors.New("trace: an argument list is not an array")
+	}
+	out := make([]string, 0, len(arr))
+	for _, a := range arr {
+		m, okm := a.(map[string]any)
+		text, okt := m["text"].(string)
+		if !okm || !okt {
+			return nil, errors.New("trace: an argument is not a text field")
+		}
+		out = append(out, text)
+	}
+	return out, nil
+}
+
+func eventFromAny(x any) (Event, error) {
+	m, ok := x.(map[string]any)
+	if !ok {
+		return nil, errors.New("trace: an event is not an object")
+	}
+	fields, okf := m["fields"].([]any)
+	if !okf {
+		return nil, errors.New("trace: an event has no fields")
+	}
+	out := Event{}
+	for _, f := range fields {
+		fm, okm := f.(map[string]any)
+		k, okk := fm["key"].(string)
+		v, okv := fm["value"].(string)
+		if !okm || !okk || !okv {
+			return nil, errors.New("trace: an event field has no key or value")
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+func traceStepFromAny(x any) (TraceStep, error) {
+	m, ok := x.(map[string]any)
+	if !ok {
+		return TraceStep{}, errors.New("trace: a step is not an object")
+	}
+	var s TraceStep
+	verb, okv := m["verb"].(string)
+	actor, oka := m["actor"].(string)
+	model, okm := m["model"].(string)
+	if !okv || !oka || !okm {
+		return TraceStep{}, errors.New("trace: a step has no verb, actor or model")
+	}
+	s.Verb = verb
+	s.Actor = actor
+	s.Model = model
+	args, err := argsFromAny(m["args"])
+	if err != nil {
+		return TraceStep{}, err
+	}
+	s.Args = args
+	if has, okh := m["hasReceipt"].(bool); okh && has {
+		e, err := eventFromAny(m["receipt"])
+		if err != nil {
+			return TraceStep{}, err
+		}
+		s.Receipt = e
+	}
+	if v, okr := m["refused"]; okr {
+		b, okb := v.(bool)
+		if !okb {
+			return TraceStep{}, errors.New("trace: refused is not boolean")
+		}
+		s.Refused = &b
+	}
+	sf, err := json.Marshal(m["state"])
+	if err != nil {
+		return TraceStep{}, err
+	}
+	st, err := stateFromCanon(sf)
+	if err != nil {
+		return TraceStep{}, err
+	}
+	s.State = st
+	return s, nil
+}
+
+// traceFromCanon is the canonical schema JSON's Trace value.
+func traceFromCanon(b []byte) (Trace, error) {
+	var o obj
+	if err := json.Unmarshal(b, &o); err != nil {
+		return Trace{}, err
+	}
+	tr := Trace{ModelSHA256: map[string]string{}}
+	src, ok := o["sourceSha256"].(string)
+	if !ok {
+		return Trace{}, errors.New("trace: no source hash")
+	}
+	tr.SourceSHA256 = src
+	for _, h := range o["modelSha256"].([]any) {
+		m := h.(map[string]any)
+		mod, okm := m["module"].(string)
+		sha, oks := m["sha256"].(string)
+		if !okm || !oks {
+			return Trace{}, errors.New("trace: a model hash has no module or sha256")
+		}
+		tr.ModelSHA256[mod] = sha
+	}
+	ini, err := json.Marshal(o["initial"])
+	if err != nil {
+		return Trace{}, err
+	}
+	if tr.Initial, err = stateFromCanon(ini); err != nil {
+		return Trace{}, err
+	}
+	for _, x := range o["steps"].([]any) {
+		s, err := traceStepFromAny(x)
+		if err != nil {
+			return Trace{}, err
+		}
+		tr.Steps = append(tr.Steps, s)
+	}
+	return tr, nil
+}
+
+// traceValue is the value a Trace codec loads.
+type traceValue struct{ tr Trace }
+
+// traceCodec is the strict read of a Trace record.
+var traceCodec = &schemaread.Codec[traceValue]{
+	Name:  "TRACE",
+	Help:  modelHelp,
+	Reset: func(v *traceValue) { v.tr = Trace{} },
+	Measure: func(wire []byte) error {
+		_, err := tablemodelwire.ModelTraceLoadMeasureReason(wire)
+		return err
+	},
+	LoadWire: func(v *traceValue, wire []byte) schemaread.Report {
+		var rep tablemodelwire.TableReport
+		b := new(tablemodelwire.ModelTraceBuilder)
+		if !b.Init() {
+			return malformedReport
+		}
+		defer b.Shutdown()
+		if !tablemodelwire.ModelTraceLoadBuilder(b, wire, &rep) || !b.Lock() {
+			return tableReport(rep, false)
+		}
+		tr, err := traceFromModel(b.AsConst())
+		if err != nil {
+			return malformedReport
+		}
+		v.tr = tr
+		return tableReport(rep, true)
+	},
+	LoadJSON: func(v *traceValue, text []byte) schemaread.Report {
+		var rep tablemodelwire.TableReport
+		b := new(tablemodelwire.ModelTraceBuilder)
+		if !b.Init() {
+			return malformedReport
+		}
+		defer b.Shutdown()
+		if !tablemodelwire.ModelTraceFromJson(b, text, &rep) || !b.Lock() {
+			return tableReport(rep, false)
+		}
+		tr, err := traceFromModel(b.AsConst())
+		if err != nil {
+			return malformedReport
+		}
+		v.tr = tr
+		return tableReport(rep, true)
+	},
+	Legacy: func(in []byte) bool {
+		var probe struct {
+			Steps []json.RawMessage `json:"steps"`
+		}
+		return json.Unmarshal(bytes.TrimSpace(in), &probe) == nil
+	},
+	LoadLegacy: func(v *traceValue, in []byte) schemaread.Report {
+		if err := json.Unmarshal(in, &v.tr); err != nil {
+			return malformedReport
+		}
+		return schemaread.Report{}
+	},
+	SaveWire: func(v *traceValue) []byte {
+		wire, err := traceWire(v.tr)
+		if err != nil {
+			return nil
+		}
+		return wire
+	},
+	SaveJSON: func(v *traceValue) []byte {
+		raw, _ := json.Marshal(traceCanon(v.tr))
+		return raw
+	},
+}
+
+// newTraceReader is a fresh strict reader of a Trace record, with its own
+// per-form counters.
+func newTraceReader() *schemaread.Reader[traceValue] { return schemaread.NewReader(traceCodec) }
+
+// traceFromModel is a loaded ModelTrace as the Trace value, via its canonical
+// JSON.
+func traceFromModel(m *tablemodelwire.ModelTrace) (Trace, error) {
+	n := tablemodelwire.ModelTraceToJsonMeasure(m)
+	if n < 0 {
+		return Trace{}, errors.New("trace: the image has no JSON")
+	}
+	buf := make([]byte, n)
+	if tablemodelwire.ModelTraceToJson(m, buf) != n {
+		return Trace{}, errors.New("trace: the image's JSON is not readable")
+	}
+	return traceFromCanon(buf)
+}
+
+// traceWire is a Trace's binary image (the table wire).
+func traceWire(tr Trace) ([]byte, error) {
+	canon, err := json.Marshal(traceCanon(tr))
+	if err != nil {
+		return nil, err
+	}
+	b := new(tablemodelwire.ModelTraceBuilder)
+	if !b.Init() {
+		return nil, errors.New("trace: cannot start the builder")
+	}
+	defer b.Shutdown()
+	var rep tablemodelwire.TableReport
+	if !tablemodelwire.ModelTraceFromJson(b, canon, &rep) || !b.Lock() {
+		return nil, errors.New("trace: a value builds no image")
+	}
+	root := b.AsConst()
+	n := tablemodelwire.ModelTraceMeasure(root)
+	if n < 0 {
+		return nil, errors.New("trace: the image has no wire")
+	}
+	buf := make([]byte, n)
+	if tablemodelwire.ModelTraceSave(root, buf) != n {
+		return nil, errors.New("trace: the wire is not writable")
+	}
+	return buf, nil
+}
+
 // stateWire is a State's binary image (the table wire).
 func stateWire(s State) ([]byte, error) {
 	canon, err := json.Marshal(stateCanon(s))

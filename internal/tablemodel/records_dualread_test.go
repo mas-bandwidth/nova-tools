@@ -89,6 +89,61 @@ func TestTableModelRecordsDualRead(t *testing.T) {
 	_, _, err = r.Read([]byte("abcd===="))
 	require.NotNil(t, refusal(t, err, "STATE"), "an invalid base64 text was read as a state")
 	require.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBase64))
+
+	// the replay Trace record (trace.json) reads alike from its binary image,
+	// its padded standard base64 and the legacy form, refused by name when
+	// damaged, counted per record and per form.
+	refused := false
+	twant := Trace{
+		SourceSHA256: "aaaabbbbccccdddd",
+		ModelSHA256:  map[string]string{"TableMachine.tla": "1111", "EpochMemberTable.tla": "2222"},
+		Initial:      want,
+		Steps: []TraceStep{
+			{Verb: "put", Args: []string{"t1", "r1"}, Actor: "w1", Refused: &refused,
+				Receipt: Event{"id": "1", "rev_before": "0", "members": `[{"k":"r1","to":"m1"}]`},
+				Model: "Put", State: want},
+			{Verb: "get", Args: []string{"t1", "r1"}, Actor: "w2", Model: "Get", State: want},
+		},
+	}
+	twire, err := traceWire(twant)
+	require.NoError(t, err)
+	tlegacy, err := json.Marshal(twant)
+	require.NoError(t, err)
+	tinputs := []struct {
+		form string
+		in   []byte
+	}{
+		{"binary", twire},
+		{"base64", []byte(base64.StdEncoding.EncodeToString(twire))},
+		{"legacy", tlegacy},
+	}
+	tr := newTraceReader()
+	for _, in := range tinputs {
+		v, _, err := tr.Read(in.in)
+		require.NoError(t, err, "%s: %v", in.form, err)
+		tassert.Equal(t, twant, v.tr, "a Trace reads alike from its %s", in.form)
+	}
+	tassert.Equal(t, uint64(1), tr.Counts().Reads(schemaread.FormBinary), "a trace read counted once under each form")
+	tassert.Equal(t, uint64(1), tr.Counts().Reads(schemaread.FormBase64), "a trace read counted once under each form")
+	tassert.Equal(t, uint64(1), tr.Counts().Reads(schemaread.FormLegacy), "a trace read counted once under each form")
+
+	tr = newTraceReader()
+	ttries := 0
+	for _, in := range tinputs {
+		for _, m := range damaged(in.in) {
+			v, _, err := tr.Read(m)
+			require.NotNil(t, refusal(t, err, "TRACE"), "%s: a damaged %s (%d bytes) was read as %v", "TRACE", in.form, len(m), v.tr)
+			tassert.Equal(t, Trace{}, v.tr, "a refused trace read hands back nothing")
+			ttries++
+		}
+	}
+	trefusals := uint64(0)
+	for k, n := range tr.Counts().Snapshot() {
+		if bytes.HasPrefix([]byte(k), []byte("refused_")) {
+			trefusals += n
+		}
+	}
+	tassert.Equal(t, uint64(ttries), trefusals, "every damaged trace read is counted as refused, by reason")
 }
 
 // refusal is err as the reader's named refusal of record name.
