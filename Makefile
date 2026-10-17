@@ -80,7 +80,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint mod-tidy preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp check clean darwin-timeout map new-rule new-verb clidoc roadmap schemawire-check schemawire-conformance
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint mod-tidy preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp check clean darwin-timeout map new-rule new-verb clidoc roadmap roadmap-check schemawire-check schemawire-conformance
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -118,6 +118,7 @@ help:
 	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
 	@echo "make clidoc      regenerate CLI.md reference blocks from tool help"
 	@echo "make roadmap     regenerate ROADMAP.md and FIXES.md from their sexp"
+	@echo "make roadmap-check refuse a ROADMAP.md that differs from what the sexp generates (run: make roadmap)"
 	@echo "make schemawire-check go generate every pkg/*wire package, then git diff --exit-code -- pkg schemas (schemas/README.md)"
 	@echo "make schemawire-conformance run the pinned schema compiler's Go oracle and wire fuzz over every unit in schemas/, bounded, and print the elapsed seconds"
 
@@ -225,6 +226,15 @@ clidoc:
 roadmap:
 	$(GO) run ./tools/roadmap --file docs/roadmap.sexp --out ROADMAP.md
 	$(GO) run ./tools/roadmap --kind fixes --file docs/fixes.sexp --out FIXES.md
+
+# roadmap-check holds the committed page to the data without writing into the
+# tree: it renders docs/roadmap.sexp to a temporary file and compares bytes, so
+# a hand edit or a sexp change that was not regenerated is refused.
+roadmap-check:
+	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
+	$(GO) run ./tools/roadmap --file docs/roadmap.sexp --out "$$tmp" >/dev/null || exit 1; \
+	cmp -s "$$tmp" ROADMAP.md || { echo "roadmap-check: ROADMAP.md differs from what tools/roadmap generates from docs/roadmap.sexp; run: make roadmap" >&2; exit 1; }
+	@echo "roadmap-check: OK"
 
 
 build:
