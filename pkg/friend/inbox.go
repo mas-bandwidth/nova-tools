@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -15,8 +16,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/answerwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // The daemon writes every card she holds (the finding of 2026-10-05: from about 18:59 the
@@ -507,24 +511,167 @@ type workerView struct {
 	} `json:"cards"`
 }
 
+// workerViewDoc is one read worker view and the region that holds its pointer
+// fields: the cards list's self-relative references point into region (the S2
+// shape pkg/schemaread reads, so a value is never copied out of its region).
+type workerViewDoc struct {
+	v      *answerwire.WorkerView
+	region []byte
+}
+
+// ViewHelp is the command a worker-view refusal points at: the writer's.
+const ViewHelp = "nova-sprint view worker --as <friend> --json"
+
+// workerViewMaxCards is the worker view's ceiling, the reader's bound for the
+// unbounded cards list (schemas/answer, the design's ceiling of 1024).
+const workerViewMaxCards = 1024
+
+// workerViewAligned is a scratch region aligned for the generated load.
+func workerViewAligned(n int64) []byte {
+	raw := make([]byte, n+63)
+	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
+	return raw[off : off+uintptr(n)]
+}
+
+// workerViewReportOf is a generated TableReport reduced to what the strict read
+// decides on.
+func workerViewReportOf(r *answerwire.TableReport) schemaread.Report {
+	return schemaread.Report{
+		Unknown: int(r.Unknown), KindMismatch: int(r.KindMismatch), Clamped: int(r.Clamped),
+		// a key given twice is ambiguous: refused, never last-wins
+		Malformed: r.Malformed || r.Duplicate > 0, Reason: r.Reason,
+	}
+}
+
+// newWorkerViewReader is the worker view's strict reader: the table wire, the
+// padded standard base64 of it, the schema JSON text, and the legacy form the
+// sprint server writes (nova-sprint view worker --json, S2), each read through
+// pkg/schemaread and refused by name when damaged, with a read counted per form.
+func newWorkerViewReader() *schemaread.Reader[workerViewDoc] {
+	fromJSON := func(text []byte, r *answerwire.TableReport) (*answerwire.WorkerView, []byte, bool) {
+		var b answerwire.WorkerViewBuilder
+		if !b.Init() || !answerwire.WorkerViewFromJson(&b, text, r) || !b.Lock() {
+			return nil, nil, false
+		}
+		return b.AsConst(), b.Region(), true
+	}
+	codec := &schemaread.Codec[workerViewDoc]{
+		Name: "WORKER VIEW",
+		Help: ViewHelp,
+		Reset: func(d *workerViewDoc) {
+			*d = workerViewDoc{}
+		},
+		Measure: func(wire []byte) error {
+			_, err := answerwire.WorkerViewLoadMeasureReason(wire)
+			return err
+		},
+		LoadWire: func(d *workerViewDoc, wire []byte) schemaread.Report {
+			n := answerwire.WorkerViewLoadMeasure(wire)
+			if n < 0 {
+				return schemaread.Report{Malformed: true}
+			}
+			var r answerwire.TableReport
+			d.region = workerViewAligned(n)
+			if d.v = answerwire.WorkerViewLoad(d.region, wire, &r); d.v == nil {
+				return schemaread.Report{Malformed: true}
+			}
+			return workerViewReportOf(&r)
+		},
+		LoadJSON: func(d *workerViewDoc, text []byte) schemaread.Report {
+			var r answerwire.TableReport
+			v, region, ok := fromJSON(text, &r)
+			if !ok {
+				return schemaread.Report{Malformed: true, Reason: r.Reason}
+			}
+			d.v, d.region = v, region
+			return workerViewReportOf(&r)
+		},
+		Legacy: func(in []byte) bool {
+			t := bytes.TrimLeft(in, " \t\r\n")
+			return len(t) > 0 && t[0] == '{' && bytes.Contains(t, []byte(`"schema":`))
+		},
+		LoadLegacy: func(d *workerViewDoc, text []byte) schemaread.Report {
+			var r answerwire.TableReport
+			v, region, ok := fromJSON(text, &r)
+			if !ok {
+				return schemaread.Report{Malformed: true, Reason: r.Reason}
+			}
+			d.v, d.region = v, region
+			return workerViewReportOf(&r)
+		},
+		Constraints: func(v *workerViewDoc, c *schemaread.Checker) {
+			c.Required("view", v.v != nil && v.v.ViewLength > 0)
+			if v.v != nil {
+				c.Bound("cards", int64(v.v.Cards.Count), 0, workerViewMaxCards)
+			}
+		},
+		SaveWire: func(d *workerViewDoc) []byte {
+			if d.v == nil {
+				return nil
+			}
+			n := answerwire.WorkerViewMeasure(d.v)
+			if n < 0 {
+				return nil
+			}
+			buf := make([]byte, n)
+			if answerwire.WorkerViewSave(d.v, buf) != n {
+				return nil
+			}
+			return buf
+		},
+		SaveJSON: func(d *workerViewDoc) []byte {
+			if d.v == nil {
+				return nil
+			}
+			n := answerwire.WorkerViewToJsonMeasure(d.v)
+			if n < 0 {
+				return nil
+			}
+			buf := make([]byte, n)
+			if answerwire.WorkerViewToJson(d.v, buf) != n {
+				return nil
+			}
+			return buf
+		},
+	}
+	return schemaread.NewReader(codec)
+}
+
 // ParseView reads the worker view's answer for this friend: each work card on her row, its job
-// the inbox directory its brief path names, and no brief (Why says so).
+// the inbox directory its brief path names, and no brief (Why says so). It reads
+// the view through newWorkerViewReader: the binary wire, the padded standard
+// base64 of it, the schema JSON text, or the legacy form the sprint server writes
+// (S2), refused by name when damaged and never read as absent, empty or zero.
 func ParseView(friend, out string) ([]HeldCard, error) {
-	var v workerView
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &v); err != nil {
-		return nil, fmt.Errorf("the worker view is not JSON: %v", err)
+	doc, _, err := newWorkerViewReader().Read([]byte(strings.TrimSpace(out)))
+	if err != nil {
+		return nil, fmt.Errorf("the worker view is not readable: %w", err)
 	}
-	if v.View != "worker" || v.As != friend || v.Kind != "friend" {
-		return nil, fmt.Errorf("the worker view is %s %q's (%s), not friend %q's", cmp.Or(v.View, "-"), v.As, cmp.Or(v.Kind, "-"), friend)
+	v := doc.v
+	if v == nil {
+		return nil, fmt.Errorf("the worker view is empty")
 	}
-	cards := make([]HeldCard, 0, len(v.Cards))
-	for _, c := range v.Cards {
-		dir, file := path.Split(c.Brief)
+	view := string(v.View[:v.ViewLength])
+	as := string(v.AsName[:v.AsNameLength])
+	kind := string(v.Kind[:v.KindLength])
+	if view != "worker" || as != friend || kind != "friend" {
+		return nil, fmt.Errorf("the worker view is %s %q's (%s), not friend %q's", cmp.Or(view, "-"), as, cmp.Or(kind, "-"), friend)
+	}
+	cards := make([]HeldCard, 0, v.Cards.Count)
+	for i := range v.Cards.Count {
+		c := v.Cards.At(i)
+		if c == nil {
+			continue
+		}
+		id := string(c.Id[:c.IdLength])
+		st := string(c.St[:c.StLength])
+		brief := string(c.Brief[:c.BriefLength])
+		dir, file := path.Split(brief)
 		job := path.Base(dir)
 		if file != "BRIEF.md" || path.Base(path.Dir(path.Clean(dir))) != "inbox" {
-			return nil, fmt.Errorf("the worker view gives card %s a brief that is no inbox/<job>/BRIEF.md: %q", c.ID, c.Brief)
+			return nil, fmt.Errorf("the worker view gives card %s a brief that is no inbox/<job>/BRIEF.md: %q", id, brief)
 		}
-		cards = append(cards, HeldCard{Card: c.ID, Job: job, Col: c.St, Why: ViewWhy})
+		cards = append(cards, HeldCard{Card: id, Job: job, Col: st, Why: ViewWhy})
 	}
 	return cards, nil
 }
