@@ -448,7 +448,9 @@ func bypassesIn(t *testing.T, f source, shadows, allowed map[string]bool) {
 	// is a writer nobody has read yet.
 	for _, imp := range f.parsed.Imports {
 		path := imp.Path.Value
-		if imp.Name != nil {
+		// A blank import binds no name, so nothing prints under it; its path is still
+		// held to the list below.
+		if imp.Name != nil && imp.Name.Name != "_" {
 			t.Errorf("%s: import %s %s is aliased; an aliased package prints under a name no check here looks for",
 				f.at(imp), imp.Name.Name, path)
 		}
