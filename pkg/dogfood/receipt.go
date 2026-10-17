@@ -1,22 +1,26 @@
 package dogfood
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/readregular"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // Receipt is one person saying: I ran this verb, on this day, on real work, and
@@ -266,11 +270,68 @@ func slug(s string) string {
 	return out
 }
 
-// ReadReceipts reads every receipt in a directory. A file holds one JSON
-// object per line, so a receipts directory written by hand — or appended to by
-// an older tool — reads the same as one Record wrote. Blank lines are skipped;
-// anything else that will not parse, or will not validate, comes back as a
-// failure naming the file and the line, and never as a quietly shorter ledger.
+// The dual read of the dogfood receipt (v1.5 aspect 13; the owner's rules S2
+// and S4, readers first): every receipt line reads alike from its table wire,
+// the padded standard base64 of that wire, or the legacy JSON form the writer
+// writes today (Record), through pkg/schemaread with the DogfoodReceipt table
+// of pkg/ledgerwire. The table load is installed into ReceiptWire by an
+// installer; until then a table image is refused as unknown_form.
+
+// ReceiptHelp is the command a receipt refusal points at.
+const ReceiptHelp = "nova-check record -h"
+
+// ReceiptLoad loads the DogfoodReceipt table wire into the receipt it reads.
+type ReceiptLoad func(wire []byte) (Receipt, schemaread.Report)
+
+// ReceiptWire is the DogfoodReceipt table load, installed by an installer; nil
+// until then. A nil load refuses the binary and base64 forms as unknown_form.
+var ReceiptWire atomic.Pointer[ReceiptLoad]
+
+var receiptRead = schemaread.NewReader(&schemaread.Codec[Receipt]{
+	Name:  "DOGFOOD_RECEIPT",
+	Help:  ReceiptHelp,
+	Forms: []byte{1, 3},
+	Reset: func(r *Receipt) { *r = Receipt{} },
+	LoadWire: func(v *Receipt, wire []byte) schemaread.Report {
+		w := ReceiptWire.Load()
+		if w == nil {
+			return schemaread.Report{Reason: schemaread.ReasonUnknownForm}
+		}
+		out, rep := (*w)(wire)
+		*v = out
+		return rep
+	},
+	Legacy: func(in []byte) bool {
+		t := bytes.TrimSpace(in)
+		return len(t) > 0 && t[0] == '{'
+	},
+	LoadLegacy: func(v *Receipt, in []byte) schemaread.Report {
+		d := json.NewDecoder(bytes.NewReader(in))
+		d.DisallowUnknownFields()
+		if err := d.Decode(v); err != nil {
+			return schemaread.Report{Malformed: true}
+		}
+		var extra json.RawMessage
+		if err := d.Decode(&extra); err != io.EOF {
+			return schemaread.Report{Malformed: true}
+		}
+		return schemaread.Report{}
+	},
+	Constraints: func(v *Receipt, c *schemaread.Checker) {
+		c.Required("tool", strings.TrimSpace(v.Tool) != "")
+		c.Required("verb", strings.TrimSpace(v.Verb) != "")
+		c.Required("by", strings.TrimSpace(v.By) != "")
+		c.Required("at", strings.TrimSpace(v.At) != "")
+		c.Required("notes", strings.TrimSpace(v.Notes) != "")
+		c.Bound("issue", int64(v.Issue), 0, math.MaxInt64)
+	},
+})
+
+// ReadReceipts reads every receipt in a directory. A file holds one receipt
+// per line: the legacy JSON form, the padded standard base64 of the table
+// wire, or the wire itself. Blank lines are skipped; anything else that will
+// not parse, or will not validate, comes back as a failure naming the file and
+// the line, and never as a quietly shorter ledger.
 //
 // The directory is read shallowly: subdirectories are somebody else's records.
 func ReadReceipts(dir string) ([]Receipt, []Failure, error) {
@@ -314,40 +375,36 @@ func ReadReceipts(dir string) ([]Receipt, []Failure, error) {
 			failures = append(failures, Failure{Subject: path, Reason: fmt.Sprintf("unreadable: %v", err)})
 			continue
 		}
-		for i, raw := range strings.Split(string(data), "\n") {
-			if strings.TrimSpace(raw) == "" {
-				continue
-			}
-			subject := fmt.Sprintf("%s:%d", path, i+1)
-			var r Receipt
-			dec := json.NewDecoder(strings.NewReader(raw))
-			dec.DisallowUnknownFields()
-			if err := dec.Decode(&r); err != nil {
-				failures = append(failures, Failure{Subject: subject, Reason: fmt.Sprintf("not a receipt: %v", err)})
-				continue
-			}
-			// One JSON object per line, then nothing but whitespace: a second
-			// object or garbage after the object is evidence the parser has
-			// not read, and accepting it would let that evidence vanish from
-			// the gate instead of failing by name (ReadReceipts's contract;
-			// docs/STANDARD.md sections 2 and 3, no silent failure). The
-			// second Decode runs to io.EOF over the whitespace tail, so only a
-			// line holding exactly one object reads as a receipt.
-			var extra json.RawMessage
-			if err := dec.Decode(&extra); err != io.EOF {
-				reason := "not a receipt: garbage follows the object"
-				if err == nil {
-					reason = "not a receipt: a second JSON object follows the first"
-				}
-				failures = append(failures, Failure{Subject: subject, Reason: reason})
-				continue
+		// A text file reads one receipt per line; a binary or base64 file
+		// holds one receipt whole (the wire may carry a newline byte, so it
+		// cannot be line-split). Both read through the same named reader.
+		readOne := func(subject string, raw []byte) {
+			r, _, err := receiptRead.Read(raw)
+			if err != nil {
+				// A line that is no receipt stays a named refusal: the line
+				// and the reason, never a quietly shorter ledger
+				// (ReadReceipts's contract; docs/STANDARD.md sections 2 and 3,
+				// no silent failure).
+				failures = append(failures, Failure{Subject: subject, Reason: err.Error()})
+				return
 			}
 			if errs := r.Validate(); len(errs) > 0 {
-				failures = append(failures, Failure{Subject: subject, Reason: errs[0].Error()})
-				continue
+				failures = append(failures, Failure{Subject: subject,
+					Reason: fmt.Sprintf("DOGFOOD_RECEIPT REFUSED: %s; run: %s", errs[0].Error(), ReceiptHelp)})
+				return
 			}
 			r.File = subject
 			receipts = append(receipts, r)
+		}
+		if len(bytes.TrimSpace(data)) > 0 && bytes.TrimSpace(data)[0] == '{' {
+			for i, raw := range strings.Split(string(data), "\n") {
+				if strings.TrimSpace(raw) == "" {
+					continue
+				}
+				readOne(fmt.Sprintf("%s:%d", path, i+1), []byte(raw))
+			}
+		} else {
+			readOne(fmt.Sprintf("%s:1", path), bytes.TrimSpace(data))
 		}
 	}
 	return receipts, failures, nil
