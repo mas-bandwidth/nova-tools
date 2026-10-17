@@ -16,6 +16,14 @@ paths are written with placeholders, since a doc names no person, friend or mach
 coordinator's name, `<seat-home>` its working directory, `<seat-bin>` the `bin/` there, `<workshop-bin>` the
 `bin/` of the coordinator's own tool repository, `<m>` the coordinator machine, `<friend>` a friend.
 
+**v1.4.8 (the owner, 2026-10-16).** Run `nova-sprint check` and fix every finding before `nova-sprint start`:
+start refuses while check finds a violation, and prints the first ones. Keep the hook answered: the heartbeat
+challenges the coordinator every 10 minutes, whatever it sends on the bus, and a challenge left unanswered past
+its 5-minute bound unhooks it; every sprint verb then refuses with the hook-in line until
+`nova-hook hook --as <seat> --role coordinator` runs again under a Monitor and receives pushes. A fleet attempt
+the sync reaps with its row from a finished, ok, failed or defect cell is no check finding. Each of these gates
+carries the comment DO NOT REMOVE THIS WITHOUT GLENN'S EXPLICIT PERMISSION.
+
 ## How the list was made
 
 On the coordinator machine, 2026-10-04: every `com.nova.*` unit in `~/Library/LaunchAgents` that

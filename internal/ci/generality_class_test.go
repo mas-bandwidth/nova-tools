@@ -118,6 +118,7 @@ var reGoGenerateRun = regexp.MustCompile(`(?m)^//go:generate go run ([^\s@]+)@\S
 var englishPhrases = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(?:leave|leaves|leaving|left|disk|free|frees|freeing|freed|enough|more|no|blank|white|trailing|leading|single|double|extra|some|much|little|of)\s+(space)\b`),
 	regexp.MustCompile(`(?i)\buntil\s+(space)\s+exists\b`),
+	regexp.MustCompile(`\bDO NOT REMOVE THIS WITHOUT (GLENN)'S EXPLICIT PERMISSION\b`), // the owner's own words, verbatim (2026-10-16)
 	regexp.MustCompile(`(?i)\b(space)(?:\s+(?:for|between|left|after|before|around|bar|character|characters|than|on\s+disk|to\s+spare)\b|-separated|-delimited)`),
 }
 
