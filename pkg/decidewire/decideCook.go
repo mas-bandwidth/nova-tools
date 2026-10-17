@@ -227,7 +227,7 @@ func init() {
 	tableCookLayoutOffset("RawTokensRow.CacheWriteTokens", unsafe.Offsetof(RawTokensRow{}.CacheWriteTokens), 48)
 	tableCookLayoutOffset("RawTokensRow.CacheReadTokens", unsafe.Offsetof(RawTokensRow{}.CacheReadTokens), 64)
 	tableCookLayoutOffset("RawTokensRow.ReasoningTokens", unsafe.Offsetof(RawTokensRow{}.ReasoningTokens), 80)
-	tableCookLayoutSize("RawUsageRow", unsafe.Sizeof(RawUsageRow{}), 36736)
+	tableCookLayoutSize("RawUsageRow", unsafe.Sizeof(RawUsageRow{}), 24)
 	tableCookLayoutSize("RawUsageRow alignment", unsafe.Alignof(RawUsageRow{}), 8)
 	tableCookLayoutOffset("RawUsageRow.Version", unsafe.Offsetof(RawUsageRow{}.Version), 0)
 	tableCookLayoutOffset("RawUsageRow.Records", unsafe.Offsetof(RawUsageRow{}.Records), 8)
@@ -414,10 +414,10 @@ func init() {
 		},
 	}
 	tableCookRecords[13] = TableCookInfo{
-		Name: "RawUsage", Size: 36736, Align: 8, NumFields: 2,
+		Name: "RawUsage", Size: 24, Align: 8, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "version", Offset: 0, Size: 4, ElemSize: 4, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
-			{Name: "records", Offset: 8, Size: 36724, ElemSize: 136, IsArray: true, ArrayBound: 270, IsPointer: false, CountOffset: 36728, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "records", Offset: 8, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
 	tableCookRecords[14] = TableCookInfo{
@@ -1919,7 +1919,7 @@ type RawUsageCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c RawUsageCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c RawUsageCook) RootSize() int64        { return 36736 }
+func (c RawUsageCook) RootSize() int64        { return 24 }
 func (c RawUsageCook) RootAlign() int64       { return 8 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
@@ -1966,7 +1966,7 @@ func (cook *RawUsageCook) Open(base unsafe.Pointer, length int64) error {
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 36736 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 24 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -2207,7 +2207,7 @@ func FrameAt(slot *int64, arena ...*TableArena) *FrameRow {
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 func (c FrameCook) Type() *TableCookInfo { return &tableCookRecords[4] }
 
-const tableCookBuildVersion uint64 = 0x94bad44d9e33750e
+const tableCookBuildVersion uint64 = 0x23d7e97c4116d1b2
 
 // TableByteOrder selects the target order, independently of the writing host.
 type TableByteOrder uint8

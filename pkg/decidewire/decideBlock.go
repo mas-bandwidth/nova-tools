@@ -634,7 +634,7 @@ func (b *RawTokensBlock) Type() *TableBlockInfo { return &tableBlockRecords[0] }
 // Its wire (§3) is unaffected — only this projection is absent, and it is
 // absent by construction rather than by refusal.
 
-// table RawUsage has NO block form: it is VARIABLE-LENGTH: RawRecord.harness is a pointer, and a pointer in the by-value closure means no fixed pitch anywhere in it (mas-bandwidth/schema docs/SPEC-TABLES.md §19).
+// table RawUsage has NO block form: it is VARIABLE-LENGTH: RawUsage.records is an unbounded array, and its elements are an extent inside the holder's own node, so there is no fixed pitch anywhere in it (mas-bandwidth/schema docs/SPEC-TABLES.md §19).
 // Its wire (§3) is unaffected — only this projection is absent, and it is
 // absent by construction rather than by refusal.
 

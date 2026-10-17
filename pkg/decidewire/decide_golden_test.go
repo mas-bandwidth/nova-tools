@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -31,6 +32,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -238,15 +240,14 @@ func rawRecordRules(v *RawRecord, k chk) {
 	rawTokensRules(&v.Tokens, k)
 }
 
-// rawUsageRules: version 1 and at least one record (raw.go:47), at most 270
-// (MaxRawBytes, raw.go:21, over a 120-byte smallest record).
+// rawUsageRules: version 1 and at least one record (raw.go:47). The code
+// bounds the envelope by bytes (MaxRawBytes, raw.go:21, enforced at raw.go:72
+// and raw.go:80), never by record count, so the list has no count bound here;
+// the byte rule is tested through cardcost at its boundary.
 func rawUsageRules(v *RawUsage, k chk) {
 	k.span("version", int64(v.Version), 1, 1)
-	k.c.Required("records", v.RecordsCount > 0)
-	k.span("records", int64(v.RecordsCount), 0, int64(len(v.Records)))
-	for i := 0; i < int(v.RecordsCount) && i < len(v.Records); i++ {
-		rawRecordRules(&v.Records[i], k)
-	}
+	k.c.Required("records", v.Records.Count > 0)
+	RawUsageRecordsEach(&v.Records, func(r *RawRecord) bool { rawRecordRules(r, k); return true }, k.ar...)
 }
 
 func stagePathRules(v *StagePath, k chk) { k.must("path", &v.Path) }
@@ -593,9 +594,44 @@ func fillRawRecord(w *TableWorker, r *RawRecord) {
 func fillRawUsage(w *TableWorker, r *RawUsage, records int) {
 	r.Version = 1
 	for i := 0; i < records; i++ {
-		fillRawRecord(w, &r.Records[i])
+		fillRawRecord(w, RawUsageRecordsAdd(w, &r.Records))
 	}
-	r.RecordsCount = int32(records)
+}
+
+// rawEnvelope is a cardcost envelope of records identical records, the last
+// one's producer_version padded by pad bytes.
+func rawEnvelope(records, pad int) *cardcost.RawUsage {
+	u := &cardcost.RawUsage{Version: cardcost.RawVersion}
+	for i := 0; i < records; i++ {
+		u.Records = append(u.Records, cardcost.RawRecord{Harness: "muse", Execution: "fleet", SourceSchema: "muse-jsonl-v1",
+			ProducerVersion: "1.4.2", Billing: cardcost.BillingPlan, Tokens: map[string]int64{"input_tokens": 4096, "output_tokens": 0}})
+	}
+	u.Records[records-1].ProducerVersion += strings.Repeat("x", pad)
+	return u
+}
+
+// rawEnvelopeBytes is the size of the envelope's JSON, the quantity
+// MaxRawBytes bounds (raw.go:72).
+func rawEnvelopeBytes(t *testing.T, u *cardcost.RawUsage) int {
+	t.Helper()
+	b, err := json.Marshal(u)
+	require.NoError(t, err)
+	return len(b)
+}
+
+// fillRawUsageFrom fills the table from a cardcost envelope, field for field.
+func fillRawUsageFrom(w *TableWorker, r *RawUsage, u *cardcost.RawUsage) {
+	r.Version = uint32(u.Version)
+	for _, rec := range u.Records {
+		row := RawUsageRecordsAdd(w, &r.Records)
+		setS(w, &row.Harness, rec.Harness)
+		setS(w, &row.Execution, rec.Execution)
+		setS(w, &row.SourceSchema, rec.SourceSchema)
+		setS(w, &row.ProducerVersion, rec.ProducerVersion)
+		row.Billing = BillingPlan
+		row.Tokens.InputTokens, row.Tokens.InputTokensPresent = rec.Tokens["input_tokens"], true
+		row.Tokens.OutputTokens, row.Tokens.OutputTokensPresent = rec.Tokens["output_tokens"], true
+	}
 }
 
 // fillFrame fills a frame with stage staged recipes and a why of whyBytes.
@@ -896,20 +932,49 @@ func TestDecideRecordsGolden(t *testing.T) {
 		exerciseVar(t, raw, func(b *RawUsageBuilder, r *RawUsage) { fillRawUsage(&b.Main, r, 2) }, []vbound[RawUsage, *RawUsageBuilder]{
 			{"version two", "version", "clamped", func(_ *RawUsageBuilder, r *RawUsage) { r.Version = 2 }},
 			{"version zero", "version", "clamped", func(_ *RawUsageBuilder, r *RawUsage) { r.Version = 0 }},
-			{"no records", "records", "absent_required", func(_ *RawUsageBuilder, r *RawUsage) { r.RecordsCount = 0 }},
-			{"271 records", "records", "clamped", func(_ *RawUsageBuilder, r *RawUsage) { r.RecordsCount = 271 }},
-			{"a record's harness not muse", "harness", "malformed", func(b *RawUsageBuilder, r *RawUsage) { setS(&b.Main, &r.Records[1].Harness, "x") }},
+			{"no records", "records", "absent_required", func(_ *RawUsageBuilder, r *RawUsage) { r.Records.Count = 0 }},
+			{"a record's harness not muse", "harness", "malformed", func(b *RawUsageBuilder, r *RawUsage) { setS(&b.Main, &r.Records.At(1, &b.Arena).Harness, "x") }},
 		})
-		// The most records the envelope's byte cap allows.
+		// The code bounds the envelope by bytes, not by records (raw.go:21,
+		// :72, :80): find the most records whose JSON fits MaxRawBytes, pad the
+		// last producer_version to exactly MaxRawBytes, and test the rule at its
+		// boundary through the code.
+		n := 1
+		for rawEnvelopeBytes(t, rawEnvelope(n+1, 0)) <= cardcost.MaxRawBytes {
+			n++
+		}
+		t.Logf("%d records fill an envelope of at most %d bytes", n, cardcost.MaxRawBytes)
+		atCap := rawEnvelope(n, cardcost.MaxRawBytes-rawEnvelopeBytes(t, rawEnvelope(n, 0)))
+		require.Equal(t, cardcost.MaxRawBytes, rawEnvelopeBytes(t, atCap))
+		text, err := cardcost.EncodeRaw(atCap)
+		require.NoError(t, err, "an envelope of exactly MaxRawBytes is accepted")
+		back, err := cardcost.DecodeRaw(text)
+		require.NoError(t, err)
+		assert.Equal(t, atCap, back)
+		over := rawEnvelope(n, cardcost.MaxRawBytes-rawEnvelopeBytes(t, rawEnvelope(n, 0))+1)
+		require.Equal(t, cardcost.MaxRawBytes+1, rawEnvelopeBytes(t, over))
+		_, err = cardcost.EncodeRaw(over)
+		require.ErrorContains(t, err, "exceeds", "one byte more than MaxRawBytes is refused")
+		overJSON, err := json.Marshal(over)
+		require.NoError(t, err)
+		_, err = cardcost.DecodeRaw(base64.RawURLEncoding.EncodeToString(overJSON))
+		require.ErrorContains(t, err, "too large", "DecodeRaw refuses one byte more")
+		// The table holds no count: the envelope at the cap, the same records
+		// past it and a thousand all round-trip in every form.
 		rd := schemaread.NewReader(raw.codec())
-		w := raw.fresh()
-		fillRawUsage(&w.Main, w.GetRoot(), 270)
-		for _, form := range allForms {
-			image, err := rd.Write(&w, form)
-			require.NoError(t, err)
-			got, _, err := rd.Read(image)
-			require.NoError(t, err)
-			assert.EqualValues(t, 270, raw.root(got).RecordsCount)
+		for _, u := range []*cardcost.RawUsage{atCap, over, rawEnvelope(1000, 0)} {
+			w := raw.fresh()
+			fillRawUsageFrom(&w.Main, w.GetRoot(), u)
+			for _, form := range allForms {
+				image, err := rd.Write(&w, form)
+				require.NoError(t, err, "%d records as %s", len(u.Records), form)
+				got, _, err := rd.Read(image)
+				require.NoError(t, err, "%d records as %s", len(u.Records), form)
+				root := raw.root(got)
+				require.EqualValues(t, len(u.Records), root.Records.Count)
+				last := root.Records.At(root.Records.Count-1, &got.Arena)
+				assert.Equal(t, u.Records[len(u.Records)-1].ProducerVersion, string(TableStringAt(&last.ProducerVersion, &got.Arena).Data))
+			}
 		}
 	})
 	t.Run("StagePath", func(t *testing.T) {

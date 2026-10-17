@@ -9443,10 +9443,7 @@ func (b *RawRecordBuilder) Shutdown() {
 // the value already holds. The reader calls it before overlaying.
 func RawUsageReset(value *RawUsage) {
 	value.Version = 0
-	for i := range value.Records {
-		RawRecordReset(&value.Records[i])
-	}
-	value.RecordsCount = 0
+	value.Records = TableList[RawRecordRow]{}
 }
 
 func RawUsageMeasureBody(value *RawUsage, ids *TableIds) int64 {
@@ -9474,24 +9471,28 @@ func RawUsageSaveBodyFields(w *TableWriter, value *RawUsage) bool {
 		}
 	}
 	{
-		if value.RecordsCount < 0 || value.RecordsCount > 270 {
+		if value.Records.Count < 0 {
 			return false
 		}
-		if value.RecordsCount > 0 {
+		if value.Records.Count > 0 {
 			if ref := w.Ids.refAtHit(56, 0xa281d6f1b14296ed); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
-			if value.RecordsCount < 0 || value.RecordsCount > 270 {
+			if value.Records.Count < 0 {
 				return false
 			}
 			{
 				mark := w.Ids.Count
 				payload24 := TableWriter{Measuring: true, Ids: w.Ids}
-				pairs := uint64(0)
-				for i := 0; i < int(value.RecordsCount); i++ {
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Records)), int64(unsafe.Sizeof(*new(RawRecordRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Records.Count; i++ {
+					p := (*RawRecordRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
 					{
 						mark := payload24.Ids.Count
-						n := RawRecordMeasureBody(&value.Records[i], payload24.Ids)
+						n := RawRecordMeasureBody(&(*p), payload24.Ids)
 						if n < 0 {
 							return false
 						}
@@ -9502,17 +9503,16 @@ func RawUsageSaveBodyFields(w *TableWriter, value *RawUsage) bool {
 							payload24.Advance(n)
 						} else {
 							payload24.Ids.Truncate(mark)
-							if !RawRecordSaveBody(&payload24, &value.Records[i]) {
+							if !RawRecordSaveBody(&payload24, &(*p)) {
 								return false
 							}
 						}
 					}
-					pairs++
 				}
 				if payload24.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(pairs) + payload24.Offset
+				n := int64(1) + tableLebBytes(uint64(value.Records.Count)) + payload24.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -9521,13 +9521,18 @@ func RawUsageSaveBodyFields(w *TableWriter, value *RawUsage) bool {
 				} else {
 					w.Ids.Truncate(mark)
 					w.Put8(13)
-					if !w.putLebPair(pairs) {
-						w.putLebWide(pairs)
+					if !w.putLebPair(uint64(value.Records.Count)) {
+						w.putLebWide(uint64(value.Records.Count))
 					}
-					for i := 0; i < int(value.RecordsCount); i++ {
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Records)), int64(unsafe.Sizeof(*new(RawRecordRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Records.Count; i++ {
+						p := (*RawRecordRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
 						{
 							mark := w.Ids.Count
-							n := RawRecordMeasureBody(&value.Records[i], w.Ids)
+							n := RawRecordMeasureBody(&(*p), w.Ids)
 							if n < 0 {
 								return false
 							}
@@ -9538,7 +9543,7 @@ func RawUsageSaveBodyFields(w *TableWriter, value *RawUsage) bool {
 								w.Advance(n)
 							} else {
 								w.Ids.Truncate(mark)
-								if !RawRecordSaveBody(w, &value.Records[i]) {
+								if !RawRecordSaveBody(w, &(*p)) {
 									return false
 								}
 							}
@@ -9641,25 +9646,39 @@ func RawUsageLoadBody(r *TableReader, value *RawUsage) bool {
 				sub.Offset = header.Offset
 				if !ok {
 					r.Report.Malformed = true
-				} else {
-					if elemKind != 13 {
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
 						r.Report.KindMismatch++
 						break
 					}
-					keep := count
-					if keep > 270 {
-						keep = 270
-						r.Report.Clamped++
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Records))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(RawRecordRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
 					}
-					previous := value.RecordsCount
-					decoded := int32(0)
-					for i := uint64(0); i < keep; i++ {
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*RawRecordRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(RawRecordRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
 						elem, ok := sub.Body()
 						if !ok {
 							r.Report.Malformed = true
 							break
 						}
-						RawRecordLoadBody(&elem, &value.Records[i])
+						RawRecordLoadBody(&elem, p)
 						sub.Take(elem)
 						if sub.Nodes.Carve.Refused {
 							r.Nodes.Carve = sub.Nodes.Carve
@@ -9667,19 +9686,24 @@ func RawUsageLoadBody(r *TableReader, value *RawUsage) bool {
 						}
 						if elem.Offset != int64(len(elem.Buffer)) {
 							r.Report.Malformed = true
-							RawRecordReset(&value.Records[i])
+							RawRecordReset(p)
 						}
-						decoded = int32(i + 1)
+						landed = true
 					}
-					for i := decoded; i < previous; i++ {
-						RawRecordReset(&value.Records[i])
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
 					}
-					value.RecordsCount = decoded
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
 				}
-			}
-			r.Take(sub)
-			if r.Nodes.Carve.Refused {
-				return false
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
 			}
 		case 0xffffffffffffffff:
 			if !r.Skip(kind) {
@@ -9736,27 +9760,31 @@ func RawUsageSaveBodyFieldsRetain(w *TableRetainWriter, value *RawUsage) bool {
 		}
 	}
 	{
-		if value.RecordsCount < 0 || value.RecordsCount > 270 {
+		if value.Records.Count < 0 {
 			return false
 		}
-		if value.RecordsCount > 0 {
+		if value.Records.Count > 0 {
 			if ref := w.Ids.refAtHit(56, 0xa281d6f1b14296ed); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
-			if value.RecordsCount < 0 || value.RecordsCount > 270 {
+			if value.Records.Count < 0 {
 				return false
 			}
 			{
 				mark := w.Ids.Count
 				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
-				pairs := uint64(0)
-				for i := 0; i < int(value.RecordsCount); i++ {
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Records)), int64(unsafe.Sizeof(*new(RawRecordRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Records.Count; i++ {
+					p := (*RawRecordRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
 					{
 						payload3 := payload1.Ids.Path
 						payload1.Ids.Path = payload3.step(1, uint32(i))
 						{
 							mark := payload1.Ids.Count
-							n := RawRecordMeasureBodyRetain(&value.Records[i], payload1.Ids)
+							n := RawRecordMeasureBodyRetain(&(*p), payload1.Ids)
 							if n < 0 {
 								return false
 							}
@@ -9767,19 +9795,18 @@ func RawUsageSaveBodyFieldsRetain(w *TableRetainWriter, value *RawUsage) bool {
 								payload1.Advance(n)
 							} else {
 								payload1.Ids.Truncate(mark)
-								if !RawRecordSaveBodyRetain(&payload1, &value.Records[i]) {
+								if !RawRecordSaveBodyRetain(&payload1, &(*p)) {
 									return false
 								}
 							}
 						}
 						payload1.Ids.Path = payload3
 					}
-					pairs++
 				}
 				if payload1.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(pairs) + payload1.Offset
+				n := int64(1) + tableLebBytes(uint64(value.Records.Count)) + payload1.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -9788,16 +9815,21 @@ func RawUsageSaveBodyFieldsRetain(w *TableRetainWriter, value *RawUsage) bool {
 				} else {
 					w.Ids.Truncate(mark)
 					w.Put8(13)
-					if !w.putLebPair(pairs) {
-						w.putLebWide(pairs)
+					if !w.putLebPair(uint64(value.Records.Count)) {
+						w.putLebWide(uint64(value.Records.Count))
 					}
-					for i := 0; i < int(value.RecordsCount); i++ {
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Records)), int64(unsafe.Sizeof(*new(RawRecordRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Records.Count; i++ {
+						p := (*RawRecordRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
 						{
 							payload5 := w.Ids.Path
 							w.Ids.Path = payload5.step(1, uint32(i))
 							{
 								mark := w.Ids.Count
-								n := RawRecordMeasureBodyRetain(&value.Records[i], w.Ids)
+								n := RawRecordMeasureBodyRetain(&(*p), w.Ids)
 								if n < 0 {
 									return false
 								}
@@ -9808,7 +9840,7 @@ func RawUsageSaveBodyFieldsRetain(w *TableRetainWriter, value *RawUsage) bool {
 									w.Advance(n)
 								} else {
 									w.Ids.Truncate(mark)
-									if !RawRecordSaveBodyRetain(w, &value.Records[i]) {
+									if !RawRecordSaveBodyRetain(w, &(*p)) {
 										return false
 									}
 								}
@@ -9917,27 +9949,41 @@ func RawUsageLoadBodyRetain(r *TableRetainReader, value *RawUsage) bool {
 				sub.Offset = header.Offset
 				if !ok {
 					r.Report.Malformed = true
-				} else {
-					if elemKind != 13 {
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
 						r.Report.KindMismatch++
 						break
 					}
-					r.Retain.discard(r.Path, true, 1)
-					keep := count
-					if keep > 270 {
-						keep = 270
-						r.Report.Clamped++
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 1)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Records))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(RawRecordRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
 					}
-					previous := value.RecordsCount
-					decoded := int32(0)
-					for i := uint64(0); i < keep; i++ {
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*RawRecordRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(RawRecordRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
 						elem, ok := sub.Body()
 						if !ok {
 							r.Report.Malformed = true
 							break
 						}
 						elem.Path = r.Path.step(1, uint32(i))
-						RawRecordLoadBodyRetain(&elem, &value.Records[i])
+						RawRecordLoadBodyRetain(&elem, p)
 						sub.Take(elem)
 						if sub.Nodes.Carve.Refused {
 							r.Nodes.Carve = sub.Nodes.Carve
@@ -9945,19 +9991,24 @@ func RawUsageLoadBodyRetain(r *TableRetainReader, value *RawUsage) bool {
 						}
 						if elem.Offset != int64(len(elem.Buffer)) {
 							r.Report.Malformed = true
-							RawRecordReset(&value.Records[i])
+							RawRecordReset(p)
 						}
-						decoded = int32(i + 1)
+						landed = true
 					}
-					for i := decoded; i < previous; i++ {
-						RawRecordReset(&value.Records[i])
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
 					}
-					value.RecordsCount = decoded
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
 				}
-			}
-			r.Take(sub)
-			if r.Nodes.Carve.Refused {
-				return false
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
 			}
 		case 0xffffffffffffffff:
 			if !r.Skip(kind) {
@@ -10091,6 +10142,27 @@ func (b *RawUsageBuilder) Shutdown() {
 	b.region = nil
 	b.allocation = nil
 	b.root = 0
+}
+func RawUsageRecordsAdd(worker *TableWorker, holder *TableList[RawRecordRow]) *RawRecordRow {
+	p := (*RawRecordRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(RawRecordRow)))))
+	if p == nil {
+		return nil
+	}
+	RawRecordReset(p)
+	return p
+}
+func RawUsageRecordsErase(arena *TableArena, holder *TableList[RawRecordRow], element *RawRecordRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func RawUsageRecordsEach(holder *TableList[RawRecordRow], visit func(*RawRecordRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(RawRecordRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*RawRecordRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
 }
 
 // StagePathReset restores StagePath's declared defaults in place, reusing the storage
@@ -13433,9 +13505,10 @@ var RawUsageTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "records", Json: "records", TypeName: "RawRecord", DeclaredTypeName: "RawRecord", Id: 0xa281d6f1b14296ed, Kind: 13, IsArray: true, Counted: true, Optional: false,
-		ArrayBound: 270, Offset: uint32(unsafe.Offsetof(RawUsage{}.Records)), ElemSize: uint32(unsafe.Sizeof(RawUsage{}.Records[0])), CountOffset: uint32(unsafe.Offsetof(RawUsage{}.RecordsCount)), PresentOffset: 0xffffffff,
-		CookOffset: 8, CookElemSize: 136, CookCountOffset: 36728, CookPresentOffset: 4294967295,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(RawUsage{}.Records)), ElemSize: uint32(unsafe.Sizeof(*new(RawRecordRow))), CountOffset: (uint32(unsafe.Offsetof(RawUsage{}.Records))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 136, CookCountOffset: 16, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
 		VariantId:   nil,
@@ -13449,7 +13522,7 @@ var RawUsageTableFields = []TableFieldInfo{
 var RawUsageTableInfo TableTypeInfo
 
 func init() {
-	RawUsageTableInfo = TableTypeInfo{Name: "RawUsage", Size: uint32(unsafe.Sizeof(RawUsage{})), NumFields: 2, Fields: RawUsageTableFields, Reset: func(storage unsafe.Pointer) { RawUsageReset((*RawUsage)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x2bbda1b32163c634, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return RawUsageSaveBody(w, (*RawUsage)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return RawUsageLoadBody(&r, (*RawUsage)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return RawUsageSaveBodyRetain(w, (*RawUsage)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return RawUsageLoadBodyRetain(&r, (*RawUsage)(p)) }, CookSize: 36736, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+	RawUsageTableInfo = TableTypeInfo{Name: "RawUsage", Size: uint32(unsafe.Sizeof(RawUsage{})), NumFields: 2, Fields: RawUsageTableFields, Reset: func(storage unsafe.Pointer) { RawUsageReset((*RawUsage)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x2bbda1b32163c634, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return RawUsageSaveBody(w, (*RawUsage)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return RawUsageLoadBody(&r, (*RawUsage)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return RawUsageSaveBodyRetain(w, (*RawUsage)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return RawUsageLoadBodyRetain(&r, (*RawUsage)(p)) }, CookSize: 24, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
 		switch id {
 		}
 		return nil

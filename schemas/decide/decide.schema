@@ -184,13 +184,18 @@ table RawRecord
 }
 
 // RawUsage: cardcost RawUsage. Validate (raw.go:47) holds version to 1 and at
-// least one record; MaxRawBytes (raw.go:21, 32768) bounds the JSON envelope,
-// and the smallest valid record is 120 bytes of JSON, so a valid envelope holds
-// at most 270 records.
+// least one record; that is an equality, not a range (a range excluding zero
+// needs a default that would hide an absent version), so the reader holds it and
+// the declared range is the type's. The code bounds the list by bytes, never by count:
+// MaxRawBytes (raw.go:21, 32768) caps the JSON envelope EncodeRaw writes
+// (raw.go:72) and DecodeRaw reads (raw.go:80), so how many records fit depends
+// on the size of each. The list is therefore open-ended and the table variable;
+// the byte cap is held by cardcost where the envelope is written, and the golden
+// test pins it at its boundary through EncodeRaw.
 table RawUsage
 {
-    version uint32           | min = 0, max = 4294967295
-    records [..270]RawRecord
+    version uint32 | min = 0, max = 4294967295
+    records []RawRecord
 }
 
 // ---- the card contract file (pkg/cardcontract/contract.go) ----

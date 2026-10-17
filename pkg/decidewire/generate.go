@@ -3,8 +3,9 @@
 // Outcome, Act, RecordLine), the attempt decision (a Decision), the decision's
 // answers, usage and card line (Answer, Usage, Decided), the import's log line
 // (ImportLogLine), the raw card cost (RawUsage, RawRecord, RawTokens) and the
-// card contract frame (Frame). All are FIXED tables. Every other .go file here
-// is generated: edit the .schema and run go generate ./pkg/decidewire, never the
+// card contract frame (Frame). Usage and RawTokens are FIXED tables; every
+// other table holds text or a list the code does not bound and is VARIABLE.
+// Every other .go file here is generated: edit the .schema and run go generate ./pkg/decidewire, never the
 // output. pkg/schemaread reads it strictly: binary wire or padded standard
 // base64 of the wire, each refused by name when damaged.
 package decidewire

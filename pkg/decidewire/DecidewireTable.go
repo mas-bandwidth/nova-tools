@@ -174,11 +174,9 @@ type RawTokensRow struct {
 // RawUsageRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type RawUsageRow struct {
-	Version      uint32
-	_            [4]byte // generated padding
-	Records      [270]RawRecordRow
-	RecordsCount int32
-	_            [4]byte // generated padding
+	Version uint32
+	_       [4]byte // generated padding
+	Records TableList[RawRecordRow]
 }
 
 // RecordLineRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
@@ -207,7 +205,7 @@ type UsageRow struct {
 // BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
 // one digest a block carries and BlockOpen compares, and the fact §3.3's
 // announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0x94bad44d9e33750e
+const BuildVersion uint64 = 0x23d7e97c4116d1b2
 
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema

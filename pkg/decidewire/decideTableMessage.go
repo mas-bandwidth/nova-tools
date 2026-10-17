@@ -5107,8 +5107,7 @@ func RawUsageLoadMessageBodyRetain(r *TableRetainMessageReader, value *RawUsage)
 					}
 				}
 				{
-					base := &value.Records
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
+					count, ok := tableMessageCount(&r.Bits, entry.Shape)
 					if !ok {
 						r.Report.Malformed = true
 						return false
@@ -5117,27 +5116,22 @@ func RawUsageLoadMessageBodyRetain(r *TableRetainMessageReader, value *RawUsage)
 						r.Report.Malformed = true
 						return false
 					}
+					holder := (*tableContainer)(unsafe.Pointer(&value.Records))
+					r.Retain.discard(r.Path, true, 1)
+					if !tableContainerFill(&r.Nodes.Carve, holder, count, 136, 8) {
+						r.Report.Malformed = true
+						return false
+					}
+					holder.Count = 0
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
-					r.Retain.discard(r.Path, true, 1)
-					keep := min(n, uint64(270))
-					if keep < n {
-						r.Report.Clamped++
-					}
-					walk := n
-					if element.Shape.Bits >= 0 {
-						walk = keep
-					}
-					for i := uint64(0); i < walk; i++ {
-						var scratch RawRecord
-						p := &scratch
-						if i < keep {
-							p = &base[i]
+					for i := uint64(0); i < count; i++ {
+						p := (*RawRecordRow)(tableContainerFillAt(&r.Nodes.Carve, holder, int32(i), 136))
+						if p == nil {
+							r.Report.Malformed = true
+							return false
 						}
-						store := r.Retain
-						if i >= keep {
-							r.Retain = nil
-						}
+						holder.Count++
 						{
 							payload7 := r.Path
 							r.Path = r.Path.step(1, uint32(i))
@@ -5146,13 +5140,7 @@ func RawUsageLoadMessageBodyRetain(r *TableRetainMessageReader, value *RawUsage)
 							}
 							r.Path = payload7
 						}
-						r.Retain = store
 					}
-					if walk < n && !r.Bits.Skip(int64(n-walk)*element.Shape.Bits) {
-						r.Report.Malformed = true
-						return false
-					}
-					value.RecordsCount = int32(keep)
 				}
 				if widened {
 					r.Report.Widened++
@@ -5175,17 +5163,27 @@ func RawUsageSaveMessageBody(w *TableMessageWriter, value *RawUsage) bool {
 		}
 	}
 	{
-		if value.RecordsCount < 0 || value.RecordsCount > 270 {
+		if value.Records.Count < 0 {
 			return false
 		}
-		if value.RecordsCount > 0 {
+		if value.Records.Count > 0 {
 			w.Put(58, TableMessageRefBitsHere)
-			if value.RecordsCount < 0 || value.RecordsCount > 270 {
+			if value.Records.Count < 0 {
 				return false
 			}
-			w.Put(uint64(value.RecordsCount)-0, 9)
-			for i := 0; i < int(value.RecordsCount); i++ {
-				if !RawRecordSaveMessageBody(w, &value.Records[i]) {
+			w.Put(uint64(value.Records.Count), 32)
+			field := &RawUsageTableFields[1]
+			if field.Kind == 6 {
+				w.Align()
+			}
+			cursor := tableMapCursor((*tableContainer)(unsafe.Pointer(&value.Records)), field, w.Numbering.arena)
+			defer cursor.Release()
+			for i := int32(0); i < value.Records.Count; i++ {
+				p := (*RawRecordRow)(cursor.Next())
+				if p == nil {
+					return false
+				}
+				if !RawRecordSaveMessageBody(w, &(*p)) {
 					return false
 				}
 			}
@@ -5269,8 +5267,7 @@ func RawUsageLoadMessageBody(r *TableMessageReader, value *RawUsage) bool {
 					}
 				}
 				{
-					base := &value.Records
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
+					count, ok := tableMessageCount(&r.Bits, entry.Shape)
 					if !ok {
 						r.Report.Malformed = true
 						return false
@@ -5279,31 +5276,25 @@ func RawUsageLoadMessageBody(r *TableMessageReader, value *RawUsage) bool {
 						r.Report.Malformed = true
 						return false
 					}
+					holder := (*tableContainer)(unsafe.Pointer(&value.Records))
+					if !tableContainerFill(&r.Nodes.Carve, holder, count, 136, 8) {
+						r.Report.Malformed = true
+						return false
+					}
+					holder.Count = 0
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
-					keep := min(n, uint64(270))
-					if keep < n {
-						r.Report.Clamped++
-					}
-					walk := n
-					if element.Shape.Bits >= 0 {
-						walk = keep
-					}
-					for i := uint64(0); i < walk; i++ {
-						var scratch RawRecord
-						p := &scratch
-						if i < keep {
-							p = &base[i]
+					for i := uint64(0); i < count; i++ {
+						p := (*RawRecordRow)(tableContainerFillAt(&r.Nodes.Carve, holder, int32(i), 136))
+						if p == nil {
+							r.Report.Malformed = true
+							return false
 						}
+						holder.Count++
 						if !RawRecordLoadMessageBody(r, &(*p)) {
 							return false
 						}
 					}
-					if walk < n && !r.Bits.Skip(int64(n-walk)*element.Shape.Bits) {
-						r.Report.Malformed = true
-						return false
-					}
-					value.RecordsCount = int32(keep)
 				}
 				if widened {
 					r.Report.Widened++
