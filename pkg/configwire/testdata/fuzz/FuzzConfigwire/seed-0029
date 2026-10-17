@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x09')
+[]byte("{\n  \"ansible_host\": \"\",\n  \"kind\": \"None\",\n  \"slots\": 0,\n  \"slots_capacity\": 0,\n  \"runners\": 0,\n  \"bench_os\": \"\",\n  \"nova_arch\": \"\",\n  \"nova_tla\": false,\n  \"registry_seat\": \"\",\n  \"registry_roles\": \"\",\n  \"ansible_user\": \"\",\n  \"nova_seat\": \"\",\n  \"nova_redis_addr\": \"\",\n  \"nova_bus_addr\": \"\",\n  \"nova_redis_port\": 0,\n  \"nova_pg_dsn\": \"\",\n  \"local\": false\n}\n")
