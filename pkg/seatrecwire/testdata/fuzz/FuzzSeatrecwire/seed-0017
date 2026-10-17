@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x05')
+[]byte("{\n  \"forge_identity\": null,\n  \"nova_sprint_redis\": null,\n  \"nova_sprint_server\": null,\n  \"nova_bus_redis\": null,\n  \"login\": null\n}\n")

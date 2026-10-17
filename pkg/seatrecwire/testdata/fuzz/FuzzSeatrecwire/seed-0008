@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x02')
+[]byte("{\n  \"date\": \"\",\n  \"model\": null,\n  \"repo\": null,\n  \"rough\": 0,\n  \"basis\": null,\n  \"sources\": []\n}\n")
