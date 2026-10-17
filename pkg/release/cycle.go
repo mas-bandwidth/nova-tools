@@ -163,6 +163,13 @@ func cycle(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		return refusal(errs, "CYCLE", err)
 	}
+	// The writer stays legacy (S4: readers first). The value the play reads is
+	// read back through its record reader (records.go CYCLE_BUILD_ARGS) before
+	// any play runs, so one the play cannot read is refused here by name and
+	// counted, never handed on.
+	if _, err := records.ReadBuildArgs(buildArgs); err != nil {
+		return refusal(errs, "CYCLE", err)
+	}
 	argv := []string{"-i", o.inventory, play,
 		"-e", "nova_version=" + o.version, "-e", "nova_source=" + o.source, "-e", "nova_release_out=" + o.out,
 		"-e", "nova_dogfood_receipts=" + receipts, "-e", string(buildArgs),
@@ -263,7 +270,9 @@ func listInventory(ctx context.Context, path string) (string, string, error) {
 
 // inventoryObject reports whether a listing is a JSON object, the shape an
 // executable inventory answers --list with; anything else (a refusal line, an
-// empty output, an array) cannot be handed to ansible as an inventory.
+// empty output, an array) cannot be handed to ansible as an inventory. The
+// listing is ansible's external format and stays one: no field of it is read,
+// so it has no table (schemas/release/release.schema, external formats).
 func inventoryObject(stdout string) bool {
 	var object map[string]any
 	return json.Unmarshal([]byte(stdout), &object) == nil && object != nil
