@@ -9,6 +9,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unsafe"
+
+	wire "github.com/mas-bandwidth/nova-tools/pkg/releasewire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 type observed struct {
@@ -232,6 +236,333 @@ func skipAfter(d *json.Decoder, t json.Token, depth int) error {
 func emptySnapshot() *snapshot {
 	return &snapshot{map[string]observed{}, map[string]delivery{}}
 }
+
+// snapDoc is one UpdateSnapshot read through pkg/schemaread. A typed form
+// (the table wire, its padded standard base64, its schema JSON text) keeps
+// the generated value and the region its text references point into; the
+// legacy form keeps the maps the snapshot reader has always produced.
+type snapDoc struct {
+	v      *wire.UpdateSnapshot
+	region []byte
+	legacy *snapshot
+}
+
+// snapshotRead is the one strict reader of the update snapshot (S2, UNION.md
+// section 6): the generated UpdateSnapshot table's binary wire, its padded
+// standard base64, its schema JSON text and the legacy JSON its writer writes
+// today. It refuses damage by name and counts reads per form, the evidence
+// the reader-first cutover needs (S4, C13).
+var snapshotRead = schemaread.NewReader(snapshotCodec())
+
+// snapshotRegion is an aligned buffer of n bytes for a region load.
+func snapshotRegion(n int64) []byte {
+	raw := make([]byte, n+63)
+	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
+	return raw[off : off+uintptr(n)]
+}
+
+// snapshotStr is a *string field's text; a zero slot is absent, not a value.
+func snapshotStr(slot *int64) string {
+	if *slot == 0 {
+		return ""
+	}
+	v := wire.TableStringAt(slot)
+	return string(v.Data[:v.Length])
+}
+
+// snapshotReport reduces a generated TableReport to the strict read's report.
+// A repeated entry name or scope is ambiguity about an identity, so it is
+// malformed here rather than silently last-one-wins.
+func snapshotReport(r *wire.TableReport) schemaread.Report {
+	return schemaread.Report{
+		Unknown:      int(r.Unknown),
+		KindMismatch: int(r.KindMismatch),
+		Clamped:      int(r.Clamped),
+		Malformed:    r.Malformed || r.Duplicate > 0 || r.MissingRequired > 0,
+		Reason:       r.Reason,
+	}
+}
+
+// snapshotLegacy recognises the JSON object the snapshot writer writes today:
+// its observed and delivered members are objects keyed by name, where the
+// schema JSON text form spells both as lists of entries. Text that is not an
+// object, or not JSON at all, is left to the binary/base64 detector or to the
+// legacy reader, which refuses it as it always has.
+func snapshotLegacy(in []byte) bool {
+	t := bytes.TrimLeft(in, " \t\r\n")
+	if len(t) == 0 || t[0] != '{' {
+		return false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(t, &m) != nil {
+		return true // unreadable JSON is the legacy reader's to refuse
+	}
+	for _, key := range []string{"observed", "delivered"} {
+		v := bytes.TrimSpace(m[key])
+		if len(v) > 0 && v[0] == '[' {
+			return false // a list is the schema JSON text form
+		}
+	}
+	return true
+}
+
+// loadSnapshotLegacy reads the legacy form exactly as readSnapshot always
+// read it: the strict shape walk (validateSnapshot) refuses an ambiguous or
+// misspelled member, and a snapshot lacking either map is refused rather than
+// read as an empty one (snapshot.go, snapshot struct).
+func loadSnapshotLegacy(d *snapDoc, in []byte) schemaread.Report {
+	if err := validateSnapshot(in); err != nil {
+		return schemaread.Report{Reason: err.Error()}
+	}
+	var s snapshot
+	dec := json.NewDecoder(bytes.NewReader(in))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&s); err != nil {
+		return schemaread.Report{Reason: schemaread.ReasonMalformed}
+	}
+	if dec.Decode(new(any)) != io.EOF {
+		return schemaread.Report{Reason: "trailing snapshot data"}
+	}
+	if s.Observed == nil || s.Delivered == nil {
+		return schemaread.Report{Reason: schemaread.ReasonAbsentRequired}
+	}
+	d.legacy = &s
+	return schemaread.Report{}
+}
+
+// loadSnapshotWire reads the table wire and keeps the region the value's text
+// points into, as the generated load returns a value that borrows it.
+func loadSnapshotWire(d *snapDoc, w []byte) schemaread.Report {
+	n, err := wire.UpdateSnapshotLoadMeasureReason(w)
+	if err != nil || n < 0 {
+		rep := schemaread.Report{Malformed: true}
+		if err != nil {
+			rep.Reason = err.Error()
+		}
+		return rep
+	}
+	var r wire.TableReport
+	d.region = snapshotRegion(n)
+	if d.v = wire.UpdateSnapshotLoad(d.region, w, &r); d.v == nil {
+		return schemaread.Report{Malformed: true, Reason: r.Reason}
+	}
+	return snapshotReport(&r)
+}
+
+// loadSnapshotJSON builds the table from its schema JSON text form and locks
+// it; the builder's region backs every string the value references.
+func loadSnapshotJSON(d *snapDoc, text []byte) schemaread.Report {
+	var r wire.TableReport
+	b := &wire.UpdateSnapshotBuilder{}
+	if !b.Init() {
+		return schemaread.Report{Malformed: true}
+	}
+	if !wire.UpdateSnapshotFromJson(b, text, &r) {
+		b.Shutdown()
+		return schemaread.Report{Malformed: true, Reason: r.Reason}
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return schemaread.Report{Malformed: true}
+	}
+	d.v, d.region = b.AsConst(), b.Region()
+	return snapshotReport(&r)
+}
+
+// snapshotConstraints holds the record to the snapshot reader's rules: a
+// record must be present, and a name or scope given twice is not one identity
+// (snapshot.go, walkDataMap; UPDATE_SNAPSHOT's own rule). The table declares
+// no bound: every text is uncapped and every list is open, so nothing here
+// can clamp (schemas/release/release.schema, the area's variability rule).
+func snapshotConstraints(d *snapDoc, c *schemaread.Checker) {
+	c.Required("record", d.v != nil || d.legacy != nil)
+	if d.v == nil {
+		return
+	}
+	seenObserved, seenDelivered := map[string]bool{}, map[string]bool{}
+	distinct := true
+	for i := int32(0); i < d.v.Observed.Count; i++ {
+		n := snapshotStr(&d.v.Observed.At(i).Name)
+		distinct = distinct && !seenObserved[n]
+		seenObserved[n] = true
+	}
+	for i := int32(0); i < d.v.Delivered.Count; i++ {
+		n := snapshotStr(&d.v.Delivered.At(i).Scope)
+		distinct = distinct && !seenDelivered[n]
+		seenDelivered[n] = true
+	}
+	c.Required("entries named distinctly", distinct)
+}
+
+// snapshotCodec is the update snapshot's Codec for pkg/schemaread: the
+// generated UpdateSnapshot table's wire, padded base64 and JSON text, the
+// legacy maps, and the constraints the read enforces.
+func snapshotCodec() *schemaread.Codec[snapDoc] {
+	return &schemaread.Codec[snapDoc]{
+		Name:  "UpdateSnapshot",
+		Help:  "nova-update report -h",
+		Reset: func(d *snapDoc) { *d = snapDoc{} },
+		Measure: func(w []byte) error {
+			_, err := wire.UpdateSnapshotLoadMeasureReason(w)
+			return err
+		},
+		LoadWire:    loadSnapshotWire,
+		LoadJSON:    loadSnapshotJSON,
+		Legacy:      snapshotLegacy,
+		LoadLegacy:  loadSnapshotLegacy,
+		Constraints: snapshotConstraints,
+		SaveWire: func(d *snapDoc) []byte {
+			b, ok := snapshotBuilder(d)
+			if !ok {
+				return nil
+			}
+			defer b.Shutdown()
+			n, err := wire.UpdateSnapshotMeasureReason(b.AsConst())
+			if err != nil || n < 0 {
+				return nil
+			}
+			buf := make([]byte, n)
+			if wire.UpdateSnapshotSave(b.AsConst(), buf) != n {
+				return nil
+			}
+			return buf
+		},
+		SaveJSON: func(d *snapDoc) []byte {
+			b, ok := snapshotBuilder(d)
+			if !ok {
+				return nil
+			}
+			defer b.Shutdown()
+			n := wire.UpdateSnapshotToJsonMeasure(b.AsConst())
+			if n < 0 {
+				return nil
+			}
+			buf := make([]byte, n)
+			if wire.UpdateSnapshotToJson(b.AsConst(), buf) != n {
+				return nil
+			}
+			return buf
+		},
+	}
+}
+
+// snapshotBuilder builds the generated table from the maps the snapshot
+// reader holds, in name order so two builds of one value are one image. A
+// *string is written only when it has text; an absent and an empty string
+// read the same.
+func snapshotBuilder(d *snapDoc) (*wire.UpdateSnapshotBuilder, bool) {
+	s, ok := d.value()
+	if !ok {
+		return nil, false
+	}
+	b := &wire.UpdateSnapshotBuilder{}
+	if !b.Init() {
+		return nil, false
+	}
+	root := b.GetRoot()
+	names := make([]string, 0, len(s.Observed))
+	for name := range s.Observed {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		e := wire.UpdateSnapshotObservedAdd(&b.Main, &root.Observed)
+		if e == nil {
+			b.Shutdown()
+			return nil, false
+		}
+		snapshotEmplace(&b.Main, &e.Name, name)
+		snapshotEmplace(&b.Main, &e.Observed.Raw, s.Observed[name].Raw)
+		snapshotEmplace(&b.Main, &e.Observed.Status, s.Observed[name].Status)
+		snapshotEmplace(&b.Main, &e.Observed.At, s.Observed[name].At)
+	}
+	scopes := make([]string, 0, len(s.Delivered))
+	for scope := range s.Delivered {
+		scopes = append(scopes, scope)
+	}
+	sort.Strings(scopes)
+	for _, scope := range scopes {
+		e := wire.UpdateSnapshotDeliveredAdd(&b.Main, &root.Delivered)
+		if e == nil {
+			b.Shutdown()
+			return nil, false
+		}
+		snapshotEmplace(&b.Main, &e.Scope, scope)
+		snapshotEmplace(&b.Main, &e.Delivery.Id, s.Delivered[scope].ID)
+		snapshotEmplace(&b.Main, &e.Delivery.At, s.Delivered[scope].At)
+		obs := make([]string, 0, len(s.Delivered[scope].Observed))
+		for name := range s.Delivered[scope].Observed {
+			obs = append(obs, name)
+		}
+		sort.Strings(obs)
+		for _, name := range obs {
+			o := wire.SnapshotDeliveryObservedAdd(&b.Main, &e.Delivery.Observed)
+			if o == nil {
+				b.Shutdown()
+				return nil, false
+			}
+			snapshotEmplace(&b.Main, &o.Name, name)
+			snapshotEmplace(&b.Main, &o.Observed.Raw, s.Delivered[scope].Observed[name].Raw)
+			snapshotEmplace(&b.Main, &o.Observed.Status, s.Delivered[scope].Observed[name].Status)
+			snapshotEmplace(&b.Main, &o.Observed.At, s.Delivered[scope].Observed[name].At)
+		}
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, false
+	}
+	return b, true
+}
+
+// snapshotEmplace writes one *string slot, leaving an empty text absent.
+func snapshotEmplace(w *wire.TableWorker, slot *wire.TableRef, text string) {
+	if text != "" {
+		wire.TableStringEmplace(w, slot, []byte(text))
+	}
+}
+
+// value is the snapshot the read produced: the legacy maps as they were read,
+// or the generated table copied into the maps the rest of the tool uses. A
+// repeated name (which the constraints already refuse) is not a value.
+func (d *snapDoc) value() (*snapshot, bool) {
+	if d.legacy != nil {
+		return d.legacy, true
+	}
+	if d.v == nil {
+		return nil, false
+	}
+	s := emptySnapshot()
+	for i := int32(0); i < d.v.Observed.Count; i++ {
+		e := d.v.Observed.At(i)
+		name := snapshotStr(&e.Name)
+		if _, twice := s.Observed[name]; twice {
+			return nil, false
+		}
+		s.Observed[name] = observed{Raw: snapshotStr(&e.Observed.Raw), Status: snapshotStr(&e.Observed.Status), At: snapshotStr(&e.Observed.At)}
+	}
+	for i := int32(0); i < d.v.Delivered.Count; i++ {
+		e := d.v.Delivered.At(i)
+		scope := snapshotStr(&e.Scope)
+		if _, twice := s.Delivered[scope]; twice {
+			return nil, false
+		}
+		dl := delivery{Observed: map[string]observed{}, ID: snapshotStr(&e.Delivery.Id), At: snapshotStr(&e.Delivery.At)}
+		for j := int32(0); j < e.Delivery.Observed.Count; j++ {
+			o := e.Delivery.Observed.At(j)
+			name := snapshotStr(&o.Name)
+			if _, twice := dl.Observed[name]; twice {
+				return nil, false
+			}
+			dl.Observed[name] = observed{Raw: snapshotStr(&o.Observed.Raw), Status: snapshotStr(&o.Observed.Status), At: snapshotStr(&o.Observed.At)}
+		}
+		s.Delivered[scope] = dl
+	}
+	return s, true
+}
+
+// readSnapshot reads the update snapshot from path in any of its four forms,
+// through the one strict reader. A missing file is the empty snapshot, as it
+// always was; damage is refused by name, never read as absent, empty or zero.
 func readSnapshot(path string) (*snapshot, error) {
 	s := emptySnapshot()
 	b, err := os.ReadFile(path)
@@ -241,21 +572,15 @@ func readSnapshot(path string) (*snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot read snapshot (supply a readable --snapshot)")
 	}
-	if err = validateSnapshot(b); err != nil {
-		return nil, fmt.Errorf("invalid snapshot: %s (preserve it and select a valid --snapshot)", err)
+	doc, _, err := snapshotRead.Read(b)
+	if err != nil {
+		return nil, err
 	}
-	d := json.NewDecoder(bytes.NewReader(b))
-	d.DisallowUnknownFields()
-	if err = d.Decode(s); err != nil {
-		return nil, fmt.Errorf("invalid snapshot (preserve it and select a valid --snapshot)")
+	out, ok := doc.value()
+	if !ok {
+		return nil, &schemaread.Refusal{Name: "UpdateSnapshot", Reason: schemaread.ReasonMalformed, Help: "nova-update report -h"}
 	}
-	if d.Decode(new(any)) != io.EOF {
-		return nil, fmt.Errorf("trailing snapshot data (preserve it and select a valid --snapshot)")
-	}
-	if s.Observed == nil || s.Delivered == nil {
-		return nil, fmt.Errorf("incomplete snapshot (preserve it and select a valid --snapshot)")
-	}
-	return s, nil
+	return out, nil
 }
 
 // writeSnapshotWith commits with rename. The command passes Environment.Rename,
