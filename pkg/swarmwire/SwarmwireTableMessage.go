@@ -13,16 +13,18 @@ package swarmwire
 import (
 	"encoding/binary"
 	"math"
+	"unsafe"
 )
 
 const TableMessageBatchMax = 256
 const TableMessageRefBitsHere = 6
-const TableMessageEntriesHere = 56
+const TableMessageEntriesHere = 58
 
-var tableAnnouncement = [...]byte{0x01, 0x01, 0x09, 0xc8, 0x95, 0xa6, 0x7b, 0x80, 0xbd, 0x1c, 0x52, 0x02, 0x0e, 0xd0, 0x04, 0x06, 0xcd, 0x04, 0xdc, 0x54, 0xfb, 0x65, 0x8c, 0x4c, 0x2b, 0xd0, 0x0c, 0x40, 0x3a, 0x70, 0x6e, 0x3e, 0x93, 0x43, 0xe5, 0x9d, 0x0c, 0x80, 0x01, 0x42, 0x99, 0x7b, 0xb5, 0x07, 0x55, 0xdc, 0x08, 0x04, 0x01, 0x09, 0x01, 0x49, 0xd3, 0x7f, 0x7a, 0x8f, 0xcd, 0x62, 0x50, 0x0c, 0x10, 0x1b, 0xeb, 0x88, 0xfe, 0xbe, 0x12, 0xbb, 0x34, 0x0c, 0x28, 0x64, 0x2a, 0x6b, 0xe6, 0x10, 0x8a, 0x65, 0xbc, 0x04, 0x01, 0x15, 0x00, 0xd8, 0xc0, 0x0d, 0xd6, 0x71, 0x4c, 0xa9, 0x73, 0x0c, 0x0c, 0xac, 0x4a, 0xf3, 0x08, 0x9a, 0xd3, 0x7b, 0x90, 0x0c, 0x80, 0x01, 0x0a, 0x50, 0x53, 0xf0, 0x18, 0x03, 0xf0, 0xc2, 0x0c, 0x20, 0xa3, 0xb9, 0x11, 0xa0, 0x8a, 0x5b, 0x70, 0x22, 0x04, 0x01, 0x1f, 0x00, 0xa1, 0x9b, 0xa3, 0x8a, 0x15, 0xc2, 0x15, 0x6a, 0x01, 0x7a, 0xbc, 0x78, 0x28, 0x6c, 0x3e, 0xd4, 0xb5, 0x01, 0x39, 0x26, 0x4f, 0x47, 0xf3, 0xd7, 0xe8, 0x65, 0x0c, 0xf4, 0x03, 0xa8, 0xf8, 0x80, 0xf4, 0x6a, 0x20, 0x0f, 0x03, 0x0c, 0x80, 0x04, 0x82, 0x6a, 0xf3, 0x05, 0xf3, 0xb4, 0x35, 0x89, 0x0e, 0x00, 0x20, 0x0d, 0xc0, 0x53, 0x51, 0x28, 0x6a, 0x4f, 0x12, 0x67, 0x0e, 0x00, 0x82, 0x01, 0x0d, 0xef, 0xd3, 0x04, 0x3e, 0xa9, 0x8f, 0x84, 0x58, 0x06, 0x01, 0x02, 0x00, 0x89, 0x5f, 0x69, 0xea, 0x4b, 0x1e, 0x7a, 0x0b, 0x0c, 0x80, 0x02, 0xdf, 0x56, 0x5a, 0x03, 0x0b, 0x64, 0x68, 0x65, 0x06, 0x01, 0x02, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x80, 0x02, 0x1a, 0xe0, 0x58, 0xed, 0x02, 0xc4, 0x52, 0x5f, 0x0c, 0x80, 0x01, 0x1e, 0x25, 0x8f, 0x9e, 0x3e, 0x15, 0x3b, 0x9a, 0x0c, 0x80, 0x04, 0x5f, 0x45, 0x7b, 0xe8, 0x90, 0x4e, 0x61, 0xb5, 0x0c, 0x80, 0x01, 0xee, 0x3d, 0x30, 0x2b, 0xbd, 0x18, 0xe6, 0x63, 0x04, 0x01, 0x14, 0x00, 0x03, 0x0c, 0x9a, 0x5f, 0xcc, 0x12, 0x8f, 0x0a, 0x0c, 0x40, 0xa5, 0x8b, 0x27, 0x51, 0xf6, 0xc0, 0x9e, 0x91, 0x0c, 0x80, 0x02, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x40, 0xaf, 0x96, 0x69, 0x85, 0x1e, 0xff, 0xf4, 0x59, 0x0c, 0x80, 0x04, 0x51, 0xc9, 0x20, 0xc0, 0xee, 0xf0, 0x23, 0xab, 0x0c, 0x80, 0x01, 0xc8, 0x5a, 0xb7, 0x4d, 0x71, 0x02, 0x17, 0x1e, 0x06, 0x01, 0x02, 0x00, 0xd0, 0x65, 0x3b, 0x50, 0x12, 0x91, 0x5b, 0x71, 0x06, 0x01, 0x02, 0x00, 0xab, 0x31, 0x53, 0xfe, 0xba, 0xcb, 0x1f, 0x21, 0x0c, 0x80, 0x02, 0x11, 0x1c, 0x7c, 0x73, 0xde, 0x71, 0x5a, 0xe1, 0x0e, 0x00, 0x40, 0x0d, 0xaf, 0x22, 0x5a, 0x05, 0x25, 0xb6, 0xb3, 0xf6, 0x0c, 0x80, 0x04, 0x75, 0xfe, 0xb6, 0x0b, 0xa4, 0xac, 0xbb, 0x4a, 0x0c, 0x20, 0x8b, 0x18, 0x83, 0xe0, 0xb2, 0x3b, 0x01, 0xd0, 0x0c, 0x80, 0x02, 0x4b, 0x5f, 0x02, 0x0b, 0x14, 0x2f, 0xdf, 0xf7, 0x0e, 0x00, 0x20, 0x0d, 0x16, 0x5c, 0x60, 0x74, 0xb2, 0x50, 0x33, 0x6e, 0x04, 0x01, 0x1f, 0x00, 0x1d, 0x56, 0x76, 0xdf, 0xed, 0x6a, 0xe1, 0x18, 0x05, 0x01, 0x35, 0x00, 0xfa, 0x49, 0x90, 0xca, 0x2c, 0x64, 0xd5, 0xf9, 0x0e, 0x00, 0x20, 0x0d, 0x01, 0x14, 0x5d, 0xbb, 0x83, 0x89, 0x35, 0x98, 0x0c, 0x20, 0xd5, 0xc9, 0xf3, 0xce, 0xe7, 0x74, 0x3f, 0x39, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0xe4, 0x4f, 0x1c, 0x4f, 0x47, 0xc0, 0x2e, 0x2f, 0x00, 0x58, 0xfc, 0xaf, 0xfa, 0xd8, 0xe0, 0x4b, 0x70, 0x00, 0xc7, 0xd4, 0x7b, 0x26, 0xb0, 0x9d, 0x29, 0x5f, 0x00, 0xf0, 0x2e, 0x14, 0x2d, 0xa1, 0x59, 0xf0, 0x3b, 0x00, 0xec, 0x63, 0xcf, 0x35, 0x75, 0x6f, 0x95, 0xeb, 0x00, 0x90, 0xe8, 0x91, 0x17, 0x2e, 0x54, 0xd0, 0x06, 0x00, 0xb0, 0x57, 0x8d, 0xda, 0xc9, 0x04, 0x95, 0x1a, 0x00, 0x59, 0x68, 0x12, 0x79, 0xf5, 0xc1, 0x61, 0x14, 0x00, 0x08, 0xc7, 0x66, 0x05, 0xdb, 0xa6, 0x57, 0xa6, 0x00, 0x7e, 0x26, 0x2a, 0xf8, 0xd3, 0x01, 0x2d, 0x42, 0x00, 0x56, 0x7a, 0x47, 0xed, 0x19, 0x2e, 0x53, 0x2e, 0x00, 0xc8, 0x90, 0xaf, 0x5c, 0xca, 0xf7, 0x30, 0xc2, 0x00, 0xfe, 0x87, 0x12, 0xbb, 0x12, 0x19, 0x79, 0xfd, 0x00, 0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+var tableAnnouncement = [...]byte{0x01, 0x01, 0x09, 0xeb, 0xa6, 0xd4, 0xbe, 0xff, 0x8b, 0xac, 0xc1, 0x02, 0x0e, 0xe2, 0x04, 0x06, 0xdf, 0x04, 0xdc, 0x54, 0xfb, 0x65, 0x8c, 0x4c, 0x2b, 0xd0, 0x0c, 0x40, 0x3a, 0x70, 0x6e, 0x3e, 0x93, 0x43, 0xe5, 0x9d, 0x0c, 0x80, 0x01, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c, 0x11, 0x42, 0x99, 0x7b, 0xb5, 0x07, 0x55, 0xdc, 0x08, 0x04, 0x01, 0x09, 0x01, 0x49, 0xd3, 0x7f, 0x7a, 0x8f, 0xcd, 0x62, 0x50, 0x0c, 0x10, 0x1b, 0xeb, 0x88, 0xfe, 0xbe, 0x12, 0xbb, 0x34, 0x0c, 0x28, 0x64, 0x2a, 0x6b, 0xe6, 0x10, 0x8a, 0x65, 0xbc, 0x04, 0x01, 0x15, 0x00, 0xd8, 0xc0, 0x0d, 0xd6, 0x71, 0x4c, 0xa9, 0x73, 0x0c, 0x0c, 0xac, 0x4a, 0xf3, 0x08, 0x9a, 0xd3, 0x7b, 0x90, 0x0c, 0x80, 0x01, 0x0a, 0x50, 0x53, 0xf0, 0x18, 0x03, 0xf0, 0xc2, 0x0c, 0x20, 0xa3, 0xb9, 0x11, 0xa0, 0x8a, 0x5b, 0x70, 0x22, 0x04, 0x01, 0x1f, 0x00, 0xa1, 0x9b, 0xa3, 0x8a, 0x15, 0xc2, 0x15, 0x6a, 0x01, 0x7a, 0xbc, 0x78, 0x28, 0x6c, 0x3e, 0xd4, 0xb5, 0x01, 0x39, 0x26, 0x4f, 0x47, 0xf3, 0xd7, 0xe8, 0x65, 0x0c, 0xf4, 0x03, 0xa8, 0xf8, 0x80, 0xf4, 0x6a, 0x20, 0x0f, 0x03, 0x11, 0x82, 0x6a, 0xf3, 0x05, 0xf3, 0xb4, 0x35, 0x89, 0x0e, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x0d, 0xc0, 0x53, 0x51, 0x28, 0x6a, 0x4f, 0x12, 0x67, 0x0e, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x0d, 0xef, 0xd3, 0x04, 0x3e, 0xa9, 0x8f, 0x84, 0x58, 0x06, 0x01, 0x02, 0x00, 0x89, 0x5f, 0x69, 0xea, 0x4b, 0x1e, 0x7a, 0x0b, 0x11, 0xdf, 0x56, 0x5a, 0x03, 0x0b, 0x64, 0x68, 0x65, 0x06, 0x01, 0x02, 0x00, 0x1a, 0xe0, 0x58, 0xed, 0x02, 0xc4, 0x52, 0x5f, 0x0c, 0x80, 0x01, 0x1e, 0x25, 0x8f, 0x9e, 0x3e, 0x15, 0x3b, 0x9a, 0x0c, 0x80, 0x04, 0x5f, 0x45, 0x7b, 0xe8, 0x90, 0x4e, 0x61, 0xb5, 0x0c, 0x80, 0x01, 0xee, 0x3d, 0x30, 0x2b, 0xbd, 0x18, 0xe6, 0x63, 0x04, 0x01, 0x14, 0x00, 0x03, 0x0c, 0x9a, 0x5f, 0xcc, 0x12, 0x8f, 0x0a, 0x0c, 0x40, 0xa5, 0x8b, 0x27, 0x51, 0xf6, 0xc0, 0x9e, 0x91, 0x0c, 0x80, 0x02, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x11, 0xdc, 0x54, 0xfb, 0x65, 0x8c, 0x4c, 0x2b, 0xd0, 0x11, 0x3a, 0x70, 0x6e, 0x3e, 0x93, 0x43, 0xe5, 0x9d, 0x11, 0x1e, 0x25, 0x8f, 0x9e, 0x3e, 0x15, 0x3b, 0x9a, 0x11, 0x1a, 0xe0, 0x58, 0xed, 0x02, 0xc4, 0x52, 0x5f, 0x11, 0xaf, 0x96, 0x69, 0x85, 0x1e, 0xff, 0xf4, 0x59, 0x11, 0x51, 0xc9, 0x20, 0xc0, 0xee, 0xf0, 0x23, 0xab, 0x11, 0xc8, 0x5a, 0xb7, 0x4d, 0x71, 0x02, 0x17, 0x1e, 0x06, 0x01, 0x02, 0x00, 0xd0, 0x65, 0x3b, 0x50, 0x12, 0x91, 0x5b, 0x71, 0x06, 0x01, 0x02, 0x00, 0xab, 0x31, 0x53, 0xfe, 0xba, 0xcb, 0x1f, 0x21, 0x11, 0x11, 0x1c, 0x7c, 0x73, 0xde, 0x71, 0x5a, 0xe1, 0x0e, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x0d, 0xaf, 0x22, 0x5a, 0x05, 0x25, 0xb6, 0xb3, 0xf6, 0x11, 0x75, 0xfe, 0xb6, 0x0b, 0xa4, 0xac, 0xbb, 0x4a, 0x11, 0x8b, 0x18, 0x83, 0xe0, 0xb2, 0x3b, 0x01, 0xd0, 0x11, 0x4b, 0x5f, 0x02, 0x0b, 0x14, 0x2f, 0xdf, 0xf7, 0x0e, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x0d, 0x16, 0x5c, 0x60, 0x74, 0xb2, 0x50, 0x33, 0x6e, 0x04, 0x01, 0x1f, 0x00, 0x1d, 0x56, 0x76, 0xdf, 0xed, 0x6a, 0xe1, 0x18, 0x05, 0x01, 0x35, 0x00, 0xfa, 0x49, 0x90, 0xca, 0x2c, 0x64, 0xd5, 0xf9, 0x0e, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x0d, 0x01, 0x14, 0x5d, 0xbb, 0x83, 0x89, 0x35, 0x98, 0x11, 0xd5, 0xc9, 0xf3, 0xce, 0xe7, 0x74, 0x3f, 0x39, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0xe4, 0x4f, 0x1c, 0x4f, 0x47, 0xc0, 0x2e, 0x2f, 0x00, 0x58, 0xfc, 0xaf, 0xfa, 0xd8, 0xe0, 0x4b, 0x70, 0x00, 0xc7, 0xd4, 0x7b, 0x26, 0xb0, 0x9d, 0x29, 0x5f, 0x00, 0xf0, 0x2e, 0x14, 0x2d, 0xa1, 0x59, 0xf0, 0x3b, 0x00, 0x73, 0xfb, 0x21, 0xbe, 0x25, 0x6d, 0xea, 0x7d, 0x00, 0xec, 0x63, 0xcf, 0x35, 0x75, 0x6f, 0x95, 0xeb, 0x00, 0x90, 0xe8, 0x91, 0x17, 0x2e, 0x54, 0xd0, 0x06, 0x00, 0xb0, 0x57, 0x8d, 0xda, 0xc9, 0x04, 0x95, 0x1a, 0x00, 0x08, 0xc7, 0x66, 0x05, 0xdb, 0xa6, 0x57, 0xa6, 0x00, 0x7e, 0x26, 0x2a, 0xf8, 0xd3, 0x01, 0x2d, 0x42, 0x00, 0xfe, 0x87, 0x12, 0xbb, 0x12, 0x19, 0x79, 0xfd, 0x00, 0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 var tableMessageEntries = [...]TableMessageEntry{
 	TableMessageEntry{Id: 0xd02b4c8c65fb54dc, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 64, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x9de543933e6e703a, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 128, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0x7ce4fd9430e80cea, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x08dc5507b57b9942, Shape: TableMessageShape{Kind: 4, Packing: 1, Bits: 9, Base: [2]uint64{0xffffffffffffffff, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x5062cd8f7a7fd349, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 16, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x34bb12befe88eb1b, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 40, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
@@ -34,48 +36,49 @@ var tableMessageEntries = [...]TableMessageEntry{
 	TableMessageEntry{Id: 0x6a15c2158aa39ba1, Shape: TableMessageShape{Kind: 1, Packing: 0, Bits: 1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0xb5d43e6c2878bc7a, Shape: TableMessageShape{Kind: 1, Packing: 0, Bits: 1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x65e8d7f3474f2639, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 500, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x030f206af480f8a8, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 512, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x8935b4f305f36a82, Shape: TableMessageShape{Kind: 14, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 32, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{Kind: 13, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}},
-	TableMessageEntry{Id: 0x67124f6a285153c0, Shape: TableMessageShape{Kind: 14, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 130, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{Kind: 13, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}},
+	TableMessageEntry{Id: 0x030f206af480f8a8, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0x8935b4f305f36a82, Shape: TableMessageShape{Kind: 14, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 4294967295, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{Kind: 13, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}},
+	TableMessageEntry{Id: 0x67124f6a285153c0, Shape: TableMessageShape{Kind: 14, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 4294967295, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{Kind: 13, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}},
 	TableMessageEntry{Id: 0x58848fa93e04d3ef, Shape: TableMessageShape{Kind: 6, Packing: 1, Bits: 2, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x0b7a1e4bea695f89, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 256, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0x0b7a1e4bea695f89, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x6568640b035a56df, Shape: TableMessageShape{Kind: 6, Packing: 1, Bits: 2, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xfa04f4ef1995407e, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 256, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x5f52c402ed58e01a, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 128, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x9a3b153e9e8f251e, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 512, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0xb5614e90e87b455f, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 128, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x63e618bd2b303dee, Shape: TableMessageShape{Kind: 4, Packing: 1, Bits: 20, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x0a8f12cc5f9a0c03, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 64, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x919ec0f651278ba5, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 256, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xc4bcadba8e631b86, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 64, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x59f4ff1e856996af, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 512, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xab23f0eec020c951, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 128, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0xc4bcadba8e631b86, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0xd02b4c8c65fb54dc, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0x9de543933e6e703a, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0x9a3b153e9e8f251e, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0x5f52c402ed58e01a, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0x59f4ff1e856996af, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0xab23f0eec020c951, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x1e1702714db75ac8, Shape: TableMessageShape{Kind: 6, Packing: 1, Bits: 2, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x715b9112503b65d0, Shape: TableMessageShape{Kind: 6, Packing: 1, Bits: 2, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x211fcbbafe5331ab, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 256, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xe15a71de737c1c11, Shape: TableMessageShape{Kind: 14, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 64, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{Kind: 13, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}},
-	TableMessageEntry{Id: 0xf6b3b625055a22af, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 512, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x4abbaca40bb6fe75, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 32, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xd0013bb2e083188b, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 256, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xf7df2f140b025f4b, Shape: TableMessageShape{Kind: 14, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 32, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{Kind: 13, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}},
+	TableMessageEntry{Id: 0x211fcbbafe5331ab, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0xe15a71de737c1c11, Shape: TableMessageShape{Kind: 14, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 4294967295, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{Kind: 13, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}},
+	TableMessageEntry{Id: 0xf6b3b625055a22af, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0x4abbaca40bb6fe75, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0xd0013bb2e083188b, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0xf7df2f140b025f4b, Shape: TableMessageShape{Kind: 14, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 4294967295, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{Kind: 13, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}},
 	TableMessageEntry{Id: 0x6e3350b274605c16, Shape: TableMessageShape{Kind: 4, Packing: 1, Bits: 31, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x18e16aeddf76561d, Shape: TableMessageShape{Kind: 5, Packing: 1, Bits: 53, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xf9d5642cca9049fa, Shape: TableMessageShape{Kind: 14, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 32, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{Kind: 13, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}},
-	TableMessageEntry{Id: 0x98358983bb5d1401, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 32, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0xf9d5642cca9049fa, Shape: TableMessageShape{Kind: 14, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 4294967295, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{Kind: 13, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}},
+	TableMessageEntry{Id: 0x98358983bb5d1401, Shape: TableMessageShape{Kind: 17, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x393f74e7cef3c9d5, Shape: TableMessageShape{Kind: 1, Packing: 0, Bits: 1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0xffffffffffffffff, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x2f2ec0474f1c4fe4, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x704be0d8faaffc58, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x5f299db0267bd4c7, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x3bf059a12d142ef0, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
+	TableMessageEntry{Id: 0x7dea6d25be21fb73, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0xeb956f7535cf63ec, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x06d0542e1791e890, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x1a9504c9da8d57b0, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x1461c1f579126859, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0xa657a6db0566c708, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0x422d01d3f82a267e, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x2e532e19ed477a56, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xc230f7ca5caf90c8, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 	TableMessageEntry{Id: 0xfd791912bb1287fe, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
 }
 
@@ -708,4 +711,872 @@ func tableMessageBatchClose(r *TableMessageReader) bool {
 		return false
 	}
 	return true
+}
+
+func tableMessageRegionWrite(w *TableMessageWriter, p unsafe.Pointer, t *TableTypeInfo, a *TableArena, allocator ...TableAllocator) bool {
+	var ok bool
+	w.numbering, ok = tableNumber(p, t, a, allocator...)
+	if !ok {
+		return false
+	}
+	n := &w.numbering
+	defer n.Release()
+	defer func() { w.Numbering = nil }()
+	w.Numbering = n
+	w.IndexBits = tableMessageBits(uint64(len(n.entries)))
+	if w.IndexBits < 1 {
+		w.IndexBits = 1
+	}
+	if len(n.entries) > 1 {
+		slot := uint64(0)
+		for i := range tableMessageEntries {
+			if tableMessageEntries[i].Id == 0xffffffffffffffff {
+				slot = uint64(i + 1)
+				break
+			}
+		}
+		if slot == 0 || uint64(len(n.entries)-1) > math.MaxUint32 {
+			return false
+		}
+		w.Put(slot, TableMessageRefBitsHere)
+		w.Put(uint64(len(n.entries)-1), 32)
+		for i := 1; i < len(n.entries); i++ {
+			node := &n.entries[i]
+			slot := tableMessageNameSlot(node.id)
+			if slot == 0 {
+				return false
+			}
+			w.Put(slot, TableMessageRefBitsHere)
+			if node.info != nil {
+				if !node.info.SaveMessageBody(w, node.node) {
+					return false
+				}
+			} else {
+				length := uint64(*(*uint32)(node.node))
+				if length > math.MaxUint32 {
+					return false
+				}
+				w.Put(length, 32)
+				w.Raw(unsafe.Slice((*byte)(unsafe.Add(node.node, 8)), int(length)))
+			}
+		}
+	}
+	return t.SaveMessageBody(w, p)
+}
+func tableMessageNodeOpen(r *TableMessageReader) (int64, bool) {
+	start := r.Bits.Offset
+	ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
+	if !ok {
+		return 0, false
+	}
+	if ref == 0 {
+		r.Bits.Offset = start
+		return 0, true
+	}
+	e, ok := r.Vocabulary.Entry(ref)
+	if !ok {
+		return 0, false
+	}
+	if e.Id != 0xffffffffffffffff {
+		r.Bits.Offset = start
+		return 0, true
+	}
+	n, ok := r.Bits.Get(32)
+	return int64(n), ok
+}
+func tableMessageExtent(r *TableMessageReader, t *TableTypeInfo, at *int64) bool {
+	return tableMessageExtentBody(r, t, at)
+}
+
+type tableMessageRecord struct {
+	id           uint64
+	size, length int64
+}
+
+func tableMessageRecordScan(r *TableMessageReader, root *TableTypeInfo, blobs int) (record tableMessageRecord, ok bool) {
+	ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
+	if !ok {
+		return record, false
+	}
+	record.id, ok = r.Vocabulary.Name(ref)
+	if !ok {
+		return record, false
+	}
+	if record.id == tableBytesTypeId || record.id == tableStringTypeId {
+		n, ok := r.Bits.Get(32)
+		if !ok || !r.Bits.Align() || !r.Bits.Skip(int64(n)*8) {
+			return record, false
+		}
+		record.length = int64(n)
+		if record.id == tableBytesTypeId && blobs&1 != 0 || record.id == tableStringTypeId && blobs&2 != 0 {
+			extra := int64(0)
+			if record.id == tableStringTypeId {
+				extra = 1
+			}
+			record.size = tableRegionRound(8 + record.length + extra)
+		}
+		return record, true
+	}
+	t := root.NodeType(record.id)
+	if t == nil {
+		return record, tableMessageSkipBody(&r.Bits, r.Vocabulary, r.IndexBits, 0)
+	}
+	extent := int64(0)
+	if !tableMessageExtent(r, t, &extent) {
+		return record, false
+	}
+	record.size = tableRegionRound(tableRegionRound(int64(t.Size)) + extent)
+	return record, true
+}
+func tableMessageBodyStorage(r *TableMessageReader, root *TableTypeInfo, blobs int) (size int64, complete, ok bool) {
+	count, ok := tableMessageNodeOpen(r)
+	if !ok {
+		return 0, false, false
+	}
+	r.IndexBits = tableMessageBits(uint64(count + 1))
+	size = (count + 1) * 16
+	for k := int64(0); k < count; k++ {
+		record, ok := tableMessageRecordScan(r, root, blobs)
+		if !ok {
+			return 0, false, false
+		}
+		size += record.size
+	}
+	extent := int64(0)
+	complete = tableMessageExtent(r, root, &extent)
+	size += tableRegionRound(tableRegionRound(int64(root.Size)) + extent)
+	return size, complete, true
+}
+func tableMessageRegionMeasure(v *TableVocabulary, data []byte, root *TableTypeInfo, blobs int) int64 {
+	var ignored TableReport
+	r, count := tableMessageBatchOpen(v, data, &ignored)
+	if count < 0 {
+		return -1
+	}
+	total := int64(0)
+	for i := int64(0); i < count; i++ {
+		size, complete, ok := tableMessageBodyStorage(&r, root, blobs)
+		if !ok {
+			return -1
+		}
+		total += size
+		if !complete {
+			break
+		}
+	}
+	return total
+}
+func tableMessageLoadInto(r TableMessageReader, t *TableTypeInfo, p unsafe.Pointer, size int64) (TableMessageReader, bool) {
+	r.Nodes.Carve = TableExtentCarve{Base: p, At: tableRegionRound(int64(t.Size)), Limit: size}
+	return t.LoadMessageBody(r, p)
+}
+func tableMessageRegionInto(r *TableMessageReader, root *TableTypeInfo, blobs int, region []byte, used *int64) (out unsafe.Pointer, ok bool) {
+	count, ok := tableMessageNodeOpen(r)
+	if !ok {
+		r.Report.Malformed = true
+		return nil, false
+	}
+	directoryBytes := (count + 1) * 16
+	limit := int64(len(region))
+	if *used > limit || directoryBytes > limit-*used {
+		r.Report.Malformed = true
+		return nil, false
+	}
+	base := unsafe.Pointer(&region[0])
+	directory := unsafe.Slice((*TableNodeDirEntry)(unsafe.Add(base, *used)), int(count+1))
+	*used += directoryBytes
+	r.IndexBits = tableMessageBits(uint64(count + 1))
+	nodes := TableNodeMap{Base: base, Entries: directory}
+	recordsStart := r.Bits.Offset
+	unknown := int32(0)
+	for k := int64(0); k < count; k++ {
+		record, good := tableMessageRecordScan(r, root, blobs)
+		if !good {
+			r.Report.Malformed = true
+			return nil, false
+		}
+		entry := &directory[k+1]
+		entry.TypeId = record.id
+		if record.size <= 0 {
+			entry.Offset = ^uint64(0)
+			unknown++
+			continue
+		}
+		if record.size > limit-*used {
+			r.Report.Malformed = true
+			return nil, false
+		}
+		entry.Offset = uint64(*used)
+		p := unsafe.Add(base, *used)
+		if t := root.NodeType(record.id); t != nil {
+			t.Reset(p)
+		} else {
+			*(*TableBlob)(p) = TableBlob{Length: uint32(uint64(record.length))}
+		}
+		*used += record.size
+	}
+	fieldsStart := r.Bits.Offset
+	walk := *r
+	extent := int64(0)
+	complete := tableMessageExtent(&walk, root, &extent)
+	if !complete && tableMessageHasExtent(root) {
+		r.Report.Malformed = true
+		return nil, false
+	}
+	rootSize := tableRegionRound(tableRegionRound(int64(root.Size)) + extent)
+	if rootSize > limit-*used {
+		r.Report.Malformed = true
+		return nil, false
+	}
+	directory[0] = TableNodeDirEntry{Offset: uint64(*used), TypeId: root.Id}
+	out = unsafe.Add(base, *used)
+	root.Reset(out)
+	*used += rootSize
+	nodes.Good = true
+	r.Report.Unknown += unknown
+	r.Nodes = nodes
+	r.Bits.Offset = recordsStart
+	for k := int64(0); k < count; k++ {
+		if _, good := r.Bits.Get(r.Vocabulary.RefBits); !good {
+			r.Report.Malformed = true
+			return out, false
+		}
+		entry := directory[k+1]
+		if entry.TypeId == tableBytesTypeId || entry.TypeId == tableStringTypeId {
+			n, good := r.Bits.Get(32)
+			if !good || !r.Bits.Align() {
+				r.Report.Malformed = true
+				return out, false
+			}
+			start := r.Bits.Offset / 8
+			if !r.Bits.Skip(int64(n) * 8) {
+				r.Report.Malformed = true
+				return out, false
+			}
+			payload := r.Bits.Buffer[start : start+int64(n)]
+			if entry.TypeId == tableStringTypeId && blobs&2 != 0 && !tableUtf8Valid(payload) {
+				r.Report.Malformed = true
+				return out, false
+			}
+			if entry.Offset != ^uint64(0) {
+				copy(unsafe.Slice((*byte)(unsafe.Add(base, entry.Offset+8)), int(n)), payload)
+			}
+			continue
+		}
+		if entry.Offset == ^uint64(0) {
+			if !tableMessageSkipBody(&r.Bits, r.Vocabulary, r.IndexBits, 0) {
+				r.Report.Malformed = true
+				return out, false
+			}
+			continue
+		}
+		t := root.NodeType(entry.TypeId)
+		walk := *r
+		extent := int64(0)
+		if !tableMessageExtent(&walk, t, &extent) {
+			r.Report.Malformed = true
+			return out, false
+		}
+		*r, ok = tableMessageLoadInto(*r, t, unsafe.Add(base, entry.Offset), tableRegionRound(int64(t.Size))+extent)
+		if !ok {
+			return out, false
+		}
+	}
+	if r.Bits.Offset != fieldsStart {
+		r.Report.Malformed = true
+		return out, false
+	}
+	*r, ok = tableMessageLoadInto(*r, root, out, rootSize)
+	return out, ok
+}
+func tableMessageHasExtent(t *TableTypeInfo) bool {
+	for i := range t.Fields {
+		if tableMessageFieldHasExtent(&t.Fields[i]) {
+			return true
+		}
+	}
+	return false
+}
+func tableMessageFieldHasExtent(f *TableFieldInfo) bool {
+	if f.List || f.Map {
+		return true
+	}
+	if f.Pointer {
+		return false
+	}
+	if f.Kind == 13 && f.Table != nil {
+		return tableMessageHasExtent(f.Table())
+	}
+	if f.Kind == 15 && f.Arms != nil {
+		u := f.Arms()
+		for i := 1; i < len(u.Arms); i++ {
+			if !u.Arms[i].Void && tableMessageFieldHasExtent(&u.Arms[i].Field) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func tableMessageExtentBody(r *TableMessageReader, t *TableTypeInfo, at *int64) bool {
+	for {
+		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
+		if !ok || ref == 0 {
+			return ok
+		}
+		e, ok := r.Vocabulary.Entry(ref)
+		if !ok || e.Id >= 0xfffffffffffffffd {
+			return false
+		}
+		var field *TableFieldInfo
+		for i := range t.Fields {
+			if t.Fields[i].Id == e.Id {
+				field = &t.Fields[i]
+				break
+			}
+		}
+		if field == nil || !tableMessageFieldHasExtent(field) {
+			if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, e, 0) {
+				return false
+			}
+			continue
+		}
+		if !tableMessageExtentField(r, e, field, at) {
+			return false
+		}
+	}
+}
+func tableMessageExtentField(r *TableMessageReader, e TableMessageEntry, f *TableFieldInfo, at *int64) bool {
+	if f.IsArray {
+		kind := uint8(14)
+		if f.KeyName != nil {
+			kind = 16
+		}
+		if e.Shape.Kind != kind || e.Element.Kind != f.Kind && !tableKindWidens(e.Element.Kind, f.Kind) {
+			return tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, e, 0)
+		}
+		n, ok := tableMessageCount(&r.Bits, e.Shape)
+		if !ok {
+			return false
+		}
+		if e.Shape.Kind == 14 && e.Element.Kind == 6 && !r.Bits.Align() {
+			return false
+		}
+		if f.List || f.Map {
+			if n > math.MaxInt32 {
+				return false
+			}
+			*at = (*at + int64(f.ElemAlign) - 1) & -int64(f.ElemAlign)
+			*at += int64(n) * int64(f.ElemSize)
+		}
+		element := TableMessageEntry{Shape: e.Element}
+		if e.Element.Bits >= 0 {
+			return r.Bits.Skip(int64(n) * e.Element.Bits)
+		}
+		for i := uint64(0); i < n; i++ {
+			if kind == 16 && !r.Bits.Skip(r.Vocabulary.RefBits) {
+				return false
+			}
+			if !tableMessageExtentValue(r, element, f, at) {
+				return false
+			}
+		}
+		return true
+	}
+	return tableMessageExtentValue(r, e, f, at)
+}
+func tableMessageExtentValue(r *TableMessageReader, e TableMessageEntry, f *TableFieldInfo, at *int64) bool {
+	if e.Shape.Kind == 13 && f.Kind == 13 && !f.Pointer {
+		return tableMessageExtentBody(r, f.Table(), at)
+	}
+	if e.Shape.Kind == 15 && f.Kind == 15 {
+		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
+		if !ok || ref == 0 {
+			return ok
+		}
+		arm, ok := r.Vocabulary.Entry(ref)
+		if !ok || arm.Id >= 0xfffffffffffffffd || arm.Shape.Kind == 0 {
+			return false
+		}
+		u := f.Arms()
+		for i := 1; i < len(u.Arms); i++ {
+			if f.VariantId(uint64(i)) == arm.Id && !u.Arms[i].Void {
+				return tableMessageExtentField(r, arm, &u.Arms[i].Field, at)
+			}
+		}
+		return tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, arm, 0)
+	}
+	return tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, e, 0)
+}
+
+func tableMessageMapReadKey(r TableMessageReader, f *TableFieldInfo) (key tableMapKey, end int64, bad, over, wide, whole bool) {
+	for {
+		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
+		if !ok {
+			return
+		}
+		if ref == 0 {
+			end = r.Bits.Offset
+			whole = true
+			return
+		}
+		e, ok := r.Vocabulary.Entry(ref)
+		if !ok || e.Id >= 0xfffffffffffffffd {
+			return
+		}
+		if e.Id != f.Id {
+			if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, e, 0) {
+				return
+			}
+			continue
+		}
+		bad = e.Shape.Kind != f.Kind && !tableKindWidens(e.Shape.Kind, f.Kind)
+		wide = wide || e.Shape.Kind != f.Kind && !bad
+		if bad {
+			if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, e, 0) {
+				return
+			}
+			continue
+		}
+		if f.Kind == 12 {
+			n, ok := tableMessageCount(&r.Bits, e.Shape)
+			if !ok || !r.Bits.Align() {
+				return
+			}
+			start := r.Bits.Offset / 8
+			if !r.Bits.Skip(int64(n) * 8) {
+				return
+			}
+			key.text = r.Bits.Buffer[start : start+int64(n)]
+			if !tableUtf8Valid(key.text) {
+				return
+			}
+			over = n > uint64(f.ArrayBound)
+		} else {
+			var raw [16]byte
+			if !tableMessageReadScalar(&r.Bits, e.Shape, &raw) {
+				return
+			}
+			value := TableReader{Buffer: raw[:]}
+			if f.Kind >= 2 && f.Kind <= 5 {
+				key.raw = uint64(value.Signed(e.Shape.Kind))
+			} else {
+				key.raw = value.Unsigned(e.Shape.Kind)
+			}
+		}
+	}
+}
+
+// Capture starts only after the ordinary skip succeeds. Capacity bounds the
+// resolved output before an announced count can expand a zero-bit element.
+func (r *TableRetainMessageReader) capture(e TableMessageEntry) bool {
+	start := r.Bits.Offset
+	if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, e, 0) {
+		return false
+	}
+	if r.Retain == nil {
+		return true
+	}
+	t, p := r.Retain, r.Path
+	header := int64(26 + p.depth*8)
+	limit := int64(len(t.Bytes)) - t.Used - header
+	if p.depth > len(p.steps) || limit < 0 {
+		r.Report.RetainLost++
+		return true
+	}
+	probe := tableRetainMessageIn{bits: r.Bits, v: r.Vocabulary, w: TableWriter{Measuring: true}, limit: limit}
+	probe.bits.Offset = start
+	if !probe.payload(e, 0) || probe.bits.Offset != r.Bits.Offset || probe.w.Offset > limit {
+		r.Report.RetainLost++
+		return true
+	}
+	need := header + probe.w.Offset
+	if need > 0xffffffff {
+		r.Report.RetainLost++
+		return true
+	}
+	b := t.Bytes[t.Used : t.Used+need]
+	clear(b[:26])
+	binary.LittleEndian.PutUint32(b, uint32(need))
+	binary.LittleEndian.PutUint32(b[4:], p.node)
+	binary.LittleEndian.PutUint32(b[8:], uint32(p.depth))
+	binary.LittleEndian.PutUint32(b[12:], uint32(probe.w.Offset))
+	binary.LittleEndian.PutUint64(b[16:], e.Id)
+	b[24] = e.Shape.Kind
+	for i := 0; i < p.depth; i++ {
+		binary.LittleEndian.PutUint32(b[26+i*8:], p.steps[i].ordinal)
+		binary.LittleEndian.PutUint32(b[30+i*8:], p.steps[i].index)
+	}
+	write := tableRetainMessageIn{bits: r.Bits, v: r.Vocabulary, w: TableWriter{Buffer: b[header:]}, limit: limit}
+	write.bits.Offset = start
+	if !write.payload(e, 0) || write.w.Overflow {
+		r.Report.RetainLost++
+		return true
+	}
+	t.Used += need
+	t.Count++
+	r.Report.Retained++
+	return true
+}
+
+type tableRetainMessageIn struct {
+	bits  TableBitReader
+	v     *TableVocabulary
+	w     TableWriter
+	limit int64
+}
+
+func (s *tableRetainMessageIn) room(n int64) bool { return n >= 0 && n <= s.limit-s.w.Offset }
+func (s *tableRetainMessageIn) ref(zero bool) (TableMessageEntry, bool) {
+	ref, ok := s.bits.Get(s.v.RefBits)
+	if !ok {
+		return TableMessageEntry{}, false
+	}
+	if ref == 0 {
+		if !zero || !s.room(8) {
+			return TableMessageEntry{}, false
+		}
+		s.w.Put64(0)
+		return TableMessageEntry{}, true
+	}
+	e, ok := s.v.Entry(ref)
+	if !ok || e.Id == 0 || e.Id >= 0xfffffffffffffffd || !s.room(8) {
+		return e, false
+	}
+	s.w.Put64(e.Id)
+	return e, true
+}
+func (s *tableRetainMessageIn) scalar(e TableMessageEntry) bool {
+	width := tableKindBytes(e.Shape.Kind)
+	if width == 0 || !s.room(width) {
+		return false
+	}
+	shape := e.Shape
+	if shape.Packing == 2 {
+		probe := s.bits
+		index, ok := probe.Get(shape.Bits)
+		if !ok || index > uint64(shape.QCount) {
+			return false
+		}
+	}
+	var raw [16]byte
+	if !tableMessageReadScalar(&s.bits, shape, &raw) {
+		return false
+	}
+	if shape.Packing == 0 && (shape.Kind >= 2 && shape.Kind <= 5 || shape.Kind >= 20 && shape.Kind <= 24) && shape.Bits > 0 && shape.Bits < 64 {
+		v := binary.LittleEndian.Uint64(raw[:])
+		if v&(uint64(1)<<uint(shape.Bits-1)) != 0 {
+			v |= ^uint64(0) << uint(shape.Bits)
+			binary.LittleEndian.PutUint64(raw[:], v)
+		}
+	}
+	s.w.Raw(raw[:width])
+	return !s.w.Overflow
+}
+func (s *tableRetainMessageIn) opaque(e TableMessageEntry, framed bool) bool {
+	var n uint64
+	var ok bool
+	if e.Shape.Kind == 12 || e.Shape.Kind == 33 {
+		n, ok = tableMessageCount(&s.bits, e.Shape)
+		if !ok {
+			return false
+		}
+		if e.Shape.Kind == 33 {
+			n *= 2
+		} else if !s.bits.Align() {
+			return false
+		}
+	} else {
+		if !s.bits.Align() {
+			return false
+		}
+		n, ok = s.bits.Get(32)
+		if !ok {
+			return false
+		}
+	}
+	extra := int64(0)
+	if framed {
+		extra = tableLebBytes(n)
+	}
+	if n > 0x7fffffff || !s.room(int64(n)+extra) || int64(n)*8 > int64(len(s.bits.Buffer))*8-s.bits.Offset {
+		return false
+	}
+	if framed {
+		s.w.PutLeb(n)
+	}
+	for i := uint64(0); i < n; i++ {
+		v, ok := s.bits.Get(8)
+		if !ok {
+			return false
+		}
+		s.w.Put8(byte(v))
+	}
+	return true
+}
+func (s *tableRetainMessageIn) framed(e TableMessageEntry, depth int) bool {
+	if depth > tableRetainWalkDepthMax || !s.room(8) {
+		return false
+	}
+	at := s.w.Offset
+	s.w.Put64(0)
+	before := s.w.Offset
+	if !s.content(e, depth) || s.w.Offset-before > 0xffffffff {
+		return false
+	}
+	if !s.w.Measuring {
+		binary.LittleEndian.PutUint32(s.w.Buffer[at:], uint32(s.w.Offset-before))
+	}
+	return true
+}
+func (s *tableRetainMessageIn) content(e TableMessageEntry, depth int) bool {
+	if depth > tableRetainWalkDepthMax {
+		return false
+	}
+	switch e.Shape.Kind {
+	case 17:
+		return false
+	case 13:
+		for {
+			entry, ok := s.ref(true)
+			if !ok {
+				return false
+			}
+			if entry.Id == 0 {
+				return true
+			}
+			if !s.room(1) {
+				return false
+			}
+			s.w.Put8(entry.Shape.Kind)
+			if !s.payload(entry, depth) {
+				return false
+			}
+		}
+	case 14, 16:
+		return s.elements(e, depth)
+	case 15, 30:
+		return s.payload(e, depth)
+	case 32:
+		return true
+	case 12, 31, 33:
+		return s.opaque(e, false)
+	}
+	return s.scalar(e)
+}
+func tableRetainMessageMinimum(kind uint8) int64 {
+	if n := tableKindBytes(kind); n != 0 {
+		return n
+	}
+	switch kind {
+	case 13:
+		return 16
+	case 14, 16:
+		return 10
+	case 15, 30:
+		return 8
+	case 17:
+		return -1
+	case 12, 31, 32, 33:
+		return 1
+	}
+	return -1
+}
+func (s *tableRetainMessageIn) elements(e TableMessageEntry, depth int) bool {
+	if e.Element.Kind == 17 {
+		return false
+	}
+	n, ok := tableMessageCount(&s.bits, e.Shape)
+	if !ok {
+		return false
+	}
+	if e.Shape.Kind == 14 && e.Element.Kind == 6 && !s.bits.Align() {
+		return false
+	}
+	if !s.room(1 + tableLebBytes(n)) {
+		return false
+	}
+	s.w.Put8(e.Element.Kind)
+	s.w.PutLeb(n)
+	floor := tableRetainMessageMinimum(e.Element.Kind)
+	if e.Shape.Kind == 16 {
+		floor = 16
+	}
+	if floor < 0 || n > uint64((s.limit-s.w.Offset)/floor) {
+		return false
+	}
+	element := TableMessageEntry{Shape: e.Element}
+	for i := uint64(0); i < n; i++ {
+		if e.Shape.Kind == 16 {
+			if _, ok := s.ref(false); !ok || !s.framed(element, depth+1) {
+				return false
+			}
+		} else if !s.payload(element, depth) {
+			return false
+		}
+	}
+	return true
+}
+func (s *tableRetainMessageIn) payload(e TableMessageEntry, depth int) bool {
+	switch e.Shape.Kind {
+	case 0, 17:
+		return false
+	case 32:
+		if !s.room(1) {
+			return false
+		}
+		s.w.PutLeb(0)
+		return true
+	case 30:
+		_, ok := s.ref(true)
+		return ok
+	case 15:
+		arm, ok := s.ref(true)
+		if !ok {
+			return false
+		}
+		if arm.Id == 0 {
+			return true
+		}
+		if arm.Shape.Kind == 0 || !s.room(1) {
+			return false
+		}
+		s.w.Put8(arm.Shape.Kind)
+		return s.framed(arm, depth+1)
+	case 13, 14, 16:
+		return s.framed(e, depth+1)
+	case 12, 31, 33:
+		return s.opaque(e, true)
+	}
+	return s.scalar(e)
+}
+func tableMessageLoadIntoRetain(r TableRetainMessageReader, t *TableTypeInfo, p unsafe.Pointer, size int64) (TableRetainMessageReader, bool) {
+	r.Nodes.Carve = TableExtentCarve{Base: p, At: tableRegionRound(int64(t.Size)), Limit: size}
+	return t.LoadMessageBodyRetain(r, p)
+}
+func tableMessageRegionIntoRetain(r *TableRetainMessageReader, root *TableTypeInfo, blobs int, region []byte, used *int64) (out unsafe.Pointer, ok bool) {
+	r.Retain.reset(nil, nil)
+	count, ok := tableMessageNodeOpen(&r.tableMessagePlainReader)
+	if !ok {
+		r.Report.Malformed = true
+		return nil, false
+	}
+	directoryBytes := (count + 1) * 16
+	limit := int64(len(region))
+	if *used > limit || directoryBytes > limit-*used {
+		r.Report.Malformed = true
+		return nil, false
+	}
+	base := unsafe.Pointer(&region[0])
+	directory := unsafe.Slice((*TableNodeDirEntry)(unsafe.Add(base, *used)), int(count+1))
+	*used += directoryBytes
+	r.IndexBits = tableMessageBits(uint64(count + 1))
+	nodes := TableNodeMap{Base: base, Entries: directory}
+	recordsStart := r.Bits.Offset
+	unknown := int32(0)
+	for k := int64(0); k < count; k++ {
+		record, good := tableMessageRecordScan(&r.tableMessagePlainReader, root, blobs)
+		if !good {
+			r.Report.Malformed = true
+			return nil, false
+		}
+		entry := &directory[k+1]
+		entry.TypeId = record.id
+		if record.size <= 0 {
+			entry.Offset = ^uint64(0)
+			unknown++
+			continue
+		}
+		if record.size > limit-*used {
+			r.Report.Malformed = true
+			return nil, false
+		}
+		entry.Offset = uint64(*used)
+		p := unsafe.Add(base, *used)
+		if t := root.NodeType(record.id); t != nil {
+			t.Reset(p)
+		} else {
+			*(*TableBlob)(p) = TableBlob{Length: uint32(uint64(record.length))}
+		}
+		*used += record.size
+	}
+	fieldsStart := r.Bits.Offset
+	walk := *r
+	extent := int64(0)
+	complete := tableMessageExtent(&walk.tableMessagePlainReader, root, &extent)
+	if !complete && tableMessageHasExtent(root) {
+		r.Report.Malformed = true
+		return nil, false
+	}
+	rootSize := tableRegionRound(tableRegionRound(int64(root.Size)) + extent)
+	if rootSize > limit-*used {
+		r.Report.Malformed = true
+		return nil, false
+	}
+	directory[0] = TableNodeDirEntry{Offset: uint64(*used), TypeId: root.Id}
+	out = unsafe.Add(base, *used)
+	root.Reset(out)
+	*used += rootSize
+	nodes.Good = true
+	r.Retain.reset(base, directory)
+	if r.Retain != nil {
+		r.Report.RetainLost += unknown
+	}
+	r.Report.Unknown += unknown
+	r.Nodes = nodes
+	r.Bits.Offset = recordsStart
+	for k := int64(0); k < count; k++ {
+		if _, good := r.Bits.Get(r.Vocabulary.RefBits); !good {
+			r.Report.Malformed = true
+			return out, false
+		}
+		entry := directory[k+1]
+		if entry.TypeId == tableBytesTypeId || entry.TypeId == tableStringTypeId {
+			n, good := r.Bits.Get(32)
+			if !good || !r.Bits.Align() {
+				r.Report.Malformed = true
+				return out, false
+			}
+			start := r.Bits.Offset / 8
+			if !r.Bits.Skip(int64(n) * 8) {
+				r.Report.Malformed = true
+				return out, false
+			}
+			payload := r.Bits.Buffer[start : start+int64(n)]
+			if entry.TypeId == tableStringTypeId && blobs&2 != 0 && !tableUtf8Valid(payload) {
+				r.Report.Malformed = true
+				return out, false
+			}
+			if entry.Offset != ^uint64(0) {
+				copy(unsafe.Slice((*byte)(unsafe.Add(base, entry.Offset+8)), int(n)), payload)
+			}
+			continue
+		}
+		if entry.Offset == ^uint64(0) {
+			if !tableMessageSkipBody(&r.Bits, r.Vocabulary, r.IndexBits, 0) {
+				r.Report.Malformed = true
+				return out, false
+			}
+			continue
+		}
+		t := root.NodeType(entry.TypeId)
+		walk := *r
+		extent := int64(0)
+		if !tableMessageExtent(&walk.tableMessagePlainReader, t, &extent) {
+			r.Report.Malformed = true
+			return out, false
+		}
+		r.Path = tableRetainPath{at: unsafe.Add(base, entry.Offset), node: uint32(k + 2)}
+		*r, ok = tableMessageLoadIntoRetain(*r, t, unsafe.Add(base, entry.Offset), tableRegionRound(int64(t.Size))+extent)
+		if !ok {
+			return out, false
+		}
+	}
+	if r.Bits.Offset != fieldsStart {
+		r.Report.Malformed = true
+		return out, false
+	}
+	r.Path = tableRetainPath{at: out, node: 1}
+	*r, ok = tableMessageLoadIntoRetain(*r, root, out, rootSize)
+	return out, ok
 }

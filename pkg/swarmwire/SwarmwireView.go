@@ -67,16 +67,14 @@ func init() {
 
 var tableUnitView = UnitViewInfo{Package: "swarmwire", ProtocolId: 0xa9d9b2293e101dd5,
 	NumTypes: 0, Types: []ViewType{},
-	NumTables: 10, Tables: []ViewType{
+	NumTables: 8, Tables: []ViewType{
 		{Name: "DeclaredModel", File: "swarm.schema", Table: true, Type: &DeclaredModelTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
+		{Name: "Entry", File: "swarm.schema", Table: true, Type: &EntryTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "ExitRecord", File: "swarm.schema", Table: true, Type: &ExitRecordTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "FenceConfig", File: "swarm.schema", Table: true, Type: &FenceConfigTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "FenceRule", File: "swarm.schema", Table: true, Type: &FenceRuleTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
-		{Name: "HarnessArg", File: "swarm.schema", Table: true, Type: &HarnessArgTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "HarnessConfigRecord", File: "swarm.schema", Table: true, Type: &HarnessConfigRecordTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "MemberCarry", File: "swarm.schema", Table: true, Type: &MemberCarryTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
-		{Name: "Path", File: "swarm.schema", Table: true, Type: &PathTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
-		{Name: "Phrase", File: "swarm.schema", Table: true, Type: &PhraseTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "WorkerRecord", File: "swarm.schema", Table: true, Type: &WorkerRecordTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 	},
 	NumEnums: 0, Enums: []ViewVocabulary{},

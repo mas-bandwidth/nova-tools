@@ -5,6 +5,9 @@ table DeclaredModel
     field provider id=0xd02b4c8c65fb54dc kind=12 size=64
     field model id=0x9de543933e6e703a kind=12 size=128
 
+table Entry
+    field value id=0x7ce4fd9430e80cea kind=17 type=string
+
 table ExitRecord
     field rc id=0x08dc5507b57b9942 kind=4 min=-1 max=255
     field signal id=0x5062cd8f7a7fd349 kind=12 size=16
@@ -19,17 +22,14 @@ table ExitRecord
     field reason id=0x65e8d7f3474f2639 kind=12 size=500
 
 table FenceConfig
-    field job_dir id=0x030f206af480f8a8 kind=12 size=512
-    field reads id=0x8935b4f305f36a82 kind=14 elem=13 type=Path array=bounded bound=32
-    field rules id=0x67124f6a285153c0 kind=14 elem=13 type=FenceRule array=bounded bound=130
+    field job_dir id=0x030f206af480f8a8 kind=17 type=string
+    field reads id=0x8935b4f305f36a82 kind=14 elem=13 type=Entry array=unbounded
+    field rules id=0x67124f6a285153c0 kind=14 elem=13 type=FenceRule array=unbounded
     field webfetch id=0x58848fa93e04d3ef kind=6 min=0 max=2
 
 table FenceRule
-    field pattern id=0x0b7a1e4bea695f89 kind=12 size=256
+    field pattern id=0x0b7a1e4bea695f89 kind=17 type=string
     field action id=0x6568640b035a56df kind=6 min=0 max=2
-
-table HarnessArg
-    field text id=0xfa04f4ef1995407e kind=12 size=256
 
 table HarnessConfigRecord
     field provider id=0xd02b4c8c65fb54dc kind=12 size=64
@@ -43,34 +43,28 @@ table MemberCarry
     field head id=0x0a8f12cc5f9a0c03 kind=12 size=64
     field branch id=0x919ec0f651278ba5 kind=12 size=256
 
-table Path
-    field text id=0xfa04f4ef1995407e kind=12 size=256
-
-table Phrase
-    field text id=0xfa04f4ef1995407e kind=12 size=256
-
 table WorkerRecord
-    field name id=0xc4bcadba8e631b86 kind=12 size=64
-    field provider id=0xd02b4c8c65fb54dc kind=12 size=64
-    field model id=0x9de543933e6e703a kind=12 size=128
-    field base_url id=0x9a3b153e9e8f251e kind=12 size=512
-    field env_var id=0x5f52c402ed58e01a kind=12 size=128
-    field key_file id=0x59f4ff1e856996af kind=12 size=512
-    field secret id=0xab23f0eec020c951 kind=12 size=128
+    field name id=0xc4bcadba8e631b86 kind=17 type=string
+    field provider id=0xd02b4c8c65fb54dc kind=17 type=string
+    field model id=0x9de543933e6e703a kind=17 type=string
+    field base_url id=0x9a3b153e9e8f251e kind=17 type=string
+    field env_var id=0x5f52c402ed58e01a kind=17 type=string
+    field key_file id=0x59f4ff1e856996af kind=17 type=string
+    field secret id=0xab23f0eec020c951 kind=17 type=string
     field usage id=0x1e1702714db75ac8 kind=6 min=0 max=2
     field worker_class id=0x715b9112503b65d0 kind=6 min=0 max=2
-    field harness id=0x211fcbbafe5331ab kind=12 size=256
-    field harness_args id=0xe15a71de737c1c11 kind=14 elem=13 type=HarnessArg array=bounded bound=64
-    field worker_dir id=0xf6b3b625055a22af kind=12 size=512
-    field deadline id=0x4abbaca40bb6fe75 kind=12 size=32
-    field board id=0xd0013bb2e083188b kind=12 size=256
-    field read_roots id=0xf7df2f140b025f4b kind=14 elem=13 type=Path array=bounded bound=32
+    field harness id=0x211fcbbafe5331ab kind=17 type=string
+    field harness_args id=0xe15a71de737c1c11 kind=14 elem=13 type=Entry array=unbounded
+    field worker_dir id=0xf6b3b625055a22af kind=17 type=string
+    field deadline id=0x4abbaca40bb6fe75 kind=17 type=string
+    field board id=0xd0013bb2e083188b kind=17 type=string
+    field read_roots id=0xf7df2f140b025f4b kind=14 elem=13 type=Entry array=unbounded
     field max_turns id=0x6e3350b274605c16 kind=4 min=0 max=2147483647
     field max_cache_read id=0x18e16aeddf76561d kind=5 min=0 max=9007199254740991
-    field input_limit_phrases id=0xf9d5642cca9049fa kind=14 elem=13 type=Phrase array=bounded bound=32
-    field launch_grace id=0x98358983bb5d1401 kind=12 size=32
+    field input_limit_phrases id=0xf9d5642cca9049fa kind=14 elem=13 type=Entry array=unbounded
+    field launch_grace id=0x98358983bb5d1401 kind=17 type=string
     field keep_data id=0x393f74e7cef3c9d5 kind=1
 
 ## history
 ### 2026-10-17 (UTC) — first baseline
-- baseline created over 10 tables — data written BEFORE this point is not covered by it
+- baseline created over 8 tables — data written BEFORE this point is not covered by it

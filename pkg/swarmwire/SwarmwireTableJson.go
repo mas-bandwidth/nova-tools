@@ -2973,48 +2973,109 @@ func tableTimestampTime(n int64) time.Time { return time.Unix(0, n).UTC() }
 
 // ---- json walk: end ----
 
-// PathFromJson fills one Path from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
-// A nil report is allowed; every tolerance event still decides the same way.
-func PathFromJson(value *Path, text []byte, report *TableReport) bool {
-	return tableJsonRead(unsafe.Pointer(value), PathTableType(), text, report)
+func tableRegionFromJson(value unsafe.Pointer, info *TableTypeInfo, worker *TableWorker, text []byte, report *TableReport) bool {
+	if report == nil {
+		var ignored TableReport
+		report = &ignored
+	}
+	if value == nil {
+		report.Malformed = true
+		return false
+	}
+	graph := tableJsonGraph{mapPlace: func(p unsafe.Pointer, f *TableFieldInfo, key tableMapKey) (unsafe.Pointer, bool) {
+		return tableMapPlace(worker, (*tableContainer)(p), f, key)
+	}, listAdd: func(p unsafe.Pointer, size int64) unsafe.Pointer {
+		return tableContainerAppend(worker, (*tableContainer)(p), size)
+	}, alloc: worker.Alloc, allocate: worker.Arena.Allocator.alloc, release: worker.Arena.Allocator.free}
+	defer graph.close()
+	in := tableJsonIn{text: text, report: report, graph: &graph}
+	info.Reset(value)
+	ok := tableJsonReadTable(&in, value, info, 0)
+	in.space()
+	if !ok || in.bad || in.pos != len(text) {
+		report.Malformed = true
+		return false
+	}
+	return true
+}
+func tableRegionToJson(value unsafe.Pointer, info *TableTypeInfo, buffer []byte, allocator ...TableAllocator) int64 {
+	n, ok := tableNumber(value, info, nil, allocator...)
+	if !ok {
+		return -1
+	}
+	defer n.Release()
+	graph := tableJsonGraph{node: func(p unsafe.Pointer) *tableJsonGraphNode {
+		i, ok := n.find(p)
+		if !ok {
+			return nil
+		}
+		return &n.entries[i].json
+	}}
+	for i := range n.entries {
+		e := &n.entries[i]
+		if e.info != nil && !tableRegionEdges(e.node, e.info, nil, func(slot *TableRef, f *TableFieldInfo) bool {
+			p := tableRefAt(slot, nil)
+			if p != nil {
+				graph.node(p).refs++
+			}
+			return true
+		}) {
+			return -1
+		}
+	}
+	out := tableJsonOut{buffer: buffer, measure: buffer == nil, graph: &graph}
+	if !tableJsonWriteValue(&out, value, info, 0) {
+		return -1
+	}
+	out.put('\n')
+	if out.overflow {
+		return -1
+	}
+	return out.offset
+}
+func EntryFromJson(builder *EntryBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), EntryTableType(), &builder.Main, text, report)
+}
+func EntryToJsonMeasure(value *Entry, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), EntryTableType(), nil, allocator...)
+}
+func EntryToJson(value *Entry, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), EntryTableType(), buffer, allocator...)
 }
 
-// PathToJsonMeasure is the exact size of Path's JSON text, writing nothing.
-func PathToJsonMeasure(value *Path) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), PathTableType(), nil)
-}
-
-// PathToJson writes Path's JSON text into the caller's slice and returns the
-// bytes written — exactly PathToJsonMeasure's answer — or -1 when it is short.
-func PathToJson(value *Path, buffer []byte) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), PathTableType(), buffer)
-}
-
-// PathSaveText returns the base64 of Path's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// EntrySaveText returns the base64 of Entry's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §16.8): the whole file, form byte first, so the text keeps the form byte,
-// the framing check and every versioning guarantee and is opaque.
-func PathSaveText(value *Path) (string, error) {
-	n := PathMeasure(value)
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context EntrySave takes.
+func EntrySaveText(value *Entry, context ...TableWriteContext) (string, error) {
+	n, err := EntryMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
 	if n < 0 {
 		return "", tableRefuseError(TableRefuseInvalidValue)
 	}
 	buf := make([]byte, n)
-	if PathSave(value, buf) < 0 {
+	if EntrySave(value, buf, context...) != n {
 		return "", tableRefuseError(TableRefuseInvalidValue)
 	}
 	return base64.StdEncoding.EncodeToString(buf), nil
 }
 
-// PathLoadText fills one Path from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §16.8). It is the STRICT read (§6.5) over the decoded wire: it refuses
-// whenever the read's report holds an error (TableReport.Err), whatever the
-// tolerant Load answered, so a recovered value never comes back. It refuses
-// by name: base64_damaged when the body does not decode, unknown_form when
-// the decoded wire's form byte is not one this build carries, wire_damaged
-// for framing damage, and the report's own reason (malformed, clamped,
-// kind_mismatch, ...) otherwise. A nil report is allowed; a supplied one
-// receives THIS read's report, so earlier counts in it never decide.
-func PathLoadText(text string, report *TableReport) (*Path, error) {
+// EntryLoadText reads one Entry from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as EntryReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func EntryLoadText(text string, report *TableReport) (*Entry, error) {
 	if report != nil {
 		*report = TableReport{}
 	}
@@ -3022,199 +3083,71 @@ func PathLoadText(text string, report *TableReport) (*Path, error) {
 	if err != nil {
 		return nil, tableRefuseError(TableRefuseBase64Damaged)
 	}
-	if len(wire) == 0 || wire[0] != 1 {
-		return nil, tableRefuseError(TableRefuseUnknownForm)
+	var builder EntryBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
 	}
-	var v Path
 	var read TableReport
-	ok := PathLoad(&v, wire, &read)
+	ok := EntryLoadBuilder(&builder, wire, &read)
 	if report != nil {
 		*report = read
 	}
-	if !ok {
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
 		return nil, tableRefuseError(TableRefuseWireDamaged)
 	}
-	if err := read.Err(); err != nil {
-		return nil, err
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
 	}
-	return &v, nil
+	return builder.AsConst(), nil
 }
 
-// HarnessArgFromJson fills one HarnessArg from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
-// A nil report is allowed; every tolerance event still decides the same way.
-func HarnessArgFromJson(value *HarnessArg, text []byte, report *TableReport) bool {
-	return tableJsonRead(unsafe.Pointer(value), HarnessArgTableType(), text, report)
+func FenceRuleFromJson(builder *FenceRuleBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), FenceRuleTableType(), &builder.Main, text, report)
 }
-
-// HarnessArgToJsonMeasure is the exact size of HarnessArg's JSON text, writing nothing.
-func HarnessArgToJsonMeasure(value *HarnessArg) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), HarnessArgTableType(), nil)
+func FenceRuleToJsonMeasure(value *FenceRule, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), FenceRuleTableType(), nil, allocator...)
 }
-
-// HarnessArgToJson writes HarnessArg's JSON text into the caller's slice and returns the
-// bytes written — exactly HarnessArgToJsonMeasure's answer — or -1 when it is short.
-func HarnessArgToJson(value *HarnessArg, buffer []byte) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), HarnessArgTableType(), buffer)
-}
-
-// HarnessArgSaveText returns the base64 of HarnessArg's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §16.8): the whole file, form byte first, so the text keeps the form byte,
-// the framing check and every versioning guarantee and is opaque.
-func HarnessArgSaveText(value *HarnessArg) (string, error) {
-	n := HarnessArgMeasure(value)
-	if n < 0 {
-		return "", tableRefuseError(TableRefuseInvalidValue)
-	}
-	buf := make([]byte, n)
-	if HarnessArgSave(value, buf) < 0 {
-		return "", tableRefuseError(TableRefuseInvalidValue)
-	}
-	return base64.StdEncoding.EncodeToString(buf), nil
-}
-
-// HarnessArgLoadText fills one HarnessArg from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §16.8). It is the STRICT read (§6.5) over the decoded wire: it refuses
-// whenever the read's report holds an error (TableReport.Err), whatever the
-// tolerant Load answered, so a recovered value never comes back. It refuses
-// by name: base64_damaged when the body does not decode, unknown_form when
-// the decoded wire's form byte is not one this build carries, wire_damaged
-// for framing damage, and the report's own reason (malformed, clamped,
-// kind_mismatch, ...) otherwise. A nil report is allowed; a supplied one
-// receives THIS read's report, so earlier counts in it never decide.
-func HarnessArgLoadText(text string, report *TableReport) (*HarnessArg, error) {
-	if report != nil {
-		*report = TableReport{}
-	}
-	wire, err := base64.StdEncoding.DecodeString(text)
-	if err != nil {
-		return nil, tableRefuseError(TableRefuseBase64Damaged)
-	}
-	if len(wire) == 0 || wire[0] != 1 {
-		return nil, tableRefuseError(TableRefuseUnknownForm)
-	}
-	var v HarnessArg
-	var read TableReport
-	ok := HarnessArgLoad(&v, wire, &read)
-	if report != nil {
-		*report = read
-	}
-	if !ok {
-		return nil, tableRefuseError(TableRefuseWireDamaged)
-	}
-	if err := read.Err(); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-// PhraseFromJson fills one Phrase from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
-// A nil report is allowed; every tolerance event still decides the same way.
-func PhraseFromJson(value *Phrase, text []byte, report *TableReport) bool {
-	return tableJsonRead(unsafe.Pointer(value), PhraseTableType(), text, report)
-}
-
-// PhraseToJsonMeasure is the exact size of Phrase's JSON text, writing nothing.
-func PhraseToJsonMeasure(value *Phrase) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), PhraseTableType(), nil)
-}
-
-// PhraseToJson writes Phrase's JSON text into the caller's slice and returns the
-// bytes written — exactly PhraseToJsonMeasure's answer — or -1 when it is short.
-func PhraseToJson(value *Phrase, buffer []byte) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), PhraseTableType(), buffer)
-}
-
-// PhraseSaveText returns the base64 of Phrase's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §16.8): the whole file, form byte first, so the text keeps the form byte,
-// the framing check and every versioning guarantee and is opaque.
-func PhraseSaveText(value *Phrase) (string, error) {
-	n := PhraseMeasure(value)
-	if n < 0 {
-		return "", tableRefuseError(TableRefuseInvalidValue)
-	}
-	buf := make([]byte, n)
-	if PhraseSave(value, buf) < 0 {
-		return "", tableRefuseError(TableRefuseInvalidValue)
-	}
-	return base64.StdEncoding.EncodeToString(buf), nil
-}
-
-// PhraseLoadText fills one Phrase from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §16.8). It is the STRICT read (§6.5) over the decoded wire: it refuses
-// whenever the read's report holds an error (TableReport.Err), whatever the
-// tolerant Load answered, so a recovered value never comes back. It refuses
-// by name: base64_damaged when the body does not decode, unknown_form when
-// the decoded wire's form byte is not one this build carries, wire_damaged
-// for framing damage, and the report's own reason (malformed, clamped,
-// kind_mismatch, ...) otherwise. A nil report is allowed; a supplied one
-// receives THIS read's report, so earlier counts in it never decide.
-func PhraseLoadText(text string, report *TableReport) (*Phrase, error) {
-	if report != nil {
-		*report = TableReport{}
-	}
-	wire, err := base64.StdEncoding.DecodeString(text)
-	if err != nil {
-		return nil, tableRefuseError(TableRefuseBase64Damaged)
-	}
-	if len(wire) == 0 || wire[0] != 1 {
-		return nil, tableRefuseError(TableRefuseUnknownForm)
-	}
-	var v Phrase
-	var read TableReport
-	ok := PhraseLoad(&v, wire, &read)
-	if report != nil {
-		*report = read
-	}
-	if !ok {
-		return nil, tableRefuseError(TableRefuseWireDamaged)
-	}
-	if err := read.Err(); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-// FenceRuleFromJson fills one FenceRule from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
-// A nil report is allowed; every tolerance event still decides the same way.
-func FenceRuleFromJson(value *FenceRule, text []byte, report *TableReport) bool {
-	return tableJsonRead(unsafe.Pointer(value), FenceRuleTableType(), text, report)
-}
-
-// FenceRuleToJsonMeasure is the exact size of FenceRule's JSON text, writing nothing.
-func FenceRuleToJsonMeasure(value *FenceRule) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), FenceRuleTableType(), nil)
-}
-
-// FenceRuleToJson writes FenceRule's JSON text into the caller's slice and returns the
-// bytes written — exactly FenceRuleToJsonMeasure's answer — or -1 when it is short.
-func FenceRuleToJson(value *FenceRule, buffer []byte) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), FenceRuleTableType(), buffer)
+func FenceRuleToJson(value *FenceRule, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), FenceRuleTableType(), buffer, allocator...)
 }
 
 // FenceRuleSaveText returns the base64 of FenceRule's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §16.8): the whole file, form byte first, so the text keeps the form byte,
-// the framing check and every versioning guarantee and is opaque.
-func FenceRuleSaveText(value *FenceRule) (string, error) {
-	n := FenceRuleMeasure(value)
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context FenceRuleSave takes.
+func FenceRuleSaveText(value *FenceRule, context ...TableWriteContext) (string, error) {
+	n, err := FenceRuleMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
 	if n < 0 {
 		return "", tableRefuseError(TableRefuseInvalidValue)
 	}
 	buf := make([]byte, n)
-	if FenceRuleSave(value, buf) < 0 {
+	if FenceRuleSave(value, buf, context...) != n {
 		return "", tableRefuseError(TableRefuseInvalidValue)
 	}
 	return base64.StdEncoding.EncodeToString(buf), nil
 }
 
-// FenceRuleLoadText fills one FenceRule from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §16.8). It is the STRICT read (§6.5) over the decoded wire: it refuses
-// whenever the read's report holds an error (TableReport.Err), whatever the
-// tolerant Load answered, so a recovered value never comes back. It refuses
-// by name: base64_damaged when the body does not decode, unknown_form when
-// the decoded wire's form byte is not one this build carries, wire_damaged
-// for framing damage, and the report's own reason (malformed, clamped,
-// kind_mismatch, ...) otherwise. A nil report is allowed; a supplied one
-// receives THIS read's report, so earlier counts in it never decide.
+// FenceRuleLoadText reads one FenceRule from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as FenceRuleReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
 func FenceRuleLoadText(text string, report *TableReport) (*FenceRule, error) {
 	if report != nil {
 		*report = TableReport{}
@@ -3223,22 +3156,27 @@ func FenceRuleLoadText(text string, report *TableReport) (*FenceRule, error) {
 	if err != nil {
 		return nil, tableRefuseError(TableRefuseBase64Damaged)
 	}
-	if len(wire) == 0 || wire[0] != 1 {
-		return nil, tableRefuseError(TableRefuseUnknownForm)
+	var builder FenceRuleBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
 	}
-	var v FenceRule
 	var read TableReport
-	ok := FenceRuleLoad(&v, wire, &read)
+	ok := FenceRuleLoadBuilder(&builder, wire, &read)
 	if report != nil {
 		*report = read
 	}
-	if !ok {
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
 		return nil, tableRefuseError(TableRefuseWireDamaged)
 	}
-	if err := read.Err(); err != nil {
-		return nil, err
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
 	}
-	return &v, nil
+	return builder.AsConst(), nil
 }
 
 // ExitRecordFromJson fills one ExitRecord from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
@@ -3308,47 +3246,48 @@ func ExitRecordLoadText(text string, report *TableReport) (*ExitRecord, error) {
 	return &v, nil
 }
 
-// WorkerRecordFromJson fills one WorkerRecord from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
-// A nil report is allowed; every tolerance event still decides the same way.
-func WorkerRecordFromJson(value *WorkerRecord, text []byte, report *TableReport) bool {
-	return tableJsonRead(unsafe.Pointer(value), WorkerRecordTableType(), text, report)
+func WorkerRecordFromJson(builder *WorkerRecordBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), WorkerRecordTableType(), &builder.Main, text, report)
 }
-
-// WorkerRecordToJsonMeasure is the exact size of WorkerRecord's JSON text, writing nothing.
-func WorkerRecordToJsonMeasure(value *WorkerRecord) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), WorkerRecordTableType(), nil)
+func WorkerRecordToJsonMeasure(value *WorkerRecord, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), WorkerRecordTableType(), nil, allocator...)
 }
-
-// WorkerRecordToJson writes WorkerRecord's JSON text into the caller's slice and returns the
-// bytes written — exactly WorkerRecordToJsonMeasure's answer — or -1 when it is short.
-func WorkerRecordToJson(value *WorkerRecord, buffer []byte) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), WorkerRecordTableType(), buffer)
+func WorkerRecordToJson(value *WorkerRecord, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), WorkerRecordTableType(), buffer, allocator...)
 }
 
 // WorkerRecordSaveText returns the base64 of WorkerRecord's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §16.8): the whole file, form byte first, so the text keeps the form byte,
-// the framing check and every versioning guarantee and is opaque.
-func WorkerRecordSaveText(value *WorkerRecord) (string, error) {
-	n := WorkerRecordMeasure(value)
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context WorkerRecordSave takes.
+func WorkerRecordSaveText(value *WorkerRecord, context ...TableWriteContext) (string, error) {
+	n, err := WorkerRecordMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
 	if n < 0 {
 		return "", tableRefuseError(TableRefuseInvalidValue)
 	}
 	buf := make([]byte, n)
-	if WorkerRecordSave(value, buf) < 0 {
+	if WorkerRecordSave(value, buf, context...) != n {
 		return "", tableRefuseError(TableRefuseInvalidValue)
 	}
 	return base64.StdEncoding.EncodeToString(buf), nil
 }
 
-// WorkerRecordLoadText fills one WorkerRecord from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §16.8). It is the STRICT read (§6.5) over the decoded wire: it refuses
-// whenever the read's report holds an error (TableReport.Err), whatever the
-// tolerant Load answered, so a recovered value never comes back. It refuses
-// by name: base64_damaged when the body does not decode, unknown_form when
-// the decoded wire's form byte is not one this build carries, wire_damaged
-// for framing damage, and the report's own reason (malformed, clamped,
-// kind_mismatch, ...) otherwise. A nil report is allowed; a supplied one
-// receives THIS read's report, so earlier counts in it never decide.
+// WorkerRecordLoadText reads one WorkerRecord from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as WorkerRecordReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
 func WorkerRecordLoadText(text string, report *TableReport) (*WorkerRecord, error) {
 	if report != nil {
 		*report = TableReport{}
@@ -3357,22 +3296,27 @@ func WorkerRecordLoadText(text string, report *TableReport) (*WorkerRecord, erro
 	if err != nil {
 		return nil, tableRefuseError(TableRefuseBase64Damaged)
 	}
-	if len(wire) == 0 || wire[0] != 1 {
-		return nil, tableRefuseError(TableRefuseUnknownForm)
+	var builder WorkerRecordBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
 	}
-	var v WorkerRecord
 	var read TableReport
-	ok := WorkerRecordLoad(&v, wire, &read)
+	ok := WorkerRecordLoadBuilder(&builder, wire, &read)
 	if report != nil {
 		*report = read
 	}
-	if !ok {
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
 		return nil, tableRefuseError(TableRefuseWireDamaged)
 	}
-	if err := read.Err(); err != nil {
-		return nil, err
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
 	}
-	return &v, nil
+	return builder.AsConst(), nil
 }
 
 // HarnessConfigRecordFromJson fills one HarnessConfigRecord from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
@@ -3442,47 +3386,48 @@ func HarnessConfigRecordLoadText(text string, report *TableReport) (*HarnessConf
 	return &v, nil
 }
 
-// FenceConfigFromJson fills one FenceConfig from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
-// A nil report is allowed; every tolerance event still decides the same way.
-func FenceConfigFromJson(value *FenceConfig, text []byte, report *TableReport) bool {
-	return tableJsonRead(unsafe.Pointer(value), FenceConfigTableType(), text, report)
+func FenceConfigFromJson(builder *FenceConfigBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), FenceConfigTableType(), &builder.Main, text, report)
 }
-
-// FenceConfigToJsonMeasure is the exact size of FenceConfig's JSON text, writing nothing.
-func FenceConfigToJsonMeasure(value *FenceConfig) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), FenceConfigTableType(), nil)
+func FenceConfigToJsonMeasure(value *FenceConfig, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), FenceConfigTableType(), nil, allocator...)
 }
-
-// FenceConfigToJson writes FenceConfig's JSON text into the caller's slice and returns the
-// bytes written — exactly FenceConfigToJsonMeasure's answer — or -1 when it is short.
-func FenceConfigToJson(value *FenceConfig, buffer []byte) int64 {
-	return tableJsonWrite(unsafe.Pointer(value), FenceConfigTableType(), buffer)
+func FenceConfigToJson(value *FenceConfig, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), FenceConfigTableType(), buffer, allocator...)
 }
 
 // FenceConfigSaveText returns the base64 of FenceConfig's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §16.8): the whole file, form byte first, so the text keeps the form byte,
-// the framing check and every versioning guarantee and is opaque.
-func FenceConfigSaveText(value *FenceConfig) (string, error) {
-	n := FenceConfigMeasure(value)
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context FenceConfigSave takes.
+func FenceConfigSaveText(value *FenceConfig, context ...TableWriteContext) (string, error) {
+	n, err := FenceConfigMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
 	if n < 0 {
 		return "", tableRefuseError(TableRefuseInvalidValue)
 	}
 	buf := make([]byte, n)
-	if FenceConfigSave(value, buf) < 0 {
+	if FenceConfigSave(value, buf, context...) != n {
 		return "", tableRefuseError(TableRefuseInvalidValue)
 	}
 	return base64.StdEncoding.EncodeToString(buf), nil
 }
 
-// FenceConfigLoadText fills one FenceConfig from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §16.8). It is the STRICT read (§6.5) over the decoded wire: it refuses
-// whenever the read's report holds an error (TableReport.Err), whatever the
-// tolerant Load answered, so a recovered value never comes back. It refuses
-// by name: base64_damaged when the body does not decode, unknown_form when
-// the decoded wire's form byte is not one this build carries, wire_damaged
-// for framing damage, and the report's own reason (malformed, clamped,
-// kind_mismatch, ...) otherwise. A nil report is allowed; a supplied one
-// receives THIS read's report, so earlier counts in it never decide.
+// FenceConfigLoadText reads one FenceConfig from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as FenceConfigReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
 func FenceConfigLoadText(text string, report *TableReport) (*FenceConfig, error) {
 	if report != nil {
 		*report = TableReport{}
@@ -3491,22 +3436,27 @@ func FenceConfigLoadText(text string, report *TableReport) (*FenceConfig, error)
 	if err != nil {
 		return nil, tableRefuseError(TableRefuseBase64Damaged)
 	}
-	if len(wire) == 0 || wire[0] != 1 {
-		return nil, tableRefuseError(TableRefuseUnknownForm)
+	var builder FenceConfigBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
 	}
-	var v FenceConfig
 	var read TableReport
-	ok := FenceConfigLoad(&v, wire, &read)
+	ok := FenceConfigLoadBuilder(&builder, wire, &read)
 	if report != nil {
 		*report = read
 	}
-	if !ok {
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
 		return nil, tableRefuseError(TableRefuseWireDamaged)
 	}
-	if err := read.Err(); err != nil {
-		return nil, err
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
 	}
-	return &v, nil
+	return builder.AsConst(), nil
 }
 
 // DeclaredModelFromJson fills one DeclaredModel from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
