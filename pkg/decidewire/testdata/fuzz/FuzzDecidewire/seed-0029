@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x09')
+[]byte("{\n  \"id\": null,\n  \"decision_name\": null,\n  \"schema\": null,\n  \"backend\": null,\n  \"at\": null,\n  \"inputs\": [],\n  \"state\": null,\n  \"answers\": [],\n  \"usage\": {\n    \"input_tokens\": 0,\n    \"output_tokens\": 0\n  }\n}\n")
