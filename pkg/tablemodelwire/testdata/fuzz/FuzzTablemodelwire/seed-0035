@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x0b')
+[]byte("{\n  \"module\": null,\n  \"sha256\": null\n}\n")
