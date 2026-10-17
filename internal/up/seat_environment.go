@@ -1,7 +1,6 @@
 package up
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/user"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatrecwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
@@ -61,11 +61,27 @@ func writeSeatEnvironment(c *tool.Call, getenv func(string) string) *tool.Out {
 		profile.Version = 1
 	}
 	profile.Environment = environment
-	data, err := json.MarshalIndent(profile, "", "  ")
-	if err != nil {
-		return tool.Refuse(fmt.Sprintf("the seat environment could not be encoded (%v); no file was changed", err))
+	table, ok := seatEnvironmentTable(profile)
+	if !ok {
+		return tool.Refuse("the seat environment could not be encoded as the table; no file was changed")
 	}
-	data = append(data, '\n')
+	n := seatrecwire.SeatEnvironmentToJsonMeasure(table)
+	if n < 0 {
+		return tool.Refuse("the seat environment has a value the table cannot hold; no file was changed")
+	}
+	data := make([]byte, n)
+	seatrecwire.SeatEnvironmentToJson(table, data)
+	// A value the table cannot hold exactly (one the schema text cannot carry
+	// and read back unchanged) is refused by name before a byte is written; the
+	// legacy form is never a fallback (S4, the owner's rules).
+	reader := seatcred.NewSeatEnvironmentReader()
+	round, err := reader.Read(data)
+	if err != nil {
+		return tool.Refuse(fmt.Sprintf("the seat environment has a value the table cannot hold (%v); no file was changed", err))
+	}
+	if !reflect.DeepEqual(round, profile) {
+		return tool.Refuse("the seat environment has a value the table cannot hold exactly; no file was changed")
+	}
 	path, err := seatcred.SeatEnvironmentPath(getenv)
 	if err != nil {
 		return tool.Refuse(fmt.Sprintf("HOME must name an absolute directory when XDG_CONFIG_HOME is not absolute (%v)", err))
@@ -80,6 +96,47 @@ func writeSeatEnvironment(c *tool.Call, getenv func(string) string) *tool.Out {
 		return tool.Refuse(fmt.Sprintf("the seat environment could not be written atomically (%v); the previous file was left intact", err))
 	}
 	return tool.Done().Note("seat environment written").Fact("fields", 3)
+}
+
+// seatEnvironmentTable is the seat environment record as the seatrec
+// SeatEnvironment table value the dual reader reads (S1, S2, C13): the fields
+// the writer stores today, version, the three endpoints and the login and
+// forge references, each a *string slot the table carries.
+func seatEnvironmentTable(rec seatcred.SeatEnvironment) (*seatrecwire.SeatEnvironment, bool) {
+	var b seatrecwire.SeatEnvironmentBuilder
+	if !b.Init() {
+		return nil, false
+	}
+	root := b.GetRoot()
+	root.Version = int32(rec.Version)
+	root.VersionPresent = true
+	if rec.ForgeIdentity != "" {
+		seatrecwire.TableStringEmplace(&b.Main, &root.ForgeIdentity, []byte(rec.ForgeIdentity))
+	}
+	slots := map[string]*int64{
+		"NOVA_SPRINT_REDIS":  &root.NovaSprintRedis,
+		"NOVA_SPRINT_SERVER": &root.NovaSprintServer,
+		"NOVA_BUS_REDIS":     &root.NovaBusRedis,
+	}
+	for key, slot := range slots {
+		if value, ok := rec.Environment[key]; ok {
+			seatrecwire.TableStringEmplace(&b.Main, slot, []byte(value))
+		}
+	}
+	if login := rec.Login; login != nil {
+		lg := seatrecwire.SeatLoginEmplace(&b.Main, &root.Login)
+		seatrecwire.TableStringEmplace(&b.Main, &lg.Redis, []byte(login.Redis))
+		seatrecwire.TableStringEmplace(&b.Main, &lg.User, []byte(login.User))
+		seatrecwire.TableStringEmplace(&b.Main, &lg.Store, []byte(login.Store))
+		seatrecwire.TableStringEmplace(&b.Main, &lg.AsName, []byte(login.As))
+		seatrecwire.TableStringEmplace(&b.Main, &lg.Key, []byte(login.Key))
+		seatrecwire.TableStringEmplace(&b.Main, &lg.Sops, []byte(login.Sops))
+		seatrecwire.TableStringEmplace(&b.Main, &lg.Secret, []byte(login.Secret))
+	}
+	if !b.Lock() {
+		return nil, false
+	}
+	return b.AsConst(), true
 }
 
 func validSeatEndpoint(value string) bool { return seatcred.ValidSeatEndpoint(value) }
