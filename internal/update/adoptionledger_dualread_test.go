@@ -129,16 +129,31 @@ func TestAdoptionLedgerDualRead(t *testing.T) {
 		})
 	}
 
-	t.Run("reads the legacy fixture from a t.TempDir file", func(t *testing.T) {
+	t.Run("reads each form from a t.TempDir file", func(t *testing.T) {
 		t.Parallel()
-		path := filepath.Join(t.TempDir(), "adoption.tsv")
-		require.NoError(t, os.WriteFile(path, legacy, 0o644))
-		f, err := os.Open(path)
-		require.NoError(t, err)
-		defer f.Close()
-		got, err := loadAdoption(f)
-		require.NoError(t, err)
-		require.Equal(t, want, got)
+		fileForms := []struct {
+			name string
+			in   []byte
+		}{
+			{"legacy", legacy},
+			{"binary image", image},
+			{"padded standard base64", b64},
+			{"schema JSON text", text},
+		}
+		for _, c := range fileForms {
+			c := c
+			t.Run(c.name, func(t *testing.T) {
+				t.Parallel()
+				path := filepath.Join(t.TempDir(), "adoption.input")
+				require.NoError(t, os.WriteFile(path, c.in, 0o644))
+				f, err := os.Open(path)
+				require.NoError(t, err)
+				defer f.Close()
+				got, err := loadAdoption(f)
+				require.NoError(t, err)
+				require.Equal(t, want, got)
+			})
+		}
 	})
 
 	t.Run("counts each read under the form read", func(t *testing.T) {
