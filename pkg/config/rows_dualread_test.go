@@ -124,8 +124,8 @@ func TestConfigRowsDualRead(t *testing.T) {
 
 	t.Run("loop view", func(t *testing.T) {
 		t.Parallel()
-		want := config.View{"machine": "studio", "name": "l1", "argv": `["/bin/true","-x"]`, "seat": "studio", "keys": "A_KEY,B_KEY",
-			"every": "60", "keepalive": "false", "enabled": "true", "log": "/home/nova/loops/l1.log"}
+		want := config.View{"machine": "host-a", "name": "l1", "argv": `["/bin/true","-x"]`, "seat": "host-a", "keys": "A_KEY,B_KEY",
+			"every": "60", "keepalive": "false", "enabled": "true", "log": "/srv/loops/l1.log"}
 		v := inventoryLoopOf(want)
 		legacy, err := json.Marshal(want)
 		require.NoError(t, err)
@@ -150,7 +150,7 @@ func TestConfigRowsDualRead(t *testing.T) {
 		snap := loopSnapshot(config.View{config.WireField: base64.StdEncoding.EncodeToString(inventoryLoopImage.wire(t, &v))})
 		inv, err := config.BuildInventory(snap, "")
 		require.NoError(t, err)
-		loops := inv.Meta.Hostvars["studio"]["nova_loops"].([]config.InventoryLoop)
+		loops := inv.Meta.Hostvars["host-a"]["nova_loops"].([]config.InventoryLoop)
 		require.Len(t, loops, 1)
 		assert.Equal(t, []string{"/bin/true", "-x"}, loops[0].Argv)
 		assert.Equal(t, []string{"A_KEY", "B_KEY"}, loops[0].Keys)
@@ -468,13 +468,13 @@ func sampleFile(schema int) config.FileState {
 	return config.FileState{
 		Schema: schema,
 		Rows: map[string]map[string]config.Row{
-			config.KindMachine: {"studio": {Name: "studio", Fields: map[string]string{"user": "nova", "seat": "studio", "slots": "4"}, CreatedAt: "2026-10-01T00:00:00Z", UpdatedAt: "2026-10-02T00:00:00Z"}},
-			config.KindLoop:    {"l1": {Name: "l1", Fields: map[string]string{"machine": "studio", "argv": `["/bin/true","-x"]`, "every": "60"}, CreatedAt: "2026-10-01T00:00:00Z", UpdatedAt: "2026-10-01T00:00:00Z"}},
+			config.KindMachine: {"host-a": {Name: "host-a", Fields: map[string]string{"user": "nova", "seat": "host-a", "slots": "4"}, CreatedAt: "2026-10-01T00:00:00Z", UpdatedAt: "2026-10-02T00:00:00Z"}},
+			config.KindLoop:    {"l1": {Name: "l1", Fields: map[string]string{"machine": "host-a", "argv": `["/bin/true","-x"]`, "every": "60"}, CreatedAt: "2026-10-01T00:00:00Z", UpdatedAt: "2026-10-01T00:00:00Z"}},
 		},
 		History: []config.Change{
-			{ID: 1, Kind: config.KindMachine, Name: "studio", Op: config.OpAdd, After: map[string]string{"user": "nova", "slots": "2"}, Actor: "rowan", Reason: "first", At: "2026-10-01T00:00:00Z"},
-			{ID: 2, Kind: config.KindMachine, Name: "studio", Op: config.OpSet, Before: map[string]string{"slots": "2"}, After: map[string]string{"slots": "4"}, Actor: "rowan", At: "2026-10-02T00:00:00Z"},
-			{ID: 3, Kind: config.KindLoop, Name: "l0", Op: config.OpRemove, Before: map[string]string{"argv": `["/bin/false"]`}, Actor: "rowan", At: "2026-10-03T00:00:00Z"},
+			{ID: 1, Kind: config.KindMachine, Name: "host-a", Op: config.OpAdd, After: map[string]string{"user": "nova", "slots": "2"}, Actor: "operator", Reason: "first", At: "2026-10-01T00:00:00Z"},
+			{ID: 2, Kind: config.KindMachine, Name: "host-a", Op: config.OpSet, Before: map[string]string{"slots": "2"}, After: map[string]string{"slots": "4"}, Actor: "operator", At: "2026-10-02T00:00:00Z"},
+			{ID: 3, Kind: config.KindLoop, Name: "l0", Op: config.OpRemove, Before: map[string]string{"argv": `["/bin/false"]`}, Actor: "operator", At: "2026-10-03T00:00:00Z"},
 		},
 	}
 }
@@ -532,8 +532,8 @@ func fileImage(t *testing.T, st config.FileState, sides bool) []byte {
 // loopSnapshot is one machine running one loop, the loop's view given.
 func loopSnapshot(loop config.View) *config.Snapshot {
 	return &config.Snapshot{
-		Machines: map[string]config.View{"studio": {"user": "nova", "seat": "studio", "slots": "1", "runners": "0", "roles": "bench,coordination,services", "tla": "false"}},
-		Fleet:    config.View{"store": "studio", "coordinator": "studio", "redis_port": "6379", "pg_dsn": "postgres://nova@studio:5432/config", "loops_dir": "/home/nova/loops"},
+		Machines: map[string]config.View{"host-a": {"user": "nova", "seat": "host-a", "slots": "1", "runners": "0", "roles": "bench,coordination,services", "tla": "false"}},
+		Fleet:    config.View{"store": "host-a", "coordinator": "host-a", "redis_port": "6379", "pg_dsn": "postgres://nova@host-a:5432/config", "loops_dir": "/srv/loops"},
 		Loops:    map[string]config.View{"l1": loop},
 		Revs:     map[string]int64{config.KindFleet: 1, config.KindMachine: 1, config.KindLoop: 1},
 	}
