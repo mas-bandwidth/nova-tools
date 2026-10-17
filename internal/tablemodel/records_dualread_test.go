@@ -156,7 +156,11 @@ func TestTableModelRecordsDualRead(t *testing.T) {
 		got, err := tm.ReadTraceFile(path)
 		require.NoError(t, err)
 		tassert.True(t, reflect.DeepEqual(want, got), "the bench trace.json reads as the trace it holds")
-		tassert.Equal(t, before+1, tm.TraceReader.Counts().Reads(schemaread.FormLegacy), "the file read is counted under the legacy form")
+		// The replay's reader is shared by the package's parallel tests (the
+		// harness tests read the same file through it), so its counter only
+		// grows by at least this read; the exact per-form counts are pinned on
+		// fresh readers (checkForms).
+		tassert.GreaterOrEqual(t, tm.TraceReader.Counts().Reads(schemaread.FormLegacy), before+1, "the file read is counted under the legacy form")
 		require.Len(t, got.Steps, 32)
 		checkForms(t, tm.TraceSpec, want)
 
@@ -168,7 +172,7 @@ func TestTableModelRecordsDualRead(t *testing.T) {
 			got, err := tm.ReadTraceFile(path)
 			require.NoError(t, err, "trace.json in its %s form", f)
 			tassert.True(t, reflect.DeepEqual(want, got), "trace.json reads alike in its %s form", f)
-			tassert.Equal(t, before+1, tm.TraceReader.Counts().Reads(f), "the file read is counted under the %s form", f)
+			tassert.GreaterOrEqual(t, tm.TraceReader.Counts().Reads(f), before+1, "the file read is counted under the %s form", f)
 		}
 
 		// a damaged trace.json is refused by name, never read as an empty trace
