@@ -1,8 +1,8 @@
 package release
 
 import (
-	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,8 +11,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unsafe"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/releasewire"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // machineName is what may be handed to ssh as a destination. It is deliberately
@@ -43,51 +46,222 @@ var installedLine = regexp.MustCompile(`RELEASE INSTALLED version=(\S+) tools=(\
 // constant -- it was four benches, then five, and the day the iMac Pro joined
 // nothing in a tool should have needed editing.
 func Machines(r io.Reader) ([]Machine, error) {
-	var machines []Machine
-	s := bufio.NewScanner(r)
-	for line := 1; s.Scan(); line++ {
-		// Only the line ENDING is trimmed here, never the tabs: trimming the
-		// whole line first would turn "name<TAB>" -- a column somebody meant
-		// to fill -- into a plain one-field line, and the refusal below would
-		// never fire. Each FIELD is trimmed after the split instead.
-		text := strings.TrimRight(s.Text(), "\r\n")
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	d, _, err := schemaread.NewReader(machineListCodec()).Read(raw)
+	if err != nil {
+		return nil, err
+	}
+	return machinesOf(d), nil
+}
+
+// machinesDoc holds a decoded MachineList and the region its text and list
+// references live in (S1, S2), so the value outlives the read that filled it.
+type machinesDoc struct {
+	list   *releasewire.MachineList
+	region []byte
+}
+
+// machineListCodec is the machines file's strict typed read: the table image,
+// its padded standard base64, the schema JSON text and today's legacy tab form
+// all decode through pkg/schemaread to one MachineList, refuse damage by name,
+// and count their reads per form (S2).
+func machineListCodec() *schemaread.Codec[machinesDoc] {
+	return &schemaread.Codec[machinesDoc]{
+		Name:  "MachineList",
+		Help:  "fix the machines file: one machine per line, <name>[TAB<bin>[TAB<dest>]]",
+		Reset: func(d *machinesDoc) { *d = machinesDoc{} },
+		Measure: func(w []byte) error {
+			_, err := releasewire.MachineListLoadMeasureReason(w)
+			return err
+		},
+		LoadWire: func(d *machinesDoc, w []byte) schemaread.Report {
+			n, err := releasewire.MachineListLoadMeasureReason(w)
+			if err != nil || n < 0 {
+				r := schemaread.Report{Malformed: true}
+				if err != nil {
+					r.Reason = err.Error()
+				}
+				return r
+			}
+			raw := make([]byte, n+63)
+			off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
+			d.region = raw[off : off+uintptr(n)]
+			var rep releasewire.TableReport
+			lv := releasewire.MachineListLoad(d.region, w, &rep)
+			if lv == nil {
+				return schemaread.Report{Malformed: true, Reason: rep.Reason}
+			}
+			d.list = lv
+			return machineReport(&rep)
+		},
+		LoadJSON: func(d *machinesDoc, text []byte) schemaread.Report {
+			var b releasewire.MachineListBuilder
+			if !b.Init() {
+				return schemaread.Report{Malformed: true}
+			}
+			var rep releasewire.TableReport
+			if !releasewire.MachineListFromJson(&b, text, &rep) || !b.Lock() {
+				return schemaread.Report{Malformed: true, Reason: rep.Reason}
+			}
+			d.region = b.Region()
+			d.list = b.AsConst()
+			return machineReport(&rep)
+		},
+		Legacy:     machinesLegacyForm,
+		LoadLegacy: loadMachinesLegacy,
+		Constraints: func(d *machinesDoc, c *schemaread.Checker) {
+			c.Required("record", d.list != nil)
+			if d.list != nil {
+				constraintsMachineList(d.list, c)
+			}
+		},
+	}
+}
+
+// machineReport folds a generated load report into the strict read's.
+func machineReport(r *releasewire.TableReport) schemaread.Report {
+	return schemaread.Report{
+		Unknown:      int(r.Unknown),
+		KindMismatch: int(r.KindMismatch),
+		Clamped:      int(r.Clamped),
+		Malformed:    r.Malformed || r.Duplicate > 0,
+		Reason:       r.Reason,
+	}
+}
+
+// constraintsMachineList holds the machines-file checks on every form: a list
+// naming no machine is refused, and every machine name and present override
+// column is checked as Machines checked them (adopt.go, the machineName
+// pattern and the empty-override refusal).
+func constraintsMachineList(v *releasewire.MachineList, c *schemaread.Checker) {
+	c.Required("machines", v.Machines.Count > 0)
+	for i := int32(0); i < v.Machines.Count; i++ {
+		machineOf(c, v.Machines.At(i))
+	}
+}
+
+func machineOf(c *schemaread.Checker, v *releasewire.MachineEntry) {
+	name := machineStr(&v.Name)
+	c.Required("name", machineName.MatchString(name))
+	if v.Bin != 0 {
+		c.Required("bin", !machineBlank(&v.Bin))
+	}
+	if v.Dest != 0 {
+		c.Required("dest", !machineBlank(&v.Dest))
+	}
+}
+
+func machineStr(slot *int64) string {
+	if *slot == 0 {
+		return ""
+	}
+	v := releasewire.TableStringAt(slot)
+	return string(v.Data[:v.Length])
+}
+
+func machineBlank(slot *int64) bool { return strings.TrimSpace(machineStr(slot)) == "" }
+
+func machinesOf(d machinesDoc) []Machine {
+	ms := make([]Machine, 0, d.list.Machines.Count)
+	for i := int32(0); i < d.list.Machines.Count; i++ {
+		e := d.list.Machines.At(i)
+		ms = append(ms, Machine{
+			Name: machineStr(&e.Name),
+			Bin:  machineStr(&e.Bin),
+			Dest: machineStr(&e.Dest),
+		})
+	}
+	return ms
+}
+
+// machinesLegacyForm recognises today's hand-written machines-file text: the
+// multi-line printable text the file is, which is not the JSON form. The one
+// line the file is read as is the one the legacy load parses.
+func machinesLegacyForm(in []byte) bool {
+	hasNewline := false
+	for _, b := range in {
+		switch {
+		case b == '\n':
+			hasNewline = true
+		case b == '\r' || b == '\t' || b >= 0x20 && b < 0x7f:
+		default:
+			return false
+		}
+	}
+	if !hasNewline {
+		return false
+	}
+	trimmed := strings.TrimSpace(string(in))
+	return trimmed != "" && !strings.HasPrefix(trimmed, "{")
+}
+
+type machinesLegacyRow struct {
+	Name string `json:"name"`
+	Bin  string `json:"bin,omitempty"`
+	Dest string `json:"dest,omitempty"`
+}
+
+// loadMachinesLegacy reads the legacy tab form into the MachineList value. The
+// refusals are the ones Machines made today, each by name: more than three
+// columns, a name the machineName pattern refuses, an empty override column and
+// a list naming no machine.
+func loadMachinesLegacy(d *machinesDoc, in []byte) schemaread.Report {
+	rows, reason := parseMachineLines(in)
+	if reason != "" {
+		return schemaread.Report{Reason: reason}
+	}
+	js, err := json.Marshal(struct {
+		Machines []machinesLegacyRow `json:"machines"`
+	}{rows})
+	if err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	var b releasewire.MachineListBuilder
+	if !b.Init() {
+		return schemaread.Report{Malformed: true}
+	}
+	var rep releasewire.TableReport
+	if !releasewire.MachineListFromJson(&b, js, &rep) || !b.Lock() {
+		return schemaread.Report{Malformed: true, Reason: rep.Reason}
+	}
+	d.region = b.Region()
+	d.list = b.AsConst()
+	return machineReport(&rep)
+}
+
+func parseMachineLines(in []byte) ([]machinesLegacyRow, string) {
+	var rows []machinesLegacyRow
+	for _, raw := range strings.Split(string(in), "\n") {
+		text := strings.TrimRight(raw, "\r")
 		if trimmed := strings.TrimSpace(text); trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		// TAB-separated, like every other hand-written table in this estate
-		// (SPEC-UPDATE rule 2's manifest), so a path may carry a blank.
 		fields := strings.Split(text, "\t")
 		if len(fields) > 3 {
-			return nil, refuse("a line is <name>, optionally TAB <bin>, optionally TAB <dest>",
-				"line %d has %d tab-separated fields: %s", line, len(fields), MachinesShape)
+			return nil, "a line is <name>, optionally TAB <bin>, optionally TAB <dest>: a line has tab-separated fields"
 		}
-		m := Machine{Name: strings.TrimSpace(fields[0])}
-		if !machineName.MatchString(m.Name) {
-			return nil, refuse("one machine name per line, letters, digits, dot, dash, underscore or @",
-				"line %d is not a machine name: %q", line, m.Name)
+		name := strings.TrimSpace(fields[0])
+		if !machineName.MatchString(name) {
+			return nil, "one machine name per line, letters, digits, dot, dash, underscore or @: not a machine name"
 		}
-		// An empty override column is a column somebody meant to fill, and
-		// falling back to the flag would be falling back to exactly the thing
-		// they were overriding -- silently, onto a path on their machine.
-		for i, into := range []*string{nil, &m.Bin, &m.Dest} {
-			if i == 0 || len(fields) <= i {
+		row := machinesLegacyRow{Name: name}
+		for j, into := range []*string{nil, &row.Bin, &row.Dest} {
+			if j == 0 || len(fields) <= j {
 				continue
 			}
-			if *into = strings.TrimSpace(fields[i]); *into == "" {
-				return nil, refuse("fill the column or remove it",
-					"line %d leaves %s's column %d empty", line, m.Name, i+1)
+			if *into = strings.TrimSpace(fields[j]); *into == "" {
+				return nil, "fill the column or remove it: an override column is empty"
 			}
 		}
-		machines = append(machines, m)
+		rows = append(rows, row)
 	}
-	if err := s.Err(); err != nil {
-		return nil, err
+	if len(rows) == 0 {
+		return nil, "put one machine name per line in the file: the machine list names no machine"
 	}
-	if len(machines) == 0 {
-		return nil, refuse("put one machine name per line in the file",
-			"the machine list names no machine")
-	}
-	return machines, nil
+	return rows, ""
 }
 
 // remotePathShape is what may be interpolated into a command the far side's
