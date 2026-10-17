@@ -93,8 +93,14 @@ func attemptWire(d *decide.Decision) []byte {
 		a := d.Answers[q]
 		na := decidewire.DecisionAnswersAdd(&b.Main, &r.Answers)
 		setText(&b.Main, &na.Question, q)
-		na.Answer.Kind = decidewire.AnswerTypeChoice
+		if a.Type == decide.Noul {
+			na.Answer.Kind = decidewire.AnswerTypeNoul
+		} else {
+			na.Answer.Kind = decidewire.AnswerTypeChoice
+		}
 		setText(&b.Main, &na.Answer.Value, a.Value)
+		na.Answer.Confidence = a.Confidence
+		setText(&b.Main, &na.Answer.Method, a.Method)
 		for _, opt := range sortedKeys(a.P) {
 			o := decidewire.AnswerPAdd(&b.Main, &na.Answer.P)
 			setText(&b.Main, &o.Option, opt)
