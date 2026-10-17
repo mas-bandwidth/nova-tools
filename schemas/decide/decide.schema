@@ -48,15 +48,15 @@ table OptionP
     p      float64
 }
 
-// Answer: pkg/decide Answer, a VARIABLE table (a document). P is at most 14
-// options: the widest choice in the code is brief.go's minutes (twelve steps,
-// none and unnumbered). Confidence and Method are the choice answered with no
+// Answer: pkg/decide Answer, a VARIABLE table (a document). P is an open-ended
+// list: a choice names any number of options, at least two (decide.go
+// ParseSchema), and Schema.Check puts no ceiling on them. Confidence and Method are the choice answered with no
 // probabilities (SPEC-NOVA-DECIDE section 3); Check holds neither to [0, 1].
 table Answer
 {
     kind       AnswerType
     value      string(48)
-    p          [..14]OptionP
+    p          []OptionP
     confidence float64
     method     string(24)
 }

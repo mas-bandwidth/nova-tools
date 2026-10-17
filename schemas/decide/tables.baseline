@@ -10,7 +10,7 @@ table Act
 table Answer
     field kind id=0xef9c96d721673243 kind=7 enum=AnswerType
     field value id=0x7ce4fd9430e80cea kind=12 size=48
-    field p id=0xaf63ed4c8602096f kind=14 elem=13 type=OptionP array=bounded bound=14
+    field p id=0xaf63ed4c8602096f kind=14 elem=13 type=OptionP array=unbounded
     field confidence id=0x547d54feea4643b1 kind=11
     field method id=0x230c05e5fb0433b0 kind=12 size=24
 

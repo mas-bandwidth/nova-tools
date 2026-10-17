@@ -440,24 +440,31 @@ func optionPRules(v *OptionP, k chk) {
 	k.prob("p", v.P)
 }
 
-// answerRules: the answer's kind is choice or noul, its options at most 14
-// (brief.go's minutes: twelve steps, none and unnumbered), each probability in
-// [0, 1] (decide.go Check).
-func answerRules(v *Answer, k chk) {
+// arenaOf is the arena a read of a table's lists passes: before the arena is
+// locked a reference is an arena offset; after it, in the packed region, a
+// reference is relative to its own slot and no arena is passed.
+func arenaOf(a *TableArena) []*TableArena {
+	if a.Locked {
+		return nil
+	}
+	return []*TableArena{a}
+}
+
+// answerRules: the answer's kind is choice or noul, its options an open-ended
+// list (decide.go ParseSchema wants two and Check sets no ceiling), each
+// probability in [0, 1] (decide.go Check).
+func answerRules(a *TableArena, v *Answer, k chk) {
 	k.span("kind", int64(v.Kind), 1, 2)
 	k.str("value", v.Value[:], v.ValueLength)
 	k.req("value", v.ValueLength)
-	k.count("p", v.PCount, len(v.P))
-	for i := 0; i < int(v.PCount) && i < len(v.P); i++ {
-		optionPRules(&v.P[i], k)
-	}
+	AnswerPEach(&v.P, func(o *OptionP) bool { optionPRules(o, k); return true }, arenaOf(a)...)
 	k.str("method", v.Method[:], v.MethodLength)
 }
 
-func namedAnswerRules(v *NamedAnswer, k chk) {
+func namedAnswerRules(a *TableArena, v *NamedAnswer, k chk) {
 	k.str("question", v.Question[:], v.QuestionLength)
 	k.req("question", v.QuestionLength)
-	answerRules(&v.Answer, k)
+	answerRules(a, &v.Answer, k)
 }
 
 func inputRules(v *Input, k chk) {
@@ -484,7 +491,7 @@ func decisionRules(a *TableArena, v *Decision, k chk) {
 	k.str("at", v.At[:], v.AtLength)
 	DecisionInputsEach(&v.Inputs, func(in *Input) bool { inputRules(in, k); return true }, arena...)
 	k.c.Text("state", string(TableStringAt(&v.State, arena...).Data), 64<<20)
-	DecisionAnswersEach(&v.Answers, func(n *NamedAnswer) bool { namedAnswerRules(n, k); return true }, arena...)
+	DecisionAnswersEach(&v.Answers, func(n *NamedAnswer) bool { namedAnswerRules(a, n, k); return true }, arena...)
 	usageRules(&v.Usage, k)
 }
 
@@ -761,21 +768,20 @@ func fillOptionP(r *OptionP, option string, p float64) {
 	r.P = p
 }
 
-// fillAnswer fills a choice with options options (up to the declared 14).
-func fillAnswer(r *Answer, options int) {
+// fillAnswer fills a choice with options options.
+func fillAnswer(w *TableWorker, r *Answer, options int) {
 	r.Kind = AnswerTypeChoice
 	put(r.Value[:len(r.Value)-1], &r.ValueLength, "opt-0")
 	for i := 0; i < options; i++ {
-		fillOptionP(&r.P[i], fmt.Sprintf("opt-%d", i), 1/float64(options))
+		fillOptionP(AnswerPAdd(w, &r.P), fmt.Sprintf("opt-%d", i), 1/float64(options))
 	}
-	r.PCount = int32(options)
 	r.Confidence = 0.5
 	put(r.Method[:len(r.Method)-1], &r.MethodLength, "coordinator")
 }
 
-func fillNamedAnswer(r *NamedAnswer, options int) {
+func fillNamedAnswer(w *TableWorker, r *NamedAnswer, options int) {
 	put(r.Question[:len(r.Question)-1], &r.QuestionLength, "class")
-	fillAnswer(&r.Answer, options)
+	fillAnswer(w, &r.Answer, options)
 }
 
 func fillInput(r *Input, i int) {
@@ -796,7 +802,7 @@ func fillDecision(w *TableWorker, r *Decision, inputs, answers, options, stateBy
 	}
 	TableStringEmplace(w, &r.State, bytes.Repeat([]byte("state "), stateBytes/6+1)[:stateBytes])
 	for i := 0; i < answers; i++ {
-		fillNamedAnswer(DecisionAnswersAdd(w, &r.Answers), options)
+		fillNamedAnswer(w, DecisionAnswersAdd(w, &r.Answers), options)
 	}
 	r.Usage = sampleUsage()
 }
@@ -813,9 +819,9 @@ func variableTables(t *testing.T) {
 	optionP := varFns[OptionP, OptionPBuilder, *OptionPBuilder]{"OptionP", OptionPLoadBuilder, OptionPFromJson, OptionPLoadMeasureReason, OptionPMeasure, OptionPSave, OptionPToJsonMeasure, OptionPToJson, nil,
 		func(_ *OptionPBuilder, r *OptionP, k chk) { optionPRules(r, k) }}
 	answer := varFns[Answer, AnswerBuilder, *AnswerBuilder]{"Answer", AnswerLoadBuilder, AnswerFromJson, AnswerLoadMeasureReason, AnswerMeasure, AnswerSave, AnswerToJsonMeasure, AnswerToJson, nil,
-		func(_ *AnswerBuilder, r *Answer, k chk) { answerRules(r, k) }}
+		func(b *AnswerBuilder, r *Answer, k chk) { answerRules(&b.Arena, r, k) }}
 	named := varFns[NamedAnswer, NamedAnswerBuilder, *NamedAnswerBuilder]{"NamedAnswer", NamedAnswerLoadBuilder, NamedAnswerFromJson, NamedAnswerLoadMeasureReason, NamedAnswerMeasure, NamedAnswerSave, NamedAnswerToJsonMeasure, NamedAnswerToJson, nil,
-		func(_ *NamedAnswerBuilder, r *NamedAnswer, k chk) { namedAnswerRules(r, k) }}
+		func(b *NamedAnswerBuilder, r *NamedAnswer, k chk) { namedAnswerRules(&b.Arena, r, k) }}
 	input := varFns[Input, InputBuilder, *InputBuilder]{"Input", InputLoadBuilder, InputFromJson, InputLoadMeasureReason, InputMeasure, InputSave, InputToJsonMeasure, InputToJson, nil,
 		func(_ *InputBuilder, r *Input, k chk) { inputRules(r, k) }}
 	decision := varFns[Decision, DecisionBuilder, *DecisionBuilder]{"Decision", DecisionLoadBuilder, DecisionFromJson, DecisionLoadMeasureReason, DecisionMeasure, DecisionSave, DecisionToJsonMeasure, DecisionToJson,
@@ -839,29 +845,36 @@ func variableTables(t *testing.T) {
 	})
 	t.Run("Answer", func(t *testing.T) {
 		t.Parallel()
-		exerciseVar(t, answer, func(_ *AnswerBuilder, r *Answer) { fillAnswer(r, 3) }, []vbound[Answer, *AnswerBuilder]{
+		exerciseVar(t, answer, func(b *AnswerBuilder, r *Answer) { fillAnswer(&b.Main, r, 3) }, []vbound[Answer, *AnswerBuilder]{
 			{"kind none", "kind", "clamped", func(_ *AnswerBuilder, r *Answer) { r.Kind = AnswerTypeNone }},
-			{"fifteen options", "p", "clamped", func(_ *AnswerBuilder, r *Answer) { r.PCount = 15 }},
-			{"an option above one", "p", "clamped", func(_ *AnswerBuilder, r *Answer) { r.P[1].P = 2 }},
+			{"an option above one", "p", "clamped", func(b *AnswerBuilder, r *Answer) { r.P.At(1, &b.Arena).P = 2 }},
 			{"value empty", "value", "absent_required", func(_ *AnswerBuilder, r *Answer) { r.ValueLength = 0 }},
 			{"method past 24 bytes", "method", "clamped", func(_ *AnswerBuilder, r *Answer) { r.MethodLength = 25 }},
 		})
-		// The widest choice in the code: fourteen options.
+		// A choice names any number of options (decide.go sets no ceiling):
+		// two, fifteen and forty round-trip in every form, each option intact.
 		r := schemaread.NewReader(answer.codec())
-		w := answer.fresh()
-		fillAnswer(w.GetRoot(), 14)
-		for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
-			image, err := r.Write(&w, form)
-			require.NoError(t, err, form.String())
-			got, _, err := r.Read(image)
-			require.NoError(t, err, form.String())
-			assert.EqualValues(t, 14, answer.root(got).PCount)
-			assert.Equal(t, answer.root(w).P, answer.root(got).P)
+		for _, options := range []int{2, 15, 40} {
+			w := answer.fresh()
+			fillAnswer(&w.Main, w.GetRoot(), options)
+			for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
+				image, err := r.Write(&w, form)
+				require.NoError(t, err, "%d options as %s", options, form)
+				got, _, err := r.Read(image)
+				require.NoError(t, err, "%d options as %s", options, form)
+				root := answer.root(got)
+				require.EqualValues(t, options, root.P.Count)
+				for i := 0; i < options; i++ {
+					o := root.P.At(int32(i), &got.Arena)
+					assert.Equal(t, fmt.Sprintf("opt-%d", i), string(o.Option[:o.OptionLength]))
+					assert.Equal(t, 1/float64(options), o.P)
+				}
+			}
 		}
 	})
 	t.Run("NamedAnswer", func(t *testing.T) {
 		t.Parallel()
-		exerciseVar(t, named, func(_ *NamedAnswerBuilder, r *NamedAnswer) { fillNamedAnswer(r, 2) }, []vbound[NamedAnswer, *NamedAnswerBuilder]{
+		exerciseVar(t, named, func(b *NamedAnswerBuilder, r *NamedAnswer) { fillNamedAnswer(&b.Main, r, 2) }, []vbound[NamedAnswer, *NamedAnswerBuilder]{
 			{"question past 32 bytes", "question", "clamped", func(_ *NamedAnswerBuilder, r *NamedAnswer) { r.QuestionLength = 33 }},
 			{"question empty", "question", "absent_required", func(_ *NamedAnswerBuilder, r *NamedAnswer) { r.QuestionLength = 0 }},
 			{"the answer's kind none", "kind", "clamped", func(_ *NamedAnswerBuilder, r *NamedAnswer) { r.Answer.Kind = AnswerTypeNone }},
@@ -883,7 +896,7 @@ func variableTables(t *testing.T) {
 			{"decision name empty", "decision_name", "absent_required", func(_ *DecisionBuilder, r *Decision) { r.DecisionNameLength = 0 }},
 			{"state not UTF-8", "state", "malformed", func(b *DecisionBuilder, r *Decision) { TableStringAt(&r.State, &b.Arena).Data[0] = 0xff }},
 			{"an input value past 1024", "value", "clamped", func(b *DecisionBuilder, r *Decision) { r.Inputs.At(0, &b.Arena).ValueLength = 1025 }},
-			{"an answer above one", "p", "clamped", func(b *DecisionBuilder, r *Decision) { r.Answers.At(0, &b.Arena).Answer.P[0].P = 1.01 }},
+			{"an answer above one", "p", "clamped", func(b *DecisionBuilder, r *Decision) { r.Answers.At(0, &b.Arena).Answer.P.At(0, &b.Arena).P = 1.01 }},
 			{"usage below zero", "output_tokens", "clamped", func(_ *DecisionBuilder, r *Decision) { r.Usage.OutputTokens = -5 }},
 		})
 		// The widest record the code writes: ten inputs (judgment.go
@@ -902,7 +915,7 @@ func variableTables(t *testing.T) {
 			root := decision.root(got)
 			assert.EqualValues(t, 10, root.Inputs.Count)
 			assert.EqualValues(t, 9, root.Answers.Count)
-			assert.EqualValues(t, 14, root.Answers.At(8, &got.Arena).Answer.PCount)
+			assert.EqualValues(t, 14, root.Answers.At(8, &got.Arena).Answer.P.Count)
 			assert.Len(t, TableStringAt(&root.State, &got.Arena).Data, 2*16<<10+1024)
 			again, err := r.Write(&got, schemaread.FormBinary)
 			require.NoError(t, err)

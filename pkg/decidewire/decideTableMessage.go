@@ -678,8 +678,7 @@ func AnswerLoadMessageBodyRetain(r *TableRetainMessageReader, value *Answer) boo
 					}
 				}
 				{
-					base := &value.P
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
+					count, ok := tableMessageCount(&r.Bits, entry.Shape)
 					if !ok {
 						r.Report.Malformed = true
 						return false
@@ -688,27 +687,22 @@ func AnswerLoadMessageBodyRetain(r *TableRetainMessageReader, value *Answer) boo
 						r.Report.Malformed = true
 						return false
 					}
+					holder := (*tableContainer)(unsafe.Pointer(&value.P))
+					r.Retain.discard(r.Path, true, 2)
+					if !tableContainerFill(&r.Nodes.Carve, holder, count, 64, 8) {
+						r.Report.Malformed = true
+						return false
+					}
+					holder.Count = 0
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
-					r.Retain.discard(r.Path, true, 2)
-					keep := min(n, uint64(14))
-					if keep < n {
-						r.Report.Clamped++
-					}
-					walk := n
-					if element.Shape.Bits >= 0 {
-						walk = keep
-					}
-					for i := uint64(0); i < walk; i++ {
-						var scratch OptionP
-						p := &scratch
-						if i < keep {
-							p = &base[i]
+					for i := uint64(0); i < count; i++ {
+						p := (*OptionPRow)(tableContainerFillAt(&r.Nodes.Carve, holder, int32(i), 64))
+						if p == nil {
+							r.Report.Malformed = true
+							return false
 						}
-						store := r.Retain
-						if i >= keep {
-							r.Retain = nil
-						}
+						holder.Count++
 						{
 							payload6 := r.Path
 							r.Path = r.Path.step(2, uint32(i))
@@ -717,13 +711,7 @@ func AnswerLoadMessageBodyRetain(r *TableRetainMessageReader, value *Answer) boo
 							}
 							r.Path = payload6
 						}
-						r.Retain = store
 					}
-					if walk < n && !r.Bits.Skip(int64(n-walk)*element.Shape.Bits) {
-						r.Report.Malformed = true
-						return false
-					}
-					value.PCount = int32(keep)
 				}
 				if widened {
 					r.Report.Widened++
@@ -854,17 +842,27 @@ func AnswerSaveMessageBody(w *TableMessageWriter, value *Answer) bool {
 		}
 	}
 	{
-		if value.PCount < 0 || value.PCount > 14 {
+		if value.P.Count < 0 {
 			return false
 		}
-		if value.PCount > 0 {
+		if value.P.Count > 0 {
 			w.Put(7, TableMessageRefBitsHere)
-			if value.PCount < 0 || value.PCount > 14 {
+			if value.P.Count < 0 {
 				return false
 			}
-			w.Put(uint64(value.PCount)-0, 4)
-			for i := 0; i < int(value.PCount); i++ {
-				if !OptionPSaveMessageBody(w, &value.P[i]) {
+			w.Put(uint64(value.P.Count), 32)
+			field := &AnswerTableFields[2]
+			if field.Kind == 6 {
+				w.Align()
+			}
+			cursor := tableMapCursor((*tableContainer)(unsafe.Pointer(&value.P)), field, w.Numbering.arena)
+			defer cursor.Release()
+			for i := int32(0); i < value.P.Count; i++ {
+				p := (*OptionPRow)(cursor.Next())
+				if p == nil {
+					return false
+				}
+				if !OptionPSaveMessageBody(w, &(*p)) {
 					return false
 				}
 			}
@@ -1006,8 +1004,7 @@ func AnswerLoadMessageBody(r *TableMessageReader, value *Answer) bool {
 					}
 				}
 				{
-					base := &value.P
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
+					count, ok := tableMessageCount(&r.Bits, entry.Shape)
 					if !ok {
 						r.Report.Malformed = true
 						return false
@@ -1016,31 +1013,25 @@ func AnswerLoadMessageBody(r *TableMessageReader, value *Answer) bool {
 						r.Report.Malformed = true
 						return false
 					}
+					holder := (*tableContainer)(unsafe.Pointer(&value.P))
+					if !tableContainerFill(&r.Nodes.Carve, holder, count, 64, 8) {
+						r.Report.Malformed = true
+						return false
+					}
+					holder.Count = 0
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
-					keep := min(n, uint64(14))
-					if keep < n {
-						r.Report.Clamped++
-					}
-					walk := n
-					if element.Shape.Bits >= 0 {
-						walk = keep
-					}
-					for i := uint64(0); i < walk; i++ {
-						var scratch OptionP
-						p := &scratch
-						if i < keep {
-							p = &base[i]
+					for i := uint64(0); i < count; i++ {
+						p := (*OptionPRow)(tableContainerFillAt(&r.Nodes.Carve, holder, int32(i), 64))
+						if p == nil {
+							r.Report.Malformed = true
+							return false
 						}
+						holder.Count++
 						if !OptionPLoadMessageBody(r, &(*p)) {
 							return false
 						}
 					}
-					if walk < n && !r.Bits.Skip(int64(n-walk)*element.Shape.Bits) {
-						r.Report.Malformed = true
-						return false
-					}
-					value.PCount = int32(keep)
 				}
 				if widened {
 					r.Report.Widened++
@@ -2361,7 +2352,7 @@ func DecisionLoadMessageBodyRetain(r *TableRetainMessageReader, value *Decision)
 					}
 					holder := (*tableContainer)(unsafe.Pointer(&value.Answers))
 					r.Retain.discard(r.Path, true, 7)
-					if !tableContainerFill(&r.Nodes.Carve, holder, count, 1040, 8) {
+					if !tableContainerFill(&r.Nodes.Carve, holder, count, 152, 8) {
 						r.Report.Malformed = true
 						return false
 					}
@@ -2369,7 +2360,7 @@ func DecisionLoadMessageBodyRetain(r *TableRetainMessageReader, value *Decision)
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
 					for i := uint64(0); i < count; i++ {
-						p := (*NamedAnswerRow)(tableContainerFillAt(&r.Nodes.Carve, holder, int32(i), 1040))
+						p := (*NamedAnswerRow)(tableContainerFillAt(&r.Nodes.Carve, holder, int32(i), 152))
 						if p == nil {
 							r.Report.Malformed = true
 							return false
@@ -2910,7 +2901,7 @@ func DecisionLoadMessageBody(r *TableMessageReader, value *Decision) bool {
 						return false
 					}
 					holder := (*tableContainer)(unsafe.Pointer(&value.Answers))
-					if !tableContainerFill(&r.Nodes.Carve, holder, count, 1040, 8) {
+					if !tableContainerFill(&r.Nodes.Carve, holder, count, 152, 8) {
 						r.Report.Malformed = true
 						return false
 					}
@@ -2918,7 +2909,7 @@ func DecisionLoadMessageBody(r *TableMessageReader, value *Decision) bool {
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
 					for i := uint64(0); i < count; i++ {
-						p := (*NamedAnswerRow)(tableContainerFillAt(&r.Nodes.Carve, holder, int32(i), 1040))
+						p := (*NamedAnswerRow)(tableContainerFillAt(&r.Nodes.Carve, holder, int32(i), 152))
 						if p == nil {
 							r.Report.Malformed = true
 							return false

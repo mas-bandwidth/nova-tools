@@ -1135,10 +1135,7 @@ func AnswerReset(value *Answer) {
 	value.Kind = AnswerTypeNone
 	clear(value.Value[:])
 	value.ValueLength = 0
-	for i := range value.P {
-		OptionPReset(&value.P[i])
-	}
-	value.PCount = 0
+	value.P = TableList[OptionPRow]{}
 	value.Confidence = 0.0
 	clear(value.Method[:])
 	value.MethodLength = 0
@@ -1230,24 +1227,28 @@ func AnswerSaveBodyFields(w *TableWriter, value *Answer) bool {
 		}
 	}
 	{
-		if value.PCount < 0 || value.PCount > 14 {
+		if value.P.Count < 0 {
 			return false
 		}
-		if value.PCount > 0 {
+		if value.P.Count > 0 {
 			if ref := w.Ids.refAtHit(60, 0xaf63ed4c8602096f); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
-			if value.PCount < 0 || value.PCount > 14 {
+			if value.P.Count < 0 {
 				return false
 			}
 			{
 				mark := w.Ids.Count
 				payload4 := TableWriter{Measuring: true, Ids: w.Ids}
-				pairs := uint64(0)
-				for i := 0; i < int(value.PCount); i++ {
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.P)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.P.Count; i++ {
+					p := (*OptionPRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
 					{
 						mark := payload4.Ids.Count
-						n := OptionPMeasureBody(&value.P[i], payload4.Ids)
+						n := OptionPMeasureBody(&(*p), payload4.Ids)
 						if n < 0 {
 							return false
 						}
@@ -1258,17 +1259,16 @@ func AnswerSaveBodyFields(w *TableWriter, value *Answer) bool {
 							payload4.Advance(n)
 						} else {
 							payload4.Ids.Truncate(mark)
-							if !OptionPSaveBody(&payload4, &value.P[i]) {
+							if !OptionPSaveBody(&payload4, &(*p)) {
 								return false
 							}
 						}
 					}
-					pairs++
 				}
 				if payload4.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(pairs) + payload4.Offset
+				n := int64(1) + tableLebBytes(uint64(value.P.Count)) + payload4.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -1277,13 +1277,18 @@ func AnswerSaveBodyFields(w *TableWriter, value *Answer) bool {
 				} else {
 					w.Ids.Truncate(mark)
 					w.Put8(13)
-					if !w.putLebPair(pairs) {
-						w.putLebWide(pairs)
+					if !w.putLebPair(uint64(value.P.Count)) {
+						w.putLebWide(uint64(value.P.Count))
 					}
-					for i := 0; i < int(value.PCount); i++ {
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.P)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.P.Count; i++ {
+						p := (*OptionPRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
 						{
 							mark := w.Ids.Count
-							n := OptionPMeasureBody(&value.P[i], w.Ids)
+							n := OptionPMeasureBody(&(*p), w.Ids)
 							if n < 0 {
 								return false
 							}
@@ -1294,7 +1299,7 @@ func AnswerSaveBodyFields(w *TableWriter, value *Answer) bool {
 								w.Advance(n)
 							} else {
 								w.Ids.Truncate(mark)
-								if !OptionPSaveBody(w, &value.P[i]) {
+								if !OptionPSaveBody(w, &(*p)) {
 									return false
 								}
 							}
@@ -1468,25 +1473,39 @@ func AnswerLoadBody(r *TableReader, value *Answer) bool {
 				sub.Offset = header.Offset
 				if !ok {
 					r.Report.Malformed = true
-				} else {
-					if elemKind != 13 {
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
 						r.Report.KindMismatch++
 						break
 					}
-					keep := count
-					if keep > 14 {
-						keep = 14
-						r.Report.Clamped++
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.P))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(OptionPRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
 					}
-					previous := value.PCount
-					decoded := int32(0)
-					for i := uint64(0); i < keep; i++ {
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*OptionPRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(OptionPRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
 						elem, ok := sub.Body()
 						if !ok {
 							r.Report.Malformed = true
 							break
 						}
-						OptionPLoadBody(&elem, &value.P[i])
+						OptionPLoadBody(&elem, p)
 						sub.Take(elem)
 						if sub.Nodes.Carve.Refused {
 							r.Nodes.Carve = sub.Nodes.Carve
@@ -1494,19 +1513,24 @@ func AnswerLoadBody(r *TableReader, value *Answer) bool {
 						}
 						if elem.Offset != int64(len(elem.Buffer)) {
 							r.Report.Malformed = true
-							OptionPReset(&value.P[i])
+							OptionPReset(p)
 						}
-						decoded = int32(i + 1)
+						landed = true
 					}
-					for i := decoded; i < previous; i++ {
-						OptionPReset(&value.P[i])
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
 					}
-					value.PCount = decoded
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
 				}
-			}
-			r.Take(sub)
-			if r.Nodes.Carve.Refused {
-				return false
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
 			}
 		case 0x547d54feea4643b1: // confidence
 			if kind != 11 {
@@ -1686,27 +1710,31 @@ func AnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *Answer) bool {
 		}
 	}
 	{
-		if value.PCount < 0 || value.PCount > 14 {
+		if value.P.Count < 0 {
 			return false
 		}
-		if value.PCount > 0 {
+		if value.P.Count > 0 {
 			if ref := w.Ids.refAtHit(60, 0xaf63ed4c8602096f); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
-			if value.PCount < 0 || value.PCount > 14 {
+			if value.P.Count < 0 {
 				return false
 			}
 			{
 				mark := w.Ids.Count
 				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
-				pairs := uint64(0)
-				for i := 0; i < int(value.PCount); i++ {
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.P)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.P.Count; i++ {
+					p := (*OptionPRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
 					{
 						payload3 := payload1.Ids.Path
 						payload1.Ids.Path = payload3.step(2, uint32(i))
 						{
 							mark := payload1.Ids.Count
-							n := OptionPMeasureBodyRetain(&value.P[i], payload1.Ids)
+							n := OptionPMeasureBodyRetain(&(*p), payload1.Ids)
 							if n < 0 {
 								return false
 							}
@@ -1717,19 +1745,18 @@ func AnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *Answer) bool {
 								payload1.Advance(n)
 							} else {
 								payload1.Ids.Truncate(mark)
-								if !OptionPSaveBodyRetain(&payload1, &value.P[i]) {
+								if !OptionPSaveBodyRetain(&payload1, &(*p)) {
 									return false
 								}
 							}
 						}
 						payload1.Ids.Path = payload3
 					}
-					pairs++
 				}
 				if payload1.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(pairs) + payload1.Offset
+				n := int64(1) + tableLebBytes(uint64(value.P.Count)) + payload1.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -1738,16 +1765,21 @@ func AnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *Answer) bool {
 				} else {
 					w.Ids.Truncate(mark)
 					w.Put8(13)
-					if !w.putLebPair(pairs) {
-						w.putLebWide(pairs)
+					if !w.putLebPair(uint64(value.P.Count)) {
+						w.putLebWide(uint64(value.P.Count))
 					}
-					for i := 0; i < int(value.PCount); i++ {
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.P)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.P.Count; i++ {
+						p := (*OptionPRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
 						{
 							payload5 := w.Ids.Path
 							w.Ids.Path = payload5.step(2, uint32(i))
 							{
 								mark := w.Ids.Count
-								n := OptionPMeasureBodyRetain(&value.P[i], w.Ids)
+								n := OptionPMeasureBodyRetain(&(*p), w.Ids)
 								if n < 0 {
 									return false
 								}
@@ -1758,7 +1790,7 @@ func AnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *Answer) bool {
 									w.Advance(n)
 								} else {
 									w.Ids.Truncate(mark)
-									if !OptionPSaveBodyRetain(w, &value.P[i]) {
+									if !OptionPSaveBodyRetain(w, &(*p)) {
 										return false
 									}
 								}
@@ -1941,27 +1973,41 @@ func AnswerLoadBodyRetain(r *TableRetainReader, value *Answer) bool {
 				sub.Offset = header.Offset
 				if !ok {
 					r.Report.Malformed = true
-				} else {
-					if elemKind != 13 {
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
 						r.Report.KindMismatch++
 						break
 					}
-					r.Retain.discard(r.Path, true, 2)
-					keep := count
-					if keep > 14 {
-						keep = 14
-						r.Report.Clamped++
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 2)
+				slot := (*tableContainer)(unsafe.Pointer(&value.P))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(OptionPRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
 					}
-					previous := value.PCount
-					decoded := int32(0)
-					for i := uint64(0); i < keep; i++ {
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*OptionPRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(OptionPRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
 						elem, ok := sub.Body()
 						if !ok {
 							r.Report.Malformed = true
 							break
 						}
 						elem.Path = r.Path.step(2, uint32(i))
-						OptionPLoadBodyRetain(&elem, &value.P[i])
+						OptionPLoadBodyRetain(&elem, p)
 						sub.Take(elem)
 						if sub.Nodes.Carve.Refused {
 							r.Nodes.Carve = sub.Nodes.Carve
@@ -1969,19 +2015,24 @@ func AnswerLoadBodyRetain(r *TableRetainReader, value *Answer) bool {
 						}
 						if elem.Offset != int64(len(elem.Buffer)) {
 							r.Report.Malformed = true
-							OptionPReset(&value.P[i])
+							OptionPReset(p)
 						}
-						decoded = int32(i + 1)
+						landed = true
 					}
-					for i := decoded; i < previous; i++ {
-						OptionPReset(&value.P[i])
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
 					}
-					value.PCount = decoded
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
 				}
-			}
-			r.Take(sub)
-			if r.Nodes.Carve.Refused {
-				return false
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
 			}
 		case 0x547d54feea4643b1: // confidence
 			if kind != 11 {
@@ -2177,6 +2228,27 @@ func (b *AnswerBuilder) Shutdown() {
 	b.region = nil
 	b.allocation = nil
 	b.root = 0
+}
+func AnswerPAdd(worker *TableWorker, holder *TableList[OptionPRow]) *OptionPRow {
+	p := (*OptionPRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(OptionPRow)))))
+	if p == nil {
+		return nil
+	}
+	OptionPReset(p)
+	return p
+}
+func AnswerPErase(arena *TableArena, holder *TableList[OptionPRow], element *OptionPRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func AnswerPEach(holder *TableList[OptionPRow], visit func(*OptionPRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(OptionPRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*OptionPRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
 }
 
 // NamedAnswerReset restores NamedAnswer's declared defaults in place, reusing the storage
@@ -16227,9 +16299,10 @@ var AnswerTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "p", Json: "p", TypeName: "OptionP", DeclaredTypeName: "OptionP", Id: 0xaf63ed4c8602096f, Kind: 13, IsArray: true, Counted: true, Optional: false,
-		ArrayBound: 14, Offset: uint32(unsafe.Offsetof(Answer{}.P)), ElemSize: uint32(unsafe.Sizeof(Answer{}.P[0])), CountOffset: uint32(unsafe.Offsetof(Answer{}.PCount)), PresentOffset: 0xffffffff,
-		CookOffset: 56, CookElemSize: 64, CookCountOffset: 952, CookPresentOffset: 4294967295,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(Answer{}.P)), ElemSize: uint32(unsafe.Sizeof(*new(OptionPRow))), CountOffset: (uint32(unsafe.Offsetof(Answer{}.P))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 56, CookElemSize: 64, CookCountOffset: 64, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
 		VariantId:   nil,
@@ -16239,7 +16312,7 @@ var AnswerTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "confidence", Json: "confidence", TypeName: "float64", DeclaredTypeName: "float64", Id: 0x547d54feea4643b1, Kind: 11, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Answer{}.Confidence)), ElemSize: uint32(unsafe.Sizeof(Answer{}.Confidence)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 960, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 72, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -16250,7 +16323,7 @@ var AnswerTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "method", Json: "method", TypeName: "string", DeclaredTypeName: "string", Id: 0x230c05e5fb0433b0, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 24, Offset: uint32(unsafe.Offsetof(Answer{}.Method)), ElemSize: uint32(unsafe.Sizeof(Answer{}.Method)), CountOffset: uint32(unsafe.Offsetof(Answer{}.MethodLength)), PresentOffset: 0xffffffff,
-		CookOffset: 968, CookElemSize: 1, CookCountOffset: 996, CookPresentOffset: 4294967295,
+		CookOffset: 80, CookElemSize: 1, CookCountOffset: 108, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -16265,7 +16338,7 @@ var AnswerTableFields = []TableFieldInfo{
 var AnswerTableInfo TableTypeInfo
 
 func init() {
-	AnswerTableInfo = TableTypeInfo{Name: "Answer", Size: uint32(unsafe.Sizeof(Answer{})), NumFields: 5, Fields: AnswerTableFields, Reset: func(storage unsafe.Pointer) { AnswerReset((*Answer)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xa6a92648588602bf, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return AnswerSaveBody(w, (*Answer)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return AnswerLoadBody(&r, (*Answer)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return AnswerSaveBodyRetain(w, (*Answer)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return AnswerLoadBodyRetain(&r, (*Answer)(p)) }, CookSize: 1000, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+	AnswerTableInfo = TableTypeInfo{Name: "Answer", Size: uint32(unsafe.Sizeof(Answer{})), NumFields: 5, Fields: AnswerTableFields, Reset: func(storage unsafe.Pointer) { AnswerReset((*Answer)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xa6a92648588602bf, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return AnswerSaveBody(w, (*Answer)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return AnswerLoadBody(&r, (*Answer)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return AnswerSaveBodyRetain(w, (*Answer)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return AnswerLoadBodyRetain(&r, (*Answer)(p)) }, CookSize: 112, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
 		switch id {
 		}
 		return nil
@@ -16290,7 +16363,7 @@ var NamedAnswerTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "answer", Json: "answer", TypeName: "Answer", DeclaredTypeName: "Answer", Id: 0x67cf8608037190df, Kind: 13, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(NamedAnswer{}.Answer)), ElemSize: uint32(unsafe.Sizeof(NamedAnswer{}.Answer)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 40, CookElemSize: 1000, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 40, CookElemSize: 112, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -16309,7 +16382,7 @@ func init() {
 		return NamedAnswerSaveBodyRetain(w, (*NamedAnswer)(p))
 	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
 		return NamedAnswerLoadBodyRetain(&r, (*NamedAnswer)(p))
-	}, CookSize: 1040, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+	}, CookSize: 152, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
 		switch id {
 		}
 		return nil
@@ -16488,7 +16561,7 @@ var DecisionTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "answers", Json: "answers", TypeName: "NamedAnswer", DeclaredTypeName: "NamedAnswer", Id: 0xd7316b9dd9f8d444, Kind: 13, IsArray: true, Counted: true, Optional: false,
 		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(Decision{}.Answers)), ElemSize: uint32(unsafe.Sizeof(*new(NamedAnswerRow))), CountOffset: (uint32(unsafe.Offsetof(Decision{}.Answers))) + 8, PresentOffset: 0xffffffff,
-		CookOffset: 544, CookElemSize: 1040, CookCountOffset: 552, CookPresentOffset: 4294967295,
+		CookOffset: 544, CookElemSize: 152, CookCountOffset: 552, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		List: true, ElemAlign: 8,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,

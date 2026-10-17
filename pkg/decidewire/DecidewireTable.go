@@ -87,9 +87,7 @@ type AnswerRow struct {
 	Value        [49]byte // string(48): buffer, used length beside it
 	_            [2]byte  // generated padding
 	ValueLength  int32
-	P            [14]OptionPRow
-	PCount       int32
-	_            [4]byte // generated padding
+	P            TableList[OptionPRow]
 	Confidence   float64
 	Method       [25]byte // string(24): buffer, used length beside it
 	_            [3]byte  // generated padding
@@ -303,7 +301,7 @@ type UsageRow struct {
 // BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
 // one digest a block carries and BlockOpen compares, and the fact §3.3's
 // announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0xa86d21da7675b65a
+const BuildVersion uint64 = 0x2a016ed04b522378
 
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema
