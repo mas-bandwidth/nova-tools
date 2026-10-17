@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -45,7 +46,18 @@ func Nonce() (string, error) {
 }
 
 // ReadJSON reads one of this package's small records back.
+// The exit record is read through its strict reader in every form (owner's
+// rules S2 and S4, readers first), so a damaged exit.json is refused by name
+// and never read as a zero record; every other record reads as JSON.
 func ReadJSON(path string, v any) error {
+	if rec, ok := v.(*ExitRecord); ok {
+		got, _, err := ReadExitFile(path)
+		if err != nil {
+			return err
+		}
+		*rec = got
+		return nil
+	}
 	raw, err := readFileSteady(path)
 	if err != nil {
 		return err
@@ -204,9 +216,183 @@ func ReadExitFile(path string) (ExitRecord, schemaread.Form, error) {
 	if err != nil {
 		return ExitRecord{}, schemaread.FormNone, err
 	}
-	d, res, err := exitReader().Read(raw)
+	d, res, err := exitReads.Read(raw)
 	if err != nil {
 		return ExitRecord{}, res.Form, err
 	}
 	return ExitRecord{RC: int(d.Rc), Signal: d.Signal, Ended: d.Ended, Survivors: int(d.Survivors), Nonce: d.Nonce, Attest: d.Attest, End: d.End, Spent: int(d.Spent), Observed: d.Observed, Partial: d.Partial, Reason: d.Reason}, res.Form, nil
+}
+
+// swarmBuilder is the generated builder of one variable table's root R.
+type swarmBuilder[R, B any] interface {
+	*B
+	Init(...swarmwire.TableAllocator) bool
+	Lock() bool
+	AsConst() *R
+	Shutdown()
+}
+
+// swarmTable is one variable table's generated functions: the shape every
+// reader in this package hands pkg/schemaread (schema section 6, the strict
+// read, and the owner's rule S2).
+type swarmTable[R, B any, PB swarmBuilder[R, B]] struct {
+	loadMeasure   func([]byte) int64
+	load          func(region, wire []byte, report *swarmwire.TableReport) *R
+	fromJSON      func(*B, []byte, *swarmwire.TableReport) bool
+	measure       func(*R, ...swarmwire.TableWriteContext) int64
+	save          func(*R, []byte, ...swarmwire.TableWriteContext) int64
+	toJSONMeasure func(*R, ...swarmwire.TableAllocator) int64
+	toJSON        func(*R, []byte, ...swarmwire.TableAllocator) int64
+}
+
+// loadWire loads the whole wire into a fresh region and hands its root to use
+// while the region is alive.
+func (t swarmTable[R, B, PB]) loadWire(wire []byte, use func(*R)) schemaread.Report {
+	n := t.loadMeasure(wire)
+	if n < 0 {
+		return exitStrict(swarmwire.TableReport{Malformed: true}, false)
+	}
+	var r swarmwire.TableReport
+	root := t.load(exitRegion(n), wire, &r)
+	if root == nil {
+		return exitStrict(r, false)
+	}
+	use(root)
+	return exitStrict(r, true)
+}
+
+// loadJSON builds the schema JSON text into a builder and hands its root to
+// use while the builder is alive.
+func (t swarmTable[R, B, PB]) loadJSON(text []byte, use func(*R)) schemaread.Report {
+	var b B
+	pb := PB(&b)
+	if !pb.Init() {
+		return exitStrict(swarmwire.TableReport{}, false)
+	}
+	defer pb.Shutdown()
+	var r swarmwire.TableReport
+	if !t.fromJSON(&b, text, &r) || !pb.Lock() {
+		return exitStrict(r, false)
+	}
+	use(pb.AsConst())
+	return exitStrict(r, true)
+}
+
+// saveWire is the table wire of the schema JSON text, nil when it does not build.
+func (t swarmTable[R, B, PB]) saveWire(text []byte) []byte {
+	var out []byte
+	t.loadJSON(text, func(root *R) {
+		buf := make([]byte, t.measure(root))
+		if t.save(root, buf) == int64(len(buf)) {
+			out = buf
+		}
+	})
+	return out
+}
+
+// saveJSON is the generated JSON text of the schema JSON text, nil when it does not build.
+func (t swarmTable[R, B, PB]) saveJSON(text []byte) []byte {
+	var out []byte
+	t.loadJSON(text, func(root *R) {
+		buf := make([]byte, t.toJSONMeasure(root))
+		if t.toJSON(root, buf) == int64(len(buf)) {
+			out = buf
+		}
+	})
+	return out
+}
+
+// swarmCodec is one record's strict codec over its generated table: of reads
+// a loaded root into the value, text writes the value as the schema JSON text
+// the generated builder reads, and the legacy pair reads the form the record's
+// writer writes today.
+func swarmCodec[T, R, B any, PB swarmBuilder[R, B]](name, help string, t swarmTable[R, B, PB], of func(*R) T, text func(*T) []byte,
+	legacy func([]byte) bool, loadLegacy func(*T, []byte) schemaread.Report, constraints func(*T, *schemaread.Checker)) *schemaread.Codec[T] {
+	var zero T
+	return &schemaread.Codec[T]{
+		Name: name, Help: help,
+		LoadWire: func(v *T, wire []byte) schemaread.Report {
+			*v = zero
+			return t.loadWire(wire, func(root *R) { *v = of(root) })
+		},
+		LoadJSON: func(v *T, in []byte) schemaread.Report {
+			*v = zero
+			return t.loadJSON(in, func(root *R) { *v = of(root) })
+		},
+		Legacy:      legacy,
+		LoadLegacy:  loadLegacy,
+		Constraints: constraints,
+		SaveWire:    func(v *T) []byte { return t.saveWire(text(v)) },
+		SaveJSON:    func(v *T) []byte { return t.saveJSON(text(v)) },
+	}
+}
+
+// swarmList is a table list of text as a Go slice; an empty list is nil, as
+// the legacy JSON's omitted list is.
+func swarmList(l *swarmwire.TableList[swarmwire.EntryRow]) []string {
+	var out []string
+	for i := int32(0); i < l.Count; i++ {
+		out = append(out, exitText(&l.At(i).Value))
+	}
+	return out
+}
+
+// swarmEntries is a slice of text as the schema JSON text of a list of Entry.
+func swarmEntries(v []string) []any {
+	out := make([]any, 0, len(v))
+	for _, s := range v {
+		out = append(out, map[string]any{"value": s})
+	}
+	return out
+}
+
+// swarmJSON is the schema's name-keyed JSON text of a document: an empty text
+// or list is absent, as a pointer field is (schemas/swarm/swarm.schema, Absence).
+func swarmJSON(m map[string]any) []byte {
+	for k, v := range m {
+		switch x := v.(type) {
+		case string:
+			if x == "" {
+				delete(m, k)
+			}
+		case []any:
+			if len(x) == 0 {
+				delete(m, k)
+			}
+		}
+	}
+	b, _ := json.Marshal(m)
+	return b
+}
+
+// jsonLegacy recognises the legacy JSON object every swarm record's writer
+// writes today. The schema JSON text opens with `{` as well; a reader whose
+// legacy keys and types are the schema's reads the schema JSON text as legacy
+// into the same value.
+func jsonLegacy(in []byte) bool {
+	t := bytes.TrimLeft(in, " \t\r\n")
+	return len(t) > 0 && t[0] == '{'
+}
+
+// The swarm records' readers, one per record, so the per-form read counters
+// accumulate across reads (owner's rule S4: the counters are the cutover's
+// evidence that every reader meets the new forms before a writer switches).
+var (
+	exitReads    = exitReader()
+	modelReads   = declaredModelReader()
+	workerReads  = workerReader()
+	harnessReads = harnessConfigReader()
+	fenceReads   = fenceConfigReader()
+)
+
+// SwarmReadCounts is every swarm record's read counters, by the record's
+// refusal name: reads per form, unknown fields and refusals per reason.
+func SwarmReadCounts() map[string]*schemaread.Counts {
+	return map[string]*schemaread.Counts{
+		"EXIT_RECORD":           exitReads.Counts(),
+		"DECLARED_MODEL":        modelReads.Counts(),
+		"WORKER_RECORD":         workerReads.Counts(),
+		"HARNESS_CONFIG_RECORD": harnessReads.Counts(),
+		"FENCE_CONFIG":          fenceReads.Counts(),
+	}
 }

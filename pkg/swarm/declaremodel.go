@@ -138,7 +138,12 @@ func declaredModelReader() *schemaread.Reader[declaredModelDoc] {
 			}
 			return schemaread.Report{}
 		},
+		// Provider and model are required: DeclareRouteModel declares nothing for an empty
+		// one (schemas/swarm/swarm.schema, Absence: the reader that needs the field refuses
+		// the empty value by name), so an image that loads both as absent is refused.
 		Constraints: func(v *declaredModelDoc, c *schemaread.Checker) {
+			c.Required("provider", v.Provider != "")
+			c.Required("model", v.Model != "")
 			c.Text("provider", v.Provider, math.MaxInt)
 			c.Text("model", v.Model, math.MaxInt)
 		},
@@ -174,6 +179,6 @@ func declaredModelReader() *schemaread.Reader[declaredModelDoc] {
 // hands the refusal to the caller by name; a malformed value is never read as
 // absent, empty or zero.
 func ReadDeclaredModel(body []byte) (declaredModelDoc, schemaread.Form, error) {
-	d, res, err := declaredModelReader().Read(body)
+	d, res, err := modelReads.Read(body)
 	return d, res.Form, err
 }
