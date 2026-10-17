@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -37,9 +38,16 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 		want := decide.RecordLine{Decision: &d}
 		legacy, err := json.Marshal(map[string]any{"decision": d})
 		require.NoError(t, err)
+		over := decisionSample()
+		a := over.Answers["class"]
+		a.P = map[string]float64{"done": 1.5}
+		over.Answers["class"] = a
+		overLegacy, err := json.Marshal(map[string]any{"decision": over})
+		require.NoError(t, err)
 		line := dual[decide.RecordLine]{name: "RECORD_LINE", want: want, wire: decisionLineImage(t, d), legacy: legacy,
-			read:   func(rd *decide.Parser, in []byte) (decide.RecordLine, error) { return rd.RecordLine(in) },
-			counts: func(rd *decide.Parser) *schemaread.Counts { return rd.RecordLineCounts() }}
+			clamped: []formInput{{"binary", decisionLineImage(t, over)}, {"base64", []byte(base64.StdEncoding.EncodeToString(decisionLineImage(t, over)))}, {"legacy", overLegacy}},
+			read:    func(rd *decide.Parser, in []byte) (decide.RecordLine, error) { return rd.RecordLine(in) },
+			counts:  func(rd *decide.Parser) *schemaread.Counts { return rd.RecordLineCounts() }}
 		line.run(t)
 		// the files are read from a directory the test writes
 		dir := t.TempDir()
@@ -64,10 +72,19 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 		d := decisionSample()
 		legacy, err := json.Marshal(d)
 		require.NoError(t, err)
+		over := decisionSample()
+		a := over.Answers["class"]
+		a.P = map[string]float64{"done": 1.5}
+		over.Answers["class"] = a
+		overLegacy, err := json.Marshal(over)
+		require.NoError(t, err)
+		overWire := decisionImage(t, over)
 		att := dual[decide.Decision]{name: "DECISION", want: d, wire: decisionImage(t, d), legacy: legacy,
-			read:   func(rd *decide.Parser, in []byte) (decide.Decision, error) { return rd.Attempt(in) },
-			counts: func(rd *decide.Parser) *schemaread.Counts { return rd.AttemptCounts() }}
+			clamped: []formInput{{"binary", overWire}, {"base64", []byte(base64.StdEncoding.EncodeToString(overWire))}, {"legacy", overLegacy}},
+			read:    func(rd *decide.Parser, in []byte) (decide.Decision, error) { return rd.Attempt(in) },
+			counts:  func(rd *decide.Parser) *schemaread.Counts { return rd.AttemptCounts() }}
 		att.run(t)
+		flipProbe(t, "DECISION", d, att.wire)
 	})
 
 	t.Run("import export", func(t *testing.T) {
@@ -93,24 +110,29 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 	})
 }
 
+// formInput is one value in one of the forms a reader takes.
+type formInput struct {
+	form string
+	in   []byte
+}
+
 // dual is one record's dual read: its value, its binary image and its legacy
-// form, and how a reader hands each to the reader.
+// form, and how a reader hands each to the reader. clamped holds values past a
+// declared bound in each form; a record whose schema declares no bound has none.
 type dual[T any] struct {
-	name   string
-	want   T
-	wire   []byte
-	legacy []byte
-	read   func(rd *decide.Parser, in []byte) (T, error)
-	counts func(rd *decide.Parser) *schemaread.Counts
+	name    string
+	want    T
+	wire    []byte
+	legacy  []byte
+	clamped []formInput
+	read    func(rd *decide.Parser, in []byte) (T, error)
+	counts  func(rd *decide.Parser) *schemaread.Counts
 }
 
 func (d dual[T]) run(t *testing.T) {
 	t.Helper()
 	rd := decide.NewParser()
-	inputs := []struct {
-		form string
-		in   []byte
-	}{
+	inputs := []formInput{
 		{"binary", d.wire},
 		{"base64", []byte(base64.StdEncoding.EncodeToString(d.wire))},
 		{"legacy", d.legacy},
@@ -126,27 +148,110 @@ func (d dual[T]) run(t *testing.T) {
 	assert.Equal(t, uint64(1), counts.Reads(schemaread.FormLegacy), d.name)
 	assert.Zero(t, counts.Reads(schemaread.FormJSON), d.name)
 
+	// A truncated, a flipped-byte and an appended value of every form is
+	// refused by name and counted under the form it arrived in.
 	rd = decide.NewParser()
-	tries := 0
+	wantReads := map[string]uint64{}
 	for _, in := range inputs {
-		if in.form == "legacy" {
-			continue
-		}
-		for _, m := range damaged(in.in) {
+		wantReads[in.form] = 0
+		for _, m := range damage(in.form, in.in) {
 			got, err := d.read(rd, m)
 			require.NotNil(t, refusal(t, err, d.name), "%s: a damaged %s (%d bytes) was read as %v", d.name, in.form, len(m), got)
 			var zero T
 			assert.Equal(t, zero, got, "%s: a refused read hands back nothing", d.name)
-			tries++
+			wantReads[in.form]++
 		}
 	}
-	refusals := uint64(0)
-	for k, n := range d.counts(rd).Snapshot() {
+	counts = d.counts(rd)
+	assert.Equal(t, wantReads["binary"], counts.Reads(schemaread.FormBinary), "%s damaged binary reads are counted", d.name)
+	assert.Equal(t, wantReads["base64"], counts.Reads(schemaread.FormBase64), "%s damaged base64 reads are counted", d.name)
+	assert.Equal(t, wantReads["legacy"], counts.Reads(schemaread.FormLegacy), "%s damaged legacy reads are counted", d.name)
+	assert.Equal(t, wantReads["binary"]+wantReads["base64"]+wantReads["legacy"], refusals(counts), "%s: every damaged read is refused, by reason", d.name)
+
+	// A value past a declared bound is refused, never clamped into the value.
+	// A record whose schema declares no bound (the export, the schema) has no
+	// clamped case to make.
+	for _, in := range d.clamped {
+		got, err := d.read(rd, in.in)
+		ref := refusal(t, err, d.name)
+		if ref != nil {
+			assert.Equal(t, schemaread.ReasonClamped, ref.Reason, "%s: a clamped %s", d.name, in.form)
+		}
+		var zero T
+		assert.Equal(t, zero, got, "%s: a refused %s hands back nothing", d.name, in.form)
+	}
+}
+
+// flipProbe flips each byte of a record's binary image and reads it. Every
+// flip that the framing, the measure or the bounds can see is refused by name;
+// a flip in a value the wire carries without a checksum (a number in range, an
+// id-table entry that still resolves, text that stays UTF-8) reads as another
+// value, and is counted here rather than mistaken for damage. The report names
+// that limit; the schema compiler's fix is a checksum in the framing.
+func flipProbe(t *testing.T, name string, want decide.Decision, wire []byte) {
+	t.Helper()
+	rd := decide.NewParser()
+	refused, same, changed := 0, 0, 0
+	for i := range wire {
+		got, err := rd.Attempt(flipByte(wire, i))
+		if err != nil {
+			refusal(t, err, name)
+			refused++
+			continue
+		}
+		if reflect.DeepEqual(got, want) {
+			same++
+			continue
+		}
+		changed++
+		assert.NotEmpty(t, got.ID, "%s: a flipped byte at %d was read as an absent id", name, i)
+		assert.NotEmpty(t, got.Decision, "%s: a flipped byte at %d was read as an absent decision", name, i)
+	}
+	t.Logf("%s: %d bytes, %d refused, %d unchanged, %d read as another value", name, len(wire), refused, same, changed)
+	assert.Equal(t, len(wire), refused+same+changed, name)
+	assert.Greater(t, refused, len(wire)/2, "%s: the framing, measure and bounds refuse most single-byte damage", name)
+}
+
+// refusals sums every refused_<reason> counter.
+func refusals(c *schemaread.Counts) uint64 {
+	var n uint64
+	for k, v := range c.Snapshot() {
 		if strings.HasPrefix(k, "refused_") {
-			refusals += n
+			n += v
 		}
 	}
-	assert.Equal(t, uint64(tries), refusals, "%s: every damaged read is counted as refused, by reason", d.name)
+	return n
+}
+
+// damage is the malformed corpus of one form: truncations, appended tails, a
+// flipped byte at the form byte and at the framing trailer, and for the legacy
+// text a flipped brace and a JSON value of the wrong kind.
+func damage(form string, in []byte) [][]byte {
+	out := damaged(in)
+	switch form {
+	case "legacy":
+		// every entry keeps its opening brace, so it is still the legacy text;
+		// the flipped byte is the first key's opening quote.
+		out = append(out, flipByte(in, 1), []byte("{"))
+	case "binary":
+		out = append(out, flipByte(in, 0), flipByte(in, len(in)-1))
+	case "base64":
+		// the first character names the form; flip the form byte and the tail
+		// of the image itself, then wrap it in base64 again
+		dec, err := base64.StdEncoding.DecodeString(string(in))
+		if err == nil && len(dec) > 0 {
+			out = append(out,
+				[]byte(base64.StdEncoding.EncodeToString(flipByte(dec, 0))),
+				[]byte(base64.StdEncoding.EncodeToString(flipByte(dec, len(dec)-1))))
+		}
+	}
+	return out
+}
+
+func flipByte(in []byte, at int) []byte {
+	out := bytes.Clone(in)
+	out[at] ^= 0xff
+	return out
 }
 
 var refusalText = regexp.MustCompile(`^[A-Z_]+ REFUSED: [^;]+; run: \S.*$`)
@@ -164,7 +269,7 @@ func refusal(t *testing.T, err error, name string) *schemaread.Refusal {
 
 func damaged(in []byte) [][]byte {
 	var out [][]byte
-	for n := 0; n < len(in); n++ {
+	for n := 1; n < len(in); n++ {
 		out = append(out, bytes.Clone(in[:n]))
 	}
 	for _, tail := range []string{"\x00", "x", "AAAA"} {

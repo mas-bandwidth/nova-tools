@@ -2,6 +2,8 @@ package decide
 
 import (
 	"encoding/json"
+	"io"
+	"math"
 	"strings"
 	"unsafe"
 
@@ -24,11 +26,12 @@ const variableForm = 1
 // damaged value of any form is refused by name. The legacy read is the
 // record's own decode.
 type decided[T any] struct {
-	name   string
-	help   string
-	read   func(*T, []byte) schemaread.Report
-	legacy func(*T, []byte) schemaread.Report
-	check  func(*T, *schemaread.Checker)
+	name    string
+	help    string
+	measure func([]byte) error
+	read    func(*T, []byte) schemaread.Report
+	legacy  func(*T, []byte) schemaread.Report
+	check   func(*T, *schemaread.Checker)
 }
 
 func (d decided[T]) reader() *schemaread.Reader[T] {
@@ -37,6 +40,7 @@ func (d decided[T]) reader() *schemaread.Reader[T] {
 		Help:        d.help,
 		Forms:       []byte{variableForm},
 		Reset:       func(v *T) { *v = *new(T) },
+		Measure:     d.measure,
 		LoadWire:    d.read,
 		Legacy:      func(in []byte) bool { return len(in) > 0 && in[0] == '{' },
 		LoadLegacy:  d.legacy,
@@ -107,6 +111,129 @@ func typeOf(k decidewire.AnswerType) string {
 	return Choice
 }
 
+// ---- the bounds the code enforces (S2, the schema's declared bounds) ----
+
+// maxText is the largest text any of these records holds: the record reader's
+// 64 MiB line (record.go parse) is the only size the code states.
+const maxText = 64 << 20
+
+// must is a text the code refuses when empty.
+func must(c *schemaread.Checker, field, text string) {
+	c.Text(field, text, maxText)
+	c.Required(field, text != "")
+}
+
+// text is a text held to UTF-8 with no NUL (S2: refused by name).
+func text(c *schemaread.Checker, field, s string) { c.Text(field, s, maxText) }
+
+// prob holds a probability to [0, 1] (decide.go Check, record.go
+// recordedProbabilities); a NaN is malformed. The checker has no float bound,
+// so an out-of-range value is a clamp and a NaN a malformed text (the schema
+// compiler's golden rules hold the same way).
+func prob(c *schemaread.Checker, field string, p float64) {
+	if math.IsNaN(p) {
+		c.Text(field, "\x00", 1)
+		return
+	}
+	in := int64(0)
+	if p >= 0 && p <= 1 {
+		in = 1
+	}
+	c.Bound(field, in, 1, 1)
+}
+
+// answerKind is the ordinal of an answer type; 0 is no type the code names.
+func answerKind(t string) int64 {
+	switch t {
+	case Choice:
+		return 1
+	case Noul:
+		return 2
+	}
+	return 0
+}
+
+// decisionCheck holds a decision to the bounds its code enforces: an id and a
+// decision name, the answer kinds and every probability, an input's key. The
+// schema records declare no length or count bound, so the lists are open.
+func decisionCheck(d *Decision, c *schemaread.Checker) {
+	must(c, "id", d.ID)
+	must(c, "decision_name", d.Decision)
+	text(c, "schema", d.Schema)
+	text(c, "backend", d.Backend)
+	text(c, "at", d.At)
+	for key, value := range d.Inputs {
+		must(c, "input.key", key)
+		text(c, "input.value", value)
+	}
+	text(c, "state", d.State)
+	for question, a := range d.Answers {
+		must(c, "question", question)
+		c.Bound("kind", answerKind(a.Type), 1, 2)
+		must(c, "value", a.Value)
+		for option, p := range a.P {
+			must(c, "option", option)
+			prob(c, "p", p)
+		}
+		text(c, "method", a.Method)
+	}
+}
+
+func outcomeCheck(o *Outcome, c *schemaread.Checker) {
+	must(c, "id", o.ID)
+	must(c, "label", o.Label)
+	text(c, "note", o.Note)
+	text(c, "at", o.At)
+}
+
+func actCheck(a *Act, c *schemaread.Checker) {
+	must(c, "id", a.ID)
+	must(c, "step", a.Act)
+	text(c, "op", a.Op)
+	text(c, "at", a.At)
+}
+
+// recordLineCheck holds a line to the one record it is (record.go parse): the
+// one kind present is the one read, and it is held to its own bounds.
+func recordLineCheck(l *line, c *schemaread.Checker) {
+	present := 0
+	if l.Decision != nil {
+		present++
+	}
+	if l.Outcome != nil {
+		present++
+	}
+	if l.Act != nil {
+		present++
+	}
+	if present != 1 {
+		// zero or two kinds is parse's own error (record.go parse), naming the
+		// file and line; the bounds of the one line are checked only when it
+		// is one record.
+		return
+	}
+	if l.Decision != nil {
+		decisionCheck(l.Decision, c)
+	}
+	if l.Outcome != nil {
+		outcomeCheck(l.Outcome, c)
+	}
+	if l.Act != nil {
+		actCheck(l.Act, c)
+	}
+}
+
+// exportCheck holds an export to the ids its lines answer: the code takes
+// every line and every id, so neither list has a count bound (import.go).
+func exportCheck(e *Export, c *schemaread.Checker) {
+	for _, l := range e.Lines {
+		text(c, "verb", l.Verb)
+		for _, id := range l.Answers {
+			must(c, "id", id)
+		}
+	}
+}
+
 // ---- the decision (ParseAttempt, the record's decision line) ----
 
 func parseAttemptTyped(v *Decision, wire []byte) schemaread.Report {
@@ -128,7 +255,10 @@ func parseAttemptTyped(v *Decision, wire []byte) schemaread.Report {
 // newAttemptReader is the attempt decision's reader; a finish carries the
 // decision as one JSON record line, which is the legacy form.
 func newAttemptReader() *schemaread.Reader[Decision] {
-	return decided[Decision]{name: "DECISION", help: "nova-sprint answer -h", read: parseAttemptTyped, legacy: func(v *Decision, in []byte) schemaread.Report { return recordLegacy(v, in) }}.reader()
+	return decided[Decision]{name: "DECISION", help: "nova-sprint answer -h",
+		measure: func(wire []byte) error { _, err := decidewire.DecisionLoadMeasureReason(wire); return err },
+		read:    parseAttemptTyped, legacy: func(v *Decision, in []byte) schemaread.Report { return recordLegacy(v, in) },
+		check: decisionCheck}.reader()
 }
 
 // ParseAttemptReader is the attempt decision's package reader.
@@ -176,14 +306,22 @@ func parseSchemaTyped(v *Schema, wire []byte) schemaread.Report {
 // newSchemaReader is the schema's reader; the schema's legacy form is the JSON
 // object ParseSchema decodes, with no field it does not know.
 func newSchemaReader() *schemaread.Reader[Schema] {
-	return decided[Schema]{name: "SCHEMA", help: "nova-decide answer -h", read: parseSchemaTyped, legacy: func(v *Schema, in []byte) schemaread.Report {
-		dec := json.NewDecoder(strings.NewReader(string(in)))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(v); err != nil {
-			return schemaread.Report{Reason: err.Error()}
-		}
-		return schemaread.Report{}
-	}}.reader()
+	return decided[Schema]{name: "SCHEMA", help: "nova-decide answer -h",
+		measure: func(wire []byte) error { _, err := decidewire.DecideSchemaLoadMeasureReason(wire); return err },
+		read:    parseSchemaTyped, legacy: func(v *Schema, in []byte) schemaread.Report {
+			dec := json.NewDecoder(strings.NewReader(string(in)))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(v); err != nil {
+				return schemaread.Report{Reason: err.Error()}
+			}
+			// The decoder reads one value and ignores what follows; a
+			// trailing byte is damage the legacy reader must not read as a
+			// schema (S2).
+			if err := dec.Decode(new(any)); err != io.EOF {
+				return schemaread.Report{Malformed: true}
+			}
+			return schemaread.Report{}
+		}}.reader()
 }
 
 // ParseSchemaReader is the schema's package reader.
@@ -236,7 +374,10 @@ func parseExportTyped(v *Export, wire []byte) schemaread.Report {
 // newExportReader is the import export's reader; the legacy form is the JSON
 // object judgmentItems unmarshals.
 func newExportReader() *schemaread.Reader[Export] {
-	return decided[Export]{name: "EXPORT", help: "nova-decide import -h", read: parseExportTyped, legacy: func(v *Export, in []byte) schemaread.Report { return recordLegacy(v, in) }}.reader()
+	return decided[Export]{name: "EXPORT", help: "nova-decide import -h",
+		measure: func(wire []byte) error { _, err := decidewire.ImportExportLoadMeasureReason(wire); return err },
+		read:    parseExportTyped, legacy: func(v *Export, in []byte) schemaread.Report { return recordLegacy(v, in) },
+		check: exportCheck}.reader()
 }
 
 // ParseExportReader is the import export's package reader.
@@ -309,7 +450,10 @@ func recordLineTyped(v *line, wire []byte) schemaread.Report {
 // newRecordLineReader is a record line's reader; the legacy form is the one
 // JSON object the line's writer appends today.
 func newRecordLineReader() *schemaread.Reader[line] {
-	return decided[line]{name: "RECORD_LINE", help: "nova-decide record -h", read: recordLineTyped, legacy: func(v *line, in []byte) schemaread.Report { return recordLegacy(v, in) }}.reader()
+	return decided[line]{name: "RECORD_LINE", help: "nova-decide record -h",
+		measure: func(wire []byte) error { _, err := decidewire.RecordLineLoadMeasureReason(wire); return err },
+		read:    recordLineTyped, legacy: func(v *line, in []byte) schemaread.Report { return recordLegacy(v, in) },
+		check: recordLineCheck}.reader()
 }
 
 // RecordLineReader is a record line's package reader.
