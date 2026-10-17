@@ -272,7 +272,7 @@ func manifestConstraints(v *wire.UpdateManifest, c *schemaread.Checker) {
 // manifest is the only one of the forms whose text is tab-separated: base64
 // and JSON carry no tabs, and the binary wire leads with a control byte, so a
 // printable text with a tab is the legacy form. Padded base64 carries no
-// inner space either, so printable text with a space, a text that opens with
+// inner blank either, so printable text with a blank, a text that opens with
 // a # comment, and an empty text are the legacy form too: a missing or wrong
 // header is still legacy text and still refused as the legacy form (line 1:
 // invalid header), as Load always refused it.
