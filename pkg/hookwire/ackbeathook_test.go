@@ -630,6 +630,19 @@ func edited(t *testing.T, text []byte, old, new string) []byte {
 	return []byte(out)
 }
 
+// hostile is the wire of a value the generated writer refuses to write (it
+// checks every bound): the value is written with a marker in bounds and the
+// marker bytes are replaced in the wire, exactly what a broken or older
+// writer could put on the bus. The marker must occur exactly once.
+func hostile(t *testing.T, wire, marker, with []byte) []byte {
+	t.Helper()
+	require.NotNil(t, wire)
+	require.Equal(t, 1, bytes.Count(wire, marker), "the marker %x occurs once", marker)
+	return bytes.Replace(wire, marker, with, 1)
+}
+
+func le32(v uint32) []byte { return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)} }
+
 func TestLayer1AckBeatHook(t *testing.T) {
 	t.Parallel()
 	const id = "01JZ8Q4W6V2N7K3M5X9R0T1Y2B"
@@ -694,7 +707,7 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			{"a push down with no reason", withAck(func(v *Ack) { v.ReasonLength = 0 }), "absent_required (reason)"},
 			{"stage absent from the JSON text", edited(t, goodAckText, "  \"stage\": \"read\",\n", ""), "absent_required (stage)"},
 			{"a stage the JSON text does not name", edited(t, goodAckText, `"stage": "read"`, `"stage": "lost"`), "absent_required (stage)"},
-			{"a NUL in the id", withAck(func(v *Ack) { v.Id[2] = 0 }), "malformed"},
+			{"a NUL in the id", hostile(t, withAck(func(v *Ack) { v.Id[2] = 1 }), []byte(id[:2]+"\x01"+id[3:]), []byte(id[:2]+"\x00"+id[3:])), "malformed"},
 			{"no ack at all", []byte("hello ack"), "malformed"},
 			{"a receipt line without its state", []byte("RECEIPTS RECEIPT id=" + id + " age=1m"), "legacy_shape"},
 			{"a receipt line with an unknown state", []byte(receiptLine(id, "lost", "1m")), "legacy_shape"},
@@ -722,9 +735,9 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			return beatWire(&v)
 		}
 		refuses(t, rb, "BEAT", beatHelp, goodBeatWire, append([]refusalCase{
-			{"stop_returns over 1024", withBeat(func(v *Beat) { v.StopReturns = 1025 }), "clamped"},
+			{"stop_returns over 1024", hostile(t, withBeat(func(v *Beat) { v.StopReturns = 1024 }), le32(1024), le32(1025)), "clamped"},
 			{"stop_returns over 1024 as JSON text", edited(t, goodBeatText, `"stop_returns": 3`, `"stop_returns": 1025`), "clamped"},
-			{"stop_returns over 1024 as base64 text", []byte(b64(withBeat(func(v *Beat) { v.StopReturns = 1025 }))), "clamped"},
+			{"stop_returns over 1024 as base64 text", []byte(b64(hostile(t, withBeat(func(v *Beat) { v.StopReturns = 1024 }), le32(1024), le32(1025)))), "clamped"},
 			{"a friend name over 64 bytes from a newer writer", writer(t, "wide-beat"), "clamped"},
 			{"a field that changed kind", writer(t, "changed-beat"), "kind_mismatch"},
 			{"friend absent", withBeat(func(v *Beat) { v.FriendNameLength = 0 }), "absent_required (friend_name)"},
@@ -734,7 +747,7 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			{"an until with no reason", withBeat(func(v *Beat) { v.UntilMs, v.UntilMsPresent = 1792003600000, true }), "absent_required (reason)"},
 			{"a reason with no until", withBeat(func(v *Beat) { v.ReasonLength = setText(v.Reason[:], "away") }), "absent_required (until_ms)"},
 			{"an active time before the epoch", withBeat(func(v *Beat) { v.ActiveMs = -1 }), "clamped (active_ms)"},
-			{"a NUL in the friend name", withBeat(func(v *Beat) { v.FriendName[2] = 0 }), "malformed"},
+			{"a NUL in the friend name", hostile(t, withBeat(func(v *Beat) { v.FriendName[2] = 1 }), []byte("ad\x01"), []byte("ad\x00")), "malformed"},
 			{"no beat at all", []byte("hello beat"), "malformed"},
 			{"an argv with a flag it never writes", []byte(`["friend","beat","ada","--lanes","4"]`), "legacy_shape"},
 			{"an argv with a time that is no RFC 3339", []byte(`["friend","beat","ada","--active","yesterday"]`), "legacy_shape"},
@@ -767,7 +780,7 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			{"at_ms before the epoch", withStamp(func(v *Stamp) { v.AtMs = -5 }), "absent_required (at_ms)"},
 			{"holder absent", withStamp(func(v *Stamp) { v.ByLength = 0 }), "absent_required (by)"},
 			{"at_ms absent from the JSON text", edited(t, goodStampText, "  \"at_ms\": 1792000000000,\n", ""), "absent_required (at_ms)"},
-			{"a NUL in the holder", withStamp(func(v *Stamp) { v.By[2] = 0 }), "malformed"},
+			{"a NUL in the holder", hostile(t, withStamp(func(v *Stamp) { v.By[2] = 1 }), []byte("no\x01a-friend 4242"), []byte("no\x00a-friend 4242")), "malformed"},
 			{"no stamp at all", []byte("hello stamp"), "malformed"},
 			// the record's stamp before this wire: an RFC 3339 time, an
 			// unknown key or spacing the scripts never write is refused by

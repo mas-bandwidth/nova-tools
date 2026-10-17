@@ -217,6 +217,19 @@ func readFile(t *testing.T, path string) []byte {
 
 var b64 = base64.StdEncoding.EncodeToString
 
+// hostile is the wire of a value the generated writer refuses to write (it
+// checks every bound): the value is written with a marker in bounds and the
+// marker bytes are replaced in the wire, exactly what a broken or older
+// writer could put on the bus. The marker must occur exactly once.
+func hostile(t *testing.T, wire, marker, with []byte) []byte {
+	t.Helper()
+	require.NotNil(t, wire)
+	require.Equal(t, 1, bytes.Count(wire, marker), "the marker %x occurs once", marker)
+	return bytes.Replace(wire, marker, with, 1)
+}
+
+func le32(v uint32) []byte { return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)} }
+
 func TestLayer1Pong(t *testing.T) {
 	t.Parallel()
 	env := envelope{from: "aurora", sentMs: 1792000000000}
@@ -305,11 +318,11 @@ func TestLayer1Pong(t *testing.T) {
 			// (TableReport carries a count only), so a read refusal names the
 			// reason alone; the writer, which checks the value itself, names
 			// the field too (the writer subtest below).
-			{"queue over 100000", with(func(v *Pong) { v.Queue = 100001 }), "clamped"},
-			{"working over 10000", with(func(v *Pong) { v.Working = 10001 }), "clamped"},
-			{"width over 1024", with(func(v *Pong) { v.Width = 1025 }), "clamped"},
+			{"queue over 100000", hostile(t, with(func(v *Pong) { v.Queue = 100000 }), le32(100000), le32(100001)), "clamped"},
+			{"working over 10000", hostile(t, with(func(v *Pong) { v.Working = 10000 }), le32(10000), le32(10001)), "clamped"},
+			{"width over 1024", hostile(t, with(func(v *Pong) { v.Width = 1024 }), le32(1024), le32(1025)), "clamped"},
 			{"queue over 100000 as JSON text", withJSON(`"queue": 5`, `"queue": 100001`), "clamped"},
-			{"queue over 100000 as base64 text", []byte(b64(with(func(v *Pong) { v.Queue = 100001 }))), "clamped"},
+			{"queue over 100000 as base64 text", []byte(b64(hostile(t, with(func(v *Pong) { v.Queue = 100000 }), le32(100000), le32(100001)))), "clamped"},
 			{"nonce over 32 bytes from a newer writer", readFile(t, "testdata/writers/wide.bin"), "clamped"},
 			{"a field that changed kind", readFile(t, "testdata/writers/changed.bin"), "kind_mismatch"},
 			// absence where zero is no answer
@@ -320,7 +333,7 @@ func TestLayer1Pong(t *testing.T) {
 			{"width absent", with(func(v *Pong) { v.Width, v.WidthPresent = 0, false }), "absent_required (width)"},
 			{"sent_ms absent", with(func(v *Pong) { v.SentMs, v.SentMsPresent = 0, false }), "absent_required (sent_ms)"},
 			{"queue absent from the JSON text", withJSON("  \"queue\": 5,\n", ""), "absent_required (queue)"},
-			{"a NUL in the nonce", with(func(v *Pong) { v.Nonce[2] = 0 }), "malformed"},
+			{"a NUL in the nonce", hostile(t, with(func(v *Pong) { v.Nonce[2] = 1 }), []byte("ab\x01123"), []byte("ab\x00123")), "malformed"},
 			// framing and form
 			{"truncated wire", goodWire[:len(goodWire)-1], "wire_damaged"},
 			{"trailing junk in the wire", append(append([]byte{}, goodWire...), 0, 1), "wire_damaged"},
