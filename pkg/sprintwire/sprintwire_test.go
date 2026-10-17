@@ -235,11 +235,11 @@ func TestClientDoReadsEveryResultStrictly(t *testing.T) {
 		{"404", reply(404, ""), "refused the request (Not Found): "},
 		{"too many results", reply(200, `{"results":[{"code":0,"stdout":"","stderr":""},{"code":0,"stdout":"","stderr":""}]}`), "answered 2 results for 1 verbs"},
 		{"no results", reply(200, `{"results":[]}`), "answered 0 results for 1 verbs"},
-		{"not json", reply(200, `ok`), "answered 0 results for 1 verbs"},
-		{"result with no code", reply(200, `{"results":[{"stdout":"","stderr":""}]}`), "result 1 of 1 names no exit code or output: nothing is known of what ran"},
-		{"result with no stdout", reply(200, `{"results":[{"code":0,"stderr":""}]}`), "result 1 of 1 names no exit code or output"},
-		{"result with no stderr", reply(200, `{"results":[{"code":0,"stdout":""}]}`), "result 1 of 1 names no exit code or output"},
-		{"null result", reply(200, `{"results":[null]}`), "result 1 of 1 names no exit code or output"},
+		{"not json", reply(200, `ok`), "Response REFUSED: malformed; run: nova-sprint -h: nothing is known of what ran"},
+		{"result with no code", reply(200, `{"results":[{"stdout":"","stderr":""}]}`), "Response REFUSED: absent_required (code); run: nova-sprint -h: nothing is known of what ran"},
+		{"result with no stdout", reply(200, `{"results":[{"code":0,"stderr":""}]}`), "Response REFUSED: absent_required (stdout)"},
+		{"result with no stderr", reply(200, `{"results":[{"code":0,"stdout":""}]}`), "Response REFUSED: absent_required (stderr)"},
+		{"null result", reply(200, `{"results":[null]}`), "Response REFUSED: kind_mismatch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
