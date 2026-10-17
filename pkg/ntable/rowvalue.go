@@ -13,8 +13,8 @@ import (
 // (S2). Legacy is supplied by the caller that knows the record's schema;
 // opaque JSON alone cannot distinguish schema JSON from legacy JSON.
 func RowValueForm(value string, legacy bool) (schemaread.Form, error) {
-	if err := rowValueText(value); err != nil {
-		return schemaread.FormNone, err
+	if !utf8.ValidString(value) {
+		return schemaread.FormNone, fmt.Errorf("row value REFUSED: invalid_utf8; run: nova-table help")
 	}
 	reader := schemaread.NewReader(&schemaread.Codec[string]{Legacy: func([]byte) bool { return legacy }})
 	return reader.Detect([]byte(value)), nil
@@ -23,10 +23,8 @@ func RowValueForm(value string, legacy bool) (schemaread.Form, error) {
 // rowValueText holds S2's opaque text rule: binary images arrive as padded
 // standard base64; this store never interprets the image or a JSON text value.
 func rowValueText(value string) error {
-	if !utf8.ValidString(value) {
-		return fmt.Errorf("row value REFUSED: invalid_utf8; run: nova-table help")
-	}
-	return nil
+	_, err := RowValueForm(value, false)
+	return err
 }
 
 // checkRowValues checks envelope strings before JSON can silently replace
