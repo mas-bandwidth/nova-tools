@@ -80,6 +80,31 @@ func ReasonFrom(ctx context.Context) string {
 	return reason
 }
 
+// The bounds of a history row's own text, at least four times the longest the
+// live history held when they were set (an actor of 14 bytes, a reason of
+// about 1050): the actor is bounded as a name is, and schemas/config/config.schema
+// declares the same numbers.
+const (
+	// MaxActor is the longest --actor in bytes.
+	MaxActor = MaxName
+	// MaxReason is the longest --reason in bytes.
+	MaxReason = 4608
+)
+
+// ValidateChangeMeta is the one check of who made a write and why, run where
+// the value enters (the CLI verbs) and where it is recorded (every store's
+// Insert, Update and Delete): past either bound it is refused by name, before
+// any write.
+func ValidateChangeMeta(actor, reason string) error {
+	if len(actor) > MaxActor {
+		return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--actor of %d bytes: over the maximum of %d bytes (MaxActor)", len(actor), MaxActor)}
+	}
+	if len(reason) > MaxReason {
+		return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--reason of %d bytes: over the maximum of %d bytes (MaxReason)", len(reason), MaxReason)}
+	}
+	return nil
+}
+
 // The three operations a history row records.
 const (
 	OpAdd    = "add"
@@ -341,6 +366,9 @@ func (m *Mem) List(_ context.Context, kind string) ([]Row, error) {
 }
 
 func (m *Mem) Insert(ctx context.Context, kind string, row Row, actor string) (int64, error) {
+	if err := ValidateChangeMeta(actor, ReasonFrom(ctx)); err != nil {
+		return 0, err
+	}
 	k, ok := Lookup(kind)
 	if !ok {
 		return 0, fmt.Errorf("unknown kind %q", kind)
@@ -363,6 +391,9 @@ func (m *Mem) Insert(ctx context.Context, kind string, row Row, actor string) (i
 }
 
 func (m *Mem) Update(ctx context.Context, kind, name string, changes map[string]string, actor string) (Row, int64, error) {
+	if err := ValidateChangeMeta(actor, ReasonFrom(ctx)); err != nil {
+		return Row{}, 0, err
+	}
 	k, ok := Lookup(kind)
 	if !ok {
 		return Row{}, 0, fmt.Errorf("unknown kind %q", kind)
@@ -386,6 +417,9 @@ func (m *Mem) Update(ctx context.Context, kind, name string, changes map[string]
 }
 
 func (m *Mem) Delete(ctx context.Context, kind, name string, actor string) (int64, error) {
+	if err := ValidateChangeMeta(actor, ReasonFrom(ctx)); err != nil {
+		return 0, err
+	}
 	m.mu.Lock()
 	cur, exists := m.rows[kind][name]
 	m.mu.Unlock()
