@@ -76,8 +76,10 @@ the writer (`EnvelopeWire`, `NativeFields`, `EnvelopeText`) and the reader
   written; its dry run names the same refusal. While writers switch, the binary
   `envelope` field is written beside the legacy text fields, which are
   unchanged: a reader that has not learned the field reads the entry as it did,
-  the field ignored. `Bus.Native` is the writer switch for the stream entry;
-  off, a send writes the legacy fields alone. The timeout the bus writes for an
+  the field ignored. `Bus.Native` is the writer switch for the stream entry,
+  and `nova-bus send` sets it (C30): every entry it writes carries the field,
+  and a message past a bound is refused, never written as a legacy entry
+  without it. Off, a send writes the legacy fields alone. The timeout the bus writes for an
   unanswered ask stays in the legacy fields.
 - The cutover is readers first, then writers (the owner's rule S4): every
   reader learns the field, then the writers switch in a short window.

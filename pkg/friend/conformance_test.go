@@ -350,3 +350,14 @@ type deferring struct{}
 func (deferring) Deliver(context.Context, string) (int, error) {
 	return 0, Deferred{Reason: "no monitor"}
 }
+
+// TestDeliveryCheckReadsTableFormPong pins that a table-form pong written as
+// the native binary wire passes the delivery check: Conformance.Run reads its
+// pong through PongReader (the reader the friend machine uses), which reads
+// the binary form strictly, so a table-form pong is taken as the answer.
+func TestDeliveryCheckReadsTableFormPong(t *testing.T) {
+	t.Parallel()
+	wire := rawWire(t, tablePong("bob", "n1", 0, 0, 0, pongAt.UnixMilli()))
+	res := runPongCheck(t, string(wire))
+	assert.Empty(t, res.Stage, "a binary table-form pong passes the delivery check: %s", res.Why)
+}

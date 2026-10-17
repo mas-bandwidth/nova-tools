@@ -305,6 +305,8 @@ Every send constructs its typed buswire.Envelope through the generated builder b
 a value past any of the envelope's bounds (a subject over 200 bytes, a body over 1 MiB, more than 64 names
 in --to or --cc, a --re or --card over 64 bytes, a --token over 128 bytes, or a --head that is not 40
 lowercase hex characters) on stderr at exit 2, writing nothing.
+Every entry carries its typed envelope as the native binary field (the table form: the binary wire kept
+beside the legacy text fields), and a reader reads it strictly, refusing damage by name.
 --token <t> makes the send safe to retry: the same token and the same arguments within --token-life
 (default 24h) print the first send's SEND OK line again (its id and at) and write nothing, so a send
 whose answer was lost after the store took it is retried without a second message; the same token with
@@ -645,7 +647,7 @@ func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(
 		r.Timeout = timeout
 		st = r
 	}
-	return &bus.Bus{Store: st, Builder: true, Envelopes: w.reader()}, login, closeStore, nil
+	return &bus.Bus{Store: st, Builder: true, Native: true, Envelopes: w.reader()}, login, closeStore, nil
 }
 
 // identity is who the verb acts as: the user the connection logged in as,
