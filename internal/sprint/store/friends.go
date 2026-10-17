@@ -314,20 +314,10 @@ func (st *Store) friendNames(ctx context.Context) []string {
 	return slices.Sorted(maps.Keys(r))
 }
 
-// friendSeats is every friend of the roster as the tick's deal gives her a friend's card
-// (sprint.FriendDeal): her name, width and status at now, read only when the snapshot
-// holds a friend's card ready; nil, and no read, when it holds none.
-func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
-	ready := false
-	for _, c := range s.Work.Column(sprint.Ready) {
-		if _, ok := sprint.FriendCard(c); ok {
-			ready = true
-			break
-		}
-	}
-	if !ready {
-		return nil, nil
-	}
+// friendSeats reads capacity before the tick's pump: a queued change or
+// dependency resolution can make work ready later in the same tick
+// (docs/SPEC-SPRINT.md, WHO preference).
+func (st *Store) friendSeats(ctx context.Context, _ *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
 	rows, err := st.FriendRows(ctx, now)
 	if err != nil {
 		return nil, err
