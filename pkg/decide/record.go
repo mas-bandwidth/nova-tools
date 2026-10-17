@@ -2,7 +2,6 @@ package decide
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +10,8 @@ import (
 	"os"
 	"slices"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/decidewire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/rogpeppe/go-internal/lockedfile"
 )
 
@@ -256,7 +257,7 @@ func locked(path string, plan func([]Decision) ([]line, error)) (err error) {
 	}
 	var out []byte
 	for _, l := range add {
-		raw, err := json.Marshal(l)
+		raw, err := recordLineWriter.Write(&l, schemaread.FormBase64)
 		if err != nil {
 			return err
 		}
@@ -264,4 +265,111 @@ func locked(path string, plan func([]Decision) ([]line, error)) (err error) {
 	}
 	_, err = f.Write(out)
 	return err
+}
+
+// recordLineWriter is the record line writer after the switch: it checks a
+// line against the bounds the dual reader enforces (recordLineCheck) and
+// writes its variable table's form as the padded standard base64 of the image
+// (S2, S4). A value the table cannot hold is refused by name before a byte is
+// written, and the legacy JSON text is never written as a fallback.
+var recordLineWriter = schemaread.NewReader(&schemaread.Codec[line]{
+	Name:        "RECORD_LINE",
+	Help:        "nova-decide record -h",
+	Forms:       []byte{variableForm},
+	Constraints: recordLineCheck,
+	SaveWire:    lineImage,
+})
+
+// lineImage is a record line's variable table image: the wire the dual reader
+// reads, whose first byte is the table's form byte. It builds the line's row
+// from the struct the writer held before the switch (record.go line).
+func lineImage(l *line) []byte {
+	var b decidewire.RecordLineBuilder
+	if !b.Init() {
+		return nil
+	}
+	defer b.Shutdown()
+	w := b.GetRoot()
+	switch {
+	case l.Decision != nil:
+		w.Kind = decidewire.LineKindDecision
+		fillDecisionRow(&b.Main, decidewire.DecisionEmplace(&b.Main, &w.AsDecision), l.Decision)
+	case l.Outcome != nil:
+		w.Kind = decidewire.LineKindOutcome
+		fillOutcomeRow(&b.Main, decidewire.OutcomeEmplace(&b.Main, &w.AsOutcome), l.Outcome)
+	case l.Act != nil:
+		w.Kind = decidewire.LineKindAct
+		fillActRow(&b.Main, decidewire.ActEmplace(&b.Main, &w.AsAct), l.Act)
+	default:
+		return nil
+	}
+	if !b.Lock() {
+		return nil
+	}
+	root := b.AsConst()
+	n := decidewire.RecordLineMeasure(root)
+	buf := make([]byte, n)
+	if decidewire.RecordLineSave(root, buf) != n {
+		return nil
+	}
+	return buf
+}
+
+// emplaceText stores a non-empty text in the table's arena under a slot; an
+// empty text leaves the slot null, the table's value for absent (dualread.go
+// strAt reads null as empty).
+func emplaceText(w *decidewire.TableWorker, slot *int64, s string) {
+	if s != "" {
+		decidewire.TableStringEmplace(w, slot, []byte(s))
+	}
+}
+
+// fillDecisionRow builds the table's decision row from the struct the writer
+// held before the switch (record.go Decision).
+func fillDecisionRow(w *decidewire.TableWorker, r *decidewire.DecisionRow, d *Decision) {
+	emplaceText(w, &r.Id, d.ID)
+	emplaceText(w, &r.DecisionName, d.Decision)
+	emplaceText(w, &r.Schema, d.Schema)
+	emplaceText(w, &r.Backend, d.Backend)
+	emplaceText(w, &r.At, d.At)
+	emplaceText(w, &r.State, d.State)
+	r.Usage = decidewire.UsageRow{InputTokens: int64(d.Usage.InputTokens), OutputTokens: int64(d.Usage.OutputTokens)}
+	for k, v := range d.Inputs {
+		in := decidewire.DecisionInputsAdd(w, &r.Inputs)
+		emplaceText(w, &in.Key, k)
+		emplaceText(w, &in.Value, v)
+	}
+	for q, a := range d.Answers {
+		na := decidewire.DecisionAnswersAdd(w, &r.Answers)
+		emplaceText(w, &na.Question, q)
+		if a.Type == Noul {
+			na.Answer.Kind = decidewire.AnswerTypeNoul
+		} else {
+			na.Answer.Kind = decidewire.AnswerTypeChoice
+		}
+		emplaceText(w, &na.Answer.Value, a.Value)
+		for opt, prob := range a.P {
+			o := decidewire.AnswerPAdd(w, &na.Answer.P)
+			emplaceText(w, &o.Option, opt)
+			o.P = prob
+		}
+	}
+}
+
+// fillOutcomeRow builds the table's outcome row from the struct the writer
+// held before the switch (record.go Outcome).
+func fillOutcomeRow(w *decidewire.TableWorker, r *decidewire.OutcomeRow, o *Outcome) {
+	emplaceText(w, &r.Id, o.ID)
+	emplaceText(w, &r.Label, o.Label)
+	emplaceText(w, &r.Note, o.Note)
+	emplaceText(w, &r.At, o.At)
+}
+
+// fillActRow builds the table's act row from the struct the writer held
+// before the switch (record.go Act).
+func fillActRow(w *decidewire.TableWorker, r *decidewire.ActRow, a *Act) {
+	emplaceText(w, &r.Id, a.ID)
+	emplaceText(w, &r.Step, a.Act)
+	emplaceText(w, &r.Op, a.Op)
+	emplaceText(w, &r.At, a.At)
 }
