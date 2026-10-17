@@ -53,6 +53,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `redisconn/` | the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown | `go test ./pkg/redisconn` | `go test ./pkg/redisconn` |
 | `redisfn/` | build, load and check a Redis function library from embedded Lua source | `go test ./pkg/redisfn` | `go test ./pkg/redisfn` |
 | `release/` | release packaging and manifest gates | `go test ./pkg/release` | `go test ./pkg/release` |
+| `releasewire/` | the release area's variable-table wire, generated from schemas/release by the pinned schema compiler (generate.go): the cycle's build arguments, the journey evidence, the spend receipts, the update snapshot and manifest, the adoption ledger and checks, the machines file, the build record, the path list and the release digest | `go test ./pkg/releasewire` | `make schemawire-check` |
 | `roadmap/` | docs/roadmap.sexp and docs/fixes.sexp read through pkg/sexp into typed records, and the ROADMAP.md and FIXES.md they render; nova-sprint imports it | `go test ./pkg/roadmap` | `make roadmap` |
 | `safepath/` | path sanitization and sandboxing | `go test ./pkg/safepath` | `go test ./pkg/safepath` |
 | `sandbox/` | OS isolation primitives (seatbelt/landlock) | `go test ./pkg/sandbox` | `go test ./pkg/sandbox` |
