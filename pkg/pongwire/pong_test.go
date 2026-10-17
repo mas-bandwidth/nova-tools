@@ -474,3 +474,23 @@ func mustWrite(t *testing.T, r *schemaread.Reader[Pong], v *Pong, form schemarea
 	t.Helper()
 	return string(mustWriteBytes(t, r, v, form))
 }
+
+// TestLayer1TextTransport: the generated SaveText and LoadText are the base64
+// text transport (padded standard base64 of the binary wire, beside the JSON
+// text form): the text equals the padded standard base64 of the wire, and
+// LoadText returns a pong that writes the same wire back.
+func TestLayer1TextTransport(t *testing.T) {
+	t.Parallel()
+	v := pong("rowan", "n-7f3a", 4, 2, 8, 1760000000000)
+	wire := saveWire(&v)
+	require.NotNil(t, wire)
+	text, err := PongSaveText(&v)
+	require.NoError(t, err)
+	assert.Equal(t, base64.StdEncoding.EncodeToString(wire), text)
+	var rep TableReport
+	got, err := PongLoadText(text, &rep)
+	require.NoError(t, err)
+	assert.Equal(t, wire, saveWire(got))
+	_, err = PongLoadText("not base64!", nil)
+	require.Error(t, err)
+}

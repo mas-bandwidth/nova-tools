@@ -988,3 +988,43 @@ func TestLayer1AckBeatHook(t *testing.T) {
 		assert.Greater(t, n, 2000)
 	})
 }
+
+// TestLayer1TextTransport: the generated SaveText and LoadText of Ack, Beat
+// and Stamp are the base64 text transport: the text equals the padded
+// standard base64 of the table's wire, and LoadText returns a value that
+// writes the same wire back.
+func TestLayer1TextTransport(t *testing.T) {
+	t.Parallel()
+	a := ack("01JA2B3C4D5E6F7G8H9J0KMNPQ", Stagedelivered, PushStateup, "")
+	aw := ackWire(&a)
+	require.NotNil(t, aw)
+	at, err := AckSaveText(&a)
+	require.NoError(t, err)
+	assert.Equal(t, b64(aw), at)
+	ag, err := AckLoadText(at, nil)
+	require.NoError(t, err)
+	assert.Equal(t, aw, ackWire(ag))
+
+	b := beat("rowan", 1760000000000, 1760000000000, 1760000600000, "working", 2)
+	bw := beatWire(&b)
+	require.NotNil(t, bw)
+	bt, err := BeatSaveText(&b)
+	require.NoError(t, err)
+	assert.Equal(t, b64(bw), bt)
+	bg, err := BeatLoadText(bt, nil)
+	require.NoError(t, err)
+	assert.Equal(t, bw, beatWire(bg))
+
+	s := stamp(21, 1760000000000, "rowan")
+	sw := stampWire(&s)
+	require.NotNil(t, sw)
+	st, err := StampSaveText(&s)
+	require.NoError(t, err)
+	assert.Equal(t, b64(sw), st)
+	sg, err := StampLoadText(st, nil)
+	require.NoError(t, err)
+	assert.Equal(t, sw, stampWire(sg))
+
+	_, err = AckLoadText("not base64!", nil)
+	require.Error(t, err)
+}

@@ -129,6 +129,39 @@ func AckSaveBodyFields(w *TableWriter, value *Ack) bool {
 			if value.IdLength < 0 || value.IdLength > 64 {
 				return false
 			}
+			{
+				n := int(value.IdLength)
+				var hi, z uint64
+				p := value.Id[:n]
+				for len(p) >= 16 {
+					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
+					hi |= x | y
+					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
+					p = p[16:]
+				}
+				if len(p) >= 8 {
+					x := tableUtf8Word(p)
+					hi |= x
+					z |= (x - 0x0101010101010101) &^ x
+					p = p[8:]
+				}
+				if len(p) > 0 {
+					if n >= 8 {
+						x := tableUtf8Word(value.Id[n-8:])
+						hi |= x
+						z |= (x - 0x0101010101010101) &^ x
+					} else {
+						for _, c := range p {
+							x := uint64(c)
+							hi |= x
+							z |= (x - 1) &^ x
+						}
+					}
+				}
+				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Id[:n]) {
+					return false
+				}
+			}
 			if !w.putLebPair(uint64(value.IdLength)) {
 				w.putLebWide(uint64(value.IdLength))
 			}
@@ -189,6 +222,39 @@ func AckSaveBodyFields(w *TableWriter, value *Ack) bool {
 			}
 			if value.ReasonLength < 0 || value.ReasonLength > 152 {
 				return false
+			}
+			{
+				n := int(value.ReasonLength)
+				var hi, z uint64
+				p := value.Reason[:n]
+				for len(p) >= 16 {
+					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
+					hi |= x | y
+					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
+					p = p[16:]
+				}
+				if len(p) >= 8 {
+					x := tableUtf8Word(p)
+					hi |= x
+					z |= (x - 0x0101010101010101) &^ x
+					p = p[8:]
+				}
+				if len(p) > 0 {
+					if n >= 8 {
+						x := tableUtf8Word(value.Reason[n-8:])
+						hi |= x
+						z |= (x - 0x0101010101010101) &^ x
+					} else {
+						for _, c := range p {
+							x := uint64(c)
+							hi |= x
+							z |= (x - 1) &^ x
+						}
+					}
+				}
+				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Reason[:n]) {
+					return false
+				}
 			}
 			if !w.putLebPair(uint64(value.ReasonLength)) {
 				w.putLebWide(uint64(value.ReasonLength))
@@ -393,6 +459,39 @@ func AckSaveBodyFieldsRetain(w *TableRetainWriter, value *Ack) bool {
 			if value.IdLength < 0 || value.IdLength > 64 {
 				return false
 			}
+			{
+				n := int(value.IdLength)
+				var hi, z uint64
+				p := value.Id[:n]
+				for len(p) >= 16 {
+					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
+					hi |= x | y
+					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
+					p = p[16:]
+				}
+				if len(p) >= 8 {
+					x := tableUtf8Word(p)
+					hi |= x
+					z |= (x - 0x0101010101010101) &^ x
+					p = p[8:]
+				}
+				if len(p) > 0 {
+					if n >= 8 {
+						x := tableUtf8Word(value.Id[n-8:])
+						hi |= x
+						z |= (x - 0x0101010101010101) &^ x
+					} else {
+						for _, c := range p {
+							x := uint64(c)
+							hi |= x
+							z |= (x - 1) &^ x
+						}
+					}
+				}
+				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Id[:n]) {
+					return false
+				}
+			}
 			if !w.putLebPair(uint64(value.IdLength)) {
 				w.putLebWide(uint64(value.IdLength))
 			}
@@ -453,6 +552,39 @@ func AckSaveBodyFieldsRetain(w *TableRetainWriter, value *Ack) bool {
 			}
 			if value.ReasonLength < 0 || value.ReasonLength > 152 {
 				return false
+			}
+			{
+				n := int(value.ReasonLength)
+				var hi, z uint64
+				p := value.Reason[:n]
+				for len(p) >= 16 {
+					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
+					hi |= x | y
+					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
+					p = p[16:]
+				}
+				if len(p) >= 8 {
+					x := tableUtf8Word(p)
+					hi |= x
+					z |= (x - 0x0101010101010101) &^ x
+					p = p[8:]
+				}
+				if len(p) > 0 {
+					if n >= 8 {
+						x := tableUtf8Word(value.Reason[n-8:])
+						hi |= x
+						z |= (x - 0x0101010101010101) &^ x
+					} else {
+						for _, c := range p {
+							x := uint64(c)
+							hi |= x
+							z |= (x - 1) &^ x
+						}
+					}
+				}
+				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Reason[:n]) {
+					return false
+				}
 			}
 			if !w.putLebPair(uint64(value.ReasonLength)) {
 				w.putLebWide(uint64(value.ReasonLength))
@@ -618,468 +750,6 @@ func AckLoadBodyRetain(r *TableRetainReader, value *Ack) bool {
 		default:
 			r.Report.Unknown++
 			if !r.capture(fieldID, kind) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-func AckLoadMessageBodyRetain(r *TableRetainMessageReader, value *Ack) bool {
-	AckReset(value)
-	r.Retain.discard(r.Path, false, 0)
-	for {
-		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		entry, ok := r.Vocabulary.Entry(ref)
-		if !ok || entry.Id >= 0xfffffffffffffffd {
-			r.Report.Malformed = true
-			return false
-		}
-		switch entry.Id {
-		case 0x08b72e07b55c3ac0:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.Id[:])
-					copy(value.Id[:], text[:kept])
-					value.IdLength = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0xee9dbaad45e3448d:
-			{
-				widened := false
-				if entry.Shape.Kind != 30 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-					if !ok {
-						r.Report.Malformed = true
-						return false
-					}
-					if ref == 0 {
-						value.Stage = StageNone
-					} else {
-						id, ok := r.Vocabulary.Name(ref)
-						if !ok {
-							r.Report.Malformed = true
-							return false
-						}
-						if !value.Stage.TableEnumValue(id) {
-							r.Report.Unknown++
-							if r.Retain != nil {
-								r.Report.RetainLost++
-							}
-						}
-					}
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x6c80030e2762459d:
-			{
-				widened := false
-				if entry.Shape.Kind != 30 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-					if !ok {
-						r.Report.Malformed = true
-						return false
-					}
-					if ref == 0 {
-						value.Push = PushStateNone
-					} else {
-						id, ok := r.Vocabulary.Name(ref)
-						if !ok {
-							r.Report.Malformed = true
-							return false
-						}
-						if !value.Push.TableEnumValue(id) {
-							r.Report.Unknown++
-							if r.Retain != nil {
-								r.Report.RetainLost++
-							}
-						}
-					}
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x65e8d7f3474f2639:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(152)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.Reason[:])
-					copy(value.Reason[:], text[:kept])
-					value.ReasonLength = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		default:
-			r.Report.Unknown++
-			if !r.capture(entry) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-func AckCookMeasure(value *Ack, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), AckTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-}
-func AckCookMeasureReason(value *Ack, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), AckTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
-}
-func AckCookFrom(value *Ack, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), AckTableType(), buffer, order, false, arena, allocator) >= 0
-}
-func AckSaveMessageBody(w *TableMessageWriter, value *Ack) bool {
-	{
-		if value.IdLength < 0 || value.IdLength > 64 {
-			return false
-		}
-		if value.IdLength > 0 {
-			w.Put(1, TableMessageRefBitsHere)
-			if value.IdLength < 0 || value.IdLength > 64 {
-				return false
-			}
-			w.Put(uint64(value.IdLength), 7)
-			w.Raw(value.Id[:value.IdLength])
-		}
-	}
-	{
-		if value.Stage != StageNone {
-			w.Put(2, TableMessageRefBitsHere)
-			if value.Stage == StageNone {
-				w.Put(0, TableMessageRefBitsHere)
-			} else {
-				id, named := value.Stage.TableEnumId()
-				if !named {
-					return false
-				}
-				slot := tableMessageNameSlot(id)
-				if slot == 0 {
-					return false
-				}
-				w.Put(slot, TableMessageRefBitsHere)
-			}
-		}
-	}
-	{
-		if value.Push != PushStateNone {
-			w.Put(3, TableMessageRefBitsHere)
-			if value.Push == PushStateNone {
-				w.Put(0, TableMessageRefBitsHere)
-			} else {
-				id, named := value.Push.TableEnumId()
-				if !named {
-					return false
-				}
-				slot := tableMessageNameSlot(id)
-				if slot == 0 {
-					return false
-				}
-				w.Put(slot, TableMessageRefBitsHere)
-			}
-		}
-	}
-	{
-		if value.ReasonLength < 0 || value.ReasonLength > 152 {
-			return false
-		}
-		if value.ReasonLength > 0 {
-			w.Put(4, TableMessageRefBitsHere)
-			if value.ReasonLength < 0 || value.ReasonLength > 152 {
-				return false
-			}
-			w.Put(uint64(value.ReasonLength), 8)
-			w.Raw(value.Reason[:value.ReasonLength])
-		}
-	}
-	w.Put(0, TableMessageRefBitsHere)
-	return !w.Overflow
-}
-func AckLoadMessageBody(r *TableMessageReader, value *Ack) bool {
-	AckReset(value)
-	for {
-		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		entry, ok := r.Vocabulary.Entry(ref)
-		if !ok || entry.Id >= 0xfffffffffffffffd {
-			r.Report.Malformed = true
-			return false
-		}
-		switch entry.Id {
-		case 0x08b72e07b55c3ac0:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.Id[:])
-					copy(value.Id[:], text[:kept])
-					value.IdLength = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0xee9dbaad45e3448d:
-			{
-				widened := false
-				if entry.Shape.Kind != 30 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-					if !ok {
-						r.Report.Malformed = true
-						return false
-					}
-					if ref == 0 {
-						value.Stage = StageNone
-					} else {
-						id, ok := r.Vocabulary.Name(ref)
-						if !ok {
-							r.Report.Malformed = true
-							return false
-						}
-						if !value.Stage.TableEnumValue(id) {
-							r.Report.Unknown++
-						}
-					}
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x6c80030e2762459d:
-			{
-				widened := false
-				if entry.Shape.Kind != 30 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-					if !ok {
-						r.Report.Malformed = true
-						return false
-					}
-					if ref == 0 {
-						value.Push = PushStateNone
-					} else {
-						id, ok := r.Vocabulary.Name(ref)
-						if !ok {
-							r.Report.Malformed = true
-							return false
-						}
-						if !value.Push.TableEnumValue(id) {
-							r.Report.Unknown++
-						}
-					}
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x65e8d7f3474f2639:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(152)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.Reason[:])
-					copy(value.Reason[:], text[:kept])
-					value.ReasonLength = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		default:
-			r.Report.Unknown++
-			if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
 				r.Report.Malformed = true
 				return false
 			}
@@ -1260,13 +930,7 @@ var AckTableFields = []TableFieldInfo{
 var AckTableInfo TableTypeInfo
 
 func init() {
-	AckTableInfo = TableTypeInfo{Name: "Ack", Size: uint32(unsafe.Sizeof(Ack{})), NumFields: 4, Fields: AckTableFields, Reset: func(storage unsafe.Pointer) { AckReset((*Ack)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xf9c5e219a019a6e2, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return AckSaveBody(w, (*Ack)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return AckLoadBody(&r, (*Ack)(p)) }, LoadMessageBodyRetain: func(r TableRetainMessageReader, p unsafe.Pointer) (TableRetainMessageReader, bool) {
-		ok := AckLoadMessageBodyRetain(&r, (*Ack)(p))
-		return r, ok
-	}, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return AckSaveBodyRetain(w, (*Ack)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return AckLoadBodyRetain(&r, (*Ack)(p)) }, CookSize: 232, CookAlign: 4, SaveMessageBody: func(w *TableMessageWriter, p unsafe.Pointer) bool { return AckSaveMessageBody(w, (*Ack)(p)) }, LoadMessageBody: func(r TableMessageReader, p unsafe.Pointer) (TableMessageReader, bool) {
-		ok := AckLoadMessageBody(&r, (*Ack)(p))
-		return r, ok
-	}, NodeType: func(id uint64) *TableTypeInfo {
+	AckTableInfo = TableTypeInfo{Name: "Ack", Size: uint32(unsafe.Sizeof(Ack{})), NumFields: 4, Fields: AckTableFields, Reset: func(storage unsafe.Pointer) { AckReset((*Ack)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xf9c5e219a019a6e2, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return AckSaveBody(w, (*Ack)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return AckLoadBody(&r, (*Ack)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return AckSaveBodyRetain(w, (*Ack)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return AckLoadBodyRetain(&r, (*Ack)(p)) }, CookSize: 232, CookAlign: 4, NodeType: func(id uint64) *TableTypeInfo {
 		switch id {
 		}
 		return nil

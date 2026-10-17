@@ -720,3 +720,22 @@ func TestLayer1EnvelopeDualRead(t *testing.T) {
 		assert.EqualError(t, err, refused("absent_required", "at_ms"))
 	})
 }
+
+// TestLayer1TextTransport: the generated EnvelopeSaveText and
+// EnvelopeLoadText are the base64 text transport: the text equals the padded
+// standard base64 of the envelope's wire, and LoadText returns an envelope
+// that writes the same wire back.
+func TestLayer1TextTransport(t *testing.T) {
+	t.Parallel()
+	d := fuzzFullDoc(t)
+	wire := saveWire(&d)
+	require.NotNil(t, wire)
+	text, err := buswire.EnvelopeSaveText(d.e)
+	require.NoError(t, err)
+	assert.Equal(t, base64.StdEncoding.EncodeToString(wire), text)
+	got, err := buswire.EnvelopeLoadText(text, nil)
+	require.NoError(t, err)
+	assert.Equal(t, wire, saveWire(&doc{e: got}))
+	_, err = buswire.EnvelopeLoadText("not base64!", nil)
+	require.Error(t, err)
+}

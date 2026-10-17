@@ -8,10 +8,7 @@
 
 package hookwire
 
-import (
-	"math"
-	"unsafe"
-)
+import "unsafe"
 
 type Stamp = StampRow
 
@@ -72,6 +69,39 @@ func StampSaveBodyFields(w *TableWriter, value *Stamp) bool {
 			}
 			if value.ByLength < 0 || value.ByLength > 128 {
 				return false
+			}
+			{
+				n := int(value.ByLength)
+				var hi, z uint64
+				p := value.By[:n]
+				for len(p) >= 16 {
+					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
+					hi |= x | y
+					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
+					p = p[16:]
+				}
+				if len(p) >= 8 {
+					x := tableUtf8Word(p)
+					hi |= x
+					z |= (x - 0x0101010101010101) &^ x
+					p = p[8:]
+				}
+				if len(p) > 0 {
+					if n >= 8 {
+						x := tableUtf8Word(value.By[n-8:])
+						hi |= x
+						z |= (x - 0x0101010101010101) &^ x
+					} else {
+						for _, c := range p {
+							x := uint64(c)
+							hi |= x
+							z |= (x - 1) &^ x
+						}
+					}
+				}
+				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.By[:n]) {
+					return false
+				}
 			}
 			if !w.putLebPair(uint64(value.ByLength)) {
 				w.putLebWide(uint64(value.ByLength))
@@ -274,6 +304,39 @@ func StampSaveBodyFieldsRetain(w *TableRetainWriter, value *Stamp) bool {
 			if value.ByLength < 0 || value.ByLength > 128 {
 				return false
 			}
+			{
+				n := int(value.ByLength)
+				var hi, z uint64
+				p := value.By[:n]
+				for len(p) >= 16 {
+					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
+					hi |= x | y
+					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
+					p = p[16:]
+				}
+				if len(p) >= 8 {
+					x := tableUtf8Word(p)
+					hi |= x
+					z |= (x - 0x0101010101010101) &^ x
+					p = p[8:]
+				}
+				if len(p) > 0 {
+					if n >= 8 {
+						x := tableUtf8Word(value.By[n-8:])
+						hi |= x
+						z |= (x - 0x0101010101010101) &^ x
+					} else {
+						for _, c := range p {
+							x := uint64(c)
+							hi |= x
+							z |= (x - 1) &^ x
+						}
+					}
+				}
+				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.By[:n]) {
+					return false
+				}
+			}
 			if !w.putLebPair(uint64(value.ByLength)) {
 				w.putLebWide(uint64(value.ByLength))
 			}
@@ -410,335 +473,6 @@ func StampLoadBodyRetain(r *TableRetainReader, value *Stamp) bool {
 		default:
 			r.Report.Unknown++
 			if !r.capture(fieldID, kind) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-func StampLoadMessageBodyRetain(r *TableRetainMessageReader, value *Stamp) bool {
-	StampReset(value)
-	r.Retain.discard(r.Path, false, 0)
-	for {
-		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		entry, ok := r.Vocabulary.Entry(ref)
-		if !ok || entry.Id >= 0xfffffffffffffffd {
-			r.Report.Malformed = true
-			return false
-		}
-		switch entry.Id {
-		case 0xfc9697d1196e6ba6:
-			{
-				widened := false
-				if entry.Shape.Kind != 5 || entry.Element.Kind != 0 {
-					if entry.Element.Kind == 0 && tableKindWidens(entry.Shape.Kind, 5) {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					var raw [16]byte
-					if !tableMessageReadScalar(&r.Bits, entry.Shape, &raw) {
-						r.Report.Malformed = true
-						return false
-					}
-					payload1 := tableRetainPlainReader{Buffer: raw[:], Report: &r.Report}
-					if !payload1.Has(tableKindBytes(entry.Shape.Kind)) {
-						r.Report.Malformed = true
-						return false
-					}
-					{
-						v := payload1.Signed(entry.Shape.Kind)
-						value.Epoch = int64(v)
-					}
-				}
-				value.EpochPresent = true
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x41fdbf81bf00fdc1:
-			{
-				widened := false
-				if entry.Shape.Kind != 5 || entry.Element.Kind != 0 {
-					if entry.Element.Kind == 0 && tableKindWidens(entry.Shape.Kind, 5) {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					var raw [16]byte
-					if !tableMessageReadScalar(&r.Bits, entry.Shape, &raw) {
-						r.Report.Malformed = true
-						return false
-					}
-					payload2 := tableRetainPlainReader{Buffer: raw[:], Report: &r.Report}
-					if !payload2.Has(tableKindBytes(entry.Shape.Kind)) {
-						r.Report.Malformed = true
-						return false
-					}
-					{
-						v := payload2.Signed(entry.Shape.Kind)
-						value.AtMs = int64(v)
-					}
-				}
-				value.AtMsPresent = true
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x08a64b07b54df8d4:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.By[:])
-					copy(value.By[:], text[:kept])
-					value.ByLength = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		default:
-			r.Report.Unknown++
-			if !r.capture(entry) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-func StampCookMeasure(value *Stamp, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), StampTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-}
-func StampCookMeasureReason(value *Stamp, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), StampTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
-}
-func StampCookFrom(value *Stamp, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), StampTableType(), buffer, order, false, arena, allocator) >= 0
-}
-func StampSaveMessageBody(w *TableMessageWriter, value *Stamp) bool {
-	{
-		if value.EpochPresent {
-			if true {
-				w.Put(11, TableMessageRefBitsHere)
-				tableMessageWriteScalar(&w.TableBitWriter, TableMessageShape{Kind: 5, Packing: 0, Bits: 64, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Epoch), uint64(0))
-			}
-		}
-	}
-	{
-		if value.AtMsPresent {
-			if true {
-				w.Put(12, TableMessageRefBitsHere)
-				tableMessageWriteScalar(&w.TableBitWriter, TableMessageShape{Kind: 5, Packing: 0, Bits: 64, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.AtMs), uint64(0))
-			}
-		}
-	}
-	{
-		if value.ByLength < 0 || value.ByLength > 128 {
-			return false
-		}
-		if value.ByLength > 0 {
-			w.Put(13, TableMessageRefBitsHere)
-			if value.ByLength < 0 || value.ByLength > 128 {
-				return false
-			}
-			w.Put(uint64(value.ByLength), 8)
-			w.Raw(value.By[:value.ByLength])
-		}
-	}
-	w.Put(0, TableMessageRefBitsHere)
-	return !w.Overflow
-}
-func StampLoadMessageBody(r *TableMessageReader, value *Stamp) bool {
-	StampReset(value)
-	for {
-		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		entry, ok := r.Vocabulary.Entry(ref)
-		if !ok || entry.Id >= 0xfffffffffffffffd {
-			r.Report.Malformed = true
-			return false
-		}
-		switch entry.Id {
-		case 0xfc9697d1196e6ba6:
-			{
-				widened := false
-				if entry.Shape.Kind != 5 || entry.Element.Kind != 0 {
-					if entry.Element.Kind == 0 && tableKindWidens(entry.Shape.Kind, 5) {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					var raw [16]byte
-					if !tableMessageReadScalar(&r.Bits, entry.Shape, &raw) {
-						r.Report.Malformed = true
-						return false
-					}
-					payload1 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload1.Has(tableKindBytes(entry.Shape.Kind)) {
-						r.Report.Malformed = true
-						return false
-					}
-					{
-						v := payload1.Signed(entry.Shape.Kind)
-						value.Epoch = int64(v)
-					}
-				}
-				value.EpochPresent = true
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x41fdbf81bf00fdc1:
-			{
-				widened := false
-				if entry.Shape.Kind != 5 || entry.Element.Kind != 0 {
-					if entry.Element.Kind == 0 && tableKindWidens(entry.Shape.Kind, 5) {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					var raw [16]byte
-					if !tableMessageReadScalar(&r.Bits, entry.Shape, &raw) {
-						r.Report.Malformed = true
-						return false
-					}
-					payload2 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload2.Has(tableKindBytes(entry.Shape.Kind)) {
-						r.Report.Malformed = true
-						return false
-					}
-					{
-						v := payload2.Signed(entry.Shape.Kind)
-						value.AtMs = int64(v)
-					}
-				}
-				value.AtMsPresent = true
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x08a64b07b54df8d4:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.By[:])
-					copy(value.By[:], text[:kept])
-					value.ByLength = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		default:
-			r.Report.Unknown++
-			if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
 				r.Report.Malformed = true
 				return false
 			}
@@ -908,13 +642,7 @@ var StampTableFields = []TableFieldInfo{
 var StampTableInfo TableTypeInfo
 
 func init() {
-	StampTableInfo = TableTypeInfo{Name: "Stamp", Size: uint32(unsafe.Sizeof(Stamp{})), NumFields: 3, Fields: StampTableFields, Reset: func(storage unsafe.Pointer) { StampReset((*Stamp)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xae3b9113b7db93a4, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return StampSaveBody(w, (*Stamp)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return StampLoadBody(&r, (*Stamp)(p)) }, LoadMessageBodyRetain: func(r TableRetainMessageReader, p unsafe.Pointer) (TableRetainMessageReader, bool) {
-		ok := StampLoadMessageBodyRetain(&r, (*Stamp)(p))
-		return r, ok
-	}, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return StampSaveBodyRetain(w, (*Stamp)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return StampLoadBodyRetain(&r, (*Stamp)(p)) }, CookSize: 160, CookAlign: 8, SaveMessageBody: func(w *TableMessageWriter, p unsafe.Pointer) bool { return StampSaveMessageBody(w, (*Stamp)(p)) }, LoadMessageBody: func(r TableMessageReader, p unsafe.Pointer) (TableMessageReader, bool) {
-		ok := StampLoadMessageBody(&r, (*Stamp)(p))
-		return r, ok
-	}, NodeType: func(id uint64) *TableTypeInfo {
+	StampTableInfo = TableTypeInfo{Name: "Stamp", Size: uint32(unsafe.Sizeof(Stamp{})), NumFields: 3, Fields: StampTableFields, Reset: func(storage unsafe.Pointer) { StampReset((*Stamp)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xae3b9113b7db93a4, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return StampSaveBody(w, (*Stamp)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return StampLoadBody(&r, (*Stamp)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return StampSaveBodyRetain(w, (*Stamp)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return StampLoadBodyRetain(&r, (*Stamp)(p)) }, CookSize: 160, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
 		switch id {
 		}
 		return nil
