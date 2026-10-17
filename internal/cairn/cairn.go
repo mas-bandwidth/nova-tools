@@ -474,7 +474,7 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 			// Corrupt provenance never reads as none (SPEC-CAIRN line 30). A
 			// refused text line is only this session's business if it could
 			// be this session's open; another session's is skipped on purpose,
-			// counted under its refusal reason (LogReadCounts). A refused line
+			// counted under its refusal reason (logRecords.Counts). A refused line
 			// in no text form (the wire, its base64, or bytes no form names,
 			// such as a table image whose first byte is damaged) names no
 			// session a reader can trust, so it is refused for every session.
@@ -586,15 +586,6 @@ func logConstraints(v *logRecord, c *schemaread.Checker) {
 // (schemas/ledger CairnLogRecord stamp and source): UTF-8 with no NUL only.
 const unbounded = int(^uint(0) >> 1)
 
-// LogReadCounts is the log reader's counters: the reads per form and the
-// refusals per reason, the evidence a cutover reads before the writer
-// switches (S4).
-func LogReadCounts() map[string]uint64 {
-	m := logRecords.Counts().Snapshot()
-	m["refused_"+schemaread.ReasonMalformed] += openRefused.Load()
-	return m
-}
-
 // openRefused counts the open records ReadOpen refuses after the strict read
 // accepted the line (an unknown field, an invalid stamp), under malformed.
 var openRefused atomic.Uint64
@@ -604,17 +595,6 @@ var openRefused atomic.Uint64
 func openRefusal(field string) error {
 	openRefused.Add(1)
 	return &schemaread.Refusal{Name: "CAIRN_LOG_RECORD", Reason: schemaread.ReasonMalformed, Field: field, Help: LogHelp}
-}
-
-// LogLineText is one log record in a table form (the wire, its base64 or the
-// schema JSON text), as appendLog will write it after the switch; it refuses
-// what the reader refuses, before a byte is written.
-func LogLineText(event, session, entry, stamp, publish, source string, form schemaread.Form) ([]byte, error) {
-	out, err := logRecords.Write(&logRecord{Event: event, Session: session, Entry: entry, Stamp: stamp, Publish: publish, Source: source}, form)
-	if err == nil && len(out) == 0 {
-		err = errors.New("the cairn log table is not installed: import internal/record/ledgerread")
-	}
-	return out, err
 }
 
 // Open starts one session record, or re-opens it: a re-open naming the

@@ -43,9 +43,6 @@ type Slot struct{ p atomic.Pointer[Wire] }
 // Install puts w in the slot; a later Install replaces it.
 func (s *Slot) Install(w Wire) { s.p.Store(&w) }
 
-// Installed reports whether the slot holds a Wire.
-func (s *Slot) Installed() bool { return s.p.Load() != nil }
-
 // errNotInstalled is the measure refusal of a table no installer wired in.
 var errNotInstalled = errors.New(schemaread.ReasonUnknownForm)
 
