@@ -209,11 +209,28 @@ func TestAFileStoreWriteCannotOutgrowItsReadBound(t *testing.T) {
 	require.NoError(t, err)
 	all, err := Migrations()
 	require.NoError(t, err)
-	// Bring an existing history field exactly to the limit without a loop
-	// generating thousands of otherwise identical writes.
-	raw, err := json.MarshalIndent(fileState{Schema: len(all), Rows: f.rows, History: f.history}, "", "  ")
-	require.NoError(t, err)
-	f.history[0].Actor += strings.Repeat("x", MaxStoreFileBytes-len(raw)-1)
+	// Bring the file exactly to the limit without a loop generating thousands
+	// of writes: history rows of another machine, each reason within MaxReason
+	// (the file's reader refuses a longer one), grown to the last byte.
+	size := func() int {
+		raw, err := json.MarshalIndent(fileState{Schema: len(all), Rows: f.rows, History: f.history}, "", "  ")
+		require.NoError(t, err)
+		return len(raw) + 1
+	}
+	filler := Change{ID: 1, Kind: KindMachine, Name: "m0", Op: OpSet, Actor: "a1", Reason: strings.Repeat("x", MaxReason/2), At: "2026-10-01T00:00:00Z"}
+	base := size()
+	f.history = append(f.history, filler)
+	step := size() - base
+	for range (MaxStoreFileBytes-base)/step - 1 {
+		f.history = append(f.history, filler)
+	}
+	left := MaxStoreFileBytes - size()
+	for i := len(f.history) - 1; left > 0; i-- {
+		grow := min(left, MaxReason-len(f.history[i].Reason))
+		f.history[i].Reason += strings.Repeat("x", grow)
+		left -= grow
+	}
+	require.Equal(t, MaxStoreFileBytes, size())
 	require.NoError(t, f.save())
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)

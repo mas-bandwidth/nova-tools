@@ -302,6 +302,7 @@ do
         end
         if depth == 1 then
           local colon = string.find(raw, '%S', i + 1)
+          -- cjson (envelope): a top-level key's token, never a value's
           if colon and string.sub(raw, colon, colon) == ':' and cjson.decode(string.sub(raw, start, i)) == field then
             local value = string.find(raw, '%S', colon + 1)
             if found or not value or string.sub(raw, value, value) ~= '[' then return false end
@@ -352,7 +353,10 @@ do
         if b == 32 or b == 9 or b == 10 or b == 13 then pos = pos + 1 else break end
       end
     end
-    local function str()
+    -- str(key): one string token; a key is decoded, a value is skipped and
+    -- never decoded (a row value is opaque text: schema-table adoption,
+    -- Aspect 8; raw has already decoded whole, so a value needs no check).
+    local function str(key)
       local start = pos
       pos = pos + 1
       while pos <= len do
@@ -363,6 +367,8 @@ do
         if string.byte(raw, at) == 92 then pos = at + 2
         else
           pos = at + 1
+          if not key then return '' end
+          -- cjson (envelope): an object key's token, compared as decoded
           local ok, decoded = pcall(cjson.decode, string.sub(raw, start, pos - 1))
           return ok and decoded or nil
         end
@@ -377,7 +383,7 @@ do
       while pos <= len do
         ws()
         if keyed then
-          local key = str()
+          local key = str(true)
           if key == nil then return false end
           if seen[key] then return true end
           seen[key] = true
@@ -397,13 +403,18 @@ do
       local ch = string.sub(raw, pos, pos)
       if ch == '{' then return container('}', true)
       elseif ch == '[' then return container(']', false)
-      elseif ch == '"' then str(); return false end
+      elseif ch == '"' then str(false); return false end
       while pos <= len and not string.find(string.sub(raw, pos, pos), '[,}%]%s]') do pos = pos + 1 end
       return false
     end
     return value()
   end
+  -- T.decode(s): a call's JSON argument (its options, a definition, a batch
+  -- envelope) as a table. A row value in it is a JSON string and comes out as
+  -- the Lua string of its bytes; the Lua stores, compares and returns those
+  -- bytes and never parses them (schema-table adoption, Aspect 8).
   function T.decode(s)
+    -- cjson (envelope): the whole argument, once
     local ok, v = pcall(cjson.decode, s or '')
     if ok and type(v) == 'table' then return v end
   end
@@ -1095,12 +1106,19 @@ do
       wireargs = {}
       for i = 1, #args - 1 do wireargs[#wireargs + 1] = args[i] end
     end
+    -- The event carries each argument and each name as a JSON string of its
+    -- own bytes (a row value in an argument is never parsed: schema-table
+    -- adoption, Aspect 8).
+    -- cjson (event): the call's arguments, each a string
     local event = {'XADD', stream, '*', 'verb', verb, 'args', cjson.encode(wireargs),
       'epoch', d.epoch, 'rev_before', d.revision, 'rev_after', after, 'actor', opts.actor or '',
+      -- cjson (event): the names of the cells the call touched
       'fence', opts.fence or '', 'idem', opts.idem or '', 'cells', #cells == 0 and '[]' or cjson.encode(cells),
+      -- cjson (event): the members' moves (id, from, to, score), no field value
       'members', #d.members == 0 and '[]' or cjson.encode(d.members), 'outcome', outcome}
     local members_at = #event - 2
     local delta_at
+    -- cjson (event): the row keys a call renamed
     if d.renamed_keys then event[#event + 1] = 'renamed_keys'; event[#event + 1] = cjson.encode(d.renamed_keys) end
     -- opts.event_extra is a flat list of field, value pairs appended to the event.
     if opts.event_extra then
@@ -1120,6 +1138,7 @@ do
       if i == #d.commands and opts.resolve then
         -- the event is the last write: its members and delta are settled now
         delta = opts.resolve()
+        -- cjson (event): the members' moves with the scores read back
         cmd[members_at] = #d.members == 0 and '[]' or cjson.encode(d.members)
         if delta_at then cmd[delta_at] = delta end
       end
@@ -2040,6 +2059,30 @@ do
     return {'SET', d.name, d.epoch, d.revision, members_out, missing}
   end
 
+  -- T.escape(raw, at): the position after the escape at raw[at] (a backslash)
+  -- in a JSON string, or nil when cjson would refuse it: one of \" \\ \/ \b \f
+  -- \n \r \t, or \u and four hex digits, where a high surrogate is followed
+  -- by a \u low surrogate and a low surrogate never comes first. It lets a
+  -- value's token be checked without decoding it (schema-table adoption,
+  -- Aspect 8: a row value is opaque).
+  function T.escape(raw, at)
+    local c = string.sub(raw, at + 1, at + 1)
+    if c ~= '' and string.find('"\\/bfnrt', c, 1, true) then return at + 2 end
+    if c ~= 'u' then return nil end
+    local function hex4(i)
+      local h = string.sub(raw, i, i + 3)
+      if not string.match(h, '^%x%x%x%x$') then return nil end
+      return tonumber(h, 16)
+    end
+    local cp = hex4(at + 2)
+    if not cp or (cp >= 0xDC00 and cp <= 0xDFFF) then return nil end
+    if cp < 0xD800 or cp > 0xDBFF then return at + 6 end
+    if string.sub(raw, at + 6, at + 7) ~= '\\u' then return nil end
+    local low = hex4(at + 8)
+    if not low or low < 0xDC00 or low > 0xDFFF then return nil end
+    return at + 12
+  end
+
   function T.validate_manifest_json(raw)
     local pos = 1
     local len = #raw
@@ -2069,7 +2112,11 @@ do
       return ch
     end
 
-    local function parse_string()
+    -- parse_string(key): one string token. A key is decoded, so a key is
+    -- compared as decoded (m\u0065mbers is members). A value is checked and
+    -- never decoded: a row value is opaque text (schema-table adoption,
+    -- Aspect 8), so its escapes are held to cjson's own rules by T.escape.
+    local function parse_string(key)
       skip_ws()
       if string.sub(raw, pos, pos) ~= '"' then return nil, "expected string" end
       local start = pos
@@ -2080,9 +2127,16 @@ do
         local at = string.find(raw, '["\\]', pos)
         if not at then pos = len + 1; break end
         if string.byte(raw, at) == 92 then
-          pos = at + 2
+          if key then
+            pos = at + 2
+          else
+            pos = T.escape(raw, at)
+            if not pos then return nil, "invalid string escape" end
+          end
         else
           pos = at + 1
+          if not key then return true end
+          -- cjson (envelope): an object key's token, compared as decoded
           local ok, s = pcall(cjson.decode, string.sub(raw, start, pos - 1))
           if not ok then return nil, "invalid string escape" end
           return s
@@ -2111,7 +2165,7 @@ do
         if ch ~= '"' then
           return nil, "expected string"
         end
-        local s, err = parse_string()
+        local s, err = parse_string(false)
         if err then return nil, err end
         return true
       end
@@ -2121,7 +2175,7 @@ do
       elseif ch == '[' then
         return parse_array(ctx)
       elseif ch == '"' then
-        local s, err = parse_string()
+        local s, err = parse_string(false)
         if err then return nil, err end
         return true
       elseif ch == 't' or ch == 'f' or ch == 'n' then
@@ -2172,7 +2226,7 @@ do
       end
 
       while true do
-        local key, err = parse_string()
+        local key, err = parse_string(true)
         if err then return nil, err end
 
         if seen[key] then
@@ -2509,11 +2563,13 @@ do
       op_field = peek.epoch .. ':' .. peek.operation_id
       local recorded = redis.call('HGET', ops_key, op_field)
       if recorded then
+        -- cjson (op record): the record whole; its request is compared as bytes
         local record = cjson.decode(recorded)
         if record.request ~= raw_json then
           return T.refuse('OPCONFLICT', peek.operation_id)
         end
         -- the original result, and a third element saying it is a replay
+        -- cjson (op record): the recorded result, answered again as it was
         local original = cjson.decode(record.result)
         original[3] = 'REPLAY'
         return original
@@ -2742,7 +2798,11 @@ do
                 end
               end
               if not matched then
-                return T.refuse('FIELDGUARD', id, T.excerpt(f), 'one_of', T.excerpt(cjson.encode(guard.one_of)), T.excerpt(actual) or '<absent>')
+                -- the refusal names how many options the guard lists, never the
+                -- options re-encoded: a row value is opaque text, compared by its
+                -- bytes (schema-table adoption, Aspect 8)
+                local n = #guard.one_of
+                return T.refuse('FIELDGUARD', id, T.excerpt(f), 'one_of', n == 1 and '1 option' or n .. ' options', T.excerpt(actual) or '<absent>')
               end
             end
           end
@@ -2990,7 +3050,11 @@ do
     end
     local outcome = (real_changes == 0 and not next(props_changed)) and 'noop' or 'changed'
     local encode_delta
+    -- The batch's delta: the event's batch_delta and the receipt's seventh
+    -- element. A field value in it is a JSON string of the value's own bytes
+    -- (T.fieldchange, T.smallvalues), never parsed (schema-table adoption, Aspect 8).
     function encode_delta()
+      -- cjson (event): the delta whole
       return cjson.encode({
         operation_id = manifest.operation_id,
         digest = digest,
@@ -3031,6 +3095,7 @@ do
         return encode_delta()
       end,
       record = function(reply, stream_id, before, after)
+        -- cjson (op record): the record whole; the request is kept as its bytes
         redis.call('HSET', ops_key, op_field, cjson.encode({
           operation_id = manifest.operation_id,
           digest = digest,
@@ -3040,6 +3105,7 @@ do
           rev_before = before,
           rev_after = after,
           outcome = outcome,
+          -- cjson (op record): the result as the call answered it
           result = cjson.encode(reply),
         }))
       end,

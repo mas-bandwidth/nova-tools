@@ -23,6 +23,59 @@ import (
 	"unsafe"
 )
 
+// AckRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type AckRow struct {
+	Id           [65]byte // string(64): buffer, used length beside it
+	_            [3]byte  // generated padding
+	IdLength     int32
+	Stage        Stage
+	Push         PushState
+	Reason       [153]byte // string(152): buffer, used length beside it
+	_            [1]byte   // generated padding
+	ReasonLength int32
+}
+
+// BeatRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type BeatRow struct {
+	FriendName         [65]byte // string(64): buffer, used length beside it
+	_                  [3]byte  // generated padding
+	FriendNameLength   int32
+	SentMs             int64
+	SentMsPresent      bool    // ?: one byte, in Go's model as in C++
+	_                  [7]byte // generated padding
+	ActiveMs           int64
+	ActiveMsPresent    bool    // ?: one byte, in Go's model as in C++
+	_                  [7]byte // generated padding
+	UntilMs            int64
+	UntilMsPresent     bool      // ?: one byte, in Go's model as in C++
+	Reason             [201]byte // string(200): buffer, used length beside it
+	_                  [2]byte   // generated padding
+	ReasonLength       int32
+	StopReturns        uint32
+	StopReturnsPresent bool    // ?: one byte, in Go's model as in C++
+	_                  [3]byte // generated padding
+}
+
+// StampRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type StampRow struct {
+	Epoch        int64
+	EpochPresent bool    // ?: one byte, in Go's model as in C++
+	_            [7]byte // generated padding
+	AtMs         int64
+	AtMsPresent  bool      // ?: one byte, in Go's model as in C++
+	By           [129]byte // string(128): buffer, used length beside it
+	_            [2]byte   // generated padding
+	ByLength     int32
+}
+
+// BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
+// one digest a block carries and BlockOpen compares, and the fact §3.3's
+// announcement carries before the first body so a peer's build is knowable.
+const BuildVersion uint64 = 0x8c4647e6606eb85b
+
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema
 // exactly. Err (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5) is the STRICT read's typed reason
@@ -40,7 +93,11 @@ type TableReport struct {
 	// A body carrying an id twice is legal input
 	// whose last occurrence wins, silently. A wire read always leaves it zero.
 	Duplicate int32
-	Malformed bool // framing damage; decode stopped, partial result kept
+	// MissingRequired counts required fields (mas-bandwidth/schema docs/SPEC-TABLES.md §2.3) the
+	// record did not carry: a record an older writer produced before the field
+	// became required. The refusal names the field in Reason.
+	MissingRequired int32
+	Malformed       bool // framing damage; decode stopped, partial result kept
 	// BuildVersionPeer and BuildVersionOwn are the two build versions a strict
 	// announcement refusal carries (mas-bandwidth/schema docs/SPEC-TABLES.md §3.3): the peer's
 	// announcement and this unit's own. They are zero on every other read.
@@ -205,6 +262,168 @@ type TableTypeInfo struct {
 	Tags    []string
 }
 
+// The helpers below began as the TEXT form's, and the core uses them too: the
+// table and view sources read storage through the same width switch and
+// evaluate the same guards, so they are declared here, once, and the text
+// form's own file only adds its walk (mas-bandwidth/schema docs/SPEC-TABLES.md, "GO's optional forms").
+
+type tableJsonGraphNode struct {
+	refs    int
+	label   uint64
+	written bool
+}
+
+// ---- storage access: the descriptors give an offset and a width, and the
+// ---- storage is the HOST's, so every load and store goes through a width
+// ---- switch rather than a copy into the low bytes of a wider word
+
+func tableJsonGetRaw(storage unsafe.Pointer, width uint32) uint64 {
+	switch width {
+	case 1:
+		return uint64(*(*uint8)(storage))
+	case 2:
+		return uint64(*(*uint16)(storage))
+	case 4:
+		return uint64(*(*uint32)(storage))
+	case 8:
+		return *(*uint64)(storage)
+	}
+	return 0
+}
+
+func tableJsonSetRaw(storage unsafe.Pointer, width uint32, value uint64) {
+	switch width {
+	case 1:
+		*(*uint8)(storage) = uint8(value)
+	case 2:
+		*(*uint16)(storage) = uint16(value)
+	case 4:
+		*(*uint32)(storage) = uint32(value)
+	case 8:
+		*(*uint64)(storage) = value
+	}
+}
+
+func tableJsonGetSigned(storage unsafe.Pointer, width uint32) int64 {
+	raw := tableJsonGetRaw(storage, width)
+	if width < 8 {
+		sign := uint64(1) << (width*8 - 1)
+		if raw&sign != 0 {
+			raw |= ^((sign << 1) - 1)
+		}
+	}
+	return int64(raw)
+}
+
+type tableMapKey struct {
+	text []byte
+	raw  uint64
+}
+
+func tableMapKeyValid(k tableMapKey, f *TableFieldInfo) bool {
+	return f.Kind != 12 || k.raw == 0 && len(k.text) <= int(f.ArrayBound)
+}
+func tableMapStoredKey(p unsafe.Pointer, f *TableFieldInfo) tableMapKey {
+	key := tableMapKey{}
+	if f.Kind == 12 {
+		n := *(*int32)(unsafe.Add(p, f.CountOffset))
+		if n < 0 || n > f.ArrayBound {
+			return tableMapKey{text: nil, raw: 1}
+		}
+		key.text = unsafe.Slice((*byte)(unsafe.Add(p, f.Offset)), int(n))
+	} else {
+		key.raw = tableJsonGetRaw(unsafe.Add(p, f.Offset), f.ElemSize)
+		if f.Kind >= 2 && f.Kind <= 5 {
+			key.raw = uint64(tableJsonGetSigned(unsafe.Add(p, f.Offset), f.ElemSize))
+		}
+	}
+	return key
+}
+func tableMapStoreKey(p unsafe.Pointer, f *TableFieldInfo, k tableMapKey) {
+	if f.Kind == 12 {
+		clear(unsafe.Slice((*byte)(unsafe.Add(p, f.Offset)), int(f.ArrayBound)+1))
+		copy(unsafe.Slice((*byte)(unsafe.Add(p, f.Offset)), len(k.text)), k.text)
+		*(*int32)(unsafe.Add(p, f.CountOffset)) = int32(len(k.text))
+	} else {
+		tableJsonSetRaw(unsafe.Add(p, f.Offset), f.ElemSize, k.raw)
+	}
+}
+func tableMapKeyOrder(a, b tableMapKey, f *TableFieldInfo) int {
+	if f.Kind == 12 {
+		for i := 0; i < len(a.text) && i < len(b.text); i++ {
+			if a.text[i] < b.text[i] {
+				return -1
+			}
+			if a.text[i] > b.text[i] {
+				return 1
+			}
+		}
+		if len(a.text) < len(b.text) {
+			return -1
+		}
+		if len(a.text) > len(b.text) {
+			return 1
+		}
+		return 0
+	}
+	if f.Kind >= 2 && f.Kind <= 5 {
+		if int64(a.raw) < int64(b.raw) {
+			return -1
+		}
+		if int64(a.raw) > int64(b.raw) {
+			return 1
+		}
+		return 0
+	}
+	if a.raw < b.raw {
+		return -1
+	}
+	if a.raw > b.raw {
+		return 1
+	}
+	return 0
+}
+
+// A guarded group rides only when its guard reads true — the wire's own elision
+// (§4), carried into the text so a text and a wire written from one instance
+// say the same thing. The guard is spelled as its branch condition over bool
+// fields of the SAME type ("at_rest", "!at_rest", "active && has_target"), so
+// evaluating it is a walk of the same descriptor. Nothing is inferred in the
+// other direction: reading places every key it can name, and the guard is a
+// plain bool key (§16.2).
+func tableJsonGuardHolds(base unsafe.Pointer, info *TableTypeInfo, guard string) bool {
+	p := 0
+	for {
+		for p < len(guard) && (guard[p] == ' ' || guard[p] == '&') {
+			p++
+		}
+		if p >= len(guard) {
+			return true
+		}
+		want := true
+		if guard[p] == '!' {
+			want = false
+			p++
+		}
+		start := p
+		for p < len(guard) && guard[p] != ' ' && guard[p] != '&' {
+			p++
+		}
+		name := guard[start:p]
+		value := false
+		for i := range info.Fields {
+			f := &info.Fields[i]
+			if f.Name == name {
+				value = tableJsonGetRaw(unsafe.Add(base, uintptr(f.Offset)), f.ElemSize) != 0
+				break
+			}
+		}
+		if value != want {
+			return false
+		}
+	}
+}
+
 // TableRefuseReason is the typed error shared by file and accelerator failures.
 // A successful call returns nil; a failure returns its first failing clause.
 type TableRefuseReason uint8
@@ -307,10 +526,18 @@ func (m TableBuildVersionMismatch) Error() string {
 	return "build_version_mismatch: peer 0x" + string(peer[:]) + " own 0x" + string(own[:])
 }
 
+// TableMissingRequired is the typed error a strict read reports for a record
+// that lacks a | required field (mas-bandwidth/schema docs/SPEC-TABLES.md §2.3): Fields names the
+// missing fields, comma-separated in declaration order, at whatever depth of
+// the record they were missing, and Error() is the report's own reason.
+type TableMissingRequired struct{ Fields string }
+
+func (m TableMissingRequired) Error() string { return "missing_required: " + m.Fields }
+
 // Err is the report's typed error (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5, mas-bandwidth/schema docs/VERSIONING.md
 // The read report). A strict read refuses malformed, clamped, kind-mismatched,
-// unknown form, wire-damaged and build-version-mismatched, each as one typed
-// reason. Unknown, Widened and Retained alone leave it nil, as does a clean read.
+// unknown form, wire-damaged, build-version-mismatched and missing-required
+// (§2.3, naming the field), each as one typed reason. Unknown, Widened and Retained alone leave it nil, as does a clean read.
 func (r *TableReport) Err() error {
 	if r == nil {
 		return nil
@@ -323,6 +550,14 @@ func (r *TableReport) Err() error {
 	}
 	if r.Verdict == TableOpenDamaged {
 		return TableRefuseWireDamaged
+	}
+	if r.MissingRequired > 0 {
+		const p = "missing_required: "
+		f := r.Reason
+		if len(f) >= len(p) && f[:len(p)] == p {
+			f = f[len(p):]
+		}
+		return TableMissingRequired{Fields: f}
 	}
 	if r.Malformed {
 		return TableRefuseMalformed
@@ -712,7 +947,7 @@ func tableKindBytes(kind uint8) int64 {
 		return 2
 	case 4, 8, 10, 22, 27:
 		return 4
-	case 5, 9, 11, 23, 28:
+	case 5, 9, 11, 23, 28, 36:
 		return 8
 	case 18, 19, 24, 29:
 		return 16
@@ -884,16 +1119,32 @@ func (r *TableReader) Signed(kind uint8) int64 {
 	}
 }
 
+// tableUtf8Word is the form-1 writer's little-endian word load for its in-line
+// text test (emitTextWords): a function of the runtime file, which imports
+// encoding/binary, so the generated writers in any file of the unit can call it.
+func tableUtf8Word(p []byte) uint64 { return binary.LittleEndian.Uint64(p) }
+
 func tableUtf8Valid(data []byte) bool {
-	if !utf8.Valid(data) {
+	// One pass, eight bytes a step: z gathers the zero-byte test of every word
+	// (exact: a word has a zero byte if and only if its lane is set), hi gathers
+	// the high bits. No zero and no high bit is ASCII with no NUL; a high bit
+	// sends the text to utf8.Valid, the zero test having already been answered.
+	var hi, z uint64
+	i := 0
+	for ; i+8 <= len(data); i += 8 {
+		x := uint64(data[i]) | uint64(data[i+1])<<8 | uint64(data[i+2])<<16 | uint64(data[i+3])<<24 | uint64(data[i+4])<<32 | uint64(data[i+5])<<40 | uint64(data[i+6])<<48 | uint64(data[i+7])<<56
+		hi |= x
+		z |= (x - 0x0101010101010101) &^ x
+	}
+	for ; i < len(data); i++ {
+		c := uint64(data[i])
+		hi |= c
+		z |= (c - 1) &^ c
+	}
+	if z&0x8080808080808080 != 0 {
 		return false
 	}
-	for _, b := range data {
-		if b == 0 {
-			return false
-		}
-	}
-	return true
+	return hi&0x8080808080808080 == 0 || utf8.Valid(data)
 }
 
 func tableUtf8Clamp(data []byte, n int64) int64 {
@@ -903,46 +1154,6 @@ func tableUtf8Clamp(data []byte, n int64) int64 {
 	return n
 }
 
-// BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
-// one digest a block carries and BlockOpen compares, and the fact §3.3's
-// announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0x8c4647e6606eb85b
-
-const TableMessageBatchMax = 256
-const TableMessageRefBitsHere = 5
-const TableMessageEntriesHere = 27
-
-var tableAnnouncement = [...]byte{0x01, 0x01, 0x09, 0x5b, 0xb8, 0x6e, 0x60, 0xe6, 0x47, 0x46, 0x8c, 0x02, 0x0e, 0x86, 0x02, 0x06, 0x83, 0x02, 0xc0, 0x3a, 0x5c, 0xb5, 0x07, 0x2e, 0xb7, 0x08, 0x0c, 0x40, 0x8d, 0x44, 0xe3, 0x45, 0xad, 0xba, 0x9d, 0xee, 0x1e, 0x9d, 0x45, 0x62, 0x27, 0x0e, 0x03, 0x80, 0x6c, 0x1e, 0x39, 0x26, 0x4f, 0x47, 0xf3, 0xd7, 0xe8, 0x65, 0x0c, 0x98, 0x01, 0xb5, 0x6e, 0xbb, 0xc7, 0xfa, 0xe2, 0xce, 0x2b, 0x0c, 0x40, 0x6c, 0x05, 0x1c, 0x2c, 0xb3, 0xf5, 0x47, 0x4a, 0x05, 0x00, 0x7c, 0xef, 0xce, 0x39, 0x28, 0xc8, 0xe4, 0x91, 0x05, 0x00, 0x3c, 0xbf, 0x0c, 0xe1, 0x32, 0x96, 0x41, 0x5f, 0x05, 0x00, 0x39, 0x26, 0x4f, 0x47, 0xf3, 0xd7, 0xe8, 0x65, 0x0c, 0xc8, 0x01, 0x81, 0xc9, 0xc0, 0xab, 0x91, 0xe3, 0x14, 0xea, 0x08, 0x01, 0x0b, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x05, 0x00, 0xc1, 0xfd, 0x00, 0xbf, 0x81, 0xbf, 0xfd, 0x41, 0x05, 0x00, 0xd4, 0xf8, 0x4d, 0xb5, 0x07, 0x4b, 0xa6, 0x08, 0x0c, 0x80, 0x01, 0x80, 0xd9, 0x66, 0xb5, 0x07, 0x3a, 0xc4, 0x08, 0x00, 0x55, 0x74, 0xbb, 0x61, 0x67, 0x12, 0x04, 0xdc, 0x00, 0x9e, 0x10, 0xca, 0x45, 0xad, 0x9a, 0x7f, 0xee, 0x00, 0x74, 0x52, 0x27, 0x1d, 0xb4, 0x0f, 0x08, 0x51, 0x00, 0x0f, 0xba, 0x85, 0x29, 0x26, 0x06, 0x39, 0x94, 0x00, 0x05, 0xd6, 0xdd, 0xbf, 0x1f, 0x53, 0xe6, 0x4c, 0x00, 0xaa, 0x9c, 0x64, 0x1c, 0x39, 0xb3, 0xee, 0xdc, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0xe4, 0x4f, 0x1c, 0x4f, 0x47, 0xc0, 0x2e, 0x2f, 0x00, 0x58, 0xfc, 0xaf, 0xfa, 0xd8, 0xe0, 0x4b, 0x70, 0x00, 0xc7, 0xd4, 0x7b, 0x26, 0xb0, 0x9d, 0x29, 0x5f, 0x00, 0xe2, 0xa6, 0x19, 0xa0, 0x19, 0xe2, 0xc5, 0xf9, 0x00, 0xe5, 0xc8, 0x7e, 0x96, 0xa7, 0x43, 0x74, 0xa0, 0x00, 0xa4, 0x93, 0xdb, 0xb7, 0x13, 0x91, 0x3b, 0xae, 0x00, 0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-var tableMessageEntries = [...]TableMessageEntry{
-	TableMessageEntry{Id: 0x08b72e07b55c3ac0, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 64, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xee9dbaad45e3448d, Shape: TableMessageShape{Kind: 30, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x6c80030e2762459d, Shape: TableMessageShape{Kind: 30, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x65e8d7f3474f2639, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 152, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x2bcee2fac7bb6eb5, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 64, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x4a47f5b32c1c056c, Shape: TableMessageShape{Kind: 5, Packing: 0, Bits: 64, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x91e4c82839ceef7c, Shape: TableMessageShape{Kind: 5, Packing: 0, Bits: 64, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x5f419632e10cbf3c, Shape: TableMessageShape{Kind: 5, Packing: 0, Bits: 64, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x65e8d7f3474f2639, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 200, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xea14e391abc0c981, Shape: TableMessageShape{Kind: 8, Packing: 1, Bits: 11, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xfc9697d1196e6ba6, Shape: TableMessageShape{Kind: 5, Packing: 0, Bits: 64, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x41fdbf81bf00fdc1, Shape: TableMessageShape{Kind: 5, Packing: 0, Bits: 64, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x08a64b07b54df8d4, Shape: TableMessageShape{Kind: 12, Packing: 0, Bits: -1, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 128, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x08c43a07b566d980, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xdc04126761bb7455, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xee7f9aad45ca109e, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x51080fb41d275274, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x943906262985ba0f, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x4ce6531fbfddd605, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xdceeb3391c649caa, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xffffffffffffffff, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x2f2ec0474f1c4fe4, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x704be0d8faaffc58, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0x5f299db0267bd4c7, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xf9c5e219a019a6e2, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xa07443a7967ec8e5, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-	TableMessageEntry{Id: 0xae3b9113b7db93a4, Shape: TableMessageShape{Kind: 0, Packing: 0, Bits: 0, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, Element: TableMessageShape{}},
-}
-
 // TableBitWriter uses the packet wire's low-bit-first order. Measuring walks
 // the identical stream, including alignment, without touching a buffer.
 type TableBitWriter struct {
@@ -950,116 +1161,10 @@ type TableBitWriter struct {
 	Bits                int64
 	Measuring, Overflow bool
 }
-
-func (w *TableBitWriter) Put(value uint64, n int64) {
-	if n < 0 || n > 64 {
-		w.Overflow = true
-		return
-	}
-	if n == 0 {
-		return
-	}
-	at := w.Bits
-	w.Bits += n
-	if w.Bits < at {
-		w.Overflow = true
-		return
-	}
-	if w.Measuring {
-		return
-	}
-	if (w.Bits+7)/8 > int64(len(w.Buffer)) {
-		w.Overflow = true
-		return
-	}
-	if n < 64 {
-		value &= (uint64(1) << n) - 1
-	}
-	index := at >> 3
-	shift := at & 7
-	head := uint64(0)
-	if shift != 0 {
-		head = uint64(w.Buffer[index]) & ((uint64(1) << shift) - 1)
-	}
-	word := head | value<<shift
-	need := (shift + n + 7) / 8
-	if need >= 8 {
-		binary.LittleEndian.PutUint64(w.Buffer[index:], word)
-		if need > 8 {
-			w.Buffer[index+8] = byte(value >> (64 - shift))
-		}
-	} else {
-		for j := int64(0); j < need; j++ {
-			w.Buffer[index+j] = byte(word >> (j * 8))
-		}
-	}
-}
-func (w *TableBitWriter) Align() { w.Put(0, (-w.Bits)&7) }
-func (w *TableBitWriter) Raw(data []byte) {
-	w.Align()
-	if w.Measuring {
-		w.Bits += int64(len(data)) * 8
-		return
-	}
-	at := w.Bits / 8
-	w.Bits += int64(len(data)) * 8
-	if at > int64(len(w.Buffer))-int64(len(data)) {
-		w.Overflow = true
-		return
-	}
-	copy(w.Buffer[at:], data)
-}
-
 type TableBitReader struct {
 	Buffer []byte
 	Offset int64
 }
-
-func (r *TableBitReader) Get(n int64) (uint64, bool) {
-	if n < 0 || n > 64 || r.Offset < 0 || n > int64(len(r.Buffer))*8-r.Offset {
-		return 0, false
-	}
-	if n == 0 {
-		return 0, true
-	}
-	at := r.Offset >> 3
-	shift := r.Offset & 7
-	need := (shift + n + 7) / 8
-	var value uint64
-	if need >= 8 {
-		value = binary.LittleEndian.Uint64(r.Buffer[at:]) >> shift
-		if need > 8 {
-			value |= uint64(r.Buffer[at+8]) << (64 - shift)
-		}
-	} else {
-		for j := int64(0); j < need; j++ {
-			value |= uint64(r.Buffer[at+j]) << (8 * j)
-		}
-		value >>= shift
-	}
-	if n < 64 {
-		value &= (uint64(1) << n) - 1
-	}
-	r.Offset += n
-	return value, true
-}
-func (r *TableBitReader) Skip(n int64) bool {
-	if n < 0 || n > int64(len(r.Buffer))*8-r.Offset {
-		return false
-	}
-	r.Offset += n
-	return true
-}
-func (r *TableBitReader) Align() bool { v, ok := r.Get((-r.Offset) & 7); return ok && v == 0 }
-func tableMessageBits(n uint64) int64 {
-	var count int64
-	for n != 0 {
-		count++
-		n >>= 1
-	}
-	return count
-}
-
 type TableMessageShape struct {
 	Kind, Packing uint8
 	Bits          int64
@@ -1082,504 +1187,6 @@ type TableVocabulary struct {
 	MaxBytes           int64
 	Strict             bool
 }
-
-func (v *TableVocabulary) Init(storage []TableMessageEntry) {
-	*v = TableVocabulary{Entries: storage, MaxBytes: 64 * 1024}
-}
-func (v *TableVocabulary) Entry(ref uint64) (TableMessageEntry, bool) {
-	if ref == 0 || ref > uint64(v.Count) {
-		return TableMessageEntry{}, false
-	}
-	return v.Entries[ref-1], true
-}
-func (v *TableVocabulary) Name(ref uint64) (uint64, bool) {
-	e, ok := v.Entry(ref)
-	return e.Id, ok && e.Shape.Kind == 0 && e.Id < 0xfffffffffffffffd
-}
-func tableMessageNameSlot(id uint64) uint64 {
-	for i := range tableMessageEntries {
-		e := &tableMessageEntries[i]
-		if e.Id == id && e.Shape.Kind == 0 {
-			return uint64(i + 1)
-		}
-	}
-	return 0
-}
-func AnnounceMeasure() int64 { return int64(len(tableAnnouncement)) }
-func Announce(buffer []byte) int64 {
-	if len(buffer) < len(tableAnnouncement) {
-		return -1
-	}
-	copy(buffer, tableAnnouncement[:])
-	return int64(len(tableAnnouncement))
-}
-func tableMessageRefuse(r *TableReport, reason string) bool {
-	r.Verdict = TableOpenRefused
-	r.Reason = reason
-	return false
-}
-func AnnounceRead(v *TableVocabulary, data []byte, report *TableReport) bool {
-	if report == nil {
-		var ignored TableReport
-		report = &ignored
-	}
-	if v.Announced || v.Refused {
-		return tableMessageRefuse(report, "second_announcement")
-	}
-	ok := tableAnnounceRead(v, data, report)
-	if !ok {
-		v.Refused = true
-	}
-	return ok
-}
-func tableAnnounceRead(v *TableVocabulary, data []byte, report *TableReport) bool {
-	r, verdict := tableOpenFramed(data, report)
-	if verdict != TableOpenOk {
-		if verdict == TableOpenRefused {
-			reason := "newer_form"
-			if len(data) > 0 && data[0] == 2 {
-				reason = "message_form_as_file"
-			}
-			return tableMessageRefuse(report, reason)
-		}
-		report.Malformed = true
-		return false
-	}
-	versionCount, wordsCount := 0, 0
-	var words []byte
-	for {
-		ref, ok := r.Leb()
-		if !ok {
-			report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			break
-		}
-		id, ok := r.Resolve(ref)
-		if !ok || !r.Has(1) {
-			report.Malformed = true
-			return false
-		}
-		kind := r.Get8()
-		switch id {
-		case 0xfffffffffffffffe:
-			if kind != 9 || !r.Has(8) {
-				report.Malformed = true
-				return false
-			}
-			v.BuildVersion = r.Get64()
-			versionCount++
-		case 0xfffffffffffffffd:
-			if kind != 14 {
-				report.Malformed = true
-				return false
-			}
-			sub, ok := r.Body()
-			if !ok || !sub.Has(1) || sub.Get8() != 6 {
-				report.Malformed = true
-				return false
-			}
-			n, ok := sub.Leb()
-			if !ok || n > uint64(len(sub.Buffer)) || int64(n) != int64(len(sub.Buffer))-sub.Offset {
-				report.Malformed = true
-				return false
-			}
-			limit := v.MaxBytes
-			if limit == 0 {
-				limit = 64 * 1024
-			}
-			if int64(n) > limit {
-				return tableMessageRefuse(report, "vocabulary_too_large")
-			}
-			words = sub.Buffer[sub.Offset:]
-			wordsCount++
-		default:
-			report.Unknown++
-			if !r.Skip(kind) {
-				report.Malformed = true
-				return false
-			}
-		}
-	}
-	if versionCount != 1 || wordsCount != 1 {
-		report.Malformed = true
-		return false
-	}
-	if v.Strict && v.BuildVersion != BuildVersion {
-		report.BuildVersionPeer = v.BuildVersion
-		report.BuildVersionOwn = BuildVersion
-		return tableMessageRefuse(report, "build_version_mismatch")
-	}
-	src := TableReader{Buffer: words, Report: report}
-	count := int64(0)
-	nodeSeen := false
-	for src.Offset < int64(len(words)) {
-		if count >= int64(len(v.Entries)) {
-			return tableMessageRefuse(report, "vocabulary_too_large")
-		}
-		began := src.Offset
-		e, ok := tableMessageEntryRead(&src)
-		if !ok || e.Id == 0xfffffffffffffffd || e.Id == 0xfffffffffffffffe || e.Id == 0xffffffffffffffff && nodeSeen {
-			report.Malformed = true
-			return false
-		}
-		if e.Id == 0xffffffffffffffff {
-			nodeSeen = true
-		}
-		for i := int64(0); i < count; i++ {
-			o := v.Entries[i].Shape
-			if o.Max-o.Min == src.Offset-began && o.Min >= 0 && o.Max <= int64(len(words)) {
-				same := true
-				for j := o.Min; j < o.Max; j++ {
-					if words[j] != words[began+j-o.Min] {
-						same = false
-						break
-					}
-				}
-				if same {
-					report.Malformed = true
-					return false
-				}
-			}
-		}
-		e.Shape.Min = began
-		e.Shape.Max = src.Offset
-		v.Entries[count] = e
-		count++
-	}
-	src.Offset = 0
-	for i := int64(0); i < count; i++ {
-		e, ok := tableMessageEntryRead(&src)
-		if !ok {
-			report.Malformed = true
-			return false
-		}
-		v.Entries[i] = e
-	}
-	v.Count = count
-	v.RefBits = tableMessageBits(uint64(count))
-	if v.RefBits == 0 {
-		v.RefBits = 1
-	}
-	v.Announced = true
-	return true
-}
-
-// THE SHAPE IS THE DECLARED ONE, the bytes the announcement spells, and never
-// the resolved entry: a resolved quantized entry keeps §4.3's derivation and
-// not the max and res it consumed, so two declared shapes that derive one delta
-// and count would read as one entry there, and a legitimate announcement, the
-// unit's own included, would be refused as malformed (#722). Go's == on float32
-// also equates +0 and -0, whose declared bytes differ. The entry's encoding is
-// canonical, a minimal LEB128 and fixed four-byte floats, so byte equality is
-// declared-fact equality, bit pattern for bit pattern. Each accepted entry parks
-// its byte extent in Shape.Min and Shape.Max until the scan is over, and the
-// second pass in tableAnnounceRead resolves every entry in place, so no offset
-// into the announcement outlives the call. The scan is quadratic in the entry
-// count, and the entry count is bounded above at 4096, so it is at most eight
-// million compares on a path that runs ONCE a connection and never again. The
-// compare is spelled inline so the emitter claims no new runtime name.
-func tableMessageKnownKind(k uint8) bool { return k <= 33 }
-func tableMessageKindBits(k uint8) int64 {
-	if k == 0 || k == 32 {
-		return 0
-	}
-	if k == 1 {
-		return 1
-	}
-	switch k {
-	case 2, 6, 20, 25:
-		return 8
-	case 3, 7, 21, 26:
-		return 16
-	case 4, 8, 10, 22, 27:
-		return 32
-	case 5, 9, 11, 23, 28:
-		return 64
-	case 18, 19, 24, 29:
-		return 128
-	}
-	return -1
-}
-func tableMessageShapeRead(r *TableReader, k uint8) (s TableMessageShape, ok bool) {
-	s.Kind = k
-	s.Bits = tableMessageKindBits(k)
-	switch {
-	case k >= 2 && k <= 10 || k >= 18 && k <= 29:
-		if !r.Has(1) {
-			return s, false
-		}
-		s.Packing = r.Get8()
-		if s.Packing == 0 {
-			return s, true
-		}
-		if s.Packing == 1 && k != 10 {
-			n, ok := r.Leb()
-			if !ok || n > uint64(s.Bits) {
-				return s, false
-			}
-			s.Bits = int64(n)
-			if k >= 18 {
-				if !r.Has(16) {
-					return s, false
-				}
-				s.Base = [2]uint64{r.Get64(), r.Get64()}
-			} else {
-				base, ok := r.Leb()
-				if !ok {
-					return s, false
-				}
-				if k >= 2 && k <= 5 {
-					base = uint64(int64(base>>1) ^ -int64(base&1))
-				}
-				s.Base[0] = base
-			}
-			return s, true
-		}
-		if s.Packing == 2 && k == 10 {
-			if !r.Has(12) {
-				return s, false
-			}
-			lo := math.Float32frombits(r.Get32())
-			hi := math.Float32frombits(r.Get32())
-			res := math.Float32frombits(r.Get32())
-			if !(lo < hi) || !(res > 0) {
-				return s, false
-			}
-			delta := float32(hi - lo)
-			values := float32(delta / res)
-			if delta-delta != 0 || values-values != 0 {
-				return s, false
-			}
-			if !(values >= 1) {
-				values = 1
-			} else if values > 4294967040.0 {
-				values = 4294967040.0
-			}
-			s.QMin = lo
-			s.QDelta = delta
-			s.QCount = uint32(math.Ceil(float64(values)))
-			s.Bits = tableMessageBits(uint64(s.QCount))
-			return s, true
-		}
-		return s, false
-	case k == 12 || k == 33:
-		n, ok := r.Leb()
-		if !ok || n > math.MaxInt32 {
-			return s, false
-		}
-		s.Max = int64(n)
-	case k == 14 || k == 16:
-		if k == 14 {
-			n, ok := r.Leb()
-			if !ok || n > math.MaxUint32 {
-				return s, false
-			}
-			s.Min = int64(n)
-		}
-		n, ok := r.Leb()
-		if !ok || n > math.MaxUint32 || int64(n) < s.Min {
-			return s, false
-		}
-		s.Max = int64(n)
-	}
-	return s, true
-}
-func tableMessageEntryRead(r *TableReader) (e TableMessageEntry, ok bool) {
-	if !r.Has(9) {
-		return e, false
-	}
-	e.Id = r.Get64()
-	kind := r.Get8()
-	if !tableMessageKnownKind(kind) {
-		return e, false
-	}
-	e.Shape, ok = tableMessageShapeRead(r, kind)
-	if !ok {
-		return e, false
-	}
-	if kind == 14 || kind == 16 {
-		if !r.Has(1) {
-			return e, false
-		}
-		elem := r.Get8()
-		if !tableMessageKnownKind(elem) || elem == 12 || elem == 33 {
-			return e, false
-		}
-		e.Element, ok = tableMessageShapeRead(r, elem)
-		if !ok {
-			return e, false
-		}
-		if elem == 14 || elem == 16 {
-			if !r.Has(1) {
-				return e, false
-			}
-			inner := r.Get8()
-			if !tableMessageKnownKind(inner) || inner == 12 || inner == 33 {
-				return e, false
-			}
-		}
-	}
-	return e, true
-}
-func tableMessageCount(r *TableBitReader, s TableMessageShape) (uint64, bool) {
-	raw, ok := r.Get(tableMessageBits(uint64(s.Max - s.Min)))
-	return raw + uint64(s.Min), ok
-}
-func tableMessageSkip(r *TableBitReader, v *TableVocabulary, indexBits int64, e TableMessageEntry, depth int) bool {
-	if depth > 128 {
-		return false
-	}
-	s := e.Shape
-	switch s.Kind {
-	case 0, 32:
-		return true
-	case 30:
-		ref, ok := r.Get(v.RefBits)
-		if !ok || ref == 0 {
-			return ok
-		}
-		_, ok = v.Name(ref)
-		return ok
-	case 13:
-		return tableMessageSkipBody(r, v, indexBits, depth+1)
-	case 17:
-		return indexBits > 0 && r.Skip(indexBits)
-	case 15:
-		ref, ok := r.Get(v.RefBits)
-		if !ok || ref == 0 {
-			return ok
-		}
-		arm, ok := v.Entry(ref)
-		return ok && arm.Id < 0xfffffffffffffffd && arm.Shape.Kind != 0 && tableMessageSkip(r, v, indexBits, arm, depth+1)
-	case 12, 33:
-		n, ok := tableMessageCount(r, s)
-		if !ok {
-			return false
-		}
-		width := int64(16)
-		if s.Kind == 12 {
-			width = 8
-			if !r.Align() {
-				return false
-			}
-		}
-		return r.Skip(int64(n) * width)
-	case 31:
-		if !r.Align() {
-			return false
-		}
-		n, ok := r.Get(32)
-		return ok && r.Skip(int64(n)*8)
-	case 14, 16:
-		n, ok := tableMessageCount(r, s)
-		if !ok {
-			return false
-		}
-		if s.Kind == 14 && e.Element.Kind == 6 && !r.Align() {
-			return false
-		}
-		if e.Element.Bits >= 0 || e.Element.Kind == 0 || e.Element.Kind == 32 {
-			width := e.Element.Bits
-			if width < 0 {
-				width = 0
-			}
-			if s.Kind == 16 {
-				width += v.RefBits
-			}
-			return r.Skip(int64(n) * width)
-		}
-		for i := uint64(0); i < n; i++ {
-			if s.Kind == 16 && !r.Skip(v.RefBits) {
-				return false
-			}
-			before := r.Offset
-			if !tableMessageSkip(r, v, indexBits, TableMessageEntry{Shape: e.Element}, depth+1) || r.Offset == before {
-				return false
-			}
-		}
-		return true
-	}
-	return s.Bits >= 0 && r.Skip(s.Bits)
-}
-
-// Framing scans follow announced shapes; typed body reads diagnose reserved ids.
-func tableMessageSkipBody(r *TableBitReader, v *TableVocabulary, indexBits int64, depth int) bool {
-	if depth > 128 {
-		return false
-	}
-	for {
-		ref, ok := r.Get(v.RefBits)
-		if !ok || ref == 0 {
-			return ok
-		}
-		e, ok := v.Entry(ref)
-		if !ok || !tableMessageSkip(r, v, indexBits, e, depth) {
-			return false
-		}
-	}
-}
-
-// Numeric values are reconstructed at the announced storage width. Typed
-// readers then apply the existing exact file-domain clamps to these lanes.
-func tableMessageReadScalar(r *TableBitReader, s TableMessageShape, out *[16]byte) bool {
-	lo, ok := r.Get(min(s.Bits, 64))
-	if !ok {
-		return false
-	}
-	hi := uint64(0)
-	if s.Bits > 64 {
-		hi, ok = r.Get(s.Bits - 64)
-		if !ok {
-			return false
-		}
-	}
-	if s.Packing == 1 {
-		sum := lo + s.Base[0]
-		carry := uint64(0)
-		if sum < lo {
-			carry = 1
-		}
-		lo = sum
-		hi += s.Base[1] + carry
-	}
-	if s.Packing == 2 {
-		index := min(uint32(lo), s.QCount)
-		ratio := float32(float32(index) / float32(s.QCount))
-		scaled := float32(ratio * s.QDelta)
-		lo = uint64(math.Float32bits(float32(scaled + s.QMin)))
-	}
-	binary.LittleEndian.PutUint64(out[:], lo)
-	binary.LittleEndian.PutUint64(out[8:], hi)
-	return true
-}
-func tableMessageWriteScalar(w *TableBitWriter, s TableMessageShape, lo, hi uint64) {
-	if s.Packing == 1 {
-		borrow := uint64(0)
-		if lo < s.Base[0] {
-			borrow = 1
-		}
-		lo -= s.Base[0]
-		hi -= s.Base[1] + borrow
-	}
-	if s.Packing == 2 {
-		value := math.Float32frombits(uint32(lo))
-		ratio := float32((value - s.QMin) / s.QDelta)
-		if !(ratio >= 0) {
-			ratio = 0
-		} else if !(ratio <= 1) {
-			ratio = 1
-		}
-		scaled := float32(ratio * float32(s.QCount))
-		lo = uint64(min(uint32(math.Floor(float64(float32(scaled+0.5)))), s.QCount))
-	}
-	w.Put(lo, min(s.Bits, 64))
-	if s.Bits > 64 {
-		w.Put(hi, s.Bits-64)
-	}
-}
-
 type TableMessageReader struct {
 	Nodes      TableNodeMap
 	Bits       TableBitReader
@@ -1588,350 +1195,51 @@ type TableMessageReader struct {
 	IndexBits  int64
 }
 
-func tableMessageBatchOpen(v *TableVocabulary, data []byte, report *TableReport) (TableMessageReader, int64) {
-	r := TableMessageReader{Vocabulary: v, Report: *report}
-	defer func() { *report = r.Report }()
-	if len(data) == 0 {
-		r.Report.Malformed = true
-		return r, -1
-	}
-	if data[0] != 2 {
-		tableMessageRefuse(&r.Report, "newer_form")
-		return r, -1
-	}
-	if v == nil || !v.Announced {
-		tableMessageRefuse(&r.Report, "no_vocabulary")
-		return r, -1
-	}
-	if len(data) < 2 {
-		r.Report.Malformed = true
-		return r, -1
-	}
-	r.Bits.Buffer = data[2:]
-	return r, int64(data[1]) + 1
-}
-func tableMessageBatchClose(r *TableMessageReader) bool {
-	if !r.Bits.Align() || r.Bits.Offset != int64(len(r.Bits.Buffer))*8 {
-		r.Report.Malformed = true
-		return false
-	}
-	return true
-}
-
 type TableMessageWriter struct {
 	TableBitWriter
 	IndexBits int64
+	Clamped   int32
 	Numbering *TableNumbering
 	numbering TableNumbering
-}
-
-func tableMessageRegionWrite(w *TableMessageWriter, p unsafe.Pointer, t *TableTypeInfo, a *TableArena, allocator ...TableAllocator) bool {
-	var ok bool
-	w.numbering, ok = tableNumber(p, t, a, allocator...)
-	if !ok {
-		return false
-	}
-	n := &w.numbering
-	defer n.Release()
-	defer func() { w.Numbering = nil }()
-	w.Numbering = n
-	w.IndexBits = tableMessageBits(uint64(len(n.entries)))
-	if w.IndexBits < 1 {
-		w.IndexBits = 1
-	}
-	if len(n.entries) > 1 {
-		slot := uint64(0)
-		for i := range tableMessageEntries {
-			if tableMessageEntries[i].Id == 0xffffffffffffffff {
-				slot = uint64(i + 1)
-				break
-			}
-		}
-		if slot == 0 || uint64(len(n.entries)-1) > math.MaxUint32 {
-			return false
-		}
-		w.Put(slot, TableMessageRefBitsHere)
-		w.Put(uint64(len(n.entries)-1), 32)
-		for i := 1; i < len(n.entries); i++ {
-			node := &n.entries[i]
-			slot := tableMessageNameSlot(node.id)
-			if slot == 0 {
-				return false
-			}
-			w.Put(slot, TableMessageRefBitsHere)
-			if node.info != nil {
-				if !node.info.SaveMessageBody(w, node.node) {
-					return false
-				}
-			} else {
-				length := uint64(*(*uint32)(node.node))
-				if length > math.MaxUint32 {
-					return false
-				}
-				w.Put(length, 32)
-				w.Raw(unsafe.Slice((*byte)(unsafe.Add(node.node, 8)), int(length)))
-			}
-		}
-	}
-	return t.SaveMessageBody(w, p)
-}
-func tableMessageNodeOpen(r *TableMessageReader) (int64, bool) {
-	start := r.Bits.Offset
-	ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-	if !ok {
-		return 0, false
-	}
-	if ref == 0 {
-		r.Bits.Offset = start
-		return 0, true
-	}
-	e, ok := r.Vocabulary.Entry(ref)
-	if !ok {
-		return 0, false
-	}
-	if e.Id != 0xffffffffffffffff {
-		r.Bits.Offset = start
-		return 0, true
-	}
-	n, ok := r.Bits.Get(32)
-	return int64(n), ok
-}
-func tableMessageExtent(r *TableMessageReader, t *TableTypeInfo, at *int64) bool {
-	return tableMessageSkipBody(&r.Bits, r.Vocabulary, r.IndexBits, 0)
-}
-
-type tableMessageRecord struct {
-	id           uint64
-	size, length int64
-}
-
-func tableMessageRecordScan(r *TableMessageReader, root *TableTypeInfo, blobs int) (record tableMessageRecord, ok bool) {
-	ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-	if !ok {
-		return record, false
-	}
-	record.id, ok = r.Vocabulary.Name(ref)
-	if !ok {
-		return record, false
-	}
-	if record.id == tableBytesTypeId || record.id == tableStringTypeId {
-		n, ok := r.Bits.Get(32)
-		if !ok || !r.Bits.Align() || !r.Bits.Skip(int64(n)*8) {
-			return record, false
-		}
-		record.length = int64(n)
-		if record.id == tableBytesTypeId && blobs&1 != 0 || record.id == tableStringTypeId && blobs&2 != 0 {
-			extra := int64(0)
-			if record.id == tableStringTypeId {
-				extra = 1
-			}
-			record.size = tableRegionRound(8 + record.length + extra)
-		}
-		return record, true
-	}
-	t := root.NodeType(record.id)
-	if t == nil {
-		return record, tableMessageSkipBody(&r.Bits, r.Vocabulary, r.IndexBits, 0)
-	}
-	extent := int64(0)
-	if !tableMessageExtent(r, t, &extent) {
-		return record, false
-	}
-	record.size = tableRegionRound(tableRegionRound(int64(t.Size)) + extent)
-	return record, true
-}
-func tableMessageBodyStorage(r *TableMessageReader, root *TableTypeInfo, blobs int) (size int64, complete, ok bool) {
-	count, ok := tableMessageNodeOpen(r)
-	if !ok {
-		return 0, false, false
-	}
-	r.IndexBits = tableMessageBits(uint64(count + 1))
-	size = (count + 1) * 16
-	for k := int64(0); k < count; k++ {
-		record, ok := tableMessageRecordScan(r, root, blobs)
-		if !ok {
-			return 0, false, false
-		}
-		size += record.size
-	}
-	extent := int64(0)
-	complete = tableMessageExtent(r, root, &extent)
-	size += tableRegionRound(tableRegionRound(int64(root.Size)) + extent)
-	return size, complete, true
-}
-func tableMessageRegionMeasure(v *TableVocabulary, data []byte, root *TableTypeInfo, blobs int) int64 {
-	var ignored TableReport
-	r, count := tableMessageBatchOpen(v, data, &ignored)
-	if count < 0 {
-		return -1
-	}
-	total := int64(0)
-	for i := int64(0); i < count; i++ {
-		size, complete, ok := tableMessageBodyStorage(&r, root, blobs)
-		if !ok {
-			return -1
-		}
-		total += size
-		if !complete {
-			break
-		}
-	}
-	return total
-}
-func tableMessageLoadInto(r TableMessageReader, t *TableTypeInfo, p unsafe.Pointer, size int64) (TableMessageReader, bool) {
-	return t.LoadMessageBody(r, p)
-}
-func tableMessageRegionInto(r *TableMessageReader, root *TableTypeInfo, blobs int, region []byte, used *int64) (out unsafe.Pointer, ok bool) {
-	count, ok := tableMessageNodeOpen(r)
-	if !ok {
-		r.Report.Malformed = true
-		return nil, false
-	}
-	directoryBytes := (count + 1) * 16
-	limit := int64(len(region))
-	if *used > limit || directoryBytes > limit-*used {
-		r.Report.Malformed = true
-		return nil, false
-	}
-	base := unsafe.Pointer(&region[0])
-	directory := unsafe.Slice((*TableNodeDirEntry)(unsafe.Add(base, *used)), int(count+1))
-	*used += directoryBytes
-	r.IndexBits = tableMessageBits(uint64(count + 1))
-	nodes := TableNodeMap{Base: base, Entries: directory}
-	recordsStart := r.Bits.Offset
-	unknown := int32(0)
-	for k := int64(0); k < count; k++ {
-		record, good := tableMessageRecordScan(r, root, blobs)
-		if !good {
-			r.Report.Malformed = true
-			return nil, false
-		}
-		entry := &directory[k+1]
-		entry.TypeId = record.id
-		if record.size <= 0 {
-			entry.Offset = ^uint64(0)
-			unknown++
-			continue
-		}
-		if record.size > limit-*used {
-			r.Report.Malformed = true
-			return nil, false
-		}
-		entry.Offset = uint64(*used)
-		p := unsafe.Add(base, *used)
-		if t := root.NodeType(record.id); t != nil {
-			t.Reset(p)
-		} else {
-			*(*TableBlob)(p) = TableBlob{Length: uint32(uint64(record.length))}
-		}
-		*used += record.size
-	}
-	fieldsStart := r.Bits.Offset
-	walk := *r
-	extent := int64(0)
-	complete := tableMessageExtent(&walk, root, &extent)
-	if !complete && tableMessageHasExtent(root) {
-		r.Report.Malformed = true
-		return nil, false
-	}
-	rootSize := tableRegionRound(tableRegionRound(int64(root.Size)) + extent)
-	if rootSize > limit-*used {
-		r.Report.Malformed = true
-		return nil, false
-	}
-	directory[0] = TableNodeDirEntry{Offset: uint64(*used), TypeId: root.Id}
-	out = unsafe.Add(base, *used)
-	root.Reset(out)
-	*used += rootSize
-	nodes.Good = true
-	r.Report.Unknown += unknown
-	r.Nodes = nodes
-	r.Bits.Offset = recordsStart
-	for k := int64(0); k < count; k++ {
-		if _, good := r.Bits.Get(r.Vocabulary.RefBits); !good {
-			r.Report.Malformed = true
-			return out, false
-		}
-		entry := directory[k+1]
-		if entry.TypeId == tableBytesTypeId || entry.TypeId == tableStringTypeId {
-			n, good := r.Bits.Get(32)
-			if !good || !r.Bits.Align() {
-				r.Report.Malformed = true
-				return out, false
-			}
-			start := r.Bits.Offset / 8
-			if !r.Bits.Skip(int64(n) * 8) {
-				r.Report.Malformed = true
-				return out, false
-			}
-			payload := r.Bits.Buffer[start : start+int64(n)]
-			if entry.TypeId == tableStringTypeId && blobs&2 != 0 && !tableUtf8Valid(payload) {
-				r.Report.Malformed = true
-				return out, false
-			}
-			if entry.Offset != ^uint64(0) {
-				copy(unsafe.Slice((*byte)(unsafe.Add(base, entry.Offset+8)), int(n)), payload)
-			}
-			continue
-		}
-		if entry.Offset == ^uint64(0) {
-			if !tableMessageSkipBody(&r.Bits, r.Vocabulary, r.IndexBits, 0) {
-				r.Report.Malformed = true
-				return out, false
-			}
-			continue
-		}
-		t := root.NodeType(entry.TypeId)
-		walk := *r
-		extent := int64(0)
-		if !tableMessageExtent(&walk, t, &extent) {
-			r.Report.Malformed = true
-			return out, false
-		}
-		*r, ok = tableMessageLoadInto(*r, t, unsafe.Add(base, entry.Offset), tableRegionRound(int64(t.Size))+extent)
-		if !ok {
-			return out, false
-		}
-	}
-	if r.Bits.Offset != fieldsStart {
-		r.Report.Malformed = true
-		return out, false
-	}
-	*r, ok = tableMessageLoadInto(*r, root, out, rootSize)
-	return out, ok
-}
-func tableMessageHasExtent(t *TableTypeInfo) bool {
-	for i := range t.Fields {
-		if tableMessageFieldHasExtent(&t.Fields[i]) {
-			return true
-		}
-	}
-	return false
-}
-func tableMessageFieldHasExtent(f *TableFieldInfo) bool {
-	if f.List || f.Map {
-		return true
-	}
-	if f.Pointer {
-		return false
-	}
-	if f.Kind == 13 && f.Table != nil {
-		return tableMessageHasExtent(f.Table())
-	}
-	if f.Kind == 15 && f.Arms != nil {
-		u := f.Arms()
-		for i := 1; i < len(u.Arms); i++ {
-			if !u.Arms[i].Void && tableMessageFieldHasExtent(&u.Arms[i].Field) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 const TableFixedForm uint8 = 3
 const TableFixedHeaderBytes = 16
 const TableFixedHashAt = 8
+
+// THE FIXED LOAD'S REFUSAL NAMES — EXPORTED (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md
+// §5.3, mas-bandwidth/schema docs/SPEC-TABLES.md §3.4). Every refusal of the fixed load has a name,
+// the framing-damage returns included, so an adopter's existing
+// report.Reason == "layout_newer" comparisons keep compiling against these
+// constants; the emitted <T>FixedLoad names every reason constant in place of
+// a string literal.
+//
+// TableFixedReasonLayoutUnknown is the Reason of a file whose header hash no
+// entry of this build's lineage holds (mas-bandwidth/schema docs/SPEC-TABLES.md §21.3, algorithm
+// §5.3 step 5). It says what the reader knows and not which way the file lies:
+// a newer writer's layout, an older one nobody locked and a damaged hash byte
+// read the same.
+//
+// TableFixedReasonLayoutNewer ("ship the reader") is RESERVED (SPEC-TABLES
+// §21.3) for a hash the lock lineage proves newer, which nothing on the wire or
+// in the lock does today, so no Go fixed load answers it; it stays exported so
+// an adopter's existing comparisons keep compiling.
+const (
+	TableFixedReasonPreviousForm         = "previous_form"
+	TableFixedReasonMessageFormAsFile    = "message_form_as_file"
+	TableFixedReasonNewerForm            = "newer_form"
+	TableFixedReasonLayoutMalformed      = "layout_malformed"
+	TableFixedReasonLayoutUnknown        = "layout_unknown"
+	TableFixedReasonLayoutNewer          = "layout_newer"
+	TableFixedReasonLayoutUnsupported    = "layout_unsupported"
+	TableFixedReasonLayoutRecordTooLarge = "layout_record_too_large"
+	TableFixedReasonPlanTooLarge         = "plan_too_large"
+	TableFixedReasonBatchTooLarge        = "batch_too_large"
+	TableFixedReasonNoLayout             = "no_layout"
+	TableFixedReasonTextIllFormed        = "text_ill_formed"
+	TableFixedReasonTruncated            = "truncated"
+	TableFixedReasonReservedNotZero      = "reserved_not_zero"
+)
 
 const (
 	tableFixedCopy uint8 = iota
@@ -1976,13 +1284,62 @@ const tableFixedMaxDepth int32 = 64
 // tag 0x0101 is not arm 1. Arg is the arm ordinal and carries NO BYTE LANE
 // (§5.8 row 5): a 256-arm union's ordinal does not fit a byte.
 type TableFixedEntry struct {
-	Src, Dst, Size, Aux, Guard, Arg uint32
+	Src, Dst, Size, Aux, Guard uint32
+	// Arg IS THE GUARD'S ORDINAL AT FULL WIDTH (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md
+	// §4.1: arg : u64, "no byte lane anywhere"): a union past 255 arms or an
+	// enum past 65535 variants holds its ordinal whole in this lane, and the
+	// compare is made against the 64-bit tag load, never a truncation of it.
+	Arg uint64
 	// Guard2 / Arg2 / ArgW2 ARE THE OUTER TAG AN ARM INSIDE AN ARM ALSO ANSWERS
 	// TO (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §4.1): the entry runs only when BOTH tags
 	// hold their ordinal. ArgW2 of zero is "no outer tag", so a plan that never
 	// nests a union leaves the lane unset and the read is unchanged.
-	Guard2, Arg2                         uint32
+	Guard2 uint32
+	Arg2   uint64
+	// GuardIndex / GuardCount ARE THE GUARD CHAIN (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md
+	// §4.1): offset+count into a pool of (guard, arg, argw) links, OUTERMOST
+	// FIRST. GuardIndex is a BYTE OFFSET from the plan's own base, where the pool
+	// is laid behind the entries the way the ordinal remap tables are, so the
+	// plan stays one slice and the read loop one signature. Every guarded entry
+	// carries its whole chain; the two lanes above stay its innermost two, the
+	// special case, so the loop walks the pool only for a chain past two. The
+	// only bound on a chain is the layout's 64 (tableFixedMaxDepth).
+	GuardIndex, GuardCount               uint32
 	Op, ArgW, DstSize, Sign, Meta, ArgW2 uint8
+}
+
+// TableFixedGuardLink is ONE LINK of a guard chain (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md
+// §4.1): the offset of the tag it reads, the ordinal the tag must hold, and the
+// width it is compared at. A chain is a CONJUNCTION — every link must hold.
+type TableFixedGuardLink struct {
+	Guard uint32
+	Arg   uint64
+	ArgW  uint8
+}
+
+// guardLink is link j of e's chain, read out of the pool laid behind the plan's
+// entries (§4.1: offset+count into the pool). A method, so the unit's package
+// scope gains no name a schema could collide with.
+func (e TableFixedEntry) guardLink(plan []TableFixedEntry, j uint32) TableFixedGuardLink {
+	at := uintptr(e.GuardIndex) + uintptr(j)*unsafe.Sizeof(TableFixedGuardLink{})
+	return *(*TableFixedGuardLink)(unsafe.Add(unsafe.Pointer(&plan[0]), at))
+}
+
+// chainHolds is whether every link of a chain PAST TWO holds: an arm inside an
+// arm inside an arm answers to EVERY enclosing tag, the outermost first
+// (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §4.1). A chain of one or two is the two-lane
+// special case, already tested on Guard and Guard2.
+func (p TableFixedEntry) chainHolds(plan []TableFixedEntry, src []byte) bool {
+	if p.GuardCount <= 2 {
+		return true
+	}
+	for j := uint32(0); j < p.GuardCount; j++ {
+		l := p.guardLink(plan, j)
+		if tableFixedTagAt(src, l.Guard, l.ArgW) != l.Arg {
+			return false
+		}
+	}
+	return true
 }
 
 type TableFixedDst struct {
@@ -2142,9 +1499,65 @@ func tableFixedPartition(plan []TableFixedEntry, n int32) int32 {
 	return split
 }
 
-func tableFixedBuildPlan(emit func([]TableFixedEntry, uint32, uint32) int, n int) tableFixedPlan {
-	raw := make([]TableFixedEntry, n)
-	written := emit(raw, 0, 0)
+// tableFixedBuildPlan runs the emitted leaf walk and lays THE GUARD CHAIN
+// (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §4.1). The walk records each entry's links
+// INNERMOST FIRST, because an inner union stamps before the outer one that
+// holds it; here they are turned OUTERMOST FIRST, the innermost two are laid on
+// the Guard and Guard2 lanes (the two-lane special case), and the whole chain is
+// laid ONCE into a pool behind the entries, deduped by content, so an entry
+// carries offset+count into it. Two entries under one chain share one slice of
+// the pool, so the coalescer compares GuardIndex and GuardCount alone.
+func tableFixedBuildPlan(emit func([]TableFixedEntry, [][]TableFixedGuardLink, uint32, uint32) int, n int) tableFixedPlan {
+	scratch := make([]TableFixedEntry, n)
+	links := make([][]TableFixedGuardLink, n)
+	written := emit(scratch, links, 0, 0)
+	var pool []TableFixedGuardLink
+	index := map[string]uint32{}
+	for i := 0; i < written; i++ {
+		chain := links[i]
+		k := len(chain)
+		if k == 0 {
+			continue
+		}
+		for a, b := 0, k-1; a < b; a, b = a+1, b-1 {
+			chain[a], chain[b] = chain[b], chain[a]
+		}
+		e := &scratch[i]
+		e.Guard, e.Arg, e.ArgW = chain[k-1].Guard, chain[k-1].Arg, chain[k-1].ArgW
+		if k >= 2 {
+			e.Guard2, e.Arg2, e.ArgW2 = chain[k-2].Guard, chain[k-2].Arg, chain[k-2].ArgW
+		}
+		kb := make([]byte, 0, k*13)
+		for _, l := range chain {
+			kb = binary.LittleEndian.AppendUint32(kb, l.Guard)
+			kb = binary.LittleEndian.AppendUint64(kb, l.Arg)
+			kb = append(kb, l.ArgW)
+		}
+		key := string(kb)
+		at, ok := index[key]
+		if !ok {
+			at = uint32(len(pool))
+			index[key] = at
+			pool = append(pool, chain...)
+		}
+		e.GuardIndex = at
+		e.GuardCount = uint32(k)
+	}
+	// THE POOL RIDES BEHIND THE ENTRIES, in the plan's own allocation, and
+	// GuardIndex becomes its byte offset from the plan's base.
+	entryBytes := int(unsafe.Sizeof(TableFixedEntry{}))
+	linkBytes := int(unsafe.Sizeof(TableFixedGuardLink{}))
+	raw := make([]TableFixedEntry, n+(len(pool)*linkBytes+entryBytes-1)/entryBytes)
+	copy(raw, scratch[:written])
+	if len(pool) > 0 {
+		base := uintptr(n * entryBytes)
+		copy(unsafe.Slice((*TableFixedGuardLink)(unsafe.Add(unsafe.Pointer(&raw[0]), base)), len(pool)), pool)
+		for i := 0; i < written; i++ {
+			if raw[i].GuardCount != 0 {
+				raw[i].GuardIndex = uint32(base) + raw[i].GuardIndex*uint32(linkBytes)
+			}
+		}
+	}
 	out := 0
 	for i := 0; i < written; i++ {
 		if out > 0 && raw[out-1].Op == raw[i].Op && tableFixedRuns(raw[i].Op) &&
@@ -2152,6 +1565,7 @@ func tableFixedBuildPlan(emit func([]TableFixedEntry, uint32, uint32) int, n int
 			raw[out-1].ArgW == raw[i].ArgW && raw[out-1].Meta == raw[i].Meta &&
 			raw[out-1].Guard2 == raw[i].Guard2 && raw[out-1].Arg2 == raw[i].Arg2 &&
 			raw[out-1].ArgW2 == raw[i].ArgW2 &&
+			raw[out-1].GuardIndex == raw[i].GuardIndex && raw[out-1].GuardCount == raw[i].GuardCount &&
 			raw[out-1].Src+raw[out-1].Size == raw[i].Src &&
 			raw[out-1].Dst+raw[out-1].Size == raw[i].Dst {
 			raw[out-1].Size += raw[i].Size
@@ -2226,6 +1640,10 @@ func tableFixedRun(plan []TableFixedEntry, count int32, src, dst []byte, report 
 		if p.ArgW2 != 0 && tableFixedTagAt(src, p.Guard2, p.ArgW2) != uint64(p.Arg2) {
 			continue
 		}
+		// AND EVERY TAG FURTHER OUT, the guard chain past the two lanes (§4.1).
+		if p.GuardCount > 2 && !p.chainHolds(plan, src) {
+			continue
+		}
 		switch p.Op {
 		case tableFixedCopy:
 			tableFixedCopyRun(dst[p.Dst:], src[p.Src:], p.Size)
@@ -2290,7 +1708,7 @@ func tableFixedRun(plan []TableFixedEntry, count int32, src, dst []byte, report 
 			// length above CLAMPS and counts; the bytes it kept are checked now,
 			// over v units and never over the span.
 			if tableFixedTextIllFormed(p.Meta, uint32(v), src[p.Src+4:]) {
-				return "text_ill_formed"
+				return TableFixedReasonTextIllFormed
 			}
 			binary.LittleEndian.PutUint32(dst[p.Dst:], uint32(v))
 			tableFixedCopyRun(dst[p.Aux:], src[p.Src+4:], p.Size)
@@ -2348,7 +1766,7 @@ func tableFixedRun(plan []TableFixedEntry, count int32, src, dst []byte, report 
 			var widened uint64
 			if bits&0x7f800000 == 0x7f800000 {
 				// THE ALL-ONES EXPONENT IS ASSEMBLED BY HAND (mas-bandwidth/schema docs/SPEC-TABLES.md
-				// §3.4, §21.2; the packet runtime's float-widen helper): the hardware
+				// §3.4, §21.2; the variable form's own float rung): the hardware
 				// f32->f64 conversion QUIETS a signalling NaN and can drop a
 				// payload bit, so the sign, the all-ones exponent and the 23-bit
 				// mantissa shifted left by 29 are carried exactly and the quiet
@@ -2397,6 +1815,9 @@ func tableFixedForgedBounds(plan []TableFixedEntry, count int32, src []byte, rep
 		// AN ARM INSIDE AN ARM ANSWERS TO THE OUTER TAG TOO (§4.1): an entry
 		// whose second lane does not hold never lands, so it never counts.
 		if p.ArgW2 != 0 && tableFixedTagAt(src, p.Guard2, p.ArgW2) != uint64(p.Arg2) {
+			continue
+		}
+		if p.GuardCount > 2 && !p.chainHolds(plan, src) {
 			continue
 		}
 		switch p.Op {
@@ -2465,6 +1886,63 @@ func tableFixedTextIllFormed(meta uint8, used uint32, p []byte) bool {
 	return false
 }
 
+// tableFixedUtf8Ok is the WRITER's string rule over the used bytes: well-formed
+// UTF-8 with no zero byte, the answer unicode/utf8.Valid and a NUL scan give
+// (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1, the same rule tableFixedTextIllFormed
+// holds on read). It is one pass, eight bytes a step, with no branch in the
+// loop: z gathers each word's zero-byte test, which is exact (a word has a
+// zero byte if and only if its lane is set), and hi gathers the high bits. A
+// zero refuses; text with no high bit is ASCII and passes; only text with a
+// byte at or past 0x80 goes on to utf8.Valid. The result is identical to the
+// two-pass spelling.
+func tableFixedUtf8Ok(p []byte) bool {
+	var hi, z uint64
+	i := 0
+	for ; i+8 <= len(p); i += 8 {
+		x := tableFixedGet64(p[i:])
+		hi |= x
+		z |= (x - 0x0101010101010101) &^ x
+	}
+	if i < len(p) && len(p) >= 8 {
+		// The tail as one word, overlapping bytes already tested: the test
+		// is the same answer for a byte seen twice.
+		x := tableFixedGet64(p[len(p)-8:])
+		hi |= x
+		z |= (x - 0x0101010101010101) &^ x
+	} else {
+		for ; i < len(p); i++ {
+			c := uint64(p[i])
+			hi |= c
+			z |= (c - 1) &^ c
+		}
+	}
+	if z&0x8080808080808080 != 0 {
+		return false
+	}
+	return hi&0x8080808080808080 == 0 || utf8.Valid(p)
+}
+
+// tableFixedUnitsIllFormed is the WRITER's twin of the wide arm above, over the
+// caller's own wstring storage: the used units are paired UTF-16 with no zero
+// unit (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1, §4.5).
+func tableFixedUnitsIllFormed(units []uint16) bool {
+	for i := 0; i < len(units); i++ {
+		u := units[i]
+		switch {
+		case u == 0:
+			return true
+		case u >= 0xD800 && u <= 0xDBFF:
+			if i+1 >= len(units) || units[i+1] < 0xDC00 || units[i+1] > 0xDFFF {
+				return true
+			}
+			i++
+		case u >= 0xDC00 && u <= 0xDFFF:
+			return true
+		}
+	}
+	return false
+}
+
 // tableFixedTextRefusal is the text CONTENT refusal as a PRE-SCAN of the plan's
 // text entries, run before the caller's storage is touched. It walks each text
 // entry under its own guard, clamps its length exactly as the scatter will, and
@@ -2486,6 +1964,13 @@ func tableFixedTextRefusal(plan []TableFixedEntry, count int32, src []byte) stri
 		if p.Guard != tableFixedNoGuard && tableFixedTagAt(src, p.Guard, p.ArgW) != uint64(p.Arg) {
 			continue
 		}
+		// AND THE OUTER TAGS (§4.1): the second lane, then the chain past it.
+		if p.ArgW2 != 0 && tableFixedTagAt(src, p.Guard2, p.ArgW2) != uint64(p.Arg2) {
+			continue
+		}
+		if p.GuardCount > 2 && !p.chainHolds(plan, src) {
+			continue
+		}
 		unit := uint32(1)
 		if p.Meta == tableFixedTextWide {
 			unit = 2
@@ -2498,7 +1983,7 @@ func tableFixedTextRefusal(plan []TableFixedEntry, count int32, src []byte) stri
 			v = int32(capn)
 		}
 		if tableFixedTextIllFormed(p.Meta, uint32(v), src[p.Src+4:]) {
-			return "text_ill_formed"
+			return TableFixedReasonTextIllFormed
 		}
 	}
 	return ""
@@ -2832,8 +2317,33 @@ type tableFixedCompiler struct {
 	// source extent is held to.
 	record uint32
 	// argW is the CURRENT union's tag width, stamped onto every guarded push.
-	argW   uint8
-	report *TableReport
+	argW uint8
+	// chain is THE GUARD CHAIN of the arm being compiled, OUTERMOST FIRST
+	// (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §4.1): one link per enclosing union, pushed
+	// on the way into an arm and popped on the way out. chainAt is its byte
+	// offset in the pool once laid, and chainLaid whether it has been: a chain is
+	// laid once per arm, and only when an entry beneath it is pushed.
+	chain     []TableFixedGuardLink
+	chainAt   uint32
+	chainLaid bool
+	report    *TableReport
+}
+
+// layGuards lays one guard chain into the plan's pool, behind the entries and
+// 8-aligned, and answers its byte offset from the plan's base
+// (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §4.1: offset+count into a pool of links). Pool
+// storage that meets the entries is plan_too_large, as for a remap table.
+func (c *tableFixedCompiler) layGuards(links []TableFixedGuardLink) uint32 {
+	bytes := int32(unsafe.Sizeof(TableFixedGuardLink{})) * int32(len(links))
+	total := int32(unsafe.Sizeof(TableFixedEntry{})) * c.capacity
+	c.pool = (c.pool + bytes + 7) &^ 7
+	if total-c.pool < c.count*int32(unsafe.Sizeof(TableFixedEntry{})) {
+		c.overflow = true
+		return 0
+	}
+	at := uint32(total - c.pool)
+	copy(unsafe.Slice((*TableFixedGuardLink)(unsafe.Add(unsafe.Pointer(&c.plan[0]), uintptr(at))), len(links)), links)
+	return at
 }
 
 // tableFixedSrcEnd is the last source byte, exclusive, an entry reads — the
@@ -2877,6 +2387,35 @@ func tableFixedPush(c *tableFixedCompiler, e TableFixedEntry) {
 	if e.Guard != tableFixedNoGuard {
 		e.ArgW = uint8(tableFixedArgWidth(c.argW))
 	}
+	// THE GUARD CHAIN (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §4.1): an entry pushed
+	// beneath a union answers to EVERY enclosing tag, outermost first, so it
+	// carries the arm's whole chain as offset+count into the pool, and its two
+	// lanes are the chain's innermost two. Each link's tag is part of the
+	// entry's source reach, so a link past the writer's record refuses the plan
+	// whole like any other read past it.
+	if k := len(c.chain); k > 0 && e.Guard != tableFixedNoGuard {
+		in := c.chain[k-1]
+		e.Guard, e.Arg, e.ArgW = in.Guard, in.Arg, in.ArgW
+		if k >= 2 {
+			out := c.chain[k-2]
+			e.Guard2, e.Arg2, e.ArgW2 = out.Guard, out.Arg, out.ArgW
+		}
+		for _, l := range c.chain {
+			if c.record != 0 && uint64(l.Guard)+uint64(tableFixedArgWidth(l.ArgW)) > uint64(c.record) {
+				c.tooLarge = true
+				return
+			}
+		}
+		if !c.chainLaid {
+			c.chainAt = c.layGuards(c.chain)
+			c.chainLaid = true
+			if c.overflow {
+				return
+			}
+		}
+		e.GuardIndex = c.chainAt
+		e.GuardCount = uint32(k)
+	}
 	// ONE ENTRY PAST THE WRITER'S RECORD REFUSES THE PLAN WHOLE (§5.2). The
 	// bound is the writer's declared root size and not this reader's: an entry
 	// that reached past it would read the NEXT record's bytes.
@@ -2915,7 +2454,7 @@ func tableFixedLayTable(c *tableFixedCompiler, values []uint16, n int32) uint32 
 // census is whether THIS entry is the first time the peer's field is seen:
 // an array's element subtree is compiled once per element and the unknown
 // count is ONCE PER FIELD PER PEER (§5.4), so only element 0 censuses.
-func tableFixedMatchChildren(c *tableFixedCompiler, theirs tableFixedLayoutView, ti int32, theirAt uint32, mine tableFixedLayoutView, mi int32, dst []TableFixedDst, myAt, guard uint32, arg uint32, census bool) {
+func tableFixedMatchChildren(c *tableFixedCompiler, theirs tableFixedLayoutView, ti int32, theirAt uint32, mine tableFixedLayoutView, mi int32, dst []TableFixedDst, myAt, guard uint32, arg uint64, census bool) {
 	te := tableFixedEntryAt(theirs, ti)
 	me := tableFixedEntryAt(mine, mi)
 	myChild := mi + 1
@@ -2953,7 +2492,7 @@ func tableFixedMatchChildren(c *tableFixedCompiler, theirs tableFixedLayoutView,
 	}
 }
 
-func tableFixedCompileEntry(c *tableFixedCompiler, theirs tableFixedLayoutView, ti int32, theirAt uint32, mine tableFixedLayoutView, mi int32, dst []TableFixedDst, myAt, guard uint32, arg uint32, census bool) {
+func tableFixedCompileEntry(c *tableFixedCompiler, theirs tableFixedLayoutView, ti int32, theirAt uint32, mine tableFixedLayoutView, mi int32, dst []TableFixedDst, myAt, guard uint32, arg uint64, census bool) {
 	te := tableFixedEntryAt(theirs, ti)
 	me := tableFixedEntryAt(mine, mi)
 	d := dst[mi]
@@ -3074,8 +2613,18 @@ func tableFixedCompileEntry(c *tableFixedCompiler, theirs tableFixedLayoutView, 
 			for j := uint32(0); j < te.Children; j++ {
 				ta := tableFixedEntryAt(theirs, theirArm)
 				if ta.Id == ma.Id {
-					tableFixedPush(c, TableFixedEntry{Src: theirAt, Dst: auxAt, Size: myTag, Aux: k + 1, Guard: theirAt, Op: tableFixedConst, Arg: j + 1})
-					tableFixedCompileEntry(c, theirs, theirArm, theirAt+theirTag, mine, myArm, dst, at, theirAt, j+1, census)
+					// THE ARM ANSWERS TO THIS TAG AND TO EVERY TAG OUTSIDE IT
+					// (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §4.1): one link is pushed
+					// on the way into the arm, the arm's own tag const included,
+					// and popped on the way out. The bound is the layout's 64:
+					// the walk that reaches here is already held to it.
+					savedAt, savedLaid := c.chainAt, c.chainLaid
+					c.chain = append(c.chain, TableFixedGuardLink{Guard: theirAt, Arg: uint64(j + 1), ArgW: c.argW})
+					c.chainLaid = false
+					tableFixedPush(c, TableFixedEntry{Src: theirAt, Dst: auxAt, Size: myTag, Aux: k + 1, Guard: theirAt, Op: tableFixedConst, Arg: uint64(j + 1)})
+					tableFixedCompileEntry(c, theirs, theirArm, theirAt+theirTag, mine, myArm, dst, at, theirAt, uint64(j+1), census)
+					c.chain = c.chain[:len(c.chain)-1]
+					c.chainAt, c.chainLaid = savedAt, savedLaid
 					break
 				}
 				theirArm += tableFixedSubtree(theirs, theirArm)
@@ -3094,10 +2643,12 @@ func tableFixedCompileEntry(c *tableFixedCompiler, theirs tableFixedLayoutView, 
 		}
 		// THE TABLE IS AS LONG AS THE WRITER'S VARIANT COUNT (§5.2), not 255:
 		// capped at 255 a 300-variant writer's variant 299 read as out of the
-		// set and landed None.
+		// set and landed None. Past the uint16 length word the plan refuses
+		// by name as plan_too_large (§5.8 row 14): the plan-storage overflow,
+		// never the record-bound refusal an entry past the record earns.
 		n := te.Children
 		if n > tableFixedRemapMax {
-			c.tooLarge = true
+			c.overflow = true
 			return
 		}
 		m := make([]uint16, n)
@@ -3170,6 +2721,9 @@ func tableFixedCompile(theirs tableFixedLayoutView, myLayout []byte, dst []Table
 		if out > 0 && plan[out-1].Op == plan[i].Op && tableFixedRuns(plan[i].Op) &&
 			plan[out-1].Guard == plan[i].Guard && plan[out-1].Arg == plan[i].Arg &&
 			plan[out-1].ArgW == plan[i].ArgW && plan[out-1].Meta == plan[i].Meta &&
+			plan[out-1].Guard2 == plan[i].Guard2 && plan[out-1].Arg2 == plan[i].Arg2 &&
+			plan[out-1].ArgW2 == plan[i].ArgW2 &&
+			plan[out-1].GuardIndex == plan[i].GuardIndex && plan[out-1].GuardCount == plan[i].GuardCount &&
 			plan[out-1].Src+plan[out-1].Size == plan[i].Src &&
 			plan[out-1].Dst+plan[out-1].Size == plan[i].Dst {
 			plan[out-1].Size += plan[i].Size
@@ -3268,9 +2822,11 @@ func tableFixedHoles(plan []TableFixedEntry, count int32, dstSize uint32) []tabl
 // A fixed table reads BACKWARD and never forward. A file is matched on the
 // eight bytes of its header's hash against the lineage the BUILD laid down, and
 // the layout it carries is held to a BYTE COMPARISON against the bytes the lock
-// recorded — never walked. A hash the lineage does not hold is layout_newer
-// (ship the reader); a hash it holds below the floor is layout_unsupported
-// (upgrade the client). Those are the operator's two distinct answers.
+// recorded — never walked. A hash the lineage does not hold is layout_unknown
+// (a layout this build's lineage does not hold; layout_newer is reserved until
+// the lineage proves direction, SPEC-TABLES §21.3); a hash it holds below the
+// floor is layout_unsupported (upgrade the client). Those are the operator's
+// two distinct answers.
 
 // TableFixedKnownLayout is one locked layout: the wire hash a file is matched
 // on, the layout bytes verbatim with its byte length BESIDE the pointer, and
@@ -3324,7 +2880,7 @@ func tableFixedLineagePlans(known []TableFixedKnownLayout, myLayout []byte, dst 
 		if why != "" {
 			// A lineage entry that is not a layout is a bug in the LOCK, not a
 			// wire event; the reader still owes a name rather than a panic.
-			out[i].Why = "layout_malformed"
+			out[i].Why = TableFixedReasonLayoutMalformed
 			continue
 		}
 		for room := 256; ; room *= 4 {
@@ -3332,16 +2888,16 @@ func tableFixedLineagePlans(known []TableFixedKnownLayout, myLayout []byte, dst 
 			var census TableReport
 			made := tableFixedCompile(parsed, myLayout, dst, plan, &census)
 			if made == -2 {
-				out[i].Why = "layout_malformed"
+				out[i].Why = TableFixedReasonLayoutMalformed
 				break
 			}
 			if made == -3 {
-				out[i].Why = "layout_record_too_large"
+				out[i].Why = TableFixedReasonLayoutRecordTooLarge
 				break
 			}
 			if made < 0 {
 				if room >= 1<<18 {
-					out[i].Why = "plan_too_large"
+					out[i].Why = TableFixedReasonPlanTooLarge
 					break
 				}
 				continue
@@ -3373,248 +2929,6 @@ func tableFixedRefuse(report *TableReport, reason string) int64 {
 
 func tableFixedOverlay(ptr unsafe.Pointer, n uintptr) []byte {
 	return unsafe.Slice((*byte)(ptr), n)
-}
-
-const tableCookBuildVersion uint64 = 0x8c4647e6606eb85b
-
-// TableByteOrder selects the target order, independently of the writing host.
-type TableByteOrder uint8
-
-const (
-	TableByteOrderLittle TableByteOrder = 1
-	TableByteOrderBig    TableByteOrder = 2
-)
-
-type tableCookWriter struct {
-	numbering *TableNumbering
-	buffer    []byte
-	order     TableByteOrder
-	at        int64
-}
-
-func (w *tableCookWriter) put(at int64, value uint64, width uint32) {
-	if w.buffer == nil {
-		return
-	}
-	for i := uint32(0); i < width; i++ {
-		shift := i
-		if w.order == TableByteOrderBig {
-			shift = width - 1 - i
-		}
-		w.buffer[at+int64(i)] = byte(value >> (shift * 8))
-	}
-}
-func (w *tableCookWriter) header(data, nodes, align int64) {
-	w.put(0, 0x4b4f4f434d484353, 8)
-	w.put(8, tableCookBuildVersion, 8)
-	w.put(16, uint64(w.order), 8)
-	w.put(24, uint64(data), 8)
-	w.put(32, uint64(nodes)*16, 8)
-	w.put(40, uint64(align), 8)
-}
-func (w *tableCookWriter) record(p unsafe.Pointer, t *TableTypeInfo, at int64, live bool) bool {
-	for i := range t.Fields {
-		f := &t.Fields[i]
-		rides := live && tableJsonGuardHolds(p, t, f.Guard)
-		if f.Optional {
-			rides = rides && *(*bool)(unsafe.Add(p, f.PresentOffset))
-		}
-		if !w.field(p, f, at, rides) {
-			return false
-		}
-	}
-	return true
-}
-func (w *tableCookWriter) field(base unsafe.Pointer, f *TableFieldInfo, at int64, live bool) bool {
-	p := unsafe.Add(base, f.Offset)
-	dest := at + int64(f.CookOffset)
-	if f.Optional {
-		v := uint64(0)
-		if *(*bool)(unsafe.Add(base, f.PresentOffset)) {
-			v = 1
-		}
-		w.put(at+int64(f.CookPresentOffset), v, 1)
-	}
-	if f.List || f.Map {
-		return w.container(p, f, dest, live)
-	}
-	count := int32(1)
-	used := int32(1)
-	if f.Counted {
-		used = *(*int32)(unsafe.Add(base, f.CountOffset))
-		if used < 0 || used > f.ArrayBound {
-			return false
-		}
-		w.put(at+int64(f.CookCountOffset), uint64(used), 4)
-	}
-	if !f.Pointer && (f.TypeName == "string" || f.TypeName == "bytes" || f.TypeName == "wstring") {
-		width := f.CookElemSize
-		for i := int32(0); i < used; i++ {
-			v := tableJsonGetRaw(unsafe.Add(p, int64(i)*int64(width)), width)
-			w.put(dest+int64(i)*int64(width), v, width)
-		}
-		return true
-	}
-	if f.IsArray {
-		count = f.ArrayBound
-		if !f.Counted {
-			used = count
-		}
-	}
-	for i := int32(0); i < count; i++ {
-		if !w.value(unsafe.Add(p, int64(i)*int64(f.ElemSize)), f, dest+int64(i)*int64(f.CookElemSize), live && i < used) {
-			return false
-		}
-	}
-	return true
-}
-func (w *tableCookWriter) value(p unsafe.Pointer, f *TableFieldInfo, at int64, live bool) bool {
-	if f.Pointer {
-		return w.reference((*int64)(p), at)
-	}
-	if f.Arms != nil {
-		u := f.Arms()
-		tag := tableJsonGetRaw(unsafe.Add(p, u.TagOffset), u.TagSize)
-		if tag >= uint64(len(u.Arms)) {
-			return false
-		}
-		w.put(at, tag, u.CookTagSize)
-		if tag == 0 || u.Arms[tag].Void {
-			return true
-		}
-		return w.field(p, &u.Arms[tag].Field, at, live)
-	}
-	if f.Table != nil {
-		return w.record(p, f.Table(), at, live)
-	}
-	width := f.CookElemSize
-	if width == 16 {
-		lo := *(*uint64)(p)
-		hi := *(*uint64)(unsafe.Add(p, 8))
-		if w.order == TableByteOrderBig {
-			lo, hi = hi, lo
-		}
-		w.put(at, lo, 8)
-		w.put(at+8, hi, 8)
-		return true
-	}
-	value := tableJsonGetRaw(p, f.ElemSize)
-	if f.Kind == 1 {
-		value = 0
-		if *(*bool)(p) {
-			value = 1
-		}
-	}
-	w.put(at, value, width)
-	return true
-}
-func tableCookFixed(p unsafe.Pointer, t *TableTypeInfo, buffer []byte, order TableByteOrder) bool {
-	if p == nil || order != TableByteOrderLittle && order != TableByteOrderBig {
-		return false
-	}
-	align := max(int64(8), int64(t.CookAlign))
-	data := (int64(t.CookSize) + align - 1) & -align
-	total := 64 + data + 16
-	if int64(len(buffer)) < total {
-		return false
-	}
-	w := tableCookWriter{order: order}
-	if !w.record(p, t, 64, true) {
-		return false
-	}
-	clear(buffer[:total])
-	w.buffer = buffer
-	w.header(data, 1, align)
-	if !w.record(p, t, 64, true) {
-		return false
-	}
-	w.put(64+data, 0, 8)
-	w.put(64+data+8, t.Id, 8)
-	return true
-}
-
-func (w *tableCookWriter) reference(slot *int64, at int64) bool {
-	if *slot == 0 {
-		return true
-	}
-	if w.numbering == nil {
-		return false
-	}
-	i, ok := w.numbering.Index(slot)
-	if !ok {
-		return false
-	}
-	w.put(at, uint64(64+w.numbering.entries[i-1].offset-at), 8)
-	return true
-}
-func tableCookRegion(p unsafe.Pointer, t *TableTypeInfo, buffer []byte, order TableByteOrder, measure bool, a *TableArena, allocator ...TableAllocator) int64 {
-	size, _ := tableCookRegionReason(p, t, buffer, order, measure, a, allocator...)
-	return size
-}
-func tableCookRegionReason(p unsafe.Pointer, t *TableTypeInfo, buffer []byte, order TableByteOrder, measure bool, a *TableArena, allocator ...TableAllocator) (int64, TableRefuseReason) {
-	if order != TableByteOrderLittle && order != TableByteOrderBig {
-		return -1, TableRefuseInvalidValue
-	}
-	n, ok := tableNumber(p, t, a, allocator...)
-	if !ok {
-		return -1, n.reason
-	}
-	defer n.Release()
-	w := tableCookWriter{order: order, numbering: &n}
-	data, align := int64(0), int64(8)
-	for i := range n.entries {
-		e := &n.entries[i]
-		size, alignment := int64(0), int64(8)
-		if e.info != nil {
-			size = int64(e.info.CookSize)
-			alignment = int64(e.info.CookAlign)
-		} else {
-			length := uint64(*(*uint32)(e.node))
-			size = 8 + int64(length)
-			if e.id == tableStringTypeId {
-				size++
-			}
-		}
-		align = max(align, alignment)
-		data = (data + alignment - 1) & -alignment
-		e.offset = data
-		w.at = 64 + data + size
-		if e.info != nil && !w.record(e.node, e.info, 64+data, true) {
-			return -1, TableRefuseInvalidValue
-		}
-		data = w.at - 64
-	}
-	data = (data + align - 1) & -align
-	total := 64 + data + int64(len(n.entries))*16
-	if measure {
-		return total, TableRefuseOk
-	}
-	if int64(len(buffer)) < total {
-		return -1, TableRefuseInvalidValue
-	}
-	clear(buffer[:total])
-	w.buffer = buffer
-	w.header(data, int64(len(n.entries)), align)
-	for i := range n.entries {
-		e := &n.entries[i]
-		at := 64 + e.offset
-		if e.info != nil {
-			w.at = at + int64(e.info.CookSize)
-			if !w.record(e.node, e.info, at, true) {
-				return -1, TableRefuseInvalidValue
-			}
-		} else {
-			length := uint64(*(*uint32)(e.node))
-			w.put(at, length, 4)
-			copy(buffer[at+8:at+8+int64(length)], unsafe.Slice((*byte)(unsafe.Add(e.node, 8)), int(length)))
-		}
-		w.put(64+data+int64(i)*16, uint64(e.offset), 8)
-		w.put(64+data+int64(i)*16+8, e.id, 8)
-	}
-	return total, TableRefuseOk
-}
-func (w *tableCookWriter) container(p unsafe.Pointer, f *TableFieldInfo, at int64, live bool) bool {
-	return false
 }
 
 const tableRegionAlign int64 = 8
@@ -4450,63 +3764,6 @@ func tableRegionPack(root unsafe.Pointer, info *TableTypeInfo, a *TableArena) ([
 	return region, allocation, true
 }
 
-func tableRegionFromJson(value unsafe.Pointer, info *TableTypeInfo, worker *TableWorker, text []byte, report *TableReport) bool {
-	if report == nil {
-		var ignored TableReport
-		report = &ignored
-	}
-	if value == nil {
-		report.Malformed = true
-		return false
-	}
-	graph := tableJsonGraph{alloc: worker.Alloc, allocate: worker.Arena.Allocator.alloc, release: worker.Arena.Allocator.free}
-	defer graph.close()
-	in := tableJsonIn{text: text, report: report, graph: &graph}
-	info.Reset(value)
-	ok := tableJsonReadTable(&in, value, info, 0)
-	in.space()
-	if !ok || in.bad || in.pos != len(text) {
-		report.Malformed = true
-		return false
-	}
-	return true
-}
-func tableRegionToJson(value unsafe.Pointer, info *TableTypeInfo, buffer []byte, allocator ...TableAllocator) int64 {
-	n, ok := tableNumber(value, info, nil, allocator...)
-	if !ok {
-		return -1
-	}
-	defer n.Release()
-	graph := tableJsonGraph{node: func(p unsafe.Pointer) *tableJsonGraphNode {
-		i, ok := n.find(p)
-		if !ok {
-			return nil
-		}
-		return &n.entries[i].json
-	}}
-	for i := range n.entries {
-		e := &n.entries[i]
-		if e.info != nil && !tableRegionEdges(e.node, e.info, func(slot *TableRef, f *TableFieldInfo) bool {
-			p := tableRefAt(slot, nil)
-			if p != nil {
-				graph.node(p).refs++
-			}
-			return true
-		}) {
-			return -1
-		}
-	}
-	out := tableJsonOut{buffer: buffer, measure: buffer == nil, graph: &graph}
-	if !tableJsonWriteValue(&out, value, info, 0) {
-		return -1
-	}
-	out.put('\n')
-	if out.overflow {
-		return -1
-	}
-	return out.offset
-}
-
 // Blob ABI follows the established tool and C++ byte contract: u32 length, u32 zero.
 // SPEC-TABLES §7.2 currently labels this u64; the big-endian fixtures distinguish them.
 type TableBlob struct {
@@ -5338,420 +4595,6 @@ type TableRetainMessageReader struct {
 	Retain *TableRetain
 	Path   tableRetainPath
 }
-
-// Capture starts only after the ordinary skip succeeds. Capacity bounds the
-// resolved output before an announced count can expand a zero-bit element.
-func (r *TableRetainMessageReader) capture(e TableMessageEntry) bool {
-	start := r.Bits.Offset
-	if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, e, 0) {
-		return false
-	}
-	if r.Retain == nil {
-		return true
-	}
-	t, p := r.Retain, r.Path
-	header := int64(26 + p.depth*8)
-	limit := int64(len(t.Bytes)) - t.Used - header
-	if p.depth > len(p.steps) || limit < 0 {
-		r.Report.RetainLost++
-		return true
-	}
-	probe := tableRetainMessageIn{bits: r.Bits, v: r.Vocabulary, w: TableWriter{Measuring: true}, limit: limit}
-	probe.bits.Offset = start
-	if !probe.payload(e, 0) || probe.bits.Offset != r.Bits.Offset || probe.w.Offset > limit {
-		r.Report.RetainLost++
-		return true
-	}
-	need := header + probe.w.Offset
-	if need > 0xffffffff {
-		r.Report.RetainLost++
-		return true
-	}
-	b := t.Bytes[t.Used : t.Used+need]
-	clear(b[:26])
-	binary.LittleEndian.PutUint32(b, uint32(need))
-	binary.LittleEndian.PutUint32(b[4:], p.node)
-	binary.LittleEndian.PutUint32(b[8:], uint32(p.depth))
-	binary.LittleEndian.PutUint32(b[12:], uint32(probe.w.Offset))
-	binary.LittleEndian.PutUint64(b[16:], e.Id)
-	b[24] = e.Shape.Kind
-	for i := 0; i < p.depth; i++ {
-		binary.LittleEndian.PutUint32(b[26+i*8:], p.steps[i].ordinal)
-		binary.LittleEndian.PutUint32(b[30+i*8:], p.steps[i].index)
-	}
-	write := tableRetainMessageIn{bits: r.Bits, v: r.Vocabulary, w: TableWriter{Buffer: b[header:]}, limit: limit}
-	write.bits.Offset = start
-	if !write.payload(e, 0) || write.w.Overflow {
-		r.Report.RetainLost++
-		return true
-	}
-	t.Used += need
-	t.Count++
-	r.Report.Retained++
-	return true
-}
-
-type tableRetainMessageIn struct {
-	bits  TableBitReader
-	v     *TableVocabulary
-	w     TableWriter
-	limit int64
-}
-
-func (s *tableRetainMessageIn) room(n int64) bool { return n >= 0 && n <= s.limit-s.w.Offset }
-func (s *tableRetainMessageIn) ref(zero bool) (TableMessageEntry, bool) {
-	ref, ok := s.bits.Get(s.v.RefBits)
-	if !ok {
-		return TableMessageEntry{}, false
-	}
-	if ref == 0 {
-		if !zero || !s.room(8) {
-			return TableMessageEntry{}, false
-		}
-		s.w.Put64(0)
-		return TableMessageEntry{}, true
-	}
-	e, ok := s.v.Entry(ref)
-	if !ok || e.Id == 0 || e.Id >= 0xfffffffffffffffd || !s.room(8) {
-		return e, false
-	}
-	s.w.Put64(e.Id)
-	return e, true
-}
-func (s *tableRetainMessageIn) scalar(e TableMessageEntry) bool {
-	width := tableKindBytes(e.Shape.Kind)
-	if width == 0 || !s.room(width) {
-		return false
-	}
-	shape := e.Shape
-	if shape.Packing == 2 {
-		probe := s.bits
-		index, ok := probe.Get(shape.Bits)
-		if !ok || index > uint64(shape.QCount) {
-			return false
-		}
-	}
-	var raw [16]byte
-	if !tableMessageReadScalar(&s.bits, shape, &raw) {
-		return false
-	}
-	if shape.Packing == 0 && (shape.Kind >= 2 && shape.Kind <= 5 || shape.Kind >= 20 && shape.Kind <= 24) && shape.Bits > 0 && shape.Bits < 64 {
-		v := binary.LittleEndian.Uint64(raw[:])
-		if v&(uint64(1)<<uint(shape.Bits-1)) != 0 {
-			v |= ^uint64(0) << uint(shape.Bits)
-			binary.LittleEndian.PutUint64(raw[:], v)
-		}
-	}
-	s.w.Raw(raw[:width])
-	return !s.w.Overflow
-}
-func (s *tableRetainMessageIn) opaque(e TableMessageEntry, framed bool) bool {
-	var n uint64
-	var ok bool
-	if e.Shape.Kind == 12 || e.Shape.Kind == 33 {
-		n, ok = tableMessageCount(&s.bits, e.Shape)
-		if !ok {
-			return false
-		}
-		if e.Shape.Kind == 33 {
-			n *= 2
-		} else if !s.bits.Align() {
-			return false
-		}
-	} else {
-		if !s.bits.Align() {
-			return false
-		}
-		n, ok = s.bits.Get(32)
-		if !ok {
-			return false
-		}
-	}
-	extra := int64(0)
-	if framed {
-		extra = tableLebBytes(n)
-	}
-	if n > 0x7fffffff || !s.room(int64(n)+extra) || int64(n)*8 > int64(len(s.bits.Buffer))*8-s.bits.Offset {
-		return false
-	}
-	if framed {
-		s.w.PutLeb(n)
-	}
-	for i := uint64(0); i < n; i++ {
-		v, ok := s.bits.Get(8)
-		if !ok {
-			return false
-		}
-		s.w.Put8(byte(v))
-	}
-	return true
-}
-func (s *tableRetainMessageIn) framed(e TableMessageEntry, depth int) bool {
-	if depth > tableRetainWalkDepthMax || !s.room(8) {
-		return false
-	}
-	at := s.w.Offset
-	s.w.Put64(0)
-	before := s.w.Offset
-	if !s.content(e, depth) || s.w.Offset-before > 0xffffffff {
-		return false
-	}
-	if !s.w.Measuring {
-		binary.LittleEndian.PutUint32(s.w.Buffer[at:], uint32(s.w.Offset-before))
-	}
-	return true
-}
-func (s *tableRetainMessageIn) content(e TableMessageEntry, depth int) bool {
-	if depth > tableRetainWalkDepthMax {
-		return false
-	}
-	switch e.Shape.Kind {
-	case 17:
-		return false
-	case 13:
-		for {
-			entry, ok := s.ref(true)
-			if !ok {
-				return false
-			}
-			if entry.Id == 0 {
-				return true
-			}
-			if !s.room(1) {
-				return false
-			}
-			s.w.Put8(entry.Shape.Kind)
-			if !s.payload(entry, depth) {
-				return false
-			}
-		}
-	case 14, 16:
-		return s.elements(e, depth)
-	case 15, 30:
-		return s.payload(e, depth)
-	case 32:
-		return true
-	case 12, 31, 33:
-		return s.opaque(e, false)
-	}
-	return s.scalar(e)
-}
-func tableRetainMessageMinimum(kind uint8) int64 {
-	if n := tableKindBytes(kind); n != 0 {
-		return n
-	}
-	switch kind {
-	case 13:
-		return 16
-	case 14, 16:
-		return 10
-	case 15, 30:
-		return 8
-	case 17:
-		return -1
-	case 12, 31, 32, 33:
-		return 1
-	}
-	return -1
-}
-func (s *tableRetainMessageIn) elements(e TableMessageEntry, depth int) bool {
-	if e.Element.Kind == 17 {
-		return false
-	}
-	n, ok := tableMessageCount(&s.bits, e.Shape)
-	if !ok {
-		return false
-	}
-	if e.Shape.Kind == 14 && e.Element.Kind == 6 && !s.bits.Align() {
-		return false
-	}
-	if !s.room(1 + tableLebBytes(n)) {
-		return false
-	}
-	s.w.Put8(e.Element.Kind)
-	s.w.PutLeb(n)
-	floor := tableRetainMessageMinimum(e.Element.Kind)
-	if e.Shape.Kind == 16 {
-		floor = 16
-	}
-	if floor < 0 || n > uint64((s.limit-s.w.Offset)/floor) {
-		return false
-	}
-	element := TableMessageEntry{Shape: e.Element}
-	for i := uint64(0); i < n; i++ {
-		if e.Shape.Kind == 16 {
-			if _, ok := s.ref(false); !ok || !s.framed(element, depth+1) {
-				return false
-			}
-		} else if !s.payload(element, depth) {
-			return false
-		}
-	}
-	return true
-}
-func (s *tableRetainMessageIn) payload(e TableMessageEntry, depth int) bool {
-	switch e.Shape.Kind {
-	case 0, 17:
-		return false
-	case 32:
-		if !s.room(1) {
-			return false
-		}
-		s.w.PutLeb(0)
-		return true
-	case 30:
-		_, ok := s.ref(true)
-		return ok
-	case 15:
-		arm, ok := s.ref(true)
-		if !ok {
-			return false
-		}
-		if arm.Id == 0 {
-			return true
-		}
-		if arm.Shape.Kind == 0 || !s.room(1) {
-			return false
-		}
-		s.w.Put8(arm.Shape.Kind)
-		return s.framed(arm, depth+1)
-	case 13, 14, 16:
-		return s.framed(e, depth+1)
-	case 12, 31, 33:
-		return s.opaque(e, true)
-	}
-	return s.scalar(e)
-}
-func tableMessageLoadIntoRetain(r TableRetainMessageReader, t *TableTypeInfo, p unsafe.Pointer, size int64) (TableRetainMessageReader, bool) {
-	return t.LoadMessageBodyRetain(r, p)
-}
-func tableMessageRegionIntoRetain(r *TableRetainMessageReader, root *TableTypeInfo, blobs int, region []byte, used *int64) (out unsafe.Pointer, ok bool) {
-	r.Retain.reset(nil, nil)
-	count, ok := tableMessageNodeOpen(&r.tableMessagePlainReader)
-	if !ok {
-		r.Report.Malformed = true
-		return nil, false
-	}
-	directoryBytes := (count + 1) * 16
-	limit := int64(len(region))
-	if *used > limit || directoryBytes > limit-*used {
-		r.Report.Malformed = true
-		return nil, false
-	}
-	base := unsafe.Pointer(&region[0])
-	directory := unsafe.Slice((*TableNodeDirEntry)(unsafe.Add(base, *used)), int(count+1))
-	*used += directoryBytes
-	r.IndexBits = tableMessageBits(uint64(count + 1))
-	nodes := TableNodeMap{Base: base, Entries: directory}
-	recordsStart := r.Bits.Offset
-	unknown := int32(0)
-	for k := int64(0); k < count; k++ {
-		record, good := tableMessageRecordScan(&r.tableMessagePlainReader, root, blobs)
-		if !good {
-			r.Report.Malformed = true
-			return nil, false
-		}
-		entry := &directory[k+1]
-		entry.TypeId = record.id
-		if record.size <= 0 {
-			entry.Offset = ^uint64(0)
-			unknown++
-			continue
-		}
-		if record.size > limit-*used {
-			r.Report.Malformed = true
-			return nil, false
-		}
-		entry.Offset = uint64(*used)
-		p := unsafe.Add(base, *used)
-		if t := root.NodeType(record.id); t != nil {
-			t.Reset(p)
-		} else {
-			*(*TableBlob)(p) = TableBlob{Length: uint32(uint64(record.length))}
-		}
-		*used += record.size
-	}
-	fieldsStart := r.Bits.Offset
-	walk := *r
-	extent := int64(0)
-	complete := tableMessageExtent(&walk.tableMessagePlainReader, root, &extent)
-	if !complete && tableMessageHasExtent(root) {
-		r.Report.Malformed = true
-		return nil, false
-	}
-	rootSize := tableRegionRound(tableRegionRound(int64(root.Size)) + extent)
-	if rootSize > limit-*used {
-		r.Report.Malformed = true
-		return nil, false
-	}
-	directory[0] = TableNodeDirEntry{Offset: uint64(*used), TypeId: root.Id}
-	out = unsafe.Add(base, *used)
-	root.Reset(out)
-	*used += rootSize
-	nodes.Good = true
-	r.Retain.reset(base, directory)
-	if r.Retain != nil {
-		r.Report.RetainLost += unknown
-	}
-	r.Report.Unknown += unknown
-	r.Nodes = nodes
-	r.Bits.Offset = recordsStart
-	for k := int64(0); k < count; k++ {
-		if _, good := r.Bits.Get(r.Vocabulary.RefBits); !good {
-			r.Report.Malformed = true
-			return out, false
-		}
-		entry := directory[k+1]
-		if entry.TypeId == tableBytesTypeId || entry.TypeId == tableStringTypeId {
-			n, good := r.Bits.Get(32)
-			if !good || !r.Bits.Align() {
-				r.Report.Malformed = true
-				return out, false
-			}
-			start := r.Bits.Offset / 8
-			if !r.Bits.Skip(int64(n) * 8) {
-				r.Report.Malformed = true
-				return out, false
-			}
-			payload := r.Bits.Buffer[start : start+int64(n)]
-			if entry.TypeId == tableStringTypeId && blobs&2 != 0 && !tableUtf8Valid(payload) {
-				r.Report.Malformed = true
-				return out, false
-			}
-			if entry.Offset != ^uint64(0) {
-				copy(unsafe.Slice((*byte)(unsafe.Add(base, entry.Offset+8)), int(n)), payload)
-			}
-			continue
-		}
-		if entry.Offset == ^uint64(0) {
-			if !tableMessageSkipBody(&r.Bits, r.Vocabulary, r.IndexBits, 0) {
-				r.Report.Malformed = true
-				return out, false
-			}
-			continue
-		}
-		t := root.NodeType(entry.TypeId)
-		walk := *r
-		extent := int64(0)
-		if !tableMessageExtent(&walk.tableMessagePlainReader, t, &extent) {
-			r.Report.Malformed = true
-			return out, false
-		}
-		r.Path = tableRetainPath{at: unsafe.Add(base, entry.Offset), node: uint32(k + 2)}
-		*r, ok = tableMessageLoadIntoRetain(*r, t, unsafe.Add(base, entry.Offset), tableRegionRound(int64(t.Size))+extent)
-		if !ok {
-			return out, false
-		}
-	}
-	if r.Bits.Offset != fieldsStart {
-		r.Report.Malformed = true
-		return out, false
-	}
-	r.Path = tableRetainPath{at: out, node: 1}
-	*r, ok = tableMessageLoadIntoRetain(*r, root, out, rootSize)
-	return out, ok
-}
-
 type TableRetainWriter struct {
 	Buffer    []byte
 	Offset    int64

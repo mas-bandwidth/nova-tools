@@ -8,4 +8,4 @@
 // base64 of the wire, or JSON text, each refused by name when damaged.
 package hookwire
 
-//go:generate go run github.com/mas-bandwidth/schema/v2/cmd/schema@v2.5.1-0.20261016000409-534490cb51c9 generate --lang go --out . ../../schemas/hook
+//go:generate go run github.com/mas-bandwidth/schema/v2/cmd/schema@v2.5.1-0.20261017012433-9b397a277ad3 generate --lang go --out . ../../schemas/hook

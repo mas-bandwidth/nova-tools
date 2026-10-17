@@ -40,6 +40,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
@@ -425,9 +426,7 @@ func legacyStamp(epoch, atMs int64, by string) string {
 }
 
 // loadLegacyStamp reads the hook record's stamp strictly: exactly what the
-// scripts write for the values it carries, or the same keys with the time as
-// RFC 3339 text (the record's earlier writer, read as the same lease and
-// never written), or legacy_shape. It is the one rule hook.Judge applies too.
+// scripts write for the values it carries, or legacy_shape.
 func loadLegacyStamp(v *Stamp, text []byte) schemaread.Report {
 	var s struct {
 		Epoch int64  `json:"epoch"`
@@ -436,29 +435,10 @@ func loadLegacyStamp(v *Stamp, text []byte) schemaread.Report {
 	}
 	d := json.NewDecoder(bytes.NewReader(text))
 	d.DisallowUnknownFields()
-	if d.Decode(&s) == nil && legacyStamp(s.Epoch, s.At, s.By) == string(text) {
-		*v = stamp(s.Epoch, s.At, s.By)
-		return schemaread.Report{}
-	}
-	var r struct {
-		Epoch int64  `json:"epoch"`
-		At    string `json:"at"`
-		By    string `json:"by"`
-	}
-	d = json.NewDecoder(bytes.NewReader(text))
-	d.DisallowUnknownFields()
-	if d.Decode(&r) != nil {
+	if d.Decode(&s) != nil || legacyStamp(s.Epoch, s.At, s.By) != string(text) {
 		return schemaread.Report{Reason: "legacy_shape"}
 	}
-	t, err := time.Parse(time.RFC3339, r.At)
-	if err != nil {
-		return schemaread.Report{Reason: "legacy_shape"}
-	}
-	by, err := json.Marshal(r.By)
-	if err != nil || fmt.Sprintf(`{"epoch":%d,"at":%q,"by":%s}`, r.Epoch, r.At, by) != string(text) {
-		return schemaread.Report{Reason: "legacy_shape"}
-	}
-	*v = stamp(r.Epoch, t.UnixMilli(), r.By)
+	*v = stamp(s.Epoch, s.At, s.By)
 	return schemaread.Report{}
 }
 
@@ -650,6 +630,19 @@ func edited(t *testing.T, text []byte, old, new string) []byte {
 	return []byte(out)
 }
 
+// hostile is the wire of a value the generated writer refuses to write (it
+// checks every bound): the value is written with a marker in bounds and the
+// marker bytes are replaced in the wire, exactly what a broken or older
+// writer could put on the bus. The marker must occur exactly once.
+func hostile(t *testing.T, wire, marker, with []byte) []byte {
+	t.Helper()
+	require.NotNil(t, wire)
+	require.Equal(t, 1, bytes.Count(wire, marker), "the marker %x occurs once", marker)
+	return bytes.Replace(wire, marker, with, 1)
+}
+
+func le32(v uint32) []byte { return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)} }
+
 func TestLayer1AckBeatHook(t *testing.T) {
 	t.Parallel()
 	const id = "01JZ8Q4W6V2N7K3M5X9R0T1Y2B"
@@ -714,7 +707,7 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			{"a push down with no reason", withAck(func(v *Ack) { v.ReasonLength = 0 }), "absent_required (reason)"},
 			{"stage absent from the JSON text", edited(t, goodAckText, "  \"stage\": \"read\",\n", ""), "absent_required (stage)"},
 			{"a stage the JSON text does not name", edited(t, goodAckText, `"stage": "read"`, `"stage": "lost"`), "absent_required (stage)"},
-			{"a NUL in the id", withAck(func(v *Ack) { v.Id[2] = 0 }), "malformed"},
+			{"a NUL in the id", hostile(t, withAck(func(v *Ack) { v.Id[2] = 1 }), []byte(id[:2]+"\x01"+id[3:]), []byte(id[:2]+"\x00"+id[3:])), "malformed"},
 			{"no ack at all", []byte("hello ack"), "malformed"},
 			{"a receipt line without its state", []byte("RECEIPTS RECEIPT id=" + id + " age=1m"), "legacy_shape"},
 			{"a receipt line with an unknown state", []byte(receiptLine(id, "lost", "1m")), "legacy_shape"},
@@ -742,9 +735,9 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			return beatWire(&v)
 		}
 		refuses(t, rb, "BEAT", beatHelp, goodBeatWire, append([]refusalCase{
-			{"stop_returns over 1024", withBeat(func(v *Beat) { v.StopReturns = 1025 }), "clamped"},
+			{"stop_returns over 1024", hostile(t, withBeat(func(v *Beat) { v.StopReturns = 1024 }), le32(1024), le32(1025)), "clamped"},
 			{"stop_returns over 1024 as JSON text", edited(t, goodBeatText, `"stop_returns": 3`, `"stop_returns": 1025`), "clamped"},
-			{"stop_returns over 1024 as base64 text", []byte(b64(withBeat(func(v *Beat) { v.StopReturns = 1025 }))), "clamped"},
+			{"stop_returns over 1024 as base64 text", []byte(b64(hostile(t, withBeat(func(v *Beat) { v.StopReturns = 1024 }), le32(1024), le32(1025)))), "clamped"},
 			{"a friend name over 64 bytes from a newer writer", writer(t, "wide-beat"), "clamped"},
 			{"a field that changed kind", writer(t, "changed-beat"), "kind_mismatch"},
 			{"friend absent", withBeat(func(v *Beat) { v.FriendNameLength = 0 }), "absent_required (friend_name)"},
@@ -754,7 +747,7 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			{"an until with no reason", withBeat(func(v *Beat) { v.UntilMs, v.UntilMsPresent = 1792003600000, true }), "absent_required (reason)"},
 			{"a reason with no until", withBeat(func(v *Beat) { v.ReasonLength = setText(v.Reason[:], "away") }), "absent_required (until_ms)"},
 			{"an active time before the epoch", withBeat(func(v *Beat) { v.ActiveMs = -1 }), "clamped (active_ms)"},
-			{"a NUL in the friend name", withBeat(func(v *Beat) { v.FriendName[2] = 0 }), "malformed"},
+			{"a NUL in the friend name", hostile(t, withBeat(func(v *Beat) { v.FriendName[2] = 1 }), []byte("ad\x01"), []byte("ad\x00")), "malformed"},
 			{"no beat at all", []byte("hello beat"), "malformed"},
 			{"an argv with a flag it never writes", []byte(`["friend","beat","ada","--lanes","4"]`), "legacy_shape"},
 			{"an argv with a time that is no RFC 3339", []byte(`["friend","beat","ada","--active","yesterday"]`), "legacy_shape"},
@@ -787,21 +780,15 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			{"at_ms before the epoch", withStamp(func(v *Stamp) { v.AtMs = -5 }), "absent_required (at_ms)"},
 			{"holder absent", withStamp(func(v *Stamp) { v.ByLength = 0 }), "absent_required (by)"},
 			{"at_ms absent from the JSON text", edited(t, goodStampText, "  \"at_ms\": 1792000000000,\n", ""), "absent_required (at_ms)"},
-			{"a NUL in the holder", withStamp(func(v *Stamp) { v.By[2] = 0 }), "malformed"},
+			{"a NUL in the holder", hostile(t, withStamp(func(v *Stamp) { v.By[2] = 1 }), []byte("no\x01a-friend 4242"), []byte("no\x00a-friend 4242")), "malformed"},
 			{"no stamp at all", []byte("hello stamp"), "malformed"},
-			// an unknown key, spacing or time text the scripts never write is
-			// refused by name, never read as no stamp (an RFC 3339 time reads:
-			// see the RFC 3339 stamp read below)
-			{"a legacy stamp with a time that is no RFC 3339", []byte(`{"epoch":7,"at":"yesterday","by":"x"}`), "legacy_shape"},
+			// the record's stamp before this wire: an RFC 3339 time, an
+			// unknown key or spacing the scripts never write is refused by
+			// name, never read as no stamp
+			{"a legacy stamp with an RFC 3339 time", []byte(`{"epoch":7,"at":"2026-10-11T12:00:00Z","by":"x"}`), "legacy_shape"},
 			{"a legacy stamp with a key it never writes", []byte(`{"epoch":7,"at":1792000000000,"by":"x","ttl":1}`), "legacy_shape"},
 			{"a legacy stamp spaced as the scripts never write it", []byte(`{"epoch":7, "at":1792000000000,"by":"x"}`), "legacy_shape"},
 		}, framing(goodStampWire, goodStampText)...))
-		// the record's stamp before this wire carried an RFC 3339 time: it reads
-		// as the same lease in milliseconds, as hook.Judge reads it
-		gotRFC, rfcRes, err := rs.Read([]byte(`{"epoch":7,"at":"2026-10-11T12:00:00Z","by":"x"}`))
-		require.NoError(t, err)
-		assert.Equal(t, schemaread.FormLegacy, rfcRes.Form)
-		assert.Equal(t, stamp(7, time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC).UnixMilli(), "x"), gotRFC)
 		gotStamp, res, err := rs.Read(writer(t, "newer-stamp"))
 		require.NoError(t, err, "a newer writer's stamp reads")
 		assert.Equal(t, 1, res.Unknown)
@@ -955,8 +942,12 @@ func TestLayer1AckBeatHook(t *testing.T) {
 		}
 		assert.Equal(t, uint64(4), rb.Counts().Reads(schemaread.FormLegacy))
 
-		// The stamp. The hook package reads every form since the reader cutover
-		// (hook.TestHookStampTyped pins it), so this test pins the table side.
+		// The stamp. The old writer is the hook record's scripts' JSON, the
+		// old reader hook.Judge: it reads the legacy stamp as a live lease of
+		// its holder. Through the switch it reads the JSON text form as the
+		// same lease (it keys on epoch and by, which the text form keeps, and
+		// skips at_ms), and a binary or base64 stamp as no lease: it never
+		// counts a stamp it cannot read, which is why readers go first.
 		rs := schemaread.NewReader(stampCodec(t))
 		for _, tc := range []struct {
 			epoch, at int64
@@ -967,6 +958,11 @@ func TestLayer1AckBeatHook(t *testing.T) {
 			{math.MaxInt64, math.MaxInt64, `quote " and \ slash`},
 		} {
 			line := legacyStamp(tc.epoch, tc.at, tc.by)
+			rec := map[string]string{"role": string(hook.Friend), "state": "hooked", "epoch": strconv.FormatInt(tc.epoch, 10)}
+			old := hook.JudgeWith(nil, "ada", rec, []hook.PushRead{{Live: line}})
+			require.Len(t, old.Pushes, 1)
+			assert.Equal(t, hook.PushArmed, old.Pushes[0].State, "the old reader reads the old writer: %s", line)
+			assert.Equal(t, tc.by, old.Pushes[0].By)
 
 			legacy, res, err := rs.Read([]byte(line))
 			require.NoError(t, err, line)
@@ -979,6 +975,12 @@ func TestLayer1AckBeatHook(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, form, res.Form)
 				assert.Equal(t, legacy, got, "the old form in and the new form in read identically (%s)", form)
+				meets := hook.JudgeWith(nil, "ada", rec, []hook.PushRead{{Live: string(out)}})
+				if form == schemaread.FormJSON {
+					assert.Equal(t, old.Pushes[0], meets.Pushes[0], "the old reader reads the JSON text stamp as the legacy one")
+					continue
+				}
+				assert.Equal(t, hook.PushDown, meets.Pushes[0].State, "the old reader does not count a %s table stamp", form)
 			}
 		}
 		assert.Equal(t, uint64(3), rs.Counts().Reads(schemaread.FormLegacy))
@@ -998,4 +1000,44 @@ func TestLayer1AckBeatHook(t *testing.T) {
 		n += mutants(t, rs, [][]byte{stampWire(&s), []byte(b64(stampWire(&s))), stampJSON(&s)})
 		assert.Greater(t, n, 2000)
 	})
+}
+
+// TestLayer1TextTransport: the generated SaveText and LoadText of Ack, Beat
+// and Stamp are the base64 text transport: the text equals the padded
+// standard base64 of the table's wire, and LoadText returns a value that
+// writes the same wire back.
+func TestLayer1TextTransport(t *testing.T) {
+	t.Parallel()
+	a := ack("01JA2B3C4D5E6F7G8H9J0KMNPQ", Stagedelivered, PushStateup, "")
+	aw := ackWire(&a)
+	require.NotNil(t, aw)
+	at, err := AckSaveText(&a)
+	require.NoError(t, err)
+	assert.Equal(t, b64(aw), at)
+	ag, err := AckLoadText(at, nil)
+	require.NoError(t, err)
+	assert.Equal(t, aw, ackWire(ag))
+
+	b := beat("rowan", 1760000000000, 1760000000000, 1760000600000, "working", 2)
+	bw := beatWire(&b)
+	require.NotNil(t, bw)
+	bt, err := BeatSaveText(&b)
+	require.NoError(t, err)
+	assert.Equal(t, b64(bw), bt)
+	bg, err := BeatLoadText(bt, nil)
+	require.NoError(t, err)
+	assert.Equal(t, bw, beatWire(bg))
+
+	s := stamp(21, 1760000000000, "rowan")
+	sw := stampWire(&s)
+	require.NotNil(t, sw)
+	st, err := StampSaveText(&s)
+	require.NoError(t, err)
+	assert.Equal(t, b64(sw), st)
+	sg, err := StampLoadText(st, nil)
+	require.NoError(t, err)
+	assert.Equal(t, sw, stampWire(sg))
+
+	_, err = AckLoadText("not base64!", nil)
+	require.Error(t, err)
 }

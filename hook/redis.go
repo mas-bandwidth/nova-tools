@@ -23,6 +23,10 @@ type Store struct {
 	// caller's context: a long-running holder's beat makes several, and one
 	// slow call never spends the next one's time.
 	Timeout time.Duration
+	// Stamps reads the leases and proofs this store judges; nil reads the
+	// JSON the record's scripts write (JSONStamps). hook/seatstamp is the
+	// reader of the typed stamp and the legacy JSON alike, counting each form.
+	Stamps StampReader
 }
 
 // call is ctx bounded by one round trip's Timeout, when the store has one.
@@ -473,7 +477,7 @@ func (s Store) Read(ctx context.Context, names ...string) ([]Status, time.Time, 
 		for j := range Pushes {
 			prs = append(prs, PushRead{Live: r.live[j].Val(), Proof: r.proof[j].Val(), LiveLeft: max(r.liveLeft[j].Val(), 0), ProofLeft: max(r.proofLeft[j].Val(), 0)})
 		}
-		out[i] = Judge(n, rec, prs)
+		out[i] = JudgeWith(s.Stamps, n, rec, prs)
 		out[i].Down = servedOf(served.Val(), now.UTC()).Down(out[i])
 	}
 	return out, now.UTC(), nil

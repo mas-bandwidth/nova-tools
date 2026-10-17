@@ -37,6 +37,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	// The blank import installs the typed record readers (pkg/config/rowsread
+	// init), so a fixed or base64 image reads in this binary and is not refused
+	// as unknown_form (S4: readers first).
+	_ "github.com/mas-bandwidth/nova-tools/pkg/config/rowsread"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
