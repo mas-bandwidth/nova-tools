@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"os"
 	"slices"
 	"sort"
@@ -33,6 +34,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
@@ -40,7 +42,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarmwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
@@ -2872,26 +2876,44 @@ func CarryLine(c Carry) string {
 // first blank one). It reads both shapes: a widen's `<card> attempt <n> head=<sha>` (ok
 // only with a card, a positive attempt and a full sha) and a finish-PR card's
 // `head=<sha> [branch=<pr branch>]` (ok with a full sha and no attempt), so `add` and
-// `brief` stage the slot from the head the line names.
+// `brief` stage the slot from the head the line names. The line's value is read through
+// the carry's strict reader in every form (carryOf). A line that does not read is no
+// carry here on purpose: the slot then stages from its base, as a rework with no pushed
+// head does (docs/SPEC-CARD-CONTRACT.md, "Where a rework starts"), and lint refuses the
+// brief (pkg/swarm lintpaths.go); the refusal is counted by name under MEMBER_CARRY
+// (owner's rule S4: the per-form counters are the cutover's evidence).
 func CarryOf(brief string) (c Carry, ok bool) {
+	c, found, err := carryOf(brief, carryReads)
+	if !found || err != nil {
+		return Carry{}, false
+	}
+	return c, true
+}
+
+// carryOf is the strict read of a brief's CARRY: line through r: found is false when the
+// header has no such line, and a line whose value does not read is refused by name
+// (`MEMBER_CARRY REFUSED: <reason>; run: nova-swarm member -h`), never read as absent,
+// empty or zero (owner's rules S2 and S4, readers first).
+func carryOf(brief string, r *schemaread.Reader[Carry]) (c Carry, found bool, err error) {
 	for i, l := range strings.Split(brief, "\n") {
 		l = strings.TrimSpace(l)
 		if i > 0 && l == "" {
 			break
 		}
-		rest, found := strings.CutPrefix(l, CarryKey)
-		if !found {
+		rest, ok := strings.CutPrefix(l, CarryKey)
+		if !ok {
 			continue
 		}
-		return parseCarry(strings.TrimSpace(rest))
+		c, _, err := r.Read([]byte(strings.TrimSpace(rest)))
+		return c, true, err
 	}
-	return Carry{}, false
+	return Carry{}, false, nil
 }
 
 // parseCarry reads a CARRY: line's fields, the inverse of CarryLine: a leading word that
 // is no key=value is the card, `attempt <n>` (or attempt=<n>) the attempt, and head= and
 // branch= their own. ok needs a full sha, and an attempt only with a card (a widen); a
-// finish-PR card names no attempt.
+// finish-PR card names no attempt. It is the carry's legacy form (carryReader).
 func parseCarry(rest string) (c Carry, ok bool) {
 	fields := strings.Fields(rest)
 	var gotHead bool
@@ -2929,6 +2951,150 @@ func parseCarry(rest string) (c Carry, ok bool) {
 	}
 	return c, gotHead && typedrec.IsFullSha(c.Head)
 }
+
+// carryLegacy recognises the CARRY: value CarryLine writes today: words with a blank
+// between them, or a single head=, branch= or attempt= word. Neither is padded standard
+// base64 (no blank, and `=` only as the closing pad), nor the schema JSON text (`{`).
+func carryLegacy(in []byte) bool {
+	t := bytes.TrimSpace(in)
+	if len(t) > 0 && t[0] == '{' {
+		return false
+	}
+	return bytes.ContainsAny(t, " \t") || bytes.HasPrefix(t, []byte("head=")) ||
+		bytes.HasPrefix(t, []byte("branch=")) || bytes.HasPrefix(t, []byte("attempt="))
+}
+
+// carryText is the text of a table string.
+func carryText(ref *swarmwire.TableRef) string {
+	v := swarmwire.TableStringAt(ref)
+	return string(v.Data[:v.Length])
+}
+
+// carryOfRoot is a loaded MemberCarry table as a Carry.
+func carryOfRoot(r *swarmwire.MemberCarry) Carry {
+	return Carry{Card: carryText(&r.Card), Attempt: int(r.Attempt), Head: carryText(&r.Head), Branch: carryText(&r.Branch)}
+}
+
+// carryJSON is c as the schema JSON text the generated MemberCarry builder reads: an
+// empty text or a zero attempt is absent (schemas/swarm/swarm.schema, Absence).
+func carryJSON(c Carry) []byte {
+	m := map[string]any{}
+	for k, v := range map[string]string{"card": c.Card, "head": c.Head, "branch": c.Branch} {
+		if v != "" {
+			m[k] = v
+		}
+	}
+	if c.Attempt != 0 {
+		m["attempt"] = c.Attempt
+	}
+	b, _ := json.Marshal(m) // a map of text and an int always marshals
+	return b
+}
+
+// carryRegion is a 64-byte aligned region of n bytes for a table load.
+func carryRegion(n int64) []byte {
+	raw := make([]byte, n+63)
+	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
+	return raw[off : off+uintptr(n)]
+}
+
+// carryStrict is a generated TableReport as the strict read decides on it.
+func carryStrict(r swarmwire.TableReport, ok bool) schemaread.Report {
+	out := schemaread.Report{Unknown: int(r.Unknown), KindMismatch: int(r.KindMismatch), Clamped: int(r.Clamped), Malformed: r.Malformed || !ok || r.Duplicate > 0}
+	if r.Verdict == swarmwire.TableOpenRefused || r.Verdict == swarmwire.TableOpenDamaged {
+		out.Reason = r.Err().Error()
+	}
+	return out
+}
+
+// carryBuilt hands use the MemberCarry table the schema JSON text builds, while its
+// builder is alive.
+func carryBuilt(text []byte, use func(*swarmwire.MemberCarry)) schemaread.Report {
+	var b swarmwire.MemberCarryBuilder
+	if !b.Init() {
+		return carryStrict(swarmwire.TableReport{}, false)
+	}
+	defer b.Shutdown()
+	var r swarmwire.TableReport
+	if !swarmwire.MemberCarryFromJson(&b, text, &r) || !b.Lock() {
+		return carryStrict(r, false)
+	}
+	use(b.AsConst())
+	return carryStrict(r, true)
+}
+
+// carryReader is the CARRY: record's strict reader (owner's rules S1 and S2; the
+// MemberCarry table of schemas/swarm/swarm.schema): it reads the table wire, the padded
+// standard base64 of that wire, the schema JSON text and the legacy words CarryLine writes
+// today, refuses a damaged value by name and counts each read under its form. Writers stay
+// legacy (CarryLine), so the read counters are the cutover's evidence (S4).
+func carryReader() *schemaread.Reader[Carry] {
+	return schemaread.NewReader(&schemaread.Codec[Carry]{
+		Name: "MEMBER_CARRY", Help: "nova-swarm member -h",
+		LoadWire: func(v *Carry, wire []byte) schemaread.Report {
+			*v = Carry{}
+			n := swarmwire.MemberCarryLoadMeasure(wire)
+			if n < 0 {
+				return carryStrict(swarmwire.TableReport{Malformed: true}, false)
+			}
+			var r swarmwire.TableReport
+			root := swarmwire.MemberCarryLoad(carryRegion(n), wire, &r)
+			if root == nil {
+				return carryStrict(r, false)
+			}
+			*v = carryOfRoot(root)
+			return carryStrict(r, true)
+		},
+		LoadJSON: func(v *Carry, text []byte) schemaread.Report {
+			*v = Carry{}
+			return carryBuilt(text, func(root *swarmwire.MemberCarry) { *v = carryOfRoot(root) })
+		},
+		Legacy: carryLegacy,
+		LoadLegacy: func(v *Carry, in []byte) schemaread.Report {
+			c, ok := parseCarry(string(in))
+			if !ok {
+				return schemaread.Report{Malformed: true}
+			}
+			*v = c
+			return schemaread.Report{}
+		},
+		// parseCarry's own checks, held for every form (schemas/swarm/swarm.schema,
+		// MemberCarry): an attempt is never negative (0 is absent), an attempt needs a
+		// card, and the head is a full sha; text holds no NUL and is UTF-8.
+		Constraints: func(v *Carry, c *schemaread.Checker) {
+			c.Bound("attempt", int64(v.Attempt), 0, math.MaxInt64)
+			c.Required("card", v.Attempt == 0 || v.Card != "")
+			c.Required("head", typedrec.IsFullSha(v.Head))
+			for _, f := range [][2]string{{"card", v.Card}, {"head", v.Head}, {"branch", v.Branch}} {
+				c.Text(f[0], f[1], math.MaxInt)
+			}
+		},
+		SaveWire: func(v *Carry) []byte {
+			var out []byte
+			carryBuilt(carryJSON(*v), func(root *swarmwire.MemberCarry) {
+				buf := make([]byte, swarmwire.MemberCarryMeasure(root))
+				if swarmwire.MemberCarrySave(root, buf) == int64(len(buf)) {
+					out = buf
+				}
+			})
+			return out
+		},
+		SaveJSON: func(v *Carry) []byte {
+			var out []byte
+			carryBuilt(carryJSON(*v), func(root *swarmwire.MemberCarry) {
+				buf := make([]byte, swarmwire.MemberCarryToJsonMeasure(root))
+				if swarmwire.MemberCarryToJson(root, buf) == int64(len(buf)) {
+					out = buf
+				}
+			})
+			return out
+		},
+	})
+}
+
+// carryReads is the CARRY: record's one reader, so its per-form read counters accumulate
+// across reads (owner's rule S4).
+var carryReads = carryReader()
 
 // Carried is a work packet as the member stages it: one with no pushed head of its own
 // (sprint.BaseOf found none) whose brief carries a CARRY: line starts from that head, as a
