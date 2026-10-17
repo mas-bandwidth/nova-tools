@@ -102,6 +102,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/ledgerwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // UnreadableSuffix names where the bytes of an unreadable box are kept when a lockdown has
@@ -262,38 +264,171 @@ func ReadBox(path string) (Box, error) {
 	if len(data) == maxBoxBytes {
 		return Box{}, fmt.Errorf("%s reached the %d-byte fuse box limit", path, maxBoxBytes)
 	}
-	var b Box
-	// The top level is required to be the object a box is, before any decoding: a
-	// null, an array, a string, a number or a boolean decodes into a Box with no
-	// error -- a null leaves it zero -- and a zero box reads as VERIFIED CLEAR, a
-	// fail-open in a safety control reached by one hand-edited byte (note 2).
-	if kind, object, found := topLevelKind(data); found {
+	// The top level is required to be the object a box is, before any deciding
+	// of form: a null, an array, a string, a number or a boolean is refused and
+	// names the kind it found (note 2). The typed forms are not JSON, so this
+	// walk lets them through to the dual read.
+	if kind, object, found := topLevelKind(data); found && !object {
+		return Box{}, fmt.Errorf("%s is not a box: top level is %s; %s", path, kind, restoreBoxRemedy)
+	}
+	b, _, err := boxReader.Read(data)
+	if err != nil {
+		return Box{}, fmt.Errorf("%s is not a readable fuse box: %w", path, err)
+	}
+	return b, nil
+}
+
+// boxForm is the one byte a variable table's wire opens with (S2, the owner's
+// rules; schemas/ledger/ledger.schema tables are variable).
+const boxForm = 1
+
+// boxCodec is the fuse box's strict read: the generated FuseBox table of
+// pkg/ledgerwire (schemas/ledger), the padded standard base64 of its image,
+// and the legacy JSON form every writer writes today. Every read is counted per
+// form (S4, readers first; UNION.md C13); a damaged value of any form is
+// refused by name and never read as absent, empty or zero (note 1, note 2).
+var boxCodec = &schemaread.Codec[Box]{
+	Name:  "FUSE_BOX",
+	Help:  "nova-fuse status -h",
+	Forms: []byte{boxForm},
+	Reset: func(b *Box) { *b = Box{} },
+	Measure: func(wire []byte) error {
+		_, err := ledgerwire.FuseBoxLoadMeasureReason(wire)
+		return err
+	},
+	LoadWire: loadBoxTyped,
+	Legacy: func(in []byte) bool {
+		t := bytes.TrimLeft(in, " \t\r\n")
+		return len(t) > 0 && t[0] == '{'
+	},
+	LoadLegacy: loadBoxLegacy,
+}
+
+// boxReader is the process's fuse box reader; ReadBox reads through it.
+var boxReader = schemaread.NewReader(boxCodec)
+
+// loadBoxLegacy is the legacy JSON read, exactly the read ReadBox made before
+// the dual read: a top level that is not an object, a duplicate member, an
+// unknown member, a malformed value and trailing data are each refused (note
+// 2). The forms of the refusal are reported to the strict read so it names
+// them; a null quarantine is normalised to an empty map.
+func loadBoxLegacy(b *Box, in []byte) schemaread.Report {
+	if kind, object, found := topLevelKind(in); found {
 		if !object {
-			return Box{}, fmt.Errorf("%s is not a box: top level is %s; %s", path, kind, restoreBoxRemedy)
+			return schemaread.Report{Reason: "not_a_box_top_level_" + kind}
 		}
-		if err := rejectDuplicateBoxMembers(data); err != nil {
-			return Box{}, fmt.Errorf("%s is not readable JSON: %w", path, err)
+		if err := rejectDuplicateBoxMembers(in); err != nil {
+			return schemaread.Report{Reason: "duplicate_top_level_member"}
 		}
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	// A box is an object with the two members SPEC.md names, and an unknown member
-	// is refused: a gate that quietly ignored a key it does not know would answer
-	// CLEAR over a box a hand or another tool meant to block with it. The safe
-	// reading for a gate is to refuse, and the refusal is CANNOT TELL like every
-	// other shape (note 2).
+	dec := json.NewDecoder(bytes.NewReader(in))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&b); err != nil {
-		return Box{}, fmt.Errorf("%s is not readable JSON: %w", path, err)
+	if err := dec.Decode(b); err != nil {
+		return schemaread.Report{Reason: "malformed"}
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		// A decode stops at the end of the first value, so without this a box with
-		// anything after it would read as the value before the trailing bytes.
-		return Box{}, fmt.Errorf("%s is not readable JSON: data follows the box object", path)
+		return schemaread.Report{Malformed: true}
 	}
 	if b.Quarantine == nil {
 		b.Quarantine = map[string]Fuse{}
 	}
-	return b, nil
+	return schemaread.Report{}
+}
+
+// reportOfBox maps the generated FuseBox table report to the strict read's.
+func reportOfBox(rep *ledgerwire.TableReport, ok bool) schemaread.Report {
+	out := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped), Malformed: rep.Malformed || !ok}
+	if rep.Verdict == ledgerwire.TableOpenRefused || rep.Verdict == ledgerwire.TableOpenDamaged {
+		if err := rep.Err(); err != nil {
+			out.Reason = err.Error()
+		}
+	}
+	return out
+}
+
+// typedDoneBox is the report of a typed load whose value is read: a load the
+// generated table accepted is refused as wire_damaged when the image is not
+// the canonical image of what it read (S2: damage is refused by name).
+func typedDoneBox(rep *ledgerwire.TableReport, isCanonical func() bool) schemaread.Report {
+	out := reportOfBox(rep, true)
+	if out.Reason == "" && !out.Malformed && out.KindMismatch == 0 && out.Clamped == 0 && !isCanonical() {
+		out.Reason = schemaread.ReasonWireDamaged
+	}
+	return out
+}
+
+// boxFromTable is the FuseBox row as the Go code holds it; ok is false when a
+// quarantine surface is named twice (putOnce).
+func boxFromTable(r *ledgerwire.FuseBox, ar []*ledgerwire.TableArena) (Box, bool) {
+	var b Box
+	b.Quarantine = map[string]Fuse{}
+	if r.Lockdown != 0 {
+		fr := ledgerwire.FuseAt(&r.Lockdown, ar...)
+		if fr == nil {
+			return Box{}, false
+		}
+		b.Lockdown = &Fuse{At: strBox(fr.At, ar), Reason: strBox(fr.Reason, ar)}
+	}
+	ok := true
+	ledgerwire.FuseBoxQuarantineEach(&r.Quarantine, func(e *ledgerwire.QuarantineEntryRow) bool {
+		s := strBox(e.Surface, ar)
+		if _, dup := b.Quarantine[s]; dup {
+			ok = false
+			return false
+		}
+		b.Quarantine[s] = Fuse{At: strBox(e.Fuse.At, ar), Reason: strBox(e.Fuse.Reason, ar)}
+		return true
+	}, ar...)
+	if !ok {
+		return Box{}, false
+	}
+	return b, true
+}
+
+// strBox is the text of a string slot in the arena a table was read into.
+func strBox(slot int64, ar []*ledgerwire.TableArena) string {
+	if slot == 0 {
+		return ""
+	}
+	v := ledgerwire.TableStringAt(&slot, ar...)
+	return string(v.Data)
+}
+
+// loadBoxTyped is the read of the generated FuseBox table image: measure, load
+// into a fresh builder, read the value, and hold the image to its canonical
+// re-encoding so a flipped byte that moves the shape is refused (S2).
+func loadBoxTyped(b *Box, wire []byte) schemaread.Report {
+	var bb ledgerwire.FuseBoxBuilder
+	if !bb.Init() {
+		return schemaread.Report{Malformed: true}
+	}
+	defer bb.Shutdown()
+	var rep ledgerwire.TableReport
+	if !ledgerwire.FuseBoxLoadBuilder(&bb, wire, &rep) {
+		return reportOfBox(&rep, false)
+	}
+	root := bb.GetRoot()
+	ar := []*ledgerwire.TableArena{&bb.Arena}
+	bo, ok := boxFromTable(root, ar)
+	if !ok {
+		return schemaread.Report{Malformed: true}
+	}
+	*b = bo
+	return typedDoneBox(&rep, func() bool {
+		if !bb.Lock() {
+			return false
+		}
+		c := bb.AsConst()
+		if c == nil {
+			return false
+		}
+		n := ledgerwire.FuseBoxMeasure(c)
+		if n != int64(len(wire)) {
+			return false
+		}
+		out := make([]byte, n)
+		return ledgerwire.FuseBoxSave(c, out) == n && bytes.Equal(out, wire)
+	})
 }
 
 // rejectDuplicateBoxMembers walks the top-level object before struct decoding. JSON field
