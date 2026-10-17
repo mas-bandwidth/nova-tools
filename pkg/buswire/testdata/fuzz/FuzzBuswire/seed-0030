@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x01')
+[]byte("{\n  \"id\": \"01JA2B3C4D5E6F7G8H9J0KMNPQ\",\n  \"from\": \"sender\",\n  \"to\": [\n    {\n      \"s\": \"reader-a\"\n    },\n    {\n      \"s\": \"reader-b\"\n    }\n  ],\n  \"cc\": [\n    {\n      \"s\": \"reader-c\"\n    }\n  ],\n  \"re\": \"01JA2B3C4D5E6F7G8H9J0KMNPA\",\n  \"kind\": \"ask\",\n  \"subject\": \"#202 HOLD at 3f9c\",\n  \"card\": \"l1-defs-bus-envelope-2\",\n  \"head\": \"3f9c3f9c3f9c3f9c3f9c3f9c3f9c3f9c3f9c3f9c\",\n  \"token\": \"retry-1\",\n  \"at_ms\": 1792098245000,\n  \"due_ms\": 1792098845000,\n  \"body\": \"the reader found it broken:\\n- a line\\n\"\n}\n")
