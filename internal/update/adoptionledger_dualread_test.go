@@ -94,11 +94,10 @@ func adoptionBase64(image []byte) []byte {
 // returns the refusal and the form's count before and after.
 func adoptionRead(t *testing.T, r *schemaread.Reader[adoptionLedgerValue], in []byte) ([]adoption, schemaread.Form, uint64, uint64, error) {
 	t.Helper()
-	before := schemaread.FormNone
-	before = r.Detect(in)
-	was := r.Counts().Reads(before)
-	rows, err := loadAdoptionThrough(r, bytes.NewReader(in))
-	return rows, before, was, r.Counts().Reads(before), err
+	form := r.Detect(in)
+	was := r.Counts().Reads(form)
+	rows, err := loadAdoptionThrough(r, strings.NewReader(string(in)))
+	return rows, form, was, r.Counts().Reads(form), err
 }
 
 func TestAdoptionLedgerDualRead(t *testing.T) {
@@ -124,7 +123,7 @@ func TestAdoptionLedgerDualRead(t *testing.T) {
 		c := c
 		t.Run("reads "+c.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := loadAdoption(bytes.NewReader(c.in))
+			got, err := loadAdoption(strings.NewReader(string(c.in)))
 			require.NoError(t, err, c.name)
 			require.Equal(t, want, got, "%s reads the one value", c.name)
 		})
