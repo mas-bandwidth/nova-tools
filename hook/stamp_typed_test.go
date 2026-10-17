@@ -15,6 +15,9 @@ import (
 // no stamp in silence), the RFC 3339 predecessor is refused as legacy_shape
 // (the one rule pkg/hookwire pins too), and each read is counted under the
 // form it arrived in. The reader's strict cases are TestSeatHookTypedStamp.
+// This card's change over the stream base is read-side tests only
+// (seat_stamp_test.go and stamp_typed_test.go); the typed reader itself ships
+// with the seat hook reader.
 func TestHookStampTyped(t *testing.T) {
 	t.Parallel()
 	const epoch, atMS = 5, int64(1792000000000)
