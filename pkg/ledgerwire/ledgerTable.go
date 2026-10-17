@@ -17,7 +17,6 @@ type CairnLogRecord = CairnLogRecordRow
 type Fuse = FuseRow
 type QuarantineEntry = QuarantineEntryRow
 type FuseBox = FuseBoxRow
-type ReceiptID = ReceiptIDRow
 type DogfoodReceipt = DogfoodReceiptRow
 
 // TableEnumId: CairnEvent on the TABLE wire rides as the 64-bit hash of its VARIANT
@@ -125,7 +124,7 @@ func LedgerKeySaveBodyFields(w *TableWriter, value *LedgerKey) bool {
 			return false
 		}
 		if value.DayLength > 0 {
-			if ref := w.Ids.refAtHit(35, 0xca8d3918f4578f1d); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(33, 0xca8d3918f4578f1d); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.DayLength < 0 || value.DayLength > 10 {
@@ -166,7 +165,7 @@ func LedgerKeySaveBodyFields(w *TableWriter, value *LedgerKey) bool {
 	}
 	{
 		if value.Card != 0 {
-			if ref := w.Ids.refAtHit(32, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(31, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Card == 0 {
@@ -186,7 +185,7 @@ func LedgerKeySaveBodyFields(w *TableWriter, value *LedgerKey) bool {
 	}
 	{
 		if value.Model != 0 {
-			if ref := w.Ids.refAtHit(30, 0x9de543933e6e703a); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(29, 0x9de543933e6e703a); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Model == 0 {
@@ -382,7 +381,7 @@ func LedgerKeySaveBodyFieldsRetain(w *TableRetainWriter, value *LedgerKey) bool 
 			return false
 		}
 		if value.DayLength > 0 {
-			if ref := w.Ids.refAtHit(35, 0xca8d3918f4578f1d); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(33, 0xca8d3918f4578f1d); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.DayLength < 0 || value.DayLength > 10 {
@@ -423,7 +422,7 @@ func LedgerKeySaveBodyFieldsRetain(w *TableRetainWriter, value *LedgerKey) bool 
 	}
 	{
 		if value.Card != 0 {
-			if ref := w.Ids.refAtHit(32, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(31, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Card == 0 {
@@ -443,7 +442,7 @@ func LedgerKeySaveBodyFieldsRetain(w *TableRetainWriter, value *LedgerKey) bool 
 	}
 	{
 		if value.Model != 0 {
-			if ref := w.Ids.refAtHit(30, 0x9de543933e6e703a); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(29, 0x9de543933e6e703a); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Model == 0 {
@@ -752,7 +751,7 @@ func TokenValueSaveBodyFields(w *TableWriter, value *TokenValue) bool {
 	if value.AmountPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(25, 0x8113fe7ea2b16969); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(24, 0x8113fe7ea2b16969); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				w.Put64(uint64(value.Amount))
@@ -867,7 +866,7 @@ func TokenValueSaveBodyFieldsRetain(w *TableRetainWriter, value *TokenValue) boo
 	if value.AmountPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(25, 0x8113fe7ea2b16969); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(24, 0x8113fe7ea2b16969); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				w.Put64(uint64(value.Amount))
@@ -1101,7 +1100,7 @@ func LedgerValueSaveBody(w *TableWriter, value *LedgerValue) bool {
 func LedgerValueSaveBodyFields(w *TableWriter, value *LedgerValue) bool {
 	{
 		if value.Provider != 0 {
-			if ref := w.Ids.refAtHit(38, 0xd02b4c8c65fb54dc); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(36, 0xd02b4c8c65fb54dc); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Provider == 0 {
@@ -1124,7 +1123,7 @@ func LedgerValueSaveBodyFields(w *TableWriter, value *LedgerValue) bool {
 			return false
 		}
 		if value.TokensCount > 0 {
-			if ref := w.Ids.refAtHit(29, 0x93fab8f021712b13); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(28, 0x93fab8f021712b13); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.TokensCount < 0 || value.TokensCount > 5 {
@@ -1423,7 +1422,7 @@ func LedgerValueSaveBodyRetain(w *TableRetainWriter, value *LedgerValue) bool {
 func LedgerValueSaveBodyFieldsRetain(w *TableRetainWriter, value *LedgerValue) bool {
 	{
 		if value.Provider != 0 {
-			if ref := w.Ids.refAtHit(38, 0xd02b4c8c65fb54dc); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(36, 0xd02b4c8c65fb54dc); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Provider == 0 {
@@ -1446,7 +1445,7 @@ func LedgerValueSaveBodyFieldsRetain(w *TableRetainWriter, value *LedgerValue) b
 			return false
 		}
 		if value.TokensCount > 0 {
-			if ref := w.Ids.refAtHit(29, 0x93fab8f021712b13); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(28, 0x93fab8f021712b13); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.TokensCount < 0 || value.TokensCount > 5 {
@@ -1887,7 +1886,7 @@ func CairnLogRecordSaveBodyFields(w *TableWriter, value *CairnLogRecord) bool {
 					w.putLebWide(0)
 				}
 			case CairnEventopen:
-				w.IdAt(45, 0xf84f97b4633670e9)
+				w.IdAt(43, 0xf84f97b4633670e9)
 			case CairnEventappend:
 				w.IdAt(9, 0x3e7fe942f71f1e61)
 			default:
@@ -1950,7 +1949,7 @@ func CairnLogRecordSaveBodyFields(w *TableWriter, value *CairnLogRecord) bool {
 			return false
 		}
 		if value.EntryLength > 0 {
-			if ref := w.Ids.refAtHit(34, 0xbe2a85bf4c0ca913); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(32, 0xbe2a85bf4c0ca913); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.EntryLength < 0 || value.EntryLength > 128 {
@@ -1997,7 +1996,7 @@ func CairnLogRecordSaveBodyFields(w *TableWriter, value *CairnLogRecord) bool {
 	}
 	{
 		if value.Stamp != 0 {
-			if ref := w.Ids.refAtHit(42, 0xee7ba9ad45c64144); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(40, 0xee7ba9ad45c64144); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Stamp == 0 {
@@ -2017,7 +2016,7 @@ func CairnLogRecordSaveBodyFields(w *TableWriter, value *CairnLogRecord) bool {
 	}
 	{
 		if value.Publish != PublishPolicyNone {
-			if ref := w.Ids.refAtHit(40, 0xe2bfe8411c472768); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(38, 0xe2bfe8411c472768); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Publish {
@@ -2026,13 +2025,13 @@ func CairnLogRecordSaveBodyFields(w *TableWriter, value *CairnLogRecord) bool {
 					w.putLebWide(0)
 				}
 			case PublishPolicynever:
-				w.IdAt(36, 0xcbd8031e3d026dc9)
+				w.IdAt(34, 0xcbd8031e3d026dc9)
 			case PublishPolicymanual:
 				w.IdAt(15, 0x567e8790c5b15043)
 			case PublishPolicydeferred:
-				w.IdAt(39, 0xdbbcbbece325734a)
+				w.IdAt(37, 0xdbbcbbece325734a)
 			case PublishPolicyimmediate:
-				w.IdAt(41, 0xed261b159d41113a)
+				w.IdAt(39, 0xed261b159d41113a)
 			default:
 				return false
 			}
@@ -2289,7 +2288,7 @@ func CairnLogRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *CairnLogRec
 					w.putLebWide(0)
 				}
 			case CairnEventopen:
-				w.IdAt(45, 0xf84f97b4633670e9)
+				w.IdAt(43, 0xf84f97b4633670e9)
 			case CairnEventappend:
 				w.IdAt(9, 0x3e7fe942f71f1e61)
 			default:
@@ -2352,7 +2351,7 @@ func CairnLogRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *CairnLogRec
 			return false
 		}
 		if value.EntryLength > 0 {
-			if ref := w.Ids.refAtHit(34, 0xbe2a85bf4c0ca913); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(32, 0xbe2a85bf4c0ca913); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.EntryLength < 0 || value.EntryLength > 128 {
@@ -2399,7 +2398,7 @@ func CairnLogRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *CairnLogRec
 	}
 	{
 		if value.Stamp != 0 {
-			if ref := w.Ids.refAtHit(42, 0xee7ba9ad45c64144); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(40, 0xee7ba9ad45c64144); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Stamp == 0 {
@@ -2419,7 +2418,7 @@ func CairnLogRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *CairnLogRec
 	}
 	{
 		if value.Publish != PublishPolicyNone {
-			if ref := w.Ids.refAtHit(40, 0xe2bfe8411c472768); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(38, 0xe2bfe8411c472768); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Publish {
@@ -2428,13 +2427,13 @@ func CairnLogRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *CairnLogRec
 					w.putLebWide(0)
 				}
 			case PublishPolicynever:
-				w.IdAt(36, 0xcbd8031e3d026dc9)
+				w.IdAt(34, 0xcbd8031e3d026dc9)
 			case PublishPolicymanual:
 				w.IdAt(15, 0x567e8790c5b15043)
 			case PublishPolicydeferred:
-				w.IdAt(39, 0xdbbcbbece325734a)
+				w.IdAt(37, 0xdbbcbbece325734a)
 			case PublishPolicyimmediate:
-				w.IdAt(41, 0xed261b159d41113a)
+				w.IdAt(39, 0xed261b159d41113a)
 			default:
 				return false
 			}
@@ -3244,7 +3243,7 @@ func QuarantineEntrySaveBodyFields(w *TableWriter, value *QuarantineEntry) bool 
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(27, 0x868e6d78db2c3430)
+		ref := w.Ids.refAtHit(26, 0x868e6d78db2c3430)
 		start := w.Ids.Count
 		n := FuseMeasureBody(&value.Fuse, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -3405,7 +3404,7 @@ func QuarantineEntrySaveBodyFieldsRetain(w *TableRetainWriter, value *Quarantine
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(27, 0x868e6d78db2c3430)
+		ref := w.Ids.refAtHit(26, 0x868e6d78db2c3430)
 		start := w.Ids.Count
 		payload := TableRetainWriter{Measuring: true, Ids: w.Ids}
 		{
@@ -3725,7 +3724,7 @@ func FuseBoxSaveBodyFields(w *TableWriter, value *FuseBox) bool {
 			return false
 		}
 		if value.Quarantine.Count > 0 {
-			if ref := w.Ids.refAtHit(24, 0x7ecc5a61e15573d1); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(23, 0x7ecc5a61e15573d1); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Quarantine.Count < 0 {
@@ -4000,7 +3999,7 @@ func FuseBoxSaveBodyFieldsRetain(w *TableRetainWriter, value *FuseBox) bool {
 			return false
 		}
 		if value.Quarantine.Count > 0 {
-			if ref := w.Ids.refAtHit(24, 0x7ecc5a61e15573d1); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(23, 0x7ecc5a61e15573d1); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Quarantine.Count < 0 {
@@ -4375,423 +4374,6 @@ func FuseBoxQuarantineEach(holder *TableList[QuarantineEntryRow], visit func(*Qu
 	return true
 }
 
-// ReceiptIDReset restores ReceiptID's declared defaults in place, reusing the storage
-// the value already holds. The reader calls it before overlaying.
-func ReceiptIDReset(value *ReceiptID) {
-	clear(value.Value[:])
-	value.ValueLength = 0
-}
-
-func ReceiptIDMeasureBody(value *ReceiptID, ids *TableIds) int64 {
-	w := TableWriter{Measuring: true, Ids: ids}
-	if !ReceiptIDSaveBody(&w, value) {
-		return -1
-	}
-	return w.Offset
-}
-
-func ReceiptIDSaveBody(w *TableWriter, value *ReceiptID) bool {
-	if !ReceiptIDSaveBodyFields(w, value) {
-		return false
-	}
-	w.Put8(0)
-	return !w.Overflow && !w.Ids.Overflow
-}
-func ReceiptIDSaveBodyFields(w *TableWriter, value *ReceiptID) bool {
-	{
-		if value.ValueLength < 0 || value.ValueLength > 8 {
-			return false
-		}
-		if value.ValueLength > 0 {
-			if ref := w.Ids.refAtHit(23, 0x7ce4fd9430e80cea); !w.headerPair(ref, 12) {
-				w.headerRest(ref, 12)
-			}
-			if value.ValueLength < 0 || value.ValueLength > 8 {
-				return false
-			}
-			{
-				n := int(value.ValueLength)
-				var hi, z uint64
-				p := value.Value[:n]
-				if len(p) >= 8 {
-					x := tableUtf8Word(p)
-					hi |= x
-					z |= (x - 0x0101010101010101) &^ x
-					p = p[8:]
-				}
-				if len(p) > 0 {
-					if n >= 8 {
-						x := tableUtf8Word(value.Value[n-8:])
-						hi |= x
-						z |= (x - 0x0101010101010101) &^ x
-					} else {
-						for _, c := range p {
-							x := uint64(c)
-							hi |= x
-							z |= (x - 1) &^ x
-						}
-					}
-				}
-				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Value[:n]) {
-					return false
-				}
-			}
-			if !w.putLebPair(uint64(value.ValueLength)) {
-				w.putLebWide(uint64(value.ValueLength))
-			}
-			w.Raw(value.Value[:value.ValueLength])
-		}
-	}
-	return !w.Overflow && !w.Ids.Overflow
-}
-
-func ReceiptIDLoadBody(r *TableReader, value *ReceiptID) bool {
-	ReceiptIDReset(value)
-	for {
-		ref, ok := r.lebPair()
-		if !ok {
-			ref, ok = r.lebWide()
-		}
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		fieldID, ok := r.Resolve(ref)
-		if !ok || !r.Has(1) {
-			r.Report.Malformed = true
-			return false
-		}
-		kind := r.Get8()
-		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
-			r.Report.Malformed = true
-			return false
-		}
-		switch fieldID {
-		case 0x7ce4fd9430e80cea: // value
-			if kind != 12 {
-				r.Report.KindMismatch++
-				if !r.Skip(kind) {
-					r.Report.Malformed = true
-					return false
-				}
-				break
-			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
-			}
-			if !tableUtf8Valid(sub.Buffer) {
-				r.Report.Malformed = true
-				clear(value.Value[:])
-				value.ValueLength = 0
-				break
-			}
-			keep := int64(len(sub.Buffer))
-			if keep > 8 {
-				keep = tableUtf8Clamp(sub.Buffer, 8)
-				r.Report.Clamped++
-			}
-			clear(value.Value[:])
-			copy(value.Value[:keep], sub.Buffer)
-			value.ValueLength = int32(keep)
-		case 0xffffffffffffffff:
-			if !r.Skip(kind) {
-				r.Report.Malformed = true
-				return false
-			}
-		default:
-			r.Report.Unknown++
-			if !r.Skip(kind) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-
-const ReceiptIDLoadRetainBuilder = "ReceiptID: retention requires a region round trip through the VARIABLE form"
-const ReceiptIDSaveRetainMessages = "ReceiptID: retention requires a region round trip through the VARIABLE form"
-
-func ReceiptIDLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *ReceiptID {
-	return (*ReceiptID)(tableRegionLoadRetain(region, wire, ReceiptIDTableType(), ReceiptIDTableType().NodeType, 0, report, retain))
-}
-func ReceiptIDMeasureRetain(value *ReceiptID, retain *TableRetain, allocator ...TableAllocator) int64 {
-	return tableRegionSaveRetain(unsafe.Pointer(value), ReceiptIDTableType(), nil, true, retain, nil, allocator...)
-}
-func ReceiptIDSaveRetain(value *ReceiptID, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
-	if report == nil {
-		return -1
-	}
-	return tableRegionSaveRetain(unsafe.Pointer(value), ReceiptIDTableType(), buffer, false, retain, report, allocator...)
-}
-func ReceiptIDMeasureBodyRetain(value *ReceiptID, ids *TableRetainIds) int64 {
-	w := TableRetainWriter{Measuring: true, Ids: ids}
-	if !ReceiptIDSaveBodyRetain(&w, value) {
-		return -1
-	}
-	return w.Offset
-}
-
-func ReceiptIDSaveBodyRetain(w *TableRetainWriter, value *ReceiptID) bool {
-	if !ReceiptIDSaveBodyFieldsRetain(w, value) {
-		return false
-	}
-	w.Put8(0)
-	return !w.Overflow && !w.Ids.Overflow
-}
-func ReceiptIDSaveBodyFieldsRetain(w *TableRetainWriter, value *ReceiptID) bool {
-	{
-		if value.ValueLength < 0 || value.ValueLength > 8 {
-			return false
-		}
-		if value.ValueLength > 0 {
-			if ref := w.Ids.refAtHit(23, 0x7ce4fd9430e80cea); !w.headerPair(ref, 12) {
-				w.headerRest(ref, 12)
-			}
-			if value.ValueLength < 0 || value.ValueLength > 8 {
-				return false
-			}
-			{
-				n := int(value.ValueLength)
-				var hi, z uint64
-				p := value.Value[:n]
-				if len(p) >= 8 {
-					x := tableUtf8Word(p)
-					hi |= x
-					z |= (x - 0x0101010101010101) &^ x
-					p = p[8:]
-				}
-				if len(p) > 0 {
-					if n >= 8 {
-						x := tableUtf8Word(value.Value[n-8:])
-						hi |= x
-						z |= (x - 0x0101010101010101) &^ x
-					} else {
-						for _, c := range p {
-							x := uint64(c)
-							hi |= x
-							z |= (x - 1) &^ x
-						}
-					}
-				}
-				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Value[:n]) {
-					return false
-				}
-			}
-			if !w.putLebPair(uint64(value.ValueLength)) {
-				w.putLebWide(uint64(value.ValueLength))
-			}
-			w.Raw(value.Value[:value.ValueLength])
-		}
-	}
-	if !tableRetainTail(w) {
-		return false
-	}
-	return !w.Overflow && !w.Ids.Overflow
-}
-
-func ReceiptIDLoadBodyRetain(r *TableRetainReader, value *ReceiptID) bool {
-	ReceiptIDReset(value)
-	r.Retain.discard(r.Path, false, 0)
-	for {
-		ref, ok := r.lebPair()
-		if !ok {
-			ref, ok = r.lebWide()
-		}
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		fieldID, ok := r.Resolve(ref)
-		if !ok || !r.Has(1) {
-			r.Report.Malformed = true
-			return false
-		}
-		kind := r.Get8()
-		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
-			r.Report.Malformed = true
-			return false
-		}
-		switch fieldID {
-		case 0x7ce4fd9430e80cea: // value
-			if kind != 12 {
-				r.Report.KindMismatch++
-				if !r.Skip(kind) {
-					r.Report.Malformed = true
-					return false
-				}
-				break
-			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
-			}
-			if !tableUtf8Valid(sub.Buffer) {
-				r.Report.Malformed = true
-				clear(value.Value[:])
-				value.ValueLength = 0
-				break
-			}
-			keep := int64(len(sub.Buffer))
-			if keep > 8 {
-				keep = tableUtf8Clamp(sub.Buffer, 8)
-				r.Report.Clamped++
-			}
-			clear(value.Value[:])
-			copy(value.Value[:keep], sub.Buffer)
-			value.ValueLength = int32(keep)
-		case 0xffffffffffffffff:
-			if !r.Skip(kind) {
-				r.Report.Malformed = true
-				return false
-			}
-		default:
-			r.Report.Unknown++
-			if !r.capture(fieldID, kind) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-func ReceiptIDEmplace(worker *TableWorker, slot *TableRef) *ReceiptID {
-	p, ref := worker.Alloc(int64(unsafe.Sizeof(ReceiptID{})))
-	*slot = ref
-	if p == nil {
-		return nil
-	}
-	value := (*ReceiptID)(p)
-	ReceiptIDReset(value)
-	return value
-}
-func ReceiptIDLoadMeasure(wire []byte) int64 {
-	n, _, _ := tableRegionMeasure(wire, ReceiptIDTableType(), ReceiptIDTableType().NodeType, 0)
-	return n
-}
-func ReceiptIDLoadMeasureReason(wire []byte) (int64, error) {
-	size, _, _, reason := tableRegionMeasureReason(wire, ReceiptIDTableType(), ReceiptIDTableType().NodeType, 0)
-	return size, tableRefuseError(reason)
-}
-func ReceiptIDLoad(region, wire []byte, report *TableReport) *ReceiptID {
-	return (*ReceiptID)(tableRegionLoad(region, wire, ReceiptIDTableType(), ReceiptIDTableType().NodeType, 0, report))
-}
-func ReceiptIDMeasure(value *ReceiptID, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableRegionSave(unsafe.Pointer(value), ReceiptIDTableType(), nil, true, arena, allocator)
-}
-func ReceiptIDMeasureReason(value *ReceiptID, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableRegionSaveReason(unsafe.Pointer(value), ReceiptIDTableType(), nil, true, arena, allocator)
-	return size, tableRefuseError(reason)
-}
-func ReceiptIDSave(value *ReceiptID, buffer []byte, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableRegionSave(unsafe.Pointer(value), ReceiptIDTableType(), buffer, false, arena, allocator)
-}
-func ReceiptIDLoadBuilder(b *ReceiptIDBuilder, wire []byte, report *TableReport) bool {
-	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, ReceiptIDTableType(), ReceiptIDTableType().NodeType, 0, report)
-}
-
-// ReceiptIDReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
-func ReceiptIDReadStrict(wire []byte) (*ReceiptID, error) {
-	var b ReceiptIDBuilder
-	if !b.Init() {
-		return nil, TableRefuseAllocationFailed
-	}
-	var report TableReport
-	ok := ReceiptIDLoadBuilder(&b, wire, &report)
-	if err := report.Err(); err != nil || !ok {
-		b.Shutdown()
-		if err == nil {
-			err = TableRefuseWireDamaged
-		}
-		return nil, err
-	}
-	if !b.Lock() {
-		b.Shutdown()
-		return nil, TableRefuseAllocationFailed
-	}
-	return b.AsConst(), nil
-}
-
-type ReceiptIDBuilder struct {
-	Arena              TableArena
-	Main               TableWorker
-	root               TableRef
-	region, allocation []byte
-}
-
-func (b *ReceiptIDBuilder) Init(allocator ...TableAllocator) bool {
-	if b.region != nil || !b.Arena.Init(allocator...) {
-		return false
-	}
-	b.Main = TableWorker{Arena: &b.Arena}
-	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(ReceiptID{})))
-	b.root = ref
-	if p == nil {
-		b.Arena.Shutdown()
-		b.root = 0
-		return false
-	}
-	ReceiptIDReset((*ReceiptID)(p))
-	return true
-}
-func (b *ReceiptIDBuilder) GetRoot() *ReceiptID {
-	if b.Arena.Locked {
-		return nil
-	}
-	return (*ReceiptID)(b.Arena.At(b.root))
-}
-func (b *ReceiptIDBuilder) AsConst() *ReceiptID {
-	if len(b.region) == 0 {
-		return nil
-	}
-	return (*ReceiptID)(unsafe.Pointer(&b.region[0]))
-}
-func (b *ReceiptIDBuilder) Region() []byte { return b.region }
-func (b *ReceiptIDBuilder) PackMeasure() int64 {
-	if b.Arena.Locked {
-		return int64(len(b.region))
-	}
-	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), ReceiptIDTableType(), &b.Arena)
-}
-func (b *ReceiptIDBuilder) PackMeasureReason() (int64, error) {
-	if b.Arena.Locked {
-		return int64(len(b.region)), nil
-	}
-	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), ReceiptIDTableType(), &b.Arena)
-	return size, tableRefuseError(reason)
-}
-func (b *ReceiptIDBuilder) Lock() bool {
-	if b.Arena.Locked {
-		return true
-	}
-	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), ReceiptIDTableType(), &b.Arena)
-	if !ok {
-		return false
-	}
-	b.region = region
-	b.allocation = allocation
-	b.Arena.Shutdown()
-	b.Arena.Locked = true
-	return true
-}
-func (b *ReceiptIDBuilder) Shutdown() {
-	b.Arena.Shutdown()
-	b.Arena.Allocator.free(b.allocation)
-	b.region = nil
-	b.allocation = nil
-	b.root = 0
-}
-
 // DogfoodReceiptReset restores DogfoodReceipt's declared defaults in place, reusing the storage
 // the value already holds. The reader calls it before overlaying.
 func DogfoodReceiptReset(value *DogfoodReceipt) {
@@ -4949,7 +4531,7 @@ func DogfoodReceiptSaveBodyFields(w *TableWriter, value *DogfoodReceipt) bool {
 	}
 	{
 		if value.Closes != 0 {
-			if ref := w.Ids.refAtHit(26, 0x8553185090e84610); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(25, 0x8553185090e84610); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Closes == 0 {
@@ -5154,7 +4736,7 @@ func DogfoodReceiptLoadBody(r *TableReader, value *DogfoodReceipt) bool {
 					r.Report.Malformed = true
 					return false
 				}
-				r.Nodes.Resolve(&value.Closes, index, 0xbcc69aaaa0af192e, r.Report)
+				r.Nodes.Resolve(&value.Closes, index, 0x704be0d8faaffc58, r.Report)
 			}
 		case 0xffffffffffffffff:
 			if !r.Skip(kind) {
@@ -5329,7 +4911,7 @@ func DogfoodReceiptSaveBodyFieldsRetain(w *TableRetainWriter, value *DogfoodRece
 	}
 	{
 		if value.Closes != 0 {
-			if ref := w.Ids.refAtHit(26, 0x8553185090e84610); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(25, 0x8553185090e84610); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Closes == 0 {
@@ -5538,7 +5120,7 @@ func DogfoodReceiptLoadBodyRetain(r *TableRetainReader, value *DogfoodReceipt) b
 					r.Report.Malformed = true
 					return false
 				}
-				r.Nodes.Resolve(&value.Closes, index, 0xbcc69aaaa0af192e, r.Report)
+				r.Nodes.Resolve(&value.Closes, index, 0x704be0d8faaffc58, r.Report)
 			}
 		case 0xffffffffffffffff:
 			if !r.Skip(kind) {
@@ -5839,7 +5421,7 @@ func LedgerValueTableType() *TableTypeInfo { return &LedgerValueTableInfo }
 
 // CairnLogRecordTableFields is CairnLogRecord's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var CairnLogRecordTableFields = []TableFieldInfo{
-	{Name: "event_kind", Json: "event_kind", TypeName: "CairnEvent", DeclaredTypeName: "CairnEvent", Id: 0x517a4505d602bca2, Kind: 30, IsArray: false, Counted: false, Optional: false,
+	{Name: "event_kind", Json: "event", TypeName: "CairnEvent", DeclaredTypeName: "CairnEvent", Id: 0x517a4505d602bca2, Kind: 30, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(CairnLogRecord{}.EventKind)), ElemSize: uint32(unsafe.Sizeof(CairnLogRecord{}.EventKind)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
 		CookOffset: 0, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: 2,
@@ -6052,35 +5634,6 @@ func init() {
 // FuseBoxTableType returns FuseBox's reflection descriptor.
 func FuseBoxTableType() *TableTypeInfo { return &FuseBoxTableInfo }
 
-// ReceiptIDTableFields is ReceiptID's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-var ReceiptIDTableFields = []TableFieldInfo{
-	{Name: "value", Json: "value", TypeName: "string", DeclaredTypeName: "string", Id: 0x7ce4fd9430e80cea, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 8, Offset: uint32(unsafe.Offsetof(ReceiptID{}.Value)), ElemSize: uint32(unsafe.Sizeof(ReceiptID{}.Value)), CountOffset: uint32(unsafe.Offsetof(ReceiptID{}.ValueLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 12, CookPresentOffset: 4294967295,
-		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
-		EnumName:    nil,
-		VariantId:   nil,
-		KeyTypeName: "", KeyName: nil, KeyId: nil,
-		Arms:  nil,
-		Guard: "", Table: nil,
-		Doc: TableDocNone, NumTags: 0, Tags: nil},
-}
-
-// ReceiptIDTableInfo is ReceiptID's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-var ReceiptIDTableInfo TableTypeInfo
-
-func init() {
-	ReceiptIDTableInfo = TableTypeInfo{Name: "ReceiptID", Size: uint32(unsafe.Sizeof(ReceiptID{})), NumFields: 1, Fields: ReceiptIDTableFields, Reset: func(storage unsafe.Pointer) { ReceiptIDReset((*ReceiptID)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xbcc69aaaa0af192e, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ReceiptIDSaveBody(w, (*ReceiptID)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ReceiptIDLoadBody(&r, (*ReceiptID)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return ReceiptIDSaveBodyRetain(w, (*ReceiptID)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return ReceiptIDLoadBodyRetain(&r, (*ReceiptID)(p)) }, CookSize: 16, CookAlign: 4, NodeType: func(id uint64) *TableTypeInfo {
-		switch id {
-		}
-		return nil
-	}}
-}
-
-// ReceiptIDTableType returns ReceiptID's reflection descriptor.
-func ReceiptIDTableType() *TableTypeInfo { return &ReceiptIDTableInfo }
-
 // DogfoodReceiptTableFields is DogfoodReceipt's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var DogfoodReceiptTableFields = []TableFieldInfo{
 	{Name: "tool", Json: "tool", TypeName: "string", DeclaredTypeName: "string", Id: 0x2fe3f0ef38a252c7, Kind: 17, IsArray: false, Counted: false, Optional: false,
@@ -6160,16 +5713,16 @@ var DogfoodReceiptTableFields = []TableFieldInfo{
 		Arms:  nil,
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
-	{Name: "closes", Json: "closes", TypeName: "ReceiptID", DeclaredTypeName: "ReceiptID", Id: 0x8553185090e84610, Kind: 17, IsArray: false, Counted: false, Optional: false,
+	{Name: "closes", Json: "closes", TypeName: "string", DeclaredTypeName: "string", Id: 0x8553185090e84610, Kind: 17, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(DogfoodReceipt{}.Closes)), ElemSize: uint32(unsafe.Sizeof(DogfoodReceipt{}.Closes)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
 		CookOffset: 64, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: true, TargetId: 0xbcc69aaaa0af192e,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
 		EnumName:    nil,
 		VariantId:   nil,
 		KeyTypeName: "", KeyName: nil, KeyId: nil,
 		Arms:  nil,
-		Guard: "", Table: ReceiptIDTableType,
+		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 }
 
@@ -6183,8 +5736,6 @@ func init() {
 		return DogfoodReceiptLoadBodyRetain(&r, (*DogfoodReceipt)(p))
 	}, CookSize: 72, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
 		switch id {
-		case 0xbcc69aaaa0af192e:
-			return ReceiptIDTableType()
 		}
 		return nil
 	}}

@@ -21,14 +21,14 @@ table LedgerKey
     repo  *string
 }
 
+// The hash value written at internal/record/ledger.go:270. The token slots
+// have a fixed five-element source array; null means Known[i] is false, as
+// LedgerTypes and the value encoder at :179-183 and :265-270 define it.
 table TokenValue
 {
     amount ?int64
 }
 
-// The hash value written at internal/record/ledger.go:270. The token slots
-// have a fixed five-element source array; null means Known[i] is false, as
-// LedgerTypes and the value encoder at :179-183 and :265-270 define it.
 table LedgerValue
 {
     provider *string
@@ -37,14 +37,15 @@ table LedgerValue
     sources  *string
 }
 
-// One JSON line appended to log.jsonl at internal/cairn/cairn.go:417-426.
+// One JSON line appended to log.jsonl at internal/cairn/cairn.go:417-426;
+// event_kind keeps the source JSON key "event".
 // Session and entry are IDs validated by ValidID (128-byte maximum, :73-110);
 // an open line has an empty entry. The event and publication values are the
 // complete values used by open/append and ValidPublish (:55-68, :218-220,
 // :542, :583, :732). Source and stamp have no field-length check.
 table CairnLogRecord
 {
-    event_kind CairnEvent
+    event_kind CairnEvent | json = "event"
     session string(128)
     entry   string(128)
     stamp   *string
@@ -77,16 +78,12 @@ table FuseBox
     quarantine []QuarantineEntry
 }
 
-table ReceiptID
-{
-    value string(8)
-}
-
 // A dogfood receipt as serialized by json.Marshal(Receipt) at
 // pkg/dogfood/receipt.go:27-43. Issue is nonnegative when present (Validate
-// at :174-177); Closes is an eight-character lowercase hex ID (:43-45, :179-182).
+// at :174-177); closes is the original text, including any accepted surrounding
+// whitespace (:180-182). File is json:"-" and absent.
 // Issue's maximum is Go int's 64-bit representable maximum on supported hosts;
-// json.Unmarshal into int rejects a larger value. File is json:"-" and absent.
+// json.Unmarshal into int rejects a larger value.
 table DogfoodReceipt
 {
     tool   *string
@@ -96,5 +93,5 @@ table DogfoodReceipt
     ok     bool
     notes  *string
     issue  ?int64 | min = 0, max = 9223372036854775807
-    closes *ReceiptID
+    closes *string
 }

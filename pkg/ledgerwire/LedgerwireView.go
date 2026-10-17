@@ -67,7 +67,7 @@ func init() {
 
 var tableUnitView = UnitViewInfo{Package: "ledgerwire", ProtocolId: 0x18e1896995290a87,
 	NumTypes: 0, Types: []ViewType{},
-	NumTables: 9, Tables: []ViewType{
+	NumTables: 8, Tables: []ViewType{
 		{Name: "CairnLogRecord", File: "ledger.schema", Table: true, Type: &CairnLogRecordTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "DogfoodReceipt", File: "ledger.schema", Table: true, Type: &DogfoodReceiptTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "Fuse", File: "ledger.schema", Table: true, Type: &FuseTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
@@ -75,7 +75,6 @@ var tableUnitView = UnitViewInfo{Package: "ledgerwire", ProtocolId: 0x18e1896995
 		{Name: "LedgerKey", File: "ledger.schema", Table: true, Type: &LedgerKeyTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "LedgerValue", File: "ledger.schema", Table: true, Type: &LedgerValueTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "QuarantineEntry", File: "ledger.schema", Table: true, Type: &QuarantineEntryTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
-		{Name: "ReceiptID", File: "ledger.schema", Table: true, Type: &ReceiptIDTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "TokenValue", File: "ledger.schema", Table: true, Type: &TokenValueTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 	},
 	NumEnums: 2, Enums: []ViewVocabulary{

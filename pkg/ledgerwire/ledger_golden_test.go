@@ -2,12 +2,18 @@ package ledgerwire
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unsafe"
 
+	cairnsource "github.com/mas-bandwidth/nova-tools/internal/cairn"
+	"github.com/mas-bandwidth/nova-tools/internal/record"
+	"github.com/mas-bandwidth/nova-tools/pkg/dogfood"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -206,8 +212,78 @@ func TestLedgersRecordsGolden(t *testing.T) {
 		return o
 	})
 	testTable(t, "LedgerValue", ledgerValue, ledgerValueWant)
+	t.Run("source ledger value keeps five positional nullable slots", func(t *testing.T) {
+		t.Parallel()
+		entry := record.LedgerEntry{
+			Provider: "fixture", Tokens: [5]int64{11, 0, 33, 0, 55},
+			Known: [5]bool{true, false, true, false, true}, Rough: 132, Sources: "ledger-source",
+		}
+		// This is the persisted shape of internal/record/ledger.go:179-184;
+		// derive the five nullable positions from the public source row.
+		type persistedValue struct {
+			Provider string    `json:"provider"`
+			Tokens   [5]*int64 `json:"tokens"`
+			Rough    int       `json:"rough"`
+			Sources  string    `json:"sources"`
+		}
+		persisted := persistedValue{Provider: entry.Provider, Rough: entry.Rough, Sources: entry.Sources}
+		for i := range entry.Tokens {
+			if entry.Known[i] {
+				n := entry.Tokens[i]
+				persisted.Tokens[i] = &n
+			}
+		}
+		sourceJSON, err := json.Marshal(persisted)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"provider":"fixture","tokens":[11,null,33,null,55],"rough":132,"sources":"ledger-source"}`, string(sourceJSON))
+		// TokenValue is the schema's explicit wrapper around each nullable
+		// source slot. Bridge [n,null,...] to [{amount:n},{amount:null},...]
+		// without compacting away any absent positions.
+		var sourceShape struct {
+			Provider string    `json:"provider"`
+			Tokens   [5]*int64 `json:"tokens"`
+			Rough    int       `json:"rough"`
+			Sources  string    `json:"sources"`
+		}
+		require.NoError(t, json.Unmarshal(sourceJSON, &sourceShape))
+		type tokenValue struct {
+			Amount *int64 `json:"amount,omitempty"`
+		}
+		bridge := struct {
+			Provider string        `json:"provider"`
+			Tokens   [5]tokenValue `json:"tokens"`
+			Rough    int           `json:"rough"`
+			Sources  string        `json:"sources"`
+		}{Provider: sourceShape.Provider, Rough: sourceShape.Rough, Sources: sourceShape.Sources}
+		for i, amount := range sourceShape.Tokens {
+			bridge.Tokens[i].Amount = amount
+		}
+		bridgeJSON, err := json.Marshal(bridge)
+		require.NoError(t, err)
+		var mapped struct {
+			Tokens [5]tokenValue `json:"tokens"`
+		}
+		require.NoError(t, json.Unmarshal(bridgeJSON, &mapped))
+		for i := range entry.Tokens {
+			if entry.Known[i] {
+				require.NotNil(t, mapped.Tokens[i].Amount, "slot %d remains present", i)
+				assert.Equal(t, entry.Tokens[i], *mapped.Tokens[i].Amount, "slot %d retains its value", i)
+			} else {
+				assert.Nil(t, mapped.Tokens[i].Amount, "slot %d remains absent in place", i)
+			}
+		}
+		var tokenField *TableFieldInfo
+		for i := range LedgerValueTableFields {
+			if LedgerValueTableFields[i].Name == "tokens" {
+				tokenField = &LedgerValueTableFields[i]
+			}
+		}
+		require.NotNil(t, tokenField)
+		assert.Equal(t, "TokenValue", tokenField.TypeName)
+		assert.Equal(t, int32(5), tokenField.ArrayBound)
+	})
 
-	cairn, cairnWant := makeCodec("CAIRN_LOG_RECORD", "cairn log", []byte(`{"event_kind":"open","session":"session-1","entry":"","stamp":"2026-10-17T12:00:00Z","publish":"manual","source":"fixture"}`), func() *CairnLogRecordBuilder { return &CairnLogRecordBuilder{} }, func(b *CairnLogRecordBuilder) bool { return b.Init() }, func(b *CairnLogRecordBuilder) *CairnLogRecord { return b.GetRoot() }, CairnLogRecordFromJson, CairnLogRecordLoadBuilder, (&CairnLogRecordCook{}).Type(), CairnLogRecordReset, CairnLogRecordLoadMeasureReason, func(v *CairnLogRecord) []byte {
+	cairn, cairnWant := makeCodec("CAIRN_LOG_RECORD", "cairn log", []byte(`{"event":"open","session":"session-1","entry":"","stamp":"2026-10-17T12:00:00Z","publish":"manual","source":"fixture"}`), func() *CairnLogRecordBuilder { return &CairnLogRecordBuilder{} }, func(b *CairnLogRecordBuilder) bool { return b.Init() }, func(b *CairnLogRecordBuilder) *CairnLogRecord { return b.GetRoot() }, CairnLogRecordFromJson, CairnLogRecordLoadBuilder, (&CairnLogRecordCook{}).Type(), CairnLogRecordReset, CairnLogRecordLoadMeasureReason, func(v *CairnLogRecord) []byte {
 		n := CairnLogRecordMeasure(v)
 		if n < 0 {
 			return nil
@@ -233,6 +309,34 @@ func TestLedgersRecordsGolden(t *testing.T) {
 		check.Bound("publish", int64(v.Publish), 1, 4)
 	}
 	testTable(t, "CairnLogRecord", cairn, cairnWant)
+	t.Run("source cairn log maps event and publish", func(t *testing.T) {
+		t.Parallel()
+		store := t.TempDir()
+		now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+		require.NoError(t, cairnsource.Open(store, "session-1", "fixture", now, cairnsource.PublishDeferred))
+		_, err := cairnsource.Append(store, "session-1", "entry-1", "source entry", "", now.Add(time.Minute), cairnsource.PublishDeferred)
+		require.NoError(t, err)
+		data, err := os.ReadFile(store + "/log.jsonl")
+		require.NoError(t, err)
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		require.Len(t, lines, 2)
+		for i, wantEvent := range []string{"open", "append"} {
+			var source map[string]string
+			require.NoError(t, json.Unmarshal([]byte(lines[i]), &source))
+			assert.Equal(t, wantEvent, source["event"])
+			assert.Equal(t, cairnsource.PublishDeferred, source["publish"])
+			assert.Equal(t, CairnEvent(i+1), map[string]CairnEvent{"open": CairnEventopen, "append": CairnEventappend}[source["event"]])
+			assert.Equal(t, PublishPolicydeferred, map[string]PublishPolicy{"deferred": PublishPolicydeferred}[source["publish"]])
+		}
+		var eventField *TableFieldInfo
+		for i := range CairnLogRecordTableFields {
+			if CairnLogRecordTableFields[i].Name == "event_kind" {
+				eventField = &CairnLogRecordTableFields[i]
+			}
+		}
+		require.NotNil(t, eventField)
+		assert.Equal(t, "event", eventField.Json, "the table field preserves the source key")
+	})
 
 	fuse, fuseWant := makeCodec("FUSE", "fuse", []byte(`{"at":"2026-10-17T12:00:00Z","reason":"fixture"}`), func() *FuseBuilder { return &FuseBuilder{} }, func(b *FuseBuilder) bool { return b.Init() }, func(b *FuseBuilder) *Fuse { return b.GetRoot() }, FuseFromJson, FuseLoadBuilder, (&FuseCook{}).Type(), FuseReset, FuseLoadMeasureReason, func(v *Fuse) []byte {
 		n := FuseMeasure(v)
@@ -303,30 +407,7 @@ func TestLedgersRecordsGolden(t *testing.T) {
 	})
 	testTable(t, "FuseBox", box, boxWant)
 
-	id, idWant := makeCodec("RECEIPT_ID", "receipt id", []byte(`{"value":"deadbeef"}`), func() *ReceiptIDBuilder { return &ReceiptIDBuilder{} }, func(b *ReceiptIDBuilder) bool { return b.Init() }, func(b *ReceiptIDBuilder) *ReceiptID { return b.GetRoot() }, ReceiptIDFromJson, ReceiptIDLoadBuilder, (&ReceiptIDCook{}).Type(), ReceiptIDReset, ReceiptIDLoadMeasureReason, func(v *ReceiptID) []byte {
-		n := ReceiptIDMeasure(v)
-		if n < 0 {
-			return nil
-		}
-		o := make([]byte, n)
-		if ReceiptIDSave(v, o) != n {
-			return nil
-		}
-		return o
-	}, func(v *ReceiptID) []byte {
-		n := ReceiptIDToJsonMeasure(v)
-		if n < 0 {
-			return nil
-		}
-		o := make([]byte, n)
-		if ReceiptIDToJson(v, o) != n {
-			return nil
-		}
-		return o
-	})
-	testTable(t, "ReceiptID", id, idWant)
-
-	receipt, receiptWant := makeCodec("DOGFOOD_RECEIPT", "dogfood receipt", []byte(`{"tool":"nova-tools","verb":"test","by":"fixture","at":"2026-10-17T12:00:00Z","ok":true,"notes":"fixture","issue":12,"closes":{"value":"deadbeef"}}`), func() *DogfoodReceiptBuilder { return &DogfoodReceiptBuilder{} }, func(b *DogfoodReceiptBuilder) bool { return b.Init() }, func(b *DogfoodReceiptBuilder) *DogfoodReceipt { return b.GetRoot() }, DogfoodReceiptFromJson, DogfoodReceiptLoadBuilder, (&DogfoodReceiptCook{}).Type(), DogfoodReceiptReset, DogfoodReceiptLoadMeasureReason, func(v *DogfoodReceipt) []byte {
+	receipt, receiptWant := makeCodec("DOGFOOD_RECEIPT", "dogfood receipt", []byte(`{"tool":"nova-tools","verb":"test","by":"fixture","at":"2026-10-17T12:00:00Z","ok":true,"notes":"fixture","issue":12,"closes":"deadbeef"}`), func() *DogfoodReceiptBuilder { return &DogfoodReceiptBuilder{} }, func(b *DogfoodReceiptBuilder) bool { return b.Init() }, func(b *DogfoodReceiptBuilder) *DogfoodReceipt { return b.GetRoot() }, DogfoodReceiptFromJson, DogfoodReceiptLoadBuilder, (&DogfoodReceiptCook{}).Type(), DogfoodReceiptReset, DogfoodReceiptLoadMeasureReason, func(v *DogfoodReceipt) []byte {
 		n := DogfoodReceiptMeasure(v)
 		if n < 0 {
 			return nil
@@ -348,14 +429,67 @@ func TestLedgersRecordsGolden(t *testing.T) {
 		return o
 	})
 	testTable(t, "DogfoodReceipt", receipt, receiptWant)
+	t.Run("source receipt preserves accepted closes text", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			name   string
+			closes string
+		}{
+			{name: "absent"},
+			{name: "plain", closes: "1234abcd"},
+			{name: "padded", closes: " 1234abcd "},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				source := dogfood.Receipt{Tool: "nova-tools", Verb: "test", By: "fixture", At: "2026-10-17T12:00:00Z", OK: true, Notes: "source fixture", Closes: tc.closes}
+				assert.Empty(t, source.Validate(), "source validation accepts this closes shape")
+				sourceJSON, err := json.Marshal(source)
+				require.NoError(t, err)
+				var sourceRoundTrip dogfood.Receipt
+				require.NoError(t, json.Unmarshal(sourceJSON, &sourceRoundTrip))
+				assert.Equal(t, source.Closes, sourceRoundTrip.Closes, "source JSON round trip preserves the original text")
+				var builder DogfoodReceiptBuilder
+				require.True(t, builder.Init())
+				var tableReport TableReport
+				require.True(t, DogfoodReceiptFromJson(&builder, sourceJSON, &tableReport), "the generated table accepts source JSON")
+				assert.Zero(t, tableReport.Clamped, "the schema does not narrow accepted source text")
+				assert.Zero(t, tableReport.KindMismatch)
+				wireSize := DogfoodReceiptMeasure(builder.GetRoot(), &builder.Arena)
+				require.Positive(t, wireSize)
+				wire := make([]byte, wireSize)
+				require.Equal(t, wireSize, DogfoodReceiptSave(builder.GetRoot(), wire, &builder.Arena))
+				got, err := DogfoodReceiptReadStrict(wire)
+				require.NoError(t, err, "generated wire round trip")
+				jsonSize := DogfoodReceiptToJsonMeasure(got)
+				require.Positive(t, jsonSize)
+				generatedJSON := make([]byte, jsonSize)
+				require.Equal(t, jsonSize, DogfoodReceiptToJson(got, generatedJSON))
+				var generated map[string]any
+				require.NoError(t, json.Unmarshal(generatedJSON, &generated))
+				if tc.closes == "" {
+					assert.True(t, generated["closes"] == nil || generated["closes"] == "", "absent closes stays empty after wire round trip")
+				} else {
+					assert.Equal(t, tc.closes, generated["closes"], "generated wire round trip preserves accepted closes text")
+				}
+				var closesField *TableFieldInfo
+				for i := range DogfoodReceiptTableFields {
+					if DogfoodReceiptTableFields[i].Name == "closes" {
+						closesField = &DogfoodReceiptTableFields[i]
+					}
+				}
+				require.NotNil(t, closesField)
+				assert.Equal(t, "string", closesField.TypeName)
+				assert.Equal(t, "closes", closesField.Json)
+			})
+		}
+	})
 	refuseJSON(t, key, `{"day":"2026-10-17x","card":"x","model":"x","repo":"x"}`, "day")
 	refuseJSON(t, ledgerValue, `{"provider":"openai","tokens":[{"amount":1},{"amount":2},{"amount":3},{"amount":4},{"amount":5},{"amount":6}],"rough":21,"sources":"x"}`, "tokens")
 	longID := strings.Repeat("x", 129)
-	refuseJSON(t, cairn, `{"event_kind":"open","session":"`+longID+`","entry":"","stamp":"x","publish":"manual","source":"x"}`, "session")
-	refuseJSON(t, cairn, `{"event_kind":"append","session":"session","entry":"`+longID+`","stamp":"x","publish":"manual","source":"x"}`, "entry")
-	refuseJSON(t, cairn, `{"event_kind":"not-a-cairn-event","session":"session","entry":"","publish":"manual"}`, "event_kind")
-	refuseJSON(t, cairn, `{"event_kind":"open","session":"session","entry":"","publish":"not-a-policy"}`, "publish")
-	refuseJSON(t, id, `{"value":"123456789"}`, "value")
+	refuseJSON(t, cairn, `{"event":"open","session":"`+longID+`","entry":"","stamp":"x","publish":"manual","source":"x"}`, "session")
+	refuseJSON(t, cairn, `{"event":"append","session":"session","entry":"`+longID+`","stamp":"x","publish":"manual","source":"x"}`, "entry")
+	refuseJSON(t, cairn, `{"event":"not-a-cairn-event","session":"session","entry":"","publish":"manual"}`, "event")
+	refuseJSON(t, cairn, `{"event":"open","session":"session","entry":"","publish":"not-a-policy"}`, "publish")
 	refuseJSON(t, receipt, `{"tool":"x","verb":"x","by":"x","at":"x","ok":true,"issue":-1}`, "issue")
 	refuseJSON(t, receipt, `{"tool":"x","verb":"x","by":"x","at":"x","ok":true,"issue":9223372036854775808}`, "issue")
 }

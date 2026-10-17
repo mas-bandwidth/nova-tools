@@ -176,9 +176,6 @@ func init() {
 	tableCookLayoutSize("QuarantineEntryRow alignment", unsafe.Alignof(QuarantineEntryRow{}), 8)
 	tableCookLayoutOffset("QuarantineEntryRow.Surface", unsafe.Offsetof(QuarantineEntryRow{}.Surface), 0)
 	tableCookLayoutOffset("QuarantineEntryRow.Fuse", unsafe.Offsetof(QuarantineEntryRow{}.Fuse), 8)
-	tableCookLayoutSize("ReceiptIDRow", unsafe.Sizeof(ReceiptIDRow{}), 16)
-	tableCookLayoutSize("ReceiptIDRow alignment", unsafe.Alignof(ReceiptIDRow{}), 4)
-	tableCookLayoutOffset("ReceiptIDRow.Value", unsafe.Offsetof(ReceiptIDRow{}.Value), 0)
 	tableCookLayoutSize("TokenValueRow", unsafe.Sizeof(TokenValueRow{}), 16)
 	tableCookLayoutSize("TokenValueRow alignment", unsafe.Alignof(TokenValueRow{}), 8)
 	tableCookLayoutOffset("TokenValueRow.Amount", unsafe.Offsetof(TokenValueRow{}.Amount), 0)
@@ -207,7 +204,7 @@ func tableCookLayoutOffset(what string, got, want uintptr) {
 // §11 fact rather than a taste: a name derived from a DECLARATION's own
 // spelling is a name a declaration can collide with, and the checker has no
 // machinery for a prefix-and-name product. One fixed name is one claim.
-var tableCookRecords = make([]TableCookInfo, 9)
+var tableCookRecords = make([]TableCookInfo, 8)
 
 // THE GRAPH IS FILLED HERE rather than in the slice's own initializer, and
 // the reason is a language fact rather than a taste: the DESCRIPTOR GRAPH is
@@ -283,21 +280,14 @@ func init() {
 		},
 	}
 	tableCookRecords[7] = TableCookInfo{
-		Name: "ReceiptID", Size: 16, Align: 4, NumFields: 1,
-		Fields: []TableCookFieldInfo{
-			{Name: "value", Offset: 0, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 8, IsPointer: false, CountOffset: 12, PresentOffset: -1, Storage: TableCookStorageString},
-		},
-	}
-	tableCookRecords[8] = TableCookInfo{
 		Name: "TokenValue", Size: 16, Align: 8, NumFields: 1,
 		Fields: []TableCookFieldInfo{
 			{Name: "amount", Offset: 0, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 8, Storage: TableCookStorageSigned},
 		},
 	}
-	tableCookRecords[1].Fields[7].Record = func() *TableCookInfo { return &tableCookRecords[7] }
 	tableCookRecords[3].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[2] }
 	tableCookRecords[3].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[6] }
-	tableCookRecords[5].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[8] }
+	tableCookRecords[5].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[7] }
 	tableCookRecords[6].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[2] }
 }
 
@@ -505,7 +495,7 @@ func TokenValueAt(slot *int64, arena ...*TableArena) *TokenValueRow {
 
 // Type is TokenValue's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c TokenValueCook) Type() *TableCookInfo { return &tableCookRecords[8] }
+func (c TokenValueCook) Type() *TableCookInfo { return &tableCookRecords[7] }
 
 // LedgerValueCook is LedgerValue's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1022,109 +1012,6 @@ func FuseBoxAt(slot *int64, arena ...*TableArena) *FuseBoxRow {
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 func (c FuseBoxCook) Type() *TableCookInfo { return &tableCookRecords[3] }
 
-// ReceiptIDCook is ReceiptID's cook: a pointer and a length, and then the root where it
-// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
-// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
-//
-// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
-// functions — ReceiptIDOpen, ReceiptIDAt — and so does Go, because Go has free functions;
-// what is a MEMBER here is only what §11 leaves a language free to make one.
-//
-// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
-// nothing here pins: the region must stay put and stay aligned for as long as
-// this handle or anything reached through it is used.
-type ReceiptIDCook struct {
-	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
-	RegionLength int64          // data_length, as the header framed it
-}
-
-// §7.1's constants, so a consumer reading this file has the facts and not a
-// description of them. They are METHODS because §11 leaves a language whose
-// accessors are members free to spell them that way, and a package constant
-// per table per fact would claim names §11 does not.
-func (c ReceiptIDCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c ReceiptIDCook) RootSize() int64        { return 16 }
-func (c ReceiptIDCook) RootAlign() int64       { return 4 }
-
-// Root is the root record at the region's base. It is a POINTER and not a
-// copy: a cooked graph is walked by adding deltas to slot addresses.
-func (c ReceiptIDCook) Root() *ReceiptIDRow { return (*ReceiptIDRow)(c.Region) }
-
-// ReceiptIDOpen is the bool convenience for the typed Open error on the handle.
-func ReceiptIDOpen(cook *ReceiptIDCook, base unsafe.Pointer, length int64) bool {
-	return cook.Open(base, length) == nil
-}
-
-// Open checks the header in SPEC §7 order, bytewise until base alignment is
-// established. A successful match points at the region and allocates nothing.
-func (cook *ReceiptIDCook) Open(base unsafe.Pointer, length int64) error {
-	*cook = ReceiptIDCook{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if length < 64 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 64)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableCookMagic {
-		if magic == 0x5343484d434f4f4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
-		return TableRefuseReservedNotZero
-	}
-	alignment := binary.NativeEndian.Uint64(header[40:])
-	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
-		return TableRefuseBadAlignment
-	}
-	bytes := uint64(length)
-	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
-	dataLength := binary.NativeEndian.Uint64(header[24:])
-	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 16 {
-		return TableRefuseTruncated
-	}
-	if uint64(uintptr(base))%alignment != 0 {
-		return TableRefuseUnalignedBase
-	}
-	cook.Region = unsafe.Add(base, uintptr(dataOffset))
-	cook.RegionLength = int64(dataLength)
-	return nil
-}
-
-// ReceiptIDAt dereferences a reference, and it is the same call in a locked region
-// and an opened cook because they are the same encoding (§6.3): the slot is
-// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
-// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
-// Nothing about this call is the cook's: it is what a region reference is, and
-// a cook is a region written verbatim.
-//
-// It takes the SLOT and not its value, because a self-relative delta means
-// nothing without the address it is relative to.
-func ReceiptIDAt(slot *int64, arena ...*TableArena) *ReceiptIDRow {
-	if len(arena) > 0 && arena[0] != nil {
-		return (*ReceiptIDRow)(arena[0].At(*slot))
-	}
-	delta := *slot
-	if delta == 0 {
-		return nil
-	}
-	return (*ReceiptIDRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
-}
-
-// Type is ReceiptID's cooked-record descriptor, the head of the graph a reflective
-// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ReceiptIDCook) Type() *TableCookInfo { return &tableCookRecords[7] }
-
 // DogfoodReceiptCook is DogfoodReceipt's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
 // (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
@@ -1228,7 +1115,7 @@ func DogfoodReceiptAt(slot *int64, arena ...*TableArena) *DogfoodReceiptRow {
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 func (c DogfoodReceiptCook) Type() *TableCookInfo { return &tableCookRecords[1] }
 
-const tableCookBuildVersion uint64 = 0x5b1bfc166595e53d
+const tableCookBuildVersion uint64 = 0xfe5142578e5bf42d
 
 // TableByteOrder selects the target order, independently of the writing host.
 type TableByteOrder uint8
@@ -1587,19 +1474,6 @@ func FuseBoxCookMeasureReason(value *FuseBox, context ...TableWriteContext) (int
 func FuseBoxCookFrom(value *FuseBox, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
 	arena, allocator := tableWriteOptions(context)
 	return tableCookRegion(unsafe.Pointer(value), FuseBoxTableType(), buffer, order, false, arena, allocator) >= 0
-}
-func ReceiptIDCookMeasure(value *ReceiptID, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), ReceiptIDTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-}
-func ReceiptIDCookMeasureReason(value *ReceiptID, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), ReceiptIDTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
-}
-func ReceiptIDCookFrom(value *ReceiptID, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), ReceiptIDTableType(), buffer, order, false, arena, allocator) >= 0
 }
 func DogfoodReceiptCookMeasure(value *DogfoodReceipt, context ...TableWriteContext) int64 {
 	arena, allocator := tableWriteOptions(context)

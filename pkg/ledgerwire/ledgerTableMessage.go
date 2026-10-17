@@ -442,7 +442,7 @@ func TokenValueSaveMessageBody(w *TableMessageWriter, value *TokenValue) bool {
 	{
 		if value.AmountPresent {
 			if true {
-				w.Put(29, TableMessageRefBitsHere)
+				w.Put(28, TableMessageRefBitsHere)
 				tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 5, Packing: 0, Bits: 64, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Amount), uint64(0))
 			}
 		}
@@ -2143,162 +2143,6 @@ func FuseBoxLoadMessageBody(r *TableMessageReader, value *FuseBox) bool {
 		}
 	}
 }
-func ReceiptIDLoadMessageBodyRetain(r *TableRetainMessageReader, value *ReceiptID) bool {
-	ReceiptIDReset(value)
-	r.Retain.discard(r.Path, false, 0)
-	for {
-		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		entry, ok := r.Vocabulary.Entry(ref)
-		if !ok || entry.Id >= 0xfffffffffffffffd {
-			r.Report.Malformed = true
-			return false
-		}
-		switch entry.Id {
-		case 0x7ce4fd9430e80cea:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(8)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.Value[:])
-					copy(value.Value[:], text[:kept])
-					value.ValueLength = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		default:
-			r.Report.Unknown++
-			if !r.capture(entry) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-func ReceiptIDSaveMessageBody(w *TableMessageWriter, value *ReceiptID) bool {
-	{
-		if value.ValueLength < 0 || value.ValueLength > 8 {
-			return false
-		}
-		if value.ValueLength > 0 {
-			w.Put(28, TableMessageRefBitsHere)
-			if value.ValueLength < 0 || value.ValueLength > 8 {
-				return false
-			}
-			w.Put(uint64(value.ValueLength), 4)
-			w.Raw(value.Value[:value.ValueLength])
-		}
-	}
-	w.Put(0, TableMessageRefBitsHere)
-	return !w.Overflow
-}
-func ReceiptIDLoadMessageBody(r *TableMessageReader, value *ReceiptID) bool {
-	ReceiptIDReset(value)
-	for {
-		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		entry, ok := r.Vocabulary.Entry(ref)
-		if !ok || entry.Id >= 0xfffffffffffffffd {
-			r.Report.Malformed = true
-			return false
-		}
-		switch entry.Id {
-		case 0x7ce4fd9430e80cea:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(8)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.Value[:])
-					copy(value.Value[:], text[:kept])
-					value.ValueLength = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		default:
-			r.Report.Unknown++
-			if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
 func DogfoodReceiptLoadMessageBodyRetain(r *TableRetainMessageReader, value *DogfoodReceipt) bool {
 	DogfoodReceiptReset(value)
 	r.Retain.discard(r.Path, false, 0)
@@ -2548,7 +2392,7 @@ func DogfoodReceiptLoadMessageBodyRetain(r *TableRetainMessageReader, value *Dog
 						r.Report.Malformed = true
 						return false
 					}
-					r.Nodes.Resolve(&value.Closes, index, 0xbcc69aaaa0af192e, &r.Report)
+					r.Nodes.Resolve(&value.Closes, index, 0x704be0d8faaffc58, &r.Report)
 				}
 				if widened {
 					r.Report.Widened++
@@ -2917,7 +2761,7 @@ func DogfoodReceiptLoadMessageBody(r *TableMessageReader, value *DogfoodReceipt)
 						r.Report.Malformed = true
 						return false
 					}
-					r.Nodes.Resolve(&value.Closes, index, 0xbcc69aaaa0af192e, &r.Report)
+					r.Nodes.Resolve(&value.Closes, index, 0x704be0d8faaffc58, &r.Report)
 				}
 				if widened {
 					r.Report.Widened++
@@ -3022,20 +2866,6 @@ func init() {
 	FuseBoxTableInfo.SaveMessageBody = func(w *TableMessageWriter, p unsafe.Pointer) bool { return FuseBoxSaveMessageBody(w, (*FuseBox)(p)) }
 	FuseBoxTableInfo.LoadMessageBody = func(r TableMessageReader, p unsafe.Pointer) (TableMessageReader, bool) {
 		ok := FuseBoxLoadMessageBody(&r, (*FuseBox)(p))
-		return r, ok
-	}
-}
-
-func init() {
-	ReceiptIDTableInfo.LoadMessageBodyRetain = func(r TableRetainMessageReader, p unsafe.Pointer) (TableRetainMessageReader, bool) {
-		ok := ReceiptIDLoadMessageBodyRetain(&r, (*ReceiptID)(p))
-		return r, ok
-	}
-	ReceiptIDTableInfo.SaveMessageBody = func(w *TableMessageWriter, p unsafe.Pointer) bool {
-		return ReceiptIDSaveMessageBody(w, (*ReceiptID)(p))
-	}
-	ReceiptIDTableInfo.LoadMessageBody = func(r TableMessageReader, p unsafe.Pointer) (TableMessageReader, bool) {
-		ok := ReceiptIDLoadMessageBody(&r, (*ReceiptID)(p))
 		return r, ok
 	}
 }

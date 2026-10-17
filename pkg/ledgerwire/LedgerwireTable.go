@@ -53,7 +53,7 @@ type DogfoodReceiptRow struct {
 	Issue        int64
 	IssuePresent bool    // ?: one byte, in Go's model as in C++
 	_            [7]byte // generated padding
-	Closes       int64   // *ReceiptID: signed self-relative delta, zero is null (§6.3)
+	Closes       int64   // *: signed self-relative delta, zero is null (§6.3)
 }
 
 // FuseRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
@@ -99,14 +99,6 @@ type QuarantineEntryRow struct {
 	Fuse    FuseRow
 }
 
-// ReceiptIDRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type ReceiptIDRow struct {
-	Value       [9]byte // string(8): buffer, used length beside it
-	_           [3]byte // generated padding
-	ValueLength int32
-}
-
 // TokenValueRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type TokenValueRow struct {
@@ -118,7 +110,7 @@ type TokenValueRow struct {
 // BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
 // one digest a block carries and BlockOpen compares, and the fact §3.3's
 // announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0x5b1bfc166595e53d
+const BuildVersion uint64 = 0xfe5142578e5bf42d
 
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema
@@ -615,7 +607,7 @@ func (r *TableReport) Err() error {
 	return nil
 }
 
-const tableIdCapacity = 47
+const tableIdCapacity = 45
 const tableIdBuckets = 128
 
 // TableIds interns the writer's ids in first-use order. Bucket links are
@@ -4812,7 +4804,7 @@ func tableMapIndexFind(index TableMapIndex, h *tableContainer, f *TableFieldInfo
 
 const tableRetainPathDepth = 2
 
-var tableRetainKnown = [...]uint64{0x089c4e07b545a968, 0x08a64b07b54df8d4, 0x08b05d07b5566bef, 0x18260d59cf7e151c, 0x1c54d4fa8357f520, 0x2f2ec0474f1c4fe4, 0x2fe3f0ef38a252c7, 0x30f50e469eeeb28e, 0x3ca2c49553a457d7, 0x3e7fe942f71f1e61, 0x40906c71b95bdbaa, 0x4399c99ff54faff9, 0x4a1db350729b2bcf, 0x4cac581fbfac663d, 0x517a4505d602bca2, 0x567e8790c5b15043, 0x56e459e309900a9b, 0x587fb5f7217333da, 0x65e8d7f3474f2639, 0x673ebb0102773a20, 0x6fc4d9b9c935cff1, 0x704be0d8faaffc58, 0x76dbdc228f782db8, 0x7ce4fd9430e80cea, 0x7ecc5a61e15573d1, 0x8113fe7ea2b16969, 0x8553185090e84610, 0x868e6d78db2c3430, 0x87997a3d60ae5c2b, 0x93fab8f021712b13, 0x9de543933e6e703a, 0xb11c6e84dc9ca810, 0xb5614e90e87b455f, 0xbcc69aaaa0af192e, 0xbe2a85bf4c0ca913, 0xca8d3918f4578f1d, 0xcbd8031e3d026dc9, 0xcd4192a1f11062bf, 0xd02b4c8c65fb54dc, 0xdbbcbbece325734a, 0xe2bfe8411c472768, 0xed261b159d41113a, 0xee7ba9ad45c64144, 0xf59d1c9999508925, 0xf6c6b3c6659bd41b, 0xf84f97b4633670e9, 0xffffffffffffffff}
+var tableRetainKnown = [...]uint64{0x089c4e07b545a968, 0x08a64b07b54df8d4, 0x08b05d07b5566bef, 0x18260d59cf7e151c, 0x1c54d4fa8357f520, 0x2f2ec0474f1c4fe4, 0x2fe3f0ef38a252c7, 0x30f50e469eeeb28e, 0x3ca2c49553a457d7, 0x3e7fe942f71f1e61, 0x40906c71b95bdbaa, 0x4399c99ff54faff9, 0x4a1db350729b2bcf, 0x4cac581fbfac663d, 0x517a4505d602bca2, 0x567e8790c5b15043, 0x56e459e309900a9b, 0x587fb5f7217333da, 0x65e8d7f3474f2639, 0x673ebb0102773a20, 0x6fc4d9b9c935cff1, 0x704be0d8faaffc58, 0x76dbdc228f782db8, 0x7ecc5a61e15573d1, 0x8113fe7ea2b16969, 0x8553185090e84610, 0x868e6d78db2c3430, 0x87997a3d60ae5c2b, 0x93fab8f021712b13, 0x9de543933e6e703a, 0xb11c6e84dc9ca810, 0xb5614e90e87b455f, 0xbe2a85bf4c0ca913, 0xca8d3918f4578f1d, 0xcbd8031e3d026dc9, 0xcd4192a1f11062bf, 0xd02b4c8c65fb54dc, 0xdbbcbbece325734a, 0xe2bfe8411c472768, 0xed261b159d41113a, 0xee7ba9ad45c64144, 0xf59d1c9999508925, 0xf6c6b3c6659bd41b, 0xf84f97b4633670e9, 0xffffffffffffffff}
 
 // TableRetain owns no storage. The caller supplies both bounded buffers; a
 // whole unknown record that does not fit is dropped and counted once.
