@@ -94,6 +94,10 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		// The temporary file atomicfile writes through before rename; on error or
 		// cleanup, atomicfile removes the temporary file this run created.
 		"pkg/atomicfile/atomicfile.go": {"os.Remove"},
+		// The day-file and roster table readers: the generated code truncates an
+		// in-memory id list while a table is measured or saved; no file is opened.
+		"pkg/seatrecwire/SeatrecwireTable.go": {".Truncate("},
+		"pkg/seatrecwire/seatrecTable.go":     {".Truncate("},
 	}
 	used := map[string]bool{}
 	// Every package of the binary, walked from its imports and from the directories this
