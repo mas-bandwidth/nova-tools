@@ -94,15 +94,15 @@ func cairnDualRead(t *testing.T) {
 	stamp := testClock.Format(time.RFC3339Nano)
 	want := cairn.OpenRecord{Source: "session:x", Publish: cairn.PublishManual, Opened: testClock, Found: true}
 
-	// Legacy: the line Open writes.
+	// Legacy: the line the prior writer wrote.
 	store := t.TempDir()
 	legacyBefore := counts("legacy")
-	require.NoError(t, cairn.Open(store, "s1", "session:x", testClock, cairn.PublishManual))
+	legacyLine := `{"entry":"","event":"open","publish":"manual","session":"s1","source":"session:x","stamp":"` + stamp + `"}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, "log.jsonl"), []byte(legacyLine+"\n"), 0o644))
 	got, err := cairn.ReadOpen(store, "s1")
 	require.NoError(t, err)
 	assert.Equal(t, want, got, "the legacy open line reads")
 	assert.GreaterOrEqual(t, counts("legacy")-legacyBefore, uint64(1))
-	legacyLine := strings.TrimSpace(readFile(t, filepath.Join(store, "log.jsonl")))
 
 	// Each table form of the same record reads to the same open record. The
 	// wire rides a line only when it holds no newline byte, so the fixture is
@@ -261,11 +261,4 @@ func cairnDualRead(t *testing.T) {
 	got, err = cairn.ReadOpen(writeLog(t, string(other), legacyLine), "s1")
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
-}
-
-func readFile(t *testing.T, name string) string {
-	t.Helper()
-	b, err := os.ReadFile(name)
-	require.NoError(t, err)
-	return string(b)
 }

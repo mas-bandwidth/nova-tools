@@ -416,17 +416,21 @@ func fsyncDir(dir string) error {
 	return nil
 }
 
-// appendLog records one event on the store's append-only log.
+// appendLog records one event on the store's append-only log. It writes the
+// CairnLogRecord table of schemas/ledger as the padded standard base64 of the
+// wire (S2), the form the reader reads. The write runs the table's constraints
+// first (S1), so a value the table cannot hold is refused by name before a byte
+// is written; the legacy line this function once wrote is not a fallback.
 func appendLog(store, event, session, id, stamp, policy, source string) error {
-	rec, _ := json.Marshal(map[string]string{
-		"event":   event,
-		"session": session,
-		"entry":   id,
-		"stamp":   stamp,
-		"publish": policy,
-		"source":  source,
-	})
-	return appendLine(filepath.Join(store, "log.jsonl"), string(rec))
+	v := logRecord{Event: event, Session: session, Entry: id, Stamp: stamp, Publish: policy, Source: source}
+	line, err := logRecords.Write(&v, schemaread.FormBase64)
+	if err != nil {
+		return err
+	}
+	if len(line) == 0 {
+		return errors.New("the cairn log table is not installed: import internal/record/ledgerread")
+	}
+	return appendLine(filepath.Join(store, "log.jsonl"), string(line))
 }
 
 // OpenRecord is what a session's open recorded in log.jsonl: its source, its
@@ -509,13 +513,14 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 	return OpenRecord{}, nil
 }
 
-// The cairn log's typed read (v1.5 aspect 13; the owner's S2 and S4, readers
-// first). A log.jsonl line is the CairnLogRecord table of schemas/ledger, read
-// from the padded standard base64 of its wire (or the wire itself) or the
-// legacy JSON line appendLog writes today. The schema JSON text of the record
-// is the legacy line's own shape, so it reads, and is counted, as legacy.
-// Writers stay legacy. pkg/ledgerwire's golden test imports this package, so
-// the generated table is wired in by internal/record/ledgerread.
+// The cairn log's typed read and write (v1.5 aspect 13; the owner's S2 and
+// S4, readers then writers). A log.jsonl line is the CairnLogRecord table of
+// schemas/ledger, read from the padded standard base64 of its wire (or the
+// wire itself) or the legacy JSON line older stores wrote. The schema JSON text
+// of the record is the legacy line's own shape, so it reads, and is counted, as
+// legacy. appendLog writes the table form as the padded standard base64 of the
+// wire (S2). pkg/ledgerwire's golden test imports this package, so the
+// generated table is wired in by internal/record/ledgerread.
 var (
 	// LogRecordWire holds the generated table an installer
 	// (internal/record/ledgerread) wires in; until then a table image is

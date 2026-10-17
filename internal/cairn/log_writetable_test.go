@@ -2,14 +2,88 @@ package cairn
 
 import (
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/record/tablejson"
 	"github.com/mas-bandwidth/nova-tools/pkg/ledgerwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/stretchr/testify/require"
 )
+
+// testCairnLogWire is the CairnLogRecord table's Wire, built from the
+// generated package as internal/record/ledgerread wires it. This test installs
+// it because a test in this package cannot import ledgerread (it imports this
+// package, so the test build would cycle); the writer switch under test runs
+// through the same slot the installer fills.
+func testCairnLogWire() tablejson.Wire {
+	load := func(in []byte, loadFn func(*ledgerwire.CairnLogRecordBuilder, []byte, *ledgerwire.TableReport) bool, out func(*ledgerwire.CairnLogRecord) []byte) ([]byte, schemaread.Report) {
+		var b ledgerwire.CairnLogRecordBuilder
+		if !b.Init() {
+			return nil, schemaread.Report{Malformed: true}
+		}
+		defer b.Shutdown()
+		var rep ledgerwire.TableReport
+		ok := loadFn(&b, in, &rep)
+		r := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped),
+			Malformed: rep.Malformed || rep.Duplicate > 0 || !ok}
+		if rep.Verdict == ledgerwire.TableOpenRefused || rep.Verdict == ledgerwire.TableOpenDamaged || rep.MissingRequired > 0 {
+			if err := rep.Err(); err != nil {
+				r.Reason = err.Error()
+			}
+		}
+		if !ok || r.Reason != "" || r.Malformed || !b.Lock() {
+			r.Malformed = r.Malformed || r.Reason == ""
+			return nil, r
+		}
+		v := b.AsConst()
+		if v == nil {
+			return nil, schemaread.Report{Malformed: true}
+		}
+		text := out(v)
+		if text == nil {
+			r.Malformed = true
+		}
+		return text, r
+	}
+	asJSON := func(v *ledgerwire.CairnLogRecord) []byte {
+		n := ledgerwire.CairnLogRecordToJsonMeasure(v)
+		if n < 0 {
+			return nil
+		}
+		buf := make([]byte, n)
+		if ledgerwire.CairnLogRecordToJson(v, buf) != n {
+			return nil
+		}
+		return buf
+	}
+	asWire := func(v *ledgerwire.CairnLogRecord) []byte {
+		n := ledgerwire.CairnLogRecordMeasure(v)
+		if n < 0 {
+			return nil
+		}
+		buf := make([]byte, n)
+		if ledgerwire.CairnLogRecordSave(v, buf) != n {
+			return nil
+		}
+		return buf
+	}
+	return tablejson.Wire{
+		Measure:  func(wire []byte) error { _, err := ledgerwire.CairnLogRecordLoadMeasureReason(wire); return err },
+		WireJSON: func(wire []byte) ([]byte, schemaread.Report) { return load(wire, ledgerwire.CairnLogRecordLoadBuilder, asJSON) },
+		JSON:     func(text []byte) ([]byte, schemaread.Report) { return load(text, ledgerwire.CairnLogRecordFromJson, asJSON) },
+		JSONWire: func(text []byte) ([]byte, error) {
+			wire, rep := load(text, ledgerwire.CairnLogRecordFromJson, asWire)
+			if wire == nil || rep.Reason != "" || rep.Malformed || rep.Clamped > 0 || rep.KindMismatch > 0 {
+				return nil, errors.New("malformed")
+			}
+			return wire, nil
+		},
+	}
+}
 
 // readCairnLogLine reads one log.jsonl line as the CairnLogRecord table: the
 // padded standard base64 of the wire (S2). It returns the record as its JSON
@@ -41,6 +115,8 @@ func readCairnLogLine(t *testing.T, line string) string {
 func TestCairnLogWriteTable(t *testing.T) {
 	t.Parallel()
 
+	LogRecordWire.Install(testCairnLogWire())
+
 	// The writer writes the table form into a t.TempDir(), and the line it
 	// appends reads back equal as the CairnLogRecord.
 	store := t.TempDir()
@@ -51,7 +127,7 @@ func TestCairnLogWriteTable(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	require.Len(t, lines, 1, "one append writes one line")
 	want := `{"event":"open","session":"session-1","entry":"","stamp":"2026-10-17T12:00:00Z","publish":"manual","source":"fixture"}`
-	require.JSONEq(t, want, readCairnLogLine(t, lines[0]), "what appendLog writes reads back equal through the cair reader")
+	require.JSONEq(t, want, readCairnLogLine(t, lines[0]), "what appendLog writes reads back equal through the dual reader")
 
 	// A value the table cannot hold is refused by name before a byte is
 	// written: an event that is not an enum variant never lands a line.
