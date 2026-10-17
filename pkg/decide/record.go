@@ -2,7 +2,6 @@ package decide
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +10,8 @@ import (
 	"os"
 	"slices"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/decidewire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/rogpeppe/go-internal/lockedfile"
 )
 
@@ -256,12 +257,107 @@ func locked(path string, plan func([]Decision) ([]line, error)) (err error) {
 	}
 	var out []byte
 	for _, l := range add {
-		raw, err := json.Marshal(l)
+		line, err := recordLineWriter.Write(&l, schemaread.FormBase64)
 		if err != nil {
 			return err
 		}
-		out = append(append(out, raw...), '\n')
+		out = append(out, append(line, '\n')...)
 	}
 	_, err = f.Write(out)
 	return err
 }
+
+// setText writes the text of a table row field (S2, the table's text form).
+func setText(w *decidewire.TableWorker, slot *int64, s string) {
+	if s != "" {
+		decidewire.TableStringEmplace(w, slot, []byte(s))
+	}
+}
+
+// sortedKeys returns a map's keys in order, so a table image is the same on
+// every run.
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// fillDecisionRow builds a decision table row from the record's decision.
+func fillDecisionRow(w *decidewire.TableWorker, r *decidewire.DecisionRow, d *Decision) {
+	setText(w, &r.Id, d.ID)
+	setText(w, &r.DecisionName, d.Decision)
+	setText(w, &r.Schema, d.Schema)
+	setText(w, &r.Backend, d.Backend)
+	setText(w, &r.At, d.At)
+	setText(w, &r.State, d.State)
+	r.Usage = decidewire.UsageRow{InputTokens: int64(d.Usage.InputTokens), OutputTokens: int64(d.Usage.OutputTokens)}
+	for _, k := range sortedKeys(d.Inputs) {
+		in := decidewire.DecisionInputsAdd(w, &r.Inputs)
+		setText(w, &in.Key, k)
+		setText(w, &in.Value, d.Inputs[k])
+	}
+	for _, q := range sortedKeys(d.Answers) {
+		a := d.Answers[q]
+		na := decidewire.DecisionAnswersAdd(w, &r.Answers)
+		setText(w, &na.Question, q)
+		na.Answer.Kind = decidewire.AnswerTypeChoice
+		setText(w, &na.Answer.Value, a.Value)
+		for _, opt := range sortedKeys(a.P) {
+			o := decidewire.AnswerPAdd(w, &na.Answer.P)
+			setText(w, &o.Option, opt)
+			o.P = a.P[opt]
+		}
+	}
+}
+
+// recordLineWire builds the record line's binary image from a line, in the
+// generated table of pkg/decidewire that the reader reads.
+func recordLineWire(l *line) []byte {
+	var b decidewire.RecordLineBuilder
+	if !b.Init() {
+		return nil
+	}
+	defer b.Shutdown()
+	w := b.GetRoot()
+	switch {
+	case l.Decision != nil:
+		w.Kind = decidewire.LineKindDecision
+		fillDecisionRow(&b.Main, decidewire.DecisionEmplace(&b.Main, &w.AsDecision), l.Decision)
+	case l.Outcome != nil:
+		w.Kind = decidewire.LineKindOutcome
+		o := decidewire.OutcomeEmplace(&b.Main, &w.AsOutcome)
+		setText(&b.Main, &o.Id, l.Outcome.ID)
+		setText(&b.Main, &o.Label, l.Outcome.Label)
+		setText(&b.Main, &o.Note, l.Outcome.Note)
+		setText(&b.Main, &o.At, l.Outcome.At)
+	case l.Act != nil:
+		w.Kind = decidewire.LineKindAct
+		a := decidewire.ActEmplace(&b.Main, &w.AsAct)
+		setText(&b.Main, &a.Id, l.Act.ID)
+		setText(&b.Main, &a.Step, l.Act.Act)
+		setText(&b.Main, &a.Op, l.Act.Op)
+		setText(&b.Main, &a.At, l.Act.At)
+	}
+	if !b.Lock() {
+		return nil
+	}
+	root := b.AsConst()
+	n := decidewire.RecordLineMeasure(root)
+	buf := make([]byte, n)
+	decidewire.RecordLineSave(root, buf)
+	return buf
+}
+
+// recordLineWriter writes a record line in the table's form: the padded
+// standard base64 of its binary image (S2). A value the table cannot hold is
+// refused by name before a byte is written (S2, the schema's declared bounds).
+var recordLineWriter = schemaread.NewReader(&schemaread.Codec[line]{
+	Name:        "RECORD_LINE",
+	Help:        "nova-decide record -h",
+	Reset:       func(v *line) { *v = line{} },
+	Constraints: recordLineCheck,
+	SaveWire:    recordLineWire,
+})
