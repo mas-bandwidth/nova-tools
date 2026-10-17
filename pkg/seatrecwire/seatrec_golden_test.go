@@ -213,11 +213,6 @@ func receiptOf(v *wire.PlacedReceipt) receipt {
 // so a field the code requires is Required here; a declared bound is checked
 // again here so the writer refuses it by name before a byte is written.
 
-// noCap is the bound of text the code does not bound: Checker.Text then
-// refuses only a NUL and text that is not UTF-8, which the table writer
-// cannot carry.
-const noCap = math.MaxInt
-
 func seatConstraints(v *wire.SeatEnvironment, c *schemaread.Checker) {
 	// LoadSeatEnvironment accepts version 1 only (pkg/seatcred/environment.go:101).
 	c.Required("version", v.VersionPresent)
