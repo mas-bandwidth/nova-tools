@@ -82,7 +82,8 @@ func TestMemberQueueAnswerDualRead(t *testing.T) {
 			r := schemaread.NewReader(queueAnswerCodec())
 			got, _, err := r.Read(d.in)
 			require.Error(t, err, "%s: refused", d.name)
-			assert.Contains(t, err.Error(), "QUEUE REFUSED", d.name)
+			assert.Contains(t, err.Error(), "QUEUE REFUSED: ", d.name)
+			assert.Contains(t, err.Error(), "; run: nova-sprint queue -h", d.name)
 			assert.Zero(t, got, "%s: never read as absent, empty or zero", d.name)
 		}
 	})
