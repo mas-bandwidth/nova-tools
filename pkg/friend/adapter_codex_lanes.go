@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // Codex runs one card in one headless Codex model process. The existing
@@ -26,22 +28,50 @@ type Codex struct {
 	Out          io.Writer
 }
 
+// codexRoutesView is the sprint routes view as codexRouteModels reads it, in
+// whichever form it arrived.
+type codexRoutesView struct {
+	TierRoutes map[string][]string `json:"tier_routes"`
+	Routes     []struct {
+		Route struct {
+			Name, Tier, Provider, Model, Harness string
+			Enabled                              bool
+			Prices                               struct{ Billing string }
+		} `json:"route"`
+	} `json:"routes"`
+}
+
+// routesViewRead is the installed strict routes-view reader, nil until a
+// program installs one. A program that reads the routes view in the table
+// forms installs it (the binaries reach pkg/friend, so they install it from
+// their own main); a program that leaves it nil reads the legacy JSON only.
+var routesViewRead func([]byte) (codexRoutesView, schemaread.Form, error)
+
+// InstallRoutesViewRead installs the strict routes-view reader the dual read
+// uses. The reader is built by the caller over pkg/schemaread and the
+// generated RoutesView table (pkg/answerwire), reads the binary wire, the
+// padded standard base64 of it, the JSON text form and the legacy form, and
+// refuses damage by name. codexRouteModels refuses a damaged value as
+// <RECORD> REFUSED: <reason>; run: <help>, never as absent, empty or zero.
+func InstallRoutesViewRead(r func([]byte) (codexRoutesView, schemaread.Form, error)) {
+	routesViewRead = r
+}
+
 // codexRouteModels reads the applied nova-config route projection already
 // exposed by nova-sprint routes --json. This transient result is discarded
 // after admission; there is no adapter model table or shadow configuration.
 func codexRouteModels(raw string) (map[string]string, error) {
-	var view struct {
-		TierRoutes map[string][]string `json:"tier_routes"`
-		Routes     []struct {
-			Route struct {
-				Name, Tier, Provider, Model, Harness string
-				Enabled                              bool
-				Prices                               struct{ Billing string }
-			}
+	var view codexRoutesView
+	if r := routesViewRead; r != nil {
+		read, _, err := r([]byte(raw))
+		if err != nil {
+			return nil, err
 		}
-	}
-	if err := json.Unmarshal([]byte(raw), &view); err != nil {
-		return nil, fmt.Errorf("Codex routes: %w", err)
+		view = read
+	} else {
+		if err := json.Unmarshal([]byte(raw), &view); err != nil {
+			return nil, fmt.Errorf("Codex routes: %w", err)
+		}
 	}
 	if view.TierRoutes == nil {
 		return nil, errors.New("the sprint routes view has no applied tier arrays; upgrade nova-sprint before starting Codex lanes")
