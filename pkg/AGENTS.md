@@ -38,6 +38,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `hostload/` | a machine's load: CPU busy percent of all its cores, else the load average over them | `go test ./pkg/hostload` | `go test ./pkg/hostload` |
 | `hygiene/` | clean checkout and leak assertions | `go test ./pkg/hygiene` | `go test ./pkg/hygiene` |
 | `keyshape/` | cryptographic key format verification | `go test ./pkg/keyshape` | `go test ./pkg/keyshape` |
+| `ledgerwire/` | the ledger area's table wire, generated from schemas/ledger by the pinned schema compiler (generate.go); strict binary, base64 and JSON reads | `go test ./pkg/ledgerwire` | `make schemawire-check` |
 | `log/` | structured logging helpers | `go test ./pkg/log` | `go test ./pkg/log` |
 | `member/` | a sprint fleet member's loop: beat, queue, push and judge the finish, take to width, each card a child | `go test ./pkg/member` | `go test ./pkg/member` |
 | `nsprint/` | the shared Redis store and login, its Functions, and the verb flags the living tools use | `go test ./pkg/nsprint/...` | `go test ./pkg/nsprint/...` |
@@ -64,6 +65,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `sprintwire/` | how a worker talks to the sprint's server (nova-sprint run --listen): the request and reply of a batch of verbs, the client, and the member's sprint over it | `go test ./pkg/sprintwire` | `go test ./pkg/sprintwire` |
 | `subproc/` | the one door a child process goes through: a named deadline per kind, WaitDelay, and a cancellable context for long-lived children | `go test ./pkg/subproc` | `go test ./pkg/subproc` |
 | `swarm/` | the native card runner: staging, the wall, budgets, slot leases and card lint | `go test ./pkg/swarm` | `go test ./pkg/swarm` |
+| `tablemodelwire/` | the table model's and the convergence verb's variable-table wire, generated from schemas/tablemodel by the pinned schema compiler (generate.go) | `go test ./pkg/tablemodelwire` | `make schemawire-check` |
 | `testbin/` | places a built program into a test dir | `go test ./pkg/testbin` | `go test ./pkg/testbin` |
 | `testgit/` | the one git identity for tests that commit in a scratch repository, and the hosted runner's identity-less git for reproducing it | `go test ./pkg/testgit` | `go test ./pkg/testgit` |
 | `testguard/` | host seam and leak interception | `go test ./pkg/testguard` | `go test ./pkg/testguard` |
