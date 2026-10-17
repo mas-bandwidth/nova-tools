@@ -183,14 +183,10 @@ func (f FileReceipts) Tokens(_ context.Context, w SpendWindow) (map[string]int64
 	if err != nil {
 		return nil, fmt.Errorf("cannot read the receipts %s: %w", f.Path, err)
 	}
-	var file struct {
-		Evidence string           `json:"evidence"`
-		From     time.Time        `json:"from"`
-		To       time.Time        `json:"to"`
-		Friends  map[string]int64 `json:"friends"`
-	}
-	if err := json.Unmarshal(raw, &file); err != nil || file.Evidence != ReceiptsKind || file.Friends == nil {
-		return nil, fmt.Errorf("%s is no %s file", f.Path, ReceiptsKind)
+	// the file is read in every form and refused by name (records.go SPEND_RECEIPTS, S2)
+	file, err := records.ReadReceipts(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s is no %s file: %w", f.Path, ReceiptsKind, err)
 	}
 	if !file.From.Equal(w.From) || file.To.Before(w.To.Add(-time.Hour)) || file.To.After(w.To) {
 		return nil, fmt.Errorf("the receipts %s cover %s..%s, and the window is %s", f.Path,
