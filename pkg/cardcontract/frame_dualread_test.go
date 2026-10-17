@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -35,6 +37,19 @@ func TestCardFrameDualRead(t *testing.T) {
 			continue
 		}
 		assert.Equal(t, rec, got, "%s form reads the frame equal", f.form)
+	}
+
+	// Files are read from a t.TempDir() the test writes: every form written to
+	// a file reads back equal through ReadFrame (S2).
+	dir := t.TempDir()
+	for _, f := range forms.each() {
+		p := filepath.Join(dir, f.form.String()+".frame.json")
+		require.NoError(t, os.WriteFile(p, f.in, 0o644))
+		got, err := cardcontract.ReadFrame(p)
+		if !assert.NoError(t, err, "%s form file reads", f.form) {
+			continue
+		}
+		assert.Equal(t, rec, got, "%s form file reads the frame equal", f.form)
 	}
 
 	// A truncated, flipped and clamped value of every form is refused by name,
