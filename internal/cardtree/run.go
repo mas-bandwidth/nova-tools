@@ -44,14 +44,55 @@ func (r Result) Line() string {
 
 var (
 	verdictRE = regexp.MustCompile(`(?i)^[ \t*-]*step[ \t-]?([0-9]+(?:\.[0-9]+)*):[ \t]*(ok|broken|not-done|skipped)\b[ \t]*(\S*)[ \t]*(.*)$`)
-	// stepShaRE is a step line's commit: a full sha or the twelve-digit short one, never a word
-	stepShaRE = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{12})$`)
+	// stepShaRE is a step line's commit once "-" is set aside: 7 to 40 lowercase
+	// hex. Shorter than 40 is a prefix of one commit of the branch
+	// (docs/SPEC-SPRINT.md, the verdict per step).
+	stepShaRE = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 )
 
+// ShaResolve turns a 7 to 40 hex step commit into the one full sha of the
+// branch the result names (docs/SPEC-SPRINT.md, the verdict per step). The
+// member supplies it; this package does not run git. An ambiguous prefix and
+// an unknown one come back as *CommitMiss.
+type ShaResolve func(prefix string) (sha string, err error)
+
+// CommitMiss is a step commit that is 7 to 40 hex but not one commit of the
+// branch. Kind is "ambiguous" or "unknown".
+type CommitMiss struct {
+	Kind, Prefix, Branch string
+}
+
+func (e *CommitMiss) Error() string {
+	if e.Kind == "ambiguous" {
+		return "the step line's commit " + e.Prefix + " is ambiguous on " + e.Branch
+	}
+	return "the step line's commit " + e.Prefix + " is on no commit of " + e.Branch
+}
+
+// AmbiguousCommit is a prefix of two commits of the branch, or one git calls ambiguous.
+func AmbiguousCommit(prefix, branch string) error {
+	return &CommitMiss{Kind: "ambiguous", Prefix: prefix, Branch: branch}
+}
+
+// UnknownCommit is a prefix of no commit of the branch.
+func UnknownCommit(prefix, branch string) error {
+	return &CommitMiss{Kind: "unknown", Prefix: prefix, Branch: branch}
+}
+
 // ParseVerdicts reads every step line of a result's body, by step number; the first line for
-// a step wins. A line whose commit is neither `-` nor a sha (40 or 12 hex) is a defect: the
-// step is not-done, its words say why, so no word is ever pushed as a head.
-func ParseVerdicts(body string) map[string]Result {
+// a step wins. A line whose commit is neither `-` nor 7 to 40 hex is a defect: the step is
+// not-done, its words say why, so no word is ever pushed as a head. A hex commit is a prefix,
+// resolved by resolve to the one full sha of the branch; a full sha is checked the same way.
+// nil resolve accepts a 40-hex sha as itself and refuses a shorter one as unknown.
+func ParseVerdicts(body string, resolve ShaResolve) map[string]Result {
+	if resolve == nil {
+		resolve = func(prefix string) (string, error) {
+			if fullShaRE.MatchString(prefix) {
+				return prefix, nil
+			}
+			return "", UnknownCommit(prefix, "the branch")
+		}
+	}
 	out := map[string]Result{}
 	for _, l := range strings.Split(body, "\n") {
 		m := verdictRE.FindStringSubmatch(strings.TrimRight(l, "\r"))
@@ -66,7 +107,19 @@ func ParseVerdicts(body string) map[string]Result {
 		case r.Sha == "-" || r.Sha == "":
 			r.Sha = ""
 		case !stepShaRE.MatchString(r.Sha):
-			r = Result{Num: r.Num, Verdict: NotDone, Words: "the step line's commit " + m[3] + " is no sha (40 or 12 hex, or -): " + strings.TrimSpace(m[3]+" "+m[4])}
+			r = Result{Num: r.Num, Verdict: NotDone, Words: "the step line's commit " + m[3] + " is no sha (7 to 40 hex, or -): " + strings.TrimSpace(m[3]+" "+m[4])}
+		default:
+			full, err := resolve(r.Sha)
+			if err != nil {
+				r = Result{Num: r.Num, Verdict: NotDone, Words: err.Error()}
+				break
+			}
+			full = strings.ToLower(strings.TrimSpace(full))
+			if !fullShaRE.MatchString(full) || !strings.HasPrefix(full, r.Sha) {
+				r = Result{Num: r.Num, Verdict: NotDone, Words: UnknownCommit(r.Sha, "the branch").Error()}
+				break
+			}
+			r.Sha = full
 		}
 		out[m[1]] = r
 	}
@@ -369,7 +422,7 @@ func Guide(t Tree) string {
 		fmt.Fprintf(&b, ", from STEP %s (the steps before it have landed)", t.From)
 	}
 	b.WriteString(", one commit per step, its COMMIT: line the message, touching only that step's PATHS:. ")
-	b.WriteString("The pull request body carries one line per work step: `step <n>: <ok|broken|not-done|skipped> <commit sha|-> <one line>`, the sha the step's full commit or its first twelve. ")
+	b.WriteString("The pull request body carries one line per work step: `step <n>: <ok|broken|not-done|skipped> <commit sha|-> <one line>`, the sha 7 to 40 hex, a short one resolved to the full sha on the branch. ")
 	b.WriteString("A step that is not ok ends the walk: say why on its line and finish with the steps before it committed; the member lands those and the rest becomes a new card.")
 	return b.String() + "\n\n"
 }

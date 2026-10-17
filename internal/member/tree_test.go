@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -88,5 +89,52 @@ func TestAFailedFirstStepIsAFailedFinishNamingTheStep(t *testing.T) {
 	finish := g.s.lines("finish")
 	require.Len(t, finish, 1)
 	assert.Contains(t, finish[0], "--report step 2 broken: the gate is red; pushed=")
+	assert.Contains(t, finish[0], "--failed")
+}
+
+func TestANineHexStepShaFinishesAtTheFullSha(t *testing.T) {
+	t.Parallel()
+	landSha := strings.Repeat("a", 40)
+	child := strings.Repeat("b", 40)
+	prefix := landSha[:9]
+	body := "step 2: ok " + prefix + " one\nstep 3: broken - red\n"
+	pu := &fakePusher{def: Push{Sha: landSha}}
+	g := treeRig(t, pu, Result{Ran: true, Shaped: true, Verdict: "not-done", Head: child, Report: "step 3 failed", Body: body})
+	g.m.cfg.ResolveStep = func(branch, got string) (string, error) {
+		if branch == "work/c1" && got == prefix {
+			return landSha, nil
+		}
+		return "", cardtree.UnknownCommit(got, branch)
+	}
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	assert.Equal(t, []string{landSha}, pu.heads, "the push is asked for the full sha, not the child's head and not the nine hex")
+	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + landSha + " to work/c1: remainder=c1-r3 step 3 broken: red --head " + landSha + " --branch work/c1 --epoch 7"},
+		g.s.lines("finish"))
+
+	amb := "bbbbbbbbb"
+	g2 := treeRig(t, &fakePusher{def: Push{Sha: landSha}}, Result{Ran: true, Shaped: true, Verdict: "ok", Head: child, Report: "done", Body: "step 2: ok " + amb + " two\n"})
+	g2.m.cfg.ResolveStep = func(branch, got string) (string, error) {
+		return "", cardtree.AmbiguousCommit(got, branch)
+	}
+	_, err = g2.tick(t)
+	require.NoError(t, err)
+	finish := g2.s.lines("finish")
+	require.Len(t, finish, 1)
+	assert.Contains(t, finish[0], "step 2 not-done: the step line's commit "+amb+" is ambiguous on work/c1")
+	assert.NotContains(t, finish[0], "is no sha")
+	assert.Contains(t, finish[0], "--failed")
+
+	unk := "ccccccccc"
+	g3 := treeRig(t, &fakePusher{def: Push{Sha: landSha}}, Result{Ran: true, Shaped: true, Verdict: "ok", Head: child, Report: "done", Body: "step 2: ok " + unk + " two\n"})
+	g3.m.cfg.ResolveStep = func(branch, got string) (string, error) {
+		return "", cardtree.UnknownCommit(got, branch)
+	}
+	_, err = g3.tick(t)
+	require.NoError(t, err)
+	finish = g3.s.lines("finish")
+	require.Len(t, finish, 1)
+	assert.Contains(t, finish[0], "step 2 not-done: the step line's commit "+unk+" is on no commit of work/c1")
+	assert.NotContains(t, finish[0], "is no sha")
 	assert.Contains(t, finish[0], "--failed")
 }

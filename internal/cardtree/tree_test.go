@@ -284,7 +284,7 @@ STEP 5. End as JOB.md says; write RESULT.md.
 `
 	tr := Parse(card)
 	sha, land := strings.Repeat("a", 40), strings.Repeat("b", 40)
-	failed, at := Land(tr, ParseVerdicts("- step 2: ok "+sha+" one done\nstep 3.1: broken - TestB is red\n"))
+	failed, at := Land(tr, ParseVerdicts("- step 2: ok "+sha+" one done\nstep 3.1: broken - TestB is red\n", statedSha(sha)))
 	require.NotNil(t, failed)
 	assert.Equal(t, Result{Num: "3.1", Verdict: Broken, Words: "TestB is red"}, *failed)
 	assert.Equal(t, sha, at, "steps before the failed one land at the last ok step's commit")
@@ -307,17 +307,27 @@ STEP 5. End as JOB.md says; write RESULT.md.
 	require.NoError(t, err)
 	assert.Equal(t, "RESULT: x sha="+land[:12]+"\nFrom: STEP 2\nNeeds: x\nbase-sha: "+land+"\n\nSTEP 1.", flat, "a card naming no base gains a base-sha: line")
 
-	none, _ := Land(tr, ParseVerdicts("step 2: ok "+sha+"\nstep 3.1: ok -\nstep 4: ok "+sha[:12]))
+	none, _ := Land(tr, ParseVerdicts("step 2: ok "+sha+"\nstep 3.1: ok -\nstep 4: ok "+sha[:12], statedSha(sha)))
 	assert.Nil(t, none, "every step ok: nothing failed")
-	first, at := Land(tr, ParseVerdicts("step 2: not-done -"))
+	first, at := Land(tr, ParseVerdicts("step 2: not-done -", statedSha(sha)))
 	require.NotNil(t, first)
 	assert.Equal(t, "2", first.Num)
 	assert.Empty(t, at, "a failed first step lands nothing")
 }
 
+// statedSha resolves a prefix of full to full, and refuses anything else.
+func statedSha(full string) ShaResolve {
+	return func(prefix string) (string, error) {
+		if strings.HasPrefix(full, prefix) && len(prefix) >= 7 {
+			return full, nil
+		}
+		return "", UnknownCommit(prefix, "b")
+	}
+}
+
 func TestAStepLineWhoseCommitIsAWordIsADefect(t *testing.T) {
 	t.Parallel()
-	v := ParseVerdicts("step 2: ok renamed Foo\nstep 3: broken - red\n")
+	v := ParseVerdicts("step 2: ok renamed Foo\nstep 3: broken - red\n", statedSha(strings.Repeat("a", 40)))
 	assert.Equal(t, NotDone, v["2"].Verdict)
 	assert.Empty(t, v["2"].Sha, "no word is ever a head")
 	assert.Contains(t, v["2"].Words, "renamed is no sha")
@@ -326,6 +336,59 @@ func TestAStepLineWhoseCommitIsAWordIsADefect(t *testing.T) {
 	require.NotNil(t, failed)
 	assert.Equal(t, "2", failed.Num, "the defect line is the failed step")
 	assert.Empty(t, land)
+}
+
+func TestFinishAcceptsAShortShaPrefixResolvedOnTheBranch(t *testing.T) {
+	t.Parallel()
+	full := strings.Repeat("a", 40)
+	prefix, amb, unk := full[:9], "bbbbbbbbb", "ccccccccc"
+	missing := strings.Repeat("d", 40)
+	branch := "work/c1"
+	var asked []string
+	resolve := func(p string) (string, error) {
+		asked = append(asked, p)
+		switch p {
+		case prefix, full:
+			return full, nil
+		case amb:
+			return "", AmbiguousCommit(p, branch)
+		default:
+			return "", UnknownCommit(p, branch)
+		}
+	}
+	body := strings.Join([]string{
+		"step 2: ok " + prefix + " one done",
+		"step 3: ok " + amb + " two",
+		"step 4: ok " + unk + " three",
+		"step 5: ok abcdef six",
+		"step 6: ok notasha nope",
+		"step 7: ok " + full + " four",
+		"step 8: ok " + missing + " five",
+	}, "\n")
+	v := ParseVerdicts(body, resolve)
+	assert.Equal(t, Result{Num: "2", Verdict: OK, Sha: full, Words: "one done"}, v["2"], "a nine-hex prefix is the full sha the resolver returns")
+	assert.Equal(t, Result{Num: "3", Verdict: NotDone, Words: "the step line's commit " + amb + " is ambiguous on " + branch}, v["3"])
+	assert.NotContains(t, v["3"].Words, "is no sha")
+	assert.Equal(t, Result{Num: "4", Verdict: NotDone, Words: "the step line's commit " + unk + " is on no commit of " + branch}, v["4"])
+	assert.NotContains(t, v["4"].Words, "is no sha")
+	assert.Equal(t, NotDone, v["5"].Verdict)
+	assert.Empty(t, v["5"].Sha)
+	assert.Contains(t, v["5"].Words, "abcdef is no sha")
+	assert.Equal(t, NotDone, v["6"].Verdict)
+	assert.Contains(t, v["6"].Words, "notasha is no sha")
+	assert.Equal(t, full, v["7"].Sha, "a full sha is checked the same way and kept")
+	assert.Equal(t, OK, v["7"].Verdict)
+	assert.Equal(t, NotDone, v["8"].Verdict)
+	assert.Contains(t, v["8"].Words, "is on no commit of "+branch)
+	assert.NotContains(t, v["8"].Words, "is no sha")
+	assert.NotContains(t, asked, "abcdef")
+	assert.NotContains(t, asked, "notasha")
+
+	card := "RESULT: c1\nSTEP 2. One.\n  PATHS: a.go\n  COMMIT: one\n  VERDICT: ok\nSTEP 3. Two.\n  PATHS: b.go\n  COMMIT: two\n  VERDICT: ok\n"
+	failed, at := Land(Parse(card), ParseVerdicts("step 2: ok "+prefix+" landed\nstep 3: broken - red\n", resolve))
+	require.NotNil(t, failed)
+	assert.Equal(t, "3", failed.Num)
+	assert.Equal(t, full, at, "the land commit is the full sha, not the prefix")
 }
 
 func TestTheTreeLintNamesEachDefect(t *testing.T) {
