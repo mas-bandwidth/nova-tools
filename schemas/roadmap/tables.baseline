@@ -1,0 +1,77 @@
+schema-tables-baseline 7
+package roadmapwire
+
+table Doc
+    field title id=0xda31296c0c1b6029 kind=17 type=string
+    field text id=0xfa04f4ef1995407e kind=17 type=string
+    field scheduled id=0xa3e655bb9ba9a298 kind=14 elem=13 type=Note array=unbounded
+    field done id=0xdc51fb6761fd6e91 kind=14 elem=13 type=Note array=unbounded
+    field groups id=0x6039b1239580514d kind=14 elem=13 type=Group array=unbounded
+    field items id=0x3e7884bf4f412c6f kind=14 elem=13 type=Item array=unbounded
+
+table Fix
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field release id=0xa63d4c9b882b10fe kind=17 type=string
+    field title id=0xda31296c0c1b6029 kind=17 type=string
+    field text id=0xfa04f4ef1995407e kind=17 type=string
+    field origin id=0xb9eae4fe785a14cf kind=17 type=string
+    field status id=0xc4d5696d6cc12c2f kind=7 enum=FixStatus
+    field kept id=0x583876d75cd7d1d9 kind=14 elem=13 type=Pair array=unbounded
+
+table Fixes
+    field title id=0xda31296c0c1b6029 kind=17 type=string
+    field text id=0xfa04f4ef1995407e kind=17 type=string
+    field releases id=0xa539b948612d1f97 kind=14 elem=13 type=Release array=unbounded
+    field items id=0x3e7884bf4f412c6f kind=14 elem=13 type=Fix array=unbounded
+
+table Group
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field title id=0xda31296c0c1b6029 kind=17 type=string
+    field text id=0xfa04f4ef1995407e kind=17 type=string
+
+table Item
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field group id=0xdc57e42946f6e08c kind=17 type=string
+    field title id=0xda31296c0c1b6029 kind=17 type=string
+    field text id=0xfa04f4ef1995407e kind=17 type=string
+    field why id=0x5ec5ea1948914a79 kind=17 type=string
+    field date id=0x855b516730a34339 kind=12 size=10
+    field area id=0x89502e843ec2b8c4 kind=17 type=string
+    field exists id=0x732d8bd38ff9851d kind=17 type=string
+    field cards id=0xaf9dac3b097689c4 kind=4 min=0 max=1048576
+    field origin id=0xb9eae4fe785a14cf kind=17 type=string
+    field release id=0xa63d4c9b882b10fe kind=17 type=string
+    field kept id=0x583876d75cd7d1d9 kind=14 elem=13 type=Pair array=unbounded
+
+table Note
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field release id=0xa63d4c9b882b10fe kind=17 type=string
+    field title id=0xda31296c0c1b6029 kind=17 type=string
+    field text id=0xfa04f4ef1995407e kind=17 type=string
+    field date id=0x855b516730a34339 kind=12 size=10
+    field kept id=0x583876d75cd7d1d9 kind=14 elem=13 type=Pair array=unbounded
+
+table Pair
+    field key id=0x3dc94a19365b10ec kind=17 type=string
+    field value id=0x7ce4fd9430e80cea kind=17 type=string
+
+table Release
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field status id=0xc4d5696d6cc12c2f kind=7 enum=ReleaseStatus
+    field text id=0xfa04f4ef1995407e kind=17 type=string
+    field date id=0x855b516730a34339 kind=12 size=10
+
+enum FixStatus
+    variant shipped id=0x51a3ab18b49d7024
+    variant in_progress id=0x6b42bc2ff497b44c
+    variant planned id=0x49d7901bf9d028c5
+    variant done id=0xdc51fb6761fd6e91
+
+enum ReleaseStatus
+    variant shipped id=0x51a3ab18b49d7024
+    variant in_progress id=0x6b42bc2ff497b44c
+    variant planned id=0x49d7901bf9d028c5
+
+## history
+### 2026-10-17 (UTC) — first baseline
+- baseline created over 8 tables — data written BEFORE this point is not covered by it
