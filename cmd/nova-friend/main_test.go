@@ -244,9 +244,12 @@ func TestPongSendsTheSessionsAnswerToTheCoordinator(t *testing.T) {
 	m := entries[0].Message()
 	assert.Equal(t, "bob", m.From, "the from is the proof, never the body")
 	assert.Equal(t, friend.PongSubject, m.Subject)
-	n, q, wk, wd, ok := friend.ParsePong(strings.TrimSpace(m.Body))
-	require.True(t, ok, m.Body)
-	assert.Equal(t, []any{"abc123", 2, 1, 4}, []any{n, q, wk, wd})
+	p, _, err := friend.NewPongReader().Message(m)
+	require.NoError(t, err, "the pong body is the table form, read strictly")
+	assert.Equal(t, "abc123", p.Nonce)
+	assert.Equal(t, 2, p.Queue)
+	assert.Equal(t, 1, p.Working)
+	assert.Equal(t, 4, p.Width)
 }
 
 func TestPongCarriesTheDaemonsNameAndTheSeatItRecorded(t *testing.T) {

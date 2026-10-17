@@ -382,9 +382,16 @@ func (p *PongReader) Read(from string, at time.Time, body []byte) (Pong, schemar
 	return pongOf(&v), res.Form, nil
 }
 
-// write checks pg and writes it as a table pong in form. Writers stay legacy
-// (PongLine); this is the switch's writer, used by the tests that prove the
-// two forms read alike.
+// WriteTable writes pg as a table pong in form: the binary wire (FormBinary),
+// padded standard base64 of the wire (FormBase64) or the JSON text (FormJSON).
+// It is the pong writer after the switch: it refuses on any validation failure
+// (a *schemaread.Refusal) and never falls back to the legacy line. The friend
+// and send time a table pong carries are pg's own.
+func (p *PongReader) WriteTable(pg Pong, form schemaread.Form) ([]byte, error) {
+	return p.write(pg, form)
+}
+
+// write checks pg and writes it as a table pong in form.
 func (p *PongReader) write(pg Pong, form schemaread.Form) ([]byte, error) {
 	var v pongTable
 	if len(pg.Friend) > len(v.FriendName)-1 || len(pg.Nonce) > len(v.Nonce)-1 {

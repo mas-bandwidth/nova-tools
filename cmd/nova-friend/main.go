@@ -41,6 +41,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
@@ -2327,14 +2328,21 @@ func (w world) pong(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	line := friend.PongLine(nonce, queue, working, width)
-	pong := bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"}
+	body, err := friend.NewPongReader().WriteTable(friend.Pong{Friend: name, Nonce: nonce, Queue: queue, Working: working, Width: width, Sent: w.now().UTC()}, schemaread.FormBinary)
+	if err != nil {
+		var ref *schemaread.Refusal
+		if errors.As(err, &ref) {
+			return tool.Refuse(ref.Reason)
+		}
+		return tool.Refuse("the pong failed validation: " + err.Error())
+	}
+	pong := bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: string(body) + "\n"}
 	if c.DryRun() {
 		// the note checked as send checks it; nothing sent
 		if _, err := b.Check(context.Background(), pong); err != nil {
 			return answer(err)
 		}
-		return tool.Done().Fact("nonce", nonce).Fact("to", to).Fact("line", tool.Text(line))
+		return tool.Done().Fact("nonce", nonce).Fact("to", to).Fact("form", "binary")
 	}
 	m, err := b.Send(context.Background(), pong)
 	if err != nil {
