@@ -20,6 +20,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `codexdesktop/` | bounded native IPC delivery to an existing Codex desktop chat, with fixed external-event notices and inherited thread settings | `go test ./pkg/codexdesktop` | `go test ./pkg/codexdesktop` |
 | `config/` | nova-config library: kind descriptors, the Postgres store and history, apply into Redis, the Ansible inventory of the applied state | `go test ./pkg/config` | `go test ./pkg/config` |
 | `decide/` | nova-decide's decision system: schemas (read, attempt, grade), backends (Jev, fixed), the record and calibration | `go test ./pkg/decide` | `go test ./pkg/decide` |
+| `decidewire/` | the decide area's table wire (the decide record lines, attempt decision, answers, raw card cost and card contract frame), generated from schemas/decide by the pinned schema compiler (generate.go) | `go test ./pkg/decidewire` | `make schemawire-check` |
 | `delayproxy/` | a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay | `go test ./pkg/delayproxy` | `go test ./pkg/delayproxy` |
 | `diffcheck/` | the lander's mechanical checks of a card's diff: files outside PATHS, stranded fragments | `go test ./pkg/diffcheck` | `go test ./pkg/diffcheck` |
 | `dogfood/` | dogfood self-test gates | `go test ./pkg/dogfood` | `go test ./pkg/dogfood` |

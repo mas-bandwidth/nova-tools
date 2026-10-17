@@ -74,6 +74,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/config", "nova-config library: kind descriptors, the Postgres store and history, apply into Redis, the Ansible inventory of the applied state", "go test ./pkg/config", "go test ./pkg/config"),
 	E("internal/converge", "convergence state and progress math", "go test ./internal/converge", "go test ./internal/converge"),
 	E("pkg/decide", "nova-decide's decision system: schemas (read, attempt, grade), backends (Jev, fixed), the record and calibration", "go test ./pkg/decide", "go test ./pkg/decide"),
+	E("pkg/decidewire", "the decide area's table wire (the decide record lines, attempt decision, answers, raw card cost and card contract frame), generated from schemas/decide by the pinned schema compiler (generate.go)", "go test ./pkg/decidewire", "make schemawire-check"),
 	E("pkg/diffcheck", "the lander's mechanical checks of a card's diff: files outside PATHS, stranded fragments", "go test ./pkg/diffcheck", "go test ./pkg/diffcheck"),
 	E("pkg/delayproxy", "a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay", "go test ./pkg/delayproxy", "go test ./pkg/delayproxy"),
 	E("internal/doctor", "nova-doctor frame: check registry, Env, results, and one check file per dependency", "go test ./internal/doctor", "go test ./internal/doctor"),
