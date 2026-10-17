@@ -41,9 +41,7 @@ import (
 //	                      tool's SPEC, on SHARED too
 //	base-is-live          BASE is a sprint base origin holds, never a temporary or deleted one
 //	tier-set              line 1 names a tier, never `-`
-//	new-model-is-heavy-or-above  a card whose NEW names a new .tla module (writes a model)
-//	                      is tier heavy or frontier; editing what tla/ holds is any tier
-//	                      (old tokens tla-is-heavy-or-above, tla-is-frontier)
+//	tla-is-heavy-or-above  a card whose PATHS covers tla/ is tier heavy or frontier
 //	model-gate-named      a card whose PATHS or NEW reaches a .tla or .cfg under tla/ names a
 //	                      STEP that runs `make tlc` or `tlacheck` and a GATE-NEEDS line with tla
 //	                      (nova-sprint 705fa0b1)
@@ -75,16 +73,13 @@ var BriefBaseRemedies = map[string]string{
 	"paths-cover-docs":      "a card that changes a cmd/<tool> verb or flag changes its documentation: name docs/CLI.md and the tool's SPEC (docs/SPEC-<TOOL>.md) on PATHS: and on SHARED:; apply the corrected lines add printed",
 	"base-is-live":          "BASE: is a sprint base origin holds (sprint/<name>, a base the sprint's cards use, or the trunk for the promotion stream; nova-sprint bases lists them), never a temporary branch (tmp/, wip/, scratch/) or one origin no longer holds; re-cut the card on the sprint branch",
 	"tier-set":              "line 1 names the card's tier, `tier: flash|pro|heavy|frontier`; a card with no tier, or `-`, was dealt to friends who could not serve it",
-	"tla-is-heavy-or-above": "a card whose NEW: names a new TLA+ module (a .tla file) writes a model, and writing a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or give the new model to its own card; editing the models, .cfg files or ledgers tla/ already holds is any tier",
-	// tla-is-heavy-or-above (above) and tla-is-frontier are the old tokens of
-	// new-model-is-heavy-or-above, kept as aliases for one release, naming the same remedy.
-	"tla-is-frontier":      "a card whose NEW: names a new TLA+ module (a .tla file) writes a model, and writing a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or give the new model to its own card; editing the models, .cfg files or ledgers tla/ already holds is any tier",
+	"tla-is-heavy-or-above": "a card whose PATHS: covers tla/ changes a TLA+ model, and a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or take tla/ out of PATHS: and give the model to its own card",
+	// tla-is-frontier is the old token, kept as an alias for one release, naming the same remedy.
+	"tla-is-frontier":      "a card whose PATHS: covers tla/ changes a TLA+ model, and a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or take tla/ out of PATHS: and give the model to its own card",
 	"model-gate-named":     ModelGateRemedy,
 	"spike-paths-research": "a spike or tracer is never the product: what it keeps is what it taught, not its code, so its KIND: spike or tracer brief names in PATHS: and NEW: only paths under a research root (ResearchRoots: the research docs directory, rnd/, perf/, benchmark/experiments/ or benchmark/findings/); deliver the code as a patch file (NEW: perf/experiments/<id>/experiment.patch beside perf/findings/<id>.md and perf/experiments/<id>/raw.txt) and edit no source file, or cut the production change as its own card with another KIND",
 	"paths-cover-registry": "a C or C++ suite builds and runs only the test sources its registry names (a Makefile listing them, test/main.c running each suite, a CMakeLists.txt adding each file), so a card adding a test source changes the registry too: name each registry the finding names on PATHS:; apply the corrected PATHS: line add printed",
 	"who-serves-tier":      "the friend WHO: names serves the card's tier (the friend's row's tiers, else the friend's class), or for `WHO: friend` some friend does; name a friend who serves it, raise the tier to one the friend serves, or drop the WHO: line so the fleet deals it",
-	// new-model-is-heavy-or-above is the TLA+ tier rule (the owner, 2026-10-17).
-	"new-model-is-heavy-or-above": "a card whose NEW: names a new TLA+ module (a .tla file) writes a model, and writing a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or give the new model to its own card; editing the models, .cfg files or ledgers tla/ already holds is any tier",
 }
 
 // ModelGate is the sentence internal/cardgen appends to a model card's STEP 4 gate so the
@@ -474,13 +469,12 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 		add("tier-set", 1, "line 1 names no tier (`tier: -` is none); a card with no tier was dealt to friends who could not serve it")
 	}
 
-	// 10. new-model-is-heavy-or-above (the owner, 2026-10-17: "I think models at heavy is
-	// fine, and touching models can be pro now"): writing a new model is heavy or above;
-	// editing the models, .cfg files and ledgers tla/ holds is any tier.
-	if model.Tier != cardhdr.RouteHeavy && model.Tier != cardhdr.RouteFrontier {
-		if m := newModels(news); len(m) > 0 {
-			add("new-model-is-heavy-or-above", 1, fmt.Sprintf("NEW names %s, a new TLA+ model, and line 1 names tier %s, not heavy or frontier", quoteDepends(m), orElse(model.Tier, "-")))
-		}
+	// 10. tla-is-heavy-or-above.
+	if model.Tier != cardhdr.RouteHeavy && model.Tier != cardhdr.RouteFrontier && slices.ContainsFunc(scope, func(e string) bool {
+		e = cleanEntry(e)
+		return e == "tla" || strings.HasPrefix(e, "tla/") || hygiene.MatchGlob(e, "tla/Model.tla")
+	}) {
+		add("tla-is-heavy-or-above", 1, fmt.Sprintf("PATHS covers tla/, a TLA+ model, and line 1 names tier %s, not heavy or frontier", orElse(model.Tier, "-")))
 	}
 
 	// 10a. model-gate-named. Ported from nova-sprint 705fa0b1.
@@ -540,7 +534,7 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 	if addShared = notIn(uniq(addShared), shared); len(addShared) > 0 {
 		fix = append(fix, "SHARED: "+strings.Join(append(slices.Clone(shared), addShared...), ","))
 	}
-	if slices.ContainsFunc(out, func(f CardHeaderFinding) bool { return f.Check == "new-model-is-heavy-or-above" }) {
+	if slices.ContainsFunc(out, func(f CardHeaderFinding) bool { return f.Check == "tla-is-heavy-or-above" }) {
 		fix = append(fix, heavyLine(firstLine(raw)))
 	}
 	return out, fix
@@ -1112,18 +1106,6 @@ func temporaryBase(ref string) bool {
 
 // lineTierRE is the tier word of line 1, its value possibly empty.
 var lineTierRE = regexp.MustCompile(`\btier:\s*[A-Za-z0-9_-]*`)
-
-// newModels is the NEW entries that write a new TLA+ module (new-model-is-heavy-or-above):
-// a .tla file, or a glob that names one under tla/.
-func newModels(news []string) []string {
-	var out []string
-	for _, e := range news {
-		if c := cleanEntry(e); strings.HasSuffix(c, ".tla") || hygiene.MatchGlob(c, "tla/Model.tla") {
-			out = append(out, c)
-		}
-	}
-	return out
-}
 
 // heavyLine is line 1 with its tier heavy, the least tier the TLA+ rule takes.
 func heavyLine(line string) string {
