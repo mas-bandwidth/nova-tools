@@ -82,19 +82,6 @@ func fuzzBuilder[B any, PB interface {
 	}}
 }
 
-// END builder
-// fuzzValue is a fixed table, read into a plain value.
-func fuzzValue[R any](name string, loadWire, fromJSON func(*R, []byte, *TableReport) bool, wire, text func(*R) []byte) fuzzRoot {
-	return fuzzRoot{name, func(f fuzzForm, in []byte, rep *TableReport) ([]byte, []byte, bool) {
-		var v R
-		ok := f == fuzzEmpty || (f == fuzzJSON && fromJSON(&v, in, rep)) || (f != fuzzJSON && loadWire(&v, in, rep))
-		if ok {
-			return wire(&v), text(&v), true
-		}
-		return nil, nil, false
-	}}
-}
-
 // fuzzRoots is every generated root, written by roots.sh.
 var fuzzRoots = []fuzzRoot{
 	fuzzBuilder("ConvergeState", func(b *ConvergeStateBuilder, w []byte, r *TableReport) bool { return ConvergeStateLoadBuilder(b, w, r) }, func(b *ConvergeStateBuilder, w []byte, r *TableReport) bool { return ConvergeStateFromJson(b, w, r) }, func(v *ConvergeState) []byte {
