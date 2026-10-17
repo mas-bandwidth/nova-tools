@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tablemodel"
+	// The blank import installs the typed record readers (recordsread init),
+	// so a table image, its base64 or its schema JSON reads in this binary and
+	// is not refused as unknown_form (S4: readers first).
+	_ "github.com/mas-bandwidth/nova-tools/internal/tablemodel/recordsread"
 	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 )
 

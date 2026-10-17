@@ -24,8 +24,9 @@ func replayFile(t *testing.T, name string) []byte {
 
 func loadTrace(t *testing.T) Trace {
 	t.Helper()
-	var tr Trace
-	err := json.Unmarshal(replayFile(t, "trace.json"), &tr)
+	// The recorded trace reads through the replay's own strict reader
+	// (records_dualread.go ReadTraceFile), as a capture's trace.json does.
+	tr, err := ReadTraceFile(filepath.Join("testdata", "replay", "trace.json"))
 	require.NoError(t, err, "trace.json: %v", err)
 	return tr
 }
