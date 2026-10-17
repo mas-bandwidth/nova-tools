@@ -25,7 +25,6 @@ import (
 	"unsafe"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
-	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/stretchr/testify/assert"
@@ -638,9 +637,8 @@ func TestWorkerAnswersGolden(t *testing.T) {
 				{"a lane past 1024", `{"friend":"rowan","cards":[{"card":"a","lane":1025}]}`, schemaread.ReasonClamped, "", false},
 				{"no friend", `{"cards":[]}`, schemaread.ReasonAbsentRequired, "friend", true},
 			})
-		// today's struct writes the keys the table reads
-		raw, err := json.Marshal(friend.HeldAnswer{Friend: "rowan", Cards: []friend.HeldCard{{Card: "a", Job: "a.w1~21", Col: "working", Epoch: 21, Brief: "/b", Lane: 2}}})
-		require.NoError(t, err)
+		// the JSON text form reads back the keys the table reads
+		raw := []byte(`{"friend":"rowan","cards":[{"card":"a","job":"a.w1~21","col":"working","epoch":21,"brief":"/b","lane":2}]}`)
 		got, res, err := schemaread.NewReader(codecOf("HeldAnswer", heldAnswerOps, heldConstraints)).Read(raw)
 		require.NoError(t, err, string(raw))
 		assert.Equal(t, schemaread.FormJSON, res.Form)
@@ -651,14 +649,12 @@ func TestWorkerAnswersGolden(t *testing.T) {
 		assert.Equal(t, uint64(21), c.Epoch)
 		assert.Equal(t, uint32(2), c.Lane)
 
-		// the struct writes a 600 byte brief and a 200 byte job: both read back whole
-		long := friend.HeldCard{Card: "a", Job: strings.Repeat("j", 200), Brief: strings.Repeat("b", 600)}
-		raw, err = json.Marshal(friend.HeldAnswer{Friend: "rowan", Cards: []friend.HeldCard{long}})
-		require.NoError(t, err)
+		// a 600 byte brief and a 200 byte job read back whole
+		raw = []byte(`{"friend":"rowan","cards":[{"card":"a","job":"` + strings.Repeat("j", 200) + `","brief":"` + strings.Repeat("b", 600) + `"}]}`)
 		got, _, err = schemaread.NewReader(codecOf("HeldAnswer", heldAnswerOps, heldConstraints)).Read(raw)
 		require.NoError(t, err)
 		c = got.v.Cards.At(0)
-		assert.Equal(t, long.Job, string(c.Job[:c.JobLength]))
+		assert.Equal(t, strings.Repeat("j", 200), string(c.Job[:c.JobLength]))
 	})
 
 	t.Run("worker view", func(t *testing.T) {

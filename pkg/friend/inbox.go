@@ -17,7 +17,114 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/answerwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
+
+// viewCard is one work card of the worker view, as the reader hands it to
+// ParseView for its brief-path check.
+type viewCard struct {
+	id, st, brief string
+}
+
+// workerViewRead is the worker view as a self-contained value: the generated
+// table's rows live in a builder arena (pkg/answerwire), so the reader copies
+// the strings out while the builder is alive, never a row header that dangles.
+type workerViewRead struct {
+	view, as, kind string
+	cards          []viewCard
+}
+
+// workerViewReader reads one worker view (ParseView) through pkg/schemaread:
+// the binary image of the generated table (pkg/answerwire), its padded
+// standard base64, and the JSON text form, which is the legacy form the sprint
+// server writes today (S1, S2, S4: readers first). Every read is counted per
+// record and per form (UNION.md C13). A malformed, clamped or damaged image of
+// any form is refused by name, never read as absent, empty or zero.
+var workerViewReader = schemaread.NewReader(&schemaread.Codec[workerViewRead]{
+	Name:  "WorkerView",
+	Help:  "nova-sprint view worker --help",
+	Forms: []byte{1},
+	Reset: func(v *workerViewRead) { *v = workerViewRead{} },
+	Measure: func(wire []byte) error {
+		_, err := answerwire.WorkerViewLoadMeasureReason(wire)
+		return err
+	},
+	LoadWire: func(v *workerViewRead, wire []byte) schemaread.Report {
+		return workerViewLoad(v, wire, func(b *answerwire.WorkerViewBuilder) (*answerwire.TableReport, bool) {
+			var rep answerwire.TableReport
+			ok := answerwire.WorkerViewLoadBuilder(b, wire, &rep)
+			return &rep, ok
+		})
+	},
+	LoadJSON: func(v *workerViewRead, text []byte) schemaread.Report {
+		return workerViewLoad(v, text, func(b *answerwire.WorkerViewBuilder) (*answerwire.TableReport, bool) {
+			var rep answerwire.TableReport
+			ok := answerwire.WorkerViewFromJson(b, text, &rep)
+			return &rep, ok
+		})
+	},
+	Constraints: workerViewCheck,
+})
+
+// workerViewLoad runs one generated load into the builder and copies the value
+// out as workerViewRead. The generated report of the load is mapped to the
+// strict read's report, so a clamped, malformed or damaged value is refused by
+// name, never read as absent, empty or zero.
+func workerViewLoad(v *workerViewRead, in []byte, load func(*answerwire.WorkerViewBuilder) (*answerwire.TableReport, bool)) schemaread.Report {
+	var b answerwire.WorkerViewBuilder
+	if !b.Init() {
+		return schemaread.Report{Reason: schemaread.ReasonMalformed}
+	}
+	defer b.Shutdown()
+	rep, ok := load(&b)
+	if !ok || !b.Lock() {
+		return workerViewReport(rep, false)
+	}
+	root := b.AsConst()
+	if root == nil {
+		return workerViewReport(rep, false)
+	}
+	v.view = string(root.View[:root.ViewLength])
+	v.as = string(root.AsName[:root.AsNameLength])
+	v.kind = string(root.Kind[:root.KindLength])
+	v.cards = make([]viewCard, 0, int(root.Cards.Count))
+	for i := int32(0); i < root.Cards.Count; i++ {
+		c := root.Cards.At(i)
+		v.cards = append(v.cards, viewCard{
+			id:    string(c.Id[:c.IdLength]),
+			st:    string(c.St[:c.StLength]),
+			brief: string(c.Brief[:c.BriefLength]),
+		})
+	}
+	return workerViewReport(rep, true)
+}
+
+// workerViewReport maps a generated table report to the strict read's report:
+// unknown fields are tolerated and counted, clamped and kind-mismatched fields
+// and damage are reported so the reader refuses them by name.
+func workerViewReport(rep *answerwire.TableReport, ok bool) schemaread.Report {
+	if rep == nil {
+		rep = &answerwire.TableReport{}
+	}
+	out := schemaread.Report{
+		Unknown:       int(rep.Unknown),
+		KindMismatch: int(rep.KindMismatch),
+		Clamped:       int(rep.Clamped),
+		Malformed:     rep.Malformed || !ok,
+	}
+	out.Reason = rep.Reason
+	return out
+}
+
+// workerViewCheck states the worker view table's bounds: the view, the as and
+// the kind names are required, and the cards list is bounded.
+func workerViewCheck(v *workerViewRead, c *schemaread.Checker) {
+	c.Required("view", len(v.view) > 0)
+	c.Required("as", len(v.as) > 0)
+	c.Required("kind", len(v.kind) > 0)
+	c.Bound("cards", int64(len(v.cards)), 0, 1024)
+}
 
 // The daemon writes every card she holds (the finding of 2026-10-05: from about 18:59 the
 // friend daemons held cards on their rows, taken by the deal in batch mode or by the
@@ -493,38 +600,29 @@ func viewEpoch(out string) uint64 {
 // ViewWhy is why a card the worker view names has no brief written for it.
 const ViewWhy = "the server does not serve friend cards, and the worker view names the card and its job with no brief"
 
-// workerView is the part of the sprint server's worker view (nova-sprint view worker --as
-// <friend> --json, schema 1) the daemon reads: her work cards, each with where its brief is
-// delivered, ~/ai/<friend>/working/inbox/<job>/BRIEF.md.
-type workerView struct {
-	View  string `json:"view"`
-	As    string `json:"as"`
-	Kind  string `json:"kind"`
-	Cards []struct {
-		ID    string `json:"id"`
-		St    string `json:"st"`
-		Brief string `json:"brief"`
-	} `json:"cards"`
-}
-
-// ParseView reads the worker view's answer for this friend: each work card on her row, its job
-// the inbox directory its brief path names, and no brief (Why says so).
+// ParseView reads the worker view's answer for this friend through pkg/schemaread:
+// the binary image of the generated table, its padded standard base64, and the
+// legacy JSON text form the sprint server writes today (S1, S2, S4), each read
+// equal and counted per form (UNION.md C13). A malformed, clamped or damaged
+// value of any form is refused by name (<RECORD> REFUSED: <reason>; run:
+// <help>). Each work card on her row, its job, the inbox directory its brief
+// path names, and no brief (Why says so).
 func ParseView(friend, out string) ([]HeldCard, error) {
-	var v workerView
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &v); err != nil {
-		return nil, fmt.Errorf("the worker view is not JSON: %v", err)
+	v, _, err := workerViewReader.Read([]byte(out))
+	if err != nil {
+		return nil, err
 	}
-	if v.View != "worker" || v.As != friend || v.Kind != "friend" {
-		return nil, fmt.Errorf("the worker view is %s %q's (%s), not friend %q's", cmp.Or(v.View, "-"), v.As, cmp.Or(v.Kind, "-"), friend)
+	if v.view != "worker" || v.as != friend || v.kind != "friend" {
+		return nil, fmt.Errorf("the worker view is %s %q's (%s), not friend %q's", cmp.Or(v.view, "-"), v.as, cmp.Or(v.kind, "-"), friend)
 	}
-	cards := make([]HeldCard, 0, len(v.Cards))
-	for _, c := range v.Cards {
-		dir, file := path.Split(c.Brief)
+	cards := make([]HeldCard, 0, len(v.cards))
+	for _, c := range v.cards {
+		dir, file := path.Split(c.brief)
 		job := path.Base(dir)
 		if file != "BRIEF.md" || path.Base(path.Dir(path.Clean(dir))) != "inbox" {
-			return nil, fmt.Errorf("the worker view gives card %s a brief that is no inbox/<job>/BRIEF.md: %q", c.ID, c.Brief)
+			return nil, fmt.Errorf("the worker view gives card %s a brief that is no inbox/<job>/BRIEF.md: %q", c.id, c.brief)
 		}
-		cards = append(cards, HeldCard{Card: c.ID, Job: job, Col: c.St, Why: ViewWhy})
+		cards = append(cards, HeldCard{Card: c.id, Job: job, Col: c.st, Why: ViewWhy})
 	}
 	return cards, nil
 }
