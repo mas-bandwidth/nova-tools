@@ -577,6 +577,21 @@ version read back, and a rollback from kept copies on missed ticks. The runbook 
 
 Each later card of stream sprint-v1-release adds its row here with its check.
 
+### release-check-acceptance-r-b.w3
+
+The six stream-acceptance checks come from Rowan's coordinator answer received 2026-10-06. They are:
+
+| check | the bar |
+|---|---|
+| `stream-terminal-cards` | every primary and sentinel record in each selected stream is landed, or dropped with a non-empty reason; ready, waiting, working, review and merging cards fail |
+| `stream-tree-gate` | unit and functional test classes pass on the base tree at that stream's last landing, for every Go package expanded from its landed cards' `PATHS` against a complete package manifest at that revision, plus `internal/docs` and `internal/ci`; missing, incomplete or revision-mismatched evidence fails |
+| `stream-final-head-reads` | each landed card has two distinct OK reads at its final work head, except a flash card needs one; reads of older heads do not count |
+| `stream-docs` | `nova-check links` and `nova-check nocode` pass at the stream's last-landing revision; revision-bound review evidence says the stream's spec and help use present tense, name no people or machines, and match the code |
+| `stream-dev-landings` | each stream's last landing is in dev's observed ancestry, or an observed queued promotion carries that exact landing |
+| `stream-open-judgments` | no open judgment names a selected stream, including stale-stream, brief-defect, conflict and returned-review judgments |
+
+Each result is `RELEASE CHECK <name> ok|fail <evidence>`. A proof with no revision or the wrong revision is missing evidence and fails closed. Check 2's tested base is the tree identified by the stream's last landing; check 3 uses each card's final worker head, which can differ from that tree revision. Check 4 reuses the actual `nova-check links` and `nova-check nocode` results; the present-tense, naming and help-fidelity claims require an explicit revision-bound review record, not invented CLI commands. No check treats absence of evidence as green.
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules

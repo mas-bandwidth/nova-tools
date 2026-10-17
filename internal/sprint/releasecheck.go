@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // The release gate's frame (docs/SPEC-SPRINT.md, the release check, card
@@ -23,6 +25,75 @@ type ReleaseFacts interface {
 	Now() time.Time
 	Log() []Line
 	DealtMax() time.Duration
+}
+
+// ReleaseAcceptance is the evidence available to the six stream-acceptance
+// checks. Commands which gather git or documentation facts must retain the
+// observed revision and raw result; an empty value is missing evidence, never
+// an implicit pass.
+type ReleaseAcceptance interface {
+	Acceptance() AcceptanceSnapshot
+}
+
+// AcceptanceSnapshot is a read-only snapshot of the store and evidence
+// gathered from the repositories named by it.
+type AcceptanceSnapshot struct {
+	Work, Readers, Merge *Table
+	Open                 []Open
+	Lines                []Line
+	Streams              []string
+	Coordinator          string
+	LastLandings         map[string]string
+	TreeGates            map[string]TreeGateEvidence
+	Docs                 map[string]DocsEvidence
+	Dev                  map[string]DevEvidence
+}
+
+// TreeGateEvidence records the tree and test classes actually run. A class
+// entry is evidence only when its revision and command result are present.
+type TreeGateEvidence struct {
+	Revision         string
+	Manifest         CommandEvidence // successful `go list ./...` output at Revision
+	Unit, Functional []CommandEvidence
+}
+
+// CommandEvidence is an observed command result tied to a revision.
+type CommandEvidence struct {
+	Revision string
+	Command  string
+	Packages []string
+	Result   string
+	Output   string
+}
+
+// DocsEvidence records nova-check results against the final source revision.
+type DocsEvidence struct {
+	Revision      string
+	Links, NoCode CommandEvidence
+	Reviews       []DocumentReviewEvidence
+}
+
+// DocumentReviewEvidence is a revision-bound human or automated review record
+// for prose and help properties with no existing nova-check verb.
+type DocumentReviewEvidence struct {
+	Stream   string
+	Revision string
+	Reviewer string
+	Scope    string
+	Findings []string
+}
+
+// DevEvidence carries the observed dev ancestry and queued promotions.
+type DevEvidence struct {
+	Revision         string
+	Ancestors        []string
+	QueuedPromotions []PromotionEvidence
+}
+
+// PromotionEvidence names the landing heads a queued promotion carries.
+type PromotionEvidence struct {
+	ID       string
+	Landings []string
 }
 
 // ReleaseResult is one check's answer.
@@ -53,6 +124,12 @@ type ReleaseCheck struct {
 // of stream sprint-v1-release adds its check here and its bar to the spec.
 var ReleaseChecks = []ReleaseCheck{
 	{CheckNoStuckFriend, "no friend was stuck at any moment of the last " + StuckWindow.String(), NoStuckFriend},
+	{CheckStreamTerminal, "every stream card is landed or dropped with a reason", CheckStreamTerminalResult},
+	{CheckStreamTreeGate, "unit and functional tree gates pass at the last landing", CheckStreamTreeGateResult},
+	{CheckStreamReads, "each landed card has two final-head OK reads, or one for flash", CheckStreamReadsResult},
+	{CheckStreamDocs, "nova-check links and no-code pass; stream text is present tense and names no people or machines", CheckStreamDocsResult},
+	{CheckStreamDev, "landings are in dev or carried by a queued promotion", CheckStreamDevResult},
+	{CheckStreamJudgments, "no open judgment names the stream", CheckStreamJudgmentsResult},
 }
 
 // ReleaseReport is the verb's result value: the lines are rendered from it and
@@ -161,8 +238,346 @@ func ReleaseStreamLines(lines []Line, glob string) ([]Line, error) {
 	return out, nil
 }
 
+// ReleaseStreamNames selects declared stream rows with the same glob contract
+// as ReleaseStreamLines. An empty result is meaningful to the caller and must
+// not be treated as a successful empty release.
+func ReleaseStreamNames(rows []string, glob string) ([]string, error) {
+	if glob == "" {
+		return append([]string(nil), rows...), nil
+	}
+	if _, err := path.Match(glob, ""); err != nil {
+		return nil, fmt.Errorf("--streams %q is not a glob: %v", glob, err)
+	}
+	var out []string
+	for _, row := range rows {
+		if ok, _ := path.Match(glob, row); ok {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
 // CheckNoStuckFriend is the name of the first check.
 const CheckNoStuckFriend = "no-stuck-friend"
+
+const (
+	CheckStreamTerminal  = "stream-terminal-cards"
+	CheckStreamTreeGate  = "stream-tree-gate"
+	CheckStreamReads     = "stream-final-head-reads"
+	CheckStreamDocs      = "stream-docs"
+	CheckStreamDev       = "stream-dev-landings"
+	CheckStreamJudgments = "stream-open-judgments"
+)
+
+func acceptance(f ReleaseFacts, name string) (AcceptanceSnapshot, ReleaseResult) {
+	a, ok := f.(ReleaseAcceptance)
+	if !ok {
+		return AcceptanceSnapshot{}, ReleaseResult{Name: name, Evidence: "acceptance snapshot unavailable; inspect nova-sprint release check evidence collection"}
+	}
+	s := a.Acceptance()
+	if s.Work == nil || s.Readers == nil || s.Merge == nil {
+		return AcceptanceSnapshot{}, ReleaseResult{Name: name, Evidence: "acceptance snapshot is incomplete (work, readers, or merge rows missing); inspect nova-sprint release check evidence collection"}
+	}
+	return s, ReleaseResult{Name: name}
+}
+
+func cardStream(c *Card) string {
+	if c == nil {
+		return ""
+	}
+	if st := c.F("stream"); st != "" {
+		return st
+	}
+	return c.Row
+}
+
+func selectedStream(streams []string, stream string) bool {
+	for _, st := range streams {
+		if st == stream {
+			return true
+		}
+	}
+	return false
+}
+
+func CheckStreamTerminalResult(f ReleaseFacts) ReleaseResult {
+	s, r := acceptance(f, CheckStreamTerminal)
+	if r.Evidence != "" {
+		return r
+	}
+	var bad []string
+	streams := map[string]bool{}
+	for _, st := range s.Streams {
+		streams[st] = true
+	}
+	if len(streams) == 0 {
+		return ReleaseResult{Name: CheckStreamTerminal, Evidence: "no stream scope was captured; inspect nova-sprint release check stream selection"}
+	}
+	total := 0
+	for _, c := range s.Work.Cards() {
+		stream := c.F("stream")
+		if stream == "" {
+			stream = c.Row
+		}
+		if c.F("kind") == "control" || !streams[stream] {
+			continue
+		}
+		total++
+		if c.Col == Landed || c.F("outcome") == "dropped" && strings.TrimSpace(c.F("reason")) != "" {
+			continue
+		}
+		if c.F("outcome") == "dropped" {
+			bad = append(bad, c.ID+" dropped without a reason")
+		} else if c.Placed() {
+			bad = append(bad, c.ID+" is "+c.Col)
+		} else {
+			bad = append(bad, c.ID+" has no landed or dropped outcome")
+		}
+	}
+	if len(bad) != 0 {
+		return ReleaseResult{Name: CheckStreamTerminal, Evidence: strings.Join(bad, "; ") + "; inspect: nova-sprint card <id> and nova-sprint log --card <id>"}
+	}
+	return ReleaseResult{Name: CheckStreamTerminal, OK: true, Evidence: fmt.Sprintf("all %d stream cards are landed or dropped with reasons", total)}
+}
+
+func checkCommands(e []CommandEvidence, revision string, required []string, functional bool) string {
+	seen := map[string]bool{}
+	for _, c := range e {
+		hasFunctional := strings.Contains(c.Command, "-tags functional") || strings.Contains(c.Command, "-tags=functional")
+		if c.Revision == "" || c.Revision != revision || c.Result != "exit=0" || !strings.Contains(c.Command, "go test") || hasFunctional != functional {
+			continue
+		}
+		for _, p := range c.Packages {
+			seen[strings.TrimPrefix(path.Clean(p), "./")] = true
+		}
+	}
+	var missing []string
+	for _, p := range required {
+		if !seen[strings.TrimPrefix(path.Clean(p), "./")] {
+			missing = append(missing, p)
+		}
+	}
+	return strings.Join(missing, ", ")
+}
+
+func packagesFromPaths(paths, manifest []string) ([]string, string) {
+	known := map[string]bool{}
+	for _, p := range manifest {
+		known[strings.TrimPrefix(path.Clean(p), "./")] = true
+	}
+	var out []string
+	for _, raw := range paths {
+		p := strings.TrimSpace(raw)
+		if p == "" {
+			continue
+		}
+		if strings.HasSuffix(p, "/**") {
+			root := strings.TrimSuffix(p, "/**")
+			found := false
+			for pkg := range known {
+				if pkg == root || strings.HasPrefix(pkg, root+"/") {
+					out = append(out, pkg)
+					found = true
+				}
+			}
+			if !found {
+				return nil, "PATHS glob " + p + " matched no packages in the complete manifest"
+			}
+			continue
+		}
+		if path.Ext(p) != ".go" {
+			continue
+		}
+		pkg := path.Dir(p)
+		if !known[pkg] {
+			return nil, "PATHS entry " + p + " names package " + pkg + ", absent from the complete manifest"
+		}
+		out = append(out, pkg)
+	}
+	if len(known) == 0 {
+		return nil, "the complete package manifest is missing"
+	}
+	seenOut := map[string]bool{}
+	uniqueOut := out[:0]
+	for _, p := range out {
+		if !seenOut[p] {
+			uniqueOut = append(uniqueOut, p)
+			seenOut[p] = true
+		}
+	}
+	sort.Strings(uniqueOut)
+	return uniqueOut, ""
+}
+
+func CheckStreamTreeGateResult(f ReleaseFacts) ReleaseResult {
+	s, r := acceptance(f, CheckStreamTreeGate)
+	if r.Evidence != "" {
+		return r
+	}
+	for _, stream := range s.Streams {
+		landing, gate := s.LastLandings[stream], s.TreeGates[stream]
+		if landing == "" || gate.Revision == "" || gate.Revision != landing {
+			return ReleaseResult{Name: CheckStreamTreeGate, Evidence: "missing or stale last-landing tree-gate revision for " + stream + "; inspect the stream's last landing and tree-gate receipts"}
+		}
+		if gate.Manifest.Revision != landing || gate.Manifest.Result != "exit=0" || !strings.Contains(gate.Manifest.Command, "go list ./...") || len(gate.Manifest.Packages) == 0 {
+			return ReleaseResult{Name: CheckStreamTreeGate, Evidence: "complete go list ./... package manifest missing, failed or stale for " + stream + " at " + landing}
+		}
+		manifest := map[string]bool{}
+		for _, pkg := range gate.Manifest.Packages {
+			manifest[strings.TrimPrefix(path.Clean(pkg), "./")] = true
+		}
+		if !manifest["internal/docs"] || !manifest["internal/ci"] {
+			return ReleaseResult{Name: CheckStreamTreeGate, Evidence: "complete package manifest at " + landing + " is missing internal/docs or internal/ci for " + stream + "; inspect go list output"}
+		}
+		required := []string{"internal/docs", "internal/ci"}
+		for _, c := range s.Work.Cards() {
+			if c.Col != Landed || c.F("kind") == "control" || cardStream(c) != stream {
+				continue
+			}
+			paths, ok := cardhdr.Value(c.F("brief"), cardhdr.KeyPaths)
+			if !ok {
+				return ReleaseResult{Name: CheckStreamTreeGate, Evidence: "landed card " + c.ID + " has no PATHS list for unit and functional gate coverage; inspect its brief and gate receipts"}
+			}
+			packages, why := packagesFromPaths(strings.Split(paths, ","), gate.Manifest.Packages)
+			if why != "" {
+				return ReleaseResult{Name: CheckStreamTreeGate, Evidence: "card " + c.ID + " PATHS package coverage is incomplete: " + why + "; inspect the revision's go list manifest and gate receipts"}
+			}
+			required = append(required, packages...)
+		}
+		if m := checkCommands(gate.Unit, landing, required, false); m != "" {
+			return ReleaseResult{Name: CheckStreamTreeGate, Evidence: "unit tree gate missing, failed, or stale for " + stream + " packages " + m + " at " + landing + "; inspect the tree-gate receipts"}
+		}
+		if m := checkCommands(gate.Functional, landing, required, true); m != "" {
+			return ReleaseResult{Name: CheckStreamTreeGate, Evidence: "functional tree gate missing, failed, or stale for " + stream + " packages " + m + " at " + landing + "; inspect the tree-gate receipts"}
+		}
+	}
+	return ReleaseResult{Name: CheckStreamTreeGate, OK: true, Evidence: fmt.Sprintf("unit and functional gates passed at each selected stream's last landing (%d streams)", len(s.Streams))}
+}
+
+func CheckStreamReadsResult(f ReleaseFacts) ReleaseResult {
+	s, r := acceptance(f, CheckStreamReads)
+	if r.Evidence != "" {
+		return r
+	}
+	var bad []string
+	for _, c := range s.Work.Cards() {
+		if c.Col != Landed || c.F("kind") == "control" || !selectedStream(s.Streams, cardStream(c)) {
+			continue
+		}
+		want := ReadsNeeded(c)
+		head := c.F("head")
+		if head == "" {
+			bad = append(bad, c.ID+" has no final head")
+			continue
+		}
+		readers := map[string]bool{}
+		for _, rd := range s.Readers.Cards() {
+			if rd.F("primary") == c.ID && rd.Col == OK && rd.F("head") == head && ReadCardAgrees(rd) {
+				readers[rd.F("reader")] = true
+			}
+		}
+		if len(readers) < want {
+			bad = append(bad, fmt.Sprintf("%s has %d final-head OK reads; needs %d", c.ID, len(readers), want))
+		}
+	}
+	if len(bad) != 0 {
+		return ReleaseResult{Name: CheckStreamReads, Evidence: strings.Join(bad, "; ") + "; inspect: nova-sprint card <id> and its read records"}
+	}
+	return ReleaseResult{Name: CheckStreamReads, OK: true, Evidence: "every landed card has the required distinct OK reads at its final head"}
+}
+
+func CheckStreamDocsResult(f ReleaseFacts) ReleaseResult {
+	s, r := acceptance(f, CheckStreamDocs)
+	if r.Evidence != "" {
+		return r
+	}
+	for _, stream := range s.Streams {
+		docs := s.Docs[stream]
+		landing := s.LastLandings[stream]
+		if landing == "" || docs.Revision == "" || docs.Revision != landing {
+			return ReleaseResult{Name: CheckStreamDocs, Evidence: "missing or stale documentation evidence for " + stream + " at its last landing " + landing + "; inspect the stream's nova-check results and review records"}
+		}
+		checks := []struct {
+			name, verb string
+			e          CommandEvidence
+		}{{"nova-check links", "links", docs.Links}, {"nova-check no-code", "nocode", docs.NoCode}}
+		var bad []string
+		for _, c := range checks {
+			if c.e.Revision == "" || c.e.Revision != docs.Revision || c.e.Result != "exit=0" || !strings.Contains(c.e.Command, "nova-check "+c.verb) {
+				bad = append(bad, c.name)
+			}
+		}
+		for _, scope := range []string{"present-tense", "no-people-or-machine-names", "help-matches-code"} {
+			ok := false
+			for _, review := range docs.Reviews {
+				if review.Stream == stream && review.Revision == landing && review.Reviewer != "" && review.Scope == scope && len(review.Findings) == 0 {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				bad = append(bad, scope+" review")
+			}
+		}
+		if len(bad) != 0 {
+			return ReleaseResult{Name: CheckStreamDocs, Evidence: "missing, failed, or stale checks for " + stream + ": " + strings.Join(bad, ", ") + "; inspect stream help/spec and nova-check receipts"}
+		}
+	}
+	return ReleaseResult{Name: CheckStreamDocs, OK: true, Evidence: fmt.Sprintf("document checks and revision-bound reviews passed for %d streams", len(s.Streams))}
+}
+
+func CheckStreamDevResult(f ReleaseFacts) ReleaseResult {
+	s, r := acceptance(f, CheckStreamDev)
+	if r.Evidence != "" {
+		return r
+	}
+	for _, stream := range s.Streams {
+		landing, dev := s.LastLandings[stream], s.Dev[stream]
+		if landing == "" || dev.Revision == "" {
+			return ReleaseResult{Name: CheckStreamDev, Evidence: "missing last-landing or dev revision for " + stream + "; inspect stream landings and dev promotion queue"}
+		}
+		ancestors := map[string]bool{}
+		for _, sha := range dev.Ancestors {
+			ancestors[sha] = true
+		}
+		if ancestors[landing] {
+			continue
+		}
+		carried := false
+		for _, p := range dev.QueuedPromotions {
+			for _, sha := range p.Landings {
+				if sha == landing {
+					carried = true
+					break
+				}
+			}
+			if carried {
+				break
+			}
+		}
+		if !carried {
+			return ReleaseResult{Name: CheckStreamDev, Evidence: "last landing " + landing + " for " + stream + " is not in dev and no promotion carrying it is queued; inspect dev ancestry and promotion rows"}
+		}
+	}
+	return ReleaseResult{Name: CheckStreamDev, OK: true, Evidence: fmt.Sprintf("each selected stream's last landing is in dev or a queued promotion (%d streams)", len(s.Streams))}
+}
+
+func CheckStreamJudgmentsResult(f ReleaseFacts) ReleaseResult {
+	s, r := acceptance(f, CheckStreamJudgments)
+	if r.Evidence != "" {
+		return r
+	}
+	var bad []string
+	for _, o := range s.Open {
+		if o.Note.Stream != "" && selectedStream(s.Streams, o.Note.Stream) {
+			bad = append(bad, o.Note.ID+" ("+o.Note.Stream+")")
+		}
+	}
+	if len(bad) != 0 {
+		return ReleaseResult{Name: CheckStreamJudgments, Evidence: "open judgments remain: " + strings.Join(bad, ", ") + "; inspect: nova-sprint inbox --open"}
+	}
+	return ReleaseResult{Name: CheckStreamJudgments, OK: true, Evidence: "no open judgment names a stream"}
+}
 
 // StuckWindow is how far back no friend may have been stuck.
 const StuckWindow = 4 * time.Hour

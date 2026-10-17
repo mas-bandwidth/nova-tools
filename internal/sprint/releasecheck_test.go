@@ -11,14 +11,16 @@ import (
 
 // fakeRelease is the release check's snapshot as a test builds it: a clock and a log.
 type fakeRelease struct {
-	now      time.Time
-	lines    []Line
-	dealtMax time.Duration
+	now        time.Time
+	lines      []Line
+	dealtMax   time.Duration
+	acceptance AcceptanceSnapshot
 }
 
-func (f fakeRelease) Now() time.Time          { return f.now }
-func (f fakeRelease) Log() []Line             { return f.lines }
-func (f fakeRelease) DealtMax() time.Duration { return f.dealtMax }
+func (f fakeRelease) Now() time.Time                 { return f.now }
+func (f fakeRelease) Log() []Line                    { return f.lines }
+func (f fakeRelease) DealtMax() time.Duration        { return f.dealtMax }
+func (f fakeRelease) Acceptance() AcceptanceSnapshot { return f.acceptance }
 func fleetMove(at time.Time, card, from, to string, set map[string]string) Line {
 	return Line{Kind: LineMove, At: at, Table: Fleet, Card: card, Stream: "s1", From: from, To: to, Set: set}
 }
@@ -208,7 +210,7 @@ func TestReleaseCheckFailsWhileAFriendWasStuckInTheLastFourHours(t *testing.T) {
 func TestTheReleaseReportSaysOKOrNotReadyByTheChecksRun(t *testing.T) {
 	t.Parallel()
 	good := relFacts(hr(1))
-	rep, err := RunReleaseChecks(good, nil)
+	rep, err := RunReleaseChecks(good, []string{CheckNoStuckFriend})
 	require.NoError(t, err)
 	assert.Equal(t, "RELEASE OK checks=1", rep.Summary)
 	assert.Equal(t, 0, rep.ExitCode())
@@ -253,4 +255,70 @@ func TestReleaseStreamsFilterKeepsTheStreamsTheGlobNames(t *testing.T) {
 	assert.Len(t, all, 2)
 	_, err = ReleaseStreamLines(nil, "[")
 	require.Error(t, err)
+}
+
+func goodAcceptance() AcceptanceSnapshot {
+	w, rd, m := NewTable(Work), NewTable(Readers), NewTable(Merge)
+	w.SetRows([]string{"s1"})
+	w.Put(&Card{ID: "s1-1", Row: "s1", Col: Landed, Fields: map[string]string{"kind": "primary", "stream": "s1", "tier": "flash", "head": "final-head", "brief": "RESULT: s1-1 tier: flash\nPATHS: internal/sprint/releasecheck*.go\n"}})
+	w.Put(&Card{ID: "s1-2", Row: "s1", Fields: map[string]string{"kind": "primary", "stream": "s1", "outcome": "dropped", "reason": "obsolete"}})
+	rd.Put(&Card{ID: "s1-1.r1.alice", Row: "alice", Col: OK, Fields: map[string]string{"primary": "s1-1", "head": "final-head", "reader": "alice"}})
+	landing := "landing-sha"
+	unit := []CommandEvidence{{Revision: landing, Command: "go test", Result: "exit=0", Packages: []string{"internal/sprint", "internal/docs", "internal/ci"}}}
+	functional := []CommandEvidence{{Revision: landing, Command: "go test -tags functional", Result: "exit=0", Packages: []string{"internal/sprint", "internal/docs", "internal/ci"}}}
+	manifest := CommandEvidence{Revision: landing, Command: "go list ./...", Result: "exit=0", Packages: []string{"internal/sprint", "internal/docs", "internal/ci"}}
+	cmd := func(name string) CommandEvidence {
+		return CommandEvidence{Revision: landing, Command: name, Result: "exit=0"}
+	}
+	return AcceptanceSnapshot{
+		Work: w, Readers: rd, Merge: m, Streams: []string{"s1"}, Coordinator: "coordinator", LastLandings: map[string]string{"s1": landing},
+		TreeGates: map[string]TreeGateEvidence{"s1": {Revision: landing, Manifest: manifest, Unit: unit, Functional: functional}},
+		Docs: map[string]DocsEvidence{"s1": {Revision: landing, Links: cmd("nova-check links"), NoCode: cmd("nova-check nocode"), Reviews: []DocumentReviewEvidence{
+			{Stream: "s1", Revision: landing, Reviewer: "reviewer-a", Scope: "present-tense"}, {Stream: "s1", Revision: landing, Reviewer: "reviewer-a", Scope: "no-people-or-machine-names"}, {Stream: "s1", Revision: landing, Reviewer: "reviewer-a", Scope: "help-matches-code"},
+		}}},
+		Dev: map[string]DevEvidence{"s1": {Revision: "dev-head", Ancestors: []string{landing}}},
+	}
+}
+
+func TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks(t *testing.T) {
+	t.Parallel()
+	base := goodAcceptance()
+	cases := []struct {
+		name    string
+		run     func(ReleaseFacts) ReleaseResult
+		breakIt func(*AcceptanceSnapshot)
+	}{
+		{CheckStreamTerminal, CheckStreamTerminalResult, func(s *AcceptanceSnapshot) { s.Work.Card("s1-1").Col = Ready }},
+		{CheckStreamTreeGate, CheckStreamTreeGateResult, func(s *AcceptanceSnapshot) { x := s.TreeGates["s1"]; x.Revision = "stale"; s.TreeGates["s1"] = x }},
+		{CheckStreamReads, CheckStreamReadsResult, func(s *AcceptanceSnapshot) { s.Readers.Drop("s1-1.r1.alice") }},
+		{CheckStreamDocs, CheckStreamDocsResult, func(s *AcceptanceSnapshot) { x := s.Docs["s1"]; x.NoCode.Result = "exit=1"; s.Docs["s1"] = x }},
+		{CheckStreamDev, CheckStreamDevResult, func(s *AcceptanceSnapshot) {
+			x := s.Dev["s1"]
+			x.Ancestors = nil
+			x.QueuedPromotions = nil
+			s.Dev["s1"] = x
+		}},
+		{CheckStreamJudgments, CheckStreamJudgmentsResult, func(s *AcceptanceSnapshot) {
+			s.Open = []Open{{Key: "j1|stream:s1", Note: Note{ID: "j1", Stream: "s1", StreamLevel: true}}}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			green := fakeRelease{acceptance: base}
+			r := tc.run(green)
+			require.True(t, r.OK, r.Evidence)
+			tc.breakIt(&base)
+			red := tc.run(fakeRelease{acceptance: base})
+			require.False(t, red.OK)
+			require.NotEmpty(t, red.Evidence)
+			require.Contains(t, red.Line(), "RELEASE CHECK "+tc.name+" fail ")
+		})
+		base = goodAcceptance()
+	}
+	checks := ReleaseChecks[1:]
+	require.Len(t, checks, 6)
+	for _, c := range checks {
+		assert.NotNil(t, c.Run)
+		assert.NotEmpty(t, c.Bar)
+	}
 }

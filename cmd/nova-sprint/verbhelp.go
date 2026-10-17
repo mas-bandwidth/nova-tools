@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // releaseHoldWords tells release apart from the holds on a member, a reader,
@@ -204,6 +205,8 @@ const cardHelpWords = "a brief is held to the card lint (nova-swarm template --n
 // still carries the inbox walkthrough and the friends section on their own.
 func verbProse(name string) string {
 	switch name {
+	case "release check":
+		return "The checks are " + strings.Join(sprint.ReleaseCheckNames(), ", ") + ". A failed line names the evidence to inspect; missing or stale revision-bound evidence fails closed."
 	case "inbox":
 		return inboxExample
 	case "release":

@@ -1182,6 +1182,10 @@ nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
 ```
 
+### release-check-acceptance-r-b.w3
+
+`nova-sprint release check` runs the six stream-acceptance checks alongside `no-stuck-friend`. Each check prints its own `RELEASE CHECK <name> ok|fail <evidence>` line. The bars and evidence rules are in [SPEC-RELEASE.md](SPEC-RELEASE.md#release-check-acceptance-r-bw3). Missing or stale revision-bound evidence is a failure.
+
 `friend sync` wakes a friend through the bus store at `NOVA_BUS_REDIS` after
 delivering her card. Its bus login reads `NOVA_BUS_REDIS_USER` and the password
 variable named by `NOVA_BUS_REDIS_PASSWORD_ENV`, separately from the sprint

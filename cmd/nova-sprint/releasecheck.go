@@ -18,7 +18,8 @@ import (
 func init() {
 	verbClasses["release check"] = classRead
 	verbEffect["release check"] = "inspection: reads the store's log and the sprint's settings, writes nothing"
-	verbExit["release check"] = "exit codes: 0 every check passed (RELEASE OK), 1 a check failed (RELEASE NOT READY; each RELEASE CHECK line names what to look at), 2 usage or a store that did not answer"
+	verbExit["release check"] = "exit codes: 0 every selected check passed (RELEASE OK), 1 a check failed (RELEASE NOT READY; each RELEASE CHECK line names what to inspect), 2 usage or a store that did not answer"
+	verbEffect["release check"] = "inspection: reads the selected streams' work, read, merge, log and open-judgment records plus revision-bound release evidence; writes nothing"
 }
 
 // releaseCheckID is the sub-verb's word: no card is added with it as its id, so
@@ -37,14 +38,16 @@ func reservedCardID(ids ...string) string {
 
 // storeRelease is the release check's facts, read from the store once.
 type storeRelease struct {
-	now      time.Time
-	lines    []sprint.Line
-	dealtMax time.Duration
+	now        time.Time
+	lines      []sprint.Line
+	dealtMax   time.Duration
+	acceptance sprint.AcceptanceSnapshot
 }
 
-func (s storeRelease) Now() time.Time          { return s.now }
-func (s storeRelease) Log() []sprint.Line      { return s.lines }
-func (s storeRelease) DealtMax() time.Duration { return s.dealtMax }
+func (s storeRelease) Now() time.Time                        { return s.now }
+func (s storeRelease) Log() []sprint.Line                    { return s.lines }
+func (s storeRelease) DealtMax() time.Duration               { return s.dealtMax }
+func (s storeRelease) Acceptance() sprint.AcceptanceSnapshot { return s.acceptance }
 
 // cmdReleaseCheck runs the release checks and prints one RELEASE CHECK line per check, then
 // RELEASE OK checks=<n> or RELEASE NOT READY failed=<n>; --json prints the one report
@@ -81,11 +84,19 @@ func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	if lines, err = sprint.ReleaseStreamLines(lines, *streams); err != nil {
 		return refuse(stderr, "release check", err.Error())
 	}
-	s, err := st.Load(ctx, []string{sprint.Work}, nil)
+	s, err := st.Load(ctx, []string{sprint.Work, sprint.Readers, sprint.Merge}, nil)
 	if err != nil {
 		return a.readFailed("release check", err, stderr)
 	}
-	rep, err := sprint.RunReleaseChecks(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax()}, names)
+	streamNames, err := sprint.ReleaseStreamNames(s.Work.Rows(), *streams)
+	if err != nil {
+		return refuse(stderr, "release check", err.Error())
+	}
+	if len(streamNames) == 0 {
+		return refuse(stderr, "release check", "--streams names no declared stream; run: nova-sprint where")
+	}
+	acceptance := sprint.AcceptanceSnapshot{Work: s.Work, Readers: s.Readers, Merge: s.Merge, Open: s.Open, Lines: lines, Streams: streamNames, Coordinator: s.Coordinator}
+	rep, err := sprint.RunReleaseChecks(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax(), acceptance: acceptance}, names)
 	if err != nil {
 		return refuse(stderr, "release check", err.Error())
 	}
