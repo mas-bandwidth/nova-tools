@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x06')
+[]byte("{\n  \"after\": null,\n  \"wake_offset\": 0\n}\n")
