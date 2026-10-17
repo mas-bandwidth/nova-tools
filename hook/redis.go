@@ -512,13 +512,24 @@ func (s Store) Gate(ctx context.Context, w Want) error {
 	return nil
 }
 
+// pushSlots is the Lua table of each push's place among a record's push keys
+// (allKeys: a lease and a proof per push, in the order of Pushes).
+func pushSlots() string {
+	var b strings.Builder
+	for i, p := range Pushes {
+		fmt.Fprintf(&b, "%s = %d, ", p, i)
+	}
+	return b.String()
+}
+
 // beatLua performs one atomic server pass (tla/HookBeat.tla, Pass). The
 // server row prevents two passes in one interval. Each hooked bus role gets
 // a challenge at the next pass after it is armed (it has not proved since),
 // then only after its selected quiet window or when proof renewal is due. A
 // valid pending nonce is retained; its outbox is retried until the bus
 // confirms delivery. Expiry invalidates its recent entry and latches failed
-// renewal until silence or a fresh model proof permits another challenge.
+// renewal against a challenge every pass; the name is asked again once per
+// down-after from its last challenge while its leases stand, whatever its activity.
 // Only a delivered expired challenge plus activity older than down-after
 // unhooks a name and logs the transition. Activity never creates a proof.
 // KEYS: events, serve, then each name's record, six push keys, challenge and
@@ -536,6 +547,24 @@ local keep = math.min(math.floor(after * 10 / (9 * every)) + 1, ` + strconv.Itoa
 local bus = {}
 for i = 1, nroles do bus[ARGV[6 + 2 * i]] = ARGV[7 + 2 * i] end
 local out, gone, live, coord = {}, {}, {}, ''
+-- proven: every push of the comma list ps has its lease and its proof (KEYS
+-- after the record at k, in the order of Pushes) stamped with the epoch e.
+local slot = {` + pushSlots() + `}
+local function stamped(key, e)
+  local v = redis.call('GET', key)
+  if not v then return false end
+  local ok, s = pcall(cjson.decode, v)
+  return ok and type(s) == 'table' and tonumber(s.epoch) == e
+end
+-- held: every push of ps has its key of kind j (1 the lease, 2 the proof) stamped with e.
+local function held(k, ps, e, j)
+  for p in string.gmatch(ps, '[^,]+') do
+    local i = slot[p]
+    if not i or not stamped(KEYS[k + j + 2 * i], e) then return false end
+  end
+  return true
+end
+local function proven(k, ps, e) return held(k, ps, e, 1) and held(k, ps, e, 2) end
 local k, a = 3, 8 + 2 * nroles
 while k <= #KEYS do
   local rec, chal, delivery, name, sum = KEYS[k], KEYS[k + 7], KEYS[k + 8], ARGV[a], ARGV[a + 1]
@@ -564,7 +593,9 @@ while k <= #KEYS do
     local armed = tonumber(redis.call('HGET', rec, 'armed') or '0')
     local heard = math.max(answer, armed, tonumber(redis.call('HGET', rec, 'bus_sent_at') or '0'))
     local quiet = ` + strconv.FormatInt(QuietAfter.Milliseconds(), 10) + `
-    if role == 'coordinator' then quiet = ` + strconv.FormatInt(CoordinatorEvery.Milliseconds(), 10) + `
+    -- DO NOT REMOVE THIS WITHOUT GLENN'S EXPLICIT PERMISSION
+    -- The coordinator's own bus sends hold off neither its challenge nor its unhook: only its answer does.
+    if role == 'coordinator' then quiet = ` + strconv.FormatInt(CoordinatorEvery.Milliseconds(), 10) + `; heard = math.max(answer, armed)
     elseif role == 'friend' and ARGV[a + 2] == '1' then quiet = ` + strconv.FormatInt(BusyQuietAfter.Milliseconds(), 10) + ` end
     if not dry then redis.call('HSET', rec, 'quiet_after', quiet) end
     local proofDue = now - math.max(answer, armed) >= ` + strconv.FormatInt((ProofTTL-AnswerBound).Milliseconds(), 10) + ` - 2 * every and redis.call('HGET', rec, 'renewal_failed') ~= '1'
@@ -587,7 +618,8 @@ while k <= #KEYS do
     else
       -- An expired challenge cannot be answered alongside its replacement.
       -- Activity may keep a name hooked, but never extends this nonce or proof.
-      if pending > 0 and now > pending then
+      local expired = pending > 0 and now > pending
+      if expired then
         if not dry then
           redis.call('DEL', chal, delivery)
           redis.call('HDEL', rec, 'recent', 'pending_until', 'pending_missed', 'pending_sent')
@@ -597,13 +629,21 @@ while k <= #KEYS do
         unproven = false
         pending = 0
       end
+      -- A hooked name whose renewal lapsed unanswered, or whose leases stand with a proof
+      -- lapsed, is asked again once per down-after from its last challenge, by the store's
+      -- TIME alone: her own bus sends never hold it off, so an active friend whose proof
+      -- lapsed is never left down and deaf (tla/HookBeat.tla, Retry and
+      -- AliveHookedEventuallyUp). A name with no live lease has no hook to hear it.
+      local ep = tonumber(redis.call('HGET', rec, 'epoch'))
+      local retry = (redis.call('HGET', rec, 'renewal_failed') == '1' or not held(k, bus[role], ep, 2))
+        and held(k, bus[role], ep, 1) and now - last > after
       if pending > 0 and not sent then
         deliveredNonce = redis.call('HGET', delivery, 'nonce') or ''
         if deliveredNonce ~= '' then
           did = 1
           e = tonumber(redis.call('HGET', rec, 'epoch'))
         end
-      elseif pending == 0 and redis.call('EXISTS', chal) == 0 and (unproven or now - heard > quiet or proofDue) then
+      elseif pending == 0 and (expired or redis.call('EXISTS', chal) == 0) and (unproven or now - heard > quiet or proofDue or retry) then
         e = tonumber(redis.call('HGET', rec, 'epoch'))
         local recent = {string.format('%d:%s:%s:%d:%s', e, sum, ms, now + after, bus[role])}
         for x in string.gmatch(redis.call('HGET', rec, 'recent') or '', '%S+') do
@@ -627,11 +667,17 @@ while k <= #KEYS do
   table.insert(out, {did, misses, e, deliveredNonce})
   local st = redis.call('HGET', rec, 'state')
   if did == 2 then st = 'unhooked' end -- what the unhook above wrote, or a dry run would
-  if st == 'unhooked' then table.insert(gone, name) end
-  if st == 'hooked' and bus[role] then
-    table.insert(live, name)
-    if role == 'coordinator' and coord == '' then coord = name end
-  end
+  -- Up is proven, never merely hooked (tla/HookBeat.tla, NoBackWithoutProof): a
+  -- hooked name of a challenged role is up only while every push its challenge
+  -- names holds a lease and a proof of the record's epoch, which only the model's
+  -- nova-hook prove writes. A service that re-arms with no model behind it leaves
+  -- the name down, so nothing is told for the arming nor for its lapse. The
+  -- coordinator is the first name of that role up: one hooked and not proven is
+  -- down, and the others are asked who takes over (serve.go tell).
+  local up = st == 'hooked' and bus[role] and proven(k, bus[role], tonumber(redis.call('HGET', rec, 'epoch')))
+  if st == 'unhooked' or (st == 'hooked' and bus[role] and not up) then table.insert(gone, name) end
+  if up then table.insert(live, name) end
+  if up and role == 'coordinator' and coord == '' then coord = name end
   k, a = k + 9, a + 4
 end
 local set = table.concat(gone, ',')
@@ -696,9 +742,9 @@ var Audiences = []string{ToCoordinator, ToRest}
 type Passed struct {
 	Taken    bool     // false: another pass (another server's) was taken inside nine tenths of the interval; nothing was done
 	Beats    []Beat   // one per name, in the order asked
-	Unhooked []string // every name unhooked now, sorted
-	Coord    string   // the coordinator now: the first hooked name of that role, "" for none
-	Live     []string // every hooked name of a challenged role: who hears a broadcast
+	Unhooked []string // every name down now, sorted: unhooked, or hooked in a challenged role and not proven (tla/HookBeat.tla, NoBackWithoutProof)
+	Coord    string   // the coordinator now: the first name of that role up (proven), "" for none
+	Live     []string // every proven name of a challenged role, the names up: who hears a broadcast
 	Was      map[string]Told
 }
 

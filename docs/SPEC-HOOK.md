@@ -68,7 +68,7 @@ the record's state, role, and epoch in the same step.
 | `BeatEvery` | 1 min | server pass interval; every hooked bus-role name is checked |
 | `BusyQuietAfter` | 5 min | quiet threshold for a friend holding ready or working sprint cards |
 | `QuietAfter` | 10 min | quiet threshold for an idle friend or comms name |
-| `CoordinatorEvery` | 30 min | coordinator quiet threshold |
+| `CoordinatorEvery` | 10 min | coordinator challenge period: its own bus sends never hold it off, and a challenge it leaves unanswered past `AnswerBound` unhooks it (the owner, 2026-10-16) |
 | `DownAfter` | 5 min | silence required in addition to an outstanding challenge past `AnswerBound` before down |
 | `ChallengeEvery` | 30 min | standalone loop cadence; Codex, DeepSeek and Antigravity bootstrap once and receive server challenges; the server checks every hooked bus-role name |
 | `AnswerBound` | 5 min | every challenge's answer window |
@@ -146,7 +146,7 @@ Every line runs as printed:
   a silence window (a challenge that lapsed unanswered falls back to the silence window, not a new one each
   pass). Once she has proved, every hooked coordinator, friend or comms name uses the latest
   proof or explicit model send, with the arming as the lower boundary. A friend holding ready or
-  working cards has a 5m quiet window, an idle friend or comms name 10m, and a coordinator 30m. The
+  working cards has a 5m quiet window, an idle friend or comms name 10m, and a coordinator 10m from its last answer (its own sends are no activity). The
   server batches authoritative `friend cards <name> --json` reads through `--sprint-server`; an unknown
   row uses 5m and prints a fault. The selected policy is recorded as `quiet_after`, not a copied work
   counter. A proof reaches renewal at `ProofTTL - AnswerBound - 2*BeatEvery` (33m after proof
@@ -172,8 +172,11 @@ Every line runs as printed:
 - **Durable challenge delivery.** A private `hook:delivery:<name>` outbox keeps the nonce, epoch and
   bus once-key. Failed or unknown sends retry that nonce without moving its deadline. A committed
   bus once-key recovers a crash before delivery acknowledgement. Expiry invalidates the old nonce
-  and recent entry. Failed renewal is latched: continued traffic cannot trigger another proof-expiry
-  challenge until the name is quiet or the model proves a fresh nonce. Activity never renews nonce or proof.
+  and recent entry. Failed renewal is latched against a challenge every pass, never against a retry: a hooked
+  name whose challenge expired unanswered, or whose leases stand with its proof lapsed, is asked again
+  once per `--down-after` from its last challenge by the store's `TIME`, and her own bus sends never
+  hold that off, so an active friend whose proof lapsed is never left down and deaf
+  (`tla/HookBeat.tla`, `Retry`, `AliveHookedEventuallyUp`; reversed witness `MCHookBeatBrokenLatch`). Activity never renews nonce or proof.
 - **Notice rollout.** Receivers accept both canonical body versions; the server emits the truthful
   silence wording. Returning older binaries update through the existing adopt/back-up flow. Their
   byte-for-byte parser does not understand the new body until updated.
@@ -183,15 +186,30 @@ Every line runs as printed:
   With uninterrupted minute passes and successful challenge delivery, silence is detected after
   the quiet window plus the 5m answer
   bound, rounded to the next pass at each strict boundary: at most 12m for a busy friend, 17m for
-  an idle friend/comms name, and 37m for a coordinator (`quiet + AnswerBound + 2*BeatEvery`). A server outage adds its duration; stale-server detection remains
-  two pass intervals. Independently of delivery, the reader backstop is 17m / 22m / 42m for busy friend /
+  an idle friend/comms name, and 17m for a coordinator (`quiet + AnswerBound + 2*BeatEvery`). A server outage adds its duration; stale-server detection remains
+  two pass intervals. Independently of delivery, the reader backstop is 17m / 22m / 22m for busy friend /
   idle friend or comms / coordinator at the defaults. This reader decision does not fabricate a delivered
   challenge or an unhook event. The model checks all prior invariants and liveness, role quiet and detection
   bounds, daemon non-activity, and proof renewal. Legacy short-cadence configurations overapproximate
   old issued-nonce compatibility and the delivery protocol; silence configurations check current
   scheduling. Each new hazard has a broken witness. Quiet policy cases explore one name per role;
   cross-name quiet interactions are not explored. Existing multi-name race and tell cases remain.
-- **Coalesced telling, one write per audience.** Changes in the unhooked set or coordinator are sent
+- **Up is proven, never merely hooked.** The set the telling carries is the names down: every
+  unhooked name, and every hooked name of a challenged role whose challenged pushes (`bus`) are not
+  live and proven in the record's epoch (`live`, `partial`, `expired`). Only the model's
+  `nova-hook prove` writes that proof, and an arming clears it, so a name a supervised hook service
+  re-arms with no model running stays down: no `FRIEND BACK` for the arming, and no second
+  `FRIEND DOWN` when its unanswered challenge unhooks it again. A name is back only once its model
+  proves. A proven name whose lease or proof lapses is down (`hooked, not proven (<state>)`). The
+  other live names, who hear a broadcast, are the names up (proven); the coordinator is the first
+  name of its role up: a coordinator hooked and not proven is down, and the other live names get
+  the `COORDINATOR DOWN <name>: who takes over?` judgment, as for an unhooked one. While no coordinator
+  is up, the coordinator audience is left unmarked: the changes pile up and are judged to the next
+  coordinator up, never marked told with no message; her own return is left out of her judgment
+  (`JudgeCoord`, `DownJudgedToCoordinator`; reversed witness `MCHookBeatBrokenMarkDrop`). The model is
+  `tla/HookBeat.tla` (Parts `proven`: `DaemonHook`, `NoBackWithoutProof`, `NoFlapWithoutProof`;
+  the reversed witness `MCHookBeatBrokenArmedBack`, up as hooked, and `MCHookBeatWitnessArmedDown`).
+- **Coalesced telling, one write per audience.** Changes in the down set or coordinator are sent
   once per audience (`hook:told:<audience>:<gen>`): one `judgment` to the coordinator (`FRIEND DOWN
   <name>: <reason>`, `FRIEND BACK <name>`) and one message (or `COORDINATOR DOWN` judgment) to the
   other live names. Open judgments in `hook:judgments` are re-pushed once as `OVERDUE` past

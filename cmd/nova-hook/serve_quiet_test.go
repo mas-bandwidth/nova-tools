@@ -30,7 +30,7 @@ func TestQuietHeartbeatUsesActivityAndAnOutstandingDeadline(t *testing.T) {
 		{"idle friend", hook.Friend, 10 * time.Minute, false},
 		{"busy friend", hook.Friend, 5 * time.Minute, true},
 		{"comms", hook.Comms, 10 * time.Minute, false},
-		{"coordinator", hook.Coordinator, 30 * time.Minute, false},
+		{"coordinator", hook.Coordinator, hook.CoordinatorEvery, false}, // 10m: the owner, 2026-10-16
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -467,4 +467,56 @@ func TestExpiredRenewalDoesNotRechallengeEachTalkingPass(t *testing.T) {
 	require.Error(t, err, "the old nonce is expired, never extended by talking")
 	st := r.h.State(t, "bob")
 	assert.NotEqual(t, hook.StateProven, st.State, "talking does not extend proof TTL")
+}
+
+// TestATalkingFriendWhoseRenewalLapsedIsAskedAgain pins the retry cadence
+// (tla/HookBeat.tla, Retry and AliveHookedEventuallyUp; the cold read's hold
+// on this branch): a friend who talks every minute, with her hook service
+// renewing her lease, misses her proof-renewal challenge and the retries
+// after it. Her own sends never hold the retry off: she is asked again at
+// most once per down-after, never at every pass, her proof lapses at its TTL
+// and she reads down, and the first retry she answers brings her back up.
+func TestATalkingFriendWhoseRenewalLapsedIsAskedAgain(t *testing.T) {
+	t.Parallel()
+	r := newQuietRig(t)
+	r.h.Hook(t, "bob", hook.Comms)
+	ctx := context.Background()
+	b := &bus.Bus{Store: bus.Redis{C: r.h.Client}}
+	answerFrom := 50 // minutes: she answers no challenge before this
+	var asked []int
+	var downAt, upAgain int
+	for m := 1; m <= 70; m++ {
+		r.h.Pass(hook.BeatEvery)
+		st := r.h.State(t, "bob")
+		require.NoError(t, r.h.Store.Renew(ctx, "bob", hook.Comms, hook.Bus, st.Epoch, "service"))
+		_, err := b.Send(ctx, bus.Message{From: "bob", To: []string{"ada"}, Kind: bus.KindStatus, Subject: "status", Body: "working", ModelActivity: true})
+		require.NoError(t, err)
+		p, err := r.h.Store.Pass(ctx, []string{"bob"}, hook.BeatEvery, hook.DownAfter, func() string { return fmt.Sprintf("n%d", m) }, "test")
+		require.NoError(t, err)
+		require.True(t, p.Taken)
+		require.NotEqual(t, hook.BeatUnhooked, p.Beats[0].Did, "minute %d: talking is never unhooked", m)
+		if p.Beats[0].Did == hook.BeatChallenged {
+			asked = append(asked, m)
+			require.NoError(t, r.h.Store.Delivered(ctx, p.Beats[0]))
+			if m >= answerFrom {
+				_, err := r.h.Store.Answer(ctx, "bob", p.Beats[0].Nonce, "model")
+				require.NoError(t, err)
+			}
+		}
+		switch proven := r.h.State(t, "bob").State == hook.StateProven; {
+		case !proven && downAt == 0:
+			downAt = m
+		case proven && downAt != 0 && upAgain == 0:
+			upAgain = m
+		}
+	}
+	t.Logf("asked %v down %d up %d", asked, downAt, upAgain)
+	require.NotEmpty(t, asked)
+	for i := 1; i < len(asked); i++ {
+		assert.Greater(t, time.Duration(asked[i]-asked[i-1])*hook.BeatEvery, hook.DownAfter, "challenges %v: at most one per down-after, never every pass", asked)
+	}
+	assert.Greater(t, len(asked), 2, "challenges %v: the lapsed renewal is asked again while she talks", asked)
+	assert.NotZero(t, downAt, "her proof lapses at its TTL: down")
+	require.NotZero(t, upAgain, "challenges %v, down at %d: a retry she answers brings her back", asked, downAt)
+	assert.LessOrEqual(t, upAgain-answerFrom, int((hook.DownAfter+hook.AnswerBound)/hook.BeatEvery)+1, "back within a retry cycle of answering again")
 }

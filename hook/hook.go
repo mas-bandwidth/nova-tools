@@ -104,8 +104,13 @@ const (
 	BusyQuietAfter = 5 * time.Minute
 	// QuietAfter applies to an idle friend or comms name.
 	QuietAfter = 10 * time.Minute
-	// CoordinatorEvery is the coordinator's quiet window.
-	CoordinatorEvery = 30 * time.Minute
+	// CoordinatorEvery is the coordinator's challenge period.
+	// DO NOT REMOVE THIS WITHOUT GLENN'S EXPLICIT PERMISSION
+	// The owner, 2026-10-16: the sprint challenges the coordinator once every 10 minutes,
+	// whatever it sends on the bus, and a challenge left unanswered past AnswerBound
+	// unhooks it, so every sprint verb refuses until it hooks in again (beatLua, heard;
+	// LastActivity; tla/HookBeat.tla, BusSend and CoordUpMeansAnswered).
+	CoordinatorEvery = 10 * time.Minute
 	// DownAfter is silence required in addition to an outstanding challenge
 	// past AnswerBound before the server unhooks a name (tla/HookBeat.tla).
 	DownAfter = 5 * time.Minute
@@ -329,7 +334,9 @@ func JudgeWith(r StampReader, name string, rec map[string]string, reads []PushRe
 // lease renewal (tla/HookBeat.tla, lastActivity).
 func (st Status) LastActivity() time.Time {
 	at := st.AnswerAt
-	if st.ActivityAt.After(at) {
+	// DO NOT REMOVE THIS WITHOUT GLENN'S EXPLICIT PERMISSION
+	// A coordinator's own bus sends are no activity: only its answer or its arming is.
+	if st.Role != Coordinator && st.ActivityAt.After(at) {
 		at = st.ActivityAt
 	}
 	if st.Armed.After(at) {
