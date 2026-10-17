@@ -18,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 func p(v float64) *float64 { return &v }
@@ -462,12 +464,29 @@ func TestAReplayedDecisionIsHeldToTheSchemaLikeAFreshAsk(t *testing.T) {
 	assert.True(t, existing2)
 	assert.Equal(t, d.Answers, d2.Answers)
 
-	// Rewrite the line to an impossible value.
+	// Rewrite the line to an impossible value: decode each record line (the
+	// table form the writer writes, S2), set the answer value, re-encode.
 	raw, err := os.ReadFile(record)
 	require.NoError(t, err)
-	tampered := strings.Replace(string(raw), `"value":"pre-existing"`, `"value":"impossible"`, 1)
-	require.NotEqual(t, string(raw), tampered, "rewrite must replace value")
-	require.NoError(t, os.WriteFile(record, []byte(tampered), 0o600))
+	rd := newRecordLineReader()
+	var tampered []byte
+	replaced := 0
+	for _, text := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		l, _, rerr := rd.Read([]byte(text))
+		require.NoError(t, rerr)
+		if l.Decision != nil {
+			if a, ok := l.Decision.Answers["class"]; ok && a.Value == PreExisting {
+				a.Value = "impossible"
+				l.Decision.Answers["class"] = a
+				replaced++
+			}
+		}
+		out, werr := recordLineWriter.Write(&l, schemaread.FormBase64)
+		require.NoError(t, werr)
+		tampered = append(append(tampered, out...), '\n')
+	}
+	require.Equal(t, 1, replaced, "rewrite must replace value")
+	require.NoError(t, os.WriteFile(record, tampered, 0o600))
 
 	// Assert Make, MakeAll and Gate return an error naming the op and do not route.
 	_, _, err = Make(context.Background(), b, s, state, record, id, inputs, at)
