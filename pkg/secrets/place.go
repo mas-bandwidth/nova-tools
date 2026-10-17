@@ -10,11 +10,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/mas-bandwidth/nova-tools/pkg/testguard"
+	wire "github.com/mas-bandwidth/nova-tools/pkg/seatrecwire"
 )
 
 // place.go implements `nova-secrets place`, which copies one named secret from the
@@ -443,8 +446,158 @@ func receiptPath(dir, machine string) string {
 	return filepath.Join(dir, machine+".receipt")
 }
 
+// The secrets place receipt record, its one reader, and the read of a machine's
+// receipt file. Every line reads through the package's one placedReceiptReader
+// (S2, C13): the fixed binary image of the seatrec PlacedReceipt table, the
+// padded standard base64 of that image, and the legacy tab-separated form every
+// writer writes today, each counted once under the form read and refused by name
+// when malformed, clamped or unreadable.
+const (
+	placedReceiptRecord = "PLACED_RECEIPT"
+	placedReceiptHelp   = "rm <machine>.receipt and place again"
+)
+
+// placedReceiptDoc is one read: the table value and the region that holds it for
+// the table forms, and the record every form reads to.
+type placedReceiptDoc struct {
+	v      *wire.PlacedReceipt
+	region []byte
+	rec    placedReceipt
+}
+
+// placedReceiptReader is the one secrets place receipt reader of the package; its
+// Counts are the per-form read counts (S2, C13).
+type placedReceiptReader struct {
+	r     *schemaread.Reader[placedReceiptDoc]
+	counts *schemaread.Counts
+}
+
+// newPlacedReceiptReader returns a receipt reader with empty counters.
+func newPlacedReceiptReader() *placedReceiptReader {
+	p := &placedReceiptReader{}
+	p.r = schemaread.NewReader(&schemaread.Codec[placedReceiptDoc]{
+		Name:  placedReceiptRecord,
+		Help:  placedReceiptHelp,
+		Reset: func(d *placedReceiptDoc) { *d = placedReceiptDoc{} },
+		Measure: func(w []byte) error {
+			_, err := wire.PlacedReceiptLoadMeasureReason(w)
+			return err
+		},
+		LoadWire:    p.loadWire,
+		Legacy:      receiptLegacy,
+		LoadLegacy:  p.loadLegacy,
+		Constraints: receiptConstraints,
+	})
+	p.counts = p.r.Counts()
+	return p
+}
+
+// receiptReader is the package's one reader of receipt lines.
+var receiptReader = newPlacedReceiptReader()
+
+// receiptLegacy is true when the input is the legacy tab-separated receipt line:
+// printable text (a tab ignored) holding at least one tab, so a binary image that
+// happens to contain a tab byte is never read as text.
+func receiptLegacy(in []byte) bool {
+	t := bytes.TrimSpace(in)
+	if len(t) == 0 || !bytes.Contains(t, []byte("\t")) {
+		return false
+	}
+	for _, b := range t {
+		if b < 0x20 && b != '\t' {
+			return false
+		}
+	}
+	return true
+}
+
+// loadLegacy reads the legacy line exactly as the package has always read it.
+func (p *placedReceiptReader) loadLegacy(d *placedReceiptDoc, b []byte) schemaread.Report {
+	fields := strings.Split(string(b), "\t")
+	switch len(fields) {
+	case 6:
+		r := placedReceipt{Secret: fields[0], Path: fields[1], File: fields[2], Head: fields[3], Blob: fields[4], Stamp: fields[5]}
+		for _, f := range []*string{&r.File, &r.Head, &r.Blob} {
+			if *f == "-" {
+				*f = ""
+			}
+		}
+		r.Unknown = r.Blob == ""
+		d.rec = r
+		return schemaread.Report{}
+	case 4:
+		// An older build's line: secret, path, sha256 of the value, stamp. The
+		// digest (fields[2]) is dropped here and goes no further.
+		d.rec = placedReceipt{Secret: fields[0], Path: fields[1], Stamp: fields[3], Unknown: true, Legacy: true}
+		return schemaread.Report{}
+	default:
+		return schemaread.Report{Reason: "malformed: want 6 tab-separated fields (secret, path, file, head, blob, stamp)"}
+	}
+}
+
+// loadWire loads the table's binary image; base64 reaches it decoded.
+func (p *placedReceiptReader) loadWire(d *placedReceiptDoc, w []byte) schemaread.Report {
+	n, err := wire.PlacedReceiptLoadMeasureReason(w)
+	if err != nil || n < 0 {
+		return schemaread.Report{Malformed: true}
+	}
+	var r wire.TableReport
+	d.region = receiptRegion(n)
+	if d.v = wire.PlacedReceiptLoad(d.region, w, &r); d.v == nil {
+		return schemaread.Report{Malformed: true, Reason: r.Reason}
+	}
+	return receiptTableReport(&r, d)
+}
+
+// receiptTableReport reduces a table read to the strict read's report and holds
+// the record it reads to. A receipt line has no checked bound (receiptConstraints),
+// so a table read that passes is the record as the fields spell it.
+func receiptTableReport(r *wire.TableReport, d *placedReceiptDoc) schemaread.Report {
+	rep := schemaread.Report{
+		Unknown:      int(r.Unknown),
+		KindMismatch: int(r.KindMismatch),
+		Clamped:      int(r.Clamped),
+		Malformed:    r.Malformed || r.Duplicate > 0,
+		Reason:       r.Reason,
+	}
+	if rep.Reason != "" || rep.Malformed || rep.KindMismatch > 0 || rep.Clamped > 0 {
+		return rep
+	}
+	d.rec = placedReceipt{
+		Secret: receiptText(&d.v.Secret), Path: receiptText(&d.v.Path),
+		File: receiptText(&d.v.File), Head: receiptText(&d.v.Head),
+		Blob: receiptText(&d.v.Blob), Stamp: receiptText(&d.v.Stamp),
+	}
+	d.rec.Unknown = d.rec.Blob == ""
+	return rep
+}
+
+// receiptConstraints is empty on purpose: readReceipts checks no receipt field's
+// length or shape, so the table refuses no receipt line today's reader accepts
+// (the seatrec schema's PlacedReceipt comment).
+func receiptConstraints(*placedReceiptDoc, *schemaread.Checker) {}
+
+// receiptText is the text of one table string slot; a null slot is "".
+func receiptText(slot *int64) string {
+	if *slot == 0 {
+		return ""
+	}
+	v := wire.TableStringAt(slot)
+	return string(v.Data[:v.Length])
+}
+
+// receiptRegion is a 64-byte aligned region of n bytes for a table load.
+func receiptRegion(n int64) []byte {
+	raw := make([]byte, n+63)
+	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
+	return raw[off : off+uintptr(n)]
+}
+
 // readReceipts reads one machine's receipt file. An absent file is zero receipts, not a
-// failure: a machine with nothing placed answers count=0.
+// failure: a machine with nothing placed answers count=0. The file is either one record
+// in a non-legacy form (its fixed binary image or the padded standard base64 of it),
+// read whole, or the legacy tab-separated text form, read line by line; every read is
+// the package's one reader, so each form reads to one equal record (S2, C13).
 func readReceipts(dir, machine string) ([]placedReceipt, error) {
 	raw, err := os.ReadFile(receiptPath(dir, machine))
 	if err != nil {
@@ -453,29 +606,24 @@ func readReceipts(dir, machine string) ([]placedReceipt, error) {
 		}
 		return nil, err
 	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, nil
+	}
+	// One record in a non-legacy form reads whole, before any line split: the
+	// binary image may itself hold newline or tab bytes.
+	if d, res, err := receiptReader.r.Read(raw); err == nil && res.Form != schemaread.FormLegacy {
+		return []placedReceipt{d.rec}, nil
+	}
 	var out []placedReceipt
 	for n, line := range strings.Split(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		fields := strings.Split(line, "\t")
-		switch len(fields) {
-		case 6:
-			r := placedReceipt{Secret: fields[0], Path: fields[1], File: fields[2], Head: fields[3], Blob: fields[4], Stamp: fields[5]}
-			for _, f := range []*string{&r.File, &r.Head, &r.Blob} {
-				if *f == "-" {
-					*f = ""
-				}
-			}
-			r.Unknown = r.Blob == ""
-			out = append(out, r)
-		case 4:
-			// An older build's line: secret, path, sha256 of the value, stamp. The digest
-			// (fields[2]) is dropped here and goes no further.
-			out = append(out, placedReceipt{Secret: fields[0], Path: fields[1], Stamp: fields[3], Unknown: true, Legacy: true})
-		default:
-			return nil, fmt.Errorf("receipt %s line %d: want 6 tab-separated fields (secret, path, file, head, blob, stamp); run: rm %s and place again", receiptPath(dir, machine), n+1, receiptPath(dir, machine))
+		rec, _, err := receiptReader.r.Read([]byte(line))
+		if err != nil {
+			return nil, fmt.Errorf("receipt %s line %d: %w", receiptPath(dir, machine), n+1, err)
 		}
+		out = append(out, rec.rec)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Secret < out[j].Secret })
 	return out, nil
