@@ -84,6 +84,8 @@ func fuzzBuilder[B any, PB interface {
 
 // END builder
 // fuzzValue is a fixed table, read into a plain value.
+//
+//lint:ignore U1000 used by roots.sh for generated roots that are not builders
 func fuzzValue[R any](name string, loadWire, fromJSON func(*R, []byte, *TableReport) bool, wire, text func(*R) []byte) fuzzRoot {
 	return fuzzRoot{name, func(f fuzzForm, in []byte, rep *TableReport) ([]byte, []byte, bool) {
 		var v R
