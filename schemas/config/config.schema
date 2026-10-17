@@ -1,0 +1,324 @@
+// config.schema: the nova-config area. The records the configuration store
+// writes and reads: a row, a row change (the history the store keeps), the
+// file twin of the store, the machine and loop views the inventory reads and
+// writes, the inventory and its hosts, the canonical kind words, and the Redis
+// view the store holds for a machine (the member beat and the bench hash,
+// merged by pkg/config mergeBeat). Its Go is generated into pkg/configwire
+// (go generate ./pkg/configwire).
+//
+// Every table here is a FIXED table (schemas/README.md, the owner's rule S1):
+// a small, bounded, server-owned record whose reader is always the same
+// version or newer. A variable table is for what friends exchange; nothing
+// here travels between friends. A fixed table stands on its schema.lock, so
+// an older reader meeting a newer layout refuses it by name (layout_newer)
+// and never reads it wrong.
+//
+// A fixed record is at most 65536 bytes, and so is every partial sum of the
+// children it holds (the schema compiler's rule): the bounds below are chosen
+// under that. Where a bound is one the code enforces today its comment names
+// the rule (pkg/config kind.go, inventory.go); where the code enforces none
+// the comment says the bound is new and where it comes from.
+//
+// Absent text reads as the empty string and absent numbers as zero, as the
+// code that fills these records does today: an optional (?T) stands where
+// absence is a fact the reader checks (a width the row names or not).
+package configwire
+
+/// MaxName is the longest row, machine, host and friend name. The code enforces
+/// the shape only (pkg/config NamePattern: lower-case letters, digits and
+/// dashes); 64 is the bound nova-bus puts on a sender name, and no fleet name
+/// is near it.
+const MaxName = 64
+
+/// MaxRowFields is the most fields a row carries: the widest kind today is the
+/// route kind with 23 fields (pkg/config Kinds); one slot is spare.
+const MaxRowFields = 24
+
+/// MaxFieldName is the longest field name: the longest today is 28 bytes
+/// (the sprint kind).
+const MaxFieldName = 32
+
+/// MaxFieldValue is the longest field value but the argv. The code bounds only
+/// the argv (below); a free text field has no bound there, so 1024 is a new
+/// bound, chosen so a row and a change holding two rows stay under the 65536
+/// byte record.
+const MaxFieldValue = 1024
+
+/// MaxArgvBytes is the longest argv in its canonical JSON spelling
+/// (pkg/config MaxArgvBytes: at most 64 words and 4096 bytes).
+const MaxArgvBytes = 4096
+
+/// MaxKeys is the most secret names a loop lists; the code bounds none, so 32
+/// is a new bound far over a loop today.
+const MaxKeys = 32
+
+/// MaxEnvName is the longest environment variable name in a loop keys list
+/// (the code bounds none; 64 is a new bound).
+const MaxEnvName = 64
+
+/// MaxHosts is the most hosts an inventory group lists. The code bounds none;
+/// 64 is a new bound over the fleet today and keeps the eight groups under the
+/// record limit.
+const MaxHosts = 64
+
+/// MaxRevs is the most kinds config:decl carries a revision for (one per kind,
+/// eight today).
+const MaxRevs = 8
+
+/// The canonical kind words (pkg/config KindMachine to KindTier, in apply
+/// order). The members are the words with a leading capital, since a few words
+/// (int, enum, bool) are the schema language's own; the canonical word is the
+/// member's name in lower case.
+enum ConfigKind
+{
+    Machine
+    Fleet
+    Friend
+    Sprint
+    Loop
+    Provider
+    Route
+    Tier
+}
+
+/// The write a history row records (pkg/config OpAdd, OpSet, OpRemove).
+enum ChangeOp
+{
+    Add
+    Set
+    Remove
+}
+
+/// The canonical field type words (pkg/config Type: TypeText to TypeDecimal).
+enum FieldType
+{
+    Text
+    Int
+    Enum
+    List
+    Names
+    Ref
+    Bool
+    Keys
+    Argv
+    Seq
+    Decimal
+}
+
+/// One field of a row: its name and its canonical text (ints as digits, lists
+/// sorted and comma joined, empty for an empty value). Values are text end to
+/// end (pkg/config Row), so the descriptor, not the row, knows the type.
+fixed table FieldPair
+{
+    name  string(MaxFieldName)
+    value string(MaxFieldValue)
+}
+
+/// A row's fields, the map pkg/config Row.Fields and Change.Before and After
+/// hold. The loop kind's argv is the one field the code bounds above a
+/// kilobyte, so it rides its own slot: a pair named argv is never written, the
+/// slot is. Pairs are kept in name order, which makes the image of a row
+/// unique.
+fixed table RowFields
+{
+    pairs [..MaxRowFields]FieldPair
+    argv  string(MaxArgvBytes)
+}
+
+/// One row of a kind (pkg/config Row): its name and its fields, and the two
+/// stamps, RFC 3339 UTC, empty for a row a store has not stamped.
+fixed table ConfigRow
+{
+    kind       ConfigKind
+    name       string(MaxName)
+    fields     RowFields
+    created_at string(32)
+    updated_at string(32)
+}
+
+/// One history row (pkg/config Change, written pg.go record, read pg.go
+/// History): the write's kind, name and op, the row before and the row after
+/// (an add has no before and a remove has no after: the has_ flags say which
+/// ride), who made it, why (the --reason, empty when none), and when (RFC 3339
+/// UTC). The reason rides here, apart from the fields, as Change.Reason does.
+fixed table ConfigChange
+{
+    id         int64
+    kind       ConfigKind
+    name       string(MaxName)
+    op         ChangeOp
+    has_before bool
+    before     RowFields
+    has_after  bool
+    after      RowFields
+    actor      string(MaxName)
+    reason     string(256)
+    at         string(32)
+}
+
+/// The header of the file twin's state (pkg/config fileState, file.go): the
+/// store file holds this record, then the rows as ConfigRow records, then the
+/// history as ConfigChange records, in a fixed batch each. The file is bounded
+/// by MaxStoreFileBytes (16 MiB), read whole when it is opened.
+fixed table FileHeader
+{
+    schema int32 | min = 0, max = 100000
+}
+
+/// The canonical words a kind and a field type and a write op are spelled
+/// with: the registry's vocabulary as one record (pkg/config Kinds, Type, Op).
+fixed table CanonicalWord
+{
+    kind       ConfigKind
+    field_type FieldType
+    op         ChangeOp
+    singleton  bool
+}
+
+/// A machine's view as the Redis view holds it (the machine:<name> hash the
+/// inventory reads, pkg/config Snapshot.Machines): its login, seat, slots,
+/// runners, explicit roles as the canonical comma list, tla flag, and the width
+/// when the row names one (the nullable width; absent defaults to half the
+/// beat cores).
+fixed table MachineView
+{
+    name    string(MaxName)
+    user    string(MaxName)
+    seat    string(MaxName)
+    slots   int32 | min = 0, max = 100000
+    runners int32 | min = 0, max = 100000
+    roles   string(64)
+    tla     bool
+    width   ?int32 | min = 0, max = 100000
+}
+
+/// One loop as the inventory carries it (pkg/config InventoryLoop, written
+/// inventory.go, read parseLoop): its machine, name, the argv in the loop
+/// view's canonical JSON text (a list of at most 64 strings in at most
+/// MaxArgvBytes bytes; the view carries it as that text), the seat, the
+/// secret names (a sorted list, only with a seat), every (seconds, 0 for a
+/// kept-alive loop), keepalive, enabled and the log path.
+fixed table InventoryLoop
+{
+    machine   string(MaxName)
+    name      string(MaxName)
+    argv      string(MaxArgvBytes)
+    seat      string(MaxName)
+    keys      [..MaxKeys]EnvName
+    every     int32 | min = 0, max = 31536000
+    keepalive bool
+    enabled   bool
+    log       string(512)
+}
+
+/// One host's variables in the inventory (pkg/config BuildInventory, the
+/// hostvars map): the facts the machine row and its beat give, the fleet's
+/// store, bus and port, and whether the host is the machine the command runs
+/// on. An empty value is left out of the Ansible JSON; here it is the empty
+/// string, and the optionals are the facts that may be absent: slots_share
+/// (the width), cores, and the beat's os and arch.
+fixed table HostView
+{
+    ansible_host    string(MaxName)
+    kind            ConfigKind
+    slots           int32 | min = 0, max = 100000
+    slots_capacity  int32 | min = 0, max = 100000
+    runners         int32 | min = 0, max = 100000
+    slots_share     ?int32 | min = 0, max = 100000
+    cores           ?int32 | min = 0, max = 100000
+    bench_os        string(32)
+    nova_arch       string(32)
+    nova_tla        bool
+    registry_seat   string(MaxName)
+    registry_roles  string(64)
+    ansible_user    string(MaxName)
+    nova_seat       string(MaxName)
+    nova_redis_addr string(MaxName)
+    nova_bus_addr   string(MaxName)
+    nova_redis_port int32 | min = 0, max = 65535
+    nova_pg_dsn     string(256)
+    local           bool
+}
+
+/// A host name in a group (the shape of a row name, at most MaxName bytes). An
+/// array of strings is a bounded array of this wrapper (the compiler's rule: an array of string(N) is not supported).
+fixed table HostName
+{
+    name string(MaxName)
+}
+
+/// A secret's environment variable name in a loop's keys list (letters, digits
+/// and underscores, not starting with a digit: pkg/config keyPattern).
+fixed table EnvName
+{
+    name string(MaxEnvName)
+}
+
+/// A group of the inventory: its hosts, at most MaxHosts of them.
+fixed table HostGroup
+{
+    hosts [..MaxHosts]HostName
+}
+
+/// The revision config:decl holds for a kind (pkg/config Snapshot.Revs).
+fixed table KindRev
+{
+    kind ConfigKind
+    rev  int64 | min = 0, max = 9007199254740991
+}
+
+/// The inventory (pkg/config AnsibleInventory): the groups the plays select,
+/// the store host and the revisions of the applied kinds (nova_config_rev).
+fixed table Inventory
+{
+    all            HostGroup
+    adopt          HostGroup
+    benches        HostGroup
+    coordinator    HostGroup
+    store          HostGroup
+    store_deployer HostGroup
+    runners        HostGroup
+    tla            HostGroup
+    nova_store     string(MaxName)
+    revs           [..MaxRevs]KindRev
+}
+
+/// The bench hash beside the member beat (pkg/config BeatKey, bench:<m>:beat,
+/// written by the bench that runs on the machine, read by nova-config): host,
+/// at (unix milliseconds), load1, ncpu, cpu, and os, arch and memory_gb when
+/// the beat carries them. A hash value is text; load1, ncpu, cpu and memory_gb
+/// keep the text the writer gave.
+fixed table BenchBeat
+{
+    host      string(MaxName)
+    at_ms     int64 | min = 0, max = 253402300799999
+    load1     string(16)
+    ncpu      string(8)
+    cpu       string(16)
+    os        string(32)
+    arch      string(32)
+    memory_gb string(16)
+}
+
+/// The member beat record (pkg/config MemberBeatKey, sprint:beat:<machine>):
+/// the part of the nova-sprint member's JSON the inventory reads, the beat
+/// time as Unix milliseconds and the logical cores. Every other field is the
+/// sprint's.
+fixed table MemberBeat
+{
+    at_ms int64 | min = 0, max = 253402300799999
+    cores int32 | min = 0, max = 100000
+}
+
+/// The beat a machine reported last, merged from the member beat and the bench
+/// hash (pkg/config Beat, mergeBeat): os, arch, cores (the member's when it
+/// has any, else the hash's ncpu), memory_gb and at (RFC 3339 UTC). Empty is a
+/// fact the beat does not carry.
+fixed table MachineBeat
+{
+    os        string(32)
+    arch      string(32)
+    cores     string(8)
+    memory_gb string(16)
+    at        string(32)
+}

@@ -1,0 +1,162 @@
+schema-tables-baseline 7
+package configwire
+
+table BenchBeat
+    field host id=0x4077f8cc7eaf4d6f kind=12 size=64
+    field at_ms id=0x41fdbf81bf00fdc1 kind=5 min=0 max=253402300799999
+    field load1 id=0x15ce02b6ebf77208 kind=12 size=16
+    field ncpu id=0xd6860fba989743c5 kind=12 size=8
+    field cpu id=0xf5a8fa190cb314c9 kind=12 size=16
+    field os id=0x08b05507b5565e57 kind=12 size=32
+    field arch id=0x893c43843eb23369 kind=12 size=32
+    field memory_gb id=0xb807c42e059a310a kind=12 size=16
+
+table CanonicalWord
+    field kind id=0xef9c96d721673243 kind=7 enum=ConfigKind
+    field field_type id=0x6ae07b83701d11a0 kind=7 enum=FieldType
+    field op id=0x08b05607b556600a kind=7 enum=ChangeOp
+    field singleton id=0xbe417b3c16299522 kind=1
+
+table ConfigChange
+    field id id=0x08b72e07b55c3ac0 kind=5
+    field kind id=0xef9c96d721673243 kind=7 enum=ConfigKind
+    field name id=0xc4bcadba8e631b86 kind=12 size=64
+    field op id=0x08b05607b556600a kind=7 enum=ChangeOp
+    field has_before id=0x511f33ef09c3af2f kind=1
+    field before id=0xd89aa06245afb2be kind=13 type=RowFields
+    field has_after id=0x0b0f529af221d41e kind=1
+    field after id=0xbf82010f6f71eae9 kind=13 type=RowFields
+    field actor id=0xdcccc5391c47d4da kind=12 size=64
+    field reason id=0x65e8d7f3474f2639 kind=12 size=256
+    field at id=0x089c4e07b545a968 kind=12 size=32
+
+table ConfigRow
+    field kind id=0xef9c96d721673243 kind=7 enum=ConfigKind
+    field name id=0xc4bcadba8e631b86 kind=12 size=64
+    field fields id=0x490e596d24847edc kind=13 type=RowFields
+    field created_at id=0xd468b6d1bff13979 kind=12 size=32
+    field updated_at id=0xcad12968ef0374e0 kind=12 size=32
+
+table EnvName
+    field name id=0xc4bcadba8e631b86 kind=12 size=64
+
+table FieldPair
+    field name id=0xc4bcadba8e631b86 kind=12 size=32
+    field value id=0x7ce4fd9430e80cea kind=12 size=1024
+
+table FileHeader
+    field schema id=0x758d17ff764667b6 kind=4 min=0 max=100000
+
+table HostGroup
+    field hosts id=0x3b28df7b43e00694 kind=14 elem=13 type=HostName array=bounded bound=64
+
+table HostName
+    field name id=0xc4bcadba8e631b86 kind=12 size=64
+
+table HostView
+    field ansible_host id=0xb1c8aea63f05c6a6 kind=12 size=64
+    field kind id=0xef9c96d721673243 kind=7 enum=ConfigKind
+    field slots id=0xe68c2e6bb1ee5646 kind=4 min=0 max=100000
+    field slots_capacity id=0x20f324b35a35e44f kind=4 min=0 max=100000
+    field runners id=0x83f33fb50ef47638 kind=4 min=0 max=100000
+    field slots_share id=0x2fe64655e6b18812 kind=4 optional=true min=0 max=100000
+    field cores id=0xce57648e554861b7 kind=4 optional=true min=0 max=100000
+    field bench_os id=0x2012766b2ddb813c kind=12 size=32
+    field nova_arch id=0x7c46adfdf7676288 kind=12 size=32
+    field nova_tla id=0xd8f8d8f10d8e04a3 kind=1
+    field registry_seat id=0xe958329ba5d0f79a kind=12 size=64
+    field registry_roles id=0x052ec9f1ca04c1bc kind=12 size=64
+    field ansible_user id=0xc4e745c36c36b777 kind=12 size=64
+    field nova_seat id=0x4855d99334fa9891 kind=12 size=64
+    field nova_redis_addr id=0x05634bfc542c0cef kind=12 size=64
+    field nova_bus_addr id=0xe986e31e72a72e3c kind=12 size=64
+    field nova_redis_port id=0x9c1d226d97d03d57 kind=4 min=0 max=65535
+    field nova_pg_dsn id=0xb5c535c3a59c23eb kind=12 size=256
+    field local id=0x249f1fb6f3a680e8 kind=1
+
+table Inventory
+    field all id=0xe6f09b190519daa4 kind=13 type=HostGroup
+    field adopt id=0xf7e235fde4a67611 kind=13 type=HostGroup
+    field benches id=0x6623fcd9fe39fb45 kind=13 type=HostGroup
+    field coordinator id=0x20cd038d974113f1 kind=13 type=HostGroup
+    field store id=0x44ee54ad76b0bd8e kind=13 type=HostGroup
+    field store_deployer id=0xbd156cca03cc3c3f kind=13 type=HostGroup
+    field runners id=0x83f33fb50ef47638 kind=13 type=HostGroup
+    field tla id=0x5703dd19446e34d4 kind=13 type=HostGroup
+    field nova_store id=0xae91b3b1f9738641 kind=12 size=64
+    field revs id=0x4cc05c1fbfbd1613 kind=14 elem=13 type=KindRev array=bounded bound=8
+
+table InventoryLoop
+    field machine id=0x385157cb98d7be6e kind=12 size=64
+    field name id=0xc4bcadba8e631b86 kind=12 size=64
+    field argv id=0x89492d843ebc9863 kind=12 size=4096
+    field seat id=0x2d08f118d3f933e8 kind=12 size=64
+    field keys id=0x581987d75cbd3e2d kind=14 elem=13 type=EnvName array=bounded bound=32
+    field every id=0x1153970079d1c964 kind=4 min=0 max=31536000
+    field keepalive id=0x38fa8bcdfda6f3a9 kind=1
+    field enabled id=0x70d885806b56289e kind=1
+    field log id=0x125073191daf5431 kind=12 size=512
+
+table KindRev
+    field kind id=0xef9c96d721673243 kind=7 enum=ConfigKind
+    field rev id=0x89e9b01960f4aa52 kind=5 min=0 max=9007199254740991
+
+table MachineBeat
+    field os id=0x08b05507b5565e57 kind=12 size=32
+    field arch id=0x893c43843eb23369 kind=12 size=32
+    field cores id=0xce57648e554861b7 kind=12 size=8
+    field memory_gb id=0xb807c42e059a310a kind=12 size=16
+    field at id=0x089c4e07b545a968 kind=12 size=32
+
+table MachineView
+    field name id=0xc4bcadba8e631b86 kind=12 size=64
+    field user id=0x7d6780e4032b48f2 kind=12 size=64
+    field seat id=0x2d08f118d3f933e8 kind=12 size=64
+    field slots id=0xe68c2e6bb1ee5646 kind=4 min=0 max=100000
+    field runners id=0x83f33fb50ef47638 kind=4 min=0 max=100000
+    field roles id=0x584d04462430003e kind=12 size=64
+    field tla id=0x5703dd19446e34d4 kind=1
+    field width id=0xdbdacd932fd1e9bf kind=4 optional=true min=0 max=100000
+
+table MemberBeat
+    field at_ms id=0x41fdbf81bf00fdc1 kind=5 min=0 max=253402300799999
+    field cores id=0xce57648e554861b7 kind=4 min=0 max=100000
+
+table RowFields
+    field pairs id=0x544438a7391e1e26 kind=14 elem=13 type=FieldPair array=bounded bound=24
+    field argv id=0x89492d843ebc9863 kind=12 size=4096
+
+enum ChangeOp
+    variant Add id=0xf9aee319a006c9b4
+    variant Set id=0x9844a719fa9b1a83
+    variant Remove id=0xea4f08110bb8f15d
+
+enum ConfigKind
+    variant Machine id=0x5dd622876bc646ce
+    variant Fleet id=0x0a53e00afba279af
+    variant Friend id=0x9f57a2661b8a7e2d
+    variant Sprint id=0xf3b65f24b2611635
+    variant Loop id=0x4efee5b48a4593cb
+    variant Provider id=0x7f5869b3d14d7cbc
+    variant Route id=0x4406e2a8264d6a3e
+    variant Tier id=0x48fd85fb3026cd69
+
+enum FieldType
+    variant Text id=0x2492f5fb1b05b45e
+    variant Int id=0x41a91f19c98dd49e
+    variant Enum id=0xbbeca76c5f31d160
+    variant List id=0x3d249bb480032121
+    variant Names id=0x6c1010666198f7af
+    variant Ref id=0x9ff1e019feac1ee2
+    variant Bool id=0xf7bdd5a7c820889d
+    variant Keys id=0xd5c688de734bde0d
+    variant Argv id=0x06f62e8b554b3843
+    variant Seq id=0x9844aa19fa9b1f9c
+    variant Decimal id=0xff65309aa41b72ac
+
+## history
+### 2026-10-17 (UTC) — first baseline
+- baseline created over 17 tables — data written BEFORE this point is not covered by it
+
+### 2026-10-17 (UTC) — first baseline
+- no compatibility-affecting edits; the wire absorbs the rest
