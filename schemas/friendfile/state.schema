@@ -1,0 +1,93 @@
+// state.schema: the local state a friend's daemon and session keep in files (pkg/friend
+// state.go): the status file (Status, :39-97), the queue file (Queue and Task,
+// :101-113, inbox/QUEUE.json) and the watch cursor (Watch, :213-216). Binary wire,
+// padded standard base64 and JSON text; its Go is generated into pkg/friendfilewire.
+//
+// Every record here is a VARIABLE table, by the coordinator's form ruling of
+// 2026-10-17 under schema owner rule S1: a record is FIXED only where every bound it
+// declares is one the code enforces, and none of these is. The bound table, field by
+// field:
+//   - Status text (friend, harness, seat, session*, mode, lanes, window, pacing,
+//     last_refusal, proof, the errors): no length check anywhere; session is
+//     SessionOK, SessionBroken or SessionLimited and limit_kind KindLimit or
+//     KindCredits by convention, but the writer and ReadStatus accept any text.
+//   - Status.Refused (map[string]int): keyed by a server verb name, with no count or
+//     length limit; the keys are written in sorted order, the order the JSON writes.
+//   - Status counts (beats, width, held, inbox, missing): any int, no range.
+//   - Queue.Tasks: no count limit; ReadQueue counts them and ignores a state other
+//     than queued, working, done (Counts, :122-135), so state is not an enum.
+//   - Watch.After: a stream entry id, no length check; wake_offset has no range.
+//   - writing: write (:174-182) marshals whatever the struct holds; the only limit
+//     on a read is the OS file size.
+// A time is the text time.Time writes (RFC 3339 with nanoseconds); a Go int is int64;
+// paced is absent before the lanes have stepped. The queue file may also be a bare
+// list of tasks (ReadQueue :201-211), which stays the reader's own fallback. No fixed
+// table is here, so there is no schema.lock.
+package friendfilewire
+
+// FriendRefusal is one entry of Status.Refused, a map[string]int: a server verb and its
+// consecutive refusals, in the verb's sorted order.
+table FriendRefusal
+{
+    verb  *string
+    count int64
+}
+
+table FriendStatus
+{
+    friend_name     *string | json = "friend"
+    harness         *string
+    started         *string
+    at              *string
+    seat            *string
+    beats           int64
+    last_beat       *string
+    beat_error      *string
+    store_error     *string
+    width           int64
+    session         *string
+    session_id      *string
+    session_reason  *string
+    broken_at       *string
+    limit_kind      *string
+    limit_until     *string
+    mode            *string
+    lanes           *string
+    paced           ?int64
+    window          *string
+    pacing          *string
+    held_known      bool
+    held            int64
+    inbox           int64
+    missing         int64
+    inbox_error     *string
+    held_from       *string
+    refused         []FriendRefusal
+    last_refusal    *string
+    last_refusal_at *string
+    proof           *string
+    proof_at        *string
+}
+
+// FriendTask is one record of the queue file. gen absent means 1 (docs/FRIENDS.md),
+// which the reader applies; the stored value is read as it stands.
+table FriendTask
+{
+    gen         int64
+    job         *string
+    id          *string
+    state       *string
+    deliverable *string
+}
+
+table FriendQueue
+{
+    tasks []FriendTask
+}
+
+// FriendWatch is the cursor of the coordinator's watch.
+table FriendWatch
+{
+    after       *string
+    wake_offset int64
+}

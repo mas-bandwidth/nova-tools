@@ -28,6 +28,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `filelock/` | process-exclusive file locks whose holder is named in the file | `go test ./pkg/filelock` | `go test ./pkg/filelock` |
 | `fleet/` | runner fleet discovery and status | `go test ./pkg/fleet` | `go test ./pkg/fleet` |
 | `friend/` | nova-friend's card lanes and reader slots, metadata beats, delivery-check adapters, state files and launchd agent | `go test ./pkg/friend` | `go test ./pkg/friend` |
+| `friendfilewire/` | the friend files' table wire, generated from schemas/friendfile by the pinned schema compiler (generate.go): the saved notice, a lane's end, the sprint server's delivery of a friend's cards and the friend's local state; strict binary, base64 and JSON reads | `go test ./pkg/friendfilewire` | `make schemawire-check` |
 | `gitrun/` | the one runner for a one-shot git child: a deadline, WaitDelay and the caller's environment choice | `go test ./pkg/gitrun` | `go test ./pkg/gitrun` |
 | `gocache/` | Go build cache held under a size, least recently used first | `go test ./pkg/gocache` | `go test ./pkg/gocache` |
 | `goenv/` | Go environment scrubber for child processes | `go test ./pkg/goenv` | `go test ./pkg/goenv` |

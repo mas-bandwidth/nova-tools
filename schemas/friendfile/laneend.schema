@@ -1,0 +1,31 @@
+// laneend.schema: how a card's last run in a lane ended (pkg/friend LaneEnd,
+// lane_end.go:48-62), the record a lane builds when a run ends with no REPORT.md and
+// from which EndReport (:90) words the report it writes. Binary wire, padded standard
+// base64 and JSON text; its Go is generated into pkg/friendfilewire.
+//
+// LaneEnd is VARIABLE (schema owner rule S1): it declares no length or count, and the
+// code enforces none on any field. The 600 bytes in EndReport (:98, oneLine) trim the
+// words of one rendered line, and CapTailLines (lane_cap.go:33, 40) is how many output
+// lines the lane keeps in the tail when it builds the record; neither bounds a stored
+// field, so none is declared and the tail is unbounded text. The Go struct has no JSON
+// tags, so the keys are its field names. A time is the text time.Time writes (RFC 3339
+// with nanoseconds, the zero time when unset), a duration is the integer nanoseconds
+// time.Duration writes, and a Go int is int64.
+package friendfilewire
+
+table LaneEnd
+{
+    exit      int64   | json = "Exit"
+    err       *string | json = "Err"
+    wall      int64   | json = "Wall"
+    cap       *string | json = "Cap"
+    rejected  *string | json = "Rejected"
+    turns     int64   | json = "Turns"
+    restart   *string | json = "Restart"
+    started   *string | json = "Started"
+    no_report bool    | json = "NoReport"
+    capped    int64   | json = "Capped"
+    tier      *string | json = "Tier"
+    overrun   int64   | json = "Overrun"
+    tail      *string | json = "Tail"
+}
