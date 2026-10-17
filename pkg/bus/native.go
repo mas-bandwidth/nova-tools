@@ -23,8 +23,8 @@ import (
 )
 
 // EnvelopeField is the stream field that holds a message's typed envelope as
-// the binary wire. An entry without it is a legacy entry, read from its text
-// fields (Parse).
+// the binary wire. An entry without it is the retired legacy form, refused by
+// that name (ReadEntry).
 const EnvelopeField = "envelope"
 
 // EnvelopeForm is the form byte the envelope's wire leads with: the table
@@ -384,7 +384,8 @@ func NativeFields(m Message) (map[string]string, error) {
 
 // EnvelopeReader reads bus entries and text-transport envelopes strictly, and
 // counts each read under the form it arrived in: binary (the native field),
-// base64 and json (the text forms) and legacy (an entry with no native field).
+// base64 and json (the text forms) and legacy (an entry with no native field,
+// refused). 
 // The counts are the cutover's evidence (readers first, then writers): when
 // legacy stops moving, every writer has switched. It is safe for concurrent
 // use.
@@ -405,13 +406,14 @@ func NewEnvelopeReader() *EnvelopeReader {
 // binary wire (a text form in it is refused as unknown_form, since the bus
 // carries no text form of the envelope), and damage is refused by name,
 // never read as a shorter envelope and never patched from the legacy fields
-// beside it. Without the field the entry is legacy and reads as Parse reads
-// it. A refusal is a *schemaread.Refusal and answers no message.
+// beside it. Without the field the entry is the retired legacy form: refused
+// by that name, counted as a legacy read, and never decoded. A refusal is a
+// *schemaread.Refusal and answers no message.
 func (r *EnvelopeReader) ReadEntry(fields map[string]string) (Message, schemaread.Form, error) {
 	raw, native := fields[EnvelopeField]
 	if !native {
 		r.legacy.Add(1)
-		return Parse(fields), schemaread.FormLegacy, nil
+		return Message{}, schemaread.FormLegacy, &schemaread.Refusal{Name: envelopeName, Reason: "legacy", Field: EnvelopeField, Help: EnvelopeHelp}
 	}
 	wire := []byte(raw)
 	if form := r.typed.Detect(wire); form != schemaread.FormBinary {

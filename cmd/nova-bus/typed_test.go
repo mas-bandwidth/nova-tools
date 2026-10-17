@@ -172,7 +172,9 @@ func TestShowFindsBeyondLogWindow(t *testing.T) {
 	t.Parallel()
 	r := newRig("ada", "bob")
 	for i := range 10000 {
-		require.NoError(t, r.store.AddAll(context.Background(), []string{bus.LogKey}, map[string]string{"id": fmt.Sprintf("old-%d", i)}))
+		old, err := bus.NativeFields(bus.Message{ID: fmt.Sprintf("01JOLD%018d", i), From: "ada", To: []string{"bob"}, Subject: "old", Kind: bus.KindStatus, At: r.clock, Body: "x\n"})
+		require.NoError(t, err)
+		require.NoError(t, r.store.AddAll(context.Background(), []string{bus.LogKey}, old))
 	}
 	sent := r.cli().OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "later", "--body", "later body\n")
 	got := r.cli().OK(t, "show", "--as", "bob", "--id", id(t, sent.Stdout))
@@ -199,70 +201,61 @@ func TestNativeViewsRefuseDamage(t *testing.T) {
 }
 
 // TestRecvDualRead pins that nova-bus recv routes every stream entry through
-// the pkg/schemaread dual-read helper, reading both the legacy stream fields
-// and the native binary envelope during the cutover window, incrementing the
-// per-form read counter, and refusing a damaged native envelope at exit 2.
+// the pkg/schemaread reader: the native binary envelope is read and counted as
+// binary and damage is refused at exit 2; a legacy entry is the retired form,
+// refused by that name and never read.
 func TestRecvDualRead(t *testing.T) {
 	t.Parallel()
-	r := newRig("ada", "bob")
-	cli := r.cli()
-	ctx := context.Background()
-
-	// 1. Legacy entry (no native envelope field on the stream): an old writer
-	// before the switch still put one there, and the dual-read recv reads it.
-	legacyBus := &bus.Bus{Store: r.store}
-	legacySent, err := legacyBus.Send(ctx, bus.Message{
-		From: "ada", To: []string{"bob"}, Subject: "from legacy",
-		Kind: bus.KindStatus, Body: "legacy body\n",
+	t.Run("a legacy entry is refused by name", func(t *testing.T) {
+		t.Parallel()
+		r := newRig("ada", "bob")
+		legacy := bus.Message{ID: "01JLEGACY0000000000000000", From: "ada", To: []string{"bob"},
+			Subject: "from legacy", Kind: bus.KindStatus, At: r.clock, Body: "legacy body\n"}.Fields()
+		require.NoError(t, r.store.AddAll(context.Background(), []string{bus.StreamOf("bob"), bus.LogKey}, legacy))
+		res := r.cli().Do(t, "recv", "--as", "bob").Exit(2)
+		assert.Contains(t, res.Stderr, "RECV REFUSED: ENVELOPE REFUSED: legacy (envelope); run: nova-bus send -h")
+		assert.Equal(t, uint64(1), r.envelopes.Reads(schemaread.FormLegacy), "legacy read counted")
 	})
-	require.NoError(t, err)
-	legacyID := legacySent.ID
+	t.Run("a native entry reads", func(t *testing.T) {
+		t.Parallel()
+		r := newRig("ada", "bob")
+		nativeSent, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{
+			From: "ada", To: []string{"bob"}, Subject: "from native", Kind: bus.KindReport,
+			Card: "l1-nova-bus-reader-builder-and-show-2", Head: strings.Repeat("abcd", 10),
+			Body: "native body\n",
+		})
+		require.NoError(t, err)
+		nativeEntries, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 0)
+		require.NoError(t, err)
+		require.Len(t, nativeEntries, 1)
+		oldReader := bus.Parse(nativeEntries[0].Fields)
+		assert.Equal(t, nativeSent.ID, oldReader.ID, "the old reader still sees a native writer's legacy fields")
+		assert.Equal(t, nativeSent.Subject, oldReader.Subject)
+		assert.Equal(t, nativeSent.Body, oldReader.Body)
+		assert.Equal(t, nativeSent.Kind, oldReader.Kind)
 
-	// 2. Native binary entry (carries EnvelopeField on the stream).
-	nativeBus := &bus.Bus{Store: r.store, Native: true}
-	nativeSent, err := nativeBus.Send(ctx, bus.Message{
-		From: "ada", To: []string{"bob"}, Subject: "from native", Kind: bus.KindReport,
-		Card: "l1-nova-bus-reader-builder-and-show-2", Head: strings.Repeat("abcd", 10),
-		Body: "native body\n",
+		gotNative := r.cli().OK(t, "recv", "--as", "bob", "--ack")
+		assert.Contains(t, gotNative.Stdout, "RECV OK id="+nativeSent.ID+" from=ada to=bob")
+		assert.Contains(t, gotNative.Stdout, "kind=report")
+		assert.Contains(t, gotNative.Stdout, "subject=\"from native\"\n\nnative body\n")
+		assert.Equal(t, uint64(1), r.envelopes.Reads(schemaread.FormBinary), "native binary read counted")
+
+		// a damaged native binary entry on the stream is refused at exit 2, never
+		// patched from the legacy fields beside it.
+		goodFields, err := bus.NativeFields(bus.Message{
+			ID: "01JA2B3C4D5E6F7G8H9J0KMNPZ", From: "ada", To: []string{"bob"},
+			Subject: "damaged", Kind: bus.KindStatus, At: r.clock.Add(time.Second), Body: "x\n",
+		})
+		require.NoError(t, err)
+		badFields := maps.Clone(goodFields)
+		raw := badFields[bus.EnvelopeField]
+		badFields[bus.EnvelopeField] = raw[:len(raw)-1]
+		require.NoError(t, r.store.AddAll(context.Background(), []string{bus.StreamOf("bob"), bus.LogKey}, badFields))
+
+		res := r.cli().Do(t, "recv", "--as", "bob").Exit(2)
+		trimmed := strings.TrimSuffix(res.Stderr, "\n")
+		assert.Equal(t, 0, strings.Count(trimmed, "\n"), "one line on stderr: %q", res.Stderr)
+		assert.Contains(t, trimmed, "RECV REFUSED: ENVELOPE REFUSED: wire_damaged; run: nova-bus send -h")
+		assert.Positive(t, r.envelopes.Snapshot()["refused_wire_damaged"])
 	})
-	require.NoError(t, err)
-	nativeEntries, err := r.store.Range(ctx, bus.StreamOf("bob"), "-", "+", 0)
-	require.NoError(t, err)
-	require.Len(t, nativeEntries, 2)
-	oldReader := bus.Parse(nativeEntries[1].Fields)
-	assert.Equal(t, nativeSent.ID, oldReader.ID, "the old reader still sees a native writer's legacy fields")
-	assert.Equal(t, nativeSent.Subject, oldReader.Subject)
-	assert.Equal(t, nativeSent.Body, oldReader.Body)
-	assert.Equal(t, nativeSent.Kind, oldReader.Kind)
-
-	gotLegacy := cli.OK(t, "recv", "--as", "bob", "--ack")
-	assert.Contains(t, gotLegacy.Stdout, "RECV OK id="+legacyID+" from=ada to=bob")
-	assert.Contains(t, gotLegacy.Stdout, "subject=\"from legacy\"\n\nlegacy body\n")
-	assert.Equal(t, uint64(1), r.envelopes.Reads(schemaread.FormLegacy), "legacy read counted")
-	assert.Equal(t, uint64(0), r.envelopes.Reads(schemaread.FormBinary), "no binary read yet")
-
-	gotNative := cli.OK(t, "recv", "--as", "bob", "--ack")
-	assert.Contains(t, gotNative.Stdout, "RECV OK id="+nativeSent.ID+" from=ada to=bob")
-	assert.Contains(t, gotNative.Stdout, "kind=report")
-	assert.Contains(t, gotNative.Stdout, "subject=\"from native\"\n\nnative body\n")
-	assert.Equal(t, uint64(1), r.envelopes.Reads(schemaread.FormLegacy))
-	assert.Equal(t, uint64(1), r.envelopes.Reads(schemaread.FormBinary), "native binary read counted")
-
-	// 3. Damaged native binary entry on the stream is refused at exit 2, never
-	// patched from the legacy fields beside it.
-	goodFields, err := bus.NativeFields(bus.Message{
-		ID: "01JA2B3C4D5E6F7G8H9J0KMNPZ", From: "ada", To: []string{"bob"},
-		Subject: "damaged", Kind: bus.KindStatus, At: r.clock.Add(time.Second), Body: "x\n",
-	})
-	require.NoError(t, err)
-	badFields := maps.Clone(goodFields)
-	raw := badFields[bus.EnvelopeField]
-	badFields[bus.EnvelopeField] = raw[:len(raw)-1]
-	require.NoError(t, r.store.AddAll(ctx, []string{bus.StreamOf("bob"), bus.LogKey}, badFields))
-
-	res := cli.Do(t, "recv", "--as", "bob").Exit(2)
-	trimmed := strings.TrimSuffix(res.Stderr, "\n")
-	assert.Equal(t, 0, strings.Count(trimmed, "\n"), "one line on stderr: %q", res.Stderr)
-	assert.Contains(t, trimmed, "RECV REFUSED: ENVELOPE REFUSED: wire_damaged; run: nova-bus send -h")
-	assert.Positive(t, r.envelopes.Snapshot()["refused_wire_damaged"])
 }

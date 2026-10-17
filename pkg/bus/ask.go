@@ -307,7 +307,11 @@ func (b *Bus) timeOut(ctx context.Context, a Ask, now time.Time, friends []strin
 	if slices.Contains(friends, a.From) {
 		marks = append(marks, Mark{Key: OwedOf(a.From), Field: m.ID, Value: m.At.Format(time.RFC3339)})
 	}
-	_, found, err := b.Store.AddOnce(ctx, AskTimeoutPrefix+a.ID, m.ID, TimeoutKeep, []string{StreamOf(a.From), LogKey}, m.Fields(), marks...)
+	fields, err := NativeFields(m)
+	if err != nil {
+		return "", false, err
+	}
+	_, found, err := b.Store.AddOnce(ctx, AskTimeoutPrefix+a.ID, m.ID, TimeoutKeep, []string{StreamOf(a.From), LogKey}, fields, marks...)
 	if err != nil || found {
 		return "", false, err
 	}

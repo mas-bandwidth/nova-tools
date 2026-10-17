@@ -27,8 +27,12 @@ type dropped struct{ from, subject string }
 // drop appends one message to bob's stream as from would: what arrives past
 // the cursor the wait holds.
 func drop(r *rig, from, id, subject string) {
-	m := bus.Message{ID: id, From: from, To: []string{"bob"}, Subject: subject, Body: "the body"}
-	if err := r.store.AddAll(context.Background(), []string{bus.StreamOf("bob")}, m.Fields()); err != nil {
+	m := bus.Message{ID: id, From: from, To: []string{"bob"}, Subject: subject, At: r.clock, Body: "the body"}
+	fields, err := bus.NativeFields(m)
+	if err != nil {
+		panic("drop: the message has no native form: " + err.Error())
+	}
+	if err := r.store.AddAll(context.Background(), []string{bus.StreamOf("bob")}, fields); err != nil {
 		panic("drop: the fake store refused the message: " + err.Error())
 	}
 }

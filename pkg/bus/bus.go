@@ -338,12 +338,11 @@ type Bus struct {
 	// later stamp lands. Nil drops it, the overdue alarm standing for it
 	// (stages.go).
 	OnStampError func(err error)
-	// Native is the writer switch of the native binary form (native.go): when
-	// set, every message Send writes carries its typed envelope as the binary
-	// wire in EnvelopeField, beside the legacy text fields, and a message past
-	// one of the envelope's bounds is refused before anything is written. Off,
-	// a send writes the legacy fields alone. Readers learn the field first;
-	// writers switch after (SPEC-BUS.md, the native form).
+	// Native is kept for the writer-side bounds check of the native binary form
+	// (native.go): every message Send writes carries its typed envelope as the
+	// binary wire in EnvelopeField beside the legacy text fields, whatever this
+	// says, and a message past one of the envelope's bounds is refused before
+	// anything is written (SPEC-BUS.md, the native form).
 	Native bool
 	// Builder is the writer-side envelope check (native.go): when set, Send and
 	// Check construct the message's buswire.Envelope through the generated
@@ -525,12 +524,10 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, []strin
 	return m, now, friends, nil
 }
 
-// entryFields is the entry Send writes for m: the legacy text fields, and the
-// native field beside them once the writer has switched (Native).
+// entryFields is the entry Send writes for m: the native field, beside the
+// legacy text fields an old reader still reads. Every writer writes the typed
+// form; the legacy reader is retired (native.go).
 func (b *Bus) entryFields(m Message) (map[string]string, error) {
-	if !b.Native {
-		return m.Fields(), nil
-	}
 	return NativeFields(m)
 }
 

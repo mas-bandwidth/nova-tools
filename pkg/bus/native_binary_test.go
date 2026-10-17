@@ -175,17 +175,16 @@ func TestEnvelopeNativeBinaryField(t *testing.T) {
 		assert.Positive(t, r.Snapshot()["refused_wire_damaged"])
 		assert.Positive(t, r.Snapshot()["refused_unknown_form"])
 	})
-	t.Run("a reader still reads the legacy fields and the text forms", func(t *testing.T) {
+	t.Run("a reader reads the text forms and refuses the legacy form", func(t *testing.T) {
 		t.Parallel()
 		b, f := rig(t, "ada", "bob")
 		r := NewEnvelopeReader()
 		sent, e := sendOne(t, b, f, msg("ada", "bob"))
 		_, native := e.Fields[EnvelopeField]
-		assert.False(t, native, "a bus whose writer has not switched writes no native field")
+		assert.True(t, native, "every bus writer writes the native field")
 		got, form, err := r.ReadEntry(e.Fields)
 		require.NoError(t, err)
-		assert.Equal(t, schemaread.FormLegacy, form)
-		assert.Equal(t, Parse(e.Fields), got, "a legacy entry reads as the legacy reader reads it")
+		assert.Equal(t, schemaread.FormBinary, form)
 		assert.Equal(t, onEntry(sent), got)
 		for _, form := range []schemaread.Form{schemaread.FormBase64, schemaread.FormJSON, schemaread.FormBinary} {
 			text, err := r.WriteText(got, form)
@@ -195,38 +194,16 @@ func TestEnvelopeNativeBinaryField(t *testing.T) {
 			assert.Equal(t, form, read)
 			assert.Equal(t, got, back, form.String())
 		}
+		legacy := maps.Clone(e.Fields)
+		delete(legacy, EnvelopeField)
+		_, _, err = r.ReadEntry(legacy)
+		assert.EqualError(t, err, "ENVELOPE REFUSED: legacy (envelope); run: "+EnvelopeHelp, "the retired legacy form is refused by name")
 		assert.Equal(t, uint64(1), r.Reads(schemaread.FormLegacy))
 		assert.Equal(t, uint64(1), r.Reads(schemaread.FormBase64))
 		assert.Equal(t, uint64(1), r.Reads(schemaread.FormJSON))
-		assert.Equal(t, uint64(1), r.Reads(schemaread.FormBinary))
 		assert.Equal(t, uint64(1), r.Snapshot()["legacy"])
 		_, _, err = r.ReadText([]byte("#202 HOLD at 3f9c"))
 		assert.EqualError(t, err, refusedAs(schemaread.ReasonUnknownForm, ""), "a text that is no form is refused by name")
-	})
-	t.Run("dual read: the old form in and the new form in read identically", func(t *testing.T) {
-		t.Parallel()
-		old, oldStore := rig(t, "ada", "bob", "cy")
-		switched, newStore := nativeRig(t)
-		r := NewEnvelopeReader()
-		ms := everyKind()
-		for _, m := range ms {
-			_, oldEntry := sendOne(t, old, oldStore, m)
-			_, newEntry := sendOne(t, switched, newStore, m)
-			fromOld, form, err := r.ReadEntry(oldEntry.Fields)
-			require.NoError(t, err, m.Kind)
-			assert.Equal(t, schemaread.FormLegacy, form)
-			fromNew, form, err := r.ReadEntry(newEntry.Fields)
-			require.NoError(t, err, m.Kind)
-			assert.Equal(t, schemaread.FormBinary, form)
-			// the two rigs draw the same ids from the same clock and source
-			assert.Equal(t, fromOld, fromNew, "%s: the new reader reads both forms alike", m.Kind)
-			// the writer switch: an old reader meets the switched entry and
-			// reads what it read before, the field it does not know ignored
-			assert.Equal(t, Parse(oldEntry.Fields), Parse(newEntry.Fields), "%s: an old reader reads the switched entry as before", m.Kind)
-			assert.Equal(t, Parse(newEntry.Fields), fromNew, "%s: the old reader and the new one agree on the switched entry", m.Kind)
-		}
-		assert.Equal(t, uint64(len(ms)), r.Reads(schemaread.FormLegacy), "the per-form counter is the cutover's evidence")
-		assert.Equal(t, uint64(len(ms)), r.Reads(schemaread.FormBinary))
 	})
 	t.Run("a switched writer refuses past the envelope's bounds and writes nothing", func(t *testing.T) {
 		t.Parallel()
@@ -245,11 +222,12 @@ func TestEnvelopeNativeBinaryField(t *testing.T) {
 		log, err := f.Range(context.Background(), LogKey, "-", "+", 10)
 		require.NoError(t, err)
 		assert.Empty(t, log, "nothing is written")
-		// the legacy writer keeps its own bounds until it switches
+		// every writer, switched or not, refuses the same bounds
 		legacy, _ := rig(t, "ada", "bob")
 		m.Token = ""
 		_, err = legacy.Send(context.Background(), m)
-		assert.NoError(t, err)
+		require.True(t, errors.As(err, &ref), "an unswitched writer refuses too: %v", err)
+		assert.EqualError(t, err, "ENVELOPE REFUSED: subject over 200 bytes; run: "+EnvelopeHelp)
 	})
 }
 

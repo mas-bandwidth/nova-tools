@@ -62,18 +62,17 @@ func TestSendCarriesTheKindAndReadersFilterOnIt(t *testing.T) {
 		assert.Equal(t, status.ID, e.Message().ID)
 	})
 
-	t.Run("an old message without the field reads as status", func(t *testing.T) {
+	t.Run("an old message without the field is refused as the legacy form", func(t *testing.T) {
 		t.Parallel()
 		b, f := rig(t, "ada", "bob")
 		old := msg("ada", "bob").Fields()
 		delete(old, "kind")
 		old["id"] = "OLD"
 		require.NoError(t, f.AddAll(ctx, []string{StreamOf("bob"), LogKey}, old))
-		e, ok, err := b.RecvKinds(ctx, "bob", 0, []string{KindStatus})
-		require.NoError(t, err)
-		require.True(t, ok)
-		assert.Equal(t, "OLD", e.Message().ID)
-		assert.Equal(t, KindStatus, e.Message().KindName())
+		_, ok, err := b.RecvKinds(ctx, "bob", 0, []string{KindStatus})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ENVELOPE REFUSED: legacy (envelope)")
+		assert.False(t, ok)
 	})
 
 	t.Run("an unknown kind is refused, sending or asking", func(t *testing.T) {
