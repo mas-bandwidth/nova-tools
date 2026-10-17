@@ -1,9 +1,9 @@
 package update
 
 import (
-	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,9 +13,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	wire "github.com/mas-bandwidth/nova-tools/pkg/releasewire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // AdoptHeader is the checks file watch --adopt reads: one adoption check per
@@ -28,47 +31,295 @@ type AdoptCheck struct {
 	Command     []string
 }
 
-// LoadAdopt reads the checks file watch --adopt names. The first line must
-// equal the header byte for byte and every other line is one tab-separated
-// check; a `#` first character opens a comment.
+// LoadAdopt reads the checks file watch --adopt names. The file is read
+// alike from the generated AdoptChecks table wire, its padded standard
+// base64, its schema JSON text and today's legacy TSV, through pkg/schemaread
+// (S1, S2): a malformed or clamped value is refused by name, never read as
+// absent, empty or zero, and every read is counted per form (C13, S4).
 func LoadAdopt(r io.Reader) ([]AdoptCheck, error) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 4096), 1024*1024)
-	if !sc.Scan() || sc.Text() != AdoptHeader {
-		return nil, fmt.Errorf("line 1: invalid header (put the header back exactly: %s)", tabbed(AdoptHeader))
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
 	}
-	var out []AdoptCheck
+	doc, _, err := adoptRead.Read(raw)
+	if err != nil {
+		return nil, err
+	}
+	return adoptOf(doc), nil
+}
+
+// adoptDoc holds one AdoptChecks read through pkg/schemaread and the region
+// its text references point into, so the value outlives the read that filled it.
+type adoptDoc struct {
+	v      *wire.AdoptChecks
+	region []byte
+}
+
+// adoptRead is the one strict reader of the adopt checks file (S2, UNION.md
+// section 6): the generated AdoptChecks table's binary wire, its padded
+// standard base64, its schema JSON text and the legacy TSV people write by
+// hand. It refuses damage by name and counts reads per form.
+var adoptRead = schemaread.NewReader(adoptCodec())
+
+// adoptCodec is the checks file's Codec for pkg/schemaread: the generated
+// AdoptChecks table's wire, padded base64 and JSON text, the legacy TSV, and
+// the constraints the read enforces.
+func adoptCodec() *schemaread.Codec[adoptDoc] {
+	return &schemaread.Codec[adoptDoc]{
+		Name:  "AdoptChecks",
+		Help:  "fix the checks file: the three-column header, then one check per line, check<TAB>command<TAB>owner",
+		Reset: func(d *adoptDoc) { *d = adoptDoc{} },
+		Measure: func(w []byte) error {
+			_, err := wire.AdoptChecksLoadMeasureReason(w)
+			return err
+		},
+		LoadWire:    loadAdoptWire,
+		LoadJSON:    loadAdoptJSON,
+		Legacy:      adoptLegacyForm,
+		LoadLegacy:  loadAdoptLegacy,
+		Constraints: adoptConstraints,
+		SaveWire: func(d *adoptDoc) []byte {
+			n, err := wire.AdoptChecksMeasureReason(d.v)
+			if err != nil || n < 0 {
+				return nil
+			}
+			buf := make([]byte, n)
+			if wire.AdoptChecksSave(d.v, buf) != n {
+				return nil
+			}
+			return buf
+		},
+		SaveJSON: func(d *adoptDoc) []byte {
+			n := wire.AdoptChecksToJsonMeasure(d.v)
+			if n < 0 {
+				return nil
+			}
+			buf := make([]byte, n)
+			if wire.AdoptChecksToJson(d.v, buf) != n {
+				return nil
+			}
+			return buf
+		},
+	}
+}
+
+// adoptReport folds a generated load report into the strict read's.
+func adoptReport(r *wire.TableReport) schemaread.Report {
+	return schemaread.Report{
+		Unknown:      int(r.Unknown),
+		KindMismatch: int(r.KindMismatch),
+		Clamped:      int(r.Clamped),
+		Malformed:    r.Malformed || r.Duplicate > 0,
+		Reason:       r.Reason,
+	}
+}
+
+// loadAdoptWire loads the table wire and keeps the region the value's text
+// points into, as the generated load returns a value that borrows it.
+func loadAdoptWire(d *adoptDoc, w []byte) schemaread.Report {
+	n, err := wire.AdoptChecksLoadMeasureReason(w)
+	if err != nil || n < 0 {
+		rep := schemaread.Report{Malformed: true}
+		if err != nil {
+			rep.Reason = err.Error()
+		}
+		return rep
+	}
+	raw := make([]byte, n+63)
+	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
+	d.region = raw[off : off+uintptr(n)]
+	var rep wire.TableReport
+	if d.v = wire.AdoptChecksLoad(d.region, w, &rep); d.v == nil {
+		return schemaread.Report{Malformed: true, Reason: rep.Reason}
+	}
+	return adoptReport(&rep)
+}
+
+// loadAdoptJSON builds the table from its schema JSON text form and locks it;
+// the builder's region backs every string the value references.
+func loadAdoptJSON(d *adoptDoc, text []byte) schemaread.Report {
+	var b wire.AdoptChecksBuilder
+	if !b.Init() {
+		return schemaread.Report{Malformed: true}
+	}
+	var rep wire.TableReport
+	if !wire.AdoptChecksFromJson(&b, text, &rep) {
+		b.Shutdown()
+		return schemaread.Report{Malformed: true, Reason: rep.Reason}
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return schemaread.Report{Malformed: true}
+	}
+	d.region = b.Region()
+	d.v = b.AsConst()
+	return adoptReport(&rep)
+}
+
+// adoptLegacyForm recognises today's hand-written checks file: the multi-line
+// printable TSV the file is, with its header and # comment lines, which is not
+// the JSON text form.
+func adoptLegacyForm(in []byte) bool {
+	hasNewline := false
+	for _, b := range in {
+		switch {
+		case b == '\n':
+			hasNewline = true
+		case b == '\r' || b == '\t' || b >= 0x20 && b < 0x7f:
+		default:
+			return false
+		}
+	}
+	if !hasNewline {
+		return false
+	}
+	trimmed := strings.TrimSpace(string(in))
+	return trimmed != "" && !strings.HasPrefix(trimmed, "{")
+}
+
+// adoptLegacyRow is one TSV row as the legacy reader parses it, in the
+// schema JSON text form: the command is a list of Word records.
+type adoptLegacyRow struct {
+	Check   string          `json:"check"`
+	Command []adoptWordJSON `json:"command"`
+	Owner   string          `json:"owner"`
+}
+
+// adoptWordJSON is one command word in the schema JSON text form.
+type adoptWordJSON struct {
+	Text string `json:"text"`
+}
+
+// loadAdoptLegacy reads the legacy TSV into the AdoptChecks value. The
+// refusals are the ones LoadAdopt made today, each by name: a header that is
+// not exactly the three-column one, a line with not three fields, an empty
+// field, a duplicate check and a command argv refuses.
+func loadAdoptLegacy(d *adoptDoc, in []byte) schemaread.Report {
+	rows, reason := parseAdoptLines(in)
+	if reason != "" {
+		return schemaread.Report{Reason: reason}
+	}
+	js, err := json.Marshal(struct {
+		Checks []adoptLegacyRow `json:"checks"`
+	}{rows})
+	if err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	var b wire.AdoptChecksBuilder
+	if !b.Init() {
+		return schemaread.Report{Malformed: true}
+	}
+	var rep wire.TableReport
+	if !wire.AdoptChecksFromJson(&b, js, &rep) || !b.Lock() {
+		b.Shutdown()
+		return schemaread.Report{Malformed: true, Reason: rep.Reason}
+	}
+	d.region = b.Region()
+	d.v = b.AsConst()
+	return adoptReport(&rep)
+}
+
+// parseAdoptLines splits the legacy TSV into rows, refusing each line exactly
+// as LoadAdopt refused it. The first line must equal the header byte for byte;
+// a `#` first character opens a comment and a blank line is skipped.
+func parseAdoptLines(in []byte) ([]adoptLegacyRow, string) {
+	lines := strings.Split(string(in), "\n")
 	seen := map[string]bool{}
-	line := 1
-	for sc.Scan() {
-		line++
-		s := sc.Text()
-		if strings.HasPrefix(s, "#") {
+	var rows []adoptLegacyRow
+	for i, raw := range lines {
+		text := strings.TrimRight(raw, "\r")
+		if i == 0 {
+			if text != AdoptHeader {
+				return nil, fmt.Sprintf("line 1: invalid header (put the header back exactly: %s)", tabbed(AdoptHeader))
+			}
 			continue
 		}
-		f := strings.Split(s, "\t")
+		if strings.HasPrefix(text, "#") || strings.TrimSpace(text) == "" {
+			continue
+		}
+		f := strings.Split(text, "\t")
 		if len(f) != 3 {
-			return nil, fmt.Errorf("line %d: %d fields, want 3 (use the three-column checks header)", line, len(f))
+			return nil, fmt.Sprintf("line %d: %d fields, want 3 (use the three-column checks header)", i+1, len(f))
 		}
 		for _, v := range f {
 			if v == "" {
-				return nil, fmt.Errorf("line %d: empty field (supply check, command and owner)", line)
+				return nil, fmt.Sprintf("line %d: empty field (supply check, command and owner)", i+1)
 			}
 		}
 		if seen[f[0]] {
-			return nil, fmt.Errorf("line %d: duplicate check %s (give each check a distinct name)", line, f[0])
+			return nil, fmt.Sprintf("line %d: duplicate check %s (give each check a distinct name)", i+1, f[0])
 		}
 		seen[f[0]] = true
 		args, err := argv(f[1])
 		if err != nil {
-			return nil, fmt.Errorf("line %d: %w", line, err)
+			return nil, fmt.Sprintf("line %d: %v", i+1, err)
 		}
-		out = append(out, AdoptCheck{Name: f[0], Owner: f[2], Command: args})
+		cmd := make([]adoptWordJSON, 0, len(args))
+		for _, a := range args {
+			cmd = append(cmd, adoptWordJSON{Text: a})
+		}
+		rows = append(rows, adoptLegacyRow{Check: f[0], Command: cmd, Owner: f[2]})
 	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("line %d: unreadable checks file (use lines below 1 MiB)", line)
+	return rows, ""
+}
+
+// adoptConstraints holds the record to the checks reader's rules, the same
+// three non-empty fields and distinct names LoadAdopt enforced today: a check
+// name, an argv command and an owner, all present, and no name twice
+// (adopt.go, the three-field and duplicate refusals). The table declares no
+// bound: every text is uncapped and every list is open, so nothing here can
+// clamp (schemas/release/release.schema, the area's variability rule).
+func adoptConstraints(d *adoptDoc, c *schemaread.Checker) {
+	c.Required("record", d.v != nil)
+	if d.v == nil {
+		return
 	}
-	return out, nil
+	seen := map[string]bool{}
+	ok := true
+	for i := int32(0); i < d.v.Checks.Count; i++ {
+		e := d.v.Checks.At(i)
+		c.Required("check", adoptStr(&e.CheckName) != "")
+		adoptArgvWords(c, &e.Command)
+		c.Required("owner", adoptStr(&e.Owner) != "")
+		n := adoptStr(&e.CheckName)
+		ok = ok && !seen[n]
+		seen[n] = true
+	}
+	c.Required("checks.check distinct", ok)
+}
+
+// adoptArgvWords holds the command to the argv rule LoadAdopt applied (adopt.go
+// via argv, manifest.go): at least one word, each with no blank, quote or line
+// break.
+func adoptArgvWords(c *schemaread.Checker, l *wire.TableList[wire.Word]) {
+	c.Required("command", l.Count > 0)
+	for i := int32(0); i < l.Count; i++ {
+		w := adoptStr(&l.At(i).Text)
+		c.Required("command word", w != "" && !strings.ContainsAny(w, " \r\n\t\"'"))
+	}
+}
+
+// adoptStr is a *string field's text; a zero slot is absent, not a value.
+func adoptStr(slot *int64) string {
+	if *slot == 0 {
+		return ""
+	}
+	v := wire.TableStringAt(slot)
+	return string(v.Data[:v.Length])
+}
+
+// adoptOf is the checks the read produced, as LoadAdopt always returned them.
+func adoptOf(d adoptDoc) []AdoptCheck {
+	out := make([]AdoptCheck, 0, d.v.Checks.Count)
+	for i := int32(0); i < d.v.Checks.Count; i++ {
+		e := d.v.Checks.At(i)
+		cmd := make([]string, 0, e.Command.Count)
+		for j := int32(0); j < e.Command.Count; j++ {
+			cmd = append(cmd, adoptStr(&e.Command.At(j).Text))
+		}
+		out = append(out, AdoptCheck{Name: adoptStr(&e.CheckName), Owner: adoptStr(&e.Owner), Command: cmd})
+	}
+	return out
 }
 
 type adoptResult struct {
