@@ -326,9 +326,6 @@ func (d *DayFileReader) structure(v *srDoc[wire.DayFile], rep schemaread.Report)
 	return rep
 }
 
-// Counts are the day-file reader's per-form counters and refusals.
-func (d *DayFileReader) Counts() *schemaread.Counts { return d.r.Counts() }
-
 // Read reads the day file named name (its day, YYYY-MM-DD) in any form. A
 // legacy file reads as ParseDayFile reads it, its findings unchanged. A table
 // form reads as the same DayFile; a refused read returns the named refusal,
@@ -349,11 +346,9 @@ func (d *DayFileReader) Read(name string, in []byte) (DayFile, []Finding, schema
 }
 
 // dayReader is the one day-file reader of the package; its counters are the
-// per-form read counts (S2, C13) a caller exports.
+// per-form read counts (S2, C13); nothing exports them until a main reads them
+// (TestDeadCode refuses an accessor no main reaches).
 var dayReader = NewDayFileReader()
-
-// DayFileReads are the day-file reads per form and refusals by reason.
-func DayFileReads() *schemaread.Counts { return dayReader.Counts() }
 
 // readDayFile reads one day file's bytes in any form. A legacy file returns
 // ParseDayFile's findings as it always has. A refused table form is one
@@ -397,9 +392,6 @@ func NewBusRosterReader() *BusRosterReader {
 	return &BusRosterReader{r: schemaread.NewReader(c)}
 }
 
-// Counts are the bus-roster reader's per-form counters and refusals.
-func (r *BusRosterReader) Counts() *schemaread.Counts { return r.r.Counts() }
-
 // ReadRoster reads the roster in any form into its lane owners' slugs, in
 // roster order: a lane "from-<slug>" with a slug is named, any other is
 // skipped, as laneNames always has. A damaged roster is the named refusal.
@@ -420,6 +412,3 @@ func (r *BusRosterReader) ReadRoster(in []byte) ([]string, error) {
 
 // rosterReader is the one roster reader of the package (S2, C13).
 var rosterReader = NewBusRosterReader()
-
-// RosterReads are the roster reads per form and refusals by reason.
-func RosterReads() *schemaread.Counts { return rosterReader.Counts() }

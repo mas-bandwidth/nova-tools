@@ -267,7 +267,7 @@ func laneNames(fsys fs.FS) ([]string, error) {
 		return nil, err
 	}
 	// Every form of the roster (the legacy JSON, a table image, its base64)
-	// reads through the one strict reader, counted per form (RosterReads), and
+	// reads through the one strict reader, counted per form (rosterReader.r.Counts), and
 	// damage is the named refusal (S2, C13).
 	out, err := rosterReader.ReadRoster(raw)
 	if err != nil {

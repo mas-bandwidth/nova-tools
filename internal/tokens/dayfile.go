@@ -468,7 +468,7 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 
 // ReadDayFile reads and parses one day file from disk, in any form: the legacy
 // file the writers write, or a table form of the seatrec DayFile (S2, C13),
-// counted per form (DayFileReads). A damaged table form is a finding on line 1
+// counted per form (dayReader.r.Counts). A damaged table form is a finding on line 1
 // carrying the named refusal, never a day with no rows.
 func ReadDayFile(path string) (DayFile, []Finding, error) {
 	raw, err := os.ReadFile(path)

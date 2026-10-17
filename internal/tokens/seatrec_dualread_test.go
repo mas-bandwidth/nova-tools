@@ -143,7 +143,7 @@ func TestTokensDayfileDualRead(t *testing.T) {
 	// The read sites, over files the test writes: ReadDayFile reads every form
 	// to one equal value, and laneNames every roster form to the same slugs.
 	dir := t.TempDir()
-	before := DayFileReads().Snapshot()
+	before := dayReader.r.Counts().Snapshot()
 	for _, tc := range []struct {
 		name string
 		in   []byte
@@ -158,12 +158,12 @@ func TestTokensDayfileDualRead(t *testing.T) {
 		require.Empty(t, f, tc.name)
 		assert.Equal(t, want, got, "%s: reads as one equal value", tc.name)
 	}
-	after := DayFileReads().Snapshot()
+	after := dayReader.r.Counts().Snapshot()
 	for _, form := range []string{"binary", "base64", "legacy"} {
 		assert.GreaterOrEqual(t, after[form], before[form]+1, "ReadDayFile counts the %s read", form)
 	}
 
-	rBefore := RosterReads().Snapshot()
+	rBefore := rosterReader.r.Counts().Snapshot()
 	for _, tc := range []struct {
 		name string
 		in   []byte
@@ -177,7 +177,7 @@ func TestTokensDayfileDualRead(t *testing.T) {
 		require.NoError(t, err, tc.name)
 		assert.Equal(t, []string{"example-000", "example-001"}, got, "%s: reads as one equal value", tc.name)
 	}
-	rAfter := RosterReads().Snapshot()
+	rAfter := rosterReader.r.Counts().Snapshot()
 	for _, form := range []string{"binary", "base64", "legacy"} {
 		assert.GreaterOrEqual(t, rAfter[form], rBefore[form]+1, "laneNames counts the %s read", form)
 	}
@@ -286,10 +286,10 @@ func TestTokensDayfileDualRead(t *testing.T) {
 		require.True(t, refusedAs(err, "DAYFILE"), "%v", err)
 	}
 	for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormLegacy, schemaread.FormJSON} {
-		assert.Equal(t, uint64(2), cd.Counts().Reads(form), "day %s reads", form)
+		assert.Equal(t, uint64(2), cd.r.Counts().Reads(form), "day %s reads", form)
 	}
-	assert.Equal(t, uint64(1), cd.Counts().Refused(schemaread.ReasonClamped))
-	assert.Equal(t, uint64(4), refusedTotal(cd.Counts()))
+	assert.Equal(t, uint64(1), cd.r.Counts().Refused(schemaread.ReasonClamped))
+	assert.Equal(t, uint64(4), refusedTotal(cd.r.Counts()))
 	for _, in := range [][]byte{rosterBinary, rosterB64, []byte(sampleRosterJSON)} {
 		_, err := cr.ReadRoster(in)
 		require.NoError(t, err)
@@ -299,9 +299,9 @@ func TestTokensDayfileDualRead(t *testing.T) {
 		require.True(t, refusedAs(err, "ROSTER"), "%v", err)
 	}
 	for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormLegacy} {
-		assert.Equal(t, uint64(2), cr.Counts().Reads(form), "roster %s reads", form)
+		assert.Equal(t, uint64(2), cr.r.Counts().Reads(form), "roster %s reads", form)
 	}
-	assert.Equal(t, uint64(3), refusedTotal(cr.Counts()))
+	assert.Equal(t, uint64(3), refusedTotal(cr.r.Counts()))
 
 	// Every single-byte flip and every truncation of every form, then seeded
 	// multi-byte damage: each is refused by name or decoded canonically, and
