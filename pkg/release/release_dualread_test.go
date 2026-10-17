@@ -1,406 +1,299 @@
 package release
 
-// TestReleaseCycleRecordsDualRead pins the release-cycle records' dual-read
-// (Aspect 13 part 1, the owner's S2 and S4, readers first, UNION.md C13):
-// the cycle's build arguments, the journey header and event lines and the
-// spend receipts each read alike from the binary wire, the padded standard
-// base64 of it, the schema JSON text form and the legacy form (the writer's
-// today), refuse damage by name and are counted per form. Each record is
-// read through pkg/schemaread with its generated table of pkg/releasewire.
-//
-// The wire, base64 and JSON forms are generated; a value is built from JSON
-// text and written in each form, read back equal, then a truncated, a
-// flipped-byte and a clamped value of each form are fed and the named refusal
-// and the per-form counts are asserted. Files are read from a t.TempDir()
-// the test writes.
+// TestReleaseCycleRecordsDualRead pins the release cycle's record readers
+// (records.go; Aspect 13 part 1, the owner's S2 and S4, readers first,
+// UNION.md C13): the cycle's build arguments, the journey evidence header and
+// event lines and the spend receipts each read alike from the binary wire, the
+// padded standard base64 of it, the schema JSON text form and the legacy form
+// the writer writes today; a damaged value of each form is refused by name and
+// never read as absent, empty or zero; a clamped value is refused; and reads
+// are counted per record and per form. Files are read from a t.TempDir() the
+// test writes. The test uses no clock, no socket and no network.
 
 import (
-	"bytes"
+	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
-	"unsafe"
+	"time"
 
-	wire "github.com/mas-bandwidth/nova-tools/pkg/releasewire"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-const dualHelp = "go doc github.com/mas-bandwidth/nova-tools/pkg/releasewire"
-
-// ---- the generated-table harness, as pkg/releasewire's golden test uses it.
-
-type doc[T any] struct {
-	v      *T
-	region []byte
+// dualRecord is one record under test: its reader, a value, and the value's
+// legacy text as its writer writes it today.
+type dualRecord[T any] struct {
+	name   string
+	reader func(*Records) *schemaread.Reader[T]
+	value  T
+	legacy []byte
+	// legacyForm is the form the legacy text is counted under: legacy, or
+	// json where the legacy text is the schema JSON text form byte for byte.
+	legacyForm schemaread.Form
 }
 
-type table[T any] struct {
-	name          string
-	measureReason func([]byte) (int64, error)
-	load          func(region, w []byte, r *wire.TableReport) *T
-	fromJSON      func([]byte, *wire.TableReport) (*T, []byte, bool)
-	measure       func(*T, ...wire.TableWriteContext) int64
-	save          func(*T, []byte, ...wire.TableWriteContext) int64
-	jsonMeasure   func(*T, ...wire.TableAllocator) int64
-	toJSON        func(*T, []byte, ...wire.TableAllocator) int64
-	constraints   func(*T, *schemaread.Checker)
-}
+var typedForms = []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON}
 
-func str(slot *int64) string {
-	if *slot == 0 {
-		return ""
-	}
-	v := wire.TableStringAt(slot)
-	return string(v.Data[:v.Length])
-}
-
-type builder[T any] interface {
-	Init(...wire.TableAllocator) bool
-	Lock() bool
-	AsConst() *T
-	Region() []byte
-}
-
-func viaJSON[T any, B any, PB interface {
-	*B
-	builder[T]
-}](from func(*B, []byte, *wire.TableReport) bool) func([]byte, *wire.TableReport) (*T, []byte, bool) {
-	return func(text []byte, r *wire.TableReport) (*T, []byte, bool) {
-		b := PB(new(B))
-		if !b.Init() || !from((*B)(b), text, r) || !b.Lock() {
-			return nil, nil, false
-		}
-		return b.AsConst(), b.Region(), true
-	}
-}
-
-func region(n int64) []byte {
-	raw := make([]byte, n+63)
-	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	return raw[off : off+uintptr(n)]
-}
-
-func report(r *wire.TableReport) schemaread.Report {
-	return schemaread.Report{
-		Unknown:      int(r.Unknown),
-		KindMismatch: int(r.KindMismatch),
-		Clamped:      int(r.Clamped),
-		Malformed:    r.Malformed || r.Duplicate > 0,
-		Reason:       r.Reason,
-	}
-}
-
-func (tb table[T]) saveWire(v *T) []byte {
-	n := tb.measure(v)
-	if n < 0 {
-		return nil
-	}
-	buf := make([]byte, n)
-	if tb.save(v, buf) != n {
-		return nil
-	}
-	return buf
-}
-
-func (tb table[T]) codec() *schemaread.Codec[doc[T]] {
-	return &schemaread.Codec[doc[T]]{
-		Name:  tb.name,
-		Help:  dualHelp,
-		Reset: func(d *doc[T]) { *d = doc[T]{} },
-		Measure: func(w []byte) error {
-			_, err := tb.measureReason(w)
-			return err
-		},
-		LoadWire: func(d *doc[T], w []byte) schemaread.Report {
-			n, err := tb.measureReason(w)
-			if err != nil || n < 0 {
-				return schemaread.Report{Malformed: true}
-			}
-			var r wire.TableReport
-			d.region = region(n)
-			if d.v = tb.load(d.region, w, &r); d.v == nil {
-				return schemaread.Report{Malformed: true, Reason: r.Reason}
-			}
-			return report(&r)
-		},
-		LoadJSON: func(d *doc[T], text []byte) schemaread.Report {
-			var r wire.TableReport
-			v, reg, ok := tb.fromJSON(text, &r)
-			if !ok {
-				return schemaread.Report{Malformed: true, Reason: r.Reason}
-			}
-			d.v, d.region = v, reg
-			return report(&r)
-		},
-		Constraints: func(d *doc[T], c *schemaread.Checker) {
-			c.Required("record", d.v != nil)
-			if d.v != nil {
-				tb.constraints(d.v, c)
-			}
-		},
-		SaveWire: func(d *doc[T]) []byte { return tb.saveWire(d.v) },
-		SaveJSON: func(d *doc[T]) []byte {
-			n := tb.jsonMeasure(d.v)
-			if n < 0 {
-				return nil
-			}
-			buf := make([]byte, n)
-			if tb.toJSON(d.v, buf) != n {
-				return nil
-			}
-			return buf
-		},
-	}
-}
-
-func dualForms() []schemaread.Form {
-	return []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON}
-}
-
-func dualB64(b []byte) []byte { return []byte(base64.StdEncoding.EncodeToString(b)) }
-
-func dualWrite[T any](t *testing.T, r *schemaread.Reader[doc[T]], d doc[T], form schemaread.Form) []byte {
+// named asserts err is the reader's named refusal and returns its reason.
+func named(t *testing.T, name string, err error) string {
 	t.Helper()
-	out, err := r.Write(&d, form)
-	require.NoError(t, err, form)
-	require.NotEmpty(t, out, "%s: the generated writer wrote it", form)
-	return out
-}
-
-// fileRead pins that a record reads alike from a file in a t.TempDir() the
-// test writes, in every form, and that each read is counted under its form
-// (DONE-WHEN: files are read from a t.TempDir() the test writes, and reads
-// are counted per record and per form).
-func fileRead[T any](t *testing.T, dir string, tb table[T], sample []byte) {
-	t.Helper()
-	r := schemaread.NewReader(tb.codec())
-	d, _, err := r.Read(sample)
-	require.NoError(t, err)
-	for _, form := range dualForms() {
-		out := dualWrite(t, r, d, form)
-		p := filepath.Join(dir, tb.name+"."+form.String())
-		require.NoError(t, os.WriteFile(p, out, 0o644))
-		raw, rerr := os.ReadFile(p)
-		require.NoError(t, rerr)
-		got, res, rerr := r.Read(raw)
-		require.NoError(t, rerr)
-		assert.Equal(t, form, res.Form, "%s: file %s", tb.name, form)
-		assert.Equal(t, canon(t, dualWrite(t, r, got, schemaread.FormJSON)), canon(t, sample), "%s: file %s reads equal", tb.name, form)
-	}
-	for _, form := range dualForms() {
-		assert.Positive(t, r.Counts().Reads(form), "%s: reads are counted per form", tb.name)
-	}
-}
-
-func canon(t *testing.T, text []byte) any {
-	t.Helper()
-	dec := json.NewDecoder(bytes.NewReader(text))
-	dec.UseNumber()
-	var v any
-	require.NoError(t, dec.Decode(&v), "%.200s", text)
-	return clean(v)
-}
-
-func clean(v any) any {
-	switch x := v.(type) {
-	case map[string]any:
-		out := map[string]any{}
-		for k, e := range x {
-			if c := clean(e); c != nil {
-				out[k] = c
-			}
-		}
-		if len(out) == 0 {
-			return nil
-		}
-		return out
-	case []any:
-		if len(x) == 0 {
-			return nil
-		}
-		return x
-	}
-	return v
-}
-
-// roundTrip writes the sample in every form and reads each back equal (S2),
-// and pins the counts per form.
-func (tb table[T]) roundTrip(t *testing.T, sample []byte) {
-	t.Helper()
-	r := schemaread.NewReader(tb.codec())
-	d, _, err := r.Read(sample)
-	require.NoError(t, err, "%s: the sample is read", tb.name)
-	want := canon(t, sample)
-	for _, form := range dualForms() {
-		out := dualWrite(t, r, d, form)
-		got, res, err := r.Read(out)
-		require.NoError(t, err, "%s %s", tb.name, form)
-		assert.Equal(t, form, res.Form)
-		assert.Equal(t, want, canon(t, dualWrite(t, r, got, schemaread.FormJSON)), "%s %s", tb.name, form)
-	}
-	w := dualWrite(t, r, d, schemaread.FormBinary)
-	assert.Equal(t, byte(1), w[0], "%s: the wire leads with its form byte", tb.name)
-	assert.Equal(t, dualB64(w), dualWrite(t, r, d, schemaread.FormBase64), "%s: base64 is padded standard base64 of the wire", tb.name)
-	assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBinary), "%s: the per-form counter moves on the form read", tb.name)
-	assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBase64))
-	assert.Equal(t, uint64(2), r.Counts().Reads(schemaread.FormJSON))
-}
-
-func dualRefusal(t *testing.T, name string, err error) string {
-	t.Helper()
-	if err == nil {
-		return ""
-	}
 	var ref *schemaread.Refusal
-	require.True(t, errors.As(err, &ref), "every refusal is a *schemaread.Refusal: %v", err)
+	require.True(t, errors.As(err, &ref), "%s: every refusal is a *schemaread.Refusal: %v", name, err)
 	assert.True(t, strings.HasPrefix(err.Error(), name+" REFUSED: "), err.Error())
-	assert.True(t, strings.HasSuffix(err.Error(), "; run: "+dualHelp), err.Error())
-	if ref.Field != "" {
-		return ref.Reason + " (" + ref.Field + ")"
-	}
+	assert.Contains(t, err.Error(), "; run: nova-update release ")
 	return ref.Reason
 }
 
-// refuses feeds a fuzzed malformed value of each form and asserts the named
-// refusal; a clamped value is refused too.
-func (tb table[T]) refuses(t *testing.T, sample []byte) {
+func isZero[T any](v T) bool { var zero T; return reflect.DeepEqual(v, zero) }
+
+// check runs one record through every form, from files in dir.
+func (d dualRecord[T]) check(t *testing.T, dir string) {
 	t.Helper()
-	r := schemaread.NewReader(tb.codec())
-	d, _, err := r.Read(sample)
-	require.NoError(t, err)
-	good := dualWrite(t, r, d, schemaread.FormBinary)
-	r = schemaread.NewReader(tb.codec())
-	for _, tc := range []struct {
-		name   string
-		in     []byte
-		reason string
-	}{
-		{"truncated wire", good[:len(good)-1], schemaread.ReasonWireDamaged},
-		{"empty", nil, schemaread.ReasonUnknownForm},
-	} {
-		got, _, err := r.Read(tc.in)
-		if err == nil {
-			assert.Nil(t, got.v, "%s: %s is never read as absent, empty or zero", tb.name, tc.name)
-		}
-		assert.Equal(t, tc.reason, dualRefusal(t, tb.name, err), "%s: %s", tb.name, tc.name)
+	recs := NewRecords()
+	r := d.reader(recs)
+	images := map[schemaread.Form][]byte{}
+	for _, form := range typedForms {
+		out, err := r.Write(&d.value, form)
+		require.NoError(t, err, "%s %s: the writer writes it", d.name, form)
+		require.NotEmpty(t, out)
+		images[form] = out
 	}
-	assert.Positive(t, r.Counts().Refused(schemaread.ReasonWireDamaged))
-	assert.Positive(t, r.Counts().Refused(schemaread.ReasonUnknownForm))
+	assert.Equal(t, byte(1), images[schemaread.FormBinary][0], "%s: the wire leads with its form byte", d.name)
+	assert.Equal(t, base64.StdEncoding.EncodeToString(images[schemaread.FormBinary]), string(images[schemaread.FormBase64]),
+		"%s: base64 is padded standard base64 of the wire", d.name)
+
+	// each form, and the legacy text, read back equal from a file
+	read := func(form string, img []byte, want schemaread.Form) {
+		p := filepath.Join(dir, d.name+"."+form)
+		require.NoError(t, os.WriteFile(p, img, 0o600))
+		raw, err := os.ReadFile(p)
+		require.NoError(t, err)
+		got, res, err := r.Read(raw)
+		require.NoError(t, err, "%s %s", d.name, form)
+		assert.Equal(t, want, res.Form, "%s %s: read as its form", d.name, form)
+		assert.Equal(t, d.value, got, "%s %s: reads equal", d.name, form)
+	}
+	for _, form := range typedForms {
+		read(form.String(), images[form], form)
+	}
+	read("legacy", d.legacy, d.legacyForm)
+
+	// reads are counted per record and per form
+	for _, form := range typedForms {
+		want := uint64(1)
+		if form == d.legacyForm {
+			want++
+		}
+		assert.Equal(t, want, r.Counts().Reads(form), "%s: reads of %s are counted", d.name, form)
+	}
+	if d.legacyForm == schemaread.FormLegacy {
+		assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormLegacy), "%s: legacy reads are counted", d.name)
+	}
+
+	// every truncation of every form is refused by name; every flipped byte is
+	// refused by name or reads a whole value, never an absent, empty or zero one
+	images[schemaread.FormLegacy] = d.legacy
+	for form, img := range images {
+		for cut := 0; cut < len(img); cut++ {
+			got, _, err := r.Read(img[:cut])
+			require.Error(t, err, "%s %s cut at %d is refused", d.name, form, cut)
+			named(t, d.name, err)
+			assert.True(t, isZero(got), "%s %s: a refused read returns no value", d.name, form)
+		}
+		for i := range img {
+			bad := append([]byte(nil), img...)
+			bad[i] ^= 0xff
+			got, _, err := r.Read(bad)
+			if err != nil {
+				named(t, d.name, err)
+				assert.True(t, isZero(got))
+				continue
+			}
+			assert.False(t, isZero(got), "%s %s flipped at %d is never read as zero", d.name, form, i)
+		}
+	}
+	wireBad := append([]byte(nil), images[schemaread.FormBinary]...)
+	wireBad[0] = 0x7f
+	_, _, err := r.Read(wireBad)
+	assert.Equal(t, schemaread.ReasonUnknownForm, named(t, d.name, err), "%s: an unknown form byte", d.name)
+	assert.Positive(t, r.Counts().Refused(schemaread.ReasonMalformed)+r.Counts().Refused(schemaread.ReasonWireDamaged),
+		"%s: refusals are counted by reason", d.name)
 }
 
-// ---- the four records' tables.
-
-var (
-	cycleBuildArgsTable = table[wire.CycleBuildArgs]{
-		name:          "CycleBuildArgs",
-		measureReason: wire.CycleBuildArgsLoadMeasureReason,
-		load:          wire.CycleBuildArgsLoad,
-		fromJSON:      viaJSON[wire.CycleBuildArgs, wire.CycleBuildArgsBuilder](wire.CycleBuildArgsFromJson),
-		measure:       wire.CycleBuildArgsMeasure,
-		save:          wire.CycleBuildArgsSave,
-		jsonMeasure:   wire.CycleBuildArgsToJsonMeasure,
-		toJSON:        wire.CycleBuildArgsToJson,
-		constraints:   func(*wire.CycleBuildArgs, *schemaread.Checker) {},
-	}
-	journeyHeaderTable = table[wire.JourneyHeader]{
-		name:          "JourneyHeader",
-		measureReason: wire.JourneyHeaderLoadMeasureReason,
-		load:          wire.JourneyHeaderLoad,
-		fromJSON:      viaJSON[wire.JourneyHeader, wire.JourneyHeaderBuilder](wire.JourneyHeaderFromJson),
-		measure:       wire.JourneyHeaderMeasure,
-		save:          wire.JourneyHeaderSave,
-		jsonMeasure:   wire.JourneyHeaderToJsonMeasure,
-		toJSON:        wire.JourneyHeaderToJson,
-		constraints: func(v *wire.JourneyHeader, c *schemaread.Checker) {
-			c.Required("evidence", !blank(&v.Evidence))
-			c.Required("revision", !blank(&v.Revision))
-			c.Required("functions", !blank(&v.Functions))
-			c.Required("schema", !blank(&v.Schema))
-			c.Required("installed", v.Installed.Count > 0)
-		},
-	}
-	journeyEventTable = table[wire.JourneyEvent]{
-		name:          "JourneyEvent",
-		measureReason: wire.JourneyEventLoadMeasureReason,
-		load:          wire.JourneyEventLoad,
-		fromJSON:      viaJSON[wire.JourneyEvent, wire.JourneyEventBuilder](wire.JourneyEventFromJson),
-		measure:       wire.JourneyEventMeasure,
-		save:          wire.JourneyEventSave,
-		jsonMeasure:   wire.JourneyEventToJsonMeasure,
-		toJSON:        wire.JourneyEventToJson,
-		constraints: func(v *wire.JourneyEvent, c *schemaread.Checker) {
-			c.Required("action", !blank(&v.Action))
-		},
-	}
-	spendReceiptsTable = table[wire.SpendReceipts]{
-		name:          "SpendReceipts",
-		measureReason: wire.SpendReceiptsLoadMeasureReason,
-		load:          wire.SpendReceiptsLoad,
-		fromJSON:      viaJSON[wire.SpendReceipts, wire.SpendReceiptsBuilder](wire.SpendReceiptsFromJson),
-		measure:       wire.SpendReceiptsMeasure,
-		save:          wire.SpendReceiptsSave,
-		jsonMeasure:   wire.SpendReceiptsToJsonMeasure,
-		toJSON:        wire.SpendReceiptsToJson,
-		constraints: func(v *wire.SpendReceipts, c *schemaread.Checker) {
-			c.Required("evidence", !blank(&v.Evidence))
-		},
-	}
-)
-
-func blank(slot *int64) bool { return strings.TrimSpace(str(slot)) == "" }
-
-// TestReleaseCycleRecordsDualRead is the card's acceptance: every record of
-// the release cycle reads alike from the binary wire, its padded standard
-// base64, the JSON text form and the legacy form, refuses damage by name and
-// counts reads per form; files are read from a t.TempDir() the test writes.
 func TestReleaseCycleRecordsDualRead(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	header := []byte(`{"evidence":"release-journeys","revision":"0123abc","functions":"f1","schema":"s1","installed":[{"machine":"example-bench","build":"v1.5.0-example","revision":"0123abc"}]}`)
-	event := []byte(`{"action":"pass","package":"hook","test":"TestExample000","output":"--- PASS\n"}`)
-	buildArgs := []byte(`{"nova_release_build_args":[{"text":"--incremental"},{"text":"--gate"},{"text":"report"}]}`)
-	receipts := []byte(`{"evidence":"spend-receipts","from":"2026-10-16T00:00:00Z","to":"2026-10-17T00:00:00Z","friends":[{"friend":"example","tokens":5}]}`)
+	from := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 
-	writeFile := func(name string, b []byte) string {
-		p := filepath.Join(dir, name)
-		require.NoError(t, os.WriteFile(p, b, 0o644))
-		return p
-	}
+	t.Run("cycle build args", func(t *testing.T) {
+		dualRecord[[]string]{
+			name:       "CYCLE_BUILD_ARGS",
+			reader:     func(r *Records) *schemaread.Reader[[]string] { return r.BuildArgs },
+			value:      []string{"--incremental", "--gate", "report", DogfoodReasonFlag, "the example reason"},
+			legacy:     []byte(`{"nova_release_build_args":["--incremental","--gate","report","` + DogfoodReasonFlag + `","the example reason"]}`),
+			legacyForm: schemaread.FormLegacy,
+		}.check(t, dir)
+		// an argument exec cannot pass is refused by name, before any play
+		_, err := NewRecords().ReadBuildArgs([]byte(`{"nova_release_build_args":["a\u0000b"]}`))
+		assert.Equal(t, schemaread.ReasonMalformed, named(t, "CYCLE_BUILD_ARGS", err))
+		_, err = NewRecords().ReadBuildArgs([]byte(`{"other":["x"]}`))
+		assert.Equal(t, schemaread.ReasonAbsentRequired, named(t, "CYCLE_BUILD_ARGS", err))
+	})
 
 	t.Run("journey header", func(t *testing.T) {
-		journeyHeaderTable.roundTrip(t, header)
-		journeyHeaderTable.refuses(t, header)
-		fileRead(t, dir, journeyHeaderTable, header)
-		p := writeFile("header.json", header)
-		raw, err := os.ReadFile(p)
-		require.NoError(t, err)
-		r := schemaread.NewReader(journeyHeaderTable.codec())
-		_, res, err := r.Read(raw)
-		require.NoError(t, err)
-		assert.Equal(t, schemaread.FormJSON, res.Form)
+		dualRecord[EvidenceHeader]{
+			name:   "JOURNEY_HEADER",
+			reader: func(r *Records) *schemaread.Reader[EvidenceHeader] { return r.Header },
+			value: EvidenceHeader{Evidence: EvidenceKind, Revision: "0123abc", Functions: "f1", Schema: "s1",
+				Installed: []InstalledReceipt{{Machine: "example-bench", Build: "v1.5.0-example", Revision: "0123abc"}}},
+			legacy:     []byte(`{"evidence":"release-journeys","revision":"0123abc","functions":"f1","schema":"s1","installed":[{"machine":"example-bench","build":"v1.5.0-example","revision":"0123abc"}]}`),
+			legacyForm: schemaread.FormJSON,
+		}.check(t, dir)
+		_, err := NewRecords().ReadHeader([]byte(`{"evidence":"something-else"}`))
+		assert.Equal(t, "absent_required", named(t, "JOURNEY_HEADER", err))
 	})
 
 	t.Run("journey event", func(t *testing.T) {
-		journeyEventTable.roundTrip(t, event)
-		journeyEventTable.refuses(t, event)
-		fileRead(t, dir, journeyEventTable, event)
-	})
-
-	t.Run("cycle build args", func(t *testing.T) {
-		cycleBuildArgsTable.roundTrip(t, buildArgs)
-		cycleBuildArgsTable.refuses(t, buildArgs)
-		fileRead(t, dir, cycleBuildArgsTable, buildArgs)
+		dualRecord[testEvent]{
+			name:       "JOURNEY_EVENT",
+			reader:     func(r *Records) *schemaread.Reader[testEvent] { return r.Event },
+			value:      testEvent{Action: "output", Package: "github.com/example/hook", Test: "TestExample", Output: "--- PASS: TestExample\n"},
+			legacy:     []byte(`{"Time":"2026-10-17T00:00:00Z","Action":"output","Package":"github.com/example/hook","Test":"TestExample","Output":"--- PASS: TestExample\n"}`),
+			legacyForm: schemaread.FormLegacy,
+		}.check(t, dir)
 	})
 
 	t.Run("spend receipts", func(t *testing.T) {
-		spendReceiptsTable.roundTrip(t, receipts)
-		spendReceiptsTable.refuses(t, receipts)
-		fileRead(t, dir, spendReceiptsTable, receipts)
+		value := spendReceipts{Evidence: ReceiptsKind, From: from, To: to, Friends: map[string]int64{"example": 5, "other": 7}}
+		dualRecord[spendReceipts]{
+			name:       "SPEND_RECEIPTS",
+			reader:     func(r *Records) *schemaread.Reader[spendReceipts] { return r.Receipts },
+			value:      value,
+			legacy:     []byte(`{"evidence":"spend-receipts","from":"2026-10-16T00:00:00Z","to":"2026-10-17T00:00:00Z","friends":{"example":5,"other":7}}`),
+			legacyForm: schemaread.FormLegacy,
+		}.check(t, dir)
+
+		// a clamped value (a negative token count) is refused on every form,
+		// and the writer refuses it before a byte is written
+		recs := NewRecords()
+		neg := value
+		neg.Friends = map[string]int64{"example": -1}
+		_, err := recs.Receipts.Write(&neg, schemaread.FormBinary)
+		assert.Equal(t, schemaread.ReasonClamped, named(t, "SPEND_RECEIPTS", err))
+		c := receiptsCodec()
+		w := c.SaveWire(&neg)
+		require.NotEmpty(t, w)
+		for _, in := range [][]byte{
+			w,
+			[]byte(base64.StdEncoding.EncodeToString(w)),
+			c.SaveJSON(&neg),
+			[]byte(`{"evidence":"spend-receipts","from":"2026-10-16T00:00:00Z","to":"2026-10-17T00:00:00Z","friends":{"example":-1}}`),
+		} {
+			got, _, err := recs.Receipts.Read(in)
+			assert.Equal(t, schemaread.ReasonClamped, named(t, "SPEND_RECEIPTS", err), "%.60q", in)
+			assert.True(t, isZero(got))
+		}
+		assert.Equal(t, uint64(5), recs.Receipts.Counts().Refused(schemaread.ReasonClamped))
+
+		// a friends record absent, or a friend named twice, is refused by name
+		_, err = recs.ReadReceipts([]byte(`{"evidence":"spend-receipts","from":"2026-10-16T00:00:00Z","to":"2026-10-17T00:00:00Z"}`))
+		assert.Equal(t, schemaread.ReasonAbsentRequired, named(t, "SPEND_RECEIPTS", err))
+		_, err = recs.ReadReceipts([]byte(`{"evidence":"spend-receipts","from":"2026-10-16T00:00:00Z","to":"2026-10-17T00:00:00Z","friends":[{"friend":"a","tokens":1},{"friend":"a","tokens":2}]}`))
+		assert.Equal(t, schemaread.ReasonMalformed, named(t, "SPEND_RECEIPTS", err))
+	})
+
+	// the read sites: the gates read each form and refuse damage by name
+	t.Run("journey evidence file", func(t *testing.T) {
+		recs := NewRecords()
+		h := EvidenceHeader{Evidence: EvidenceKind, Revision: "0123abc", Functions: "f1", Schema: "s1",
+			Installed: []InstalledReceipt{{Machine: "example-bench", Build: "v1", Revision: "0123abc"}}}
+		header, err := recs.Header.Write(&h, schemaread.FormBase64)
+		require.NoError(t, err)
+		e := testEvent{Action: "pass", Package: "hook", Test: "TestExample"}
+		ev, err := recs.Event.Write(&e, schemaread.FormJSON)
+		require.NoError(t, err)
+		evB64, err := recs.Event.Write(&e, schemaread.FormBase64)
+		require.NoError(t, err)
+		legacy := `{"Action":"pass","Package":"hook","Test":"TestExample"}`
+		p := filepath.Join(dir, "evidence.mixed")
+		require.NoError(t, os.WriteFile(p, []byte(string(header)+"\n"+string(ev)+"\n"+string(evB64)+"\n"+legacy+"\n"), 0o600))
+		gotH, events, err := readJourneyEvidence(p)
+		require.NoError(t, err)
+		assert.Equal(t, h, gotH)
+		assert.Equal(t, []testEvent{e, e, e}, events)
+
+		require.NoError(t, os.WriteFile(p, []byte(string(header)+"\n"+string(evB64[:len(evB64)-4])+"\n"), 0o600))
+		_, _, err = readJourneyEvidence(p)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "line 2 is not a go test -json event")
+		assert.Contains(t, err.Error(), "JOURNEY_EVENT REFUSED: ")
+
+		require.NoError(t, os.WriteFile(p, []byte(string(header[:len(header)-4])+"\n"), 0o600))
+		_, _, err = readJourneyEvidence(p)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "JOURNEY_HEADER REFUSED: ")
+	})
+
+	t.Run("spend receipts file", func(t *testing.T) {
+		recs := NewRecords()
+		v := spendReceipts{Evidence: ReceiptsKind, From: from, To: to, Friends: map[string]int64{"example": 5}}
+		w := SpendWindowFrom(from, to)
+		for _, form := range typedForms {
+			img, err := recs.Receipts.Write(&v, form)
+			require.NoError(t, err)
+			p := filepath.Join(dir, "receipts."+form.String())
+			require.NoError(t, os.WriteFile(p, img, 0o600))
+			got, err := FileReceipts{Path: p}.Tokens(context.Background(), w)
+			require.NoError(t, err, form)
+			assert.Equal(t, v.Friends, got, form)
+
+			require.NoError(t, os.WriteFile(p, img[:len(img)-2], 0o600))
+			_, err = FileReceipts{Path: p}.Tokens(context.Background(), w)
+			require.Error(t, err, form)
+			assert.Contains(t, err.Error(), "SPEND_RECEIPTS REFUSED: ", form)
+		}
+	})
+}
+
+// FuzzReleaseCycleRecordReads holds every reader to its contract on any
+// input: a read is a value or a named refusal, never a panic, and a refused
+// read returns no value.
+func FuzzReleaseCycleRecordReads(f *testing.F) {
+	recs := NewRecords()
+	v := spendReceipts{Evidence: ReceiptsKind, From: time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), Friends: map[string]int64{"a": 1}}
+	for _, form := range typedForms {
+		img, err := recs.Receipts.Write(&v, form)
+		require.NoError(f, err)
+		f.Add(img)
+	}
+	f.Add([]byte(`{"nova_release_build_args":["--gate"]}`))
+	f.Add([]byte(`{"Action":"pass","Package":"hook","Test":"T"}`))
+	f.Add([]byte(`{"evidence":"release-journeys","revision":"r","functions":"f","schema":"s"}`))
+	f.Fuzz(func(t *testing.T, in []byte) {
+		r := NewRecords()
+		refused := func(name string, err error, zero bool) {
+			if err == nil {
+				return
+			}
+			var ref *schemaread.Refusal
+			require.True(t, errors.As(err, &ref), "%s: %v is a named refusal", name, err)
+			require.Equal(t, name, ref.Name)
+			require.True(t, zero, "%s: a refused read returns no value", name)
+		}
+		a, err := r.ReadBuildArgs(in)
+		refused("CYCLE_BUILD_ARGS", err, a == nil)
+		h, err := r.ReadHeader(in)
+		refused("JOURNEY_HEADER", err, isZero(h))
+		e, err := r.ReadEvent(in)
+		refused("JOURNEY_EVENT", err, isZero(e))
+		s, err := r.ReadReceipts(in)
+		refused("SPEND_RECEIPTS", err, isZero(s))
 	})
 }

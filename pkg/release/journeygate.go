@@ -6,7 +6,6 @@ package release
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -150,8 +149,10 @@ type testEvent struct {
 }
 
 // readJourneyEvidence reads an evidence file: the header, then `go test -json`.
-// A line that is not JSON refuses: a broken record is not an absent one, and
-// reading past it would answer a greener truth than the one on disk.
+// A line that is not a record refuses: a broken record is not an absent one,
+// and reading past it would answer a greener truth than the one on disk. Each
+// line is read through its record reader (records.go JOURNEY_HEADER and
+// JOURNEY_EVENT) in every form, refused by name and counted per form (S2).
 func readJourneyEvidence(path string) (EvidenceHeader, []testEvent, error) {
 	var h EvidenceHeader
 	f, err := os.Open(path)
@@ -171,16 +172,18 @@ func readJourneyEvidence(path string) (EvidenceHeader, []testEvent, error) {
 			continue
 		}
 		if n == 1 {
-			if err := json.Unmarshal([]byte(line), &h); err != nil || h.Evidence != EvidenceKind {
+			read, err := records.ReadHeader([]byte(line))
+			if err != nil {
 				return h, nil, refuse("start the file with the evidence header",
-					"%s line 1 is not a {\"evidence\":%q} header", path, EvidenceKind)
+					"%s line 1 is not a {\"evidence\":%q} header: %s", path, EvidenceKind, err)
 			}
+			h = read
 			continue
 		}
-		var e testEvent
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
+		e, err := records.ReadEvent([]byte(line))
+		if err != nil {
 			return h, nil, refuse("rerun the journeys with go test -json and keep its output whole",
-				"%s line %d is not a go test -json event: %.80q", path, n, line)
+				"%s line %d is not a go test -json event: %.80q: %s", path, n, line, err)
 		}
 		events = append(events, e)
 	}
