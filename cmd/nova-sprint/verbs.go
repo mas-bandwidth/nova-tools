@@ -53,6 +53,7 @@ func init() {
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
+		{"remind", "(--in <duration> | --at <time>) --note <text> [--for <actor>] [--within <duration>] [--dry-run] | --list [--missed] [--for <actor>] | --cancel <id> [--dry-run] | --ack <id> [--dry-run]", "remind --in 30m --note 'look at the lander' --dry-run", (*app).cmdRemind},
 		{"take", "--as <member> [<card>@<gen>...] [--epoch <n>] [--max <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
 		{"finish", "--as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --head 9f3c2e1 --report 'tests green'", (*app).cmdFinish},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--max <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
@@ -225,6 +226,7 @@ and prints each one's generation.
 ` + readerWords() + `
 ` + streamWords() + `
 ` + goalWords() + `
+` + remindWords() + `
 ` + twinWords() + `
 ` + landWords() + `
 ` + wordsSection() + `

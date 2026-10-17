@@ -918,6 +918,7 @@ nova-sprint tick [--answer-rules] [--idle-alarm]
 nova-sprint goal set <name> [--file <path>] [--to file:<path>]
 nova-sprint goal show [<name>]
 nova-sprint goal drop <name>
+nova-sprint remind (--in <duration> | --at <time>) --note <text> [--for <actor>] [--within <duration>] [--dry-run] | --list [--missed] [--for <actor>] | --cancel <id> [--dry-run] | --ack <id> [--dry-run]
 nova-sprint take --as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]
 nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]
 nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]

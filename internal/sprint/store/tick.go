@@ -626,12 +626,21 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		if err := st.keepWhere(ctx, m); err != nil {
 			return res, fmt.Errorf("where: %w", err)
 		}
+		// a timer fires on a STOPPED machine too: it is the clock's, not the
+		// sprint's; its failure is the tick's, after the look is recorded
+		terr := st.timers(ctx, &res)
+		if terr != nil {
+			terr = fmt.Errorf("timers: %w", terr)
+		}
 		now := st.now()
 		if now.Sub(hb.Alive()) < HeartbeatIdleEvery && !hb.Looked.IsZero() {
-			return res, nil
+			return res, terr
 		}
 		hb.Looked = now
-		return res, st.putJSON(ctx, keyHeartbeat, hb)
+		if err := st.putJSON(ctx, keyHeartbeat, hb); err != nil {
+			return res, err
+		}
+		return res, terr
 	}
 	seen, err := st.tick(ctx, m, hb, &res)
 	if err == nil && res.Halted == "" && res.Done == "" {
@@ -645,6 +654,14 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 			}
 		}
 		res.Times = append(res.Times, mt.part("", "remind"))
+	}
+	if err == nil && res.Stale == "" {
+		// timers fire whatever the machine's state (timers.go)
+		mt := st.meter()
+		if terr := st.timers(ctx, &res); terr != nil {
+			err = fmt.Errorf("timers: %w", terr)
+		}
+		res.Times = append(res.Times, mt.part("", "timers"))
 	}
 	if err == nil && res.Stale == "" && hb.Failures > 0 {
 		// the tick works again after failing: one note, with the count

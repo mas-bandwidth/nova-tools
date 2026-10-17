@@ -13,7 +13,8 @@ import (
 //   - worker: a fleet member or a reader, named by --as (fleet beat: the
 //     member; friend beat: the friend); its actor is that name, whatever
 //     --actor says.
-//   - report: an outside actor's report (merge, ci), anyone's who names it.
+//   - report: an outside actor's report (merge, ci), anyone's who names it,
+//     and a timer (remind), set, cancelled or seen by any actor.
 //   - machine: the run loop's (tick, run), recorded as the machine.
 //   - read: changes nothing and needs no actor.
 //   - seat: coordinator <name>, the seat moved: given by its holder or the
@@ -39,6 +40,8 @@ var verbClasses = map[string]string{
 	"fleet level": classCoordinator, "fleet sync": classCoordinator, "friend sync": classCoordinator, "friend down": classCoordinator, "friend up": classCoordinator, "friend take": classCoordinator, "friend level": classCoordinator, "friend health": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "reader retire": classCoordinator, "stream remove": classCoordinator, "stream set": classCoordinator, "set": classCoordinator, "promoted": classCoordinator, "funded": classCoordinator, "wait": classCoordinator,
 	"ack": classCoordinator, "answer": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
+
+	"remind": classReport,
 
 	"take": classWorker, "finish": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker,
 
