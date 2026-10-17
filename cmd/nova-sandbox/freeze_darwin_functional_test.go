@@ -44,7 +44,7 @@ func TestARunawayIsFrozenBeforeItIsKilled(t *testing.T) {
 	needDarwin(t)
 	j := newJob(t)
 	bin := toolBinary(t)
-	cmd := exec.Command(bin, "--read", j.read, "--write", j.write, "--",
+	cmd := exec.Command(bin, "--read", j.read, "--write", j.write, "--max-procs", "256", "--",
 		"/bin/sh", "-c", "i=0; while [ $i -lt 1500 ]; do sleep 60 & i=$((i+1)); done; wait")
 	cmd.Env = j.env()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
