@@ -17,7 +17,9 @@ import (
 // form it arrived in. The reader's strict cases are TestSeatHookTypedStamp.
 // This card's change over the stream base is read-side tests only
 // (seat_stamp_test.go and stamp_typed_test.go); the typed reader itself ships
-// with the seat hook reader.
+// with the seat hook reader, and the writer-side cutover is a later card's.
+// The kept rule is the pkg/hookwire one: a legacy RFC 3339 stamp refuses as
+// legacy_shape rather than being read as a time.
 func TestHookStampTyped(t *testing.T) {
 	t.Parallel()
 	const epoch, atMS = 5, int64(1792000000000)
