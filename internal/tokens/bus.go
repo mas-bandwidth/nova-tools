@@ -1,7 +1,6 @@
 package tokens
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -267,20 +266,12 @@ func laneNames(fsys fs.FS) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var c struct {
-		Participants []struct {
-			Name string `json:"name"`
-			Lane string `json:"lane"`
-		} `json:"participants"`
-	}
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, p := range c.Participants {
-		if slug, ok := strings.CutPrefix(p.Lane, "from-"); ok && slug != "" {
-			out = append(out, slug)
-		}
+	// Every form of the roster (the legacy JSON, a table image, its base64)
+	// reads through the one strict reader, counted per form (RosterReads), and
+	// damage is the named refusal (S2, C13).
+	out, err := rosterReader.ReadRoster(raw)
+	if err != nil {
+		return nil, fmt.Errorf("participants.json: %w", err)
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf(`participants.json names no lane; it wants {"participants":[{"name":"Ada","lane":"from-ada"}]} -- one entry per friend, each lane "from-<slug>", and every <slug>/*.md whose Subject: is exactly "tokens YYYY-MM-DD" is read`)
