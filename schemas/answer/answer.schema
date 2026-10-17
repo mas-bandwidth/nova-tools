@@ -95,8 +95,8 @@ table HeldCard
     // card: the card id. No code bound; the longest id of the sprint is under
     // 100 bytes, and 160 leaves room for a generation suffix.
     card    string(160)
-    // job: the inbox directory of its brief.
-    job     string(160)
+    // job: the inbox directory of its brief; pkg/friend validJob allows 200 bytes.
+    job     string(200)
     // col: the column the card stands in (working, ready, ...).
     col     string(32)
     kind    string(16)
@@ -109,7 +109,8 @@ table HeldCard
     repo    string(128)
     // base_branch: the branch the card lands on (the key stays "base"; base is a reserved word in C#).
     base_branch string(256) | json = "base"
-    brief   string(512)
+    // brief: the brief text or its path as the server writes it; the code holds no byte cap, so unbounded.
+    brief   *string
     // lane: the lane of her row the server says holds the card (take --lane),
     // 0 for none.
     lane    uint32 | min = 0, max = 1024
@@ -246,7 +247,8 @@ table Packet
     attempt     uint32 | min = 0, max = 100000
     gen         uint32 | min = 0, max = 100000
     epoch       uint64
-    brief       string(512)
+    // brief: the card brief text; the code holds no byte cap, so unbounded.
+    brief       *string
     // rules: the held rules file the card names, empty when it carries its own.
     rules       string(512)
     fix         *string

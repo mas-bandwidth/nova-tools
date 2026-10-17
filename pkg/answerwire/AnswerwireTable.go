@@ -39,7 +39,7 @@ type HeldCardRow struct {
 	Card             [161]byte // string(160): buffer, used length beside it
 	_                [3]byte   // generated padding
 	CardLength       int32
-	Job              [161]byte // string(160): buffer, used length beside it
+	Job              [201]byte // string(200): buffer, used length beside it
 	_                [3]byte   // generated padding
 	JobLength        int32
 	Col              [33]byte // string(32): buffer, used length beside it
@@ -66,9 +66,7 @@ type HeldCardRow struct {
 	BaseBranch       [257]byte // string(256): buffer, used length beside it
 	_                [3]byte   // generated padding
 	BaseBranchLength int32
-	Brief            [513]byte // string(512): buffer, used length beside it
-	_                [3]byte   // generated padding
-	BriefLength      int32
+	Brief            int64 // *: signed self-relative delta, zero is null (§6.3)
 	Lane             uint32
 	_                [4]byte // generated padding
 }
@@ -148,9 +146,7 @@ type PacketRow struct {
 	Attempt                     uint32
 	Gen                         uint32
 	Epoch                       uint64
-	Brief                       [513]byte // string(512): buffer, used length beside it
-	_                           [3]byte   // generated padding
-	BriefLength                 int32
+	Brief                       int64     // *: signed self-relative delta, zero is null (§6.3)
 	Rules                       [513]byte // string(512): buffer, used length beside it
 	_                           [3]byte   // generated padding
 	RulesLength                 int32
@@ -430,7 +426,7 @@ type WorkerViewRow struct {
 // BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
 // one digest a block carries and BlockOpen compares, and the fact §3.3's
 // announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0x7abe659529201008
+const BuildVersion uint64 = 0x90370e63ee0b2d93
 
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema

@@ -3552,8 +3552,7 @@ func HeldCardReset(value *HeldCard) {
 	value.RepoLength = 0
 	clear(value.BaseBranch[:])
 	value.BaseBranchLength = 0
-	clear(value.Brief[:])
-	value.BriefLength = 0
+	value.Brief = 0
 	value.Lane = 0
 }
 
@@ -3624,14 +3623,14 @@ func HeldCardSaveBodyFields(w *TableWriter, value *HeldCard) bool {
 		}
 	}
 	{
-		if value.JobLength < 0 || value.JobLength > 160 {
+		if value.JobLength < 0 || value.JobLength > 200 {
 			return false
 		}
 		if value.JobLength > 0 {
 			if ref := w.Ids.refAtHit(39, 0x45627c193a5b605c); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.JobLength < 0 || value.JobLength > 160 {
+			if value.JobLength < 0 || value.JobLength > 200 {
 				return false
 			}
 			{
@@ -4054,53 +4053,23 @@ func HeldCardSaveBodyFields(w *TableWriter, value *HeldCard) bool {
 		}
 	}
 	{
-		if value.BriefLength < 0 || value.BriefLength > 512 {
-			return false
-		}
-		if value.BriefLength > 0 {
-			if ref := w.Ids.refAtHit(123, 0xf90e421e2470877f); !w.headerPair(ref, 12) {
-				w.headerRest(ref, 12)
+		if value.Brief != 0 {
+			if ref := w.Ids.refAtHit(123, 0xf90e421e2470877f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
 			}
-			if value.BriefLength < 0 || value.BriefLength > 512 {
-				return false
-			}
-			{
-				n := int(value.BriefLength)
-				var hi, z uint64
-				p := value.Brief[:n]
-				for len(p) >= 16 {
-					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
-					hi |= x | y
-					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
-					p = p[16:]
+			if value.Brief == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
 				}
-				if len(p) >= 8 {
-					x := tableUtf8Word(p)
-					hi |= x
-					z |= (x - 0x0101010101010101) &^ x
-					p = p[8:]
-				}
-				if len(p) > 0 {
-					if n >= 8 {
-						x := tableUtf8Word(value.Brief[n-8:])
-						hi |= x
-						z |= (x - 0x0101010101010101) &^ x
-					} else {
-						for _, c := range p {
-							x := uint64(c)
-							hi |= x
-							z |= (x - 1) &^ x
-						}
-					}
-				}
-				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Brief[:n]) {
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Brief)
+				if !ok {
 					return false
 				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
 			}
-			if !w.putLebPair(uint64(value.BriefLength)) {
-				w.putLebWide(uint64(value.BriefLength))
-			}
-			w.Raw(value.Brief[:value.BriefLength])
 		}
 	}
 	{
@@ -4191,8 +4160,8 @@ func HeldCardLoadBody(r *TableReader, value *HeldCard) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 160 {
-				keep = tableUtf8Clamp(sub.Buffer, 160)
+			if keep > 200 {
+				keep = tableUtf8Clamp(sub.Buffer, 200)
 				r.Report.Clamped++
 			}
 			clear(value.Job[:])
@@ -4510,7 +4479,7 @@ func HeldCardLoadBody(r *TableReader, value *HeldCard) bool {
 			copy(value.BaseBranch[:keep], sub.Buffer)
 			value.BaseBranchLength = int32(keep)
 		case 0xf90e421e2470877f: // brief
-			if kind != 12 {
+			if kind != 17 {
 				r.Report.KindMismatch++
 				if !r.Skip(kind) {
 					r.Report.Malformed = true
@@ -4518,25 +4487,14 @@ func HeldCardLoadBody(r *TableReader, value *HeldCard) bool {
 				}
 				break
 			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Brief, index, 0x704be0d8faaffc58, r.Report)
 			}
-			if !tableUtf8Valid(sub.Buffer) {
-				r.Report.Malformed = true
-				clear(value.Brief[:])
-				value.BriefLength = 0
-				break
-			}
-			keep := int64(len(sub.Buffer))
-			if keep > 512 {
-				keep = tableUtf8Clamp(sub.Buffer, 512)
-				r.Report.Clamped++
-			}
-			clear(value.Brief[:])
-			copy(value.Brief[:keep], sub.Buffer)
-			value.BriefLength = int32(keep)
 		case 0x0460ddad9060af0f: // lane
 			if kind != 8 {
 				if tableKindWidens(kind, 8) {
@@ -4599,7 +4557,7 @@ const HeldCardLoadRetainBuilder = "HeldCard: retention requires a region round t
 const HeldCardSaveRetainMessages = "HeldCard: retention requires a region round trip through the VARIABLE form"
 
 func HeldCardLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *HeldCard {
-	return (*HeldCard)(tableRegionLoadRetain(region, wire, HeldCardTableType(), HeldCardTableType().NodeType, 0, report, retain))
+	return (*HeldCard)(tableRegionLoadRetain(region, wire, HeldCardTableType(), HeldCardTableType().NodeType, 2, report, retain))
 }
 func HeldCardMeasureRetain(value *HeldCard, retain *TableRetain, allocator ...TableAllocator) int64 {
 	return tableRegionSaveRetain(unsafe.Pointer(value), HeldCardTableType(), nil, true, retain, nil, allocator...)
@@ -4677,14 +4635,14 @@ func HeldCardSaveBodyFieldsRetain(w *TableRetainWriter, value *HeldCard) bool {
 		}
 	}
 	{
-		if value.JobLength < 0 || value.JobLength > 160 {
+		if value.JobLength < 0 || value.JobLength > 200 {
 			return false
 		}
 		if value.JobLength > 0 {
 			if ref := w.Ids.refAtHit(39, 0x45627c193a5b605c); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.JobLength < 0 || value.JobLength > 160 {
+			if value.JobLength < 0 || value.JobLength > 200 {
 				return false
 			}
 			{
@@ -5107,53 +5065,23 @@ func HeldCardSaveBodyFieldsRetain(w *TableRetainWriter, value *HeldCard) bool {
 		}
 	}
 	{
-		if value.BriefLength < 0 || value.BriefLength > 512 {
-			return false
-		}
-		if value.BriefLength > 0 {
-			if ref := w.Ids.refAtHit(123, 0xf90e421e2470877f); !w.headerPair(ref, 12) {
-				w.headerRest(ref, 12)
+		if value.Brief != 0 {
+			if ref := w.Ids.refAtHit(123, 0xf90e421e2470877f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
 			}
-			if value.BriefLength < 0 || value.BriefLength > 512 {
-				return false
-			}
-			{
-				n := int(value.BriefLength)
-				var hi, z uint64
-				p := value.Brief[:n]
-				for len(p) >= 16 {
-					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
-					hi |= x | y
-					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
-					p = p[16:]
+			if value.Brief == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
 				}
-				if len(p) >= 8 {
-					x := tableUtf8Word(p)
-					hi |= x
-					z |= (x - 0x0101010101010101) &^ x
-					p = p[8:]
-				}
-				if len(p) > 0 {
-					if n >= 8 {
-						x := tableUtf8Word(value.Brief[n-8:])
-						hi |= x
-						z |= (x - 0x0101010101010101) &^ x
-					} else {
-						for _, c := range p {
-							x := uint64(c)
-							hi |= x
-							z |= (x - 1) &^ x
-						}
-					}
-				}
-				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Brief[:n]) {
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Brief)
+				if !ok {
 					return false
 				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
 			}
-			if !w.putLebPair(uint64(value.BriefLength)) {
-				w.putLebWide(uint64(value.BriefLength))
-			}
-			w.Raw(value.Brief[:value.BriefLength])
 		}
 	}
 	{
@@ -5248,8 +5176,8 @@ func HeldCardLoadBodyRetain(r *TableRetainReader, value *HeldCard) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 160 {
-				keep = tableUtf8Clamp(sub.Buffer, 160)
+			if keep > 200 {
+				keep = tableUtf8Clamp(sub.Buffer, 200)
 				r.Report.Clamped++
 			}
 			clear(value.Job[:])
@@ -5567,7 +5495,7 @@ func HeldCardLoadBodyRetain(r *TableRetainReader, value *HeldCard) bool {
 			copy(value.BaseBranch[:keep], sub.Buffer)
 			value.BaseBranchLength = int32(keep)
 		case 0xf90e421e2470877f: // brief
-			if kind != 12 {
+			if kind != 17 {
 				r.Report.KindMismatch++
 				if !r.Skip(kind) {
 					r.Report.Malformed = true
@@ -5575,25 +5503,14 @@ func HeldCardLoadBodyRetain(r *TableRetainReader, value *HeldCard) bool {
 				}
 				break
 			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Brief, index, 0x704be0d8faaffc58, r.Report)
 			}
-			if !tableUtf8Valid(sub.Buffer) {
-				r.Report.Malformed = true
-				clear(value.Brief[:])
-				value.BriefLength = 0
-				break
-			}
-			keep := int64(len(sub.Buffer))
-			if keep > 512 {
-				keep = tableUtf8Clamp(sub.Buffer, 512)
-				r.Report.Clamped++
-			}
-			clear(value.Brief[:])
-			copy(value.Brief[:keep], sub.Buffer)
-			value.BriefLength = int32(keep)
 		case 0x0460ddad9060af0f: // lane
 			if kind != 8 {
 				if tableKindWidens(kind, 8) {
@@ -5652,15 +5569,15 @@ func HeldCardLoadBodyRetain(r *TableRetainReader, value *HeldCard) bool {
 	}
 }
 func HeldCardLoadMeasure(wire []byte) int64 {
-	n, _, _ := tableRegionMeasure(wire, HeldCardTableType(), HeldCardTableType().NodeType, 0)
+	n, _, _ := tableRegionMeasure(wire, HeldCardTableType(), HeldCardTableType().NodeType, 2)
 	return n
 }
 func HeldCardLoadMeasureReason(wire []byte) (int64, error) {
-	size, _, _, reason := tableRegionMeasureReason(wire, HeldCardTableType(), HeldCardTableType().NodeType, 0)
+	size, _, _, reason := tableRegionMeasureReason(wire, HeldCardTableType(), HeldCardTableType().NodeType, 2)
 	return size, tableRefuseError(reason)
 }
 func HeldCardLoad(region, wire []byte, report *TableReport) *HeldCard {
-	return (*HeldCard)(tableRegionLoad(region, wire, HeldCardTableType(), HeldCardTableType().NodeType, 0, report))
+	return (*HeldCard)(tableRegionLoad(region, wire, HeldCardTableType(), HeldCardTableType().NodeType, 2, report))
 }
 func HeldCardMeasure(value *HeldCard, context ...TableWriteContext) int64 {
 	arena, allocator := tableWriteOptions(context)
@@ -5676,7 +5593,7 @@ func HeldCardSave(value *HeldCard, buffer []byte, context ...TableWriteContext) 
 	return tableRegionSave(unsafe.Pointer(value), HeldCardTableType(), buffer, false, arena, allocator)
 }
 func HeldCardLoadBuilder(b *HeldCardBuilder, wire []byte, report *TableReport) bool {
-	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, HeldCardTableType(), HeldCardTableType().NodeType, 0, report)
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, HeldCardTableType(), HeldCardTableType().NodeType, 2, report)
 }
 
 // HeldCardReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
@@ -6084,7 +6001,7 @@ const HeldAnswerLoadRetainBuilder = "HeldAnswer: retention requires a region rou
 const HeldAnswerSaveRetainMessages = "HeldAnswer: retention requires a region round trip through the VARIABLE form"
 
 func HeldAnswerLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *HeldAnswer {
-	return (*HeldAnswer)(tableRegionLoadRetain(region, wire, HeldAnswerTableType(), HeldAnswerTableType().NodeType, 0, report, retain))
+	return (*HeldAnswer)(tableRegionLoadRetain(region, wire, HeldAnswerTableType(), HeldAnswerTableType().NodeType, 2, report, retain))
 }
 func HeldAnswerMeasureRetain(value *HeldAnswer, retain *TableRetain, allocator ...TableAllocator) int64 {
 	return tableRegionSaveRetain(unsafe.Pointer(value), HeldAnswerTableType(), nil, true, retain, nil, allocator...)
@@ -6412,15 +6329,15 @@ func HeldAnswerLoadBodyRetain(r *TableRetainReader, value *HeldAnswer) bool {
 	}
 }
 func HeldAnswerLoadMeasure(wire []byte) int64 {
-	n, _, _ := tableRegionMeasure(wire, HeldAnswerTableType(), HeldAnswerTableType().NodeType, 0)
+	n, _, _ := tableRegionMeasure(wire, HeldAnswerTableType(), HeldAnswerTableType().NodeType, 2)
 	return n
 }
 func HeldAnswerLoadMeasureReason(wire []byte) (int64, error) {
-	size, _, _, reason := tableRegionMeasureReason(wire, HeldAnswerTableType(), HeldAnswerTableType().NodeType, 0)
+	size, _, _, reason := tableRegionMeasureReason(wire, HeldAnswerTableType(), HeldAnswerTableType().NodeType, 2)
 	return size, tableRefuseError(reason)
 }
 func HeldAnswerLoad(region, wire []byte, report *TableReport) *HeldAnswer {
-	return (*HeldAnswer)(tableRegionLoad(region, wire, HeldAnswerTableType(), HeldAnswerTableType().NodeType, 0, report))
+	return (*HeldAnswer)(tableRegionLoad(region, wire, HeldAnswerTableType(), HeldAnswerTableType().NodeType, 2, report))
 }
 func HeldAnswerMeasure(value *HeldAnswer, context ...TableWriteContext) int64 {
 	arena, allocator := tableWriteOptions(context)
@@ -6436,7 +6353,7 @@ func HeldAnswerSave(value *HeldAnswer, buffer []byte, context ...TableWriteConte
 	return tableRegionSave(unsafe.Pointer(value), HeldAnswerTableType(), buffer, false, arena, allocator)
 }
 func HeldAnswerLoadBuilder(b *HeldAnswerBuilder, wire []byte, report *TableReport) bool {
-	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, HeldAnswerTableType(), HeldAnswerTableType().NodeType, 0, report)
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, HeldAnswerTableType(), HeldAnswerTableType().NodeType, 2, report)
 }
 
 // HeldAnswerReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
@@ -15759,8 +15676,7 @@ func PacketReset(value *Packet) {
 	value.Attempt = 0
 	value.Gen = 0
 	value.Epoch = 0
-	clear(value.Brief[:])
-	value.BriefLength = 0
+	value.Brief = 0
 	clear(value.Rules[:])
 	value.RulesLength = 0
 	value.Fix = 0
@@ -16124,53 +16040,23 @@ func PacketSaveBodyFields(w *TableWriter, value *Packet) bool {
 		}
 	}
 	{
-		if value.BriefLength < 0 || value.BriefLength > 512 {
-			return false
-		}
-		if value.BriefLength > 0 {
-			if ref := w.Ids.refAtHit(123, 0xf90e421e2470877f); !w.headerPair(ref, 12) {
-				w.headerRest(ref, 12)
+		if value.Brief != 0 {
+			if ref := w.Ids.refAtHit(123, 0xf90e421e2470877f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
 			}
-			if value.BriefLength < 0 || value.BriefLength > 512 {
-				return false
-			}
-			{
-				n := int(value.BriefLength)
-				var hi, z uint64
-				p := value.Brief[:n]
-				for len(p) >= 16 {
-					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
-					hi |= x | y
-					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
-					p = p[16:]
+			if value.Brief == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
 				}
-				if len(p) >= 8 {
-					x := tableUtf8Word(p)
-					hi |= x
-					z |= (x - 0x0101010101010101) &^ x
-					p = p[8:]
-				}
-				if len(p) > 0 {
-					if n >= 8 {
-						x := tableUtf8Word(value.Brief[n-8:])
-						hi |= x
-						z |= (x - 0x0101010101010101) &^ x
-					} else {
-						for _, c := range p {
-							x := uint64(c)
-							hi |= x
-							z |= (x - 1) &^ x
-						}
-					}
-				}
-				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Brief[:n]) {
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Brief)
+				if !ok {
 					return false
 				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
 			}
-			if !w.putLebPair(uint64(value.BriefLength)) {
-				w.putLebWide(uint64(value.BriefLength))
-			}
-			w.Raw(value.Brief[:value.BriefLength])
 		}
 	}
 	{
@@ -17592,7 +17478,7 @@ func PacketLoadBody(r *TableReader, value *Packet) bool {
 				value.Epoch = uint64(v)
 			}
 		case 0xf90e421e2470877f: // brief
-			if kind != 12 {
+			if kind != 17 {
 				r.Report.KindMismatch++
 				if !r.Skip(kind) {
 					r.Report.Malformed = true
@@ -17600,25 +17486,14 @@ func PacketLoadBody(r *TableReader, value *Packet) bool {
 				}
 				break
 			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Brief, index, 0x704be0d8faaffc58, r.Report)
 			}
-			if !tableUtf8Valid(sub.Buffer) {
-				r.Report.Malformed = true
-				clear(value.Brief[:])
-				value.BriefLength = 0
-				break
-			}
-			keep := int64(len(sub.Buffer))
-			if keep > 512 {
-				keep = tableUtf8Clamp(sub.Buffer, 512)
-				r.Report.Clamped++
-			}
-			clear(value.Brief[:])
-			copy(value.Brief[:keep], sub.Buffer)
-			value.BriefLength = int32(keep)
 		case 0x67124f6a285153c0: // rules
 			if kind != 12 {
 				r.Report.KindMismatch++
@@ -18790,53 +18665,23 @@ func PacketSaveBodyFieldsRetain(w *TableRetainWriter, value *Packet) bool {
 		}
 	}
 	{
-		if value.BriefLength < 0 || value.BriefLength > 512 {
-			return false
-		}
-		if value.BriefLength > 0 {
-			if ref := w.Ids.refAtHit(123, 0xf90e421e2470877f); !w.headerPair(ref, 12) {
-				w.headerRest(ref, 12)
+		if value.Brief != 0 {
+			if ref := w.Ids.refAtHit(123, 0xf90e421e2470877f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
 			}
-			if value.BriefLength < 0 || value.BriefLength > 512 {
-				return false
-			}
-			{
-				n := int(value.BriefLength)
-				var hi, z uint64
-				p := value.Brief[:n]
-				for len(p) >= 16 {
-					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
-					hi |= x | y
-					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
-					p = p[16:]
+			if value.Brief == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
 				}
-				if len(p) >= 8 {
-					x := tableUtf8Word(p)
-					hi |= x
-					z |= (x - 0x0101010101010101) &^ x
-					p = p[8:]
-				}
-				if len(p) > 0 {
-					if n >= 8 {
-						x := tableUtf8Word(value.Brief[n-8:])
-						hi |= x
-						z |= (x - 0x0101010101010101) &^ x
-					} else {
-						for _, c := range p {
-							x := uint64(c)
-							hi |= x
-							z |= (x - 1) &^ x
-						}
-					}
-				}
-				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Brief[:n]) {
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Brief)
+				if !ok {
 					return false
 				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
 			}
-			if !w.putLebPair(uint64(value.BriefLength)) {
-				w.putLebWide(uint64(value.BriefLength))
-			}
-			w.Raw(value.Brief[:value.BriefLength])
 		}
 	}
 	{
@@ -20275,7 +20120,7 @@ func PacketLoadBodyRetain(r *TableRetainReader, value *Packet) bool {
 				value.Epoch = uint64(v)
 			}
 		case 0xf90e421e2470877f: // brief
-			if kind != 12 {
+			if kind != 17 {
 				r.Report.KindMismatch++
 				if !r.Skip(kind) {
 					r.Report.Malformed = true
@@ -20283,25 +20128,14 @@ func PacketLoadBodyRetain(r *TableRetainReader, value *Packet) bool {
 				}
 				break
 			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Brief, index, 0x704be0d8faaffc58, r.Report)
 			}
-			if !tableUtf8Valid(sub.Buffer) {
-				r.Report.Malformed = true
-				clear(value.Brief[:])
-				value.BriefLength = 0
-				break
-			}
-			keep := int64(len(sub.Buffer))
-			if keep > 512 {
-				keep = tableUtf8Clamp(sub.Buffer, 512)
-				r.Report.Clamped++
-			}
-			clear(value.Brief[:])
-			copy(value.Brief[:keep], sub.Buffer)
-			value.BriefLength = int32(keep)
 		case 0x67124f6a285153c0: // rules
 			if kind != 12 {
 				r.Report.KindMismatch++
@@ -24467,8 +24301,8 @@ var HeldCardTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "job", Json: "job", TypeName: "string", DeclaredTypeName: "string", Id: 0x45627c193a5b605c, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 160, Offset: uint32(unsafe.Offsetof(HeldCard{}.Job)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Job)), CountOffset: uint32(unsafe.Offsetof(HeldCard{}.JobLength)), PresentOffset: 0xffffffff,
-		CookOffset: 168, CookElemSize: 1, CookCountOffset: 332, CookPresentOffset: 4294967295,
+		ArrayBound: 200, Offset: uint32(unsafe.Offsetof(HeldCard{}.Job)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Job)), CountOffset: uint32(unsafe.Offsetof(HeldCard{}.JobLength)), PresentOffset: 0xffffffff,
+		CookOffset: 168, CookElemSize: 1, CookCountOffset: 372, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24479,7 +24313,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "col", Json: "col", TypeName: "string", DeclaredTypeName: "string", Id: 0xf604f3190d016791, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(HeldCard{}.Col)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Col)), CountOffset: uint32(unsafe.Offsetof(HeldCard{}.ColLength)), PresentOffset: 0xffffffff,
-		CookOffset: 336, CookElemSize: 1, CookCountOffset: 372, CookPresentOffset: 4294967295,
+		CookOffset: 376, CookElemSize: 1, CookCountOffset: 412, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24490,7 +24324,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "kind", Json: "kind", TypeName: "string", DeclaredTypeName: "string", Id: 0xef9c96d721673243, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 16, Offset: uint32(unsafe.Offsetof(HeldCard{}.Kind)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Kind)), CountOffset: uint32(unsafe.Offsetof(HeldCard{}.KindLength)), PresentOffset: 0xffffffff,
-		CookOffset: 376, CookElemSize: 1, CookCountOffset: 396, CookPresentOffset: 4294967295,
+		CookOffset: 416, CookElemSize: 1, CookCountOffset: 436, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24501,7 +24335,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "branch", Json: "branch", TypeName: "string", DeclaredTypeName: "string", Id: 0x919ec0f651278ba5, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(HeldCard{}.Branch)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Branch)), CountOffset: uint32(unsafe.Offsetof(HeldCard{}.BranchLength)), PresentOffset: 0xffffffff,
-		CookOffset: 400, CookElemSize: 1, CookCountOffset: 660, CookPresentOffset: 4294967295,
+		CookOffset: 440, CookElemSize: 1, CookCountOffset: 700, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24512,7 +24346,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "tier", Json: "tier", TypeName: "string", DeclaredTypeName: "string", Id: 0x1e6f84ef2eb65989, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 16, Offset: uint32(unsafe.Offsetof(HeldCard{}.Tier)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Tier)), CountOffset: uint32(unsafe.Offsetof(HeldCard{}.TierLength)), PresentOffset: 0xffffffff,
-		CookOffset: 664, CookElemSize: 1, CookCountOffset: 684, CookPresentOffset: 4294967295,
+		CookOffset: 704, CookElemSize: 1, CookCountOffset: 724, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24523,7 +24357,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "stream", Json: "stream", TypeName: "string", DeclaredTypeName: "string", Id: 0x4f6a36d8e8907985, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(HeldCard{}.Stream)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Stream)), CountOffset: uint32(unsafe.Offsetof(HeldCard{}.StreamLength)), PresentOffset: 0xffffffff,
-		CookOffset: 688, CookElemSize: 1, CookCountOffset: 820, CookPresentOffset: 4294967295,
+		CookOffset: 728, CookElemSize: 1, CookCountOffset: 860, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24534,7 +24368,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "attempt", Json: "attempt", TypeName: "uint32", DeclaredTypeName: "uint32", Id: 0x63e618bd2b303dee, Kind: 8, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HeldCard{}.Attempt)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Attempt)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 824, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 864, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24545,7 +24379,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "gen", Json: "gen", TypeName: "uint32", DeclaredTypeName: "uint32", Id: 0xd4e26d18faaa8af5, Kind: 8, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HeldCard{}.Gen)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Gen)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 828, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 868, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24556,7 +24390,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "epoch", Json: "epoch", TypeName: "uint64", DeclaredTypeName: "uint64", Id: 0xfc9697d1196e6ba6, Kind: 9, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HeldCard{}.Epoch)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Epoch)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 832, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 872, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24567,7 +24401,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "repo", Json: "repo", TypeName: "string", DeclaredTypeName: "string", Id: 0x4cac581fbfac663d, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(HeldCard{}.Repo)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Repo)), CountOffset: uint32(unsafe.Offsetof(HeldCard{}.RepoLength)), PresentOffset: 0xffffffff,
-		CookOffset: 840, CookElemSize: 1, CookCountOffset: 972, CookPresentOffset: 4294967295,
+		CookOffset: 880, CookElemSize: 1, CookCountOffset: 1012, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24578,7 +24412,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "base_branch", Json: "base", TypeName: "string", DeclaredTypeName: "string", Id: 0xce7ab7bf2ce42bc5, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(HeldCard{}.BaseBranch)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.BaseBranch)), CountOffset: uint32(unsafe.Offsetof(HeldCard{}.BaseBranchLength)), PresentOffset: 0xffffffff,
-		CookOffset: 976, CookElemSize: 1, CookCountOffset: 1236, CookPresentOffset: 4294967295,
+		CookOffset: 1016, CookElemSize: 1, CookCountOffset: 1276, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24587,11 +24421,11 @@ var HeldCardTableFields = []TableFieldInfo{
 		Arms:  nil,
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
-	{Name: "brief", Json: "brief", TypeName: "string", DeclaredTypeName: "string", Id: 0xf90e421e2470877f, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 512, Offset: uint32(unsafe.Offsetof(HeldCard{}.Brief)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Brief)), CountOffset: uint32(unsafe.Offsetof(HeldCard{}.BriefLength)), PresentOffset: 0xffffffff,
-		CookOffset: 1240, CookElemSize: 1, CookCountOffset: 1756, CookPresentOffset: 4294967295,
+	{Name: "brief", Json: "brief", TypeName: "string", DeclaredTypeName: "string", Id: 0xf90e421e2470877f, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HeldCard{}.Brief)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Brief)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 1280, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
 		EnumName:    nil,
 		VariantId:   nil,
 		KeyTypeName: "", KeyName: nil, KeyId: nil,
@@ -24600,7 +24434,7 @@ var HeldCardTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "lane", Json: "lane", TypeName: "uint32", DeclaredTypeName: "uint32", Id: 0x460ddad9060af0f, Kind: 8, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HeldCard{}.Lane)), ElemSize: uint32(unsafe.Sizeof(HeldCard{}.Lane)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 1760, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 1288, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 1024.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -24615,7 +24449,7 @@ var HeldCardTableFields = []TableFieldInfo{
 var HeldCardTableInfo TableTypeInfo
 
 func init() {
-	HeldCardTableInfo = TableTypeInfo{Name: "HeldCard", Size: uint32(unsafe.Sizeof(HeldCard{})), NumFields: 14, Fields: HeldCardTableFields, Reset: func(storage unsafe.Pointer) { HeldCardReset((*HeldCard)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x32545b15e796cc4c, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return HeldCardSaveBody(w, (*HeldCard)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return HeldCardLoadBody(&r, (*HeldCard)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return HeldCardSaveBodyRetain(w, (*HeldCard)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return HeldCardLoadBodyRetain(&r, (*HeldCard)(p)) }, CookSize: 1768, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+	HeldCardTableInfo = TableTypeInfo{Name: "HeldCard", Size: uint32(unsafe.Sizeof(HeldCard{})), NumFields: 14, Fields: HeldCardTableFields, Reset: func(storage unsafe.Pointer) { HeldCardReset((*HeldCard)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x32545b15e796cc4c, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return HeldCardSaveBody(w, (*HeldCard)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return HeldCardLoadBody(&r, (*HeldCard)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return HeldCardSaveBodyRetain(w, (*HeldCard)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return HeldCardLoadBodyRetain(&r, (*HeldCard)(p)) }, CookSize: 1296, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
 		switch id {
 		}
 		return nil
@@ -24640,7 +24474,7 @@ var HeldAnswerTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "cards", Json: "cards", TypeName: "HeldCard", DeclaredTypeName: "HeldCard", Id: 0xaf9dac3b097689c4, Kind: 13, IsArray: true, Counted: true, Optional: false,
 		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(HeldAnswer{}.Cards)), ElemSize: uint32(unsafe.Sizeof(*new(HeldCardRow))), CountOffset: (uint32(unsafe.Offsetof(HeldAnswer{}.Cards))) + 8, PresentOffset: 0xffffffff,
-		CookOffset: 72, CookElemSize: 1768, CookCountOffset: 80, CookPresentOffset: 4294967295,
+		CookOffset: 72, CookElemSize: 1296, CookCountOffset: 80, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		List: true, ElemAlign: 8,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
@@ -25408,11 +25242,11 @@ var PacketTableFields = []TableFieldInfo{
 		Arms:  nil,
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
-	{Name: "brief", Json: "brief", TypeName: "string", DeclaredTypeName: "string", Id: 0xf90e421e2470877f, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 512, Offset: uint32(unsafe.Offsetof(Packet{}.Brief)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Brief)), CountOffset: uint32(unsafe.Offsetof(Packet{}.BriefLength)), PresentOffset: 0xffffffff,
-		CookOffset: 504, CookElemSize: 1, CookCountOffset: 1020, CookPresentOffset: 4294967295,
+	{Name: "brief", Json: "brief", TypeName: "string", DeclaredTypeName: "string", Id: 0xf90e421e2470877f, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Packet{}.Brief)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Brief)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 504, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
 		EnumName:    nil,
 		VariantId:   nil,
 		KeyTypeName: "", KeyName: nil, KeyId: nil,
@@ -25421,7 +25255,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "rules", Json: "rules", TypeName: "string", DeclaredTypeName: "string", Id: 0x67124f6a285153c0, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 512, Offset: uint32(unsafe.Offsetof(Packet{}.Rules)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Rules)), CountOffset: uint32(unsafe.Offsetof(Packet{}.RulesLength)), PresentOffset: 0xffffffff,
-		CookOffset: 1024, CookElemSize: 1, CookCountOffset: 1540, CookPresentOffset: 4294967295,
+		CookOffset: 512, CookElemSize: 1, CookCountOffset: 1028, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25432,7 +25266,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "fix", Json: "fix", TypeName: "string", DeclaredTypeName: "string", Id: 0xdc9e7e18fec93bb8, Kind: 17, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Packet{}.Fix)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Fix)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 1544, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 1032, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
 		EnumName:    nil,
@@ -25443,7 +25277,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "finding", Json: "finding", TypeName: "string", DeclaredTypeName: "string", Id: 0x35ceaba76a4aabe6, Kind: 17, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Packet{}.Finding)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Finding)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 1552, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 1040, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
 		EnumName:    nil,
@@ -25454,7 +25288,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "why", Json: "why", TypeName: "string", DeclaredTypeName: "string", Id: 0x5ec5ea1948914a79, Kind: 17, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Packet{}.Why)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Why)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 1560, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 1048, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
 		EnumName:    nil,
@@ -25465,7 +25299,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "notes", Json: "notes", TypeName: "Line", DeclaredTypeName: "Line", Id: 0x40906c71b95bdbaa, Kind: 13, IsArray: true, Counted: true, Optional: false,
 		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(Packet{}.Notes)), ElemSize: uint32(unsafe.Sizeof(*new(LineRow))), CountOffset: (uint32(unsafe.Offsetof(Packet{}.Notes))) + 8, PresentOffset: 0xffffffff,
-		CookOffset: 1568, CookElemSize: 8, CookCountOffset: 1576, CookPresentOffset: 4294967295,
+		CookOffset: 1056, CookElemSize: 8, CookCountOffset: 1064, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		List: true, ElemAlign: 8,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
@@ -25477,7 +25311,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "branch", Json: "branch", TypeName: "string", DeclaredTypeName: "string", Id: 0x919ec0f651278ba5, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(Packet{}.Branch)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Branch)), CountOffset: uint32(unsafe.Offsetof(Packet{}.BranchLength)), PresentOffset: 0xffffffff,
-		CookOffset: 1584, CookElemSize: 1, CookCountOffset: 1844, CookPresentOffset: 4294967295,
+		CookOffset: 1072, CookElemSize: 1, CookCountOffset: 1332, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25488,7 +25322,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "base_branch", Json: "base", TypeName: "string", DeclaredTypeName: "string", Id: 0xce7ab7bf2ce42bc5, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(Packet{}.BaseBranch)), ElemSize: uint32(unsafe.Sizeof(Packet{}.BaseBranch)), CountOffset: uint32(unsafe.Offsetof(Packet{}.BaseBranchLength)), PresentOffset: 0xffffffff,
-		CookOffset: 1848, CookElemSize: 1, CookCountOffset: 2108, CookPresentOffset: 4294967295,
+		CookOffset: 1336, CookElemSize: 1, CookCountOffset: 1596, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25499,7 +25333,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "base_head", Json: "base_head", TypeName: "string", DeclaredTypeName: "string", Id: 0x9069304ae8bb5623, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(Packet{}.BaseHead)), ElemSize: uint32(unsafe.Sizeof(Packet{}.BaseHead)), CountOffset: uint32(unsafe.Offsetof(Packet{}.BaseHeadLength)), PresentOffset: 0xffffffff,
-		CookOffset: 2112, CookElemSize: 1, CookCountOffset: 2180, CookPresentOffset: 4294967295,
+		CookOffset: 1600, CookElemSize: 1, CookCountOffset: 1668, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25510,7 +25344,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "base_attempt", Json: "base_attempt", TypeName: "uint32", DeclaredTypeName: "uint32", Id: 0x93187a82f702c88e, Kind: 8, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Packet{}.BaseAttempt)), ElemSize: uint32(unsafe.Sizeof(Packet{}.BaseAttempt)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 2184, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 1672, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25521,7 +25355,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "worker", Json: "worker", TypeName: "string", DeclaredTypeName: "string", Id: 0xa51a677d5b590177, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(Packet{}.Worker)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Worker)), CountOffset: uint32(unsafe.Offsetof(Packet{}.WorkerLength)), PresentOffset: 0xffffffff,
-		CookOffset: 2188, CookElemSize: 1, CookCountOffset: 2256, CookPresentOffset: 4294967295,
+		CookOffset: 1676, CookElemSize: 1, CookCountOffset: 1744, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25532,7 +25366,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "head", Json: "head", TypeName: "string", DeclaredTypeName: "string", Id: 0xa8f12cc5f9a0c03, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(Packet{}.Head)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Head)), CountOffset: uint32(unsafe.Offsetof(Packet{}.HeadLength)), PresentOffset: 0xffffffff,
-		CookOffset: 2260, CookElemSize: 1, CookCountOffset: 2328, CookPresentOffset: 4294967295,
+		CookOffset: 1748, CookElemSize: 1, CookCountOffset: 1816, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25543,7 +25377,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "work_branch", Json: "work_branch", TypeName: "string", DeclaredTypeName: "string", Id: 0x8e3fa378a6b7f3ed, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(Packet{}.WorkBranch)), ElemSize: uint32(unsafe.Sizeof(Packet{}.WorkBranch)), CountOffset: uint32(unsafe.Offsetof(Packet{}.WorkBranchLength)), PresentOffset: 0xffffffff,
-		CookOffset: 2332, CookElemSize: 1, CookCountOffset: 2592, CookPresentOffset: 4294967295,
+		CookOffset: 1820, CookElemSize: 1, CookCountOffset: 2080, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25554,7 +25388,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "work_base", Json: "work_base", TypeName: "string", DeclaredTypeName: "string", Id: 0x8433717273a41760, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(Packet{}.WorkBase)), ElemSize: uint32(unsafe.Sizeof(Packet{}.WorkBase)), CountOffset: uint32(unsafe.Offsetof(Packet{}.WorkBaseLength)), PresentOffset: 0xffffffff,
-		CookOffset: 2596, CookElemSize: 1, CookCountOffset: 2856, CookPresentOffset: 4294967295,
+		CookOffset: 2084, CookElemSize: 1, CookCountOffset: 2344, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25565,7 +25399,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "report", Json: "report", TypeName: "string", DeclaredTypeName: "string", Id: 0xadae49645df2840b, Kind: 17, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Packet{}.Report)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Report)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 2864, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 2352, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
 		EnumName:    nil,
@@ -25576,7 +25410,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "route", Json: "route", TypeName: "string", DeclaredTypeName: "string", Id: 0x3127fb469f19ebde, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(Packet{}.Route)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Route)), CountOffset: uint32(unsafe.Offsetof(Packet{}.RouteLength)), PresentOffset: 0xffffffff,
-		CookOffset: 2872, CookElemSize: 1, CookCountOffset: 2940, CookPresentOffset: 4294967295,
+		CookOffset: 2360, CookElemSize: 1, CookCountOffset: 2428, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25587,7 +25421,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "model", Json: "model", TypeName: "string", DeclaredTypeName: "string", Id: 0x9de543933e6e703a, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(Packet{}.Model)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Model)), CountOffset: uint32(unsafe.Offsetof(Packet{}.ModelLength)), PresentOffset: 0xffffffff,
-		CookOffset: 2944, CookElemSize: 1, CookCountOffset: 3076, CookPresentOffset: 4294967295,
+		CookOffset: 2432, CookElemSize: 1, CookCountOffset: 2564, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25598,7 +25432,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "tokens", Json: "tokens", TypeName: "string", DeclaredTypeName: "string", Id: 0x93fab8f021712b13, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(Packet{}.Tokens)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Tokens)), CountOffset: uint32(unsafe.Offsetof(Packet{}.TokensLength)), PresentOffset: 0xffffffff,
-		CookOffset: 3080, CookElemSize: 1, CookCountOffset: 3116, CookPresentOffset: 4294967295,
+		CookOffset: 2568, CookElemSize: 1, CookCountOffset: 2604, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25609,7 +25443,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "usd", Json: "usd", TypeName: "string", DeclaredTypeName: "string", Id: 0x4c52b1193dcce7e7, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(Packet{}.Usd)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Usd)), CountOffset: uint32(unsafe.Offsetof(Packet{}.UsdLength)), PresentOffset: 0xffffffff,
-		CookOffset: 3120, CookElemSize: 1, CookCountOffset: 3156, CookPresentOffset: 4294967295,
+		CookOffset: 2608, CookElemSize: 1, CookCountOffset: 2644, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25620,7 +25454,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "harness", Json: "harness", TypeName: "string", DeclaredTypeName: "string", Id: 0x211fcbbafe5331ab, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(Packet{}.Harness)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Harness)), CountOffset: uint32(unsafe.Offsetof(Packet{}.HarnessLength)), PresentOffset: 0xffffffff,
-		CookOffset: 3160, CookElemSize: 1, CookCountOffset: 3196, CookPresentOffset: 4294967295,
+		CookOffset: 2648, CookElemSize: 1, CookCountOffset: 2684, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25631,7 +25465,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "deadline", Json: "deadline", TypeName: "uint32", DeclaredTypeName: "uint32", Id: 0x4abbaca40bb6fe75, Kind: 8, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Packet{}.Deadline)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Deadline)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 3200, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 2688, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 1e+08, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25642,7 +25476,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "rate_rpm", Json: "rate_rpm", TypeName: "uint32", DeclaredTypeName: "uint32", Id: 0x1e9c7e26c6e7e535, Kind: 8, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Packet{}.RateRpm)), ElemSize: uint32(unsafe.Sizeof(Packet{}.RateRpm)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 3204, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 2692, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 1e+08, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25653,7 +25487,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "rate_concurrent", Json: "rate_concurrent", TypeName: "uint32", DeclaredTypeName: "uint32", Id: 0xb6e7951a47a01bd9, Kind: 8, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Packet{}.RateConcurrent)), ElemSize: uint32(unsafe.Sizeof(Packet{}.RateConcurrent)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 3208, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 2696, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 1e+06, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25664,7 +25498,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "tier", Json: "tier", TypeName: "string", DeclaredTypeName: "string", Id: 0x1e6f84ef2eb65989, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 16, Offset: uint32(unsafe.Offsetof(Packet{}.Tier)), ElemSize: uint32(unsafe.Sizeof(Packet{}.Tier)), CountOffset: uint32(unsafe.Offsetof(Packet{}.TierLength)), PresentOffset: 0xffffffff,
-		CookOffset: 3212, CookElemSize: 1, CookCountOffset: 3232, CookPresentOffset: 4294967295,
+		CookOffset: 2700, CookElemSize: 1, CookCountOffset: 2720, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25675,7 +25509,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "decide_bounce", Json: "decide_bounce", TypeName: "string", DeclaredTypeName: "string", Id: 0x364f8f1334dc227a, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(Packet{}.DecideBounce)), ElemSize: uint32(unsafe.Sizeof(Packet{}.DecideBounce)), CountOffset: uint32(unsafe.Offsetof(Packet{}.DecideBounceLength)), PresentOffset: 0xffffffff,
-		CookOffset: 3236, CookElemSize: 1, CookCountOffset: 3272, CookPresentOffset: 4294967295,
+		CookOffset: 2724, CookElemSize: 1, CookCountOffset: 2760, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25686,7 +25520,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "decide_review", Json: "decide_review", TypeName: "string", DeclaredTypeName: "string", Id: 0xb17ac487d29d6e42, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(Packet{}.DecideReview)), ElemSize: uint32(unsafe.Sizeof(Packet{}.DecideReview)), CountOffset: uint32(unsafe.Offsetof(Packet{}.DecideReviewLength)), PresentOffset: 0xffffffff,
-		CookOffset: 3276, CookElemSize: 1, CookCountOffset: 3312, CookPresentOffset: 4294967295,
+		CookOffset: 2764, CookElemSize: 1, CookCountOffset: 2800, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25697,7 +25531,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "decide_gate_flaky", Json: "decide_gate_flaky", TypeName: "string", DeclaredTypeName: "string", Id: 0x51b5e2696d2d0b97, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(Packet{}.DecideGateFlaky)), ElemSize: uint32(unsafe.Sizeof(Packet{}.DecideGateFlaky)), CountOffset: uint32(unsafe.Offsetof(Packet{}.DecideGateFlakyLength)), PresentOffset: 0xffffffff,
-		CookOffset: 3316, CookElemSize: 1, CookCountOffset: 3352, CookPresentOffset: 4294967295,
+		CookOffset: 2804, CookElemSize: 1, CookCountOffset: 2840, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25708,7 +25542,7 @@ var PacketTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "decide_gate_preexisting", Json: "decide_gate_preexisting", TypeName: "string", DeclaredTypeName: "string", Id: 0x2b7d15b2bf924552, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(Packet{}.DecideGatePreexisting)), ElemSize: uint32(unsafe.Sizeof(Packet{}.DecideGatePreexisting)), CountOffset: uint32(unsafe.Offsetof(Packet{}.DecideGatePreexistingLength)), PresentOffset: 0xffffffff,
-		CookOffset: 3356, CookElemSize: 1, CookCountOffset: 3392, CookPresentOffset: 4294967295,
+		CookOffset: 2844, CookElemSize: 1, CookCountOffset: 2880, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -25723,7 +25557,7 @@ var PacketTableFields = []TableFieldInfo{
 var PacketTableInfo TableTypeInfo
 
 func init() {
-	PacketTableInfo = TableTypeInfo{Name: "Packet", Size: uint32(unsafe.Sizeof(Packet{})), NumFields: 37, Fields: PacketTableFields, Reset: func(storage unsafe.Pointer) { PacketReset((*Packet)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x64777a6e6fe2f9f1, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return PacketSaveBody(w, (*Packet)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return PacketLoadBody(&r, (*Packet)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return PacketSaveBodyRetain(w, (*Packet)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return PacketLoadBodyRetain(&r, (*Packet)(p)) }, CookSize: 3400, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+	PacketTableInfo = TableTypeInfo{Name: "Packet", Size: uint32(unsafe.Sizeof(Packet{})), NumFields: 37, Fields: PacketTableFields, Reset: func(storage unsafe.Pointer) { PacketReset((*Packet)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x64777a6e6fe2f9f1, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return PacketSaveBody(w, (*Packet)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return PacketLoadBody(&r, (*Packet)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return PacketSaveBodyRetain(w, (*Packet)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return PacketLoadBodyRetain(&r, (*Packet)(p)) }, CookSize: 2888, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
 		switch id {
 		}
 		return nil
@@ -25921,7 +25755,7 @@ func QueueOutTableType() *TableTypeInfo { return &QueueOutTableInfo }
 var TakeOutTableFields = []TableFieldInfo{
 	{Name: "packets", Json: "packets", TypeName: "Packet", DeclaredTypeName: "Packet", Id: 0x747ac0ec4bc12286, Kind: 13, IsArray: true, Counted: true, Optional: false,
 		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(TakeOut{}.Packets)), ElemSize: uint32(unsafe.Sizeof(*new(PacketRow))), CountOffset: (uint32(unsafe.Offsetof(TakeOut{}.Packets))) + 8, PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 3400, CookCountOffset: 8, CookPresentOffset: 4294967295,
+		CookOffset: 0, CookElemSize: 2888, CookCountOffset: 8, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		List: true, ElemAlign: 8,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,

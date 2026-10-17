@@ -629,8 +629,10 @@ func TestWorkerAnswersGolden(t *testing.T) {
 	t.Run("friend cards answer", func(t *testing.T) {
 		t.Parallel()
 		card := `{"card":"a11-defs-worker-answers","job":"a11-defs-worker-answers.w1~21","col":"working","kind":"work","branch":"sprint/a.w1.g1.e21","tier":"pro","stream":"v15-schema-tables","attempt":1,"gen":1,"epoch":21,"repo":"mas-bandwidth/nova-tools","base":"sprint/v15-schema-tables","brief":"/inbox/a/BRIEF.md","lane":2}`
+		// a brief past 512 bytes and a 200 byte job (pkg/friend validJob) are held whole
+		longCard := `{"card":"a","job":"` + strings.Repeat("j", 200) + `","brief":"` + strings.Repeat("b", 600) + `"}`
 		runRoot(t, "HeldAnswer", heldAnswerOps, heldConstraints,
-			`{"friend":"rowan","cards":[`+card+`]}`, 0, []bad{
+			`{"friend":"rowan","cards":[`+card+`,`+longCard+`]}`, 0, []bad{
 				{"a friend name past 64 bytes", `{"friend":"` + strings.Repeat("a", 65) + `","cards":[]}`, schemaread.ReasonClamped, "", false},
 				{"cards past the ceiling", `{"friend":"rowan","cards":[` + many(maxCards+1, card) + `]}`, schemaread.ReasonClamped, "cards", true},
 				{"a lane past 1024", `{"friend":"rowan","cards":[{"card":"a","lane":1025}]}`, schemaread.ReasonClamped, "", false},
@@ -648,6 +650,15 @@ func TestWorkerAnswersGolden(t *testing.T) {
 		assert.Equal(t, "a.w1~21", string(c.Job[:c.JobLength]))
 		assert.Equal(t, uint64(21), c.Epoch)
 		assert.Equal(t, uint32(2), c.Lane)
+
+		// the struct writes a 600 byte brief and a 200 byte job: both read back whole
+		long := friend.HeldCard{Card: "a", Job: strings.Repeat("j", 200), Brief: strings.Repeat("b", 600)}
+		raw, err = json.Marshal(friend.HeldAnswer{Friend: "rowan", Cards: []friend.HeldCard{long}})
+		require.NoError(t, err)
+		got, _, err = schemaread.NewReader(codecOf("HeldAnswer", heldAnswerOps, heldConstraints)).Read(raw)
+		require.NoError(t, err)
+		c = got.v.Cards.At(0)
+		assert.Equal(t, long.Job, string(c.Job[:c.JobLength]))
 	})
 
 	t.Run("worker view", func(t *testing.T) {
@@ -703,7 +714,7 @@ func TestWorkerAnswersGolden(t *testing.T) {
 		t.Parallel()
 		packet := `{"billing":"plan","card":"a11","kind":"work","as":"rowan","primary":"rowan","stream":"v15","attempt":1,"gen":1,"epoch":21,"brief":"/b","notes":[{"s":"one"},{"s":"two"}],"branch":"sprint/a","base":"sprint/v15","base_head":"abc","base_attempt":1,"worker":"rowan","head":"def","work_branch":"w","work_base":"b","report":"done","route":"r","model":"m","tokens":"1000","usd":"2.5","harness":"claude","deadline":9000,"rate_rpm":60,"rate_concurrent":4,"tier":"pro","decide_bounce":"0.2","decide_review":"0.1","decide_gate_flaky":"0.3","decide_gate_preexisting":"0.4"}`
 		runRoot(t, "TakeOut", takeOutOps, takeConstraints,
-			`{"packets":[`+packet+`,{"card":"a12","kind":"read","finding":"f","why":"w"}]}`, 0, []bad{
+			`{"packets":[`+packet+`,{"card":"a12","kind":"read","finding":"f","why":"w"},{"card":"a13","brief":"`+strings.Repeat("b", 600)+`"}]}`, 0, []bad{
 				{"a card past 160 bytes", `{"packets":[{"card":"` + strings.Repeat("c", 161) + `"}]}`, schemaread.ReasonClamped, "", false},
 				{"a deadline past its bound", `{"packets":[{"card":"a","deadline":100000001}]}`, schemaread.ReasonClamped, "", false},
 				{"packets past the ceiling", `{"packets":[` + many(maxCards+1, `{"card":"a"}`) + `]}`, schemaread.ReasonClamped, "packets", true},

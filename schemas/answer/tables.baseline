@@ -11,7 +11,7 @@ table HeldAnswer
 
 table HeldCard
     field card id=0xb5614e90e87b455f kind=12 size=160
-    field job id=0x45627c193a5b605c kind=12 size=160
+    field job id=0x45627c193a5b605c kind=12 size=200
     field col id=0xf604f3190d016791 kind=12 size=32
     field kind id=0xef9c96d721673243 kind=12 size=16
     field branch id=0x919ec0f651278ba5 kind=12 size=256
@@ -22,7 +22,7 @@ table HeldCard
     field epoch id=0xfc9697d1196e6ba6 kind=9
     field repo id=0x4cac581fbfac663d kind=12 size=128
     field base_branch id=0xce7ab7bf2ce42bc5 kind=12 size=256
-    field brief id=0xf90e421e2470877f kind=12 size=512
+    field brief id=0xf90e421e2470877f kind=17 type=string
     field lane id=0x0460ddad9060af0f kind=8 min=0 max=1024
 
 table HolderCard
@@ -57,7 +57,7 @@ table Packet
     field attempt id=0x63e618bd2b303dee kind=8 min=0 max=100000
     field gen id=0xd4e26d18faaa8af5 kind=8 min=0 max=100000
     field epoch id=0xfc9697d1196e6ba6 kind=9
-    field brief id=0xf90e421e2470877f kind=12 size=512
+    field brief id=0xf90e421e2470877f kind=17 type=string
     field rules id=0x67124f6a285153c0 kind=12 size=512
     field fix id=0xdc9e7e18fec93bb8 kind=17 type=string
     field finding id=0x35ceaba76a4aabe6 kind=17 type=string
@@ -194,3 +194,9 @@ enum PacketKind
 ## history
 ### 2026-10-17 (UTC) — first baseline
 - baseline created over 24 tables — data written BEFORE this point is not covered by it
+
+### 2026-10-17 (UTC) — a11 w2: brief fields unbounded text and job to 200, the read of PR 5899 found the code writes them uncapped (first unmerged edit of the baseline)
+- HeldCard.brief: wire kind 12 -> 17 [refuse]
+- HeldCard.brief: nested table string added [refuse]
+- Packet.brief: wire kind 12 -> 17 [refuse]
+- Packet.brief: nested table string added [refuse]
