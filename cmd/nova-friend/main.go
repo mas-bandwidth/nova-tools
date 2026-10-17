@@ -14,7 +14,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -32,11 +31,13 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/hookgate"
+	"github.com/mas-bandwidth/nova-tools/pkg/answerwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
@@ -2438,33 +2439,95 @@ func (w world) host(c *tool.Call) *tool.Out {
 	return tool.Done().Fact("session", res.Session).Fact("dir", dir).Fact("attach", tool.Text(res.Attach))
 }
 
-// parseHolders reads the server's view cards document, schema 1. Empty holders
-// mean no working fleet row holds the card; malformed or mismatched documents
-// never supply an ownership name.
+// init wires the generated HoldersView table loads into the cards-view reader
+// (pkg/answerwire, schemas/answer). pkg/friend does not import pkg/answerwire,
+// which imports pkg/friend; this binary imports both and installs the loads, so
+// a table image, its base64 or the schema JSON text reads in the binary instead
+// of being refused as unknown_form (S4: readers first).
+func init() {
+	friend.RegisterHoldersWire(
+		func(wire []byte) error {
+			_, err := answerwire.HoldersViewLoadMeasureReason(wire)
+			return err
+		},
+		holdersLoadWire,
+		holdersLoadJSON,
+		nil, nil, // writers stay legacy; only the read side moves here
+	)
+}
+
+// holdersLoadWire loads one HoldersView table image into a region and reduces
+// it to the owners map (the reader reads the wire by its measure, then loads).
+func holdersLoadWire(v *friend.Holders, in []byte) schemaread.Report {
+	n := answerwire.HoldersViewLoadMeasure(in)
+	if n < 0 {
+		return schemaread.Report{Malformed: true}
+	}
+	raw := make([]byte, n+63)
+	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
+	region := raw[off : off+uintptr(n)]
+	var rep answerwire.TableReport
+	root := answerwire.HoldersViewLoad(region, in, &rep)
+	return holdersReduce(v, root, &rep)
+}
+
+// holdersLoadJSON loads the schema JSON text form through the generated builder.
+func holdersLoadJSON(v *friend.Holders, in []byte) schemaread.Report {
+	var b answerwire.HoldersViewBuilder
+	if !b.Init() {
+		return schemaread.Report{Malformed: true}
+	}
+	defer b.Shutdown()
+	var rep answerwire.TableReport
+	if !answerwire.HoldersViewFromJson(&b, in, &rep) || !b.Lock() {
+		return schemaread.Report{Malformed: true, Reason: rep.Reason}
+	}
+	return holdersReduce(v, b.AsConst(), &rep)
+}
+
+// holdersReduce reduces a loaded HoldersView to the owners map, refusing a
+// document that is not the cards view schema 1 or that holds an empty or
+// duplicate card id.
+func holdersReduce(v *friend.Holders, root *answerwire.HoldersView, rep *answerwire.TableReport) schemaread.Report {
+	out := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped), Malformed: rep.Malformed || rep.Duplicate > 0 || root == nil}
+	if rep.Verdict == answerwire.TableOpenRefused || rep.Verdict == answerwire.TableOpenDamaged {
+		if err := rep.Err(); err != nil {
+			out.Reason = err.Error()
+		}
+	}
+	if root == nil || out.Reason != "" || out.Malformed || out.KindMismatch > 0 || out.Clamped > 0 {
+		return out
+	}
+	if string(root.View[:root.ViewLength]) != "cards" || root.Schema != 1 {
+		return schemaread.Report{Reason: schemaread.ReasonKindMismatch}
+	}
+	m := map[string]string{}
+	for i := int32(0); i < root.Cards.Count; i++ {
+		c := root.Cards.At(i)
+		if c.IdLength <= 0 {
+			return schemaread.Report{Malformed: true}
+		}
+		id := string(c.Id[:c.IdLength])
+		if _, dup := m[id]; dup {
+			return schemaread.Report{Malformed: true}
+		}
+		if c.HolderLength > 0 {
+			m[id] = string(c.Holder[:c.HolderLength])
+		}
+	}
+	*v = m
+	return out
+}
+
+// parseHolders reads the server's view cards document, schema 1, through the
+// strict cards-view reader (CARD_HOLDERS, pkg/schemaread). Empty holders mean
+// no working fleet row holds the card; malformed or mismatched documents are
+// refused by name and never supply an ownership name.
 func parseHolders(out string) (map[string]string, error) {
-	var v struct {
-		View   string `json:"view"`
-		Schema int    `json:"schema"`
-		Cards  []struct {
-			ID     string `json:"id"`
-			Holder string `json:"holder"`
-		} `json:"cards"`
+	h := friend.NewHoldersReader()
+	v, _, err := h.Read([]byte(out))
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal([]byte(out), &v); err != nil {
-		return nil, errors.New("card holders: the view is not valid JSON")
-	}
-	if v.View != "cards" || v.Schema != 1 {
-		return nil, errors.New("card holders: expected view cards schema 1")
-	}
-	holders, seen := map[string]string{}, map[string]bool{}
-	for _, c := range v.Cards {
-		if c.ID == "" || seen[c.ID] {
-			return nil, errors.New("card holders: empty or duplicate card id")
-		}
-		seen[c.ID] = true
-		if c.Holder != "" {
-			holders[c.ID] = c.Holder
-		}
-	}
-	return holders, nil
+	return map[string]string(v), nil
 }
