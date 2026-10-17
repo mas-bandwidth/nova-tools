@@ -1,0 +1,15 @@
+schema-tables-baseline 7
+package tablemodeltracewire
+
+table ModelHash
+    field module id=0x43e6a23362b6dadd kind=12 size=160
+    field sha256 id=0x31c5f470214e1c5a kind=12 size=64
+
+table ModelTrace
+    field sourceSha256 id=0x4fbdf626b33de6bf kind=12 size=64
+    field modelSha256 id=0x952f22722a282495 kind=14 elem=13 type=ModelHash array=unbounded
+    field stepCount id=0x25b7fb969ec3a816 kind=4 min=0 max=40
+
+## history
+### 2026-10-17 (UTC) — first baseline
+- baseline created over 2 tables — data written BEFORE this point is not covered by it

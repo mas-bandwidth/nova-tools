@@ -325,7 +325,7 @@ func ModelPhysSaveMessageBody(w *TableMessageWriter, value *ModelPhys) bool {
 			return false
 		}
 		if value.TableNameLength > 0 {
-			w.Put(30, TableMessageRefBitsHere)
+			w.Put(28, TableMessageRefBitsHere)
 			if value.TableNameLength < 0 || value.TableNameLength > 16 {
 				return false
 			}
@@ -335,7 +335,7 @@ func ModelPhysSaveMessageBody(w *TableMessageWriter, value *ModelPhys) bool {
 	}
 	{
 		if value.Epoch != 0 {
-			w.Put(31, TableMessageRefBitsHere)
+			w.Put(29, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 20, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Epoch), uint64(0))
 		}
 	}
@@ -1535,7 +1535,7 @@ func ModelPlacementSaveMessageBody(w *TableMessageWriter, value *ModelPlacement)
 			return false
 		}
 		if value.LocationsCount > 0 {
-			w.Put(32, TableMessageRefBitsHere)
+			w.Put(30, TableMessageRefBitsHere)
 			if value.LocationsCount < 0 || value.LocationsCount > 4 {
 				return false
 			}
@@ -1747,7 +1747,7 @@ func ModelSeenSaveMessageBody(w *TableMessageWriter, value *ModelSeen) bool {
 			return false
 		}
 		if value.WriterLength > 0 {
-			w.Put(36, TableMessageRefBitsHere)
+			w.Put(34, TableMessageRefBitsHere)
 			if value.WriterLength < 0 || value.WriterLength > 16 {
 				return false
 			}
@@ -1757,7 +1757,7 @@ func ModelSeenSaveMessageBody(w *TableMessageWriter, value *ModelSeen) bool {
 	}
 	{
 		if value.Epoch != 0 {
-			w.Put(31, TableMessageRefBitsHere)
+			w.Put(29, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 20, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Epoch), uint64(0))
 		}
 	}
@@ -1947,7 +1947,7 @@ func ModelStateSaveMessageBody(w *TableMessageWriter, value *ModelState) bool {
 			return false
 		}
 		if value.LiveCount > 0 {
-			w.Put(37, TableMessageRefBitsHere)
+			w.Put(35, TableMessageRefBitsHere)
 			if value.LiveCount < 0 || value.LiveCount > 4 {
 				return false
 			}
@@ -1964,7 +1964,7 @@ func ModelStateSaveMessageBody(w *TableMessageWriter, value *ModelState) bool {
 			return false
 		}
 		if value.RowsCount > 0 {
-			w.Put(38, TableMessageRefBitsHere)
+			w.Put(36, TableMessageRefBitsHere)
 			if value.RowsCount < 0 || value.RowsCount > 8 {
 				return false
 			}
@@ -1981,7 +1981,7 @@ func ModelStateSaveMessageBody(w *TableMessageWriter, value *ModelState) bool {
 			return false
 		}
 		if value.BindsCount > 0 {
-			w.Put(39, TableMessageRefBitsHere)
+			w.Put(37, TableMessageRefBitsHere)
 			if value.BindsCount < 0 || value.BindsCount > 25 {
 				return false
 			}
@@ -1998,7 +1998,7 @@ func ModelStateSaveMessageBody(w *TableMessageWriter, value *ModelState) bool {
 			return false
 		}
 		if value.DataCount > 0 {
-			w.Put(40, TableMessageRefBitsHere)
+			w.Put(38, TableMessageRefBitsHere)
 			if value.DataCount < 0 || value.DataCount > 75 {
 				return false
 			}
@@ -2015,7 +2015,7 @@ func ModelStateSaveMessageBody(w *TableMessageWriter, value *ModelState) bool {
 			return false
 		}
 		if value.PlaceCount > 0 {
-			w.Put(41, TableMessageRefBitsHere)
+			w.Put(39, TableMessageRefBitsHere)
 			if value.PlaceCount < 0 || value.PlaceCount > 3 {
 				return false
 			}
@@ -2029,7 +2029,7 @@ func ModelStateSaveMessageBody(w *TableMessageWriter, value *ModelState) bool {
 	}
 	{
 		if value.Active != 0 {
-			w.Put(42, TableMessageRefBitsHere)
+			w.Put(40, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 20, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Active), uint64(0))
 		}
 	}
@@ -2038,7 +2038,7 @@ func ModelStateSaveMessageBody(w *TableMessageWriter, value *ModelState) bool {
 			return false
 		}
 		if value.SeenCount > 0 {
-			w.Put(43, TableMessageRefBitsHere)
+			w.Put(41, TableMessageRefBitsHere)
 			if value.SeenCount < 0 || value.SeenCount > 2 {
 				return false
 			}
@@ -3228,7 +3228,7 @@ func ModelTraceStepSaveMessageBody(w *TableMessageWriter, value *ModelTraceStep)
 	{
 		if value.RefusedPresent {
 			if true {
-				w.Put(60, TableMessageRefBitsHere)
+				w.Put(54, TableMessageRefBitsHere)
 				if value.Refused {
 					w.Put(1, 1)
 				} else {
@@ -3239,7 +3239,7 @@ func ModelTraceStepSaveMessageBody(w *TableMessageWriter, value *ModelTraceStep)
 	}
 	{
 		if value.HasReceipt != false {
-			w.Put(61, TableMessageRefBitsHere)
+			w.Put(55, TableMessageRefBitsHere)
 			if value.HasReceipt {
 				w.Put(1, 1)
 			} else {
@@ -3255,7 +3255,7 @@ func ModelTraceStepSaveMessageBody(w *TableMessageWriter, value *ModelTraceStep)
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(62, TableMessageRefBitsHere)
+			w.Put(56, TableMessageRefBitsHere)
 			if !ModelEventSaveMessageBody(w, &value.Receipt) {
 				return false
 			}
@@ -3266,7 +3266,7 @@ func ModelTraceStepSaveMessageBody(w *TableMessageWriter, value *ModelTraceStep)
 			return false
 		}
 		if value.ModelLength > 0 {
-			w.Put(63, TableMessageRefBitsHere)
+			w.Put(57, TableMessageRefBitsHere)
 			if value.ModelLength < 0 || value.ModelLength > 512 {
 				return false
 			}
@@ -3282,7 +3282,7 @@ func ModelTraceStepSaveMessageBody(w *TableMessageWriter, value *ModelTraceStep)
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(64, TableMessageRefBitsHere)
+			w.Put(58, TableMessageRefBitsHere)
 			if !ModelStateSaveMessageBody(w, &value.State) {
 				return false
 			}
@@ -3677,523 +3677,6 @@ func ModelTraceStepLoadMessages(values []ModelTraceStep, vocabulary *TableVocabu
 	}
 	return count, tableMessageBatchClose(&r)
 }
-func ModelHashSaveMessageBody(w *TableMessageWriter, value *ModelHash) bool {
-	{
-		if value.ModuleLength < 0 || value.ModuleLength > 32 {
-			return false
-		}
-		if value.ModuleLength > 0 {
-			w.Put(23, TableMessageRefBitsHere)
-			if value.ModuleLength < 0 || value.ModuleLength > 32 {
-				return false
-			}
-			w.Put(uint64(value.ModuleLength), 6)
-			w.Raw(value.Module[:value.ModuleLength])
-		}
-	}
-	{
-		if value.Sha256Length < 0 || value.Sha256Length > 64 {
-			return false
-		}
-		if value.Sha256Length > 0 {
-			w.Put(24, TableMessageRefBitsHere)
-			if value.Sha256Length < 0 || value.Sha256Length > 64 {
-				return false
-			}
-			w.Put(uint64(value.Sha256Length), 7)
-			w.Raw(value.Sha256[:value.Sha256Length])
-		}
-	}
-	w.Put(0, TableMessageRefBitsHere)
-	return !w.Overflow
-}
-func ModelHashMeasureMessages(values []*ModelHash, report *TableReport) int64 {
-	if len(values) < 1 || len(values) > TableMessageBatchMax {
-		if report != nil {
-			tableMessageRefuse(report, "batch_too_large")
-		}
-		return -1
-	}
-	w := TableMessageWriter{TableBitWriter: TableBitWriter{Measuring: true}}
-	for _, value := range values {
-		if value == nil || !ModelHashSaveMessageBody(&w, value) {
-			return -1
-		}
-	}
-	w.Align()
-	if w.Overflow {
-		return -1
-	}
-	return 2 + w.Bits/8
-}
-func ModelHashSaveMessages(values []*ModelHash, buffer []byte, report *TableReport) int64 {
-	if len(values) < 1 || len(values) > TableMessageBatchMax {
-		if report != nil {
-			tableMessageRefuse(report, "batch_too_large")
-		}
-		return -1
-	}
-	if len(buffer) < 2 {
-		return -1
-	}
-	buffer[0] = 2
-	buffer[1] = byte(len(values) - 1)
-	w := TableMessageWriter{TableBitWriter: TableBitWriter{Buffer: buffer[2:]}}
-	for _, value := range values {
-		if value == nil || !ModelHashSaveMessageBody(&w, value) {
-			return -1
-		}
-	}
-	w.Align()
-	if w.Overflow {
-		return -1
-	}
-	if report != nil {
-		report.Clamped += w.Clamped
-	}
-	return 2 + w.Bits/8
-}
-func ModelHashLoadMessageBody(r *TableMessageReader, value *ModelHash) bool {
-	ModelHashReset(value)
-	for {
-		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		entry, ok := r.Vocabulary.Entry(ref)
-		if !ok || entry.Id >= 0xfffffffffffffffd {
-			r.Report.Malformed = true
-			return false
-		}
-		switch entry.Id {
-		case 0x43e6a23362b6dadd:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(32)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.Module[:])
-					copy(value.Module[:], text[:kept])
-					value.ModuleLength = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x31c5f470214e1c5a:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.Sha256[:])
-					copy(value.Sha256[:], text[:kept])
-					value.Sha256Length = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		default:
-			r.Report.Unknown++
-			if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-func ModelHashLoadMessages(values []ModelHash, vocabulary *TableVocabulary, data []byte, report *TableReport) (int64, bool) {
-	if report == nil {
-		var ignored TableReport
-		report = &ignored
-	}
-	r, count := tableMessageBatchOpen(vocabulary, data, report)
-	defer func() { *report = r.Report }()
-	if count < 0 {
-		return 0, false
-	}
-	if count > int64(len(values)) {
-		return count, tableMessageRefuse(&r.Report, "batch_too_large")
-	}
-	for i := int64(0); i < count; i++ {
-		if !ModelHashLoadMessageBody(&r, &values[i]) {
-			return i, false
-		}
-	}
-	return count, tableMessageBatchClose(&r)
-}
-func ModelTraceSaveMessageBody(w *TableMessageWriter, value *ModelTrace) bool {
-	{
-		if value.SourceSha256Length < 0 || value.SourceSha256Length > 64 {
-			return false
-		}
-		if value.SourceSha256Length > 0 {
-			w.Put(56, TableMessageRefBitsHere)
-			if value.SourceSha256Length < 0 || value.SourceSha256Length > 64 {
-				return false
-			}
-			w.Put(uint64(value.SourceSha256Length), 7)
-			w.Raw(value.SourceSha256[:value.SourceSha256Length])
-		}
-	}
-	{
-		if value.ModelSha256Count < 0 || value.ModelSha256Count > 4 {
-			return false
-		}
-		if value.ModelSha256Count > 0 {
-			w.Put(57, TableMessageRefBitsHere)
-			if value.ModelSha256Count < 0 || value.ModelSha256Count > 4 {
-				return false
-			}
-			w.Put(uint64(value.ModelSha256Count)-0, 3)
-			for i := 0; i < int(value.ModelSha256Count); i++ {
-				if !ModelHashSaveMessageBody(w, &value.ModelSha256[i]) {
-					return false
-				}
-			}
-		}
-	}
-	{
-		probe := *w
-		probe.Measuring = true
-		probe.Bits = 0
-		if !ModelStateSaveMessageBody(&probe, &value.Initial) {
-			return false
-		}
-		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(58, TableMessageRefBitsHere)
-			if !ModelStateSaveMessageBody(w, &value.Initial) {
-				return false
-			}
-		}
-	}
-	{
-		if value.StepCount != 0 {
-			w.Put(59, TableMessageRefBitsHere)
-			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 6, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.StepCount), uint64(0))
-		}
-	}
-	w.Put(0, TableMessageRefBitsHere)
-	return !w.Overflow
-}
-func ModelTraceMeasureMessages(values []*ModelTrace, report *TableReport) int64 {
-	if len(values) < 1 || len(values) > TableMessageBatchMax {
-		if report != nil {
-			tableMessageRefuse(report, "batch_too_large")
-		}
-		return -1
-	}
-	w := TableMessageWriter{TableBitWriter: TableBitWriter{Measuring: true}}
-	for _, value := range values {
-		if value == nil || !ModelTraceSaveMessageBody(&w, value) {
-			return -1
-		}
-	}
-	w.Align()
-	if w.Overflow {
-		return -1
-	}
-	return 2 + w.Bits/8
-}
-func ModelTraceSaveMessages(values []*ModelTrace, buffer []byte, report *TableReport) int64 {
-	if len(values) < 1 || len(values) > TableMessageBatchMax {
-		if report != nil {
-			tableMessageRefuse(report, "batch_too_large")
-		}
-		return -1
-	}
-	if len(buffer) < 2 {
-		return -1
-	}
-	buffer[0] = 2
-	buffer[1] = byte(len(values) - 1)
-	w := TableMessageWriter{TableBitWriter: TableBitWriter{Buffer: buffer[2:]}}
-	for _, value := range values {
-		if value == nil || !ModelTraceSaveMessageBody(&w, value) {
-			return -1
-		}
-	}
-	w.Align()
-	if w.Overflow {
-		return -1
-	}
-	if report != nil {
-		report.Clamped += w.Clamped
-	}
-	return 2 + w.Bits/8
-}
-func ModelTraceLoadMessageBody(r *TableMessageReader, value *ModelTrace) bool {
-	ModelTraceReset(value)
-	for {
-		ref, ok := r.Bits.Get(r.Vocabulary.RefBits)
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		entry, ok := r.Vocabulary.Entry(ref)
-		if !ok || entry.Id >= 0xfffffffffffffffd {
-			r.Report.Malformed = true
-			return false
-		}
-		switch entry.Id {
-		case 0x4fbdf626b33de6bf:
-			{
-				widened := false
-				if entry.Shape.Kind != 12 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok || !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					start := r.Bits.Offset / 8
-					if !r.Bits.Skip(int64(n) * 8) {
-						r.Report.Malformed = true
-						return false
-					}
-					text := r.Bits.Buffer[start : start+int64(n)]
-					if !tableUtf8Valid(text) {
-						r.Report.Malformed = true
-						return false
-					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
-					if kept < int64(n) {
-						r.Report.Clamped++
-					}
-					clear(value.SourceSha256[:])
-					copy(value.SourceSha256[:], text[:kept])
-					value.SourceSha256Length = int32(kept)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x952f22722a282495:
-			{
-				widened := false
-				if entry.Shape.Kind != 14 || entry.Element.Kind != 13 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					base := &value.ModelSha256
-					n, ok := tableMessageCount(&r.Bits, entry.Shape)
-					if !ok {
-						r.Report.Malformed = true
-						return false
-					}
-					if entry.Element.Kind == 6 && !r.Bits.Align() {
-						r.Report.Malformed = true
-						return false
-					}
-					element := TableMessageEntry{Shape: entry.Element}
-					_ = element
-					keep := min(n, uint64(4))
-					if keep < n {
-						r.Report.Clamped++
-					}
-					walk := n
-					if element.Shape.Bits >= 0 {
-						walk = keep
-					}
-					for i := uint64(0); i < walk; i++ {
-						var scratch ModelHash
-						p := &scratch
-						if i < keep {
-							p = &base[i]
-						}
-						if !ModelHashLoadMessageBody(r, &(*p)) {
-							return false
-						}
-					}
-					if walk < n && !r.Bits.Skip(int64(n-walk)*element.Shape.Bits) {
-						r.Report.Malformed = true
-						return false
-					}
-					value.ModelSha256Count = int32(keep)
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x7f5f002d3284b6c3:
-			{
-				widened := false
-				if entry.Shape.Kind != 13 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				if !ModelStateLoadMessageBody(r, &value.Initial) {
-					return false
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0x25b7fb969ec3a816:
-			{
-				widened := false
-				if entry.Shape.Kind != 4 || entry.Element.Kind != 0 {
-					if entry.Element.Kind == 0 && tableKindWidens(entry.Shape.Kind, 4) {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				{
-					var raw [16]byte
-					if !tableMessageReadScalar(&r.Bits, entry.Shape, &raw) {
-						r.Report.Malformed = true
-						return false
-					}
-					payload40 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload40.Has(tableKindBytes(entry.Shape.Kind)) {
-						r.Report.Malformed = true
-						return false
-					}
-					{
-						v := payload40.Signed(entry.Shape.Kind)
-						if v < 0 {
-							v = 0
-							r.Report.Clamped++
-						} else if v > 40 {
-							v = 40
-							r.Report.Clamped++
-						}
-						value.StepCount = int32(v)
-					}
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		default:
-			r.Report.Unknown++
-			if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-func ModelTraceLoadMessages(values []ModelTrace, vocabulary *TableVocabulary, data []byte, report *TableReport) (int64, bool) {
-	if report == nil {
-		var ignored TableReport
-		report = &ignored
-	}
-	r, count := tableMessageBatchOpen(vocabulary, data, report)
-	defer func() { *report = r.Report }()
-	if count < 0 {
-		return 0, false
-	}
-	if count > int64(len(values)) {
-		return count, tableMessageRefuse(&r.Report, "batch_too_large")
-	}
-	for i := int64(0); i < count; i++ {
-		if !ModelTraceLoadMessageBody(&r, &values[i]) {
-			return i, false
-		}
-	}
-	return count, tableMessageBatchClose(&r)
-}
 func ModelFindingSaveMessageBody(w *TableMessageWriter, value *ModelFinding) bool {
 	{
 		if value.NameLength < 0 || value.NameLength > 64 {
@@ -4464,7 +3947,7 @@ func ModelReplayEventSaveMessageBody(w *TableMessageWriter, value *ModelReplayEv
 			return false
 		}
 		if value.StepLength > 0 {
-			w.Put(33, TableMessageRefBitsHere)
+			w.Put(31, TableMessageRefBitsHere)
 			if value.StepLength < 0 || value.StepLength > 64 {
 				return false
 			}
@@ -4477,7 +3960,7 @@ func ModelReplayEventSaveMessageBody(w *TableMessageWriter, value *ModelReplayEv
 			return false
 		}
 		if value.VerdictLength > 0 {
-			w.Put(34, TableMessageRefBitsHere)
+			w.Put(32, TableMessageRefBitsHere)
 			if value.VerdictLength < 0 || value.VerdictLength > 64 {
 				return false
 			}
@@ -4490,7 +3973,7 @@ func ModelReplayEventSaveMessageBody(w *TableMessageWriter, value *ModelReplayEv
 			return false
 		}
 		if value.FieldsCount > 0 {
-			w.Put(35, TableMessageRefBitsHere)
+			w.Put(33, TableMessageRefBitsHere)
 			if value.FieldsCount < 0 || value.FieldsCount > 8 {
 				return false
 			}
@@ -4758,7 +4241,7 @@ func ModelStepSaveMessageBody(w *TableMessageWriter, value *ModelStep) bool {
 			return false
 		}
 		if value.ModuleLength > 0 {
-			w.Put(44, TableMessageRefBitsHere)
+			w.Put(42, TableMessageRefBitsHere)
 			if value.ModuleLength < 0 || value.ModuleLength > 96 {
 				return false
 			}
@@ -4768,7 +4251,7 @@ func ModelStepSaveMessageBody(w *TableMessageWriter, value *ModelStep) bool {
 	}
 	{
 		if value.Workers != 0 {
-			w.Put(45, TableMessageRefBitsHere)
+			w.Put(43, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 11, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Workers), uint64(0))
 		}
 	}
@@ -4777,7 +4260,7 @@ func ModelStepSaveMessageBody(w *TableMessageWriter, value *ModelStep) bool {
 			return false
 		}
 		if value.KindLength > 0 {
-			w.Put(46, TableMessageRefBitsHere)
+			w.Put(44, TableMessageRefBitsHere)
 			if value.KindLength < 0 || value.KindLength > 16 {
 				return false
 			}
@@ -4790,7 +4273,7 @@ func ModelStepSaveMessageBody(w *TableMessageWriter, value *ModelStep) bool {
 			return false
 		}
 		if value.PropertyLength > 0 {
-			w.Put(47, TableMessageRefBitsHere)
+			w.Put(45, TableMessageRefBitsHere)
 			if value.PropertyLength < 0 || value.PropertyLength > 64 {
 				return false
 			}
@@ -4803,7 +4286,7 @@ func ModelStepSaveMessageBody(w *TableMessageWriter, value *ModelStep) bool {
 			return false
 		}
 		if value.MetLength > 0 {
-			w.Put(48, TableMessageRefBitsHere)
+			w.Put(46, TableMessageRefBitsHere)
 			if value.MetLength < 0 || value.MetLength > 32 {
 				return false
 			}
@@ -4984,13 +4467,13 @@ func ModelStepLoadMessageBody(r *TableMessageReader, value *ModelStep) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					payload44 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload44.Has(tableKindBytes(entry.Shape.Kind)) {
+					payload40 := TableReader{Buffer: raw[:], Report: &r.Report}
+					if !payload40.Has(tableKindBytes(entry.Shape.Kind)) {
 						r.Report.Malformed = true
 						return false
 					}
 					{
-						v := payload44.Signed(entry.Shape.Kind)
+						v := payload40.Signed(entry.Shape.Kind)
 						if v < 0 {
 							v = 0
 							r.Report.Clamped++
@@ -5169,7 +4652,7 @@ func ModelViolationSaveMessageBody(w *TableMessageWriter, value *ModelViolation)
 			return false
 		}
 		if value.KindLength > 0 {
-			w.Put(65, TableMessageRefBitsHere)
+			w.Put(59, TableMessageRefBitsHere)
 			if value.KindLength < 0 || value.KindLength > 32 {
 				return false
 			}
@@ -5182,7 +4665,7 @@ func ModelViolationSaveMessageBody(w *TableMessageWriter, value *ModelViolation)
 			return false
 		}
 		if value.NameLength > 0 {
-			w.Put(66, TableMessageRefBitsHere)
+			w.Put(60, TableMessageRefBitsHere)
 			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
@@ -5374,7 +4857,7 @@ func ModelViolationLoadMessages(values []ModelViolation, vocabulary *TableVocabu
 func ModelOutcomeSaveMessageBody(w *TableMessageWriter, value *ModelOutcome) bool {
 	{
 		if value.Completed != false {
-			w.Put(25, TableMessageRefBitsHere)
+			w.Put(23, TableMessageRefBitsHere)
 			if value.Completed {
 				w.Put(1, 1)
 			} else {
@@ -5387,7 +4870,7 @@ func ModelOutcomeSaveMessageBody(w *TableMessageWriter, value *ModelOutcome) boo
 			return false
 		}
 		if value.GeneratedLength > 0 {
-			w.Put(26, TableMessageRefBitsHere)
+			w.Put(24, TableMessageRefBitsHere)
 			if value.GeneratedLength < 0 || value.GeneratedLength > 24 {
 				return false
 			}
@@ -5400,7 +4883,7 @@ func ModelOutcomeSaveMessageBody(w *TableMessageWriter, value *ModelOutcome) boo
 			return false
 		}
 		if value.DistinctLength > 0 {
-			w.Put(27, TableMessageRefBitsHere)
+			w.Put(25, TableMessageRefBitsHere)
 			if value.DistinctLength < 0 || value.DistinctLength > 24 {
 				return false
 			}
@@ -5413,7 +4896,7 @@ func ModelOutcomeSaveMessageBody(w *TableMessageWriter, value *ModelOutcome) boo
 			return false
 		}
 		if value.ViolationsCount > 0 {
-			w.Put(28, TableMessageRefBitsHere)
+			w.Put(26, TableMessageRefBitsHere)
 			if value.ViolationsCount < 0 || value.ViolationsCount > 16 {
 				return false
 			}
@@ -5427,7 +4910,7 @@ func ModelOutcomeSaveMessageBody(w *TableMessageWriter, value *ModelOutcome) boo
 	}
 	{
 		if value.InitialState != false {
-			w.Put(29, TableMessageRefBitsHere)
+			w.Put(27, TableMessageRefBitsHere)
 			if value.InitialState {
 				w.Put(1, 1)
 			} else {
@@ -5522,12 +5005,12 @@ func ModelOutcomeLoadMessageBody(r *TableMessageReader, value *ModelOutcome) boo
 						r.Report.Malformed = true
 						return false
 					}
-					payload48 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload48.Has(tableKindBytes(entry.Shape.Kind)) {
+					payload44 := TableReader{Buffer: raw[:], Report: &r.Report}
+					if !payload44.Has(tableKindBytes(entry.Shape.Kind)) {
 						r.Report.Malformed = true
 						return false
 					}
-					value.Completed = payload48.Get8() != 0
+					value.Completed = payload44.Get8() != 0
 				}
 				if widened {
 					r.Report.Widened++
@@ -5696,12 +5179,12 @@ func ModelOutcomeLoadMessageBody(r *TableMessageReader, value *ModelOutcome) boo
 						r.Report.Malformed = true
 						return false
 					}
-					payload49 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload49.Has(tableKindBytes(entry.Shape.Kind)) {
+					payload45 := TableReader{Buffer: raw[:], Report: &r.Report}
+					if !payload45.Has(tableKindBytes(entry.Shape.Kind)) {
 						r.Report.Malformed = true
 						return false
 					}
-					value.InitialState = payload49.Get8() != 0
+					value.InitialState = payload45.Get8() != 0
 				}
 				if widened {
 					r.Report.Widened++
@@ -5745,7 +5228,7 @@ func ModelStepResultSaveMessageBody(w *TableMessageWriter, value *ModelStepResul
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(49, TableMessageRefBitsHere)
+			w.Put(47, TableMessageRefBitsHere)
 			if !ModelStepSaveMessageBody(w, &value.Step) {
 				return false
 			}
@@ -5756,7 +5239,7 @@ func ModelStepResultSaveMessageBody(w *TableMessageWriter, value *ModelStepResul
 			return false
 		}
 		if value.VerdictLength > 0 {
-			w.Put(50, TableMessageRefBitsHere)
+			w.Put(48, TableMessageRefBitsHere)
 			if value.VerdictLength < 0 || value.VerdictLength > 32 {
 				return false
 			}
@@ -5766,7 +5249,7 @@ func ModelStepResultSaveMessageBody(w *TableMessageWriter, value *ModelStepResul
 	}
 	{
 		if value.Ok != false {
-			w.Put(51, TableMessageRefBitsHere)
+			w.Put(49, TableMessageRefBitsHere)
 			if value.Ok {
 				w.Put(1, 1)
 			} else {
@@ -5776,13 +5259,13 @@ func ModelStepResultSaveMessageBody(w *TableMessageWriter, value *ModelStepResul
 	}
 	{
 		if value.Code != 0 {
-			w.Put(52, TableMessageRefBitsHere)
+			w.Put(50, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 8, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Code), uint64(0))
 		}
 	}
 	{
 		if value.Seconds != 0 {
-			w.Put(53, TableMessageRefBitsHere)
+			w.Put(51, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 5, Packing: 1, Bits: 47, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Seconds), uint64(0))
 		}
 	}
@@ -5794,7 +5277,7 @@ func ModelStepResultSaveMessageBody(w *TableMessageWriter, value *ModelStepResul
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(54, TableMessageRefBitsHere)
+			w.Put(52, TableMessageRefBitsHere)
 			if !ModelOutcomeSaveMessageBody(w, &value.Outcome) {
 				return false
 			}
@@ -5805,7 +5288,7 @@ func ModelStepResultSaveMessageBody(w *TableMessageWriter, value *ModelStepResul
 			return false
 		}
 		if value.LogLength > 0 {
-			w.Put(55, TableMessageRefBitsHere)
+			w.Put(53, TableMessageRefBitsHere)
 			if value.LogLength < 0 || value.LogLength > 1024 {
 				return false
 			}
@@ -5965,12 +5448,12 @@ func ModelStepResultLoadMessageBody(r *TableMessageReader, value *ModelStepResul
 						r.Report.Malformed = true
 						return false
 					}
-					payload50 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload50.Has(tableKindBytes(entry.Shape.Kind)) {
+					payload46 := TableReader{Buffer: raw[:], Report: &r.Report}
+					if !payload46.Has(tableKindBytes(entry.Shape.Kind)) {
 						r.Report.Malformed = true
 						return false
 					}
-					value.Ok = payload50.Get8() != 0
+					value.Ok = payload46.Get8() != 0
 				}
 				if widened {
 					r.Report.Widened++
@@ -5997,13 +5480,13 @@ func ModelStepResultLoadMessageBody(r *TableMessageReader, value *ModelStepResul
 						r.Report.Malformed = true
 						return false
 					}
-					payload51 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload51.Has(tableKindBytes(entry.Shape.Kind)) {
+					payload47 := TableReader{Buffer: raw[:], Report: &r.Report}
+					if !payload47.Has(tableKindBytes(entry.Shape.Kind)) {
 						r.Report.Malformed = true
 						return false
 					}
 					{
-						v := payload51.Signed(entry.Shape.Kind)
+						v := payload47.Signed(entry.Shape.Kind)
 						if v < 0 {
 							v = 0
 							r.Report.Clamped++
@@ -6039,13 +5522,13 @@ func ModelStepResultLoadMessageBody(r *TableMessageReader, value *ModelStepResul
 						r.Report.Malformed = true
 						return false
 					}
-					payload52 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload52.Has(tableKindBytes(entry.Shape.Kind)) {
+					payload48 := TableReader{Buffer: raw[:], Report: &r.Report}
+					if !payload48.Has(tableKindBytes(entry.Shape.Kind)) {
 						r.Report.Malformed = true
 						return false
 					}
 					{
-						v := payload52.Signed(entry.Shape.Kind)
+						v := payload48.Signed(entry.Shape.Kind)
 						if v < 0 {
 							v = 0
 							r.Report.Clamped++
@@ -6323,17 +5806,17 @@ func ConvergeStreamEntryLoadMessageBody(r *TableMessageReader, value *ConvergeSt
 						r.Report.Malformed = true
 						return false
 					}
-					payload53 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload53.Has(tableKindBytes(entry.Shape.Kind)) {
+					payload49 := TableReader{Buffer: raw[:], Report: &r.Report}
+					if !payload49.Has(tableKindBytes(entry.Shape.Kind)) {
 						r.Report.Malformed = true
 						return false
 					}
 					{
 						var v float64
 						if entry.Shape.Kind == 10 {
-							v = math.Float64frombits(tableWidenFloat(payload53.Get32()))
+							v = math.Float64frombits(tableWidenFloat(payload49.Get32()))
 						} else {
-							v = math.Float64frombits(payload53.Get64())
+							v = math.Float64frombits(payload49.Get64())
 						}
 						value.Now = v
 					}
@@ -6406,13 +5889,13 @@ func ConvergeStreamEntryLoadMessageBody(r *TableMessageReader, value *ConvergeSt
 						r.Report.Malformed = true
 						return false
 					}
-					payload54 := TableReader{Buffer: raw[:], Report: &r.Report}
-					if !payload54.Has(tableKindBytes(entry.Shape.Kind)) {
+					payload50 := TableReader{Buffer: raw[:], Report: &r.Report}
+					if !payload50.Has(tableKindBytes(entry.Shape.Kind)) {
 						r.Report.Malformed = true
 						return false
 					}
 					{
-						v := payload54.Signed(entry.Shape.Kind)
+						v := payload50.Signed(entry.Shape.Kind)
 						if v < 0 {
 							v = 0
 							r.Report.Clamped++
@@ -6769,26 +6252,6 @@ func init() {
 	}
 	ModelTraceStepTableInfo.LoadMessageBody = func(r TableMessageReader, p unsafe.Pointer) (TableMessageReader, bool) {
 		ok := ModelTraceStepLoadMessageBody(&r, (*ModelTraceStep)(p))
-		return r, ok
-	}
-}
-
-func init() {
-	ModelHashTableInfo.SaveMessageBody = func(w *TableMessageWriter, p unsafe.Pointer) bool {
-		return ModelHashSaveMessageBody(w, (*ModelHash)(p))
-	}
-	ModelHashTableInfo.LoadMessageBody = func(r TableMessageReader, p unsafe.Pointer) (TableMessageReader, bool) {
-		ok := ModelHashLoadMessageBody(&r, (*ModelHash)(p))
-		return r, ok
-	}
-}
-
-func init() {
-	ModelTraceTableInfo.SaveMessageBody = func(w *TableMessageWriter, p unsafe.Pointer) bool {
-		return ModelTraceSaveMessageBody(w, (*ModelTrace)(p))
-	}
-	ModelTraceTableInfo.LoadMessageBody = func(r TableMessageReader, p unsafe.Pointer) (TableMessageReader, bool) {
-		ok := ModelTraceLoadMessageBody(&r, (*ModelTrace)(p))
 		return r, ok
 	}
 }

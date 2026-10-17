@@ -2,9 +2,10 @@ package tablemodelwire
 
 // TestModelsRecordsGolden is the golden test of the tablemodel definitions
 // (schemas/tablemodel): every FIXED table of the area (the table model's
-// state, action, receipt, trace head and trace step, the witness finding, the
-// replay event, the suite step and its result, and the convergence verb's
-// state) round-trips as the binary wire and as padded standard base64 of that
+// state, action, receipt and trace step, the witness finding, the replay
+// event, the suite step and its result, and the convergence verb's state)
+// and the one VARIABLE table, the trace head ModelTrace (schemas/tablemodeltrace,
+// whose list of model hashes is unbounded) round-trip as the binary wire and as padded standard base64 of that
 // wire, each read strictly through pkg/schemaread (schemas/README.md; the
 // owner's S1 and S2); a value past each declared bound is refused by name on
 // write and on read, never clamped; and a damaged image of each form is
@@ -18,13 +19,19 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tablemodel"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
+	tw "github.com/mas-bandwidth/nova-tools/pkg/tablemodeltracewire"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -439,13 +446,7 @@ func TestModelsRecordsGolden(t *testing.T) {
 			body: ModelTraceStepFixedWriteBody, recBytes: ModelTraceStepFixedRecordBytes, reset: ModelTraceStepReset,
 			wire: "349f4f0700902424d98c45f41027004833ca0fa55a41ea0b845b71b59ae731e6"})
 	})
-	t.Run("ModelTrace", func(t *testing.T) {
-		t.Parallel()
-		goldenFixed(t, fixedOps[ModelTrace]{name: "MODELTRACE", measure: ModelTraceFixedMeasure, save: ModelTraceFixedSave,
-			saveWhy: ModelTraceFixedSaveReason, load: ModelTraceFixedLoad, planCount: int(ModelTraceFixedPlan.Count),
-			body: ModelTraceFixedWriteBody, recBytes: ModelTraceFixedRecordBytes, reset: ModelTraceReset,
-			wire: "41aaf0895d5c927090927a3af6548aa10e579e10a9ffcd360d67fa4f501f4ef0"})
-	})
+	t.Run("ModelTraceHead", traceHeadGolden)
 	t.Run("ModelFinding", func(t *testing.T) {
 		t.Parallel()
 		goldenFixed(t, fixedOps[ModelFinding]{name: "MODELFINDING", measure: ModelFindingFixedMeasure, save: ModelFindingFixedSave,
@@ -516,4 +517,237 @@ func TestModelsRecordsGolden(t *testing.T) {
 			assert.Zero(t, rep.Clamped)
 		}
 	})
+}
+
+// traceHead is a ModelTrace read out of its arena: ModelTrace is the one
+// VARIABLE table of the area (its list of model hashes grows with the
+// repository), so its value lives in a builder's arena and the test holds a
+// plain copy.
+type traceHead struct {
+	source string
+	mods   [][2]string // file name, hex SHA-256
+	steps  int32
+}
+
+func setText(dst []byte, length *int32, s string) {
+	copy(dst, s)
+	*length = int32(len(s))
+}
+
+func text(src []byte, n int32) string { return string(src[:min(int(n), len(src))]) }
+
+// buildTrace writes h into a builder; mutate may plant a value past a bound,
+// which the generated writer does not check.
+func buildTrace(h traceHead, mutate func(*tw.ModelTraceRow, *tw.TableArena)) []byte {
+	var b tw.ModelTraceBuilder
+	if !b.Init() {
+		panic("builder init")
+	}
+	defer b.Shutdown()
+	root := b.GetRoot()
+	setText(root.SourceSha256[:], &root.SourceSha256Length, h.source)
+	root.StepCount = h.steps
+	for _, m := range h.mods {
+		p := tw.ModelTraceModelSha256Add(&b.Main, &b.GetRoot().ModelSha256)
+		if p == nil {
+			panic("list append")
+		}
+		setText(p.Module[:], &p.ModuleLength, m[0])
+		setText(p.Sha256[:], &p.Sha256Length, m[1])
+	}
+	if mutate != nil {
+		mutate(b.GetRoot(), &b.Arena)
+	}
+	n := tw.ModelTraceMeasure(b.GetRoot(), &b.Arena)
+	if n < 0 {
+		return nil
+	}
+	buf := make([]byte, n)
+	if tw.ModelTraceSave(b.GetRoot(), buf, &b.Arena) < 0 {
+		return nil
+	}
+	return buf
+}
+
+func traceCodec() *schemaread.Codec[traceHead] {
+	return &schemaread.Codec[traceHead]{
+		Name: "MODELTRACE",
+		Help: modelsHelp,
+		Measure: func(wire []byte) error {
+			_, err := tw.ModelTraceLoadMeasureReason(wire)
+			return err
+		},
+		LoadWire: func(v *traceHead, wire []byte) schemaread.Report {
+			var b tw.ModelTraceBuilder
+			if !b.Init() {
+				return schemaread.Report{Malformed: true}
+			}
+			defer b.Shutdown()
+			var rep tw.TableReport
+			ok := tw.ModelTraceLoadBuilder(&b, wire, &rep)
+			if root := b.GetRoot(); root != nil && ok {
+				v.source = text(root.SourceSha256[:], root.SourceSha256Length)
+				v.steps = root.StepCount
+				tw.ModelTraceModelSha256Each(&root.ModelSha256, func(p *tw.ModelHashRow) bool {
+					v.mods = append(v.mods, [2]string{text(p.Module[:], p.ModuleLength), text(p.Sha256[:], p.Sha256Length)})
+					return true
+				}, &b.Arena)
+			}
+			out := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped),
+				Malformed: rep.Malformed || !ok}
+			if rep.Verdict == tw.TableOpenRefused || rep.Verdict == tw.TableOpenDamaged {
+				out.Reason = rep.Err().Error()
+			}
+			return out
+		},
+		Constraints: func(v *traceHead, c *schemaread.Checker) {
+			c.Text("sourceSha256", v.source, 64)
+			c.Bound("stepCount", int64(v.steps), 0, 40)
+			for _, m := range v.mods {
+				c.Text("modelSha256.module", m[0], 160)
+				c.Text("modelSha256.sha256", m[1], 64)
+			}
+		},
+		SaveWire: func(v *traceHead) []byte {
+			return buildTrace(*v, nil)
+		},
+	}
+}
+
+func shaOf(s string) string { d := sha256.Sum256([]byte(s)); return hex.EncodeToString(d[:]) }
+
+// shippedHashes reads the model hashes of the shipped capture
+// (internal/tablemodel/testdata/replay/trace.json), in sorted name order.
+func shippedHashes(t *testing.T) (string, [][2]string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "tablemodel", "testdata", "replay", "trace.json"))
+	require.NoError(t, err)
+	var tr struct {
+		Source string            `json:"source_sha256"`
+		Models map[string]string `json:"model_sha256"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &tr))
+	var names []string
+	for n := range tr.Models {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var mods [][2]string
+	for _, n := range names {
+		mods = append(mods, [2]string{n, tr.Models[n]})
+	}
+	return tr.Source, mods
+}
+
+// traceHeadGolden is the contract of ModelTrace, the area's variable table:
+// the shipped capture's 34 model hashes and a list of 200 round-trip as binary
+// wire and padded standard base64; a value past a bound and a damaged image of
+// each form are refused by name.
+func traceHeadGolden(t *testing.T) {
+	t.Parallel()
+	source, shipped := shippedHashes(t)
+	require.Equal(t, 34, len(shipped), "the shipped capture holds 34 model hashes")
+
+	// module is four times the longest name measured: the shipped capture's
+	// and every .tla file hashModels would find in tla/.
+	longest := 0
+	for _, m := range shipped {
+		longest = max(longest, len(m[0]))
+	}
+	tla, err := filepath.Glob(filepath.Join("..", "..", "tla", "*.tla"))
+	require.NoError(t, err)
+	require.NotEmpty(t, tla)
+	for _, f := range tla {
+		longest = max(longest, len(filepath.Base(f)))
+	}
+	var proto tw.ModelHashRow
+	assert.GreaterOrEqual(t, len(proto.Module)-1, 4*longest, "module holds four times the longest model file name (%d)", longest)
+
+	var many [][2]string
+	for i := 0; i < 200; i++ {
+		many = append(many, [2]string{fmt.Sprintf("MCSynthetic%03d_TTrace_1790631425.tla", i), shaOf(fmt.Sprint(i))})
+	}
+	rd := schemaread.NewReader(traceCodec())
+	for name, mods := range map[string][][2]string{"shipped": shipped, "two hundred": many, "none": nil} {
+		want := traceHead{source: source, mods: mods, steps: 32}
+		wire, err := rd.Write(&want, schemaread.FormBinary)
+		require.NoError(t, err, name)
+		text, err := rd.Write(&want, schemaread.FormBase64)
+		require.NoError(t, err, name)
+		assert.Equal(t, base64.StdEncoding.EncodeToString(wire), string(text), name)
+		for _, in := range [][]byte{wire, text} {
+			got, _, err := rd.Read(in)
+			require.NoError(t, err, name)
+			assert.Equal(t, want.source, got.source, name)
+			assert.Equal(t, want.steps, got.steps, name)
+			assert.Equal(t, len(want.mods), len(got.mods), name)
+			assert.ElementsMatch(t, want.mods, got.mods, name)
+		}
+	}
+	assert.EqualValues(t, 6, rd.Counts().Reads(schemaread.FormBinary)+rd.Counts().Reads(schemaread.FormBase64))
+
+	base := traceHead{source: source, mods: shipped[:2], steps: 32}
+	wire, err := rd.Write(&base, schemaread.FormBinary)
+	require.NoError(t, err)
+
+	// A value past each bound is refused by name on write, and a wire that
+	// carries one is refused on read, never clamped.
+	type plant struct {
+		what  string
+		head  func(*traceHead)
+		raw   func(*tw.ModelTraceRow, *tw.TableArena)
+		hasFE bool
+	}
+	over := func(n int) string { return strings.Repeat("a", n) }
+	plants := []plant{
+		{"sourceSha256 65 bytes", func(h *traceHead) { h.source = over(65) }, func(r *tw.ModelTraceRow, _ *tw.TableArena) { r.SourceSha256Length = 65 }, true},
+		{"module 161 bytes", func(h *traceHead) { h.mods = [][2]string{{over(161), "x"}} }, func(r *tw.ModelTraceRow, a *tw.TableArena) {
+			first(r, a, func(p *tw.ModelHashRow) { p.ModuleLength = 161 })
+		}, true},
+		{"sha256 65 bytes", func(h *traceHead) { h.mods = [][2]string{{"a", over(65)}} }, func(r *tw.ModelTraceRow, a *tw.TableArena) {
+			first(r, a, func(p *tw.ModelHashRow) { p.Sha256Length = 65 })
+		}, true},
+		{"stepCount 41", func(h *traceHead) { h.steps = 41 }, func(r *tw.ModelTraceRow, _ *tw.TableArena) { r.StepCount = 41 }, true},
+		{"stepCount -1", func(h *traceHead) { h.steps = -1 }, func(r *tw.ModelTraceRow, _ *tw.TableArena) { r.StepCount = -1 }, true},
+	}
+	for _, p := range plants {
+		bad := base
+		p.head(&bad)
+		_, err := rd.Write(&bad, schemaread.FormBinary)
+		require.Error(t, err, p.what)
+		assert.Equal(t, schemaread.ReasonClamped, reasonOf(t, err), p.what)
+		if p.raw != nil {
+			img := buildTrace(base, p.raw)
+			if img != nil {
+				_, _, err := rd.Read(img)
+				require.Error(t, err, p.what+" on the wire")
+				assert.Contains(t, []string{schemaread.ReasonClamped, schemaread.ReasonMalformed, schemaread.ReasonWireDamaged}, reasonOf(t, err), p.what)
+			}
+		}
+	}
+
+	// A damaged image of each form is refused by name.
+	ts := base64.StdEncoding.EncodeToString(wire)
+	cases := []struct {
+		what string
+		in   []byte
+	}{
+		{"cut binary", wire[:len(wire)-1]},
+		{"header only", wire[:4]},
+		{"fixed form byte", append([]byte{TableFixedForm}, wire[1:]...)},
+		{"unassigned form byte", append([]byte{9}, wire[1:]...)},
+		{"cut base64", []byte(ts[:len(ts)-1])},
+		{"not base64", []byte(ts[:5] + "!" + ts[6:])},
+		{"cut wire in base64", []byte(base64.StdEncoding.EncodeToString(wire[:len(wire)/2]))},
+	}
+	for _, c := range cases {
+		_, _, err := rd.Read(c.in)
+		require.Error(t, err, c.what)
+		assert.Contains(t, []string{schemaread.ReasonWireDamaged, schemaread.ReasonUnknownForm, schemaread.ReasonMalformed}, reasonOf(t, err), c.what)
+	}
+}
+
+// first applies f to the first model hash of a trace held in an arena.
+func first(r *tw.ModelTraceRow, a *tw.TableArena, f func(*tw.ModelHashRow)) {
+	tw.ModelTraceModelSha256Each(&r.ModelSha256, func(p *tw.ModelHashRow) bool { f(p); return false }, a)
 }

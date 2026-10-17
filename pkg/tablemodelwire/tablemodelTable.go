@@ -156,26 +156,6 @@ type ModelTraceStep struct {
 	State          ModelState
 }
 
-// ModelHash — TABLE-wire storage: exported fields, every buffer inside the value,
-// declared defaults restored by ModelHashReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
-type ModelHash struct {
-	Module       [32]byte // string(32): max length, used length beside it
-	ModuleLength int32
-	Sha256       [64]byte // string(64): max length, used length beside it
-	Sha256Length int32
-}
-
-// ModelTrace — TABLE-wire storage: exported fields, every buffer inside the value,
-// declared defaults restored by ModelTraceReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
-type ModelTrace struct {
-	SourceSha256       [64]byte // string(64): max length, used length beside it
-	SourceSha256Length int32
-	ModelSha256        [4]ModelHash // used count beside it; count in [0, 4]
-	ModelSha256Count   int32
-	Initial            ModelState
-	StepCount          int32
-}
-
 // ModelFinding — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by ModelFindingReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type ModelFinding struct {
@@ -310,7 +290,7 @@ func ModelArgSaveBody(w *TableWriter, value *ModelArg) bool {
 			return false
 		}
 		if value.TextLength > 0 {
-			if ref := w.Ids.refAtHit(80, 0xfa04f4ef1995407e); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(73, 0xfa04f4ef1995407e); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.TextLength < 0 || value.TextLength > 512 {
@@ -561,7 +541,7 @@ func ModelDetailSaveBody(w *TableWriter, value *ModelDetail) bool {
 			return false
 		}
 		if value.TextLength > 0 {
-			if ref := w.Ids.refAtHit(80, 0xfa04f4ef1995407e); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(73, 0xfa04f4ef1995407e); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.TextLength < 0 || value.TextLength > 256 {
@@ -813,7 +793,7 @@ func ModelPhysSaveBody(w *TableWriter, value *ModelPhys) bool {
 			return false
 		}
 		if value.TableNameLength > 0 {
-			if ref := w.Ids.refAtHit(31, 0x6bcb6e85b78cf363); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(27, 0x6bcb6e85b78cf363); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.TableNameLength < 0 || value.TableNameLength > 16 {
@@ -860,7 +840,7 @@ func ModelPhysSaveBody(w *TableWriter, value *ModelPhys) bool {
 	}
 	{
 		if value.Epoch != 0 {
-			if ref := w.Ids.refAtHit(81, 0xfc9697d1196e6ba6); !w.headerPair(ref, 4) {
+			if ref := w.Ids.refAtHit(74, 0xfc9697d1196e6ba6); !w.headerPair(ref, 4) {
 				w.headerRest(ref, 4)
 			}
 			if value.Epoch < 0 || value.Epoch > 1000000 {
@@ -1118,7 +1098,7 @@ func ModelCellMeasureReason(value *ModelCell) (int64, error) {
 func ModelCellSaveBody(w *TableWriter, value *ModelCell) bool {
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(57, 0xaf63ed4c8602096f)
+		ref := w.Ids.refAtHit(51, 0xaf63ed4c8602096f)
 		start := w.Ids.Count
 		n := ModelPhysMeasureBody(&value.P, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -1148,7 +1128,7 @@ func ModelCellSaveBody(w *TableWriter, value *ModelCell) bool {
 			return false
 		}
 		if value.RowLength > 0 {
-			if ref := w.Ids.refAtHit(42, 0x8a0bc1196111ad9b); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(37, 0x8a0bc1196111ad9b); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.RowLength < 0 || value.RowLength > 16 {
@@ -1198,7 +1178,7 @@ func ModelCellSaveBody(w *TableWriter, value *ModelCell) bool {
 			return false
 		}
 		if value.ColLength > 0 {
-			if ref := w.Ids.refAtHit(78, 0xf604f3190d016791); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(71, 0xf604f3190d016791); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.ColLength < 0 || value.ColLength > 16 {
@@ -1494,7 +1474,7 @@ func ModelRowAtMeasureReason(value *ModelRowAt) (int64, error) {
 func ModelRowAtSaveBody(w *TableWriter, value *ModelRowAt) bool {
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(57, 0xaf63ed4c8602096f)
+		ref := w.Ids.refAtHit(51, 0xaf63ed4c8602096f)
 		start := w.Ids.Count
 		n := ModelPhysMeasureBody(&value.P, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -1524,7 +1504,7 @@ func ModelRowAtSaveBody(w *TableWriter, value *ModelRowAt) bool {
 			return false
 		}
 		if value.RowLength > 0 {
-			if ref := w.Ids.refAtHit(42, 0x8a0bc1196111ad9b); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(37, 0x8a0bc1196111ad9b); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.RowLength < 0 || value.RowLength > 16 {
@@ -1791,7 +1771,7 @@ func ModelBindMeasureReason(value *ModelBind) (int64, error) {
 func ModelBindSaveBody(w *TableWriter, value *ModelBind) bool {
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(69, 0xd98b1e90fd653435)
+		ref := w.Ids.refAtHit(62, 0xd98b1e90fd653435)
 		start := w.Ids.Count
 		n := ModelCellMeasureBody(&value.Cell, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -2058,7 +2038,7 @@ func ModelDatumMeasureReason(value *ModelDatum) (int64, error) {
 func ModelDatumSaveBody(w *TableWriter, value *ModelDatum) bool {
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(69, 0xd98b1e90fd653435)
+		ref := w.Ids.refAtHit(62, 0xd98b1e90fd653435)
 		start := w.Ids.Count
 		n := ModelCellMeasureBody(&value.Cell, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -2088,7 +2068,7 @@ func ModelDatumSaveBody(w *TableWriter, value *ModelDatum) bool {
 			return false
 		}
 		if value.MemberLength > 0 {
-			if ref := w.Ids.refAtHit(43, 0x8cada599d66ec543); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(38, 0x8cada599d66ec543); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.MemberLength < 0 || value.MemberLength > 16 {
@@ -2135,7 +2115,7 @@ func ModelDatumSaveBody(w *TableWriter, value *ModelDatum) bool {
 	}
 	{
 		if value.Score != 0 {
-			if ref := w.Ids.refAtHit(60, 0xc10e63fbe7f624f5); !w.headerPair(ref, 4) {
+			if ref := w.Ids.refAtHit(54, 0xc10e63fbe7f624f5); !w.headerPair(ref, 4) {
 				w.headerRest(ref, 4)
 			}
 			w.Put32(uint32(value.Score))
@@ -2392,7 +2372,7 @@ func ModelLocationMeasureReason(value *ModelLocation) (int64, error) {
 func ModelLocationSaveBody(w *TableWriter, value *ModelLocation) bool {
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(57, 0xaf63ed4c8602096f)
+		ref := w.Ids.refAtHit(51, 0xaf63ed4c8602096f)
 		start := w.Ids.Count
 		n := ModelPhysMeasureBody(&value.P, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -2419,7 +2399,7 @@ func ModelLocationSaveBody(w *TableWriter, value *ModelLocation) bool {
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(69, 0xd98b1e90fd653435)
+		ref := w.Ids.refAtHit(62, 0xd98b1e90fd653435)
 		start := w.Ids.Count
 		n := ModelCellMeasureBody(&value.Cell, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -2665,7 +2645,7 @@ func ModelPlacementSaveBody(w *TableWriter, value *ModelPlacement) bool {
 			return false
 		}
 		if value.MemberLength > 0 {
-			if ref := w.Ids.refAtHit(43, 0x8cada599d66ec543); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(38, 0x8cada599d66ec543); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.MemberLength < 0 || value.MemberLength > 16 {
@@ -2715,7 +2695,7 @@ func ModelPlacementSaveBody(w *TableWriter, value *ModelPlacement) bool {
 			return false
 		}
 		if value.LocationsCount > 0 {
-			if ref := w.Ids.refAtHit(40, 0x86c910f0aa9f8e2f); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(35, 0x86c910f0aa9f8e2f); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.LocationsCount < 0 || value.LocationsCount > 4 {
@@ -3024,7 +3004,7 @@ func ModelSeenSaveBody(w *TableWriter, value *ModelSeen) bool {
 			return false
 		}
 		if value.WriterLength > 0 {
-			if ref := w.Ids.refAtHit(12, 0x2a5c507228ac9b4a); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(11, 0x2a5c507228ac9b4a); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.WriterLength < 0 || value.WriterLength > 16 {
@@ -3071,7 +3051,7 @@ func ModelSeenSaveBody(w *TableWriter, value *ModelSeen) bool {
 	}
 	{
 		if value.Epoch != 0 {
-			if ref := w.Ids.refAtHit(81, 0xfc9697d1196e6ba6); !w.headerPair(ref, 4) {
+			if ref := w.Ids.refAtHit(74, 0xfc9697d1196e6ba6); !w.headerPair(ref, 4) {
 				w.headerRest(ref, 4)
 			}
 			if value.Epoch < 0 || value.Epoch > 1000000 {
@@ -3353,7 +3333,7 @@ func ModelStateSaveBody(w *TableWriter, value *ModelState) bool {
 			return false
 		}
 		if value.LiveCount > 0 {
-			if ref := w.Ids.refAtHit(59, 0xbf6695ad6966058f); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(53, 0xbf6695ad6966058f); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.LiveCount < 0 || value.LiveCount > 4 {
@@ -3407,7 +3387,7 @@ func ModelStateSaveBody(w *TableWriter, value *ModelState) bool {
 			return false
 		}
 		if value.RowsCount > 0 {
-			if ref := w.Ids.refAtHit(52, 0xa3a7061ff10a8138); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(46, 0xa3a7061ff10a8138); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.RowsCount < 0 || value.RowsCount > 8 {
@@ -3461,7 +3441,7 @@ func ModelStateSaveBody(w *TableWriter, value *ModelState) bool {
 			return false
 		}
 		if value.BindsCount > 0 {
-			if ref := w.Ids.refAtHit(18, 0x3cadc9c3a6a7e0c7); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(15, 0x3cadc9c3a6a7e0c7); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.BindsCount < 0 || value.BindsCount > 25 {
@@ -3515,7 +3495,7 @@ func ModelStateSaveBody(w *TableWriter, value *ModelState) bool {
 			return false
 		}
 		if value.DataCount > 0 {
-			if ref := w.Ids.refAtHit(39, 0x855b556730a34a05); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(34, 0x855b556730a34a05); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.DataCount < 0 || value.DataCount > 75 {
@@ -3569,7 +3549,7 @@ func ModelStateSaveBody(w *TableWriter, value *ModelState) bool {
 			return false
 		}
 		if value.PlaceCount > 0 {
-			if ref := w.Ids.refAtHit(83, 0xfd6f0e4e166f85bc); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(76, 0xfd6f0e4e166f85bc); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.PlaceCount < 0 || value.PlaceCount > 3 {
@@ -3620,7 +3600,7 @@ func ModelStateSaveBody(w *TableWriter, value *ModelState) bool {
 	}
 	{
 		if value.Active != 0 {
-			if ref := w.Ids.refAtHit(26, 0x6580790b036f0c6f); !w.headerPair(ref, 4) {
+			if ref := w.Ids.refAtHit(22, 0x6580790b036f0c6f); !w.headerPair(ref, 4) {
 				w.headerRest(ref, 4)
 			}
 			if value.Active < 0 || value.Active > 1000000 {
@@ -3634,7 +3614,7 @@ func ModelStateSaveBody(w *TableWriter, value *ModelState) bool {
 			return false
 		}
 		if value.SeenCount > 0 {
-			if ref := w.Ids.refAtHit(14, 0x2cfadb18d3ecd12a); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(12, 0x2cfadb18d3ecd12a); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.SeenCount < 0 || value.SeenCount > 2 {
@@ -4229,7 +4209,7 @@ func ModelActionSaveBody(w *TableWriter, value *ModelAction) bool {
 			return false
 		}
 		if value.VerbLength > 0 {
-			if ref := w.Ids.refAtHit(30, 0x673ebb0102773a20); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(26, 0x673ebb0102773a20); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.VerbLength < 0 || value.VerbLength > 24 {
@@ -4279,7 +4259,7 @@ func ModelActionSaveBody(w *TableWriter, value *ModelAction) bool {
 			return false
 		}
 		if value.ArgsCount > 0 {
-			if ref := w.Ids.refAtHit(41, 0x894930843ebc9d7c); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(36, 0x894930843ebc9d7c); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.ArgsCount < 0 || value.ArgsCount > 5 {
@@ -4333,7 +4313,7 @@ func ModelActionSaveBody(w *TableWriter, value *ModelAction) bool {
 			return false
 		}
 		if value.ActorLength > 0 {
-			if ref := w.Ids.refAtHit(70, 0xdcccc5391c47d4da); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(63, 0xdcccc5391c47d4da); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.ActorLength < 0 || value.ActorLength > 16 {
@@ -4667,7 +4647,7 @@ func ModelEventFieldSaveBody(w *TableWriter, value *ModelEventField) bool {
 			return false
 		}
 		if value.KeyLength > 0 {
-			if ref := w.Ids.refAtHit(19, 0x3dc94a19365b10ec); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(16, 0x3dc94a19365b10ec); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.KeyLength < 0 || value.KeyLength > 24 {
@@ -4717,7 +4697,7 @@ func ModelEventFieldSaveBody(w *TableWriter, value *ModelEventField) bool {
 			return false
 		}
 		if value.ValueLength > 0 {
-			if ref := w.Ids.refAtHit(35, 0x7ce4fd9430e80cea); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(31, 0x7ce4fd9430e80cea); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.ValueLength < 0 || value.ValueLength > 512 {
@@ -4999,7 +4979,7 @@ func ModelEventSaveBody(w *TableWriter, value *ModelEvent) bool {
 			return false
 		}
 		if value.FieldsCount > 0 {
-			if ref := w.Ids.refAtHit(21, 0x490e596d24847edc); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(18, 0x490e596d24847edc); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.FieldsCount < 0 || value.FieldsCount > 16 {
@@ -5293,7 +5273,7 @@ func ModelTraceStepSaveBody(w *TableWriter, value *ModelTraceStep) bool {
 			return false
 		}
 		if value.VerbLength > 0 {
-			if ref := w.Ids.refAtHit(30, 0x673ebb0102773a20); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(26, 0x673ebb0102773a20); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.VerbLength < 0 || value.VerbLength > 24 {
@@ -5343,7 +5323,7 @@ func ModelTraceStepSaveBody(w *TableWriter, value *ModelTraceStep) bool {
 			return false
 		}
 		if value.ArgsCount > 0 {
-			if ref := w.Ids.refAtHit(41, 0x894930843ebc9d7c); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(36, 0x894930843ebc9d7c); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.ArgsCount < 0 || value.ArgsCount > 5 {
@@ -5397,7 +5377,7 @@ func ModelTraceStepSaveBody(w *TableWriter, value *ModelTraceStep) bool {
 			return false
 		}
 		if value.ActorLength > 0 {
-			if ref := w.Ids.refAtHit(70, 0xdcccc5391c47d4da); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(63, 0xdcccc5391c47d4da); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.ActorLength < 0 || value.ActorLength > 16 {
@@ -5445,7 +5425,7 @@ func ModelTraceStepSaveBody(w *TableWriter, value *ModelTraceStep) bool {
 	if value.RefusedPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(71, 0xdd362779f48a4b03); !w.headerPair(ref, 1) {
+				if ref := w.Ids.refAtHit(64, 0xdd362779f48a4b03); !w.headerPair(ref, 1) {
 					w.headerRest(ref, 1)
 				}
 				if value.Refused {
@@ -5458,7 +5438,7 @@ func ModelTraceStepSaveBody(w *TableWriter, value *ModelTraceStep) bool {
 	}
 	{
 		if value.HasReceipt != false {
-			if ref := w.Ids.refAtHit(82, 0xfd4f7e71a1a21495); !w.headerPair(ref, 1) {
+			if ref := w.Ids.refAtHit(75, 0xfd4f7e71a1a21495); !w.headerPair(ref, 1) {
 				w.headerRest(ref, 1)
 			}
 			if value.HasReceipt {
@@ -5470,7 +5450,7 @@ func ModelTraceStepSaveBody(w *TableWriter, value *ModelTraceStep) bool {
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(79, 0xf8f39921c835bf03)
+		ref := w.Ids.refAtHit(72, 0xf8f39921c835bf03)
 		start := w.Ids.Count
 		n := ModelEventMeasureBody(&value.Receipt, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -5500,7 +5480,7 @@ func ModelTraceStepSaveBody(w *TableWriter, value *ModelTraceStep) bool {
 			return false
 		}
 		if value.ModelLength > 0 {
-			if ref := w.Ids.refAtHit(50, 0x9de543933e6e703a); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(44, 0x9de543933e6e703a); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.ModelLength < 0 || value.ModelLength > 512 {
@@ -5547,7 +5527,7 @@ func ModelTraceStepSaveBody(w *TableWriter, value *ModelTraceStep) bool {
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(76, 0xee63aaad45b1b116)
+		ref := w.Ids.refAtHit(69, 0xee63aaad45b1b116)
 		start := w.Ids.Count
 		n := ModelStateMeasureBody(&value.State, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -5912,802 +5892,6 @@ const ModelTraceStepLoadRetain = "ModelTraceStep: retention requires a variable 
 const ModelTraceStepMeasureRetain = "ModelTraceStep: retention requires a variable root and its region directory"
 const ModelTraceStepSaveRetain = "ModelTraceStep: retention requires a variable root and its region directory"
 
-// ModelHashReset restores ModelHash's declared defaults in place, reusing the storage
-// the value already holds. The reader calls it before overlaying.
-func ModelHashReset(value *ModelHash) {
-	clear(value.Module[:])
-	value.ModuleLength = 0
-	clear(value.Sha256[:])
-	value.Sha256Length = 0
-}
-
-func ModelHashMeasureBody(value *ModelHash, ids *TableIds) int64 {
-	w := TableWriter{Measuring: true, Ids: ids}
-	if !ModelHashSaveBody(&w, value) {
-		return -1
-	}
-	return w.Offset
-}
-
-func ModelHashMeasure(value *ModelHash) int64 {
-	var ids TableIds
-	w := TableWriter{Measuring: true, Ids: &ids}
-	w.Put8(1)
-	if !ModelHashSaveBody(&w, value) {
-		return -1
-	}
-	w.Trailer()
-	if w.Overflow || ids.Overflow {
-		return -1
-	}
-	return w.Offset
-}
-
-func ModelHashMeasureReason(value *ModelHash) (int64, error) {
-	size := ModelHashMeasure(value)
-	if size < 0 {
-		return size, TableRefuseInvalidValue
-	}
-	return size, nil
-}
-func ModelHashSaveBody(w *TableWriter, value *ModelHash) bool {
-	{
-		if value.ModuleLength < 0 || value.ModuleLength > 32 {
-			return false
-		}
-		if value.ModuleLength > 0 {
-			if ref := w.Ids.refAtHit(20, 0x43e6a23362b6dadd); !w.headerPair(ref, 12) {
-				w.headerRest(ref, 12)
-			}
-			if value.ModuleLength < 0 || value.ModuleLength > 32 {
-				return false
-			}
-			{
-				n := int(value.ModuleLength)
-				var hi, z uint64
-				p := value.Module[:n]
-				for len(p) >= 16 {
-					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
-					hi |= x | y
-					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
-					p = p[16:]
-				}
-				if len(p) >= 8 {
-					x := tableUtf8Word(p)
-					hi |= x
-					z |= (x - 0x0101010101010101) &^ x
-					p = p[8:]
-				}
-				if len(p) > 0 {
-					if n >= 8 {
-						x := tableUtf8Word(value.Module[n-8:])
-						hi |= x
-						z |= (x - 0x0101010101010101) &^ x
-					} else {
-						for _, c := range p {
-							x := uint64(c)
-							hi |= x
-							z |= (x - 1) &^ x
-						}
-					}
-				}
-				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Module[:n]) {
-					return false
-				}
-			}
-			if !w.putLebPair(uint64(value.ModuleLength)) {
-				w.putLebWide(uint64(value.ModuleLength))
-			}
-			w.Raw(value.Module[:value.ModuleLength])
-		}
-	}
-	{
-		if value.Sha256Length < 0 || value.Sha256Length > 64 {
-			return false
-		}
-		if value.Sha256Length > 0 {
-			if ref := w.Ids.refAtHit(17, 0x31c5f470214e1c5a); !w.headerPair(ref, 12) {
-				w.headerRest(ref, 12)
-			}
-			if value.Sha256Length < 0 || value.Sha256Length > 64 {
-				return false
-			}
-			{
-				n := int(value.Sha256Length)
-				var hi, z uint64
-				p := value.Sha256[:n]
-				for len(p) >= 16 {
-					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
-					hi |= x | y
-					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
-					p = p[16:]
-				}
-				if len(p) >= 8 {
-					x := tableUtf8Word(p)
-					hi |= x
-					z |= (x - 0x0101010101010101) &^ x
-					p = p[8:]
-				}
-				if len(p) > 0 {
-					if n >= 8 {
-						x := tableUtf8Word(value.Sha256[n-8:])
-						hi |= x
-						z |= (x - 0x0101010101010101) &^ x
-					} else {
-						for _, c := range p {
-							x := uint64(c)
-							hi |= x
-							z |= (x - 1) &^ x
-						}
-					}
-				}
-				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.Sha256[:n]) {
-					return false
-				}
-			}
-			if !w.putLebPair(uint64(value.Sha256Length)) {
-				w.putLebWide(uint64(value.Sha256Length))
-			}
-			w.Raw(value.Sha256[:value.Sha256Length])
-		}
-	}
-	w.Put8(0)
-	return !w.Overflow && !w.Ids.Overflow
-}
-
-func ModelHashSave(value *ModelHash, buffer []byte) int64 {
-	var ids TableIds
-	w := TableWriter{Buffer: buffer, Ids: &ids}
-	w.Put8(1)
-	if !ModelHashSaveBody(&w, value) {
-		return -1
-	}
-	w.Trailer()
-	if w.Overflow || ids.Overflow {
-		return -1
-	}
-	return w.Offset
-}
-
-func ModelHashLoadBody(r *TableReader, value *ModelHash) bool {
-	ModelHashReset(value)
-	for {
-		ref, ok := r.lebPair()
-		if !ok {
-			ref, ok = r.lebWide()
-		}
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		fieldID, ok := r.Resolve(ref)
-		if !ok || !r.Has(1) {
-			r.Report.Malformed = true
-			return false
-		}
-		kind := r.Get8()
-		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
-			r.Report.Malformed = true
-			return false
-		}
-		switch fieldID {
-		case 0x43e6a23362b6dadd: // module
-			if kind != 12 {
-				r.Report.KindMismatch++
-				if !r.Skip(kind) {
-					r.Report.Malformed = true
-					return false
-				}
-				break
-			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
-			}
-			if !tableUtf8Valid(sub.Buffer) {
-				r.Report.Malformed = true
-				clear(value.Module[:])
-				value.ModuleLength = 0
-				break
-			}
-			keep := int64(len(sub.Buffer))
-			if keep > 32 {
-				keep = tableUtf8Clamp(sub.Buffer, 32)
-				r.Report.Clamped++
-			}
-			clear(value.Module[:])
-			copy(value.Module[:keep], sub.Buffer)
-			value.ModuleLength = int32(keep)
-		case 0x31c5f470214e1c5a: // sha256
-			if kind != 12 {
-				r.Report.KindMismatch++
-				if !r.Skip(kind) {
-					r.Report.Malformed = true
-					return false
-				}
-				break
-			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
-			}
-			if !tableUtf8Valid(sub.Buffer) {
-				r.Report.Malformed = true
-				clear(value.Sha256[:])
-				value.Sha256Length = 0
-				break
-			}
-			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
-				r.Report.Clamped++
-			}
-			clear(value.Sha256[:])
-			copy(value.Sha256[:keep], sub.Buffer)
-			value.Sha256Length = int32(keep)
-		default:
-			r.Report.Unknown++
-			if !r.Skip(kind) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-
-// ModelHash also carries the FIXED form (form 3): ModelHashFixedLoad reads that one and
-// names a form-1 file `previous_form`. This Load is the VARIABLE form's entry
-// point and reads form 1, whether or not the table was DECLARED fixed
-// (mas-bandwidth/schema docs/SPEC-TABLES.md §3.4, §15).
-func ModelHashLoad(value *ModelHash, data []byte, report *TableReport) bool {
-	if report == nil {
-		var ignored TableReport
-		report = &ignored
-	}
-	r, verdict := tableOpen(data, report)
-	report.Verdict = verdict
-	report.Reason = ""
-	if verdict == TableOpenRefused {
-		report.Reason = "unsupported wire form"
-		if len(data) > 0 && data[0] == 2 {
-			report.Reason = "message form requires an announced vocabulary and a message reader"
-		}
-	}
-	if verdict != TableOpenOk {
-		ModelHashReset(value)
-		if verdict == TableOpenDamaged {
-			report.Malformed = true
-		}
-		return false
-	}
-	// The root read answers its own early end after the walk, not before it.
-	// A body that returned at its zero reference left the cursor on the byte
-	// after that reference. Every field leaves the cursor where skip would, so
-	// r.Offset != len(r.Buffer) is the old EndsEarly on the true path.
-	// Nothing is decoded on the damaged path: the value goes back to defaults
-	// and the report goes back to what the caller handed in, so an early end
-	// counts no unknown, no kind mismatch and no clamp — as when the framing
-	// walk refused before the reader had seen one byte.
-	before := *report
-	if !ModelHashLoadBody(&r, value) {
-		// The reading walk stops on rules the framing walk has no opinion about
-		// — a reserved id in a file body is the one that matters — so a body
-		// that stopped is still asked the framing question from the start of
-		// the body, and a body whose framing ends early is damage whatever else
-		// was wrong with it.
-		probe := r
-		probe.Offset = 0
-		if probe.EndsEarly() {
-			ModelHashReset(value)
-			*report = before
-			report.Malformed = true
-			report.Verdict = TableOpenDamaged
-			return false
-		}
-		report.Verdict = TableOpenBodyStopped
-		return false
-	}
-	if r.Offset != int64(len(r.Buffer)) {
-		ModelHashReset(value)
-		*report = before
-		report.Malformed = true
-		report.Verdict = TableOpenDamaged
-		return false
-	}
-	return true
-}
-
-// ModelHashReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, one typed reason.
-func ModelHashReadStrict(wire []byte) (*ModelHash, error) {
-	value := new(ModelHash)
-	var report TableReport
-	ok := ModelHashLoad(value, wire, &report)
-	if err := report.Err(); err != nil || !ok {
-		if err == nil {
-			err = TableRefuseWireDamaged
-		}
-		return nil, err
-	}
-	return value, nil
-}
-
-const ModelHashLoadRetainBuilder = "ModelHash: retention requires a region round trip through the VARIABLE form"
-const ModelHashSaveRetainMessages = "ModelHash: retention requires a region round trip through the VARIABLE form"
-const ModelHashLoadRetainMessages = "ModelHash: retention requires a region round trip through the VARIABLE form"
-const ModelHashLoadRetain = "ModelHash: retention requires a variable root and its region directory"
-const ModelHashMeasureRetain = "ModelHash: retention requires a variable root and its region directory"
-const ModelHashSaveRetain = "ModelHash: retention requires a variable root and its region directory"
-
-// ModelTraceReset restores ModelTrace's declared defaults in place, reusing the storage
-// the value already holds. The reader calls it before overlaying.
-func ModelTraceReset(value *ModelTrace) {
-	clear(value.SourceSha256[:])
-	value.SourceSha256Length = 0
-	for i := range value.ModelSha256 {
-		ModelHashReset(&value.ModelSha256[i])
-	}
-	value.ModelSha256Count = 0
-	ModelStateReset(&value.Initial)
-	value.StepCount = 0
-}
-
-func ModelTraceMeasureBody(value *ModelTrace, ids *TableIds) int64 {
-	w := TableWriter{Measuring: true, Ids: ids}
-	if !ModelTraceSaveBody(&w, value) {
-		return -1
-	}
-	return w.Offset
-}
-
-func ModelTraceMeasure(value *ModelTrace) int64 {
-	var ids TableIds
-	w := TableWriter{Measuring: true, Ids: &ids}
-	w.Put8(1)
-	if !ModelTraceSaveBody(&w, value) {
-		return -1
-	}
-	w.Trailer()
-	if w.Overflow || ids.Overflow {
-		return -1
-	}
-	return w.Offset
-}
-
-func ModelTraceMeasureReason(value *ModelTrace) (int64, error) {
-	size := ModelTraceMeasure(value)
-	if size < 0 {
-		return size, TableRefuseInvalidValue
-	}
-	return size, nil
-}
-func ModelTraceSaveBody(w *TableWriter, value *ModelTrace) bool {
-	var arrayLengths [4]int64
-	{
-		if value.SourceSha256Length < 0 || value.SourceSha256Length > 64 {
-			return false
-		}
-		if value.SourceSha256Length > 0 {
-			if ref := w.Ids.refAtHit(23, 0x4fbdf626b33de6bf); !w.headerPair(ref, 12) {
-				w.headerRest(ref, 12)
-			}
-			if value.SourceSha256Length < 0 || value.SourceSha256Length > 64 {
-				return false
-			}
-			{
-				n := int(value.SourceSha256Length)
-				var hi, z uint64
-				p := value.SourceSha256[:n]
-				for len(p) >= 16 {
-					x, y := tableUtf8Word(p), tableUtf8Word(p[8:])
-					hi |= x | y
-					z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
-					p = p[16:]
-				}
-				if len(p) >= 8 {
-					x := tableUtf8Word(p)
-					hi |= x
-					z |= (x - 0x0101010101010101) &^ x
-					p = p[8:]
-				}
-				if len(p) > 0 {
-					if n >= 8 {
-						x := tableUtf8Word(value.SourceSha256[n-8:])
-						hi |= x
-						z |= (x - 0x0101010101010101) &^ x
-					} else {
-						for _, c := range p {
-							x := uint64(c)
-							hi |= x
-							z |= (x - 1) &^ x
-						}
-					}
-				}
-				if z&0x8080808080808080 != 0 || hi&0x8080808080808080 != 0 && !tableUtf8Valid(value.SourceSha256[:n]) {
-					return false
-				}
-			}
-			if !w.putLebPair(uint64(value.SourceSha256Length)) {
-				w.putLebWide(uint64(value.SourceSha256Length))
-			}
-			w.Raw(value.SourceSha256[:value.SourceSha256Length])
-		}
-	}
-	{
-		if value.ModelSha256Count < 0 || value.ModelSha256Count > 4 {
-			return false
-		}
-		if value.ModelSha256Count > 0 {
-			if ref := w.Ids.refAtHit(46, 0x952f22722a282495); !w.headerPair(ref, 14) {
-				w.headerRest(ref, 14)
-			}
-			if value.ModelSha256Count < 0 || value.ModelSha256Count > 4 {
-				return false
-			}
-			{
-				mark := w.Ids.Count
-				payload37 := TableWriter{Measuring: true, Ids: w.Ids}
-				pairs := uint64(0)
-				for i := 0; i < int(value.ModelSha256Count); i++ {
-					n := ModelHashMeasureBody(&value.ModelSha256[i], payload37.Ids)
-					if n < 0 {
-						return false
-					}
-					arrayLengths[i] = n
-					if !payload37.putLebPair(uint64(n)) {
-						payload37.putLebWide(uint64(n))
-					}
-					payload37.Advance(n)
-					pairs++
-				}
-				if payload37.Overflow {
-					return false
-				}
-				n := int64(1) + tableLebBytes(pairs) + payload37.Offset
-				if !w.putLebPair(uint64(n)) {
-					w.putLebWide(uint64(n))
-				}
-				if w.Measuring {
-					w.Advance(n)
-				} else {
-					w.Ids.Truncate(mark)
-					w.Put8(13)
-					if !w.putLebPair(pairs) {
-						w.putLebWide(pairs)
-					}
-					for i := 0; i < int(value.ModelSha256Count); i++ {
-						if !w.putLebPair(uint64(arrayLengths[i])) {
-							w.putLebWide(uint64(arrayLengths[i]))
-						}
-						if !ModelHashSaveBody(w, &value.ModelSha256[i]) {
-							return false
-						}
-					}
-				}
-			}
-		}
-	}
-	{
-		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(36, 0x7f5f002d3284b6c3)
-		start := w.Ids.Count
-		n := ModelStateMeasureBody(&value.Initial, w.Ids)
-		if n < 0 || w.Ids.Overflow {
-			return false
-		}
-		if n > 1 {
-			if w.Measuring {
-				w.Advance(tableLebBytes(ref) + 1 + tableLebBytes(uint64(n)) + n)
-			} else {
-				w.Ids.Truncate(start)
-				if !w.headerPair(ref, 13) {
-					w.headerRest(ref, 13)
-				}
-				if !w.putLebPair(uint64(n)) {
-					w.putLebWide(uint64(n))
-				}
-				if !ModelStateSaveBody(w, &value.Initial) {
-					return false
-				}
-			}
-		} else {
-			w.Ids.Truncate(mark)
-		}
-	}
-	{
-		if value.StepCount != 0 {
-			if ref := w.Ids.refAtHit(11, 0x25b7fb969ec3a816); !w.headerPair(ref, 4) {
-				w.headerRest(ref, 4)
-			}
-			if value.StepCount < 0 || value.StepCount > 40 {
-				return false
-			}
-			w.Put32(uint32(value.StepCount))
-		}
-	}
-	w.Put8(0)
-	return !w.Overflow && !w.Ids.Overflow
-}
-
-func ModelTraceSave(value *ModelTrace, buffer []byte) int64 {
-	var ids TableIds
-	w := TableWriter{Buffer: buffer, Ids: &ids}
-	w.Put8(1)
-	if !ModelTraceSaveBody(&w, value) {
-		return -1
-	}
-	w.Trailer()
-	if w.Overflow || ids.Overflow {
-		return -1
-	}
-	return w.Offset
-}
-
-func ModelTraceLoadBody(r *TableReader, value *ModelTrace) bool {
-	ModelTraceReset(value)
-	for {
-		ref, ok := r.lebPair()
-		if !ok {
-			ref, ok = r.lebWide()
-		}
-		if !ok {
-			r.Report.Malformed = true
-			return false
-		}
-		if ref == 0 {
-			return true
-		}
-		fieldID, ok := r.Resolve(ref)
-		if !ok || !r.Has(1) {
-			r.Report.Malformed = true
-			return false
-		}
-		kind := r.Get8()
-		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
-			r.Report.Malformed = true
-			return false
-		}
-		switch fieldID {
-		case 0x4fbdf626b33de6bf: // sourceSha256
-			if kind != 12 {
-				r.Report.KindMismatch++
-				if !r.Skip(kind) {
-					r.Report.Malformed = true
-					return false
-				}
-				break
-			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
-			}
-			if !tableUtf8Valid(sub.Buffer) {
-				r.Report.Malformed = true
-				clear(value.SourceSha256[:])
-				value.SourceSha256Length = 0
-				break
-			}
-			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
-				r.Report.Clamped++
-			}
-			clear(value.SourceSha256[:])
-			copy(value.SourceSha256[:keep], sub.Buffer)
-			value.SourceSha256Length = int32(keep)
-		case 0x952f22722a282495: // modelSha256
-			if kind != 14 {
-				r.Report.KindMismatch++
-				if !r.Skip(kind) {
-					r.Report.Malformed = true
-					return false
-				}
-				break
-			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
-			}
-			if len(sub.Buffer) >= 2 {
-				header := sub
-				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
-				elemKind := header.Get8()
-				count, ok := header.Leb()
-				sub.Offset = header.Offset
-				if !ok {
-					r.Report.Malformed = true
-				} else {
-					if elemKind != 13 {
-						r.Report.KindMismatch++
-						break
-					}
-					keep := count
-					if keep > 4 {
-						keep = 4
-						r.Report.Clamped++
-					}
-					previous := value.ModelSha256Count
-					decoded := int32(0)
-					for i := uint64(0); i < keep; i++ {
-						elem, ok := sub.Body()
-						if !ok {
-							r.Report.Malformed = true
-							break
-						}
-						ModelHashLoadBody(&elem, &value.ModelSha256[i])
-						if elem.Offset != int64(len(elem.Buffer)) {
-							r.Report.Malformed = true
-							ModelHashReset(&value.ModelSha256[i])
-						}
-						decoded = int32(i + 1)
-					}
-					for i := decoded; i < previous; i++ {
-						ModelHashReset(&value.ModelSha256[i])
-					}
-					value.ModelSha256Count = decoded
-				}
-			}
-		case 0x7f5f002d3284b6c3: // initial
-			if kind != 13 {
-				r.Report.KindMismatch++
-				if !r.Skip(kind) {
-					r.Report.Malformed = true
-					return false
-				}
-				break
-			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
-			}
-			ModelStateLoadBody(&sub, &value.Initial)
-			if sub.Offset != int64(len(sub.Buffer)) {
-				r.Report.Malformed = true
-				ModelStateReset(&value.Initial)
-			}
-		case 0x25b7fb969ec3a816: // stepCount
-			if kind != 4 {
-				if tableKindWidens(kind, 4) {
-					if !r.Has(tableKindBytes(kind)) {
-						r.Report.Malformed = true
-						return false
-					}
-					{
-						v := r.Signed(kind)
-						if v < 0 {
-							v = 0
-							r.Report.Clamped++
-						} else if v > 40 {
-							v = 40
-							r.Report.Clamped++
-						}
-						value.StepCount = int32(v)
-					}
-					r.Report.Widened++
-					break
-				}
-				r.Report.KindMismatch++
-				if !r.Skip(kind) {
-					r.Report.Malformed = true
-					return false
-				}
-				break
-			}
-			if !r.Has(4) {
-				r.Report.Malformed = true
-				return false
-			}
-			{
-				v := int32(r.Get32())
-				if v < 0 {
-					v = 0
-					r.Report.Clamped++
-				} else if v > 40 {
-					v = 40
-					r.Report.Clamped++
-				}
-				value.StepCount = int32(v)
-			}
-		default:
-			r.Report.Unknown++
-			if !r.Skip(kind) {
-				r.Report.Malformed = true
-				return false
-			}
-		}
-	}
-}
-
-// ModelTrace also carries the FIXED form (form 3): ModelTraceFixedLoad reads that one and
-// names a form-1 file `previous_form`. This Load is the VARIABLE form's entry
-// point and reads form 1, whether or not the table was DECLARED fixed
-// (mas-bandwidth/schema docs/SPEC-TABLES.md §3.4, §15).
-func ModelTraceLoad(value *ModelTrace, data []byte, report *TableReport) bool {
-	if report == nil {
-		var ignored TableReport
-		report = &ignored
-	}
-	r, verdict := tableOpen(data, report)
-	report.Verdict = verdict
-	report.Reason = ""
-	if verdict == TableOpenRefused {
-		report.Reason = "unsupported wire form"
-		if len(data) > 0 && data[0] == 2 {
-			report.Reason = "message form requires an announced vocabulary and a message reader"
-		}
-	}
-	if verdict != TableOpenOk {
-		ModelTraceReset(value)
-		if verdict == TableOpenDamaged {
-			report.Malformed = true
-		}
-		return false
-	}
-	// The root read answers its own early end after the walk, not before it.
-	// A body that returned at its zero reference left the cursor on the byte
-	// after that reference. Every field leaves the cursor where skip would, so
-	// r.Offset != len(r.Buffer) is the old EndsEarly on the true path.
-	// Nothing is decoded on the damaged path: the value goes back to defaults
-	// and the report goes back to what the caller handed in, so an early end
-	// counts no unknown, no kind mismatch and no clamp — as when the framing
-	// walk refused before the reader had seen one byte.
-	before := *report
-	if !ModelTraceLoadBody(&r, value) {
-		// The reading walk stops on rules the framing walk has no opinion about
-		// — a reserved id in a file body is the one that matters — so a body
-		// that stopped is still asked the framing question from the start of
-		// the body, and a body whose framing ends early is damage whatever else
-		// was wrong with it.
-		probe := r
-		probe.Offset = 0
-		if probe.EndsEarly() {
-			ModelTraceReset(value)
-			*report = before
-			report.Malformed = true
-			report.Verdict = TableOpenDamaged
-			return false
-		}
-		report.Verdict = TableOpenBodyStopped
-		return false
-	}
-	if r.Offset != int64(len(r.Buffer)) {
-		ModelTraceReset(value)
-		*report = before
-		report.Malformed = true
-		report.Verdict = TableOpenDamaged
-		return false
-	}
-	return true
-}
-
-// ModelTraceReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, one typed reason.
-func ModelTraceReadStrict(wire []byte) (*ModelTrace, error) {
-	value := new(ModelTrace)
-	var report TableReport
-	ok := ModelTraceLoad(value, wire, &report)
-	if err := report.Err(); err != nil || !ok {
-		if err == nil {
-			err = TableRefuseWireDamaged
-		}
-		return nil, err
-	}
-	return value, nil
-}
-
-const ModelTraceLoadRetainBuilder = "ModelTrace: retention requires a region round trip through the VARIABLE form"
-const ModelTraceSaveRetainMessages = "ModelTrace: retention requires a region round trip through the VARIABLE form"
-const ModelTraceLoadRetainMessages = "ModelTrace: retention requires a region round trip through the VARIABLE form"
-const ModelTraceLoadRetain = "ModelTrace: retention requires a variable root and its region directory"
-const ModelTraceMeasureRetain = "ModelTrace: retention requires a variable root and its region directory"
-const ModelTraceSaveRetain = "ModelTrace: retention requires a variable root and its region directory"
-
 // ModelFindingReset restores ModelFinding's declared defaults in place, reusing the storage
 // the value already holds. The reader calls it before overlaying.
 func ModelFindingReset(value *ModelFinding) {
@@ -6754,7 +5938,7 @@ func ModelFindingSaveBody(w *TableWriter, value *ModelFinding) bool {
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(62, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(56, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.NameLength < 0 || value.NameLength > 64 {
@@ -6804,7 +5988,7 @@ func ModelFindingSaveBody(w *TableWriter, value *ModelFinding) bool {
 			return false
 		}
 		if value.ResultLength > 0 {
-			if ref := w.Ids.refAtHit(49, 0x9b51cd7cd76778c4); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(43, 0x9b51cd7cd76778c4); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.ResultLength < 0 || value.ResultLength > 32 {
@@ -6854,7 +6038,7 @@ func ModelFindingSaveBody(w *TableWriter, value *ModelFinding) bool {
 			return false
 		}
 		if value.TextLength > 0 {
-			if ref := w.Ids.refAtHit(80, 0xfa04f4ef1995407e); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(73, 0xfa04f4ef1995407e); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.TextLength < 0 || value.TextLength > 512 {
@@ -7168,7 +6352,7 @@ func ModelReplayEventSaveBody(w *TableWriter, value *ModelReplayEvent) bool {
 			return false
 		}
 		if value.StepLength > 0 {
-			if ref := w.Ids.refAtHit(55, 0xaf0b4e191da20cef); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(49, 0xaf0b4e191da20cef); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.StepLength < 0 || value.StepLength > 64 {
@@ -7218,7 +6402,7 @@ func ModelReplayEventSaveBody(w *TableWriter, value *ModelReplayEvent) bool {
 			return false
 		}
 		if value.VerdictLength > 0 {
-			if ref := w.Ids.refAtHit(47, 0x96aeedce78407976); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(41, 0x96aeedce78407976); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.VerdictLength < 0 || value.VerdictLength > 64 {
@@ -7268,7 +6452,7 @@ func ModelReplayEventSaveBody(w *TableWriter, value *ModelReplayEvent) bool {
 			return false
 		}
 		if value.FieldsCount > 0 {
-			if ref := w.Ids.refAtHit(21, 0x490e596d24847edc); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(18, 0x490e596d24847edc); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.FieldsCount < 0 || value.FieldsCount > 8 {
@@ -7276,24 +6460,24 @@ func ModelReplayEventSaveBody(w *TableWriter, value *ModelReplayEvent) bool {
 			}
 			{
 				mark := w.Ids.Count
-				payload41 := TableWriter{Measuring: true, Ids: w.Ids}
+				payload37 := TableWriter{Measuring: true, Ids: w.Ids}
 				pairs := uint64(0)
 				for i := 0; i < int(value.FieldsCount); i++ {
-					n := ModelDetailMeasureBody(&value.Fields[i], payload41.Ids)
+					n := ModelDetailMeasureBody(&value.Fields[i], payload37.Ids)
 					if n < 0 {
 						return false
 					}
 					arrayLengths[i] = n
-					if !payload41.putLebPair(uint64(n)) {
-						payload41.putLebWide(uint64(n))
+					if !payload37.putLebPair(uint64(n)) {
+						payload37.putLebWide(uint64(n))
 					}
-					payload41.Advance(n)
+					payload37.Advance(n)
 					pairs++
 				}
-				if payload41.Overflow {
+				if payload37.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(pairs) + payload41.Offset
+				n := int64(1) + tableLebBytes(pairs) + payload37.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -7613,7 +6797,7 @@ func ModelStepSaveBody(w *TableWriter, value *ModelStep) bool {
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(62, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(56, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.NameLength < 0 || value.NameLength > 64 {
@@ -7663,7 +6847,7 @@ func ModelStepSaveBody(w *TableWriter, value *ModelStep) bool {
 			return false
 		}
 		if value.ModuleLength > 0 {
-			if ref := w.Ids.refAtHit(20, 0x43e6a23362b6dadd); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(17, 0x43e6a23362b6dadd); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.ModuleLength < 0 || value.ModuleLength > 96 {
@@ -7710,7 +6894,7 @@ func ModelStepSaveBody(w *TableWriter, value *ModelStep) bool {
 	}
 	{
 		if value.Workers != 0 {
-			if ref := w.Ids.refAtHit(74, 0xe4dede02383cb9cc); !w.headerPair(ref, 4) {
+			if ref := w.Ids.refAtHit(67, 0xe4dede02383cb9cc); !w.headerPair(ref, 4) {
 				w.headerRest(ref, 4)
 			}
 			if value.Workers < 0 || value.Workers > 1024 {
@@ -7724,7 +6908,7 @@ func ModelStepSaveBody(w *TableWriter, value *ModelStep) bool {
 			return false
 		}
 		if value.KindLength > 0 {
-			if ref := w.Ids.refAtHit(77, 0xef9c96d721673243); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(70, 0xef9c96d721673243); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.KindLength < 0 || value.KindLength > 16 {
@@ -7774,7 +6958,7 @@ func ModelStepSaveBody(w *TableWriter, value *ModelStep) bool {
 			return false
 		}
 		if value.PropertyLength > 0 {
-			if ref := w.Ids.refAtHit(25, 0x58da6b1ccd7c4488); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(21, 0x58da6b1ccd7c4488); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.PropertyLength < 0 || value.PropertyLength > 64 {
@@ -8232,7 +7416,7 @@ func ModelViolationSaveBody(w *TableWriter, value *ModelViolation) bool {
 			return false
 		}
 		if value.KindLength > 0 {
-			if ref := w.Ids.refAtHit(77, 0xef9c96d721673243); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(70, 0xef9c96d721673243); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.KindLength < 0 || value.KindLength > 32 {
@@ -8282,7 +7466,7 @@ func ModelViolationSaveBody(w *TableWriter, value *ModelViolation) bool {
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(62, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(56, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.NameLength < 0 || value.NameLength > 128 {
@@ -8567,7 +7751,7 @@ func ModelOutcomeSaveBody(w *TableWriter, value *ModelOutcome) bool {
 	var arrayLengths [16]int64
 	{
 		if value.Completed != false {
-			if ref := w.Ids.refAtHit(84, 0xfdde30c24ce38292); !w.headerPair(ref, 1) {
+			if ref := w.Ids.refAtHit(77, 0xfdde30c24ce38292); !w.headerPair(ref, 1) {
 				w.headerRest(ref, 1)
 			}
 			if value.Completed {
@@ -8582,7 +7766,7 @@ func ModelOutcomeSaveBody(w *TableWriter, value *ModelOutcome) bool {
 			return false
 		}
 		if value.GeneratedLength > 0 {
-			if ref := w.Ids.refAtHit(72, 0xe062a9743d7b3b62); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(65, 0xe062a9743d7b3b62); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.GeneratedLength < 0 || value.GeneratedLength > 24 {
@@ -8632,7 +7816,7 @@ func ModelOutcomeSaveBody(w *TableWriter, value *ModelOutcome) bool {
 			return false
 		}
 		if value.DistinctLength > 0 {
-			if ref := w.Ids.refAtHit(27, 0x65a59df633133c8d); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(23, 0x65a59df633133c8d); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.DistinctLength < 0 || value.DistinctLength > 24 {
@@ -8682,7 +7866,7 @@ func ModelOutcomeSaveBody(w *TableWriter, value *ModelOutcome) bool {
 			return false
 		}
 		if value.ViolationsCount > 0 {
-			if ref := w.Ids.refAtHit(33, 0x7170d96cddbdcbf1); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(29, 0x7170d96cddbdcbf1); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.ViolationsCount < 0 || value.ViolationsCount > 16 {
@@ -8690,24 +7874,24 @@ func ModelOutcomeSaveBody(w *TableWriter, value *ModelOutcome) bool {
 			}
 			{
 				mark := w.Ids.Count
-				payload45 := TableWriter{Measuring: true, Ids: w.Ids}
+				payload41 := TableWriter{Measuring: true, Ids: w.Ids}
 				pairs := uint64(0)
 				for i := 0; i < int(value.ViolationsCount); i++ {
-					n := ModelViolationMeasureBody(&value.Violations[i], payload45.Ids)
+					n := ModelViolationMeasureBody(&value.Violations[i], payload41.Ids)
 					if n < 0 {
 						return false
 					}
 					arrayLengths[i] = n
-					if !payload45.putLebPair(uint64(n)) {
-						payload45.putLebWide(uint64(n))
+					if !payload41.putLebPair(uint64(n)) {
+						payload41.putLebWide(uint64(n))
 					}
-					payload45.Advance(n)
+					payload41.Advance(n)
 					pairs++
 				}
-				if payload45.Overflow {
+				if payload41.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(pairs) + payload45.Offset
+				n := int64(1) + tableLebBytes(pairs) + payload41.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -8733,7 +7917,7 @@ func ModelOutcomeSaveBody(w *TableWriter, value *ModelOutcome) bool {
 	}
 	{
 		if value.InitialState != false {
-			if ref := w.Ids.refAtHit(22, 0x4cea86c6bb96e874); !w.headerPair(ref, 1) {
+			if ref := w.Ids.refAtHit(19, 0x4cea86c6bb96e874); !w.headerPair(ref, 1) {
 				w.headerRest(ref, 1)
 			}
 			if value.InitialState {
@@ -9062,7 +8246,7 @@ func ModelStepResultMeasureReason(value *ModelStepResult) (int64, error) {
 func ModelStepResultSaveBody(w *TableWriter, value *ModelStepResult) bool {
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(55, 0xaf0b4e191da20cef)
+		ref := w.Ids.refAtHit(49, 0xaf0b4e191da20cef)
 		start := w.Ids.Count
 		n := ModelStepMeasureBody(&value.Step, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -9092,7 +8276,7 @@ func ModelStepResultSaveBody(w *TableWriter, value *ModelStepResult) bool {
 			return false
 		}
 		if value.VerdictLength > 0 {
-			if ref := w.Ids.refAtHit(47, 0x96aeedce78407976); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(41, 0x96aeedce78407976); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.VerdictLength < 0 || value.VerdictLength > 32 {
@@ -9162,7 +8346,7 @@ func ModelStepResultSaveBody(w *TableWriter, value *ModelStepResult) bool {
 	}
 	{
 		if value.Seconds != 0 {
-			if ref := w.Ids.refAtHit(51, 0x9eff639fb8a1be0a); !w.headerPair(ref, 5) {
+			if ref := w.Ids.refAtHit(45, 0x9eff639fb8a1be0a); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
 			}
 			if value.Seconds < 0 || value.Seconds > 86400000000000 {
@@ -9173,7 +8357,7 @@ func ModelStepResultSaveBody(w *TableWriter, value *ModelStepResult) bool {
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(34, 0x75fe2a8465b02e53)
+		ref := w.Ids.refAtHit(30, 0x75fe2a8465b02e53)
 		start := w.Ids.Count
 		n := ModelOutcomeMeasureBody(&value.Outcome, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -9624,7 +8808,7 @@ func ConvergeStreamEntrySaveBody(w *TableWriter, value *ConvergeStreamEntry) boo
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(62, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(56, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.NameLength < 0 || value.NameLength > 32 {
@@ -10052,7 +9236,7 @@ func ConvergeStateSaveBody(w *TableWriter, value *ConvergeState) bool {
 			return false
 		}
 		if value.StreamsCount > 0 {
-			if ref := w.Ids.refAtHit(38, 0x81f528932d7f3d02); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(33, 0x81f528932d7f3d02); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.StreamsCount < 0 || value.StreamsCount > 16 {
@@ -10060,24 +9244,24 @@ func ConvergeStateSaveBody(w *TableWriter, value *ConvergeState) bool {
 			}
 			{
 				mark := w.Ids.Count
-				payload55 := TableWriter{Measuring: true, Ids: w.Ids}
+				payload51 := TableWriter{Measuring: true, Ids: w.Ids}
 				pairs := uint64(0)
 				for i := 0; i < int(value.StreamsCount); i++ {
-					n := ConvergeStreamEntryMeasureBody(&value.Streams[i], payload55.Ids)
+					n := ConvergeStreamEntryMeasureBody(&value.Streams[i], payload51.Ids)
 					if n < 0 {
 						return false
 					}
 					arrayLengths[i] = n
-					if !payload55.putLebPair(uint64(n)) {
-						payload55.putLebWide(uint64(n))
+					if !payload51.putLebPair(uint64(n)) {
+						payload51.putLebWide(uint64(n))
 					}
-					payload55.Advance(n)
+					payload51.Advance(n)
 					pairs++
 				}
-				if payload55.Overflow {
+				if payload51.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(pairs) + payload55.Offset
+				n := int64(1) + tableLebBytes(pairs) + payload51.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -10759,63 +9943,6 @@ func ModelTraceStepFixedWriteBody(b []byte, value *ModelTraceStep) {
 	ModelStateFixedWriteBody(b[11859:], &value.State)
 }
 
-func ModelHashFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
-	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(ModelHash{}.ModuleLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(ModelHash{}.Module)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // module
-	n++
-	out[n] = TableFixedEntry{Src: src + 36, Dst: dst + uint32(unsafe.Offsetof(ModelHash{}.Sha256Length)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(ModelHash{}.Sha256)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // sha256
-	n++
-	return n
-}
-
-func ModelHashFixedWriteBody(b []byte, value *ModelHash) {
-	tableFixedPut32(b[0:], uint32(value.ModuleLength))
-	copy(b[0:][4:], value.Module[:min(uint32(value.ModuleLength), 32)])
-	tableFixedPut32(b[36:], uint32(value.Sha256Length))
-	copy(b[36:][4:], value.Sha256[:min(uint32(value.Sha256Length), 64)])
-}
-
-func ModelTraceFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
-	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(ModelTrace{}.SourceSha256Length)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(ModelTrace{}.SourceSha256)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // sourceSha256
-	n++
-	out[n] = TableFixedEntry{Src: src + 68, Dst: dst + uint32(unsafe.Offsetof(ModelTrace{}.ModelSha256Count)), Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCount} // modelSha256 count
-	n++
-	for i := uint32(0); i < 4; i++ {
-		es := src + 72 + i*104
-		ed := dst + uint32(unsafe.Offsetof(ModelTrace{}.ModelSha256)) + i*uint32(unsafe.Sizeof(ModelHash{}))
-		n += ModelHashFixedLeaves(out[n:], links[n:], es, ed)
-	}
-	{
-		es := src + 488
-		ed := dst + uint32(unsafe.Offsetof(ModelTrace{}.Initial))
-		n += ModelStateFixedLeaves(out[n:], links[n:], es, ed)
-	}
-	{
-		es := src + 11940
-		ed := dst + uint32(unsafe.Offsetof(ModelTrace{}.StepCount))
-		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
-		n++
-	}
-	return n
-}
-
-func ModelTraceFixedWriteBody(b []byte, value *ModelTrace) {
-	tableFixedPut32(b[0:], uint32(value.SourceSha256Length))
-	copy(b[0:][4:], value.SourceSha256[:min(uint32(value.SourceSha256Length), 64)])
-	tableFixedPut32(b[68:], uint32(value.ModelSha256Count))
-	{
-		livei := min(max(int64(value.ModelSha256Count), 0), 4)
-		for i := int64(0); i < livei; i++ {
-			clear(b[72:][i*104 : i*104+104])
-			ModelHashFixedWriteBody(b[72:][i*104:], &value.ModelSha256[i])
-		}
-		clear(b[72:][livei*104 : 416])
-	}
-	ModelStateFixedWriteBody(b[488:], &value.Initial)
-	tableFixedPut32(b[11940:], uint32(value.StepCount))
-}
-
 func ModelFindingFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
 	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(ModelFinding{}.NameLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(ModelFinding{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
@@ -11219,27 +10346,6 @@ func ModelTraceStepFixedClampBody(value *ModelTraceStep, clamped *int32) {
 	}
 	ModelEventFixedClampBody(&value.Receipt, clamped)
 	ModelStateFixedClampBody(&value.State, clamped)
-}
-
-// ModelHash's read-side bounds.
-func ModelHashFixedClampBody(value *ModelHash, clamped *int32) {
-	_, _ = value, clamped
-}
-
-// ModelTrace's read-side bounds.
-func ModelTraceFixedClampBody(value *ModelTrace, clamped *int32) {
-	_, _ = value, clamped
-	for i := int64(0); i < int64(value.ModelSha256Count); i++ {
-		ModelHashFixedClampBody(&value.ModelSha256[i], clamped)
-	}
-	ModelStateFixedClampBody(&value.Initial, clamped)
-	if value.StepCount < 0 {
-		value.StepCount = 0
-		(*clamped)++
-	} else if value.StepCount > 40 {
-		value.StepCount = 40
-		(*clamped)++
-	}
 }
 
 // ModelFinding's read-side bounds.
@@ -12206,165 +11312,6 @@ func ModelTraceStepFixedCheckBodyExact(value *ModelTraceStep) bool {
 		return false
 	}
 	if !ModelStateFixedCheckBody(&value.State) {
-		return false
-	}
-	return true
-}
-
-// ModelHash's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
-func ModelHashFixedCheckBody(value *ModelHash) bool {
-	var z, hi uint64
-	if n := int(value.ModuleLength); uint(n) > 32 {
-		return false
-	} else {
-		p := value.Module[:n]
-		for len(p) >= 16 {
-			x, y := tableFixedGet64(p), tableFixedGet64(p[8:])
-			hi |= x | y
-			z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
-			p = p[16:]
-		}
-		if len(p) >= 8 {
-			x := tableFixedGet64(p)
-			hi |= x
-			z |= (x - 0x0101010101010101) &^ x
-			p = p[8:]
-		}
-		if len(p) > 0 {
-			var x uint64
-			if n >= 8 {
-				x = tableFixedGet64(value.Module[n-8:])
-			} else {
-				m := uint64(1)<<(8*uint(n)) - 1
-				x = tableFixedGet64(value.Module[:])&m | 0x0101010101010101&^m
-			}
-			hi |= x
-			z |= (x - 0x0101010101010101) &^ x
-		}
-	}
-	if n := int(value.Sha256Length); uint(n) > 64 {
-		return false
-	} else {
-		p := value.Sha256[:n]
-		for len(p) >= 16 {
-			x, y := tableFixedGet64(p), tableFixedGet64(p[8:])
-			hi |= x | y
-			z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
-			p = p[16:]
-		}
-		if len(p) >= 8 {
-			x := tableFixedGet64(p)
-			hi |= x
-			z |= (x - 0x0101010101010101) &^ x
-			p = p[8:]
-		}
-		if len(p) > 0 {
-			var x uint64
-			if n >= 8 {
-				x = tableFixedGet64(value.Sha256[n-8:])
-			} else {
-				m := uint64(1)<<(8*uint(n)) - 1
-				x = tableFixedGet64(value.Sha256[:])&m | 0x0101010101010101&^m
-			}
-			hi |= x
-			z |= (x - 0x0101010101010101) &^ x
-		}
-	}
-	if z&0x8080808080808080 != 0 {
-		return false
-	}
-	if hi&0x8080808080808080 != 0 {
-		return ModelHashFixedCheckBodyExact(value)
-	}
-	return true
-}
-
-// ModelHashFixedCheckBodyExact is ModelHashFixedCheckBody with each string asked by
-// tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
-func ModelHashFixedCheckBodyExact(value *ModelHash) bool {
-	_ = value
-	if uint32(value.ModuleLength) > 32 || !tableFixedUtf8Ok(value.Module[:value.ModuleLength]) {
-		return false
-	}
-	if uint32(value.Sha256Length) > 64 || !tableFixedUtf8Ok(value.Sha256[:value.Sha256Length]) {
-		return false
-	}
-	return true
-}
-
-// ModelTrace's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
-func ModelTraceFixedCheckBody(value *ModelTrace) bool {
-	var z, hi uint64
-	if n := int(value.SourceSha256Length); uint(n) > 64 {
-		return false
-	} else {
-		p := value.SourceSha256[:n]
-		for len(p) >= 16 {
-			x, y := tableFixedGet64(p), tableFixedGet64(p[8:])
-			hi |= x | y
-			z |= (x-0x0101010101010101)&^x | (y-0x0101010101010101)&^y
-			p = p[16:]
-		}
-		if len(p) >= 8 {
-			x := tableFixedGet64(p)
-			hi |= x
-			z |= (x - 0x0101010101010101) &^ x
-			p = p[8:]
-		}
-		if len(p) > 0 {
-			var x uint64
-			if n >= 8 {
-				x = tableFixedGet64(value.SourceSha256[n-8:])
-			} else {
-				m := uint64(1)<<(8*uint(n)) - 1
-				x = tableFixedGet64(value.SourceSha256[:])&m | 0x0101010101010101&^m
-			}
-			hi |= x
-			z |= (x - 0x0101010101010101) &^ x
-		}
-	}
-	if value.ModelSha256Count < 0 || value.ModelSha256Count > 4 {
-		return false
-	}
-	for i := int64(value.ModelSha256Count) - 1; i >= 0; i-- {
-		if !ModelHashFixedCheckBody(&value.ModelSha256[i]) {
-			return false
-		}
-	}
-	if !ModelStateFixedCheckBody(&value.Initial) {
-		return false
-	}
-	if value.StepCount < 0 || value.StepCount > 40 {
-		return false
-	}
-	if z&0x8080808080808080 != 0 {
-		return false
-	}
-	if hi&0x8080808080808080 != 0 {
-		return ModelTraceFixedCheckBodyExact(value)
-	}
-	return true
-}
-
-// ModelTraceFixedCheckBodyExact is ModelTraceFixedCheckBody with each string asked by
-// tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
-func ModelTraceFixedCheckBodyExact(value *ModelTrace) bool {
-	_ = value
-	if uint32(value.SourceSha256Length) > 64 || !tableFixedUtf8Ok(value.SourceSha256[:value.SourceSha256Length]) {
-		return false
-	}
-	if value.ModelSha256Count < 0 || value.ModelSha256Count > 4 {
-		return false
-	}
-	for i := int64(value.ModelSha256Count) - 1; i >= 0; i-- {
-		if !ModelHashFixedCheckBody(&value.ModelSha256[i]) {
-			return false
-		}
-	}
-	if !ModelStateFixedCheckBody(&value.Initial) {
-		return false
-	}
-	if value.StepCount < 0 || value.StepCount > 40 {
 		return false
 	}
 	return true
@@ -17364,685 +16311,6 @@ func ModelTraceStepFixedLoad(values []ModelTraceStep, data []byte, plan []TableF
 // clamp COUNTS. The pass walks LIVE elements only: a counted array's live
 // count, not its slack; an optional's payload only when present; a union's
 // set arm, not the others.
-func ModelHashFixedClamp(value *ModelHash, report *TableReport) {
-	clamped := int32(0)
-	ModelHashFixedClampBody(value, &clamped)
-	report.Clamped += clamped
-}
-
-// ---- ModelHash, the fixed form ----
-
-const ModelHashFixedBodyBytes = 104
-const ModelHashFixedRecordBytes = 8 + ModelHashFixedBodyBytes
-const ModelHashFixedHash = 0xfef399711000dda7
-
-var ModelHashFixedLayout = []byte{
-	0x03, 0x00, 0x00, 0x00, 0x6e, 0x7f, 0xd5, 0x05, 0x57, 0xbb, 0x32, 0xc9, 0x0d, 0x68, 0x00, 0x00,
-	0x00, 0x02, 0x00, 0x00, 0x00, 0xdd, 0xda, 0xb6, 0x62, 0x33, 0xa2, 0xe6, 0x43, 0x0c, 0x24, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x1c, 0x4e, 0x21, 0x70, 0xf4, 0xc5, 0x31, 0x0c, 0x44,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-}
-
-var ModelHashFixedDst = []TableFixedDst{
-	{0, 0, 0, 0, 0, 0}, // ModelHash
-	{uint32(unsafe.Offsetof(ModelHash{}.ModuleLength)), 0, uint32(unsafe.Offsetof(ModelHash{}.Module)), 0, 1, 1}, // module
-	{uint32(unsafe.Offsetof(ModelHash{}.Sha256Length)), 0, uint32(unsafe.Offsetof(ModelHash{}.Sha256)), 0, 1, 1}, // sha256
-}
-
-var ModelHashFixedPlan = tableFixedBuildPlan(ModelHashFixedLeaves, 2)
-
-var ModelHashFixedKnown = []TableFixedKnownLayout{
-	{
-		Hash:        0xfef399711000dda7,
-		LayoutBytes: 55,
-		Record:      112,
-		Layout: []byte{
-			0x03, 0x00, 0x00, 0x00, 0x6e, 0x7f, 0xd5, 0x05, 0x57, 0xbb, 0x32, 0xc9, 0x0d, 0x68, 0x00, 0x00,
-			0x00, 0x02, 0x00, 0x00, 0x00, 0xdd, 0xda, 0xb6, 0x62, 0x33, 0xa2, 0xe6, 0x43, 0x0c, 0x24, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x1c, 0x4e, 0x21, 0x70, 0xf4, 0xc5, 0x31, 0x0c, 0x44,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		},
-	},
-}
-
-// The floor: below it a layout this build once served is retired, and
-// the answer is layout_unsupported rather than layout_unknown (§5.2).
-const ModelHashFixedFloor = 0
-
-// One plan per lineage entry, laid down from THE LOCK's bytes: nothing
-// compiles on the load path (§5.8 row 3).
-var ModelHashFixedLineagePlans = tableFixedLineagePlans(ModelHashFixedKnown, ModelHashFixedLayout, ModelHashFixedDst, ModelHashFixedHash)
-
-var ModelHashFixedResetImage = func() []byte {
-	var def ModelHash
-	ModelHashReset(&def)
-	return tableFixedOverlay(unsafe.Pointer(&def), unsafe.Sizeof(def))
-}()
-
-var ModelHashFixedHoles = tableFixedHoles(ModelHashFixedPlan.Entries, ModelHashFixedPlan.Count, uint32(len(ModelHashFixedResetImage)))
-
-var ModelHashFixedLineageHoles = func() [][]tableFixedHole {
-	out := make([][]tableFixedHole, len(ModelHashFixedLineagePlans))
-	for i := range ModelHashFixedLineagePlans {
-		lane := &ModelHashFixedLineagePlans[i]
-		if lane.Why == "" {
-			out[i] = tableFixedHoles(lane.Entries, lane.Count, uint32(len(ModelHashFixedResetImage)))
-		}
-	}
-	return out
-}()
-
-// ModelHashFixedPlanMax is the plan capacity every layout this build reads needs:
-// the largest entry count over the identity plan and every lineage plan
-// (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §5.2). A plan slice of this length never
-// refuses plan_too_large for a layout the lineage holds.
-var ModelHashFixedPlanMax = func() int32 {
-	m := ModelHashFixedPlan.Count
-	for _, lane := range ModelHashFixedLineagePlans {
-		if lane.Count > m {
-			m = lane.Count
-		}
-	}
-	return m
-}()
-
-// A FILE: form byte, seven reserved zeros, the LAYOUT HASH at 8, body at 16,
-// then the layout behind its u32 length, then the records to the end of it.
-func ModelHashFixedMeasure(count int64) int64 {
-	return TableFixedHeaderBytes + 4 + int64(len(ModelHashFixedLayout)) + count*ModelHashFixedRecordBytes
-}
-
-// ModelHashFixedSave is the fixed form's writer: it returns the bytes written, or -1 for a
-// buffer too short or a value outside its declared contract (§3.1); see FixedSaveReason.
-func ModelHashFixedSave(values []ModelHash, buffer []byte) int64 {
-	need := ModelHashFixedMeasure(int64(len(values)))
-	if int64(len(buffer)) < need {
-		return -1
-	}
-	for k := range values {
-		if !ModelHashFixedCheckBody(&values[k]) {
-			return -1
-		}
-	}
-	clear(buffer[:TableFixedHeaderBytes])
-	buffer[0] = TableFixedForm
-	tableFixedPut64(buffer[TableFixedHashAt:], ModelHashFixedHash)
-	tableFixedPut32(buffer[TableFixedHeaderBytes:], uint32(len(ModelHashFixedLayout)))
-	copy(buffer[TableFixedHeaderBytes+4:], ModelHashFixedLayout)
-	at := buffer[TableFixedHeaderBytes+4+len(ModelHashFixedLayout):]
-	for k := range values {
-		tableFixedPut64(at, ModelHashFixedHash)
-		clear(at[8 : 8+ModelHashFixedBodyBytes])
-		ModelHashFixedWriteBody(at[8:], &values[k])
-		at = at[ModelHashFixedRecordBytes:]
-	}
-	return need
-}
-
-func ModelHashFixedSaveReason(values []ModelHash, buffer []byte) (int64, error) {
-	if n := ModelHashFixedSave(values, buffer); n >= 0 {
-		return n, nil
-	}
-	if int64(len(buffer)) < ModelHashFixedMeasure(int64(len(values))) {
-		return -1, TableRefuseTruncated
-	}
-	return -1, TableRefuseInvalidValue
-}
-
-func ModelHashFixedLoad(values []ModelHash, data []byte, plan []TableFixedEntry, report *TableReport) int64 {
-	if report == nil {
-		var local TableReport
-		report = &local
-	}
-	*report = TableReport{}
-	if len(data) < 1 {
-		report.Malformed = true
-		report.Reason = TableFixedReasonTruncated
-		return -1
-	}
-	if data[0] != TableFixedForm {
-		switch data[0] {
-		case 1: // the VARIABLE form, and the only form this one is newer than
-			return tableFixedRefuse(report, TableFixedReasonPreviousForm)
-		case 2: // the MESSAGE form: a form this build carries, through another surface
-			return tableFixedRefuse(report, TableFixedReasonMessageFormAsFile)
-		}
-		return tableFixedRefuse(report, TableFixedReasonNewerForm)
-	}
-	if len(data) < TableFixedHeaderBytes+4 {
-		report.Malformed = true
-		report.Reason = TableFixedReasonTruncated
-		return -1
-	}
-	for _, reserved := range data[1:TableFixedHashAt] {
-		if reserved != 0 {
-			report.Malformed = true
-			report.Reason = TableFixedReasonReservedNotZero
-			return -1
-		}
-	}
-	layoutBytes := tableFixedGet32(data[TableFixedHeaderBytes:])
-	if int64(layoutBytes)+TableFixedHeaderBytes+4 > int64(len(data)) {
-		return tableFixedRefuse(report, TableFixedReasonLayoutMalformed)
-	}
-	layout := data[TableFixedHeaderBytes+4 : TableFixedHeaderBytes+4+layoutBytes]
-	hash := tableFixedGet64(data[TableFixedHashAt:])
-	pick := tableFixedSelect(ModelHashFixedKnown, hash)
-	if pick < 0 {
-		return tableFixedRefuseHash(report, TableFixedReasonLayoutUnknown, hash)
-	}
-	if pick < ModelHashFixedFloor {
-		return tableFixedRefuseHash(report, TableFixedReasonLayoutUnsupported, hash)
-	}
-	known := &ModelHashFixedKnown[pick]
-	if int(layoutBytes) != len(known.Layout) {
-		return tableFixedRefuse(report, TableFixedReasonLayoutMalformed)
-	}
-	for i := range layout {
-		if layout[i] != known.Layout[i] {
-			return tableFixedRefuse(report, TableFixedReasonLayoutMalformed)
-		}
-	}
-	entries := ModelHashFixedPlan.Entries
-	entryCount := ModelHashFixedPlan.Count
-	// THE PREFILL'S HOLES ARE LAID ONCE (§4.3): the identity plan's list, then
-	// a lineage plan's when a peer selects one. Nothing computes them per call.
-	holes := ModelHashFixedHoles
-	recordBytes := known.Record
-	censusUnknown, censusKind := int32(0), int32(0)
-	if hash != ModelHashFixedHash {
-		lane := &ModelHashFixedLineagePlans[pick]
-		if lane.Why != "" {
-			return tableFixedRefuse(report, lane.Why)
-		}
-		entries, entryCount = lane.Entries, lane.Count
-		holes = ModelHashFixedLineageHoles[pick]
-		// THE CENSUS IS ONCE PER PEER and never per record (§5.4), and it
-		// lands only on a read that returns: REFUSE moves no counter.
-		censusUnknown, censusKind = lane.Unknown, lane.KindMismatch
-	}
-	if int64(entryCount) > int64(len(plan)) {
-		return tableFixedRefuse(report, TableFixedReasonPlanTooLarge)
-	}
-	at := data[TableFixedHeaderBytes+4+layoutBytes:]
-	rest := int64(len(data)) - TableFixedHeaderBytes - 4 - int64(layoutBytes)
-	if recordBytes <= 8 || rest%recordBytes != 0 {
-		report.Malformed = true
-		report.Reason = TableFixedReasonTruncated
-		return -1
-	}
-	n := rest / recordBytes
-	if n > int64(len(values)) {
-		return tableFixedRefuse(report, TableFixedReasonBatchTooLarge)
-	}
-	defBytes := ModelHashFixedResetImage
-	for k, scan := int64(0), at; k < n; k, scan = k+1, scan[recordBytes:] {
-		if tableFixedGet64(scan) != hash {
-			return tableFixedRefuse(report, TableFixedReasonNoLayout)
-		}
-		if why := tableFixedTextRefusal(entries, entryCount, scan[8:recordBytes]); why != "" {
-			return tableFixedRefuse(report, why)
-		}
-	}
-	for k := int64(0); k < n; k++ {
-		dst := tableFixedOverlay(unsafe.Pointer(&values[k]), unsafe.Sizeof(values[k]))
-		for i := range holes {
-			h := holes[i]
-			copy(dst[h.Off:h.Off+h.Size], defBytes[h.Off:h.Off+h.Size])
-		}
-		if why := tableFixedRun(entries, entryCount, at[8:recordBytes], dst, report); why != "" {
-			return tableFixedRefuse(report, why)
-		}
-		tableFixedForgedBounds(entries, entryCount, at[8:recordBytes], report)
-		// AND THE BOUNDS THE LOOP DOES NOT HOLD, straight-line over the
-		// storage it just wrote: the same pass for either plan (§3.4).
-		ModelHashFixedClamp(&values[k], report)
-		at = at[recordBytes:]
-	}
-	report.Unknown += censusUnknown
-	report.KindMismatch += censusKind
-	return n
-}
-
-// THE READ-SIDE BOUNDS (mas-bandwidth/schema docs/SPEC-TABLES.md §3.4): a ranged scalar's
-// declared min and max, and an ORDINAL's set — a union tag past the arm
-// count, an enum ordinal past the enum's top value. Straight-line, after
-// the copy, over STORAGE, so the identity plan and a plan compiled from a
-// stranger's layout are held to the same numbers by the same pass. Every
-// clamp COUNTS. The pass walks LIVE elements only: a counted array's live
-// count, not its slack; an optional's payload only when present; a union's
-// set arm, not the others.
-func ModelTraceFixedClamp(value *ModelTrace, report *TableReport) {
-	clamped := int32(0)
-	ModelTraceFixedClampBody(value, &clamped)
-	report.Clamped += clamped
-}
-
-// ---- ModelTrace, the fixed form ----
-
-const ModelTraceFixedBodyBytes = 11944
-const ModelTraceFixedRecordBytes = 8 + ModelTraceFixedBodyBytes
-const ModelTraceFixedHash = 0x3f372193d58f950b
-
-var ModelTraceFixedLayout = []byte{
-	0x3d, 0x00, 0x00, 0x00, 0x47, 0x7d, 0xc9, 0xbd, 0xcc, 0x69, 0xa1, 0x2a, 0x0d, 0xa8, 0x2e, 0x00,
-	0x00, 0x04, 0x00, 0x00, 0x00, 0xbf, 0xe6, 0x3d, 0xb3, 0x26, 0xf6, 0xbd, 0x4f, 0x0c, 0x44, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x95, 0x24, 0x28, 0x2a, 0x72, 0x22, 0x2f, 0x95, 0x0e, 0xa4,
-	0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
-	0x68, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0xdd, 0xda, 0xb6, 0x62, 0x33, 0xa2, 0xe6, 0x43,
-	0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x1c, 0x4e, 0x21, 0x70, 0xf4, 0xc5,
-	0x31, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc3, 0xb6, 0x84, 0x32, 0x2d, 0x00,
-	0x5f, 0x7f, 0x0d, 0xbc, 0x2c, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x8f, 0x05, 0x66, 0x69, 0xad,
-	0x95, 0x66, 0xbf, 0x0e, 0x64, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x0d, 0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x63, 0xf3, 0x8c,
-	0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa6, 0x6b,
-	0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38,
-	0x81, 0x0a, 0xf1, 0x1f, 0x06, 0xa7, 0xa3, 0x0e, 0x64, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x2c, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
-	0x00, 0x6f, 0x09, 0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf, 0x0d, 0x18, 0x00, 0x00, 0x00, 0x02, 0x00,
-	0x00, 0x00, 0x63, 0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x04, 0x04, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x9b, 0xad, 0x11, 0x61, 0x19, 0xc1, 0x0b, 0x8a, 0x0c, 0x14, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0xc7, 0xe0, 0xa7, 0xa6, 0xc3, 0xc9, 0xad, 0x3c, 0x0e, 0x84, 0x0c,
-	0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x80,
-	0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x35, 0x34, 0x65, 0xfd, 0x90, 0x1e, 0x8b, 0xd9, 0x0d,
-	0x40, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x6f, 0x09, 0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf,
-	0x0d, 0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x63, 0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb,
-	0x6b, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97,
-	0x96, 0xfc, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9b, 0xad, 0x11, 0x61, 0x19,
-	0xc1, 0x0b, 0x8a, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0x67, 0x01, 0x0d,
-	0x19, 0xf3, 0x04, 0xf6, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe8, 0xe3, 0xee,
-	0x51, 0x60, 0xe4, 0xf3, 0x16, 0x0d, 0x40, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x6f, 0x09,
-	0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf, 0x0d, 0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x63,
-	0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x9b, 0xad, 0x11, 0x61, 0x19, 0xc1, 0x0b, 0x8a, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x91, 0x67, 0x01, 0x0d, 0x19, 0xf3, 0x04, 0xf6, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x05, 0x4a, 0xa3, 0x30, 0x67, 0x55, 0x5b, 0x85, 0x0e, 0xcc, 0x19, 0x00, 0x00,
-	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x58, 0x00, 0x00,
-	0x00, 0x03, 0x00, 0x00, 0x00, 0x35, 0x34, 0x65, 0xfd, 0x90, 0x1e, 0x8b, 0xd9, 0x0d, 0x40, 0x00,
-	0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x6f, 0x09, 0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf, 0x0d, 0x18,
-	0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x63, 0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c,
-	0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc,
-	0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9b, 0xad, 0x11, 0x61, 0x19, 0xc1, 0x0b,
-	0x8a, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0x67, 0x01, 0x0d, 0x19, 0xf3,
-	0x04, 0xf6, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x43, 0xc5, 0x6e, 0xd6, 0x99,
-	0xa5, 0xad, 0x8c, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf5, 0x24, 0xf6, 0xe7,
-	0xfb, 0x63, 0x0e, 0xc1, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0x85, 0x6f,
-	0x16, 0x4e, 0x0e, 0x6f, 0xfd, 0x0e, 0x6c, 0x04, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x78, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x43,
-	0xc5, 0x6e, 0xd6, 0x99, 0xa5, 0xad, 0x8c, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x2f, 0x8e, 0x9f, 0xaa, 0xf0, 0x10, 0xc9, 0x86, 0x0e, 0x64, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x58, 0x00, 0x00, 0x00, 0x02, 0x00,
-	0x00, 0x00, 0x6f, 0x09, 0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf, 0x0d, 0x18, 0x00, 0x00, 0x00, 0x02,
-	0x00, 0x00, 0x00, 0x63, 0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c, 0x14, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x04, 0x04, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x35, 0x34, 0x65, 0xfd, 0x90, 0x1e, 0x8b, 0xd9, 0x0d, 0x40, 0x00,
-	0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x6f, 0x09, 0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf, 0x0d, 0x18,
-	0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x63, 0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c,
-	0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc,
-	0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9b, 0xad, 0x11, 0x61, 0x19, 0xc1, 0x0b,
-	0x8a, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0x67, 0x01, 0x0d, 0x19, 0xf3,
-	0x04, 0xf6, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6f, 0x0c, 0x6f, 0x03, 0x0b,
-	0x79, 0x80, 0x65, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a, 0xd1, 0xec, 0xd3,
-	0x18, 0xdb, 0xfa, 0x2c, 0x0e, 0x34, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x4a, 0x9b,
-	0xac, 0x28, 0x72, 0x50, 0x5c, 0x2a, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa6,
-	0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x16, 0xa8, 0xc3, 0x9e, 0x96, 0xfb, 0xb7, 0x25, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00,
-}
-
-var ModelTraceFixedDst = []TableFixedDst{
-	{0, 0, 0, 0, 0, 0}, // ModelTrace
-	{uint32(unsafe.Offsetof(ModelTrace{}.SourceSha256Length)), 0, uint32(unsafe.Offsetof(ModelTrace{}.SourceSha256)), 0, 1, 1},                               // sourceSha256
-	{uint32(unsafe.Offsetof(ModelTrace{}.ModelSha256)), uint32(unsafe.Sizeof(ModelHash{})), uint32(unsafe.Offsetof(ModelTrace{}.ModelSha256Count)), 1, 0, 0}, // modelSha256
-	{0, 0, 0, 0, 0, 0}, // element
-	{uint32(unsafe.Offsetof(ModelHash{}.ModuleLength)), 0, uint32(unsafe.Offsetof(ModelHash{}.Module)), 0, 1, 1},                               // module
-	{uint32(unsafe.Offsetof(ModelHash{}.Sha256Length)), 0, uint32(unsafe.Offsetof(ModelHash{}.Sha256)), 0, 1, 1},                               // sha256
-	{uint32(unsafe.Offsetof(ModelTrace{}.Initial)), 0, 0, 0, 0, 0},                                                                             // initial
-	{uint32(unsafe.Offsetof(ModelState{}.Live)), uint32(unsafe.Sizeof(ModelPhys{})), uint32(unsafe.Offsetof(ModelState{}.LiveCount)), 1, 0, 0}, // live
-	{0, 0, 0, 0, 0, 0}, // element
-	{uint32(unsafe.Offsetof(ModelPhys{}.TableNameLength)), 0, uint32(unsafe.Offsetof(ModelPhys{}.TableName)), 0, 1, 1},                          // table_name
-	{uint32(unsafe.Offsetof(ModelPhys{}.Epoch)), 0, 0, 0, 0, 0},                                                                                 // epoch
-	{uint32(unsafe.Offsetof(ModelState{}.Rows)), uint32(unsafe.Sizeof(ModelRowAt{})), uint32(unsafe.Offsetof(ModelState{}.RowsCount)), 1, 0, 0}, // rows
-	{0, 0, 0, 0, 0, 0}, // element
-	{uint32(unsafe.Offsetof(ModelRowAt{}.P)), 0, 0, 0, 0, 0},                                                                                     // p
-	{uint32(unsafe.Offsetof(ModelPhys{}.TableNameLength)), 0, uint32(unsafe.Offsetof(ModelPhys{}.TableName)), 0, 1, 1},                           // table_name
-	{uint32(unsafe.Offsetof(ModelPhys{}.Epoch)), 0, 0, 0, 0, 0},                                                                                  // epoch
-	{uint32(unsafe.Offsetof(ModelRowAt{}.RowLength)), 0, uint32(unsafe.Offsetof(ModelRowAt{}.Row)), 0, 1, 1},                                     // row
-	{uint32(unsafe.Offsetof(ModelState{}.Binds)), uint32(unsafe.Sizeof(ModelBind{})), uint32(unsafe.Offsetof(ModelState{}.BindsCount)), 1, 0, 0}, // binds
-	{0, 0, 0, 0, 0, 0}, // element
-	{uint32(unsafe.Offsetof(ModelBind{}.Cell)), 0, 0, 0, 0, 0},                                                                                  // cell
-	{uint32(unsafe.Offsetof(ModelCell{}.P)), 0, 0, 0, 0, 0},                                                                                     // p
-	{uint32(unsafe.Offsetof(ModelPhys{}.TableNameLength)), 0, uint32(unsafe.Offsetof(ModelPhys{}.TableName)), 0, 1, 1},                          // table_name
-	{uint32(unsafe.Offsetof(ModelPhys{}.Epoch)), 0, 0, 0, 0, 0},                                                                                 // epoch
-	{uint32(unsafe.Offsetof(ModelCell{}.RowLength)), 0, uint32(unsafe.Offsetof(ModelCell{}.Row)), 0, 1, 1},                                      // row
-	{uint32(unsafe.Offsetof(ModelCell{}.ColLength)), 0, uint32(unsafe.Offsetof(ModelCell{}.Col)), 0, 1, 1},                                      // col
-	{uint32(unsafe.Offsetof(ModelBind{}.Target)), 0, 0, 0, 0, 0},                                                                                // target
-	{uint32(unsafe.Offsetof(ModelCell{}.P)), 0, 0, 0, 0, 0},                                                                                     // p
-	{uint32(unsafe.Offsetof(ModelPhys{}.TableNameLength)), 0, uint32(unsafe.Offsetof(ModelPhys{}.TableName)), 0, 1, 1},                          // table_name
-	{uint32(unsafe.Offsetof(ModelPhys{}.Epoch)), 0, 0, 0, 0, 0},                                                                                 // epoch
-	{uint32(unsafe.Offsetof(ModelCell{}.RowLength)), 0, uint32(unsafe.Offsetof(ModelCell{}.Row)), 0, 1, 1},                                      // row
-	{uint32(unsafe.Offsetof(ModelCell{}.ColLength)), 0, uint32(unsafe.Offsetof(ModelCell{}.Col)), 0, 1, 1},                                      // col
-	{uint32(unsafe.Offsetof(ModelState{}.Data)), uint32(unsafe.Sizeof(ModelDatum{})), uint32(unsafe.Offsetof(ModelState{}.DataCount)), 1, 0, 0}, // data
-	{0, 0, 0, 0, 0, 0}, // element
-	{uint32(unsafe.Offsetof(ModelDatum{}.Cell)), 0, 0, 0, 0, 0},                                                                                       // cell
-	{uint32(unsafe.Offsetof(ModelCell{}.P)), 0, 0, 0, 0, 0},                                                                                           // p
-	{uint32(unsafe.Offsetof(ModelPhys{}.TableNameLength)), 0, uint32(unsafe.Offsetof(ModelPhys{}.TableName)), 0, 1, 1},                                // table_name
-	{uint32(unsafe.Offsetof(ModelPhys{}.Epoch)), 0, 0, 0, 0, 0},                                                                                       // epoch
-	{uint32(unsafe.Offsetof(ModelCell{}.RowLength)), 0, uint32(unsafe.Offsetof(ModelCell{}.Row)), 0, 1, 1},                                            // row
-	{uint32(unsafe.Offsetof(ModelCell{}.ColLength)), 0, uint32(unsafe.Offsetof(ModelCell{}.Col)), 0, 1, 1},                                            // col
-	{uint32(unsafe.Offsetof(ModelDatum{}.MemberLength)), 0, uint32(unsafe.Offsetof(ModelDatum{}.Member)), 0, 1, 1},                                    // member
-	{uint32(unsafe.Offsetof(ModelDatum{}.Score)), 0, 0, 0, 0, 0},                                                                                      // score
-	{uint32(unsafe.Offsetof(ModelState{}.Place)), uint32(unsafe.Sizeof(ModelPlacement{})), uint32(unsafe.Offsetof(ModelState{}.PlaceCount)), 1, 0, 0}, // place
-	{0, 0, 0, 0, 0, 0}, // element
-	{uint32(unsafe.Offsetof(ModelPlacement{}.MemberLength)), 0, uint32(unsafe.Offsetof(ModelPlacement{}.Member)), 0, 1, 1},                                           // member
-	{uint32(unsafe.Offsetof(ModelPlacement{}.Locations)), uint32(unsafe.Sizeof(ModelLocation{})), uint32(unsafe.Offsetof(ModelPlacement{}.LocationsCount)), 1, 0, 0}, // locations
-	{0, 0, 0, 0, 0, 0}, // element
-	{uint32(unsafe.Offsetof(ModelLocation{}.P)), 0, 0, 0, 0, 0},                                                                                // p
-	{uint32(unsafe.Offsetof(ModelPhys{}.TableNameLength)), 0, uint32(unsafe.Offsetof(ModelPhys{}.TableName)), 0, 1, 1},                         // table_name
-	{uint32(unsafe.Offsetof(ModelPhys{}.Epoch)), 0, 0, 0, 0, 0},                                                                                // epoch
-	{uint32(unsafe.Offsetof(ModelLocation{}.Cell)), 0, 0, 0, 0, 0},                                                                             // cell
-	{uint32(unsafe.Offsetof(ModelCell{}.P)), 0, 0, 0, 0, 0},                                                                                    // p
-	{uint32(unsafe.Offsetof(ModelPhys{}.TableNameLength)), 0, uint32(unsafe.Offsetof(ModelPhys{}.TableName)), 0, 1, 1},                         // table_name
-	{uint32(unsafe.Offsetof(ModelPhys{}.Epoch)), 0, 0, 0, 0, 0},                                                                                // epoch
-	{uint32(unsafe.Offsetof(ModelCell{}.RowLength)), 0, uint32(unsafe.Offsetof(ModelCell{}.Row)), 0, 1, 1},                                     // row
-	{uint32(unsafe.Offsetof(ModelCell{}.ColLength)), 0, uint32(unsafe.Offsetof(ModelCell{}.Col)), 0, 1, 1},                                     // col
-	{uint32(unsafe.Offsetof(ModelState{}.Active)), 0, 0, 0, 0, 0},                                                                              // active
-	{uint32(unsafe.Offsetof(ModelState{}.Seen)), uint32(unsafe.Sizeof(ModelSeen{})), uint32(unsafe.Offsetof(ModelState{}.SeenCount)), 1, 0, 0}, // seen
-	{0, 0, 0, 0, 0, 0}, // element
-	{uint32(unsafe.Offsetof(ModelSeen{}.WriterLength)), 0, uint32(unsafe.Offsetof(ModelSeen{}.Writer)), 0, 1, 1}, // writer
-	{uint32(unsafe.Offsetof(ModelSeen{}.Epoch)), 0, 0, 0, 0, 0},                                                  // epoch
-	{uint32(unsafe.Offsetof(ModelTrace{}.StepCount)), 0, 0, 0, 0, 0},                                             // stepCount
-}
-
-var ModelTraceFixedPlan = tableFixedBuildPlan(ModelTraceFixedLeaves, 782)
-
-var ModelTraceFixedKnown = []TableFixedKnownLayout{
-	{
-		Hash:        0x3f372193d58f950b,
-		LayoutBytes: 1041,
-		Record:      11952,
-		Layout: []byte{
-			0x3d, 0x00, 0x00, 0x00, 0x47, 0x7d, 0xc9, 0xbd, 0xcc, 0x69, 0xa1, 0x2a, 0x0d, 0xa8, 0x2e, 0x00,
-			0x00, 0x04, 0x00, 0x00, 0x00, 0xbf, 0xe6, 0x3d, 0xb3, 0x26, 0xf6, 0xbd, 0x4f, 0x0c, 0x44, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x95, 0x24, 0x28, 0x2a, 0x72, 0x22, 0x2f, 0x95, 0x0e, 0xa4,
-			0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
-			0x68, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0xdd, 0xda, 0xb6, 0x62, 0x33, 0xa2, 0xe6, 0x43,
-			0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x1c, 0x4e, 0x21, 0x70, 0xf4, 0xc5,
-			0x31, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc3, 0xb6, 0x84, 0x32, 0x2d, 0x00,
-			0x5f, 0x7f, 0x0d, 0xbc, 0x2c, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x8f, 0x05, 0x66, 0x69, 0xad,
-			0x95, 0x66, 0xbf, 0x0e, 0x64, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x0d, 0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x63, 0xf3, 0x8c,
-			0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa6, 0x6b,
-			0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38,
-			0x81, 0x0a, 0xf1, 0x1f, 0x06, 0xa7, 0xa3, 0x0e, 0x64, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x2c, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
-			0x00, 0x6f, 0x09, 0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf, 0x0d, 0x18, 0x00, 0x00, 0x00, 0x02, 0x00,
-			0x00, 0x00, 0x63, 0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x04, 0x04, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x9b, 0xad, 0x11, 0x61, 0x19, 0xc1, 0x0b, 0x8a, 0x0c, 0x14, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0xc7, 0xe0, 0xa7, 0xa6, 0xc3, 0xc9, 0xad, 0x3c, 0x0e, 0x84, 0x0c,
-			0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x80,
-			0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x35, 0x34, 0x65, 0xfd, 0x90, 0x1e, 0x8b, 0xd9, 0x0d,
-			0x40, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x6f, 0x09, 0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf,
-			0x0d, 0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x63, 0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb,
-			0x6b, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97,
-			0x96, 0xfc, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9b, 0xad, 0x11, 0x61, 0x19,
-			0xc1, 0x0b, 0x8a, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0x67, 0x01, 0x0d,
-			0x19, 0xf3, 0x04, 0xf6, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe8, 0xe3, 0xee,
-			0x51, 0x60, 0xe4, 0xf3, 0x16, 0x0d, 0x40, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x6f, 0x09,
-			0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf, 0x0d, 0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x63,
-			0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x9b, 0xad, 0x11, 0x61, 0x19, 0xc1, 0x0b, 0x8a, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x91, 0x67, 0x01, 0x0d, 0x19, 0xf3, 0x04, 0xf6, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x05, 0x4a, 0xa3, 0x30, 0x67, 0x55, 0x5b, 0x85, 0x0e, 0xcc, 0x19, 0x00, 0x00,
-			0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x58, 0x00, 0x00,
-			0x00, 0x03, 0x00, 0x00, 0x00, 0x35, 0x34, 0x65, 0xfd, 0x90, 0x1e, 0x8b, 0xd9, 0x0d, 0x40, 0x00,
-			0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x6f, 0x09, 0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf, 0x0d, 0x18,
-			0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x63, 0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c,
-			0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc,
-			0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9b, 0xad, 0x11, 0x61, 0x19, 0xc1, 0x0b,
-			0x8a, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0x67, 0x01, 0x0d, 0x19, 0xf3,
-			0x04, 0xf6, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x43, 0xc5, 0x6e, 0xd6, 0x99,
-			0xa5, 0xad, 0x8c, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf5, 0x24, 0xf6, 0xe7,
-			0xfb, 0x63, 0x0e, 0xc1, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0x85, 0x6f,
-			0x16, 0x4e, 0x0e, 0x6f, 0xfd, 0x0e, 0x6c, 0x04, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x78, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x43,
-			0xc5, 0x6e, 0xd6, 0x99, 0xa5, 0xad, 0x8c, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x2f, 0x8e, 0x9f, 0xaa, 0xf0, 0x10, 0xc9, 0x86, 0x0e, 0x64, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x58, 0x00, 0x00, 0x00, 0x02, 0x00,
-			0x00, 0x00, 0x6f, 0x09, 0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf, 0x0d, 0x18, 0x00, 0x00, 0x00, 0x02,
-			0x00, 0x00, 0x00, 0x63, 0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c, 0x14, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x04, 0x04, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x35, 0x34, 0x65, 0xfd, 0x90, 0x1e, 0x8b, 0xd9, 0x0d, 0x40, 0x00,
-			0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x6f, 0x09, 0x02, 0x86, 0x4c, 0xed, 0x63, 0xaf, 0x0d, 0x18,
-			0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x63, 0xf3, 0x8c, 0xb7, 0x85, 0x6e, 0xcb, 0x6b, 0x0c,
-			0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa6, 0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc,
-			0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9b, 0xad, 0x11, 0x61, 0x19, 0xc1, 0x0b,
-			0x8a, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0x67, 0x01, 0x0d, 0x19, 0xf3,
-			0x04, 0xf6, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6f, 0x0c, 0x6f, 0x03, 0x0b,
-			0x79, 0x80, 0x65, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a, 0xd1, 0xec, 0xd3,
-			0x18, 0xdb, 0xfa, 0x2c, 0x0e, 0x34, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x18, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x4a, 0x9b,
-			0xac, 0x28, 0x72, 0x50, 0x5c, 0x2a, 0x0c, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa6,
-			0x6b, 0x6e, 0x19, 0xd1, 0x97, 0x96, 0xfc, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x16, 0xa8, 0xc3, 0x9e, 0x96, 0xfb, 0xb7, 0x25, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00,
-		},
-	},
-}
-
-// The floor: below it a layout this build once served is retired, and
-// the answer is layout_unsupported rather than layout_unknown (§5.2).
-const ModelTraceFixedFloor = 0
-
-// One plan per lineage entry, laid down from THE LOCK's bytes: nothing
-// compiles on the load path (§5.8 row 3).
-var ModelTraceFixedLineagePlans = tableFixedLineagePlans(ModelTraceFixedKnown, ModelTraceFixedLayout, ModelTraceFixedDst, ModelTraceFixedHash)
-
-var ModelTraceFixedResetImage = func() []byte {
-	var def ModelTrace
-	ModelTraceReset(&def)
-	return tableFixedOverlay(unsafe.Pointer(&def), unsafe.Sizeof(def))
-}()
-
-var ModelTraceFixedHoles = tableFixedHoles(ModelTraceFixedPlan.Entries, ModelTraceFixedPlan.Count, uint32(len(ModelTraceFixedResetImage)))
-
-var ModelTraceFixedLineageHoles = func() [][]tableFixedHole {
-	out := make([][]tableFixedHole, len(ModelTraceFixedLineagePlans))
-	for i := range ModelTraceFixedLineagePlans {
-		lane := &ModelTraceFixedLineagePlans[i]
-		if lane.Why == "" {
-			out[i] = tableFixedHoles(lane.Entries, lane.Count, uint32(len(ModelTraceFixedResetImage)))
-		}
-	}
-	return out
-}()
-
-// ModelTraceFixedPlanMax is the plan capacity every layout this build reads needs:
-// the largest entry count over the identity plan and every lineage plan
-// (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §5.2). A plan slice of this length never
-// refuses plan_too_large for a layout the lineage holds.
-var ModelTraceFixedPlanMax = func() int32 {
-	m := ModelTraceFixedPlan.Count
-	for _, lane := range ModelTraceFixedLineagePlans {
-		if lane.Count > m {
-			m = lane.Count
-		}
-	}
-	return m
-}()
-
-// A FILE: form byte, seven reserved zeros, the LAYOUT HASH at 8, body at 16,
-// then the layout behind its u32 length, then the records to the end of it.
-func ModelTraceFixedMeasure(count int64) int64 {
-	return TableFixedHeaderBytes + 4 + int64(len(ModelTraceFixedLayout)) + count*ModelTraceFixedRecordBytes
-}
-
-// ModelTraceFixedSave is the fixed form's writer: it returns the bytes written, or -1 for a
-// buffer too short or a value outside its declared contract (§3.1); see FixedSaveReason.
-func ModelTraceFixedSave(values []ModelTrace, buffer []byte) int64 {
-	need := ModelTraceFixedMeasure(int64(len(values)))
-	if int64(len(buffer)) < need {
-		return -1
-	}
-	for k := range values {
-		if !ModelTraceFixedCheckBody(&values[k]) {
-			return -1
-		}
-	}
-	clear(buffer[:TableFixedHeaderBytes])
-	buffer[0] = TableFixedForm
-	tableFixedPut64(buffer[TableFixedHashAt:], ModelTraceFixedHash)
-	tableFixedPut32(buffer[TableFixedHeaderBytes:], uint32(len(ModelTraceFixedLayout)))
-	copy(buffer[TableFixedHeaderBytes+4:], ModelTraceFixedLayout)
-	at := buffer[TableFixedHeaderBytes+4+len(ModelTraceFixedLayout):]
-	for k := range values {
-		tableFixedPut64(at, ModelTraceFixedHash)
-		clear(at[8:76])
-		clear(at[496:11952])
-		ModelTraceFixedWriteBody(at[8:], &values[k])
-		at = at[ModelTraceFixedRecordBytes:]
-	}
-	return need
-}
-
-func ModelTraceFixedSaveReason(values []ModelTrace, buffer []byte) (int64, error) {
-	if n := ModelTraceFixedSave(values, buffer); n >= 0 {
-		return n, nil
-	}
-	if int64(len(buffer)) < ModelTraceFixedMeasure(int64(len(values))) {
-		return -1, TableRefuseTruncated
-	}
-	return -1, TableRefuseInvalidValue
-}
-
-func ModelTraceFixedLoad(values []ModelTrace, data []byte, plan []TableFixedEntry, report *TableReport) int64 {
-	if report == nil {
-		var local TableReport
-		report = &local
-	}
-	*report = TableReport{}
-	if len(data) < 1 {
-		report.Malformed = true
-		report.Reason = TableFixedReasonTruncated
-		return -1
-	}
-	if data[0] != TableFixedForm {
-		switch data[0] {
-		case 1: // the VARIABLE form, and the only form this one is newer than
-			return tableFixedRefuse(report, TableFixedReasonPreviousForm)
-		case 2: // the MESSAGE form: a form this build carries, through another surface
-			return tableFixedRefuse(report, TableFixedReasonMessageFormAsFile)
-		}
-		return tableFixedRefuse(report, TableFixedReasonNewerForm)
-	}
-	if len(data) < TableFixedHeaderBytes+4 {
-		report.Malformed = true
-		report.Reason = TableFixedReasonTruncated
-		return -1
-	}
-	for _, reserved := range data[1:TableFixedHashAt] {
-		if reserved != 0 {
-			report.Malformed = true
-			report.Reason = TableFixedReasonReservedNotZero
-			return -1
-		}
-	}
-	layoutBytes := tableFixedGet32(data[TableFixedHeaderBytes:])
-	if int64(layoutBytes)+TableFixedHeaderBytes+4 > int64(len(data)) {
-		return tableFixedRefuse(report, TableFixedReasonLayoutMalformed)
-	}
-	layout := data[TableFixedHeaderBytes+4 : TableFixedHeaderBytes+4+layoutBytes]
-	hash := tableFixedGet64(data[TableFixedHashAt:])
-	pick := tableFixedSelect(ModelTraceFixedKnown, hash)
-	if pick < 0 {
-		return tableFixedRefuseHash(report, TableFixedReasonLayoutUnknown, hash)
-	}
-	if pick < ModelTraceFixedFloor {
-		return tableFixedRefuseHash(report, TableFixedReasonLayoutUnsupported, hash)
-	}
-	known := &ModelTraceFixedKnown[pick]
-	if int(layoutBytes) != len(known.Layout) {
-		return tableFixedRefuse(report, TableFixedReasonLayoutMalformed)
-	}
-	for i := range layout {
-		if layout[i] != known.Layout[i] {
-			return tableFixedRefuse(report, TableFixedReasonLayoutMalformed)
-		}
-	}
-	entries := ModelTraceFixedPlan.Entries
-	entryCount := ModelTraceFixedPlan.Count
-	// THE PREFILL'S HOLES ARE LAID ONCE (§4.3): the identity plan's list, then
-	// a lineage plan's when a peer selects one. Nothing computes them per call.
-	holes := ModelTraceFixedHoles
-	recordBytes := known.Record
-	censusUnknown, censusKind := int32(0), int32(0)
-	if hash != ModelTraceFixedHash {
-		lane := &ModelTraceFixedLineagePlans[pick]
-		if lane.Why != "" {
-			return tableFixedRefuse(report, lane.Why)
-		}
-		entries, entryCount = lane.Entries, lane.Count
-		holes = ModelTraceFixedLineageHoles[pick]
-		// THE CENSUS IS ONCE PER PEER and never per record (§5.4), and it
-		// lands only on a read that returns: REFUSE moves no counter.
-		censusUnknown, censusKind = lane.Unknown, lane.KindMismatch
-	}
-	if int64(entryCount) > int64(len(plan)) {
-		return tableFixedRefuse(report, TableFixedReasonPlanTooLarge)
-	}
-	at := data[TableFixedHeaderBytes+4+layoutBytes:]
-	rest := int64(len(data)) - TableFixedHeaderBytes - 4 - int64(layoutBytes)
-	if recordBytes <= 8 || rest%recordBytes != 0 {
-		report.Malformed = true
-		report.Reason = TableFixedReasonTruncated
-		return -1
-	}
-	n := rest / recordBytes
-	if n > int64(len(values)) {
-		return tableFixedRefuse(report, TableFixedReasonBatchTooLarge)
-	}
-	defBytes := ModelTraceFixedResetImage
-	for k, scan := int64(0), at; k < n; k, scan = k+1, scan[recordBytes:] {
-		if tableFixedGet64(scan) != hash {
-			return tableFixedRefuse(report, TableFixedReasonNoLayout)
-		}
-		if why := tableFixedTextRefusal(entries, entryCount, scan[8:recordBytes]); why != "" {
-			return tableFixedRefuse(report, why)
-		}
-	}
-	for k := int64(0); k < n; k++ {
-		dst := tableFixedOverlay(unsafe.Pointer(&values[k]), unsafe.Sizeof(values[k]))
-		for i := range holes {
-			h := holes[i]
-			copy(dst[h.Off:h.Off+h.Size], defBytes[h.Off:h.Off+h.Size])
-		}
-		if why := tableFixedRun(entries, entryCount, at[8:recordBytes], dst, report); why != "" {
-			return tableFixedRefuse(report, why)
-		}
-		tableFixedForgedBounds(entries, entryCount, at[8:recordBytes], report)
-		// AND THE BOUNDS THE LOOP DOES NOT HOLD, straight-line over the
-		// storage it just wrote: the same pass for either plan (§3.4).
-		ModelTraceFixedClamp(&values[k], report)
-		at = at[recordBytes:]
-	}
-	report.Unknown += censusUnknown
-	report.KindMismatch += censusKind
-	return n
-}
-
-// THE READ-SIDE BOUNDS (mas-bandwidth/schema docs/SPEC-TABLES.md §3.4): a ranged scalar's
-// declared min and max, and an ORDINAL's set — a union tag past the arm
-// count, an enum ordinal past the enum's top value. Straight-line, after
-// the copy, over STORAGE, so the identity plan and a plan compiled from a
-// stranger's layout are held to the same numbers by the same pass. Every
-// clamp COUNTS. The pass walks LIVE elements only: a counted array's live
-// count, not its slack; an optional's payload only when present; a union's
-// set arm, not the others.
 func ModelFindingFixedClamp(value *ModelFinding, report *TableReport) {
 	clamped := int32(0)
 	ModelFindingFixedClampBody(value, &clamped)
@@ -20800,100 +19068,6 @@ func init() {
 
 // ModelTraceStepTableType returns ModelTraceStep's reflection descriptor.
 func ModelTraceStepTableType() *TableTypeInfo { return &ModelTraceStepTableInfo }
-
-// ModelHashTableFields is ModelHash's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-var ModelHashTableFields = []TableFieldInfo{
-	{Name: "module", Json: "module", TypeName: "string", DeclaredTypeName: "string", Id: 0x43e6a23362b6dadd, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(ModelHash{}.Module)), ElemSize: uint32(unsafe.Sizeof(ModelHash{}.Module)), CountOffset: uint32(unsafe.Offsetof(ModelHash{}.ModuleLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 36, CookPresentOffset: 4294967295,
-		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
-		EnumName:    nil,
-		VariantId:   nil,
-		KeyTypeName: "", KeyName: nil, KeyId: nil,
-		Arms:  nil,
-		Guard: "", Table: nil,
-		Doc: TableDocNone, NumTags: 0, Tags: nil},
-	{Name: "sha256", Json: "sha256", TypeName: "string", DeclaredTypeName: "string", Id: 0x31c5f470214e1c5a, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(ModelHash{}.Sha256)), ElemSize: uint32(unsafe.Sizeof(ModelHash{}.Sha256)), CountOffset: uint32(unsafe.Offsetof(ModelHash{}.Sha256Length)), PresentOffset: 0xffffffff,
-		CookOffset: 40, CookElemSize: 1, CookCountOffset: 108, CookPresentOffset: 4294967295,
-		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
-		EnumName:    nil,
-		VariantId:   nil,
-		KeyTypeName: "", KeyName: nil, KeyId: nil,
-		Arms:  nil,
-		Guard: "", Table: nil,
-		Doc: TableDocNone, NumTags: 0, Tags: nil},
-}
-
-// ModelHashTableInfo is ModelHash's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-var ModelHashTableInfo TableTypeInfo
-
-func init() {
-	ModelHashTableInfo = TableTypeInfo{Name: "ModelHash", Size: uint32(unsafe.Sizeof(ModelHash{})), NumFields: 2, Fields: ModelHashTableFields, Reset: func(storage unsafe.Pointer) { ModelHashReset((*ModelHash)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xc932bb5705d57f6e, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ModelHashSaveBody(w, (*ModelHash)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ModelHashLoadBody(&r, (*ModelHash)(p)) }, CookSize: 112, CookAlign: 4}
-}
-
-// ModelHashTableType returns ModelHash's reflection descriptor.
-func ModelHashTableType() *TableTypeInfo { return &ModelHashTableInfo }
-
-// ModelTraceTableFields is ModelTrace's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-var ModelTraceTableFields = []TableFieldInfo{
-	{Name: "sourceSha256", Json: "sourceSha256", TypeName: "string", DeclaredTypeName: "string", Id: 0x4fbdf626b33de6bf, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(ModelTrace{}.SourceSha256)), ElemSize: uint32(unsafe.Sizeof(ModelTrace{}.SourceSha256)), CountOffset: uint32(unsafe.Offsetof(ModelTrace{}.SourceSha256Length)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 68, CookPresentOffset: 4294967295,
-		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
-		EnumName:    nil,
-		VariantId:   nil,
-		KeyTypeName: "", KeyName: nil, KeyId: nil,
-		Arms:  nil,
-		Guard: "", Table: nil,
-		Doc: TableDocNone, NumTags: 0, Tags: nil},
-	{Name: "modelSha256", Json: "modelSha256", TypeName: "ModelHash", DeclaredTypeName: "ModelHash", Id: 0x952f22722a282495, Kind: 13, IsArray: true, Counted: true, Optional: false,
-		ArrayBound: 4, Offset: uint32(unsafe.Offsetof(ModelTrace{}.ModelSha256)), ElemSize: uint32(unsafe.Sizeof(ModelTrace{}.ModelSha256[0])), CountOffset: uint32(unsafe.Offsetof(ModelTrace{}.ModelSha256Count)), PresentOffset: 0xffffffff,
-		CookOffset: 72, CookElemSize: 112, CookCountOffset: 520, CookPresentOffset: 4294967295,
-		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
-		EnumName:    nil,
-		VariantId:   nil,
-		KeyTypeName: "", KeyName: nil, KeyId: nil,
-		Arms:  nil,
-		Guard: "", Table: ModelHashTableType,
-		Doc: TableDocNone, NumTags: 0, Tags: nil},
-	{Name: "initial", Json: "initial", TypeName: "ModelState", DeclaredTypeName: "ModelState", Id: 0x7f5f002d3284b6c3, Kind: 13, IsArray: false, Counted: false, Optional: false,
-		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(ModelTrace{}.Initial)), ElemSize: uint32(unsafe.Sizeof(ModelTrace{}.Initial)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 524, CookElemSize: 13544, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
-		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
-		EnumName:    nil,
-		VariantId:   nil,
-		KeyTypeName: "", KeyName: nil, KeyId: nil,
-		Arms:  nil,
-		Guard: "", Table: ModelStateTableType,
-		Doc: TableDocNone, NumTags: 0, Tags: nil},
-	{Name: "stepCount", Json: "stepCount", TypeName: "int32", DeclaredTypeName: "int32", Id: 0x25b7fb969ec3a816, Kind: 4, IsArray: false, Counted: false, Optional: false,
-		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(ModelTrace{}.StepCount)), ElemSize: uint32(unsafe.Sizeof(ModelTrace{}.StepCount)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 14068, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
-		HasRange: true, RangeMin: 0.0, RangeMax: 40.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
-		EnumName:    nil,
-		VariantId:   nil,
-		KeyTypeName: "", KeyName: nil, KeyId: nil,
-		Arms:  nil,
-		Guard: "", Table: nil,
-		Doc: TableDocNone, NumTags: 0, Tags: nil},
-}
-
-// ModelTraceTableInfo is ModelTrace's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-var ModelTraceTableInfo TableTypeInfo
-
-func init() {
-	ModelTraceTableInfo = TableTypeInfo{Name: "ModelTrace", Size: uint32(unsafe.Sizeof(ModelTrace{})), NumFields: 4, Fields: ModelTraceTableFields, Reset: func(storage unsafe.Pointer) { ModelTraceReset((*ModelTrace)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x2aa169ccbdc97d47, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ModelTraceSaveBody(w, (*ModelTrace)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ModelTraceLoadBody(&r, (*ModelTrace)(p)) }, CookSize: 14072, CookAlign: 4}
-}
-
-// ModelTraceTableType returns ModelTrace's reflection descriptor.
-func ModelTraceTableType() *TableTypeInfo { return &ModelTraceTableInfo }
 
 // ModelFindingTableFields is ModelFinding's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var ModelFindingTableFields = []TableFieldInfo{

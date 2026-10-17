@@ -451,45 +451,6 @@ type ModelTraceStepBlockProjection struct {
 	State          ModelStateRow
 }
 
-// ModelHashBlockProjection — the block PROJECTION: the table's own instance as it
-// sits at the front of a block, opening with the generated PROLOGUE and
-// carrying, per out-of-line array, the triple that says where its rows are.
-// It is a record like any other and follows the same C ABI rule (§19.3).
-//
-// It is a SEPARATE record from ModelHashRow: a table can be both a block root and
-// another block's row, and the two differ by the prologue.
-type ModelHashBlockProjection struct {
-	Magic        uint64   // generated: identifies a schema block
-	BuildVersion uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder    uint64   // generated: 1 little, 2 big
-	Module       [33]byte // string(32): max length, used length beside it
-	_            [3]byte  // generated padding
-	ModuleLength int32
-	Sha256       [65]byte // string(64): max length, used length beside it
-	_            [3]byte  // generated padding
-	Sha256Length int32
-}
-
-// ModelTraceBlockProjection — the block PROJECTION: the table's own instance as it
-// sits at the front of a block, opening with the generated PROLOGUE and
-// carrying, per out-of-line array, the triple that says where its rows are.
-// It is a record like any other and follows the same C ABI rule (§19.3).
-//
-// It is a SEPARATE record from ModelTraceRow: a table can be both a block root and
-// another block's row, and the two differ by the prologue.
-type ModelTraceBlockProjection struct {
-	Magic              uint64   // generated: identifies a schema block
-	BuildVersion       uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder          uint64   // generated: 1 little, 2 big
-	SourceSha256       [65]byte // string(64): max length, used length beside it
-	_                  [3]byte  // generated padding
-	SourceSha256Length int32
-	ModelSha256        TableBlockTriple // [..4]ModelHash, laid out of line
-	Initial            ModelStateRow
-	StepCount          int32
-	_                  [4]byte // generated padding
-}
-
 // ModelFindingBlockProjection — the block PROJECTION: the table's own instance as it
 // sits at the front of a block, opening with the generated PROLOGUE and
 // carrying, per out-of-line array, the triple that says where its rows are.
@@ -704,10 +665,6 @@ func init() {
 	tableBlockLayoutSize("ModelEventFieldRow alignment", unsafe.Alignof(ModelEventFieldRow{}), 4)
 	tableBlockLayoutOffset("ModelEventFieldRow.Key", unsafe.Offsetof(ModelEventFieldRow{}.Key), 0)
 	tableBlockLayoutOffset("ModelEventFieldRow.Value", unsafe.Offsetof(ModelEventFieldRow{}.Value), 32)
-	tableBlockLayoutSize("ModelHashRow", unsafe.Sizeof(ModelHashRow{}), 112)
-	tableBlockLayoutSize("ModelHashRow alignment", unsafe.Alignof(ModelHashRow{}), 4)
-	tableBlockLayoutOffset("ModelHashRow.Module", unsafe.Offsetof(ModelHashRow{}.Module), 0)
-	tableBlockLayoutOffset("ModelHashRow.Sha256", unsafe.Offsetof(ModelHashRow{}.Sha256), 40)
 	tableBlockLayoutSize("ModelLocationRow", unsafe.Sizeof(ModelLocationRow{}), 104)
 	tableBlockLayoutSize("ModelLocationRow alignment", unsafe.Alignof(ModelLocationRow{}), 4)
 	tableBlockLayoutOffset("ModelLocationRow.P", unsafe.Offsetof(ModelLocationRow{}.P), 0)
@@ -838,13 +795,6 @@ func init() {
 	tableBlockLayoutOffset("ModelFindingBlockProjection.Name", unsafe.Offsetof(ModelFindingBlockProjection{}.Name), 24)
 	tableBlockLayoutOffset("ModelFindingBlockProjection.Result", unsafe.Offsetof(ModelFindingBlockProjection{}.Result), 96)
 	tableBlockLayoutOffset("ModelFindingBlockProjection.Text", unsafe.Offsetof(ModelFindingBlockProjection{}.Text), 136)
-	tableBlockLayoutSize("ModelHashBlockProjection", unsafe.Sizeof(ModelHashBlockProjection{}), 136)
-	tableBlockLayoutSize("ModelHashBlockProjection alignment", unsafe.Alignof(ModelHashBlockProjection{}), 8)
-	tableBlockLayoutOffset("ModelHashBlockProjection.Magic", unsafe.Offsetof(ModelHashBlockProjection{}.Magic), 0)
-	tableBlockLayoutOffset("ModelHashBlockProjection.BuildVersion", unsafe.Offsetof(ModelHashBlockProjection{}.BuildVersion), 8)
-	tableBlockLayoutOffset("ModelHashBlockProjection.ByteOrder", unsafe.Offsetof(ModelHashBlockProjection{}.ByteOrder), 16)
-	tableBlockLayoutOffset("ModelHashBlockProjection.Module", unsafe.Offsetof(ModelHashBlockProjection{}.Module), 24)
-	tableBlockLayoutOffset("ModelHashBlockProjection.Sha256", unsafe.Offsetof(ModelHashBlockProjection{}.Sha256), 64)
 	tableBlockLayoutSize("ModelLocationBlockProjection", unsafe.Sizeof(ModelLocationBlockProjection{}), 128)
 	tableBlockLayoutSize("ModelLocationBlockProjection alignment", unsafe.Alignof(ModelLocationBlockProjection{}), 8)
 	tableBlockLayoutOffset("ModelLocationBlockProjection.Magic", unsafe.Offsetof(ModelLocationBlockProjection{}.Magic), 0)
@@ -942,16 +892,6 @@ func init() {
 	tableBlockLayoutOffset("ModelStepResultBlockProjection.Seconds", unsafe.Offsetof(ModelStepResultBlockProjection{}.Seconds), 392)
 	tableBlockLayoutOffset("ModelStepResultBlockProjection.Outcome", unsafe.Offsetof(ModelStepResultBlockProjection{}.Outcome), 400)
 	tableBlockLayoutOffset("ModelStepResultBlockProjection.Log", unsafe.Offsetof(ModelStepResultBlockProjection{}.Log), 3288)
-	tableBlockLayoutSize("ModelTraceBlockProjection", unsafe.Sizeof(ModelTraceBlockProjection{}), 13664)
-	tableBlockLayoutSize("ModelTraceBlockProjection alignment", unsafe.Alignof(ModelTraceBlockProjection{}), 8)
-	tableBlockLayoutOffset("ModelTraceBlockProjection.Magic", unsafe.Offsetof(ModelTraceBlockProjection{}.Magic), 0)
-	tableBlockLayoutOffset("ModelTraceBlockProjection.BuildVersion", unsafe.Offsetof(ModelTraceBlockProjection{}.BuildVersion), 8)
-	tableBlockLayoutOffset("ModelTraceBlockProjection.ByteOrder", unsafe.Offsetof(ModelTraceBlockProjection{}.ByteOrder), 16)
-	tableBlockLayoutOffset("ModelTraceBlockProjection.SourceSha256", unsafe.Offsetof(ModelTraceBlockProjection{}.SourceSha256), 24)
-	tableBlockLayoutOffset("ModelTraceBlockProjection.ModelSha256", unsafe.Offsetof(ModelTraceBlockProjection{}.ModelSha256), 96)
-	tableBlockLayoutOffset("ModelTraceBlockProjection.Initial", unsafe.Offsetof(ModelTraceBlockProjection{}.Initial), 112)
-	tableBlockLayoutOffset("ModelTraceBlockProjection.StepCount", unsafe.Offsetof(ModelTraceBlockProjection{}.StepCount), 13656)
-	tableBlockLayoutSize("ModelTrace.ModelSha256 stride", unsafe.Sizeof(ModelHashRow{}), 112)
 	tableBlockLayoutSize("ModelTraceStepBlockProjection", unsafe.Sizeof(ModelTraceStepBlockProjection{}), 23000)
 	tableBlockLayoutSize("ModelTraceStepBlockProjection alignment", unsafe.Alignof(ModelTraceStepBlockProjection{}), 8)
 	tableBlockLayoutOffset("ModelTraceStepBlockProjection.Magic", unsafe.Offsetof(ModelTraceStepBlockProjection{}.Magic), 0)
@@ -996,7 +936,7 @@ func tableBlockLayoutOffset(what string, got, want uintptr) {
 // data, so a reflective read costs a lookup and not a parse. Every record
 // hangs off the element column rather than taking a name of its own, so a
 // walker reaches the whole graph from any block's Type (§8, §19.2).
-var tableBlockRecords = make([]TableBlockInfo, 43)
+var tableBlockRecords = make([]TableBlockInfo, 40)
 
 // The graph is FILLED HERE rather than in the slice's own initializer, and
 // the reason is a language fact: a field's element column names another
@@ -1010,7 +950,7 @@ func init() {
 		Name: "ConvergeState", BuildVersion: BuildVersion, Size: 40, Align: 8, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
 			{Name: "streams", Offset: 24, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 24, CountOffset: 32, StrideOffset: 36, Stride: 104,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[25] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[23] }},
 		},
 	}
 	tableBlockRecords[1] = TableBlockInfo{
@@ -1032,7 +972,7 @@ func init() {
 			{Name: "verb", Offset: 24, Size: 32, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 52, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 24, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "args", Offset: 56, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 56, CountOffset: 64, StrideOffset: 68, Stride: 520,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 5, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 5, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[24] }},
 			{Name: "actor", Offset: 72, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
@@ -1048,16 +988,16 @@ func init() {
 		Name: "ModelBind", BuildVersion: BuildVersion, Size: 176, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "cell", Offset: 24, Size: 76, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
 			{Name: "target", Offset: 100, Size: 76, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
 		},
 	}
 	tableBlockRecords[5] = TableBlockInfo{
 		Name: "ModelCell", BuildVersion: BuildVersion, Size: 104, Align: 8, NumFields: 3,
 		Fields: []TableBlockFieldInfo{
 			{Name: "p", Offset: 24, Size: 28, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[36] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[33] }},
 			{Name: "row", Offset: 52, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 72, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "col", Offset: 76, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 96, StrideOffset: 0xffffffff, Stride: 0,
@@ -1068,7 +1008,7 @@ func init() {
 		Name: "ModelDatum", BuildVersion: BuildVersion, Size: 128, Align: 8, NumFields: 3,
 		Fields: []TableBlockFieldInfo{
 			{Name: "cell", Offset: 24, Size: 76, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
 			{Name: "member", Offset: 100, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 120, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "score", Offset: 124, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
@@ -1086,7 +1026,7 @@ func init() {
 		Name: "ModelEvent", BuildVersion: BuildVersion, Size: 40, Align: 8, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
 			{Name: "fields", Offset: 24, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 24, CountOffset: 32, StrideOffset: 36, Stride: 552,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[32] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[30] }},
 		},
 	}
 	tableBlockRecords[9] = TableBlockInfo{
@@ -1110,24 +1050,15 @@ func init() {
 		},
 	}
 	tableBlockRecords[11] = TableBlockInfo{
-		Name: "ModelHash", BuildVersion: BuildVersion, Size: 136, Align: 8, NumFields: 2,
-		Fields: []TableBlockFieldInfo{
-			{Name: "module", Offset: 24, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "sha256", Offset: 64, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 132, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[12] = TableBlockInfo{
 		Name: "ModelLocation", BuildVersion: BuildVersion, Size: 128, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "p", Offset: 24, Size: 28, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[36] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[33] }},
 			{Name: "cell", Offset: 52, Size: 76, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
 		},
 	}
-	tableBlockRecords[13] = TableBlockInfo{
+	tableBlockRecords[12] = TableBlockInfo{
 		Name: "ModelOutcome", BuildVersion: BuildVersion, Size: 112, Align: 8, NumFields: 5,
 		Fields: []TableBlockFieldInfo{
 			{Name: "completed", Offset: 24, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
@@ -1137,12 +1068,12 @@ func init() {
 			{Name: "distinct", Offset: 56, Size: 32, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 84, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 24, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "violations", Offset: 88, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 88, CountOffset: 96, StrideOffset: 100, Stride: 176,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[42] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[39] }},
 			{Name: "initialState", Offset: 104, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[14] = TableBlockInfo{
+	tableBlockRecords[13] = TableBlockInfo{
 		Name: "ModelPhys", BuildVersion: BuildVersion, Size: 56, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "table_name", Offset: 24, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 44, StrideOffset: 0xffffffff, Stride: 0,
@@ -1151,16 +1082,16 @@ func init() {
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[15] = TableBlockInfo{
+	tableBlockRecords[14] = TableBlockInfo{
 		Name: "ModelPlacement", BuildVersion: BuildVersion, Size: 64, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "member", Offset: 24, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 44, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "locations", Offset: 48, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 48, CountOffset: 56, StrideOffset: 60, Stride: 104,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 4, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[34] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 4, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[31] }},
 		},
 	}
-	tableBlockRecords[16] = TableBlockInfo{
+	tableBlockRecords[15] = TableBlockInfo{
 		Name: "ModelReplayEvent", BuildVersion: BuildVersion, Size: 184, Align: 8, NumFields: 3,
 		Fields: []TableBlockFieldInfo{
 			{Name: "step", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
@@ -1168,19 +1099,19 @@ func init() {
 			{Name: "verdict", Offset: 96, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 164, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "fields", Offset: 168, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 168, CountOffset: 176, StrideOffset: 180, Stride: 264,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[30] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
 		},
 	}
-	tableBlockRecords[17] = TableBlockInfo{
+	tableBlockRecords[16] = TableBlockInfo{
 		Name: "ModelRowAt", BuildVersion: BuildVersion, Size: 80, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "p", Offset: 24, Size: 28, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[36] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[33] }},
 			{Name: "row", Offset: 52, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 72, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[18] = TableBlockInfo{
+	tableBlockRecords[17] = TableBlockInfo{
 		Name: "ModelSeen", BuildVersion: BuildVersion, Size: 56, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "writer", Offset: 24, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 44, StrideOffset: 0xffffffff, Stride: 0,
@@ -1189,26 +1120,26 @@ func init() {
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[19] = TableBlockInfo{
+	tableBlockRecords[18] = TableBlockInfo{
 		Name: "ModelState", BuildVersion: BuildVersion, Size: 128, Align: 8, NumFields: 7,
 		Fields: []TableBlockFieldInfo{
 			{Name: "live", Offset: 24, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 24, CountOffset: 32, StrideOffset: 36, Stride: 28,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 4, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[36] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 4, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[33] }},
 			{Name: "rows", Offset: 40, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 40, CountOffset: 48, StrideOffset: 52, Stride: 52,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[38] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[35] }},
 			{Name: "binds", Offset: 56, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 56, CountOffset: 64, StrideOffset: 68, Stride: 152,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 25, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[27] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 25, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[25] }},
 			{Name: "data", Offset: 72, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 72, CountOffset: 80, StrideOffset: 84, Stride: 104,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 75, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[29] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 75, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[27] }},
 			{Name: "place", Offset: 88, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 88, CountOffset: 96, StrideOffset: 100, Stride: 444,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 3, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[37] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 3, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[34] }},
 			{Name: "active", Offset: 104, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "seen", Offset: 112, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 112, CountOffset: 120, StrideOffset: 124, Stride: 28,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 2, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[39] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 2, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[36] }},
 		},
 	}
-	tableBlockRecords[20] = TableBlockInfo{
+	tableBlockRecords[19] = TableBlockInfo{
 		Name: "ModelStep", BuildVersion: BuildVersion, Size: 344, Align: 8, NumFields: 6,
 		Fields: []TableBlockFieldInfo{
 			{Name: "name", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
@@ -1225,11 +1156,11 @@ func init() {
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[21] = TableBlockInfo{
+	tableBlockRecords[20] = TableBlockInfo{
 		Name: "ModelStepResult", BuildVersion: BuildVersion, Size: 4320, Align: 8, NumFields: 7,
 		Fields: []TableBlockFieldInfo{
 			{Name: "step", Offset: 24, Size: 316, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 316, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[41] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 316, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[38] }},
 			{Name: "verdict", Offset: 340, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 376, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "ok", Offset: 380, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
@@ -1239,31 +1170,18 @@ func init() {
 			{Name: "seconds", Offset: 392, Size: 8, Kind: 5, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "outcome", Offset: 400, Size: 2888, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 2888, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[35] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 2888, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[32] }},
 			{Name: "log", Offset: 3288, Size: 1032, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4316, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 1024, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[22] = TableBlockInfo{
-		Name: "ModelTrace", BuildVersion: BuildVersion, Size: 13664, Align: 8, NumFields: 4,
-		Fields: []TableBlockFieldInfo{
-			{Name: "sourceSha256", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "modelSha256", Offset: 96, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 96, CountOffset: 104, StrideOffset: 108, Stride: 112,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 4, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[33] }},
-			{Name: "initial", Offset: 112, Size: 13544, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 13544, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[40] }},
-			{Name: "stepCount", Offset: 13656, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[23] = TableBlockInfo{
+	tableBlockRecords[21] = TableBlockInfo{
 		Name: "ModelTraceStep", BuildVersion: BuildVersion, Size: 23000, Align: 8, NumFields: 8,
 		Fields: []TableBlockFieldInfo{
 			{Name: "verb", Offset: 24, Size: 32, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 52, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 24, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "args", Offset: 56, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 56, CountOffset: 64, StrideOffset: 68, Stride: 520,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 5, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 5, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[24] }},
 			{Name: "actor", Offset: 72, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "refused", Offset: 96, Size: 2, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
@@ -1271,14 +1189,14 @@ func init() {
 			{Name: "hasReceipt", Offset: 98, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "receipt", Offset: 100, Size: 8836, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8836, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[31] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8836, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[29] }},
 			{Name: "model", Offset: 8936, Size: 520, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 9452, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "state", Offset: 9456, Size: 13544, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 13544, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[40] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 13544, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[37] }},
 		},
 	}
-	tableBlockRecords[24] = TableBlockInfo{
+	tableBlockRecords[22] = TableBlockInfo{
 		Name: "ModelViolation", BuildVersion: BuildVersion, Size: 200, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "kind", Offset: 24, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60, StrideOffset: 0xffffffff, Stride: 0,
@@ -1287,7 +1205,7 @@ func init() {
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[25] = TableBlockInfo{
+	tableBlockRecords[23] = TableBlockInfo{
 		Name: "ConvergeStreamEntry", BuildVersion: BuildVersion, Size: 104, Align: 8, NumFields: 4,
 		Fields: []TableBlockFieldInfo{
 			{Name: "name", Offset: 0, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 36, StrideOffset: 0xffffffff, Stride: 0,
@@ -1300,59 +1218,59 @@ func init() {
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[26] = TableBlockInfo{
+	tableBlockRecords[24] = TableBlockInfo{
 		Name: "ModelArg", BuildVersion: BuildVersion, Size: 520, Align: 4, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
 			{Name: "text", Offset: 0, Size: 520, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 516, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[27] = TableBlockInfo{
+	tableBlockRecords[25] = TableBlockInfo{
 		Name: "ModelBind", BuildVersion: BuildVersion, Size: 152, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "cell", Offset: 0, Size: 76, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
 			{Name: "target", Offset: 76, Size: 76, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
 		},
 	}
-	tableBlockRecords[28] = TableBlockInfo{
+	tableBlockRecords[26] = TableBlockInfo{
 		Name: "ModelCell", BuildVersion: BuildVersion, Size: 76, Align: 4, NumFields: 3,
 		Fields: []TableBlockFieldInfo{
 			{Name: "p", Offset: 0, Size: 28, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[36] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[33] }},
 			{Name: "row", Offset: 28, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 48, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "col", Offset: 52, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 72, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[29] = TableBlockInfo{
+	tableBlockRecords[27] = TableBlockInfo{
 		Name: "ModelDatum", BuildVersion: BuildVersion, Size: 104, Align: 4, NumFields: 3,
 		Fields: []TableBlockFieldInfo{
 			{Name: "cell", Offset: 0, Size: 76, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
 			{Name: "member", Offset: 76, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 96, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "score", Offset: 100, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[30] = TableBlockInfo{
+	tableBlockRecords[28] = TableBlockInfo{
 		Name: "ModelDetail", BuildVersion: BuildVersion, Size: 264, Align: 4, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
 			{Name: "text", Offset: 0, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 260, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[31] = TableBlockInfo{
+	tableBlockRecords[29] = TableBlockInfo{
 		Name: "ModelEvent", BuildVersion: BuildVersion, Size: 8836, Align: 4, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
 			{Name: "fields", Offset: 0, Size: 8836, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 8832, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 552, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[32] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 552, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[30] }},
 		},
 	}
-	tableBlockRecords[32] = TableBlockInfo{
+	tableBlockRecords[30] = TableBlockInfo{
 		Name: "ModelEventField", BuildVersion: BuildVersion, Size: 552, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "key", Offset: 0, Size: 32, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 28, StrideOffset: 0xffffffff, Stride: 0,
@@ -1361,25 +1279,16 @@ func init() {
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[33] = TableBlockInfo{
-		Name: "ModelHash", BuildVersion: BuildVersion, Size: 112, Align: 4, NumFields: 2,
-		Fields: []TableBlockFieldInfo{
-			{Name: "module", Offset: 0, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 36, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "sha256", Offset: 40, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 108, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-		},
-	}
-	tableBlockRecords[34] = TableBlockInfo{
+	tableBlockRecords[31] = TableBlockInfo{
 		Name: "ModelLocation", BuildVersion: BuildVersion, Size: 104, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "p", Offset: 0, Size: 28, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[36] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[33] }},
 			{Name: "cell", Offset: 28, Size: 76, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[28] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 76, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[26] }},
 		},
 	}
-	tableBlockRecords[35] = TableBlockInfo{
+	tableBlockRecords[32] = TableBlockInfo{
 		Name: "ModelOutcome", BuildVersion: BuildVersion, Size: 2888, Align: 4, NumFields: 5,
 		Fields: []TableBlockFieldInfo{
 			{Name: "completed", Offset: 0, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
@@ -1389,12 +1298,12 @@ func init() {
 			{Name: "distinct", Offset: 32, Size: 32, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 24, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "violations", Offset: 64, Size: 2820, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2880, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 176, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[42] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 176, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[39] }},
 			{Name: "initialState", Offset: 2884, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[36] = TableBlockInfo{
+	tableBlockRecords[33] = TableBlockInfo{
 		Name: "ModelPhys", BuildVersion: BuildVersion, Size: 28, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "table_name", Offset: 0, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 20, StrideOffset: 0xffffffff, Stride: 0,
@@ -1403,25 +1312,25 @@ func init() {
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[37] = TableBlockInfo{
+	tableBlockRecords[34] = TableBlockInfo{
 		Name: "ModelPlacement", BuildVersion: BuildVersion, Size: 444, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "member", Offset: 0, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 20, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "locations", Offset: 24, Size: 420, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 440, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 4, ElemSize: 104, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[34] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 4, ElemSize: 104, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[31] }},
 		},
 	}
-	tableBlockRecords[38] = TableBlockInfo{
+	tableBlockRecords[35] = TableBlockInfo{
 		Name: "ModelRowAt", BuildVersion: BuildVersion, Size: 52, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "p", Offset: 0, Size: 28, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[36] }},
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[33] }},
 			{Name: "row", Offset: 28, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 48, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[39] = TableBlockInfo{
+	tableBlockRecords[36] = TableBlockInfo{
 		Name: "ModelSeen", BuildVersion: BuildVersion, Size: 28, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "writer", Offset: 0, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 20, StrideOffset: 0xffffffff, Stride: 0,
@@ -1430,26 +1339,26 @@ func init() {
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[40] = TableBlockInfo{
+	tableBlockRecords[37] = TableBlockInfo{
 		Name: "ModelState", BuildVersion: BuildVersion, Size: 13544, Align: 4, NumFields: 7,
 		Fields: []TableBlockFieldInfo{
 			{Name: "live", Offset: 0, Size: 116, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 112, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 4, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[36] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 4, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[33] }},
 			{Name: "rows", Offset: 116, Size: 420, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 532, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 52, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[38] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 52, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[35] }},
 			{Name: "binds", Offset: 536, Size: 3804, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4336, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 25, ElemSize: 152, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[27] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 25, ElemSize: 152, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[25] }},
 			{Name: "data", Offset: 4340, Size: 7804, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 12140, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 75, ElemSize: 104, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[29] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 75, ElemSize: 104, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[27] }},
 			{Name: "place", Offset: 12144, Size: 1336, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 13476, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 3, ElemSize: 444, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[37] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 3, ElemSize: 444, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[34] }},
 			{Name: "active", Offset: 13480, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "seen", Offset: 13484, Size: 60, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 13540, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 2, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[39] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 2, ElemSize: 28, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[36] }},
 		},
 	}
-	tableBlockRecords[41] = TableBlockInfo{
+	tableBlockRecords[38] = TableBlockInfo{
 		Name: "ModelStep", BuildVersion: BuildVersion, Size: 316, Align: 4, NumFields: 6,
 		Fields: []TableBlockFieldInfo{
 			{Name: "name", Offset: 0, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 68, StrideOffset: 0xffffffff, Stride: 0,
@@ -1466,7 +1375,7 @@ func init() {
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
-	tableBlockRecords[42] = TableBlockInfo{
+	tableBlockRecords[39] = TableBlockInfo{
 		Name: "ModelViolation", BuildVersion: BuildVersion, Size: 176, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "kind", Offset: 0, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 36, StrideOffset: 0xffffffff, Stride: 0,
@@ -1895,7 +1804,7 @@ func ModelPhysBlockBytes(b *ModelPhysBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelPhysBlock) Type() *TableBlockInfo { return &tableBlockRecords[14] }
+func (b *ModelPhysBlock) Type() *TableBlockInfo { return &tableBlockRecords[13] }
 
 // ModelCellBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -2175,7 +2084,7 @@ func ModelRowAtBlockBytes(b *ModelRowAtBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelRowAtBlock) Type() *TableBlockInfo { return &tableBlockRecords[17] }
+func (b *ModelRowAtBlock) Type() *TableBlockInfo { return &tableBlockRecords[16] }
 
 // ModelBindBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -2595,7 +2504,7 @@ func ModelLocationBlockBytes(b *ModelLocationBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelLocationBlock) Type() *TableBlockInfo { return &tableBlockRecords[12] }
+func (b *ModelLocationBlock) Type() *TableBlockInfo { return &tableBlockRecords[11] }
 
 // ModelPlacementBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -2806,7 +2715,7 @@ func ModelPlacementBlockBytes(b *ModelPlacementBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelPlacementBlock) Type() *TableBlockInfo { return &tableBlockRecords[15] }
+func (b *ModelPlacementBlock) Type() *TableBlockInfo { return &tableBlockRecords[14] }
 
 // ModelSeenBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -2946,7 +2855,7 @@ func ModelSeenBlockBytes(b *ModelSeenBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelSeenBlock) Type() *TableBlockInfo { return &tableBlockRecords[18] }
+func (b *ModelSeenBlock) Type() *TableBlockInfo { return &tableBlockRecords[17] }
 
 // ModelStateBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -3512,7 +3421,7 @@ func ModelStateBlockBytes(b *ModelStateBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelStateBlock) Type() *TableBlockInfo { return &tableBlockRecords[19] }
+func (b *ModelStateBlock) Type() *TableBlockInfo { return &tableBlockRecords[18] }
 
 // ModelActionBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -4285,358 +4194,7 @@ func ModelTraceStepBlockBytes(b *ModelTraceStepBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelTraceStepBlock) Type() *TableBlockInfo { return &tableBlockRecords[23] }
-
-// ModelHashBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
-// from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
-// not allocate a block — the bytes are handed to it — but it caps by this: a
-// playback buffer, a recording, a scratch copy all size from the generated
-// constant rather than from a number a person wrote down beside it.
-const ModelHashBlockMaxBytes int64 = 192
-
-// ModelHashBlock is ModelHash's block: a pointer and a length, and then rows in place.
-// Opening one is ONE check and no copy; reading a row is one add (§19.2).
-//
-// The bytes belong to the CONSUMER — a []byte it owns, an mmap, or memory a
-// producer handed across. Nothing here allocates.
-//
-// A block is valid until the next fill over the SAME storage, which
-// invalidates every block over it and every row pointer taken from one.
-type ModelHashBlock struct {
-	Base       unsafe.Pointer            // the extent's base, 64-byte aligned
-	Projection *ModelHashBlockProjection // the projection, at offset 0
-	Bytes      int64                     // the extent in use
-}
-
-// ---- block fill path: begin ----
-// ---- block fill path: end ----
-// ModelHashBlockOpen is the bool convenience for the handle's typed Open error.
-func ModelHashBlockOpen(block *ModelHashBlock, base unsafe.Pointer, bytes int64) bool {
-	return block.Open(base, bytes) == nil
-}
-
-// Open reads all prologue and layout words bytewise before the final base
-// alignment check. Every refusal names the first failed clause in SPEC §19.2.
-func (block *ModelHashBlock) Open(base unsafe.Pointer, bytes int64) error {
-	*block = ModelHashBlock{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if bytes < 136 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 136)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableBlockMagic {
-		if magic == 0x5343484d41424c4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableBlockByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	used := int64(136)
-	padding := (64 - (used % 64)) % 64
-	if padding > bytes-used {
-		return TableRefuseTruncated
-	}
-	used += padding
-	if uintptr(base)%64 != 0 {
-		return TableRefuseUnalignedBase
-	}
-	block.Base = base
-	block.Projection = (*ModelHashBlockProjection)(base)
-	block.Bytes = used
-	return nil
-}
-
-// ModelHashCounts is gathered before Begin; clamping is the caller's policy.
-type ModelHashCounts struct {
-}
-
-// ModelHashBlockStorage owns a maximum-sized extent. Do not copy an initialized storage.
-type ModelHashBlockStorage struct {
-	base       unsafe.Pointer
-	allocation []byte
-	allocator  TableBlockAllocator
-}
-
-func (s *ModelHashBlockStorage) Create(a TableBlockAllocator) bool {
-	if s == nil || s.allocation != nil || a.Alloc == nil || a.Free == nil {
-		return false
-	}
-	raw := a.Alloc(ModelHashBlockMaxBytes + 63)
-	if int64(len(raw)) < ModelHashBlockMaxBytes+63 {
-		if raw != nil {
-			a.Free(raw)
-		}
-		return false
-	}
-	s.allocation = raw
-	s.allocator = a
-	offset := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	s.base = unsafe.Pointer(&raw[offset])
-	return true
-}
-func (s *ModelHashBlockStorage) Destroy() {
-	if s != nil && s.allocation != nil {
-		s.allocator.Free(s.allocation)
-		*s = ModelHashBlockStorage{}
-	}
-}
-
-// ---- block fill path: begin ----
-// ModelHashBlockBegin writes only the prologue and triples, never rows or padding.
-// Storage and all counts are checked before any byte of the extent changes.
-func ModelHashBlockBegin(b *ModelHashBlock, s *ModelHashBlockStorage, c ModelHashCounts, refusal *TableBlockRefusal) bool {
-	if refusal != nil {
-		*refusal = TableBlockRefusal{}
-	}
-	if b == nil {
-		return false
-	}
-	if s == nil || s.base == nil {
-		return false
-	}
-	p := (*ModelHashBlockProjection)(s.base)
-	p.Magic = TableBlockMagic
-	p.BuildVersion = BuildVersion
-	p.ByteOrder = TableBlockByteOrder
-	offset := int64(136)
-	*b = ModelHashBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
-	return true
-}
-
-func ModelHashBlockBytes(b *ModelHashBlock) int64 {
-	if b == nil || b.Projection == nil {
-		return 0
-	}
-	used := int64(136)
-	return (used + 63) &^ int64(63)
-}
-
-// ---- block fill path: end ----
-
-// Type is this block's descriptors: constant data, so a reflective read costs
-// a lookup and not a parse. The row layouts hang off the element column
-// rather than taking names of their own, so a walker reaches every record
-// through the graph.
-func (b *ModelHashBlock) Type() *TableBlockInfo { return &tableBlockRecords[11] }
-
-// ModelTraceBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
-// from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
-// not allocate a block — the bytes are handed to it — but it caps by this: a
-// playback buffer, a recording, a scratch copy all size from the generated
-// constant rather than from a number a person wrote down beside it.
-const ModelTraceBlockMaxBytes int64 = 14144
-
-// ModelTraceBlock is ModelTrace's block: a pointer and a length, and then rows in place.
-// Opening one is ONE check and no copy; reading a row is one add (§19.2).
-//
-// The bytes belong to the CONSUMER — a []byte it owns, an mmap, or memory a
-// producer handed across. Nothing here allocates.
-//
-// A block is valid until the next fill over the SAME storage, which
-// invalidates every block over it and every row pointer taken from one.
-type ModelTraceBlock struct {
-	Base       unsafe.Pointer             // the extent's base, 64-byte aligned
-	Projection *ModelTraceBlockProjection // the projection, at offset 0
-	Bytes      int64                      // the extent in use
-}
-
-// ---- block fill path: begin ----
-// ModelSha256Stride, ModelSha256Max and ModelSha256ProjectionOffset are the constants this build
-// asserts against. A consumer INDEXES with what it read from the instance,
-// never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
-// package constants because §11 gives a language whose accessors are members
-// exactly that latitude: a member claims nothing at file scope.
-func (b *ModelTraceBlock) ModelSha256Stride() int64           { return 112 }
-func (b *ModelTraceBlock) ModelSha256Max() int64              { return 4 }
-func (b *ModelTraceBlock) ModelSha256ProjectionOffset() int64 { return 96 }
-
-// ModelSha256 is ITERATED, not indexed by hand: the accessor points at each row where
-// it lies, at the pitch the INSTANCE gives, for the count the instance gives.
-func (b *ModelTraceBlock) ModelSha256() TableBlockRows[ModelHashRow] {
-	return TableBlockRows[ModelHashRow]{
-		Base:   unsafe.Add(b.Base, uintptr(b.Projection.ModelSha256.OffsetOf)),
-		Count:  int32(b.Projection.ModelSha256.Count),
-		Stride: int32(b.Projection.ModelSha256.Stride),
-	}
-}
-
-// ModelSha256Span is the CONTIGUOUS view, available because the pitch IS the
-// element's size (§2.7), which is how the per-frame fast path is written.
-func (b *ModelTraceBlock) ModelSha256Span() []ModelHashRow {
-	return unsafe.Slice((*ModelHashRow)(unsafe.Add(b.Base, uintptr(b.Projection.ModelSha256.OffsetOf))), b.Projection.ModelSha256.Count)
-}
-
-// ---- block fill path: end ----
-// ModelTraceBlockOpen is the bool convenience for the handle's typed Open error.
-func ModelTraceBlockOpen(block *ModelTraceBlock, base unsafe.Pointer, bytes int64) bool {
-	return block.Open(base, bytes) == nil
-}
-
-// Open reads all prologue and layout words bytewise before the final base
-// alignment check. Every refusal names the first failed clause in SPEC §19.2.
-func (block *ModelTraceBlock) Open(base unsafe.Pointer, bytes int64) error {
-	*block = ModelTraceBlock{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if bytes < 13664 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 13664)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableBlockMagic {
-		if magic == 0x5343484d41424c4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableBlockByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	used := int64(13664)
-	{
-		// EVERY NUMBER BELOW COMES FROM THE INSTANCE, so the arithmetic is
-		// unsigned and each term is BOUNDED BEFORE IT IS ADDED. A forged
-		// OffsetOf near 2^63 must refuse, and an addition that wrapped past the
-		// top of the type would be what the check after it was supposed to
-		// catch. The C++ side holds the same shape for the same reason.
-		triple := header[unsafe.Offsetof(ModelTraceBlockProjection{}.ModelSha256):]
-		offsetOf := binary.NativeEndian.Uint64(triple)
-		count := uint64(binary.NativeEndian.Uint32(triple[8:]))
-		stride := uint64(binary.NativeEndian.Uint32(triple[12:]))
-		if stride != uint64(unsafe.Sizeof(ModelHashRow{})) {
-			return TableRefuseBadLayout
-		}
-		// past the DECLARED MAXIMUM: the producer side refuses this too, because
-		// a consumer that sizes anything by the maximum would overflow on a
-		// count the maximum does not bound
-		if count > 4 {
-			return TableRefuseBadLayout
-		}
-		if offsetOf < 13664 || offsetOf%64 != 0 {
-			return TableRefuseBadLayout
-		}
-		if offsetOf > uint64(bytes) {
-			return TableRefuseBadLayout
-		}
-		rows := count * stride // both bounded above: this cannot carry
-		if rows > uint64(bytes)-offsetOf {
-			return TableRefuseBadLayout
-		}
-		if end := int64(offsetOf + rows); end > used {
-			used = end
-		}
-	}
-	padding := (64 - (used % 64)) % 64
-	if padding > bytes-used {
-		return TableRefuseTruncated
-	}
-	used += padding
-	if uintptr(base)%64 != 0 {
-		return TableRefuseUnalignedBase
-	}
-	block.Base = base
-	block.Projection = (*ModelTraceBlockProjection)(base)
-	block.Bytes = used
-	return nil
-}
-
-// ModelTraceCounts is gathered before Begin; clamping is the caller's policy.
-type ModelTraceCounts struct {
-	ModelSha256 int32
-}
-
-// ModelTraceBlockStorage owns a maximum-sized extent. Do not copy an initialized storage.
-type ModelTraceBlockStorage struct {
-	base       unsafe.Pointer
-	allocation []byte
-	allocator  TableBlockAllocator
-}
-
-func (s *ModelTraceBlockStorage) Create(a TableBlockAllocator) bool {
-	if s == nil || s.allocation != nil || a.Alloc == nil || a.Free == nil {
-		return false
-	}
-	raw := a.Alloc(ModelTraceBlockMaxBytes + 63)
-	if int64(len(raw)) < ModelTraceBlockMaxBytes+63 {
-		if raw != nil {
-			a.Free(raw)
-		}
-		return false
-	}
-	s.allocation = raw
-	s.allocator = a
-	offset := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	s.base = unsafe.Pointer(&raw[offset])
-	return true
-}
-func (s *ModelTraceBlockStorage) Destroy() {
-	if s != nil && s.allocation != nil {
-		s.allocator.Free(s.allocation)
-		*s = ModelTraceBlockStorage{}
-	}
-}
-
-// ---- block fill path: begin ----
-// ModelTraceBlockBegin writes only the prologue and triples, never rows or padding.
-// Storage and all counts are checked before any byte of the extent changes.
-func ModelTraceBlockBegin(b *ModelTraceBlock, s *ModelTraceBlockStorage, c ModelTraceCounts, refusal *TableBlockRefusal) bool {
-	if refusal != nil {
-		*refusal = TableBlockRefusal{}
-	}
-	if b == nil {
-		return false
-	}
-	if c.ModelSha256 < 0 || c.ModelSha256 > 4 {
-		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "modelSha256", Count: int64(c.ModelSha256), Maximum: 4}
-		}
-		return false
-	}
-	if s == nil || s.base == nil {
-		return false
-	}
-	p := (*ModelTraceBlockProjection)(s.base)
-	p.Magic = TableBlockMagic
-	p.BuildVersion = BuildVersion
-	p.ByteOrder = TableBlockByteOrder
-	offset := int64(13664)
-	offset = (offset + 63) &^ int64(63)
-	p.ModelSha256 = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.ModelSha256), Stride: 112}
-	offset += int64(c.ModelSha256) * 112
-	*b = ModelTraceBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
-	return true
-}
-
-func ModelTraceBlockBytes(b *ModelTraceBlock) int64 {
-	if b == nil || b.Projection == nil {
-		return 0
-	}
-	used := int64(13664)
-	if end := int64(b.Projection.ModelSha256.OffsetOf) + int64(b.Projection.ModelSha256.Count)*int64(b.Projection.ModelSha256.Stride); end > used {
-		used = end
-	}
-	return (used + 63) &^ int64(63)
-}
-
-// ---- block fill path: end ----
-
-// Type is this block's descriptors: constant data, so a reflective read costs
-// a lookup and not a parse. The row layouts hang off the element column
-// rather than taking names of their own, so a walker reaches every record
-// through the graph.
-func (b *ModelTraceBlock) Type() *TableBlockInfo { return &tableBlockRecords[22] }
+func (b *ModelTraceStepBlock) Type() *TableBlockInfo { return &tableBlockRecords[21] }
 
 // ModelFindingBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -4987,7 +4545,7 @@ func ModelReplayEventBlockBytes(b *ModelReplayEventBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelReplayEventBlock) Type() *TableBlockInfo { return &tableBlockRecords[16] }
+func (b *ModelReplayEventBlock) Type() *TableBlockInfo { return &tableBlockRecords[15] }
 
 // ModelStepBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -5127,7 +4685,7 @@ func ModelStepBlockBytes(b *ModelStepBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelStepBlock) Type() *TableBlockInfo { return &tableBlockRecords[20] }
+func (b *ModelStepBlock) Type() *TableBlockInfo { return &tableBlockRecords[19] }
 
 // ModelViolationBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -5267,7 +4825,7 @@ func ModelViolationBlockBytes(b *ModelViolationBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelViolationBlock) Type() *TableBlockInfo { return &tableBlockRecords[24] }
+func (b *ModelViolationBlock) Type() *TableBlockInfo { return &tableBlockRecords[22] }
 
 // ModelOutcomeBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -5478,7 +5036,7 @@ func ModelOutcomeBlockBytes(b *ModelOutcomeBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelOutcomeBlock) Type() *TableBlockInfo { return &tableBlockRecords[13] }
+func (b *ModelOutcomeBlock) Type() *TableBlockInfo { return &tableBlockRecords[12] }
 
 // ModelStepResultBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does
@@ -5618,7 +5176,7 @@ func ModelStepResultBlockBytes(b *ModelStepResultBlock) int64 {
 // a lookup and not a parse. The row layouts hang off the element column
 // rather than taking names of their own, so a walker reaches every record
 // through the graph.
-func (b *ModelStepResultBlock) Type() *TableBlockInfo { return &tableBlockRecords[21] }
+func (b *ModelStepResultBlock) Type() *TableBlockInfo { return &tableBlockRecords[20] }
 
 // ConvergeStreamEntryBlockMaxBytes is the storage a PRODUCER of this block allocates, sized
 // from the declared maxima (mas-bandwidth/schema docs/SPEC-TABLES.md §19.1). A Go consumer does

@@ -180,10 +180,6 @@ func init() {
 	tableCookLayoutOffset("ModelFindingRow.Name", unsafe.Offsetof(ModelFindingRow{}.Name), 0)
 	tableCookLayoutOffset("ModelFindingRow.Result", unsafe.Offsetof(ModelFindingRow{}.Result), 72)
 	tableCookLayoutOffset("ModelFindingRow.Text", unsafe.Offsetof(ModelFindingRow{}.Text), 112)
-	tableCookLayoutSize("ModelHashRow", unsafe.Sizeof(ModelHashRow{}), 112)
-	tableCookLayoutSize("ModelHashRow alignment", unsafe.Alignof(ModelHashRow{}), 4)
-	tableCookLayoutOffset("ModelHashRow.Module", unsafe.Offsetof(ModelHashRow{}.Module), 0)
-	tableCookLayoutOffset("ModelHashRow.Sha256", unsafe.Offsetof(ModelHashRow{}.Sha256), 40)
 	tableCookLayoutSize("ModelLocationRow", unsafe.Sizeof(ModelLocationRow{}), 104)
 	tableCookLayoutSize("ModelLocationRow alignment", unsafe.Alignof(ModelLocationRow{}), 4)
 	tableCookLayoutOffset("ModelLocationRow.P", unsafe.Offsetof(ModelLocationRow{}.P), 0)
@@ -242,12 +238,6 @@ func init() {
 	tableCookLayoutOffset("ModelStepResultRow.Seconds", unsafe.Offsetof(ModelStepResultRow{}.Seconds), 368)
 	tableCookLayoutOffset("ModelStepResultRow.Outcome", unsafe.Offsetof(ModelStepResultRow{}.Outcome), 376)
 	tableCookLayoutOffset("ModelStepResultRow.Log", unsafe.Offsetof(ModelStepResultRow{}.Log), 3264)
-	tableCookLayoutSize("ModelTraceRow", unsafe.Sizeof(ModelTraceRow{}), 14072)
-	tableCookLayoutSize("ModelTraceRow alignment", unsafe.Alignof(ModelTraceRow{}), 4)
-	tableCookLayoutOffset("ModelTraceRow.SourceSha256", unsafe.Offsetof(ModelTraceRow{}.SourceSha256), 0)
-	tableCookLayoutOffset("ModelTraceRow.ModelSha256", unsafe.Offsetof(ModelTraceRow{}.ModelSha256), 72)
-	tableCookLayoutOffset("ModelTraceRow.Initial", unsafe.Offsetof(ModelTraceRow{}.Initial), 524)
-	tableCookLayoutOffset("ModelTraceRow.StepCount", unsafe.Offsetof(ModelTraceRow{}.StepCount), 14068)
 	tableCookLayoutSize("ModelTraceStepRow", unsafe.Sizeof(ModelTraceStepRow{}), 25564)
 	tableCookLayoutSize("ModelTraceStepRow alignment", unsafe.Alignof(ModelTraceStepRow{}), 4)
 	tableCookLayoutOffset("ModelTraceStepRow.Verb", unsafe.Offsetof(ModelTraceStepRow{}.Verb), 0)
@@ -287,7 +277,7 @@ func tableCookLayoutOffset(what string, got, want uintptr) {
 // §11 fact rather than a taste: a name derived from a DECLARATION's own
 // spelling is a name a declaration can collide with, and the checker has no
 // machinery for a prefix-and-name product. One fixed name is one claim.
-var tableCookRecords = make([]TableCookInfo, 25)
+var tableCookRecords = make([]TableCookInfo, 23)
 
 // THE GRAPH IS FILLED HERE rather than in the slice's own initializer, and
 // the reason is a language fact rather than a taste: the DESCRIPTOR GRAPH is
@@ -379,20 +369,13 @@ func init() {
 		},
 	}
 	tableCookRecords[11] = TableCookInfo{
-		Name: "ModelHash", Size: 112, Align: 4, NumFields: 2,
-		Fields: []TableCookFieldInfo{
-			{Name: "module", Offset: 0, Size: 40, ElemSize: 40, IsArray: false, ArrayBound: 32, IsPointer: false, CountOffset: 36, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "sha256", Offset: 40, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 108, PresentOffset: -1, Storage: TableCookStorageString},
-		},
-	}
-	tableCookRecords[12] = TableCookInfo{
 		Name: "ModelLocation", Size: 104, Align: 4, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "p", Offset: 0, Size: 28, ElemSize: 28, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
 			{Name: "cell", Offset: 28, Size: 76, ElemSize: 76, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
-	tableCookRecords[13] = TableCookInfo{
+	tableCookRecords[12] = TableCookInfo{
 		Name: "ModelOutcome", Size: 2888, Align: 4, NumFields: 5,
 		Fields: []TableCookFieldInfo{
 			{Name: "completed", Offset: 0, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
@@ -402,21 +385,21 @@ func init() {
 			{Name: "initialState", Offset: 2884, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
 		},
 	}
-	tableCookRecords[14] = TableCookInfo{
+	tableCookRecords[13] = TableCookInfo{
 		Name: "ModelPhys", Size: 28, Align: 4, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "table_name", Offset: 0, Size: 24, ElemSize: 24, IsArray: false, ArrayBound: 16, IsPointer: false, CountOffset: 20, PresentOffset: -1, Storage: TableCookStorageString},
 			{Name: "epoch", Offset: 24, Size: 4, ElemSize: 4, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
 		},
 	}
-	tableCookRecords[15] = TableCookInfo{
+	tableCookRecords[14] = TableCookInfo{
 		Name: "ModelPlacement", Size: 444, Align: 4, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "member", Offset: 0, Size: 24, ElemSize: 24, IsArray: false, ArrayBound: 16, IsPointer: false, CountOffset: 20, PresentOffset: -1, Storage: TableCookStorageString},
 			{Name: "locations", Offset: 24, Size: 420, ElemSize: 104, IsArray: true, ArrayBound: 4, IsPointer: false, CountOffset: 440, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
-	tableCookRecords[16] = TableCookInfo{
+	tableCookRecords[15] = TableCookInfo{
 		Name: "ModelReplayEvent", Size: 2260, Align: 4, NumFields: 3,
 		Fields: []TableCookFieldInfo{
 			{Name: "step", Offset: 0, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 68, PresentOffset: -1, Storage: TableCookStorageString},
@@ -424,21 +407,21 @@ func init() {
 			{Name: "fields", Offset: 144, Size: 2116, ElemSize: 264, IsArray: true, ArrayBound: 8, IsPointer: false, CountOffset: 2256, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
-	tableCookRecords[17] = TableCookInfo{
+	tableCookRecords[16] = TableCookInfo{
 		Name: "ModelRowAt", Size: 52, Align: 4, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "p", Offset: 0, Size: 28, ElemSize: 28, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
 			{Name: "row", Offset: 28, Size: 24, ElemSize: 24, IsArray: false, ArrayBound: 16, IsPointer: false, CountOffset: 48, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
-	tableCookRecords[18] = TableCookInfo{
+	tableCookRecords[17] = TableCookInfo{
 		Name: "ModelSeen", Size: 28, Align: 4, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "writer", Offset: 0, Size: 24, ElemSize: 24, IsArray: false, ArrayBound: 16, IsPointer: false, CountOffset: 20, PresentOffset: -1, Storage: TableCookStorageString},
 			{Name: "epoch", Offset: 24, Size: 4, ElemSize: 4, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
 		},
 	}
-	tableCookRecords[19] = TableCookInfo{
+	tableCookRecords[18] = TableCookInfo{
 		Name: "ModelState", Size: 13544, Align: 4, NumFields: 7,
 		Fields: []TableCookFieldInfo{
 			{Name: "live", Offset: 0, Size: 116, ElemSize: 28, IsArray: true, ArrayBound: 4, IsPointer: false, CountOffset: 112, PresentOffset: -1, Storage: TableCookStorageRecord},
@@ -450,7 +433,7 @@ func init() {
 			{Name: "seen", Offset: 13484, Size: 60, ElemSize: 28, IsArray: true, ArrayBound: 2, IsPointer: false, CountOffset: 13540, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
-	tableCookRecords[20] = TableCookInfo{
+	tableCookRecords[19] = TableCookInfo{
 		Name: "ModelStep", Size: 316, Align: 4, NumFields: 6,
 		Fields: []TableCookFieldInfo{
 			{Name: "name", Offset: 0, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 68, PresentOffset: -1, Storage: TableCookStorageString},
@@ -461,7 +444,7 @@ func init() {
 			{Name: "met", Offset: 276, Size: 40, ElemSize: 40, IsArray: false, ArrayBound: 32, IsPointer: false, CountOffset: 312, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
-	tableCookRecords[21] = TableCookInfo{
+	tableCookRecords[20] = TableCookInfo{
 		Name: "ModelStepResult", Size: 4296, Align: 8, NumFields: 7,
 		Fields: []TableCookFieldInfo{
 			{Name: "step", Offset: 0, Size: 316, ElemSize: 316, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
@@ -473,16 +456,7 @@ func init() {
 			{Name: "log", Offset: 3264, Size: 1032, ElemSize: 1032, IsArray: false, ArrayBound: 1024, IsPointer: false, CountOffset: 4292, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
-	tableCookRecords[22] = TableCookInfo{
-		Name: "ModelTrace", Size: 14072, Align: 4, NumFields: 4,
-		Fields: []TableCookFieldInfo{
-			{Name: "sourceSha256", Offset: 0, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 68, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "modelSha256", Offset: 72, Size: 452, ElemSize: 112, IsArray: true, ArrayBound: 4, IsPointer: false, CountOffset: 520, PresentOffset: -1, Storage: TableCookStorageRecord},
-			{Name: "initial", Offset: 524, Size: 13544, ElemSize: 13544, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
-			{Name: "stepCount", Offset: 14068, Size: 4, ElemSize: 4, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
-		},
-	}
-	tableCookRecords[23] = TableCookInfo{
+	tableCookRecords[21] = TableCookInfo{
 		Name: "ModelTraceStep", Size: 25564, Align: 4, NumFields: 8,
 		Fields: []TableCookFieldInfo{
 			{Name: "verb", Offset: 0, Size: 32, ElemSize: 32, IsArray: false, ArrayBound: 24, IsPointer: false, CountOffset: 28, PresentOffset: -1, Storage: TableCookStorageString},
@@ -495,7 +469,7 @@ func init() {
 			{Name: "state", Offset: 12020, Size: 13544, ElemSize: 13544, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
-	tableCookRecords[24] = TableCookInfo{
+	tableCookRecords[22] = TableCookInfo{
 		Name: "ModelViolation", Size: 176, Align: 4, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "kind", Offset: 0, Size: 40, ElemSize: 40, IsArray: false, ArrayBound: 32, IsPointer: false, CountOffset: 36, PresentOffset: -1, Storage: TableCookStorageString},
@@ -506,28 +480,26 @@ func init() {
 	tableCookRecords[2].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[3] }
 	tableCookRecords[4].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[5] }
 	tableCookRecords[4].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[5] }
-	tableCookRecords[5].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[14] }
+	tableCookRecords[5].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[13] }
 	tableCookRecords[6].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[5] }
 	tableCookRecords[8].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[9] }
-	tableCookRecords[12].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[14] }
-	tableCookRecords[12].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[5] }
-	tableCookRecords[13].Fields[3].Record = func() *TableCookInfo { return &tableCookRecords[24] }
-	tableCookRecords[15].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[12] }
-	tableCookRecords[16].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[7] }
-	tableCookRecords[17].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[14] }
-	tableCookRecords[19].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[14] }
-	tableCookRecords[19].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[17] }
-	tableCookRecords[19].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[4] }
-	tableCookRecords[19].Fields[3].Record = func() *TableCookInfo { return &tableCookRecords[6] }
-	tableCookRecords[19].Fields[4].Record = func() *TableCookInfo { return &tableCookRecords[15] }
-	tableCookRecords[19].Fields[6].Record = func() *TableCookInfo { return &tableCookRecords[18] }
-	tableCookRecords[21].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[20] }
-	tableCookRecords[21].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[13] }
-	tableCookRecords[22].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[11] }
-	tableCookRecords[22].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[19] }
-	tableCookRecords[23].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[3] }
-	tableCookRecords[23].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[8] }
-	tableCookRecords[23].Fields[7].Record = func() *TableCookInfo { return &tableCookRecords[19] }
+	tableCookRecords[11].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[13] }
+	tableCookRecords[11].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[5] }
+	tableCookRecords[12].Fields[3].Record = func() *TableCookInfo { return &tableCookRecords[22] }
+	tableCookRecords[14].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[11] }
+	tableCookRecords[15].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[7] }
+	tableCookRecords[16].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[13] }
+	tableCookRecords[18].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[13] }
+	tableCookRecords[18].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[16] }
+	tableCookRecords[18].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[4] }
+	tableCookRecords[18].Fields[3].Record = func() *TableCookInfo { return &tableCookRecords[6] }
+	tableCookRecords[18].Fields[4].Record = func() *TableCookInfo { return &tableCookRecords[14] }
+	tableCookRecords[18].Fields[6].Record = func() *TableCookInfo { return &tableCookRecords[17] }
+	tableCookRecords[20].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[19] }
+	tableCookRecords[20].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[12] }
+	tableCookRecords[21].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[3] }
+	tableCookRecords[21].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[8] }
+	tableCookRecords[21].Fields[7].Record = func() *TableCookInfo { return &tableCookRecords[18] }
 }
 
 // ModelArgCook is ModelArg's cook: a pointer and a length, and then the root where it
@@ -828,7 +800,7 @@ func ModelPhysAt(slot *int64) *ModelPhysRow {
 
 // Type is ModelPhys's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelPhysCook) Type() *TableCookInfo { return &tableCookRecords[14] }
+func (c ModelPhysCook) Type() *TableCookInfo { return &tableCookRecords[13] }
 
 // ModelCellCook is ModelCell's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1028,7 +1000,7 @@ func ModelRowAtAt(slot *int64) *ModelRowAtRow {
 
 // Type is ModelRowAt's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelRowAtCook) Type() *TableCookInfo { return &tableCookRecords[17] }
+func (c ModelRowAtCook) Type() *TableCookInfo { return &tableCookRecords[16] }
 
 // ModelBindCook is ModelBind's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1328,7 +1300,7 @@ func ModelLocationAt(slot *int64) *ModelLocationRow {
 
 // Type is ModelLocation's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelLocationCook) Type() *TableCookInfo { return &tableCookRecords[12] }
+func (c ModelLocationCook) Type() *TableCookInfo { return &tableCookRecords[11] }
 
 // ModelPlacementCook is ModelPlacement's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1428,7 +1400,7 @@ func ModelPlacementAt(slot *int64) *ModelPlacementRow {
 
 // Type is ModelPlacement's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelPlacementCook) Type() *TableCookInfo { return &tableCookRecords[15] }
+func (c ModelPlacementCook) Type() *TableCookInfo { return &tableCookRecords[14] }
 
 // ModelSeenCook is ModelSeen's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1528,7 +1500,7 @@ func ModelSeenAt(slot *int64) *ModelSeenRow {
 
 // Type is ModelSeen's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelSeenCook) Type() *TableCookInfo { return &tableCookRecords[18] }
+func (c ModelSeenCook) Type() *TableCookInfo { return &tableCookRecords[17] }
 
 // ModelStateCook is ModelState's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1628,7 +1600,7 @@ func ModelStateAt(slot *int64) *ModelStateRow {
 
 // Type is ModelState's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelStateCook) Type() *TableCookInfo { return &tableCookRecords[19] }
+func (c ModelStateCook) Type() *TableCookInfo { return &tableCookRecords[18] }
 
 // ModelActionCook is ModelAction's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -2028,207 +2000,7 @@ func ModelTraceStepAt(slot *int64) *ModelTraceStepRow {
 
 // Type is ModelTraceStep's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelTraceStepCook) Type() *TableCookInfo { return &tableCookRecords[23] }
-
-// ModelHashCook is ModelHash's cook: a pointer and a length, and then the root where it
-// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
-// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
-//
-// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
-// functions — ModelHashOpen, ModelHashAt — and so does Go, because Go has free functions;
-// what is a MEMBER here is only what §11 leaves a language free to make one.
-//
-// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
-// nothing here pins: the region must stay put and stay aligned for as long as
-// this handle or anything reached through it is used.
-type ModelHashCook struct {
-	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
-	RegionLength int64          // data_length, as the header framed it
-}
-
-// §7.1's constants, so a consumer reading this file has the facts and not a
-// description of them. They are METHODS because §11 leaves a language whose
-// accessors are members free to spell them that way, and a package constant
-// per table per fact would claim names §11 does not.
-func (c ModelHashCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c ModelHashCook) RootSize() int64        { return 112 }
-func (c ModelHashCook) RootAlign() int64       { return 4 }
-
-// Root is the root record at the region's base. It is a POINTER and not a
-// copy: a cooked graph is walked by adding deltas to slot addresses.
-func (c ModelHashCook) Root() *ModelHashRow { return (*ModelHashRow)(c.Region) }
-
-// ModelHashOpen is the bool convenience for the typed Open error on the handle.
-func ModelHashOpen(cook *ModelHashCook, base unsafe.Pointer, length int64) bool {
-	return cook.Open(base, length) == nil
-}
-
-// Open checks the header in SPEC §7 order, bytewise until base alignment is
-// established. A successful match points at the region and allocates nothing.
-func (cook *ModelHashCook) Open(base unsafe.Pointer, length int64) error {
-	*cook = ModelHashCook{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if length < 64 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 64)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableCookMagic {
-		if magic == 0x5343484d434f4f4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
-		return TableRefuseReservedNotZero
-	}
-	alignment := binary.NativeEndian.Uint64(header[40:])
-	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
-		return TableRefuseBadAlignment
-	}
-	bytes := uint64(length)
-	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
-	dataLength := binary.NativeEndian.Uint64(header[24:])
-	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 112 {
-		return TableRefuseTruncated
-	}
-	if uint64(uintptr(base))%alignment != 0 {
-		return TableRefuseUnalignedBase
-	}
-	cook.Region = unsafe.Add(base, uintptr(dataOffset))
-	cook.RegionLength = int64(dataLength)
-	return nil
-}
-
-// ModelHashAt dereferences a reference, and it is the same call in a locked region
-// and an opened cook because they are the same encoding (§6.3): the slot is
-// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
-// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
-// Nothing about this call is the cook's: it is what a region reference is, and
-// a cook is a region written verbatim.
-//
-// It takes the SLOT and not its value, because a self-relative delta means
-// nothing without the address it is relative to.
-func ModelHashAt(slot *int64) *ModelHashRow {
-	delta := *slot
-	if delta == 0 {
-		return nil
-	}
-	return (*ModelHashRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
-}
-
-// Type is ModelHash's cooked-record descriptor, the head of the graph a reflective
-// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelHashCook) Type() *TableCookInfo { return &tableCookRecords[11] }
-
-// ModelTraceCook is ModelTrace's cook: a pointer and a length, and then the root where it
-// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
-// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
-//
-// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
-// functions — ModelTraceOpen, ModelTraceAt — and so does Go, because Go has free functions;
-// what is a MEMBER here is only what §11 leaves a language free to make one.
-//
-// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
-// nothing here pins: the region must stay put and stay aligned for as long as
-// this handle or anything reached through it is used.
-type ModelTraceCook struct {
-	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
-	RegionLength int64          // data_length, as the header framed it
-}
-
-// §7.1's constants, so a consumer reading this file has the facts and not a
-// description of them. They are METHODS because §11 leaves a language whose
-// accessors are members free to spell them that way, and a package constant
-// per table per fact would claim names §11 does not.
-func (c ModelTraceCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c ModelTraceCook) RootSize() int64        { return 14072 }
-func (c ModelTraceCook) RootAlign() int64       { return 4 }
-
-// Root is the root record at the region's base. It is a POINTER and not a
-// copy: a cooked graph is walked by adding deltas to slot addresses.
-func (c ModelTraceCook) Root() *ModelTraceRow { return (*ModelTraceRow)(c.Region) }
-
-// ModelTraceOpen is the bool convenience for the typed Open error on the handle.
-func ModelTraceOpen(cook *ModelTraceCook, base unsafe.Pointer, length int64) bool {
-	return cook.Open(base, length) == nil
-}
-
-// Open checks the header in SPEC §7 order, bytewise until base alignment is
-// established. A successful match points at the region and allocates nothing.
-func (cook *ModelTraceCook) Open(base unsafe.Pointer, length int64) error {
-	*cook = ModelTraceCook{}
-	if base == nil {
-		return TableRefuseUnalignedBase
-	}
-	if length < 64 {
-		return TableRefuseTruncated
-	}
-	header := unsafe.Slice((*byte)(base), 64)
-	magic := binary.NativeEndian.Uint64(header)
-	if magic != TableCookMagic {
-		if magic == 0x5343484d434f4f4b {
-			return TableRefuseForeignOrder
-		}
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
-		return TableRefuseNotACook
-	}
-	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
-		return TableRefuseWrongBuildVersion
-	}
-	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
-		return TableRefuseReservedNotZero
-	}
-	alignment := binary.NativeEndian.Uint64(header[40:])
-	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
-		return TableRefuseBadAlignment
-	}
-	bytes := uint64(length)
-	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
-	dataLength := binary.NativeEndian.Uint64(header[24:])
-	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 14072 {
-		return TableRefuseTruncated
-	}
-	if uint64(uintptr(base))%alignment != 0 {
-		return TableRefuseUnalignedBase
-	}
-	cook.Region = unsafe.Add(base, uintptr(dataOffset))
-	cook.RegionLength = int64(dataLength)
-	return nil
-}
-
-// ModelTraceAt dereferences a reference, and it is the same call in a locked region
-// and an opened cook because they are the same encoding (§6.3): the slot is
-// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
-// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
-// Nothing about this call is the cook's: it is what a region reference is, and
-// a cook is a region written verbatim.
-//
-// It takes the SLOT and not its value, because a self-relative delta means
-// nothing without the address it is relative to.
-func ModelTraceAt(slot *int64) *ModelTraceRow {
-	delta := *slot
-	if delta == 0 {
-		return nil
-	}
-	return (*ModelTraceRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
-}
-
-// Type is ModelTrace's cooked-record descriptor, the head of the graph a reflective
-// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelTraceCook) Type() *TableCookInfo { return &tableCookRecords[22] }
+func (c ModelTraceStepCook) Type() *TableCookInfo { return &tableCookRecords[21] }
 
 // ModelFindingCook is ModelFinding's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -2428,7 +2200,7 @@ func ModelReplayEventAt(slot *int64) *ModelReplayEventRow {
 
 // Type is ModelReplayEvent's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelReplayEventCook) Type() *TableCookInfo { return &tableCookRecords[16] }
+func (c ModelReplayEventCook) Type() *TableCookInfo { return &tableCookRecords[15] }
 
 // ModelStepCook is ModelStep's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -2528,7 +2300,7 @@ func ModelStepAt(slot *int64) *ModelStepRow {
 
 // Type is ModelStep's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelStepCook) Type() *TableCookInfo { return &tableCookRecords[20] }
+func (c ModelStepCook) Type() *TableCookInfo { return &tableCookRecords[19] }
 
 // ModelViolationCook is ModelViolation's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -2628,7 +2400,7 @@ func ModelViolationAt(slot *int64) *ModelViolationRow {
 
 // Type is ModelViolation's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelViolationCook) Type() *TableCookInfo { return &tableCookRecords[24] }
+func (c ModelViolationCook) Type() *TableCookInfo { return &tableCookRecords[22] }
 
 // ModelOutcomeCook is ModelOutcome's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -2728,7 +2500,7 @@ func ModelOutcomeAt(slot *int64) *ModelOutcomeRow {
 
 // Type is ModelOutcome's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelOutcomeCook) Type() *TableCookInfo { return &tableCookRecords[13] }
+func (c ModelOutcomeCook) Type() *TableCookInfo { return &tableCookRecords[12] }
 
 // ModelStepResultCook is ModelStepResult's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -2828,7 +2600,7 @@ func ModelStepResultAt(slot *int64) *ModelStepResultRow {
 
 // Type is ModelStepResult's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ModelStepResultCook) Type() *TableCookInfo { return &tableCookRecords[21] }
+func (c ModelStepResultCook) Type() *TableCookInfo { return &tableCookRecords[20] }
 
 // ConvergeStreamEntryCook is ConvergeStreamEntry's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -3032,7 +2804,7 @@ func ConvergeStateAt(slot *int64) *ConvergeStateRow {
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 func (c ConvergeStateCook) Type() *TableCookInfo { return &tableCookRecords[0] }
 
-const tableCookBuildVersion uint64 = 0x927d83e9214c9f66
+const tableCookBuildVersion uint64 = 0x9fe10d650d779a51
 
 // TableByteOrder selects the target order, independently of the writing host.
 type TableByteOrder uint8
@@ -3296,20 +3068,6 @@ func ModelTraceStepCookMeasureReason(value *ModelTraceStep) (int64, error) {
 }
 func ModelTraceStepCookFrom(value *ModelTraceStep, buffer []byte, order TableByteOrder) bool {
 	return tableCookFixed(unsafe.Pointer(value), ModelTraceStepTableType(), buffer, order)
-}
-func ModelHashCookMeasure(value *ModelHash) int64 { return 192 }
-func ModelHashCookMeasureReason(value *ModelHash) (int64, error) {
-	return ModelHashCookMeasure(value), nil
-}
-func ModelHashCookFrom(value *ModelHash, buffer []byte, order TableByteOrder) bool {
-	return tableCookFixed(unsafe.Pointer(value), ModelHashTableType(), buffer, order)
-}
-func ModelTraceCookMeasure(value *ModelTrace) int64 { return 14152 }
-func ModelTraceCookMeasureReason(value *ModelTrace) (int64, error) {
-	return ModelTraceCookMeasure(value), nil
-}
-func ModelTraceCookFrom(value *ModelTrace, buffer []byte, order TableByteOrder) bool {
-	return tableCookFixed(unsafe.Pointer(value), ModelTraceTableType(), buffer, order)
 }
 func ModelFindingCookMeasure(value *ModelFinding) int64 { return 712 }
 func ModelFindingCookMeasureReason(value *ModelFinding) (int64, error) {

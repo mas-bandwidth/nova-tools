@@ -98,17 +98,6 @@ type ModelEventFieldRow struct {
 	ValueLength int32
 }
 
-// ModelHashRow — a block row, or a record one nests by value. `Row` is a CLAIMED
-// suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
-type ModelHashRow struct {
-	Module       [33]byte // string(32): max length, used length beside it
-	_            [3]byte  // generated padding
-	ModuleLength int32
-	Sha256       [65]byte // string(64): max length, used length beside it
-	_            [3]byte  // generated padding
-	Sha256Length int32
-}
-
 // ModelLocationRow — a block row, or a record one nests by value. `Row` is a CLAIMED
 // suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
 type ModelLocationRow struct {
@@ -285,18 +274,6 @@ type ModelStepResultRow struct {
 	LogLength     int32
 }
 
-// ModelTraceRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type ModelTraceRow struct {
-	SourceSha256       [65]byte // string(64): buffer, used length beside it
-	_                  [3]byte  // generated padding
-	SourceSha256Length int32
-	ModelSha256        [4]ModelHashRow
-	ModelSha256Count   int32
-	Initial            ModelStateRow
-	StepCount          int32
-}
-
 // ModelTraceStepRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type ModelTraceStepRow struct {
@@ -322,7 +299,7 @@ type ModelTraceStepRow struct {
 // BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
 // one digest a block carries and BlockOpen compares, and the fact §3.3's
 // announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0x927d83e9214c9f66
+const BuildVersion uint64 = 0x9fe10d650d779a51
 
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema
@@ -816,7 +793,7 @@ func (r *TableReport) Err() error {
 	return nil
 }
 
-const tableIdCapacity = 86
+const tableIdCapacity = 79
 const tableIdBuckets = 256
 
 // TableIds interns the writer's ids in first-use order. Bucket links are

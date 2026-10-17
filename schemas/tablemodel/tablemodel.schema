@@ -3,14 +3,17 @@
 // wire and padded standard base64 text. Its Go is generated into
 // pkg/tablemodelwire (go generate ./pkg/tablemodelwire).
 //
-// FIXED tables (schema owner rule S1): each is a bounded record the tool
-// itself writes and reads back, and its reader is always the same version or
-// newer. The layout is a promise to every image already written, so
-// schema.lock sits beside this file and tables.baseline records the tables.
-// A fixed record is at most 65536 bytes (docs/SPEC-TABLES.md §3.4), so a
-// whole retained trace, which is far past that, is one ModelTrace header
-// followed by its steps as a batch of ModelTraceStep records (a fixed save
-// and load take a batch).
+// Every record here is a FIXED table (schema owner rule S1: a struct, small,
+// bounded, stable layout), and a unit holding a fixed table holds no variable
+// one (the compiler emits the fixed form only for a unit that is fixed
+// throughout), so ModelTrace, whose head carries a list that grows with the
+// repository, is the VARIABLE table of the sibling area schemas/tablemodeltrace.
+// The layout of a fixed table is a promise to every image already written, so
+// schema.lock sits beside this file and tables.baseline records the tables. A
+// fixed record is at most 65536 bytes (docs/SPEC-TABLES.md §3.4), so a whole
+// retained trace is one ModelTrace head (tablemodeltrace), then the initial
+// ModelState, then its steps as a batch of ModelTraceStep records (a fixed
+// save and load take a batch).
 //
 // Every field is a field of the Go struct it replaces and keeps its meaning.
 // The Go structs declare no length or count themselves; the bound of each
@@ -185,28 +188,6 @@ fixed table ModelTraceStep
     receipt    ModelEvent
     model      string(512)
     state      ModelState
-}
-
-// ModelHash is one entry of Trace.ModelSHA256: the module name and the hex
-// SHA-256 of its text (replay.go modelModules is four modules, the longest
-// name MCEpochMemberTable). sha256: 64 hex characters.
-fixed table ModelHash
-{
-    module string(32)
-    sha256 string(64)
-}
-
-// ModelTrace is the head of trace.json (replay.go Trace): the source and model
-// hashes it was taken from and the initial state. sourceSha256: 64 hex
-// characters. modelSha256: one per module of modelModules: 4. The steps are
-// the ModelTraceStep records saved after this one, in order; stepCount is how
-// many (Actions() is 32 calls, 40 leaves room for the fixture to grow).
-fixed table ModelTrace
-{
-    sourceSha256 string(64)
-    modelSha256  [..4]ModelHash
-    initial      ModelState
-    stepCount    int32 | min = 0, max = 40
 }
 
 // ModelFinding is one replayed witness or control (witnesses.go Finding).

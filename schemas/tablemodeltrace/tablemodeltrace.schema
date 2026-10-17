@@ -1,0 +1,41 @@
+// tablemodeltrace.schema: the head of the table model's retained trace
+// (internal/tablemodel replay.go Trace), as binary wire and padded standard
+// base64 text. Its Go is generated into pkg/tablemodeltracewire
+// (go generate ./pkg/tablemodeltracewire).
+//
+// A VARIABLE table: a variable table is a document sized by its content, and
+// this head carries a list that grows with the repository (one hash per .tla
+// file replay.go hashModels finds: 77 in tla/ today, 34 in the shipped
+// capture). It sits in its own area because the compiler emits the fixed form
+// only for a unit that is fixed throughout; the fixed records of the trace
+// (ModelState, ModelTraceStep) are in schemas/tablemodel. A whole retained
+// trace is this head, then the initial ModelState, then stepCount
+// ModelTraceStep records.
+//
+// Absent reads as zero in a variable table, and the runtime clamps an
+// over-bound value and counts it; a reader refuses every clamp.
+package tablemodeltracewire
+
+// ModelHash is one entry of Trace.ModelSHA256: a model file name and the hex
+// SHA-256 of its text (replay.go hashModels writes one entry per *.tla in the
+// models directory). module: the longest .tla name in tla/ is 30 bytes
+// (MCLoopRedialBrokenNoRedial.tla) and the longest in the shipped capture
+// (internal/tablemodel/testdata/replay/trace.json, 34 entries) is 40 bytes
+// (MCEpochMemberTable_TTrace_1790631425.tla); 160 is four times the longest
+// measured. sha256: 64 hex characters.
+table ModelHash
+{
+    module string(160)
+    sha256 string(64)
+}
+
+// ModelTrace is the head of trace.json (replay.go Trace): the source and model
+// hashes it was taken from. sourceSha256: 64 hex characters. modelSha256: one
+// entry per *.tla file, unbounded. stepCount: how many ModelTraceStep records
+// follow (Actions() is 32 calls, 40 leaves room for the fixture to grow).
+table ModelTrace
+{
+    sourceSha256 string(64)
+    modelSha256  []ModelHash
+    stepCount    int32 | min = 0, max = 40
+}
