@@ -36,6 +36,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/answerwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
@@ -1210,11 +1211,15 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		acted += reportOnQueueFailure()
 		return acted, fmt.Errorf("queue: exit %d: %s", code, strings.TrimSpace(string(out)))
 	}
-	var q queueOut
-	if err := json.Unmarshal(out, &q); err != nil {
+	// the queue answer is read strictly through pkg/schemaread from the QueueOut
+	// table (pkg/answerwire): its binary wire, the padded standard base64 of it,
+	// the schema JSON text and the legacy JSON every writer still writes (S1, S2,
+	// readers first). A refusal is named and handed up, never read as no record.
+	q, _, err := queueReader.Read(out)
+	if err != nil {
 		acted += m.collect()
 		acted += reportOnQueueFailure()
-		return acted, fmt.Errorf("queue: not JSON: %w", err)
+		return acted, fmt.Errorf("queue: %w", err)
 	}
 	m.epoch = q.Epoch
 	if e, ok := m.runner.(Epocher); ok {
@@ -3560,3 +3565,138 @@ func IsReadCardID(id string) bool {
 	n, err := strconv.Atoi(strings.TrimPrefix(parts[1], "r"))
 	return strings.HasPrefix(parts[1], "r") && err == nil && n >= 1
 }
+
+// queueReader reads the queue answer (queueOut) strictly through
+// pkg/schemaread from the QueueOut table (pkg/answerwire): its binary wire,
+// the padded standard base64 of it, the schema JSON text and the legacy JSON
+// every writer still writes (S1, S2, readers first). It is the one reader the
+// member's loop uses; a test makes its own to count.
+var queueReader = schemaread.NewReader(queueAnswerCodec())
+
+// queueAnswerCodec is the QueueOut table's functions as pkg/schemaread takes
+// them: the strict load of each form, the legacy JSON every writer still
+// writes, and the bounds the generated Go cannot state (S1, the schema).
+func queueAnswerCodec() *schemaread.Codec[queueOut] {
+	return &schemaread.Codec[queueOut]{
+		Name:  "QUEUE",
+		Help:  "nova-sprint queue -h",
+		Forms: []byte{1}, // the variable-table wire form (S1)
+		Measure: func(wire []byte) error {
+			_, err := answerwire.QueueOutLoadMeasureReason(wire)
+			return err
+		},
+		LoadWire: queueAnswerLoadWire,
+		LoadJSON: queueAnswerLoadJSON,
+		Legacy: func(in []byte) bool {
+			return bytes.HasPrefix(bytes.TrimSpace(in), []byte("{"))
+		},
+		LoadLegacy:  queueAnswerLoadLegacy,
+		Constraints: queueAnswerConstraints,
+	}
+}
+
+// queueAnswerLoadWire decodes the QueueOut binary wire into a queueOut. The
+// strict read of the table validates the wire and refuses damage by name (S1);
+// the value then reads as its schema JSON text, the one form that is the
+// legacy writer's (S2).
+func queueAnswerLoadWire(q *queueOut, wire []byte) schemaread.Report {
+	row, err := answerwire.QueueOutReadStrict(wire)
+	if err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	n := answerwire.QueueOutToJsonMeasure(row)
+	buf := make([]byte, n)
+	answerwire.QueueOutToJson(row, buf)
+	if err := json.Unmarshal(buf, q); err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	return schemaread.Report{}
+}
+
+// queueAnswerLoadJSON decodes the QueueOut schema JSON text form (S2) as the
+// legacy JSON: both are the writer's text, and the schema keys are the Go
+// struct's.
+func queueAnswerLoadJSON(q *queueOut, text []byte) schemaread.Report {
+	return queueAnswerLoadLegacy(q, text)
+}
+
+// queueAnswerLoadLegacy reads the legacy JSON every writer still writes — the
+// queue answer as `nova-sprint queue --json` prints it today (S4, readers
+// first). A value it cannot read is malformed, refused by name.
+func queueAnswerLoadLegacy(q *queueOut, in []byte) schemaread.Report {
+	if err := json.Unmarshal(in, q); err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	return schemaread.Report{}
+}
+
+// queueAnswerConstraints holds the QueueOut table's bounds the generated Go
+// cannot state (S1): the required fields and the counts of the unbounded
+// arrays, run on every form.
+func queueAnswerConstraints(q *queueOut, c *schemaread.Checker) {
+	c.Required("as", q.As != "")
+	c.Enum("machine", machineStateOrdinal(q.Machine), int(answerwire.MachineStateCount)+1)
+	c.Bound("width", int64(q.Width), 0, 1024)
+	c.Bound("cards", int64(len(q.Cards)), 0, 4096)
+	for i := range q.Cards {
+		qc := &q.Cards[i]
+		c.Required("id", qc.ID != "")
+		if qc.Packet != nil {
+			packetConstraints(qc.Packet, c)
+		}
+	}
+}
+
+// machineStateOrdinal is the local Machine word's MachineState ordinal: the
+// implicit None (0) is a server from before the word.
+func machineStateOrdinal(s string) int {
+	switch s {
+	case "STOPPED":
+		return int(answerwire.MachineStateSTOPPED)
+	case "RUNNING":
+		return int(answerwire.MachineStateRUNNING)
+	case "":
+		return int(answerwire.MachineStateNone)
+	}
+	return -1
+}
+
+// packetConstraints holds a packet's bounds the generated Go cannot state
+// (S1), as the queue answer's cards read them.
+func packetConstraints(p *Packet, c *schemaread.Checker) {
+	c.Required("card", p.Card != "")
+	c.Enum("kind", packetKindOrdinal(p.Kind), int(answerwire.PacketKindCount)+1)
+	c.Bound("attempt", int64(p.Attempt), 0, 100000)
+	c.Bound("gen", int64(p.Gen), 0, 100000)
+	c.Bound("notes", int64(len(p.Notes)), 0, 256)
+	c.Text("branch", p.Branch, 256)
+	c.Text("work_branch", p.WorkBranch, 256)
+	c.Text("work_base", p.WorkBase, 256)
+	c.Text("model", p.Model, 128)
+	c.Text("tier", p.Tier, 16)
+	c.Text("tokens", p.Tokens, 32)
+	c.Text("usd", p.USD, 32)
+	c.Text("harness", p.Harness, 32)
+	c.Text("route", p.Route, 64)
+	c.Bound("deadline", int64(p.Deadline), 0, 100000000)
+	c.Bound("rate_rpm", int64(p.RateRPM), 0, 100000000)
+	c.Bound("rate_concurrent", int64(p.RateConcurrent), 0, 1000000)
+	for _, n := range p.Notes {
+		c.Text("notes", n, 64<<10)
+	}
+}
+
+// packetKindOrdinal is the local Kind word's PacketKind ordinal.
+func packetKindOrdinal(k string) int {
+	switch k {
+	case "work":
+		return int(answerwire.PacketKindwork)
+	case "read":
+		return int(answerwire.PacketKindread)
+	case "":
+		return int(answerwire.PacketKindNone)
+	}
+	return -1
+}
+
+
