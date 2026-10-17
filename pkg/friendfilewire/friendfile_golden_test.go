@@ -303,15 +303,46 @@ func message(from, token, body string, listed int) map[string]any {
 // long is text past any wire short form: multibyte, so a byte count and a rune count differ.
 func long(n int) string { return strings.Repeat("é", n) }
 
+// listKeys are the JSON names of every list the structs write: the lists of text and of
+// tables, and the map written as a list of entries. A struct leaves one nil and
+// encoding/json writes null for it unless the field is omitempty.
+var listKeys = map[string]bool{"To": true, "CC": true, "Marks": true, "senders": true, "recovery_messages": true,
+	"tasks": true, "cards": true, "refused": true}
+
+// nullListsAsEmpty is the one place the test says that a nil list and an empty list are
+// the same thing to a table: the source's JSON is read through it before it is compared.
+func nullListsAsEmpty(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			if e == nil && listKeys[k] {
+				x[k] = []any{}
+				continue
+			}
+			x[k] = nullListsAsEmpty(e)
+		}
+	case []any:
+		for i := range x {
+			x[i] = nullListsAsEmpty(x[i])
+		}
+	}
+	return v
+}
+
 // toTableShape is the bridge the writers cross when a record moves to the table, the two
 // shapes the compiler has no direct form for: a list of text (to, cc, senders) becomes a
 // list of one-field tables, and a map[string]int (Status.Refused) becomes a list of verb
 // and count entries in the key's sorted order, the order encoding/json writes a map in.
-// fromTableShape is the way back; an empty list is a field the Go struct leaves nil.
+// fromTableShape is the way back; it keeps an empty list as an empty list.
 func toTableShape(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, e := range x {
+			if e == nil && listKeys[k] {
+				// a nil Go slice or map is JSON null, and a list of a table is never null: it is empty.
+				x[k] = []any{}
+				continue
+			}
 			switch k {
 			case "To", "CC", "senders":
 				if list, ok := e.([]any); ok {
@@ -351,11 +382,7 @@ func fromTableShape(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, e := range x {
-			list, isList := e.([]any)
-			if isList && len(list) == 0 {
-				delete(x, k)
-				continue
-			}
+			list, _ := e.([]any)
 			switch k {
 			case "To", "CC", "senders":
 				out := make([]any, len(list))
@@ -554,12 +581,15 @@ func TestFriendFilesGolden(t *testing.T) {
 			{"NoticeEnvelope", env, func() any { return new(notice.Envelope) }, true},
 			{"NoticeEnvelope", bare, func() any { return new(notice.Envelope) }, true},
 			{"NoticeMessage", msg, func() any { return new(bus.Message) }, true},
+			{"NoticeMessage", bus.Message{From: "rowan"}, func() any { return new(bus.Message) }, true},
 			{"LaneEnd", lane, func() any { return new(friend.LaneEnd) }, false},
 			{"LaneEnd", friend.LaneEnd{}, func() any { return new(friend.LaneEnd) }, false},
-			{"Delivery", held, func() any { return new(friend.HeldAnswer) }, false},
+			{"Delivery", held, func() any { return new(friend.HeldAnswer) }, true},
+			{"Delivery", friend.HeldAnswer{Friend: "rowan"}, func() any { return new(friend.HeldAnswer) }, true},
 			{"FriendStatus", status, func() any { return new(friend.Status) }, true},
 			{"FriendStatus", friend.Status{}, func() any { return new(friend.Status) }, true},
-			{"FriendQueue", queue, func() any { return new(friend.Queue) }, false},
+			{"FriendQueue", queue, func() any { return new(friend.Queue) }, true},
+			{"FriendQueue", friend.Queue{}, func() any { return new(friend.Queue) }, true},
 			{"FriendWatch", friend.Watch{After: "1700000000000-0", WakeOffset: 4096}, func() any { return new(friend.Watch) }, false},
 		} {
 			tb := all[tc.table]
@@ -575,6 +605,12 @@ func TestFriendFilesGolden(t *testing.T) {
 				require.False(t, rep.Malformed, "%s reads the struct's JSON: %s", tc.table, text)
 				require.Zero(t, rep.Clamped, "%s", tc.table)
 				require.Zero(t, rep.Unknown, "%s names every field the struct writes: %s", tc.table, text)
+				require.Zero(t, rep.KindMismatch, "%s reads every list of the struct as a list: %s", tc.table, text)
+				// the strict reader takes the same text in every form, with no kind mismatch
+				strict := schemaread.NewReader(tb.codec)
+				_, result, err := strict.Read(text)
+				require.NoError(t, err, "%s is read strictly: %s", tc.table, text)
+				require.Equal(t, schemaread.FormJSON, result.Form)
 				// through the wire, and back to the Go struct
 				var viaWire any
 				wireRep := tb.codec.LoadWire(&viaWire, tb.wire(v))
@@ -589,7 +625,55 @@ func TestFriendFilesGolden(t *testing.T) {
 				require.NoError(t, err)
 				want, err := json.Marshal(tc.src)
 				require.NoError(t, err)
-				assert.JSONEq(t, string(want), string(again), "%s survives the table and returns to the struct", tc.table)
+				// a nil list is null in the struct's JSON and empty in the table: the one difference, said here.
+				assert.JSONEq(t, string(reshape(want, nullListsAsEmpty)), string(again), "%s survives the table and returns to the struct", tc.table)
+			})
+		}
+	})
+
+	// A nil list is JSON null in the struct's JSON (To, CC and Marks of a message, the tasks
+	// of a queue, the cards of a delivery, the lists of a notice), and a table's list is
+	// never null: the bridge writes it as an empty list, and the strict reader takes the
+	// bridged text with no kind mismatch. The raw null is refused by name, so the bridge
+	// is what the check pins.
+	t.Run("nil lists", func(t *testing.T) {
+		t.Parallel()
+		var bare notice.Envelope
+		bare.SavedAt = base
+		var noMarks bus.Message
+		noMarks.From = "rowan"
+		for _, tc := range []struct {
+			table string
+			src   any
+			list  string
+		}{
+			{"NoticeEnvelope", bare, ""},
+			{"NoticeMessage", noMarks, `"To":null`},
+			{"FriendQueue", friend.Queue{}, `"tasks":null`},
+			{"Delivery", friend.HeldAnswer{Friend: "rowan"}, `"cards":null`},
+		} {
+			tb := all[tc.table]
+			t.Run(tc.table, func(t *testing.T) {
+				t.Parallel()
+				raw, err := json.Marshal(tc.src)
+				require.NoError(t, err)
+				if tc.list != "" {
+					require.Contains(t, string(raw), tc.list, "the struct writes a nil list as null")
+					var v any
+					rep := tb.codec.LoadJSON(&v, raw)
+					require.NotZero(t, rep.KindMismatch, "a null list is a kind mismatch")
+					_, _, err := schemaread.NewReader(tb.codec).Read(raw)
+					var refusal *schemaread.Refusal
+					require.ErrorAs(t, err, &refusal)
+					require.Equal(t, schemaread.ReasonKindMismatch, refusal.Reason)
+				}
+				bridged := reshape(raw, toTableShape)
+				var v any
+				rep := tb.codec.LoadJSON(&v, bridged)
+				require.False(t, rep.Malformed)
+				require.Zero(t, rep.KindMismatch, "%s: %s", tc.table, bridged)
+				_, _, err = schemaread.NewReader(tb.codec).Read(bridged)
+				require.NoError(t, err, "%s: %s", tc.table, bridged)
 			})
 		}
 	})
