@@ -209,6 +209,7 @@ func FuzzSwarmwire(f *testing.F) {
 			if form == fuzzWire && fuzzSeeds[string(in)] && clean {
 				require.Equal(t, in, wire, "%s: an accepted seed wire does not reproduce", root.name)
 			}
+			require.Empty(t, fuzzNeighbours(root, wire), "%s as %d %q: an accepted value fails the neighbour oracle", root.name, form, in)
 		}
 	})
 }
@@ -225,5 +226,55 @@ func TestWriteFuzzSwarmwireSeeds(t *testing.T) {
 	for i := range ins {
 		body := fmt.Sprintf("go test fuzz v1\nbyte('\\x%02x')\n[]byte(%s)\n", sels[i], strconv.Quote(string(ins[i])))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("seed-%04d", i)), []byte(body), 0o644))
+	}
+}
+
+// fuzzNeighbours is the input-to-output oracle for every accepted value, seed
+// or not: each strict prefix of its wire is refused with a named Table* error,
+// and its wire with one byte appended (0x00, then 0xff) does not read clean.
+// It returns "" or what failed.
+func fuzzNeighbours(root fuzzRoot, wire []byte) string {
+	for n := 0; n < len(wire); n++ {
+		_, _, _, err := root.load(fuzzWire, wire[:n])
+		if err == nil {
+			return fmt.Sprintf("%s: a strict prefix (%d of %d bytes) of an accepted wire is accepted", root.name, n, len(wire))
+		}
+		if !strings.HasPrefix(fmt.Sprintf("%T", err), "swarmwire.Table") {
+			return fmt.Sprintf("%s: a prefix refusal with no name: %T %v", root.name, err, err)
+		}
+	}
+	for _, x := range []byte{0x00, 0xff} {
+		_, _, rep, err := root.load(fuzzWire, append(append([]byte{}, wire...), x))
+		if err == nil && rep.Unknown == 0 && rep.Widened == 0 && rep.Retained == 0 && rep.Clamped == 0 && rep.KindMismatch == 0 && rep.Duplicate == 0 {
+			return fmt.Sprintf("%s: an accepted wire plus one byte %02x reads clean", root.name, x)
+		}
+	}
+	return ""
+}
+
+// TestFuzzSwarmwireNeighbours proves fuzzNeighbours on every root: the real reader
+// passes at its reset value, and two planted readers fail, one that accepts
+// the reset wire with a byte appended and one that accepts a strict prefix.
+func TestFuzzSwarmwireNeighbours(t *testing.T) {
+	t.Parallel()
+	for _, root := range fuzzRoots {
+		var rep TableReport
+		wire, _, ok := root.run(fuzzEmpty, nil, &rep)
+		require.True(t, ok, "%s: the reset value does not encode", root.name)
+		require.Empty(t, fuzzNeighbours(root, wire))
+		trailing := fuzzRoot{root.name, func(f fuzzForm, in []byte, rep *TableReport) ([]byte, []byte, bool) {
+			if f == fuzzWire && len(in) > len(wire) && string(in[:len(wire)]) == string(wire) {
+				in = wire
+			}
+			return root.run(f, in, rep)
+		}}
+		require.Contains(t, fuzzNeighbours(trailing, wire), "plus one byte", "%s: the planted trailing-byte reader passes", root.name)
+		prefix := fuzzRoot{root.name, func(f fuzzForm, in []byte, rep *TableReport) ([]byte, []byte, bool) {
+			if f == fuzzWire && len(in) < len(wire) && string(wire[:len(in)]) == string(in) {
+				in = wire
+			}
+			return root.run(f, in, rep)
+		}}
+		require.Contains(t, fuzzNeighbours(prefix, wire), "strict prefix", "%s: the planted prefix reader passes", root.name)
 	}
 }
