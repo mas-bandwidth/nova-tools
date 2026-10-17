@@ -130,6 +130,7 @@ internal/scaffold	0.0	@run37411066588	self-hosted
 pkg/schemaread	0.2	@local	-
 pkg/seatcred	0.4	@run37411066588	self-hosted
 pkg/seatcred/seattest	0.0	@local	-
+pkg/seatrecwire	0.5	@local	-
 pkg/secrets	0.7	@run37411066588	self-hosted
 internal/selftalk	0.0	@run37411066588	self-hosted
 internal/shippedsmoke	0.0	@local	-

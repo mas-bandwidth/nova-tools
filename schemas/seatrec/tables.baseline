@@ -1,0 +1,73 @@
+schema-tables-baseline 7
+package seatrecwire
+
+table BusRoster
+    field participants id=0xefa00499695c8287 kind=14 elem=13 type=Participant array=bounded bound=64
+
+table DayFile
+    field day id=0xca8d3918f4578f1d kind=12 size=10
+    field at id=0x089c4e07b545a968 kind=12 size=64
+    field build id=0x802517e298c70b03 kind=12 size=64
+    field turns id=0x7f189dd0bc4902cb kind=5 optional=true min=0 max=9223372036854775807
+    field sources id=0x6fc4d9b9c935cff1 kind=14 elem=13 type=SourceLabel array=bounded bound=16
+    field rows id=0xa3a7061ff10a8138 kind=14 elem=13 type=DayLine array=bounded bound=24
+
+table DayLine
+    field date id=0x855b516730a34339 kind=12 size=10
+    field model id=0x9de543933e6e703a kind=12 size=128
+    field repo id=0x4cac581fbfac663d kind=12 size=128
+    field input id=0x1ebbae8f5810b65b kind=5 min=0 max=9223372036854775807
+    field input_set id=0x4f147397ef34fb24 kind=1
+    field output id=0x150f53f8651b4384 kind=5 min=0 max=9223372036854775807
+    field output_set id=0x6f06213ad8a04b87 kind=1
+    field cache_write id=0x313c6440b18aae09 kind=5 min=0 max=9223372036854775807
+    field cache_write_set id=0xb4e4f8fe4a5dff32 kind=1
+    field cache_read id=0x779748cd7970e246 kind=5 min=0 max=9223372036854775807
+    field cache_read_set id=0x038bb7a9b11315c9 kind=1
+    field reasoning id=0x938f9c45fb249647 kind=5 min=0 max=9223372036854775807
+    field reasoning_set id=0x606560d100cf4408 kind=1
+    field rough id=0x30f50e469eeeb28e kind=5 min=0 max=9223372036854775807
+    field basis id=0xd6e86e826dfb3bed kind=12 size=64
+    field sources id=0x6fc4d9b9c935cff1 kind=14 elem=13 type=SourceLabel array=bounded bound=16
+
+table Participant
+    field name id=0xc4bcadba8e631b86 kind=12 size=64
+    field lane id=0x0460ddad9060af0f kind=12 size=80
+
+table PlacedReceipt
+    field secret id=0xab23f0eec020c951 kind=12 size=128
+    field path id=0x03c52d0debd70676 kind=12 size=1024
+    field file id=0xaad01178f02a6a23 kind=12 size=256
+    field head id=0x0a8f12cc5f9a0c03 kind=12 size=64
+    field blob id=0xc573b39bc29148ca kind=12 size=40
+    field stamp id=0xee7ba9ad45c64144 kind=12 size=25
+
+table SeatDir
+    field text id=0xfa04f4ef1995407e kind=12 size=1024
+
+table SeatEndpoint
+    field text id=0xfa04f4ef1995407e kind=12 size=256
+
+table SeatEnvironment
+    field version id=0xbb62c62c9808ea37 kind=4 min=1 max=1 default=1
+    field forge_identity id=0x5f122daed6fcc133 kind=13 type=SeatDir optional=true
+    field nova_sprint_redis id=0x2826e06f7b226d28 kind=13 type=SeatEndpoint optional=true
+    field nova_sprint_server id=0xbe2f0f1d219ab446 kind=13 type=SeatEndpoint optional=true
+    field nova_bus_redis id=0x8446977236f3ac26 kind=13 type=SeatEndpoint optional=true
+    field login id=0x03c75db6e18f29d2 kind=13 type=SeatLogin optional=true
+
+table SeatLogin
+    field redis id=0xa30c3ff3148ac374 kind=12 size=256
+    field user id=0x7d6780e4032b48f2 kind=12 size=128
+    field store id=0x44ee54ad76b0bd8e kind=12 size=1024
+    field as_name id=0x8e5c9519cf8cfeb5 kind=12 size=128
+    field key id=0x3dc94a19365b10ec kind=12 size=1024
+    field sops id=0x5ff4de18f0844142 kind=12 size=1024
+    field secret id=0xab23f0eec020c951 kind=12 size=128
+
+table SourceLabel
+    field text id=0xfa04f4ef1995407e kind=12 size=64
+
+## history
+### 2026-10-17 (UTC) — first baseline
+- baseline created over 10 tables — data written BEFORE this point is not covered by it
