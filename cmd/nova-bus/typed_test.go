@@ -208,8 +208,15 @@ func TestRecvDualRead(t *testing.T) {
 	cli := r.cli()
 	ctx := context.Background()
 
-	// 1. Legacy entry (no native envelope field on the stream).
-	legacyID := id(t, cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "from legacy", "--body", "legacy body\n").Stdout)
+	// 1. Legacy entry (no native envelope field on the stream): an old writer
+	// before the switch still put one there, and the dual-read recv reads it.
+	legacyBus := &bus.Bus{Store: r.store}
+	legacySent, err := legacyBus.Send(ctx, bus.Message{
+		From: "ada", To: []string{"bob"}, Subject: "from legacy",
+		Kind: bus.KindStatus, Body: "legacy body\n",
+	})
+	require.NoError(t, err)
+	legacyID := legacySent.ID
 
 	// 2. Native binary entry (carries EnvelopeField on the stream).
 	nativeBus := &bus.Bus{Store: r.store, Native: true}

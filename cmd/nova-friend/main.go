@@ -764,7 +764,8 @@ command, no prompt pattern for the harness, tmux missing or failing).`,
 ping named, read from the status file) and records it in the state directory (--state-dir, as the
 check's line names the daemon's; else ~/.nova-friend/<me>), where the daemon reads it. The note on
 the bus is the answer: a pong file that cannot be written is said and the answer stands. The name is the daemon's: a
---as that is not the friend whose state is there is refused. --dry-run checks the note as send checks it and prints
+ --as that is not the friend whose state is there is refused. The pong note is
+ written as the table form (the binary wire of the typed pong, read strictly by the reader), and a value past the schema's bound is refused, never falling back to the legacy line. --dry-run checks the note as send checks it and prints
 the line it would send; nothing is sent and no pong file is written.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the friend the daemon in --dir runs as")
