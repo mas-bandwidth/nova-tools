@@ -67,14 +67,12 @@ func init() {
 
 var tableUnitView = UnitViewInfo{Package: "seatrecwire", ProtocolId: 0xe7507216082d094b,
 	NumTypes: 0, Types: []ViewType{},
-	NumTables: 10, Tables: []ViewType{
+	NumTables: 8, Tables: []ViewType{
 		{Name: "BusRoster", File: "seatrec.schema", Table: true, Type: &BusRosterTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "DayFile", File: "seatrec.schema", Table: true, Type: &DayFileTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "DayLine", File: "seatrec.schema", Table: true, Type: &DayLineTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "Participant", File: "seatrec.schema", Table: true, Type: &ParticipantTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "PlacedReceipt", File: "seatrec.schema", Table: true, Type: &PlacedReceiptTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
-		{Name: "SeatDir", File: "seatrec.schema", Table: true, Type: &SeatDirTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
-		{Name: "SeatEndpoint", File: "seatrec.schema", Table: true, Type: &SeatEndpointTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "SeatEnvironment", File: "seatrec.schema", Table: true, Type: &SeatEnvironmentTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "SeatLogin", File: "seatrec.schema", Table: true, Type: &SeatLoginTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
 		{Name: "SourceLabel", File: "seatrec.schema", Table: true, Type: &SourceLabelTableInfo, Doc: TableDocNone, NumTags: 0, Tags: nil},
