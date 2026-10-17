@@ -3,8 +3,6 @@ package friendfilewire
 // FuzzFriendfilewire feeds hostile bytes, in three forms (binary wire, padded standard
 // base64, JSON text), to every generated root. go test runs the checked-in seeds only;
 // nightly: go test -run='^$' -fuzz='^FuzzFriendfilewire$' -fuzztime=5m ./pkg/friendfilewire
-// In a thread-limited sandbox the run needs a bounded GOMAXPROCS (say 16); the
-// default one worker per core spawns more fuzz workers than the box allows.
 // An input is [root selector byte][bytes].
 
 import (
