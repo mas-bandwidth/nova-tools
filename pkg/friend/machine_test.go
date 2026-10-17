@@ -1,6 +1,8 @@
 package friend
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"math/rand/v2"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/pkg/pongwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/stretchr/testify/assert"
@@ -54,8 +57,8 @@ func tablePong(friendName, nonce string, queue, working, width uint32, sentMs in
 	return v
 }
 
-// rawWire is the generated Measure and Save called directly: it checks no
-// bound, so it writes what a broken or newer writer could put on the bus.
+// rawWire is the generated Measure and Save called directly. The generated
+// writer checks every bound, so a value past one is written through hostile.
 func rawWire(t *testing.T, v pongwire.Pong) []byte {
 	t.Helper()
 	n := pongwire.PongMeasure(&v)
@@ -65,7 +68,7 @@ func rawWire(t *testing.T, v pongwire.Pong) []byte {
 	return buf
 }
 
-// rawJSON is the generated ToJson called directly, unchecked.
+// rawJSON is the generated ToJson called directly.
 func rawJSON(t *testing.T, v pongwire.Pong) []byte {
 	t.Helper()
 	n := pongwire.PongToJsonMeasure(&v)
@@ -76,6 +79,20 @@ func rawJSON(t *testing.T, v pongwire.Pong) []byte {
 }
 
 var pongB64 = base64.StdEncoding.EncodeToString
+
+// hostile is the wire (or JSON text) of a value the generated writer refuses
+// to write, since it checks every bound: the value is written with a marker
+// in bounds and the marker's bytes are replaced, which is what a broken or
+// older writer could put on the bus. The marker occurs exactly once.
+func hostile(t *testing.T, wire, marker, with []byte) []byte {
+	t.Helper()
+	require.NotNil(t, wire)
+	require.Equal(t, 1, bytes.Count(wire, marker), "the marker %x occurs once", marker)
+	return bytes.Replace(wire, marker, with, 1)
+}
+
+// le32 is v as four little-endian bytes, the wire's 32-bit count.
+func le32(v uint32) []byte { return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)} }
 
 // pongRefusal is the reason and field a read was refused by, checking that
 // the refusal is a named *schemaread.Refusal in the house style and that a
@@ -176,11 +193,11 @@ func TestPongDualRead(t *testing.T) {
 			body   []byte
 			reason string
 		}{
-			{"queue over 100000 as the wire", rawWire(t, tablePong("bob", "abc123", 100001, 3, 8, at)), "clamped"},
-			{"working over 10000 as the wire", rawWire(t, tablePong("bob", "abc123", 5, 10001, 8, at)), "clamped"},
-			{"width over 1024 as the wire", rawWire(t, tablePong("bob", "abc123", 5, 3, 1025, at)), "clamped"},
-			{"queue over 100000 as base64", []byte(pongB64(rawWire(t, tablePong("bob", "abc123", 100001, 3, 8, at)))), "clamped"},
-			{"queue over 100000 as JSON", rawJSON(t, tablePong("bob", "abc123", 100001, 3, 8, at)), "clamped"},
+			{"queue over 100000 as the wire", hostile(t, rawWire(t, tablePong("bob", "abc123", 100000, 3, 8, at)), le32(100000), le32(100001)), "clamped"},
+			{"working over 10000 as the wire", hostile(t, rawWire(t, tablePong("bob", "abc123", 5, 10000, 8, at)), le32(10000), le32(10001)), "clamped"},
+			{"width over 1024 as the wire", hostile(t, rawWire(t, tablePong("bob", "abc123", 5, 3, 1024, at)), le32(1024), le32(1025)), "clamped"},
+			{"queue over 100000 as base64", []byte(pongB64(hostile(t, rawWire(t, tablePong("bob", "abc123", 100000, 3, 8, at)), le32(100000), le32(100001)))), "clamped"},
+			{"queue over 100000 as JSON", hostile(t, rawJSON(t, tablePong("bob", "abc123", 5, 3, 8, at)), []byte(`"queue": 5,`), []byte(`"queue": 100001,`)), "clamped"},
 			{"queue over 100000 as the legacy line", []byte(PongLine("abc123", 100001, 3, 8)), "clamped (queue)"},
 			{"working over 10000 as the legacy line", []byte(PongLine("abc123", 5, 10001, 8)), "clamped (working)"},
 			{"width over 1024 as the legacy line", []byte(PongLine("abc123", 5, 3, 1025)), "clamped (width)"},
@@ -236,7 +253,7 @@ func TestPongDualRead(t *testing.T) {
 			{"friend absent", "bob", pongAt, with(func(v *pongwire.Pong) { v.FriendNameLength = 0 }), "absent_required (friend_name)"},
 			{"queue absent", "bob", pongAt, with(func(v *pongwire.Pong) { v.Queue, v.QueuePresent = 0, false }), "absent_required (queue)"},
 			{"sent_ms absent", "bob", pongAt, with(func(v *pongwire.Pong) { v.SentMs, v.SentMsPresent = 0, false }), "absent_required (sent_ms)"},
-			{"a NUL in the nonce", "bob", pongAt, with(func(v *pongwire.Pong) { v.Nonce[2] = 0 }), "malformed"},
+			{"a NUL in the nonce", "bob", pongAt, hostile(t, with(func(v *pongwire.Pong) { v.Nonce[2] = 1 }), []byte("ab\x01123"), []byte("ab\x00123")), "malformed"},
 			{"truncated wire", "bob", pongAt, goodWire[:len(goodWire)-1], "wire_damaged"},
 			{"trailing junk in the wire", "bob", pongAt, append(append([]byte{}, goodWire...), 0, 1), "wire_damaged"},
 			{"an unknown newer form", "bob", pongAt, newerForm, "unknown_form"},
@@ -284,9 +301,13 @@ func TestPongDualRead(t *testing.T) {
 		got, _, err = r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: okBody + "\n", At: pongAt})
 		require.NoError(t, err)
 		assert.Equal(t, 5, got.Queue)
-		for _, body := range []string{okBody + "  \n", okBody + " ", " " + okBody + "\n", okBody + "\n\n", okBody + "\r\n", "\t" + okBody} {
-			got, _, err = r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: body, At: pongAt})
-			assert.Equal(t, "malformed", pongRefusal(t, got, err, "whitespace "+body))
+		got, _, err = r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: okBody, At: pongAt})
+		require.NoError(t, err, "a body with no framing newline reads alike")
+		assert.Equal(t, 5, got.Queue)
+		for _, ws := range pongWhitespaceDamage(okBody) {
+			got, _, err = r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: ws.body, At: pongAt})
+			assert.Equal(t, "malformed", pongRefusal(t, got, err, ws.name), ws.name)
+			assert.EqualError(t, err, "PONG REFUSED: malformed; run: "+PongHelp, ws.name)
 		}
 	})
 
@@ -342,6 +363,71 @@ func TestPongDualRead(t *testing.T) {
 		}
 		assert.Equal(t, uint64(refused), tallied, "every refusal is tallied under its name")
 	})
+
+	// The delivery check (Conformance.Run) reads its pong as PongReader.Message
+	// does: only the writer's one framing newline is dropped, so a pong with
+	// any other whitespace is refused by name and never passes the check.
+	t.Run("the delivery check reads its pong as the reader does", func(t *testing.T) {
+		t.Parallel()
+		line := PongLine("n1", 0, 0, 0)
+		const refusedWhy = "; a pong from bob was refused: PONG REFUSED: malformed; run: " + PongHelp
+		for _, tc := range []struct{ name, body, why string }{
+			{"the writer's exact framing", line + "\n", ""},
+			{"no framing newline", line, ""},
+			{"a table pong in base64 with its framing", pongB64(rawWire(t, tablePong("bob", "n1", 0, 0, 0, pongAt.UnixMilli()))) + "\n", ""},
+		} {
+			res := runPongCheck(t, tc.body)
+			assert.Empty(t, res.Stage, "%s: %s", tc.name, res.Why)
+		}
+		for _, ws := range pongWhitespaceDamage(line) {
+			res := runPongCheck(t, ws.body)
+			assert.Equal(t, StageAct, res.Stage, ws.name)
+			assert.True(t, strings.HasSuffix(res.Why, refusedWhy), "%s: the refusal is named: %s", ws.name, res.Why)
+		}
+	})
+}
+
+// pongWhitespaceDamage is a good pong body with whitespace the writer never
+// adds, each case named: every one is a malformed pong.
+func pongWhitespaceDamage(good string) []struct{ name, body string } {
+	return []struct{ name, body string }{
+		{"an extra trailing space", good + " \n"},
+		{"extra trailing spaces", good + "  \n"},
+		{"a trailing space and no framing", good + " "},
+		{"a trailing tab", good + "\t\n"},
+		{"a leading tab", "\t" + good + "\n"},
+		{"an extra newline", good + "\n\n"},
+		{"a carriage return", good + "\r\n"},
+		{"a leading space", " " + good + "\n"},
+	}
+}
+
+// pongSession answers a delivery check with one pong body from bob on the
+// bus, as a session running the check's pong line does.
+type pongSession struct {
+	store bus.Store
+	body  string
+}
+
+func (s pongSession) Deliver(ctx context.Context, _ string) (int, error) {
+	_, err := (&bus.Bus{Store: s.store}).Send(ctx, bus.Message{From: "bob", To: []string{"ada"}, Subject: PongSubject, Body: s.body})
+	return 0, err
+}
+
+// runPongCheck runs one delivery check whose session answers with body, over
+// bus's Fake and a clock moved only by the check's own waits.
+func runPongCheck(t *testing.T, body string) CheckResult {
+	t.Helper()
+	store := bustest.NewFake(pongAt, "ada", "bob")
+	now := pongAt
+	c := Conformance{
+		Friend: "bob", Harness: "test", Deliver: pongSession{store: store, body: body}, Store: store, Within: 3 * CheckPoll,
+		Now:   func() time.Time { return now },
+		Wait:  func(context.Context) bool { now = now.Add(CheckPoll); return true },
+		Nonce: func() string { return "n1" },
+		Text:  func(nonce string) string { return SessionCheckPrefix + nonce },
+	}
+	return c.Run(context.Background())
 }
 
 // mutatePong is one seeded mutation of in: a byte flipped, set, dropped or

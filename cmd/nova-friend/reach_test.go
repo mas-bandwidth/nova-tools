@@ -400,6 +400,12 @@ func TestReachProofRequiresFreshFriendEvidence(t *testing.T) {
 		{"a pong with extra trailing spaces", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "  \n", "", "PONG REFUSED: malformed" + refusedHelp, true},
 		{"a pong with a leading space", "bob", friend.PongSubject, " " + friend.PongLine("n1", 0, 0, 0), "", "PONG REFUSED: malformed" + refusedHelp, true},
 		{"a pong with a second newline", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\n\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"a pong with an extra trailing space", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + " \n", "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"a pong with a trailing space and no framing", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + " ", "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"a pong with a trailing tab", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\t\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"a pong with a leading tab", "bob", friend.PongSubject, "\t" + friend.PongLine("n1", 0, 0, 0) + "\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"a pong with a carriage return", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\r\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"a pong line with whitespace damage under another subject", "bob", "hello", " " + friend.PongLine("n1", 0, 0, 0) + "\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
 		{"matching table pong", "bob", friend.PongSubject, reachTablePong(t, "bob", "n1"), "pong", "", true},
 		{"table pong for another nonce", "bob", friend.PongSubject, reachTablePong(t, "bob", "wrong"), "", "", true},
 	} {
