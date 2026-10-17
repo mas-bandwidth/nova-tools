@@ -216,11 +216,9 @@ func TestUpSeatWritesFleetEndpointsAndPreservesReferences(t *testing.T) {
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(data, &got))
 	assert.Equal(t, float64(1), got["version"])
-	assert.Equal(t, map[string]any{
-		"NOVA_SPRINT_REDIS":  "store.example:6380",
-		"NOVA_SPRINT_SERVER": "sprint.example:6390",
-		"NOVA_BUS_REDIS":     "bus.example:6381",
-	}, got["environment"])
+	assert.Equal(t, "store.example:6380", got["nova_sprint_redis"])
+	assert.Equal(t, "sprint.example:6390", got["nova_sprint_server"])
+	assert.Equal(t, "bus.example:6381", got["nova_bus_redis"])
 	assert.Equal(t, os.FileMode(0o600), mustStat(t, path).Mode().Perm())
 	assert.Equal(t, os.FileMode(0o700), mustStat(t, filepath.Dir(path)).Mode().Perm())
 	require.NoError(t, os.WriteFile(legacyPath, legacy, 0o600))
@@ -253,7 +251,7 @@ func TestUpSeatWritesFleetEndpointsAndPreservesReferences(t *testing.T) {
 	assert.Equal(t, "coordinator", login["user"])
 	assert.Equal(t, "NOVA_REDIS_COORDINATOR_PASSWORD", login["secret"])
 	assert.Equal(t, gh, got["forge_identity"])
-	assert.Equal(t, "store.example:6380", got["environment"].(map[string]any)["NOVA_SPRINT_REDIS"])
+	assert.Equal(t, "store.example:6380", got["nova_sprint_redis"])
 	legacyAfter, err := os.ReadFile(legacyPath)
 	require.NoError(t, err)
 	assert.Equal(t, legacy, legacyAfter, "legacy seat.json remains unchanged")
