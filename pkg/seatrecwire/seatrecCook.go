@@ -134,61 +134,72 @@ type TableCookInfo struct {
 // compiler's C ABI model, so a runtime that lays one of these records out
 // differently would read a cook at the wrong offsets and never know.
 func init() {
-	tableCookLayoutSize("BusRosterRow", unsafe.Sizeof(BusRosterRow{}), 16)
-	tableCookLayoutSize("BusRosterRow alignment", unsafe.Alignof(BusRosterRow{}), 8)
+	tableCookLayoutSize("BusRosterRow", unsafe.Sizeof(BusRosterRow{}), 10244)
+	tableCookLayoutSize("BusRosterRow alignment", unsafe.Alignof(BusRosterRow{}), 4)
 	tableCookLayoutOffset("BusRosterRow.Participants", unsafe.Offsetof(BusRosterRow{}.Participants), 0)
-	tableCookLayoutSize("DayFileRow", unsafe.Sizeof(DayFileRow{}), 80)
+	tableCookLayoutSize("DayFileRow", unsafe.Sizeof(DayFileRow{}), 39928)
 	tableCookLayoutSize("DayFileRow alignment", unsafe.Alignof(DayFileRow{}), 8)
 	tableCookLayoutOffset("DayFileRow.Day", unsafe.Offsetof(DayFileRow{}.Day), 0)
 	tableCookLayoutOffset("DayFileRow.At", unsafe.Offsetof(DayFileRow{}.At), 16)
-	tableCookLayoutOffset("DayFileRow.Build", unsafe.Offsetof(DayFileRow{}.Build), 24)
-	tableCookLayoutOffset("DayFileRow.Turns", unsafe.Offsetof(DayFileRow{}.Turns), 32)
-	tableCookLayoutOffset("DayFileRow.Sources", unsafe.Offsetof(DayFileRow{}.Sources), 48)
-	tableCookLayoutOffset("DayFileRow.Rows", unsafe.Offsetof(DayFileRow{}.Rows), 64)
-	tableCookLayoutSize("DayLineRow", unsafe.Sizeof(DayLineRow{}), 144)
+	tableCookLayoutOffset("DayFileRow.Build", unsafe.Offsetof(DayFileRow{}.Build), 88)
+	tableCookLayoutOffset("DayFileRow.Turns", unsafe.Offsetof(DayFileRow{}.Turns), 160)
+	tableCookLayoutOffset("DayFileRow.Sources", unsafe.Offsetof(DayFileRow{}.Sources), 172)
+	tableCookLayoutOffset("DayFileRow.Rows", unsafe.Offsetof(DayFileRow{}.Rows), 1328)
+	tableCookLayoutSize("DayLineRow", unsafe.Sizeof(DayLineRow{}), 1608)
 	tableCookLayoutSize("DayLineRow alignment", unsafe.Alignof(DayLineRow{}), 8)
 	tableCookLayoutOffset("DayLineRow.Date", unsafe.Offsetof(DayLineRow{}.Date), 0)
 	tableCookLayoutOffset("DayLineRow.Model", unsafe.Offsetof(DayLineRow{}.Model), 16)
-	tableCookLayoutOffset("DayLineRow.Repo", unsafe.Offsetof(DayLineRow{}.Repo), 24)
-	tableCookLayoutOffset("DayLineRow.Input", unsafe.Offsetof(DayLineRow{}.Input), 32)
-	tableCookLayoutOffset("DayLineRow.Output", unsafe.Offsetof(DayLineRow{}.Output), 48)
-	tableCookLayoutOffset("DayLineRow.CacheWrite", unsafe.Offsetof(DayLineRow{}.CacheWrite), 64)
-	tableCookLayoutOffset("DayLineRow.CacheRead", unsafe.Offsetof(DayLineRow{}.CacheRead), 80)
-	tableCookLayoutOffset("DayLineRow.Reasoning", unsafe.Offsetof(DayLineRow{}.Reasoning), 96)
-	tableCookLayoutOffset("DayLineRow.Rough", unsafe.Offsetof(DayLineRow{}.Rough), 112)
-	tableCookLayoutOffset("DayLineRow.Basis", unsafe.Offsetof(DayLineRow{}.Basis), 120)
-	tableCookLayoutOffset("DayLineRow.Sources", unsafe.Offsetof(DayLineRow{}.Sources), 128)
-	tableCookLayoutSize("ParticipantRow", unsafe.Sizeof(ParticipantRow{}), 16)
-	tableCookLayoutSize("ParticipantRow alignment", unsafe.Alignof(ParticipantRow{}), 8)
+	tableCookLayoutOffset("DayLineRow.Repo", unsafe.Offsetof(DayLineRow{}.Repo), 152)
+	tableCookLayoutOffset("DayLineRow.Input", unsafe.Offsetof(DayLineRow{}.Input), 288)
+	tableCookLayoutOffset("DayLineRow.InputSet", unsafe.Offsetof(DayLineRow{}.InputSet), 296)
+	tableCookLayoutOffset("DayLineRow.Output", unsafe.Offsetof(DayLineRow{}.Output), 304)
+	tableCookLayoutOffset("DayLineRow.OutputSet", unsafe.Offsetof(DayLineRow{}.OutputSet), 312)
+	tableCookLayoutOffset("DayLineRow.CacheWrite", unsafe.Offsetof(DayLineRow{}.CacheWrite), 320)
+	tableCookLayoutOffset("DayLineRow.CacheWriteSet", unsafe.Offsetof(DayLineRow{}.CacheWriteSet), 328)
+	tableCookLayoutOffset("DayLineRow.CacheRead", unsafe.Offsetof(DayLineRow{}.CacheRead), 336)
+	tableCookLayoutOffset("DayLineRow.CacheReadSet", unsafe.Offsetof(DayLineRow{}.CacheReadSet), 344)
+	tableCookLayoutOffset("DayLineRow.Reasoning", unsafe.Offsetof(DayLineRow{}.Reasoning), 352)
+	tableCookLayoutOffset("DayLineRow.ReasoningSet", unsafe.Offsetof(DayLineRow{}.ReasoningSet), 360)
+	tableCookLayoutOffset("DayLineRow.Rough", unsafe.Offsetof(DayLineRow{}.Rough), 368)
+	tableCookLayoutOffset("DayLineRow.Basis", unsafe.Offsetof(DayLineRow{}.Basis), 376)
+	tableCookLayoutOffset("DayLineRow.Sources", unsafe.Offsetof(DayLineRow{}.Sources), 448)
+	tableCookLayoutSize("ParticipantRow", unsafe.Sizeof(ParticipantRow{}), 160)
+	tableCookLayoutSize("ParticipantRow alignment", unsafe.Alignof(ParticipantRow{}), 4)
 	tableCookLayoutOffset("ParticipantRow.Name", unsafe.Offsetof(ParticipantRow{}.Name), 0)
-	tableCookLayoutOffset("ParticipantRow.Lane", unsafe.Offsetof(ParticipantRow{}.Lane), 8)
-	tableCookLayoutSize("PlacedReceiptRow", unsafe.Sizeof(PlacedReceiptRow{}), 48)
-	tableCookLayoutSize("PlacedReceiptRow alignment", unsafe.Alignof(PlacedReceiptRow{}), 8)
+	tableCookLayoutOffset("ParticipantRow.Lane", unsafe.Offsetof(ParticipantRow{}.Lane), 72)
+	tableCookLayoutSize("PlacedReceiptRow", unsafe.Sizeof(PlacedReceiptRow{}), 1584)
+	tableCookLayoutSize("PlacedReceiptRow alignment", unsafe.Alignof(PlacedReceiptRow{}), 4)
 	tableCookLayoutOffset("PlacedReceiptRow.Secret", unsafe.Offsetof(PlacedReceiptRow{}.Secret), 0)
-	tableCookLayoutOffset("PlacedReceiptRow.Path", unsafe.Offsetof(PlacedReceiptRow{}.Path), 8)
-	tableCookLayoutOffset("PlacedReceiptRow.File", unsafe.Offsetof(PlacedReceiptRow{}.File), 16)
-	tableCookLayoutOffset("PlacedReceiptRow.Head", unsafe.Offsetof(PlacedReceiptRow{}.Head), 24)
-	tableCookLayoutOffset("PlacedReceiptRow.Blob", unsafe.Offsetof(PlacedReceiptRow{}.Blob), 32)
-	tableCookLayoutOffset("PlacedReceiptRow.Stamp", unsafe.Offsetof(PlacedReceiptRow{}.Stamp), 40)
-	tableCookLayoutSize("SeatEnvironmentRow", unsafe.Sizeof(SeatEnvironmentRow{}), 48)
-	tableCookLayoutSize("SeatEnvironmentRow alignment", unsafe.Alignof(SeatEnvironmentRow{}), 8)
+	tableCookLayoutOffset("PlacedReceiptRow.Path", unsafe.Offsetof(PlacedReceiptRow{}.Path), 136)
+	tableCookLayoutOffset("PlacedReceiptRow.File", unsafe.Offsetof(PlacedReceiptRow{}.File), 1168)
+	tableCookLayoutOffset("PlacedReceiptRow.Head", unsafe.Offsetof(PlacedReceiptRow{}.Head), 1432)
+	tableCookLayoutOffset("PlacedReceiptRow.Blob", unsafe.Offsetof(PlacedReceiptRow{}.Blob), 1504)
+	tableCookLayoutOffset("PlacedReceiptRow.Stamp", unsafe.Offsetof(PlacedReceiptRow{}.Stamp), 1552)
+	tableCookLayoutSize("SeatDirRow", unsafe.Sizeof(SeatDirRow{}), 1032)
+	tableCookLayoutSize("SeatDirRow alignment", unsafe.Alignof(SeatDirRow{}), 4)
+	tableCookLayoutOffset("SeatDirRow.Text", unsafe.Offsetof(SeatDirRow{}.Text), 0)
+	tableCookLayoutSize("SeatEndpointRow", unsafe.Sizeof(SeatEndpointRow{}), 264)
+	tableCookLayoutSize("SeatEndpointRow alignment", unsafe.Alignof(SeatEndpointRow{}), 4)
+	tableCookLayoutOffset("SeatEndpointRow.Text", unsafe.Offsetof(SeatEndpointRow{}.Text), 0)
+	tableCookLayoutSize("SeatEnvironmentRow", unsafe.Sizeof(SeatEnvironmentRow{}), 5616)
+	tableCookLayoutSize("SeatEnvironmentRow alignment", unsafe.Alignof(SeatEnvironmentRow{}), 4)
 	tableCookLayoutOffset("SeatEnvironmentRow.Version", unsafe.Offsetof(SeatEnvironmentRow{}.Version), 0)
-	tableCookLayoutOffset("SeatEnvironmentRow.ForgeIdentity", unsafe.Offsetof(SeatEnvironmentRow{}.ForgeIdentity), 8)
-	tableCookLayoutOffset("SeatEnvironmentRow.NovaSprintRedis", unsafe.Offsetof(SeatEnvironmentRow{}.NovaSprintRedis), 16)
-	tableCookLayoutOffset("SeatEnvironmentRow.NovaSprintServer", unsafe.Offsetof(SeatEnvironmentRow{}.NovaSprintServer), 24)
-	tableCookLayoutOffset("SeatEnvironmentRow.NovaBusRedis", unsafe.Offsetof(SeatEnvironmentRow{}.NovaBusRedis), 32)
-	tableCookLayoutOffset("SeatEnvironmentRow.Login", unsafe.Offsetof(SeatEnvironmentRow{}.Login), 40)
-	tableCookLayoutSize("SeatLoginRow", unsafe.Sizeof(SeatLoginRow{}), 56)
-	tableCookLayoutSize("SeatLoginRow alignment", unsafe.Alignof(SeatLoginRow{}), 8)
+	tableCookLayoutOffset("SeatEnvironmentRow.ForgeIdentity", unsafe.Offsetof(SeatEnvironmentRow{}.ForgeIdentity), 4)
+	tableCookLayoutOffset("SeatEnvironmentRow.NovaSprintRedis", unsafe.Offsetof(SeatEnvironmentRow{}.NovaSprintRedis), 1040)
+	tableCookLayoutOffset("SeatEnvironmentRow.NovaSprintServer", unsafe.Offsetof(SeatEnvironmentRow{}.NovaSprintServer), 1308)
+	tableCookLayoutOffset("SeatEnvironmentRow.NovaBusRedis", unsafe.Offsetof(SeatEnvironmentRow{}.NovaBusRedis), 1576)
+	tableCookLayoutOffset("SeatEnvironmentRow.Login", unsafe.Offsetof(SeatEnvironmentRow{}.Login), 1844)
+	tableCookLayoutSize("SeatLoginRow", unsafe.Sizeof(SeatLoginRow{}), 3768)
+	tableCookLayoutSize("SeatLoginRow alignment", unsafe.Alignof(SeatLoginRow{}), 4)
 	tableCookLayoutOffset("SeatLoginRow.Redis", unsafe.Offsetof(SeatLoginRow{}.Redis), 0)
-	tableCookLayoutOffset("SeatLoginRow.User", unsafe.Offsetof(SeatLoginRow{}.User), 8)
-	tableCookLayoutOffset("SeatLoginRow.Store", unsafe.Offsetof(SeatLoginRow{}.Store), 16)
-	tableCookLayoutOffset("SeatLoginRow.AsName", unsafe.Offsetof(SeatLoginRow{}.AsName), 24)
-	tableCookLayoutOffset("SeatLoginRow.Key", unsafe.Offsetof(SeatLoginRow{}.Key), 32)
-	tableCookLayoutOffset("SeatLoginRow.Sops", unsafe.Offsetof(SeatLoginRow{}.Sops), 40)
-	tableCookLayoutOffset("SeatLoginRow.Secret", unsafe.Offsetof(SeatLoginRow{}.Secret), 48)
-	tableCookLayoutSize("SourceLabelRow", unsafe.Sizeof(SourceLabelRow{}), 8)
-	tableCookLayoutSize("SourceLabelRow alignment", unsafe.Alignof(SourceLabelRow{}), 8)
+	tableCookLayoutOffset("SeatLoginRow.User", unsafe.Offsetof(SeatLoginRow{}.User), 264)
+	tableCookLayoutOffset("SeatLoginRow.Store", unsafe.Offsetof(SeatLoginRow{}.Store), 400)
+	tableCookLayoutOffset("SeatLoginRow.AsName", unsafe.Offsetof(SeatLoginRow{}.AsName), 1432)
+	tableCookLayoutOffset("SeatLoginRow.Key", unsafe.Offsetof(SeatLoginRow{}.Key), 1568)
+	tableCookLayoutOffset("SeatLoginRow.Sops", unsafe.Offsetof(SeatLoginRow{}.Sops), 2600)
+	tableCookLayoutOffset("SeatLoginRow.Secret", unsafe.Offsetof(SeatLoginRow{}.Secret), 3632)
+	tableCookLayoutSize("SourceLabelRow", unsafe.Sizeof(SourceLabelRow{}), 72)
+	tableCookLayoutSize("SourceLabelRow alignment", unsafe.Alignof(SourceLabelRow{}), 4)
 	tableCookLayoutOffset("SourceLabelRow.Text", unsafe.Offsetof(SourceLabelRow{}.Text), 0)
 }
 
@@ -215,7 +226,7 @@ func tableCookLayoutOffset(what string, got, want uintptr) {
 // §11 fact rather than a taste: a name derived from a DECLARATION's own
 // spelling is a name a declaration can collide with, and the checker has no
 // machinery for a prefix-and-name product. One fixed name is one claim.
-var tableCookRecords = make([]TableCookInfo, 8)
+var tableCookRecords = make([]TableCookInfo, 10)
 
 // THE GRAPH IS FILLED HERE rather than in the slice's own initializer, and
 // the reason is a language fact rather than a taste: the DESCRIPTOR GRAPH is
@@ -228,91 +239,312 @@ var tableCookRecords = make([]TableCookInfo, 8)
 // any goroutine at any time with no synchronisation.
 func init() {
 	tableCookRecords[0] = TableCookInfo{
-		Name: "BusRoster", Size: 16, Align: 8, NumFields: 1,
+		Name: "BusRoster", Size: 10244, Align: 4, NumFields: 1,
 		Fields: []TableCookFieldInfo{
-			{Name: "participants", Offset: 0, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "participants", Offset: 0, Size: 10244, ElemSize: 160, IsArray: true, ArrayBound: 64, IsPointer: false, CountOffset: 10240, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
 	tableCookRecords[1] = TableCookInfo{
-		Name: "DayFile", Size: 80, Align: 8, NumFields: 6,
+		Name: "DayFile", Size: 39928, Align: 8, NumFields: 6,
 		Fields: []TableCookFieldInfo{
 			{Name: "day", Offset: 0, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 10, IsPointer: false, CountOffset: 12, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "at", Offset: 16, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "build", Offset: 24, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "turns", Offset: 32, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 40, Storage: TableCookStorageSigned},
-			{Name: "sources", Offset: 48, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
-			{Name: "rows", Offset: 64, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "at", Offset: 16, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 84, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "build", Offset: 88, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 156, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "turns", Offset: 160, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 168, Storage: TableCookStorageSigned},
+			{Name: "sources", Offset: 172, Size: 1156, ElemSize: 72, IsArray: true, ArrayBound: 16, IsPointer: false, CountOffset: 1324, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "rows", Offset: 1328, Size: 38596, ElemSize: 1608, IsArray: true, ArrayBound: 24, IsPointer: false, CountOffset: 39920, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
 	tableCookRecords[2] = TableCookInfo{
-		Name: "DayLine", Size: 144, Align: 8, NumFields: 11,
+		Name: "DayLine", Size: 1608, Align: 8, NumFields: 16,
 		Fields: []TableCookFieldInfo{
 			{Name: "date", Offset: 0, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 10, IsPointer: false, CountOffset: 12, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "model", Offset: 16, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "repo", Offset: 24, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "input", Offset: 32, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 40, Storage: TableCookStorageSigned},
-			{Name: "output", Offset: 48, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 56, Storage: TableCookStorageSigned},
-			{Name: "cache_write", Offset: 64, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 72, Storage: TableCookStorageSigned},
-			{Name: "cache_read", Offset: 80, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 88, Storage: TableCookStorageSigned},
-			{Name: "reasoning", Offset: 96, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 104, Storage: TableCookStorageSigned},
-			{Name: "rough", Offset: 112, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
-			{Name: "basis", Offset: 120, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "sources", Offset: 128, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "model", Offset: 16, Size: 136, ElemSize: 136, IsArray: false, ArrayBound: 128, IsPointer: false, CountOffset: 148, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "repo", Offset: 152, Size: 136, ElemSize: 136, IsArray: false, ArrayBound: 128, IsPointer: false, CountOffset: 284, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "input", Offset: 288, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
+			{Name: "input_set", Offset: 296, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
+			{Name: "output", Offset: 304, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
+			{Name: "output_set", Offset: 312, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
+			{Name: "cache_write", Offset: 320, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
+			{Name: "cache_write_set", Offset: 328, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
+			{Name: "cache_read", Offset: 336, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
+			{Name: "cache_read_set", Offset: 344, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
+			{Name: "reasoning", Offset: 352, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
+			{Name: "reasoning_set", Offset: 360, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
+			{Name: "rough", Offset: 368, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
+			{Name: "basis", Offset: 376, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 444, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "sources", Offset: 448, Size: 1156, ElemSize: 72, IsArray: true, ArrayBound: 16, IsPointer: false, CountOffset: 1600, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
 	tableCookRecords[3] = TableCookInfo{
-		Name: "Participant", Size: 16, Align: 8, NumFields: 2,
+		Name: "Participant", Size: 160, Align: 4, NumFields: 2,
 		Fields: []TableCookFieldInfo{
-			{Name: "name", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "lane", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "name", Offset: 0, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 68, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "lane", Offset: 72, Size: 88, ElemSize: 88, IsArray: false, ArrayBound: 80, IsPointer: false, CountOffset: 156, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
 	tableCookRecords[4] = TableCookInfo{
-		Name: "PlacedReceipt", Size: 48, Align: 8, NumFields: 6,
+		Name: "PlacedReceipt", Size: 1584, Align: 4, NumFields: 6,
 		Fields: []TableCookFieldInfo{
-			{Name: "secret", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "path", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "file", Offset: 16, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "head", Offset: 24, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "blob", Offset: 32, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "stamp", Offset: 40, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "secret", Offset: 0, Size: 136, ElemSize: 136, IsArray: false, ArrayBound: 128, IsPointer: false, CountOffset: 132, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "path", Offset: 136, Size: 1032, ElemSize: 1032, IsArray: false, ArrayBound: 1024, IsPointer: false, CountOffset: 1164, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "file", Offset: 1168, Size: 264, ElemSize: 264, IsArray: false, ArrayBound: 256, IsPointer: false, CountOffset: 1428, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "head", Offset: 1432, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 1500, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "blob", Offset: 1504, Size: 48, ElemSize: 48, IsArray: false, ArrayBound: 40, IsPointer: false, CountOffset: 1548, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "stamp", Offset: 1552, Size: 32, ElemSize: 32, IsArray: false, ArrayBound: 25, IsPointer: false, CountOffset: 1580, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
 	tableCookRecords[5] = TableCookInfo{
-		Name: "SeatEnvironment", Size: 48, Align: 8, NumFields: 6,
+		Name: "SeatDir", Size: 1032, Align: 4, NumFields: 1,
 		Fields: []TableCookFieldInfo{
-			{Name: "version", Offset: 0, Size: 5, ElemSize: 5, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 4, Storage: TableCookStorageSigned},
-			{Name: "forge_identity", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "nova_sprint_redis", Offset: 16, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "nova_sprint_server", Offset: 24, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "nova_bus_redis", Offset: 32, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "login", Offset: 40, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "text", Offset: 0, Size: 1032, ElemSize: 1032, IsArray: false, ArrayBound: 1024, IsPointer: false, CountOffset: 1028, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
 	tableCookRecords[6] = TableCookInfo{
-		Name: "SeatLogin", Size: 56, Align: 8, NumFields: 7,
+		Name: "SeatEndpoint", Size: 264, Align: 4, NumFields: 1,
 		Fields: []TableCookFieldInfo{
-			{Name: "redis", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "user", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "store", Offset: 16, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "as_name", Offset: 24, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "key", Offset: 32, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "sops", Offset: 40, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
-			{Name: "secret", Offset: 48, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "text", Offset: 0, Size: 264, ElemSize: 264, IsArray: false, ArrayBound: 256, IsPointer: false, CountOffset: 260, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
 	tableCookRecords[7] = TableCookInfo{
-		Name: "SourceLabel", Size: 8, Align: 8, NumFields: 1,
+		Name: "SeatEnvironment", Size: 5616, Align: 4, NumFields: 6,
 		Fields: []TableCookFieldInfo{
-			{Name: "text", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "version", Offset: 0, Size: 4, ElemSize: 4, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
+			{Name: "forge_identity", Offset: 4, Size: 1033, ElemSize: 1033, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 1036, Storage: TableCookStorageRecord},
+			{Name: "nova_sprint_redis", Offset: 1040, Size: 265, ElemSize: 265, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 1304, Storage: TableCookStorageRecord},
+			{Name: "nova_sprint_server", Offset: 1308, Size: 265, ElemSize: 265, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 1572, Storage: TableCookStorageRecord},
+			{Name: "nova_bus_redis", Offset: 1576, Size: 265, ElemSize: 265, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 1840, Storage: TableCookStorageRecord},
+			{Name: "login", Offset: 1844, Size: 3769, ElemSize: 3769, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 5612, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[8] = TableCookInfo{
+		Name: "SeatLogin", Size: 3768, Align: 4, NumFields: 7,
+		Fields: []TableCookFieldInfo{
+			{Name: "redis", Offset: 0, Size: 264, ElemSize: 264, IsArray: false, ArrayBound: 256, IsPointer: false, CountOffset: 260, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "user", Offset: 264, Size: 136, ElemSize: 136, IsArray: false, ArrayBound: 128, IsPointer: false, CountOffset: 396, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "store", Offset: 400, Size: 1032, ElemSize: 1032, IsArray: false, ArrayBound: 1024, IsPointer: false, CountOffset: 1428, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "as_name", Offset: 1432, Size: 136, ElemSize: 136, IsArray: false, ArrayBound: 128, IsPointer: false, CountOffset: 1564, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "key", Offset: 1568, Size: 1032, ElemSize: 1032, IsArray: false, ArrayBound: 1024, IsPointer: false, CountOffset: 2596, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "sops", Offset: 2600, Size: 1032, ElemSize: 1032, IsArray: false, ArrayBound: 1024, IsPointer: false, CountOffset: 3628, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "secret", Offset: 3632, Size: 136, ElemSize: 136, IsArray: false, ArrayBound: 128, IsPointer: false, CountOffset: 3764, PresentOffset: -1, Storage: TableCookStorageString},
+		},
+	}
+	tableCookRecords[9] = TableCookInfo{
+		Name: "SourceLabel", Size: 72, Align: 4, NumFields: 1,
+		Fields: []TableCookFieldInfo{
+			{Name: "text", Offset: 0, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 68, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
 	tableCookRecords[0].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[3] }
-	tableCookRecords[1].Fields[4].Record = func() *TableCookInfo { return &tableCookRecords[7] }
+	tableCookRecords[1].Fields[4].Record = func() *TableCookInfo { return &tableCookRecords[9] }
 	tableCookRecords[1].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[2] }
-	tableCookRecords[2].Fields[10].Record = func() *TableCookInfo { return &tableCookRecords[7] }
-	tableCookRecords[5].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[6] }
+	tableCookRecords[2].Fields[15].Record = func() *TableCookInfo { return &tableCookRecords[9] }
+	tableCookRecords[7].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[5] }
+	tableCookRecords[7].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[6] }
+	tableCookRecords[7].Fields[3].Record = func() *TableCookInfo { return &tableCookRecords[6] }
+	tableCookRecords[7].Fields[4].Record = func() *TableCookInfo { return &tableCookRecords[6] }
+	tableCookRecords[7].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[8] }
 }
+
+// SeatDirCook is SeatDir's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — SeatDirOpen, SeatDirAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type SeatDirCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c SeatDirCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c SeatDirCook) RootSize() int64        { return 1032 }
+func (c SeatDirCook) RootAlign() int64       { return 4 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c SeatDirCook) Root() *SeatDirRow { return (*SeatDirRow)(c.Region) }
+
+// SeatDirOpen is the bool convenience for the typed Open error on the handle.
+func SeatDirOpen(cook *SeatDirCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *SeatDirCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = SeatDirCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 1032 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// SeatDirAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func SeatDirAt(slot *int64) *SeatDirRow {
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*SeatDirRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is SeatDir's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c SeatDirCook) Type() *TableCookInfo { return &tableCookRecords[5] }
+
+// SeatEndpointCook is SeatEndpoint's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — SeatEndpointOpen, SeatEndpointAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type SeatEndpointCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c SeatEndpointCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c SeatEndpointCook) RootSize() int64        { return 264 }
+func (c SeatEndpointCook) RootAlign() int64       { return 4 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c SeatEndpointCook) Root() *SeatEndpointRow { return (*SeatEndpointRow)(c.Region) }
+
+// SeatEndpointOpen is the bool convenience for the typed Open error on the handle.
+func SeatEndpointOpen(cook *SeatEndpointCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *SeatEndpointCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = SeatEndpointCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 264 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// SeatEndpointAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func SeatEndpointAt(slot *int64) *SeatEndpointRow {
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*SeatEndpointRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is SeatEndpoint's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c SeatEndpointCook) Type() *TableCookInfo { return &tableCookRecords[6] }
 
 // SeatLoginCook is SeatLogin's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -335,8 +567,8 @@ type SeatLoginCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c SeatLoginCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c SeatLoginCook) RootSize() int64        { return 56 }
-func (c SeatLoginCook) RootAlign() int64       { return 8 }
+func (c SeatLoginCook) RootSize() int64        { return 3768 }
+func (c SeatLoginCook) RootAlign() int64       { return 4 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
 // copy: a cooked graph is walked by adding deltas to slot addresses.
@@ -375,14 +607,14 @@ func (cook *SeatLoginCook) Open(base unsafe.Pointer, length int64) error {
 		return TableRefuseReservedNotZero
 	}
 	alignment := binary.NativeEndian.Uint64(header[40:])
-	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
 		return TableRefuseBadAlignment
 	}
 	bytes := uint64(length)
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 56 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 3768 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -402,10 +634,7 @@ func (cook *SeatLoginCook) Open(base unsafe.Pointer, length int64) error {
 //
 // It takes the SLOT and not its value, because a self-relative delta means
 // nothing without the address it is relative to.
-func SeatLoginAt(slot *int64, arena ...*TableArena) *SeatLoginRow {
-	if len(arena) > 0 && arena[0] != nil {
-		return (*SeatLoginRow)(arena[0].At(*slot))
-	}
+func SeatLoginAt(slot *int64) *SeatLoginRow {
 	delta := *slot
 	if delta == 0 {
 		return nil
@@ -415,7 +644,7 @@ func SeatLoginAt(slot *int64, arena ...*TableArena) *SeatLoginRow {
 
 // Type is SeatLogin's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c SeatLoginCook) Type() *TableCookInfo { return &tableCookRecords[6] }
+func (c SeatLoginCook) Type() *TableCookInfo { return &tableCookRecords[8] }
 
 // SeatEnvironmentCook is SeatEnvironment's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -438,8 +667,8 @@ type SeatEnvironmentCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c SeatEnvironmentCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c SeatEnvironmentCook) RootSize() int64        { return 48 }
-func (c SeatEnvironmentCook) RootAlign() int64       { return 8 }
+func (c SeatEnvironmentCook) RootSize() int64        { return 5616 }
+func (c SeatEnvironmentCook) RootAlign() int64       { return 4 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
 // copy: a cooked graph is walked by adding deltas to slot addresses.
@@ -478,14 +707,14 @@ func (cook *SeatEnvironmentCook) Open(base unsafe.Pointer, length int64) error {
 		return TableRefuseReservedNotZero
 	}
 	alignment := binary.NativeEndian.Uint64(header[40:])
-	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
 		return TableRefuseBadAlignment
 	}
 	bytes := uint64(length)
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 48 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 5616 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -505,10 +734,7 @@ func (cook *SeatEnvironmentCook) Open(base unsafe.Pointer, length int64) error {
 //
 // It takes the SLOT and not its value, because a self-relative delta means
 // nothing without the address it is relative to.
-func SeatEnvironmentAt(slot *int64, arena ...*TableArena) *SeatEnvironmentRow {
-	if len(arena) > 0 && arena[0] != nil {
-		return (*SeatEnvironmentRow)(arena[0].At(*slot))
-	}
+func SeatEnvironmentAt(slot *int64) *SeatEnvironmentRow {
 	delta := *slot
 	if delta == 0 {
 		return nil
@@ -518,7 +744,7 @@ func SeatEnvironmentAt(slot *int64, arena ...*TableArena) *SeatEnvironmentRow {
 
 // Type is SeatEnvironment's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c SeatEnvironmentCook) Type() *TableCookInfo { return &tableCookRecords[5] }
+func (c SeatEnvironmentCook) Type() *TableCookInfo { return &tableCookRecords[7] }
 
 // SourceLabelCook is SourceLabel's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -541,8 +767,8 @@ type SourceLabelCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c SourceLabelCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c SourceLabelCook) RootSize() int64        { return 8 }
-func (c SourceLabelCook) RootAlign() int64       { return 8 }
+func (c SourceLabelCook) RootSize() int64        { return 72 }
+func (c SourceLabelCook) RootAlign() int64       { return 4 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
 // copy: a cooked graph is walked by adding deltas to slot addresses.
@@ -581,14 +807,14 @@ func (cook *SourceLabelCook) Open(base unsafe.Pointer, length int64) error {
 		return TableRefuseReservedNotZero
 	}
 	alignment := binary.NativeEndian.Uint64(header[40:])
-	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
 		return TableRefuseBadAlignment
 	}
 	bytes := uint64(length)
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 8 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 72 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -608,10 +834,7 @@ func (cook *SourceLabelCook) Open(base unsafe.Pointer, length int64) error {
 //
 // It takes the SLOT and not its value, because a self-relative delta means
 // nothing without the address it is relative to.
-func SourceLabelAt(slot *int64, arena ...*TableArena) *SourceLabelRow {
-	if len(arena) > 0 && arena[0] != nil {
-		return (*SourceLabelRow)(arena[0].At(*slot))
-	}
+func SourceLabelAt(slot *int64) *SourceLabelRow {
 	delta := *slot
 	if delta == 0 {
 		return nil
@@ -621,7 +844,7 @@ func SourceLabelAt(slot *int64, arena ...*TableArena) *SourceLabelRow {
 
 // Type is SourceLabel's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c SourceLabelCook) Type() *TableCookInfo { return &tableCookRecords[7] }
+func (c SourceLabelCook) Type() *TableCookInfo { return &tableCookRecords[9] }
 
 // DayLineCook is DayLine's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -644,7 +867,7 @@ type DayLineCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c DayLineCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c DayLineCook) RootSize() int64        { return 144 }
+func (c DayLineCook) RootSize() int64        { return 1608 }
 func (c DayLineCook) RootAlign() int64       { return 8 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
@@ -691,7 +914,7 @@ func (cook *DayLineCook) Open(base unsafe.Pointer, length int64) error {
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 144 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 1608 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -711,10 +934,7 @@ func (cook *DayLineCook) Open(base unsafe.Pointer, length int64) error {
 //
 // It takes the SLOT and not its value, because a self-relative delta means
 // nothing without the address it is relative to.
-func DayLineAt(slot *int64, arena ...*TableArena) *DayLineRow {
-	if len(arena) > 0 && arena[0] != nil {
-		return (*DayLineRow)(arena[0].At(*slot))
-	}
+func DayLineAt(slot *int64) *DayLineRow {
 	delta := *slot
 	if delta == 0 {
 		return nil
@@ -747,7 +967,7 @@ type DayFileCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c DayFileCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c DayFileCook) RootSize() int64        { return 80 }
+func (c DayFileCook) RootSize() int64        { return 39928 }
 func (c DayFileCook) RootAlign() int64       { return 8 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
@@ -794,7 +1014,7 @@ func (cook *DayFileCook) Open(base unsafe.Pointer, length int64) error {
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 80 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 39928 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -814,10 +1034,7 @@ func (cook *DayFileCook) Open(base unsafe.Pointer, length int64) error {
 //
 // It takes the SLOT and not its value, because a self-relative delta means
 // nothing without the address it is relative to.
-func DayFileAt(slot *int64, arena ...*TableArena) *DayFileRow {
-	if len(arena) > 0 && arena[0] != nil {
-		return (*DayFileRow)(arena[0].At(*slot))
-	}
+func DayFileAt(slot *int64) *DayFileRow {
 	delta := *slot
 	if delta == 0 {
 		return nil
@@ -850,8 +1067,8 @@ type ParticipantCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c ParticipantCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c ParticipantCook) RootSize() int64        { return 16 }
-func (c ParticipantCook) RootAlign() int64       { return 8 }
+func (c ParticipantCook) RootSize() int64        { return 160 }
+func (c ParticipantCook) RootAlign() int64       { return 4 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
 // copy: a cooked graph is walked by adding deltas to slot addresses.
@@ -890,14 +1107,14 @@ func (cook *ParticipantCook) Open(base unsafe.Pointer, length int64) error {
 		return TableRefuseReservedNotZero
 	}
 	alignment := binary.NativeEndian.Uint64(header[40:])
-	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
 		return TableRefuseBadAlignment
 	}
 	bytes := uint64(length)
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 16 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 160 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -917,10 +1134,7 @@ func (cook *ParticipantCook) Open(base unsafe.Pointer, length int64) error {
 //
 // It takes the SLOT and not its value, because a self-relative delta means
 // nothing without the address it is relative to.
-func ParticipantAt(slot *int64, arena ...*TableArena) *ParticipantRow {
-	if len(arena) > 0 && arena[0] != nil {
-		return (*ParticipantRow)(arena[0].At(*slot))
-	}
+func ParticipantAt(slot *int64) *ParticipantRow {
 	delta := *slot
 	if delta == 0 {
 		return nil
@@ -953,8 +1167,8 @@ type BusRosterCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c BusRosterCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c BusRosterCook) RootSize() int64        { return 16 }
-func (c BusRosterCook) RootAlign() int64       { return 8 }
+func (c BusRosterCook) RootSize() int64        { return 10244 }
+func (c BusRosterCook) RootAlign() int64       { return 4 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
 // copy: a cooked graph is walked by adding deltas to slot addresses.
@@ -993,14 +1207,14 @@ func (cook *BusRosterCook) Open(base unsafe.Pointer, length int64) error {
 		return TableRefuseReservedNotZero
 	}
 	alignment := binary.NativeEndian.Uint64(header[40:])
-	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
 		return TableRefuseBadAlignment
 	}
 	bytes := uint64(length)
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 16 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 10244 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -1020,10 +1234,7 @@ func (cook *BusRosterCook) Open(base unsafe.Pointer, length int64) error {
 //
 // It takes the SLOT and not its value, because a self-relative delta means
 // nothing without the address it is relative to.
-func BusRosterAt(slot *int64, arena ...*TableArena) *BusRosterRow {
-	if len(arena) > 0 && arena[0] != nil {
-		return (*BusRosterRow)(arena[0].At(*slot))
-	}
+func BusRosterAt(slot *int64) *BusRosterRow {
 	delta := *slot
 	if delta == 0 {
 		return nil
@@ -1056,8 +1267,8 @@ type PlacedReceiptCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c PlacedReceiptCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c PlacedReceiptCook) RootSize() int64        { return 48 }
-func (c PlacedReceiptCook) RootAlign() int64       { return 8 }
+func (c PlacedReceiptCook) RootSize() int64        { return 1584 }
+func (c PlacedReceiptCook) RootAlign() int64       { return 4 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
 // copy: a cooked graph is walked by adding deltas to slot addresses.
@@ -1096,14 +1307,14 @@ func (cook *PlacedReceiptCook) Open(base unsafe.Pointer, length int64) error {
 		return TableRefuseReservedNotZero
 	}
 	alignment := binary.NativeEndian.Uint64(header[40:])
-	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%4 != 0 {
 		return TableRefuseBadAlignment
 	}
 	bytes := uint64(length)
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 48 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 1584 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -1123,10 +1334,7 @@ func (cook *PlacedReceiptCook) Open(base unsafe.Pointer, length int64) error {
 //
 // It takes the SLOT and not its value, because a self-relative delta means
 // nothing without the address it is relative to.
-func PlacedReceiptAt(slot *int64, arena ...*TableArena) *PlacedReceiptRow {
-	if len(arena) > 0 && arena[0] != nil {
-		return (*PlacedReceiptRow)(arena[0].At(*slot))
-	}
+func PlacedReceiptAt(slot *int64) *PlacedReceiptRow {
 	delta := *slot
 	if delta == 0 {
 		return nil
@@ -1138,7 +1346,7 @@ func PlacedReceiptAt(slot *int64, arena ...*TableArena) *PlacedReceiptRow {
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 func (c PlacedReceiptCook) Type() *TableCookInfo { return &tableCookRecords[4] }
 
-const tableCookBuildVersion uint64 = 0xde220d8d9f8f3d83
+const tableCookBuildVersion uint64 = 0x709625b52a7c16a2
 
 // TableByteOrder selects the target order, independently of the writing host.
 type TableByteOrder uint8
@@ -1149,10 +1357,9 @@ const (
 )
 
 type tableCookWriter struct {
-	numbering *TableNumbering
-	buffer    []byte
-	order     TableByteOrder
-	at        int64
+	buffer []byte
+	order  TableByteOrder
+	at     int64
 }
 
 func (w *tableCookWriter) put(at int64, value uint64, width uint32) {
@@ -1295,219 +1502,71 @@ func tableCookFixed(p unsafe.Pointer, t *TableTypeInfo, buffer []byte, order Tab
 	w.put(64+data+8, t.Id, 8)
 	return true
 }
-
-func (w *tableCookWriter) reference(slot *int64, at int64) bool {
-	if *slot == 0 {
-		return true
-	}
-	if w.numbering == nil {
-		return false
-	}
-	i, ok := w.numbering.Index(slot)
-	if !ok {
-		return false
-	}
-	w.put(at, uint64(64+w.numbering.entries[i-1].offset-at), 8)
-	return true
-}
-func tableCookRegion(p unsafe.Pointer, t *TableTypeInfo, buffer []byte, order TableByteOrder, measure bool, a *TableArena, allocator ...TableAllocator) int64 {
-	size, _ := tableCookRegionReason(p, t, buffer, order, measure, a, allocator...)
-	return size
-}
-func tableCookRegionReason(p unsafe.Pointer, t *TableTypeInfo, buffer []byte, order TableByteOrder, measure bool, a *TableArena, allocator ...TableAllocator) (int64, TableRefuseReason) {
-	if order != TableByteOrderLittle && order != TableByteOrderBig {
-		return -1, TableRefuseInvalidValue
-	}
-	n, ok := tableNumber(p, t, a, allocator...)
-	if !ok {
-		return -1, n.reason
-	}
-	defer n.Release()
-	w := tableCookWriter{order: order, numbering: &n}
-	data, align := int64(0), int64(8)
-	for i := range n.entries {
-		e := &n.entries[i]
-		size, alignment := int64(0), int64(8)
-		if e.info != nil {
-			size = int64(e.info.CookSize)
-			alignment = int64(e.info.CookAlign)
-		} else {
-			length := uint64(*(*uint32)(e.node))
-			size = 8 + int64(length)
-			if e.id == tableStringTypeId {
-				size++
-			}
-		}
-		align = max(align, alignment)
-		data = (data + alignment - 1) & -alignment
-		e.offset = data
-		w.at = 64 + data + size
-		if e.info != nil && !w.record(e.node, e.info, 64+data, true) {
-			return -1, TableRefuseInvalidValue
-		}
-		data = w.at - 64
-	}
-	data = (data + align - 1) & -align
-	total := 64 + data + int64(len(n.entries))*16
-	if measure {
-		return total, TableRefuseOk
-	}
-	if int64(len(buffer)) < total {
-		return -1, TableRefuseInvalidValue
-	}
-	clear(buffer[:total])
-	w.buffer = buffer
-	w.header(data, int64(len(n.entries)), align)
-	for i := range n.entries {
-		e := &n.entries[i]
-		at := 64 + e.offset
-		if e.info != nil {
-			w.at = at + int64(e.info.CookSize)
-			if !w.record(e.node, e.info, at, true) {
-				return -1, TableRefuseInvalidValue
-			}
-		} else {
-			length := uint64(*(*uint32)(e.node))
-			w.put(at, length, 4)
-			copy(buffer[at+8:at+8+int64(length)], unsafe.Slice((*byte)(unsafe.Add(e.node, 8)), int(length)))
-		}
-		w.put(64+data+int64(i)*16, uint64(e.offset), 8)
-		w.put(64+data+int64(i)*16+8, e.id, 8)
-	}
-	return total, TableRefuseOk
-}
-
+func (w *tableCookWriter) reference(slot *int64, at int64) bool { return *slot == 0 }
 func (w *tableCookWriter) container(p unsafe.Pointer, f *TableFieldInfo, at int64, live bool) bool {
-	h := (*tableContainer)(p)
-	if h.Count < 0 || !live && h.Count != 0 {
-		return false
-	}
-	if h.Count == 0 {
-		return true
-	}
-	if w.numbering == nil {
-		return false
-	}
-	alignment := int64(f.ElemAlign)
-	w.at = (w.at + alignment - 1) & -alignment
-	start := w.at
-	w.at += int64(h.Count) * int64(f.CookElemSize)
-	if w.at < start {
-		return false
-	}
-	w.put(at, uint64(start-at), 8)
-	w.put(at+8, uint64(h.Count), 4)
-	cursor := tableMapCursor(h, f, w.numbering.arena)
-	defer cursor.Release()
-	for i := int32(0); i < h.Count; i++ {
-		elem := cursor.Next()
-		if elem == nil || !w.value(elem, f, start+int64(i)*int64(f.CookElemSize), true) {
-			return false
-		}
-	}
-	return true
+	return false
 }
-func SeatLoginCookMeasure(value *SeatLogin, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), SeatLoginTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+func SeatDirCookMeasure(value *SeatDir) int64                { return 1112 }
+func SeatDirCookMeasureReason(value *SeatDir) (int64, error) { return SeatDirCookMeasure(value), nil }
+func SeatDirCookFrom(value *SeatDir, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), SeatDirTableType(), buffer, order)
 }
-func SeatLoginCookMeasureReason(value *SeatLogin, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), SeatLoginTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
+func SeatEndpointCookMeasure(value *SeatEndpoint) int64 { return 344 }
+func SeatEndpointCookMeasureReason(value *SeatEndpoint) (int64, error) {
+	return SeatEndpointCookMeasure(value), nil
 }
-func SeatLoginCookFrom(value *SeatLogin, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), SeatLoginTableType(), buffer, order, false, arena, allocator) >= 0
+func SeatEndpointCookFrom(value *SeatEndpoint, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), SeatEndpointTableType(), buffer, order)
 }
-func SeatEnvironmentCookMeasure(value *SeatEnvironment, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), SeatEnvironmentTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+func SeatLoginCookMeasure(value *SeatLogin) int64 { return 3848 }
+func SeatLoginCookMeasureReason(value *SeatLogin) (int64, error) {
+	return SeatLoginCookMeasure(value), nil
 }
-func SeatEnvironmentCookMeasureReason(value *SeatEnvironment, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), SeatEnvironmentTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
+func SeatLoginCookFrom(value *SeatLogin, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), SeatLoginTableType(), buffer, order)
 }
-func SeatEnvironmentCookFrom(value *SeatEnvironment, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), SeatEnvironmentTableType(), buffer, order, false, arena, allocator) >= 0
+func SeatEnvironmentCookMeasure(value *SeatEnvironment) int64 { return 5696 }
+func SeatEnvironmentCookMeasureReason(value *SeatEnvironment) (int64, error) {
+	return SeatEnvironmentCookMeasure(value), nil
 }
-func SourceLabelCookMeasure(value *SourceLabel, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), SourceLabelTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+func SeatEnvironmentCookFrom(value *SeatEnvironment, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), SeatEnvironmentTableType(), buffer, order)
 }
-func SourceLabelCookMeasureReason(value *SourceLabel, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), SourceLabelTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
+func SourceLabelCookMeasure(value *SourceLabel) int64 { return 152 }
+func SourceLabelCookMeasureReason(value *SourceLabel) (int64, error) {
+	return SourceLabelCookMeasure(value), nil
 }
-func SourceLabelCookFrom(value *SourceLabel, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), SourceLabelTableType(), buffer, order, false, arena, allocator) >= 0
+func SourceLabelCookFrom(value *SourceLabel, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), SourceLabelTableType(), buffer, order)
 }
-func DayLineCookMeasure(value *DayLine, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), DayLineTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+func DayLineCookMeasure(value *DayLine) int64                { return 1688 }
+func DayLineCookMeasureReason(value *DayLine) (int64, error) { return DayLineCookMeasure(value), nil }
+func DayLineCookFrom(value *DayLine, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), DayLineTableType(), buffer, order)
 }
-func DayLineCookMeasureReason(value *DayLine, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), DayLineTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
+func DayFileCookMeasure(value *DayFile) int64                { return 40008 }
+func DayFileCookMeasureReason(value *DayFile) (int64, error) { return DayFileCookMeasure(value), nil }
+func DayFileCookFrom(value *DayFile, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), DayFileTableType(), buffer, order)
 }
-func DayLineCookFrom(value *DayLine, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), DayLineTableType(), buffer, order, false, arena, allocator) >= 0
+func ParticipantCookMeasure(value *Participant) int64 { return 240 }
+func ParticipantCookMeasureReason(value *Participant) (int64, error) {
+	return ParticipantCookMeasure(value), nil
 }
-func DayFileCookMeasure(value *DayFile, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), DayFileTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+func ParticipantCookFrom(value *Participant, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), ParticipantTableType(), buffer, order)
 }
-func DayFileCookMeasureReason(value *DayFile, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), DayFileTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
+func BusRosterCookMeasure(value *BusRoster) int64 { return 10328 }
+func BusRosterCookMeasureReason(value *BusRoster) (int64, error) {
+	return BusRosterCookMeasure(value), nil
 }
-func DayFileCookFrom(value *DayFile, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), DayFileTableType(), buffer, order, false, arena, allocator) >= 0
+func BusRosterCookFrom(value *BusRoster, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), BusRosterTableType(), buffer, order)
 }
-func ParticipantCookMeasure(value *Participant, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), ParticipantTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+func PlacedReceiptCookMeasure(value *PlacedReceipt) int64 { return 1664 }
+func PlacedReceiptCookMeasureReason(value *PlacedReceipt) (int64, error) {
+	return PlacedReceiptCookMeasure(value), nil
 }
-func ParticipantCookMeasureReason(value *Participant, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), ParticipantTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
-}
-func ParticipantCookFrom(value *Participant, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), ParticipantTableType(), buffer, order, false, arena, allocator) >= 0
-}
-func BusRosterCookMeasure(value *BusRoster, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), BusRosterTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-}
-func BusRosterCookMeasureReason(value *BusRoster, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), BusRosterTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
-}
-func BusRosterCookFrom(value *BusRoster, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), BusRosterTableType(), buffer, order, false, arena, allocator) >= 0
-}
-func PlacedReceiptCookMeasure(value *PlacedReceipt, context ...TableWriteContext) int64 {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), PlacedReceiptTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-}
-func PlacedReceiptCookMeasureReason(value *PlacedReceipt, context ...TableWriteContext) (int64, error) {
-	arena, allocator := tableWriteOptions(context)
-	size, reason := tableCookRegionReason(unsafe.Pointer(value), PlacedReceiptTableType(), nil, TableByteOrderLittle, true, arena, allocator)
-	return size, tableRefuseError(reason)
-}
-func PlacedReceiptCookFrom(value *PlacedReceipt, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
-	arena, allocator := tableWriteOptions(context)
-	return tableCookRegion(unsafe.Pointer(value), PlacedReceiptTableType(), buffer, order, false, arena, allocator) >= 0
+func PlacedReceiptCookFrom(value *PlacedReceipt, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), PlacedReceiptTableType(), buffer, order)
 }

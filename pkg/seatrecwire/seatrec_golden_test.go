@@ -1,423 +1,239 @@
-package seatrecwire_test
+package seatrecwire
 
 // TestSeatAndTokensRecordsGolden is the golden test of the seatrec
-// definitions (schemas/seatrec/seatrec.schema, schemas/seatrec/schema.lock,
-// schemas/seatrec/tables.baseline and the generated pkg/seatrecwire): the
-// seat environment, the tokens day file, the tokens bus roster and the
-// secrets place receipt round-trip through pkg/schemaread as the binary
-// wire, padded standard base64 of that wire and the schema JSON text form
-// (S1, S2); a value past each declared bound is refused by name on write and
-// on read, never clamped; a damaged image of each form is refused by name;
-// and generate.go pins the repository's schema pin.
+// definitions (schemas/seatrec): the seat environment, the tokens day file,
+// the tokens bus roster and the secrets place receipt round-trip as the
+// binary wire and as padded standard base64 of that wire, each read strictly
+// through pkg/schemaread (schemas/README.md; S1 and S2). A value past each
+// declared bound is refused by name on write and on read, and a damaged
+// image of each form is refused by name. Nothing is clamped. The sample of
+// each table is filled from the generated struct itself, so the test and the
+// definition cannot drift apart, and the SHA-256 of each sample's wire is
+// pinned so a change of layout or encoding shows as a changed digest.
 //
-// The split it pins (S1, as the coordinator read it for this card): every
-// record of the area is a VARIABLE table, because each holds text, and the
-// day file and the roster hold lists, that the Go code does not bound. Text
-// with no bound in the code is *string, a list is []T, and a string(N) or a
-// range is declared only where the code enforces it (the day and the row
-// date, 10 bytes; the counts, never negative). So a 100-row day file, a
-// 200-participant roster and text of a megabyte round-trip, where the
-// attempt-1 fixed tables refused them.
-//
-// The instances are written as JSON text and read by the generated reader,
-// the wire is the generated writer's, and the lock and the baseline are
-// files of the repository. The test uses no clock, no socket, no network and
-// no program, and no field or fixture holds a secret value: a secret is
-// named, and the names here are obviously fake.
+// The clock is the test clock: 1000.0 seconds, and the stamps the sample
+// carries are that instant. No field and no fixture holds a secret value.
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
+	"encoding/hex"
 	"errors"
-	"fmt"
 	"math"
-	"os"
-	"path/filepath"
-	"regexp"
+	"reflect"
 	"strings"
 	"testing"
-	"unsafe"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
-	wire "github.com/mas-bandwidth/nova-tools/pkg/seatrecwire"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// help is the command every refusal points at.
-const help = "go doc github.com/mas-bandwidth/nova-tools/pkg/seatrecwire"
+// testClock is the test clock, in seconds. It starts at 1000.0, never 0.
+const testClock = 1000.0
 
-// ---------------------------------------------------------------------------
-// The models: today's records, field for field, as the test states them.
-// Text the Go code treats as absent when empty is a string here, and a null
-// *string on the table; the day file's at and build, whose keys the Go code
-// requires while it accepts an empty value, are *string so present-and-empty
-// is kept apart from absent.
-
-type label struct {
-	Text string `json:"text,omitempty"`
+// ranged names the scalar fields that declare a min and max in the schema
+// (seatrec.schema). A max on the storage limit is a check the compiler
+// elides, because no value of the type can stand past it; the refusal the
+// test pins for those fields is the minimum.
+var ranged = map[string][2]int64{
+	"Version":    {1, 1},                 // SeatEnvironment: LoadSeatEnvironment accepts only 1
+	"Input":      {0, math.MaxInt64},     // DayLine: ParseDayFile refuses a negative
+	"Output":     {0, math.MaxInt64},     // DayLine
+	"CacheWrite": {0, math.MaxInt64},     // DayLine
+	"CacheRead":  {0, math.MaxInt64},     // DayLine
+	"Reasoning":  {0, math.MaxInt64},     // DayLine
+	"Rough":      {0, math.MaxInt64},     // DayLine: strconv.Atoi, then rough < 0 is refused
+	"Turns":      {0, math.MaxInt64},     // DayFile: a present turns is a non-negative count
 }
 
-type login struct {
-	Redis  string `json:"redis,omitempty"`
-	User   string `json:"user,omitempty"`
-	Store  string `json:"store,omitempty"`
-	As     string `json:"as,omitempty"`
-	Key    string `json:"key,omitempty"`
-	Sops   string `json:"sops,omitempty"`
-	Secret string `json:"secret,omitempty"`
+// knob is one declared bound of a table: a string length, an array count or a
+// ranged scalar, reached from the root value by path.
+type knob struct {
+	name     string
+	max, min int64
+	width    int // bytes of the scalar on the wire
+	// at returns the scalar the bound is on; array returns the string or element
+	// array beside it, nil for a ranged scalar.
+	at    func(root reflect.Value) reflect.Value
+	array func(root reflect.Value) reflect.Value
+	isLen bool
 }
 
-type seatEnv struct {
-	Version          *int32 `json:"version,omitempty"`
-	ForgeIdentity    string `json:"forge_identity,omitempty"`
-	NovaSprintRedis  string `json:"nova_sprint_redis,omitempty"`
-	NovaSprintServer string `json:"nova_sprint_server,omitempty"`
-	NovaBusRedis     string `json:"nova_bus_redis,omitempty"`
-	Login            *login `json:"login,omitempty"`
+type step struct {
+	field int
+	elem  bool
 }
 
-type dayLine struct {
-	Date       string  `json:"date,omitempty"`
-	Model      string  `json:"model,omitempty"`
-	Repo       string  `json:"repo,omitempty"`
-	Input      *int64  `json:"input,omitempty"`
-	Output     *int64  `json:"output,omitempty"`
-	CacheWrite *int64  `json:"cache_write,omitempty"`
-	CacheRead  *int64  `json:"cache_read,omitempty"`
-	Reasoning  *int64  `json:"reasoning,omitempty"`
-	Rough      int64   `json:"rough,omitempty"`
-	Basis      string  `json:"basis,omitempty"`
-	Sources    []label `json:"sources,omitempty"`
-}
-
-type dayFile struct {
-	Day     string    `json:"day,omitempty"`
-	At      *string   `json:"at,omitempty"`
-	Build   *string   `json:"build,omitempty"`
-	Turns   *int64    `json:"turns,omitempty"`
-	Sources []label   `json:"sources,omitempty"`
-	Rows    []dayLine `json:"rows,omitempty"`
-}
-
-type participant struct {
-	Name string `json:"name,omitempty"`
-	Lane string `json:"lane,omitempty"`
-}
-
-type roster struct {
-	Participants []participant `json:"participants,omitempty"`
-}
-
-type receipt struct {
-	Secret string `json:"secret,omitempty"`
-	Path   string `json:"path,omitempty"`
-	File   string `json:"file,omitempty"`
-	Head   string `json:"head,omitempty"`
-	Blob   string `json:"blob,omitempty"`
-	Stamp  string `json:"stamp,omitempty"`
-}
-
-func i64(v int64) *int64  { return &v }
-func i32(v int32) *int32  { return &v }
-func sp(v string) *string { return &v }
-
-// ---------------------------------------------------------------------------
-// Reading a loaded value back into its model.
-
-func str(slot *int64) string {
-	if *slot == 0 {
-		return ""
+func walk(v reflect.Value, path []step) reflect.Value {
+	for _, s := range path {
+		v = v.Field(s.field)
+		if s.elem {
+			v = v.Index(0)
+		}
 	}
-	v := wire.TableStringAt(slot)
-	return string(v.Data[:v.Length])
+	return v
 }
 
-func strp(slot *int64) *string {
-	if *slot == 0 {
-		return nil
-	}
-	s := str(slot)
-	return &s
-}
-
-func opt(v int64, present bool) *int64 {
-	if !present {
-		return nil
-	}
-	return &v
-}
-
-func fixedText(b []byte, n int32) string { return string(b[:n]) }
-
-func labels(l *wire.TableList[wire.SourceLabelRow]) []label {
-	var out []label
-	for i := int32(0); i < l.Count; i++ {
-		out = append(out, label{Text: str(&l.At(i).Text)})
+// knobs lists every declared bound reachable from t.
+func knobs(t reflect.Type, prefix string, path []step) []knob {
+	var out []knob
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		here := append(append([]step{}, path...), step{field: i})
+		name := prefix + f.Name
+		switch {
+		case f.Type.Kind() == reflect.Struct:
+			out = append(out, knobs(f.Type, name+".", here)...)
+		case f.Type.Kind() == reflect.Array && f.Type.Elem().Kind() == reflect.Uint8:
+			if _, ok := t.FieldByName(f.Name + "Length"); !ok {
+				continue
+			}
+			li, _ := t.FieldByName(f.Name + "Length")
+			lp := append(append([]step{}, path...), step{field: li.Index[0]})
+			ap := here
+			out = append(out, knob{name: name + "Length", max: int64(f.Type.Len()), width: 4, isLen: true,
+				at:    func(r reflect.Value) reflect.Value { return walk(r, lp) },
+				array: func(r reflect.Value) reflect.Value { return walk(r, ap) }})
+		case f.Type.Kind() == reflect.Array:
+			ci, ok := t.FieldByName(f.Name + "Count")
+			if !ok {
+				continue
+			}
+			cp := append(append([]step{}, path...), step{field: ci.Index[0]})
+			ap := here
+			out = append(out, knob{name: name + "Count", max: int64(f.Type.Len()), width: 4,
+				at:    func(r reflect.Value) reflect.Value { return walk(r, cp) },
+				array: func(r reflect.Value) reflect.Value { return walk(r, ap) }})
+			if f.Type.Elem().Kind() == reflect.Struct {
+				out = append(out, knobs(f.Type.Elem(), name+"[0].", append(append([]step{}, path...), step{field: i, elem: true}))...)
+			}
+		case f.Type.Kind() == reflect.Int32 || f.Type.Kind() == reflect.Int64:
+			b, ok := ranged[f.Name]
+			if !ok {
+				continue
+			}
+			w := 4
+			if f.Type.Kind() == reflect.Int64 {
+				w = 8
+			}
+			p := here
+			out = append(out, knob{name: name, min: b[0], max: b[1], width: w,
+				at: func(r reflect.Value) reflect.Value { return walk(r, p) }})
+		}
 	}
 	return out
 }
 
-func seatOf(v *wire.SeatEnvironment) seatEnv {
-	m := seatEnv{
-		ForgeIdentity: str(&v.ForgeIdentity), NovaSprintRedis: str(&v.NovaSprintRedis),
-		NovaSprintServer: str(&v.NovaSprintServer), NovaBusRedis: str(&v.NovaBusRedis),
-	}
-	if v.VersionPresent {
-		m.Version = i32(v.Version)
-	}
-	if l := wire.SeatLoginAt(&v.Login); l != nil {
-		m.Login = &login{Redis: str(&l.Redis), User: str(&l.User), Store: str(&l.Store), As: str(&l.AsName),
-			Key: str(&l.Key), Sops: str(&l.Sops), Secret: str(&l.Secret)}
-	}
-	return m
-}
-
-func dayOf(v *wire.DayFile) dayFile {
-	m := dayFile{
-		Day: fixedText(v.Day[:], v.DayLength), At: strp(&v.At), Build: strp(&v.Build),
-		Turns: opt(v.Turns, v.TurnsPresent), Sources: labels(&v.Sources),
-	}
-	for i := int32(0); i < v.Rows.Count; i++ {
-		r := v.Rows.At(i)
-		m.Rows = append(m.Rows, dayLine{
-			Date: fixedText(r.Date[:], r.DateLength), Model: str(&r.Model), Repo: str(&r.Repo),
-			Input: opt(r.Input, r.InputPresent), Output: opt(r.Output, r.OutputPresent),
-			CacheWrite: opt(r.CacheWrite, r.CacheWritePresent), CacheRead: opt(r.CacheRead, r.CacheReadPresent),
-			Reasoning: opt(r.Reasoning, r.ReasoningPresent), Rough: r.Rough, Basis: str(&r.Basis),
-			Sources: labels(&r.Sources),
-		})
-	}
-	return m
-}
-
-func rosterOf(v *wire.BusRoster) roster {
-	var m roster
-	for i := int32(0); i < v.Participants.Count; i++ {
-		p := v.Participants.At(i)
-		m.Participants = append(m.Participants, participant{Name: str(&p.Name), Lane: str(&p.Lane)})
-	}
-	return m
-}
-
-func receiptOf(v *wire.PlacedReceipt) receipt {
-	return receipt{Secret: str(&v.Secret), Path: str(&v.Path), File: str(&v.File),
-		Head: str(&v.Head), Blob: str(&v.Blob), Stamp: str(&v.Stamp)}
-}
-
-// ---------------------------------------------------------------------------
-// The constraints: what the Go code requires of each record, stated once for
-// the reader and the writer. A variable table reads an absent field as zero,
-// so a field the code requires is Required here; a declared bound is checked
-// again here so the writer refuses it by name before a byte is written.
-
-func seatConstraints(v *wire.SeatEnvironment, c *schemaread.Checker) {
-	// LoadSeatEnvironment accepts version 1 only (pkg/seatcred/environment.go:101).
-	c.Required("version", v.VersionPresent)
-	c.Bound("version", int64(v.Version), 1, 1)
-	l := wire.SeatLoginAt(&v.Login)
-	if l == nil {
-		return
-	}
-	// validate and StoreLogin.missing require every reference of a present
-	// login (environment.go:248-258, 275-277).
-	for _, f := range []struct {
-		name string
-		slot *int64
-	}{{"redis", &l.Redis}, {"user", &l.User}, {"store", &l.Store}, {"as", &l.AsName}, {"key", &l.Key}, {"sops", &l.Sops}, {"secret", &l.Secret}} {
-		c.Required("login."+f.name, str(f.slot) != "")
-	}
-}
-
-func dayConstraints(v *wire.DayFile, c *schemaread.Checker) {
-	// The version line requires day, at and build (dayfile.go:353-358); the
-	// day is a ValidDay name of 10 bytes (check.go:99, dayfile.go:372-374).
-	c.Required("day", v.DayLength > 0)
-	c.Text("day", fixedText(v.Day[:], min(v.DayLength, int32(len(v.Day)))), 10)
-	if v.DayLength > 10 {
-		c.Bound("day", int64(v.DayLength), 0, 10)
-	}
-	c.Required("at", v.At != 0)
-	c.Required("build", v.Build != 0)
-	if v.TurnsPresent {
-		c.Bound("turns", v.Turns, 0, math.MaxInt64) // dayfile.go:361-371
-	}
-	// A file with no rows is refused (dayfile.go:463-465).
-	c.Required("rows", v.Rows.Count > 0)
-	for i := int32(0); i < v.Rows.Count; i++ {
-		r := v.Rows.At(i)
-		c.Required("rows.date", r.DateLength > 0)
-		if r.DateLength > 10 {
-			c.Bound("rows.date", int64(r.DateLength), 0, 10)
-		}
-		for _, n := range []struct {
-			name    string
-			v       int64
-			present bool
-		}{
-			{"rows.input", r.Input, r.InputPresent}, {"rows.output", r.Output, r.OutputPresent},
-			{"rows.cache_write", r.CacheWrite, r.CacheWritePresent}, {"rows.cache_read", r.CacheRead, r.CacheReadPresent},
-			{"rows.reasoning", r.Reasoning, r.ReasoningPresent}, {"rows.rough", r.Rough, true},
-		} {
-			if n.present {
-				c.Bound(n.name, n.v, 0, math.MaxInt64) // dayfile.go:408-418, 421-426
+// fill sets every field of v to a short valid value: strings of three bytes,
+// two elements per array (one when the bound is one), 7 in a ranged scalar
+// when 7 is inside the range and the range's minimum otherwise, true in a
+// bool.
+func fill(v reflect.Value, seed *int) {
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f, fv := t.Field(i), v.Field(i)
+		switch {
+		case f.Type.Kind() == reflect.Struct:
+			fill(fv, seed)
+		case f.Type.Kind() == reflect.Array && f.Type.Elem().Kind() == reflect.Uint8:
+			if _, ok := t.FieldByName(f.Name + "Length"); !ok {
+				continue
 			}
-		}
-		// An empty sources cell is refused (dayfile.go:432-436).
-		c.Required("rows.sources", r.Sources.Count > 0)
-	}
-}
-
-// slugOf is laneNames's rule (internal/tokens/bus.go:280-283): a lane is
-// "from-<slug>" with a non-empty slug.
-func slugOf(lane string) string {
-	slug, ok := strings.CutPrefix(lane, "from-")
-	if !ok {
-		return ""
-	}
-	return slug
-}
-
-func rosterConstraints(v *wire.BusRoster, c *schemaread.Checker) {
-	// A roster that yields no lane is refused (bus.go:285-287).
-	lanes := 0
-	for i := int32(0); i < v.Participants.Count; i++ {
-		if slugOf(str(&v.Participants.At(i).Lane)) != "" {
-			lanes++
+			*seed++
+			s := []byte{byte('a' + *seed%26), byte('a' + (*seed+1)%26), byte('a' + (*seed+2)%26)}
+			n := min(3, fv.Len())
+			for j := 0; j < n; j++ {
+				fv.Index(j).SetUint(uint64(s[j]))
+			}
+			v.FieldByName(f.Name + "Length").SetInt(int64(n))
+		case f.Type.Kind() == reflect.Array:
+			if _, ok := t.FieldByName(f.Name + "Count"); !ok {
+				continue
+			}
+			n := min(2, fv.Len())
+			v.FieldByName(f.Name + "Count").SetInt(int64(n))
+			if f.Type.Elem().Kind() == reflect.Struct {
+				for j := 0; j < n; j++ {
+					fill(fv.Index(j), seed)
+				}
+			}
+		case f.Type.Kind() == reflect.Int32 || f.Type.Kind() == reflect.Int64:
+			if strings.HasSuffix(f.Name, "Length") || strings.HasSuffix(f.Name, "Count") && f.Name != "StepCount" {
+				continue
+			}
+			*seed++
+			n := int64(7)
+			if b, ok := ranged[f.Name]; ok && (n < b[0] || n > b[1]) {
+				n = b[0]
+			}
+			fv.SetInt(n)
+		case f.Type.Kind() == reflect.Bool:
+			fv.SetBool(true)
+		case f.Type.Kind() == reflect.Float64:
+			fv.SetFloat(1000.5)
 		}
 	}
-	c.Required("participants.lane", lanes > 0)
 }
 
-// receiptConstraints is empty on purpose: readReceipts
-// (pkg/secrets/place.go:448-482) checks no field, so the table refuses no
-// receipt line today's reader accepts.
-func receiptConstraints(*wire.PlacedReceipt, *schemaread.Checker) {}
-
-// ---------------------------------------------------------------------------
-// The harness: one generated table behind pkg/schemaread.
-
-// doc is one value and the region that holds it: text and lists are
-// self-relative references into that region, so the value is never copied
-// out of it.
-type doc[T any] struct {
-	v      *T
-	region []byte
+// clockStamp is the test clock as an RFC3339 instant: 1000.0 seconds.
+func clockStamp() string {
+	return time.Unix(int64(testClock), 0).UTC().Format(time.RFC3339)
 }
 
-type table[T any] struct {
-	name          string
-	info          func() *wire.TableTypeInfo
-	measureReason func([]byte) (int64, error)
-	load          func(region, w []byte, r *wire.TableReport) *T
-	fromJSON      func([]byte, *wire.TableReport) (*T, []byte, bool)
-	measure       func(*T, ...wire.TableWriteContext) int64
-	save          func(*T, []byte, ...wire.TableWriteContext) int64
-	jsonMeasure   func(*T, ...wire.TableAllocator) int64
-	toJSON        func(*T, []byte, ...wire.TableAllocator) int64
-	saveText      func(*T, ...wire.TableWriteContext) (string, error)
-	loadText      func(string, *wire.TableReport) (*T, error)
-	constraints   func(*T, *schemaread.Checker)
-}
-
-type builder[T any] interface {
-	Init(...wire.TableAllocator) bool
-	Lock() bool
-	AsConst() *T
-	Region() []byte
-}
-
-// viaJSON is a generated builder filled from JSON text by the generated
-// reader, then locked into its region.
-func viaJSON[T any, B any, PB interface {
-	*B
-	builder[T]
-}](from func(*B, []byte, *wire.TableReport) bool) func([]byte, *wire.TableReport) (*T, []byte, bool) {
-	return func(text []byte, r *wire.TableReport) (*T, []byte, bool) {
-		b := PB(new(B))
-		if !b.Init() || !from((*B)(b), text, r) || !b.Lock() {
-			return nil, nil, false
-		}
-		return b.AsConst(), b.Region(), true
+func setText(dst []byte, length *int32, s string) {
+	for i := range dst {
+		dst[i] = 0
 	}
+	copy(dst, s)
+	*length = int32(len(s))
 }
 
-// region is an aligned buffer of n bytes for a region load.
-func region(n int64) []byte {
-	raw := make([]byte, n+63)
-	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
-	return raw[off : off+uintptr(n)]
+// fixedOps is the generated fixed-form surface of one table.
+type fixedOps[T any] struct {
+	name      string
+	help      string
+	measure   func(count int64) int64
+	save      func([]T, []byte) int64
+	saveWhy   func([]T, []byte) (int64, error)
+	load      func([]T, []byte, []TableFixedEntry, *TableReport) int64
+	planCount int
+	body      func([]byte, *T)
+	recBytes  int64
+	reset     func(*T)
+	after     func(*T)
+	wire      string // the pinned SHA-256 of the sample's wire
 }
 
-func report(r *wire.TableReport) schemaread.Report {
-	return schemaread.Report{
-		Unknown:      int(r.Unknown),
-		KindMismatch: int(r.KindMismatch),
-		Clamped:      int(r.Clamped),
-		// a key given twice in the JSON text is ambiguous: refused, never last-wins
-		Malformed: r.Malformed || r.Duplicate > 0,
-		Reason:    r.Reason,
-	}
-}
-
-func (tb table[T]) saveWire(v *T) []byte {
-	n := tb.measure(v)
-	if n < 0 {
-		return nil
-	}
-	buf := make([]byte, n)
-	if tb.save(v, buf) != n {
-		return nil
-	}
-	return buf
-}
-
-func (tb table[T]) codec() *schemaread.Codec[doc[T]] {
-	return &schemaread.Codec[doc[T]]{
-		Name:  tb.name,
-		Help:  help,
-		Reset: func(d *doc[T]) { *d = doc[T]{} },
-		Measure: func(w []byte) error {
-			_, err := tb.measureReason(w)
-			return err
+// codec is the strict read and write over the generated fixed functions.
+// Refuse every clamp, refuse every value past a declared bound before a byte
+// is written (the generated writer checks them too and answers invalid_value),
+// and read the one form byte of the fixed form.
+func (o fixedOps[T]) codec(ks []knob) *schemaread.Codec[T] {
+	return &schemaread.Codec[T]{
+		Name:  o.name,
+		Help:  o.help,
+		Reset: o.reset,
+		Forms: []byte{TableFixedForm},
+		LoadWire: func(v *T, wire []byte) schemaread.Report {
+			vals := make([]T, 1)
+			var rep TableReport
+			n := o.load(vals, wire, make([]TableFixedEntry, o.planCount), &rep)
+			r := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped),
+				Malformed: rep.Malformed, Reason: rep.Reason}
+			if n != 1 && r.Reason == "" && !r.Malformed {
+				r.Malformed = true
+			}
+			*v = vals[0]
+			return r
 		},
-		LoadWire: func(d *doc[T], w []byte) schemaread.Report {
-			n, err := tb.measureReason(w)
-			if err != nil || n < 0 {
-				return schemaread.Report{Malformed: true}
-			}
-			var r wire.TableReport
-			d.region = region(n)
-			if d.v = tb.load(d.region, w, &r); d.v == nil {
-				return schemaread.Report{Malformed: true, Reason: r.Reason}
-			}
-			return report(&r)
-		},
-		LoadJSON: func(d *doc[T], text []byte) schemaread.Report {
-			var r wire.TableReport
-			v, reg, ok := tb.fromJSON(text, &r)
-			if !ok {
-				return schemaread.Report{Malformed: true, Reason: r.Reason}
-			}
-			d.v, d.region = v, reg
-			return report(&r)
-		},
-		Constraints: func(d *doc[T], c *schemaread.Checker) {
-			c.Required("record", d.v != nil)
-			if d.v != nil {
-				tb.constraints(d.v, c)
-			}
-		},
-		SaveWire: func(d *doc[T]) []byte { return tb.saveWire(d.v) },
-		SaveJSON: func(d *doc[T]) []byte {
-			n := tb.jsonMeasure(d.v)
-			if n < 0 {
-				return nil
-			}
-			buf := make([]byte, n)
-			if tb.toJSON(d.v, buf) != n {
+		Constraints: func(v *T, c *schemaread.Checker) { check(reflect.ValueOf(v).Elem(), ks, c) },
+		SaveWire: func(v *T) []byte {
+			buf := make([]byte, o.measure(1))
+			if n := o.save([]T{*v}, buf); n < 0 {
 				return nil
 			}
 			return buf
@@ -425,478 +241,266 @@ func (tb table[T]) codec() *schemaread.Codec[doc[T]] {
 	}
 }
 
-var (
-	seatTable = table[wire.SeatEnvironment]{
-		name: "SEAT", info: wire.SeatEnvironmentTableType, measureReason: wire.SeatEnvironmentLoadMeasureReason,
-		load: wire.SeatEnvironmentLoad, fromJSON: viaJSON[wire.SeatEnvironment, wire.SeatEnvironmentBuilder](wire.SeatEnvironmentFromJson),
-		measure: wire.SeatEnvironmentMeasure, save: wire.SeatEnvironmentSave,
-		jsonMeasure: wire.SeatEnvironmentToJsonMeasure, toJSON: wire.SeatEnvironmentToJson,
-		saveText: wire.SeatEnvironmentSaveText, loadText: wire.SeatEnvironmentLoadText, constraints: seatConstraints,
+// check states the bounds once: a length or count past its bound, a ranged
+// scalar outside its range, text that is not UTF-8. A path through an array
+// element is checked on element 0, which the sample fills.
+func check(root reflect.Value, ks []knob, c *schemaread.Checker) {
+	for _, k := range ks {
+		n := k.at(root).Int()
+		lo := k.min
+		if k.array != nil {
+			lo = 0
+		}
+		c.Bound(k.name, n, lo, k.max)
+		if k.isLen && n >= 0 && n <= k.max {
+			b := make([]byte, n)
+			for i := range b {
+				b[i] = byte(k.array(root).Index(i).Uint())
+			}
+			c.Text(k.name, string(b), int(k.max))
+		}
 	}
-	dayTable = table[wire.DayFile]{
-		name: "DAYFILE", info: wire.DayFileTableType, measureReason: wire.DayFileLoadMeasureReason,
-		load: wire.DayFileLoad, fromJSON: viaJSON[wire.DayFile, wire.DayFileBuilder](wire.DayFileFromJson),
-		measure: wire.DayFileMeasure, save: wire.DayFileSave,
-		jsonMeasure: wire.DayFileToJsonMeasure, toJSON: wire.DayFileToJson,
-		saveText: wire.DayFileSaveText, loadText: wire.DayFileLoadText, constraints: dayConstraints,
-	}
-	rosterTable = table[wire.BusRoster]{
-		name: "ROSTER", info: wire.BusRosterTableType, measureReason: wire.BusRosterLoadMeasureReason,
-		load: wire.BusRosterLoad, fromJSON: viaJSON[wire.BusRoster, wire.BusRosterBuilder](wire.BusRosterFromJson),
-		measure: wire.BusRosterMeasure, save: wire.BusRosterSave,
-		jsonMeasure: wire.BusRosterToJsonMeasure, toJSON: wire.BusRosterToJson,
-		saveText: wire.BusRosterSaveText, loadText: wire.BusRosterLoadText, constraints: rosterConstraints,
-	}
-	receiptTable = table[wire.PlacedReceipt]{
-		name: "RECEIPT", info: wire.PlacedReceiptTableType, measureReason: wire.PlacedReceiptLoadMeasureReason,
-		load: wire.PlacedReceiptLoad, fromJSON: viaJSON[wire.PlacedReceipt, wire.PlacedReceiptBuilder](wire.PlacedReceiptFromJson),
-		measure: wire.PlacedReceiptMeasure, save: wire.PlacedReceiptSave,
-		jsonMeasure: wire.PlacedReceiptToJsonMeasure, toJSON: wire.PlacedReceiptToJson,
-		saveText: wire.PlacedReceiptSaveText, loadText: wire.PlacedReceiptLoadText, constraints: receiptConstraints,
-	}
-)
-
-var forms = []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON}
-
-func b64(b []byte) []byte { return []byte(base64.StdEncoding.EncodeToString(b)) }
-
-func jsonOf(t *testing.T, m any) []byte {
-	t.Helper()
-	b, err := json.Marshal(m)
-	require.NoError(t, err)
-	return b
 }
 
-// read is a model written as JSON text and read by the generated reader.
-func read[T any](t *testing.T, r *schemaread.Reader[doc[T]], m any) doc[T] {
+// image returns the one-record wire of v.
+func image[T any](t *testing.T, o fixedOps[T], v T) []byte {
 	t.Helper()
-	d, res, err := r.Read(jsonOf(t, m))
-	require.NoError(t, err)
-	require.Equal(t, schemaread.FormJSON, res.Form)
-	return d
+	buf := make([]byte, o.measure(1))
+	n, err := o.saveWhy([]T{v}, buf)
+	require.NoError(t, err, o.name)
+	require.EqualValues(t, len(buf), n, o.name)
+	return buf
 }
 
-func write[T any](t *testing.T, r *schemaread.Reader[doc[T]], d doc[T], form schemaread.Form) []byte {
+// reasonOf is the name a refusal carries.
+func reasonOf(t *testing.T, err error) string {
 	t.Helper()
-	out, err := r.Write(&d, form)
-	require.NoError(t, err, form)
-	require.NotEmpty(t, out, "%s: the generated writer wrote it", form)
-	return out
-}
-
-// roundTrip writes m in every form and reads each back as m (S2), and pins
-// the wire as canonical and the base64 text as padded standard base64 of it.
-func roundTrip[T any, M any](t *testing.T, tb table[T], of func(*T) M, m M) {
-	t.Helper()
-	r := schemaread.NewReader(tb.codec())
-	d := read(t, r, m)
-	require.Equal(t, m, of(d.v), "%s: the JSON text reads as written", tb.name)
-	for _, form := range forms {
-		out := write(t, r, d, form)
-		got, res, err := r.Read(out)
-		require.NoError(t, err, "%s %s", tb.name, form)
-		assert.Equal(t, form, res.Form)
-		assert.Zero(t, res.Unknown)
-		assert.Equal(t, m, of(got.v), "%s %s", tb.name, form)
-	}
-	w := write(t, r, d, schemaread.FormBinary)
-	assert.Equal(t, byte(1), w[0], "%s: the wire leads with its form byte", tb.name)
-	again, _, err := r.Read(w)
-	require.NoError(t, err)
-	assert.Equal(t, w, write(t, r, again, schemaread.FormBinary), "%s: a saved wire re-saves to the same bytes", tb.name)
-	assert.Equal(t, b64(w), write(t, r, d, schemaread.FormBase64), "%s: base64 is padded standard base64 of the wire", tb.name)
-	// The generated text transport is the same base64, and loads back to the
-	// same wire.
-	text, err := tb.saveText(d.v)
-	require.NoError(t, err)
-	assert.Equal(t, string(b64(w)), text, tb.name)
-	back, err := tb.loadText(text, nil)
-	require.NoError(t, err)
-	assert.Equal(t, w, tb.saveWire(back), tb.name)
-	assert.Equal(t, uint64(2), r.Counts().Reads(schemaread.FormBinary), "%s: the per-form counter moves on the form read", tb.name)
-	assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBase64))
-	assert.Equal(t, uint64(2), r.Counts().Reads(schemaread.FormJSON))
-}
-
-// refusal is the reason a read or a write refused with, by name; "" when
-// it did not refuse.
-func refusal(t *testing.T, name string, err error) string {
-	t.Helper()
-	if err == nil {
-		return ""
-	}
 	var ref *schemaread.Refusal
-	require.True(t, errors.As(err, &ref), "every refusal is a *schemaread.Refusal: %v", err)
-	assert.True(t, strings.HasPrefix(err.Error(), name+" REFUSED: "), err.Error())
-	assert.True(t, strings.HasSuffix(err.Error(), "; run: "+help), err.Error())
-	if ref.Field != "" {
-		return ref.Reason + " (" + ref.Field + ")"
-	}
+	require.True(t, errors.As(err, &ref), "a refusal by name: %v", err)
+	require.NotEmpty(t, ref.Reason)
 	return ref.Reason
 }
 
-func readRefusal[T any](t *testing.T, r *schemaread.Reader[doc[T]], name string, in []byte) string {
+// goldenFixed runs the whole contract over one table.
+func goldenFixed[T any](t *testing.T, o fixedOps[T]) {
 	t.Helper()
-	got, _, err := r.Read(in)
-	if err != nil {
-		assert.Nil(t, got.v, "a refused read returns nothing")
+	var sample T
+	ks := knobs(reflect.TypeOf(sample), "", nil)
+	require.NotEmpty(t, ks, o.name+" declares a bound")
+	seed := 0
+	fill(reflect.ValueOf(&sample).Elem(), &seed)
+	if o.after != nil {
+		o.after(&sample)
 	}
-	return refusal(t, name, err)
-}
 
-// refusesDamage reads the damaged images of a good wire and its JSON text
-// and asserts each is refused by name.
-func refusesDamage[T any](t *testing.T, tb table[T], good, text []byte) {
-	t.Helper()
-	r := schemaread.NewReader(tb.codec())
-	newer := bytes.Clone(good)
-	newer[0] = 9
-	for _, tc := range []struct {
-		name   string
-		in     []byte
+	rd := schemaread.NewReader(o.codec(ks))
+	wire, err := rd.Write(&sample, schemaread.FormBinary)
+	require.NoError(t, err, o.name)
+	require.Equal(t, wire, image(t, o, sample), o.name)
+	text, err := rd.Write(&sample, schemaread.FormBase64)
+	require.NoError(t, err, o.name)
+	assert.Equal(t, base64.StdEncoding.EncodeToString(wire), string(text), o.name+": base64 is padded standard base64 of the wire")
+	digest := sha256.Sum256(wire)
+	assert.Equal(t, o.wire, hex.EncodeToString(digest[:]), o.name+": the wire of the sample changed (pin it again only for an agreed layout change)")
+
+	// Both forms read back to the same value, and each read is counted once on
+	// the form it arrived in.
+	for _, in := range []struct {
+		form schemaread.Form
+		data []byte
+	}{{schemaread.FormBinary, wire}, {schemaread.FormBase64, text}} {
+		got, res, err := rd.Read(in.data)
+		require.NoError(t, err, o.name+" "+in.form.String())
+		assert.Equal(t, in.form, res.Form, o.name)
+		assert.True(t, reflect.DeepEqual(sample, got), "%s %s: the read value differs", o.name, in.form)
+	}
+	assert.EqualValues(t, 1, rd.Counts().Reads(schemaread.FormBinary), o.name)
+	assert.EqualValues(t, 1, rd.Counts().Reads(schemaread.FormBase64), o.name)
+
+	// A value past each declared bound is refused by name on write: by the
+	// reader's facade and by the generated writer, which answers invalid_value.
+	for _, k := range ks {
+		for _, over := range overs(k) {
+			bad := sample
+			k.at(reflect.ValueOf(&bad).Elem()).SetInt(over)
+			_, err := rd.Write(&bad, schemaread.FormBinary)
+			require.Error(t, err, "%s %s=%d is refused on write", o.name, k.name, over)
+			if k.isLen || k.array != nil {
+				assert.Equal(t, schemaread.ReasonClamped, reasonOf(t, err), "%s %s", o.name, k.name)
+			}
+			_, err = o.saveWhy([]T{bad}, make([]byte, o.measure(1)))
+			require.ErrorIs(t, err, TableRefuseInvalidValue, "%s %s=%d: the generated writer refuses", o.name, k.name, over)
+		}
+	}
+
+	// A wire carrying a value past a bound is refused by name on read, never
+	// clamped: the scalar's place on the wire is found by writing the sample
+	// twice with the scalar at two legal values and diffing the images. A
+	// bound with only one legal value is found by the encoding of that value.
+	for _, k := range ks {
+		at := wireOffset(t, o, sample, k, rd)
+		for _, over := range overs(k) {
+			bad := append([]byte{}, wire...)
+			put(bad[at:at+k.width], over)
+			for _, in := range [][]byte{bad, []byte(base64.StdEncoding.EncodeToString(bad))} {
+				got, _, err := rd.Read(in)
+				require.Error(t, err, "%s %s=%d on the wire is refused", o.name, k.name, over)
+				assert.Contains(t, []string{schemaread.ReasonClamped, schemaread.ReasonMalformed, TableFixedReasonTextIllFormed}, reasonOf(t, err), "%s %s", o.name, k.name)
+				assert.True(t, reflect.DeepEqual(got, *new(T)), "%s %s: a refused read returns nothing", o.name, k.name)
+			}
+		}
+	}
+
+	// A damaged image of each form is refused by name.
+	hashAt, layoutAt := TableFixedHashAt, TableFixedHeaderBytes
+	damaged := []struct {
+		what   string
+		mutate func([]byte) []byte
 		reason string
 	}{
-		{"truncated wire", good[:len(good)-1], schemaread.ReasonWireDamaged},
-		{"truncated to the form byte", good[:1], schemaread.ReasonWireDamaged},
-		{"trailing junk", append(bytes.Clone(good), 0, 1), schemaread.ReasonWireDamaged},
-		{"a form this reader does not know", newer, schemaread.ReasonUnknownForm},
-		{"the same as base64", b64(newer), schemaread.ReasonUnknownForm},
-		{"truncated base64", b64(good)[:len(b64(good))-3], schemaread.ReasonMalformed},
-		{"bad base64", append([]byte("!"), b64(good)[1:]...), schemaread.ReasonUnknownForm},
-		{"empty", nil, schemaread.ReasonUnknownForm},
-		{"truncated JSON text", bytes.TrimSpace(text)[:len(bytes.TrimSpace(text))-1], schemaread.ReasonMalformed},
-		{"JSON text that does not parse", []byte(`{"x": `), schemaread.ReasonMalformed},
-	} {
-		assert.Equal(t, tc.reason, readRefusal(t, r, tb.name, tc.in), "%s: %s", tb.name, tc.name)
+		{"previous form byte", func(b []byte) []byte { b[0] = 1; return b }, schemaread.ReasonUnknownForm},
+		{"message form byte", func(b []byte) []byte { b[0] = 2; return b }, schemaread.ReasonUnknownForm},
+		{"newer form byte", func(b []byte) []byte { b[0] = 9; return b }, schemaread.ReasonUnknownForm},
+		{"reserved byte set", func(b []byte) []byte { b[3] = 1; return b }, TableFixedReasonReservedNotZero},
+		{"layout hash flipped", func(b []byte) []byte { b[hashAt] ^= 0xff; return b }, TableFixedReasonLayoutUnknown},
+		{"layout length past the image", func(b []byte) []byte { binary.LittleEndian.PutUint32(b[layoutAt:], 1<<30); return b }, TableFixedReasonLayoutMalformed},
+		{"layout byte flipped", func(b []byte) []byte { b[layoutAt+4] ^= 0xff; return b }, TableFixedReasonLayoutMalformed},
+		{"record hash flipped", func(b []byte) []byte { b[len(b)-int(o.recBytes)] ^= 0xff; return b }, TableFixedReasonNoLayout},
+		{"last byte cut", func(b []byte) []byte { return b[:len(b)-1] }, TableFixedReasonTruncated},
+		{"header only", func(b []byte) []byte { return b[:TableFixedHeaderBytes] }, TableFixedReasonTruncated},
+		{"a second record", func(b []byte) []byte { return append(b, b[len(b)-int(o.recBytes):]...) }, TableFixedReasonBatchTooLarge},
 	}
-	for i := range len(good) {
-		assert.NotEmpty(t, readRefusal(t, r, tb.name, good[:i]), "%s: every truncation is refused, never read as a shorter record: cut at %d", tb.name, i)
+	for _, d := range damaged {
+		bad := d.mutate(append([]byte{}, wire...))
+		for _, in := range []struct {
+			form schemaread.Form
+			data []byte
+		}{{schemaread.FormBinary, bad}, {schemaread.FormBase64, []byte(base64.StdEncoding.EncodeToString(bad))}} {
+			_, res, err := rd.Read(in.data)
+			require.Error(t, err, "%s %s %s", o.name, in.form, d.what)
+			assert.Equal(t, d.reason, reasonOf(t, err), "%s %s %s", o.name, in.form, d.what)
+			assert.Equal(t, in.form, res.Form, "%s %s", o.name, d.what)
+		}
 	}
-	assert.Positive(t, r.Counts().Refused(schemaread.ReasonWireDamaged))
+	// Damage of the text form itself: bytes that are not base64, a missing
+	// pad, and nothing at all.
+	ts := string(text)
+	for _, bad := range []string{ts[:len(ts)-1], ts[:5] + "!" + ts[6:], ts + "A"} {
+		_, res, err := rd.Read([]byte(bad))
+		require.Error(t, err, o.name+" damaged base64")
+		assert.Equal(t, schemaread.ReasonMalformed, reasonOf(t, err), o.name)
+		assert.Equal(t, schemaread.FormBase64, res.Form, o.name)
+	}
+	_, _, err = rd.Read(nil)
+	require.Error(t, err, o.name)
+	assert.Equal(t, schemaread.ReasonUnknownForm, reasonOf(t, err), o.name)
+	assert.NotZero(t, rd.Counts().Refused(TableFixedReasonTruncated), o.name+": refusals are counted by name")
 }
 
-// duplicated is JSON text with its first key given twice.
-func duplicated(text []byte) []byte {
-	i := bytes.IndexByte(text, ',')
-	return append(append(bytes.Clone(text[:i]), ','), text[1:]...)
+// overs are the values past a bound: one over the maximum, and one under the
+// minimum. A maximum on the storage limit has no representable value past it.
+func overs(k knob) []int64 {
+	if k.array != nil {
+		return []int64{k.max + 1, -1}
+	}
+	storage := int64(math.MaxInt32)
+	if k.width == 8 {
+		storage = math.MaxInt64
+	}
+	out := []int64{}
+	if k.max < storage {
+		out = append(out, k.max+1)
+	}
+	return append(out, k.min-1)
 }
 
-// pastBound is the wire image good holds with its string of exactly the n
-// bytes s grown by one byte, its length prefix rewritten: the image of a
-// writer that ignored the bound. The table wire writes a string(N) as kind
-// 12, the LEB128 length and the bytes, so the image differs from good only
-// there.
-func pastBound(t *testing.T, good []byte, s string) []byte {
+func put(b []byte, v int64) {
+	if len(b) == 8 {
+		binary.LittleEndian.PutUint64(b, uint64(v))
+		return
+	}
+	binary.LittleEndian.PutUint32(b, uint32(int32(v)))
+}
+
+// wireOffset finds where k lives in the image. Two legal values diff to the
+// first byte that moves. A bound with a single legal value is the slot whose
+// encoding, patched one under the minimum, the reader refuses as clamped.
+// The same bytes can sit in slack beside a bool, and that slot still loads.
+func wireOffset[T any](t *testing.T, o fixedOps[T], sample T, k knob, rd *schemaread.Reader[T]) int {
 	t.Helper()
-	enc := func(s string) []byte { return append(binary.AppendUvarint([]byte{12}, uint64(len(s))), s...) }
-	require.Equal(t, 1, bytes.Count(good, enc(s)), "the at-bound string %q is in the image once", s)
-	return bytes.Replace(good, enc(s), enc(s+"9"), 1)
-}
-
-// hostile is good with its one occurrence of the eight little-endian bytes
-// of from replaced by those of to.
-func hostile(t *testing.T, good []byte, from, to int64) []byte {
-	t.Helper()
-	le := func(v int64) []byte { return binary.LittleEndian.AppendUint64(nil, uint64(v)) }
-	require.Equal(t, 1, bytes.Count(good, le(from)), "the marker %d is in the image once", from)
-	return bytes.Replace(good, le(from), le(to), 1)
-}
-
-// edited is JSON text with one value replaced.
-func edited(t *testing.T, text []byte, from, to string) []byte {
-	t.Helper()
-	require.Equal(t, 1, bytes.Count(text, []byte(from)), "%q is in the text once", from)
-	return bytes.Replace(text, []byte(from), []byte(to), 1)
-}
-
-// ---------------------------------------------------------------------------
-// The samples. Every name is obviously fake, and no secret value appears.
-
-func sampleSeat() seatEnv {
-	return seatEnv{
-		Version:       i32(1),
-		ForgeIdentity: "/home/example-seat/.forge",
-		NovaBusRedis:  "127.0.0.1:6381", NovaSprintServer: "sprint.example.test:7070",
-		Login: &login{Redis: "store.example.test:6390", User: "example-seat", Store: "/srv/example-store",
-			As: "example-seat", Key: "/srv/example-store/keys/example-seat.txt", Sops: "/srv/example-store/.sops.yaml",
-			Secret: "EXAMPLE_FAKE_SECRET_NAME"},
+	if k.array != nil || k.max >= k.min+2 {
+		a, b := sample, sample
+		k.at(reflect.ValueOf(&a).Elem()).SetInt(k.min + 1)
+		k.at(reflect.ValueOf(&b).Elem()).SetInt(k.min + 2)
+		ia, ib := image(t, o, a), image(t, o, b)
+		for i := range ia {
+			if ia[i] != ib[i] {
+				return i
+			}
+		}
+		require.Failf(t, "identical", "%s %s: the two images are identical", o.name, k.name)
+		return 0
 	}
-}
-
-func sampleRow(day string, i int) dayLine {
-	return dayLine{
-		Date: day, Model: fmt.Sprintf("example-model-%03d", i), Repo: "example/repo",
-		Input: i64(1000 + int64(i)), Output: i64(0), CacheRead: i64(math.MaxInt64), Reasoning: i64(7),
-		Rough: int64(i), Basis: "America/New_York", Sources: []label{{"claude"}, {"opencode"}},
+	cur := k.at(reflect.ValueOf(&sample).Elem()).Int()
+	img := image(t, o, sample)
+	needle := make([]byte, k.width)
+	put(needle, cur)
+	var hits []int
+	for i := 0; i+k.width <= len(img); i++ {
+		if !bytes.Equal(img[i:i+k.width], needle) {
+			continue
+		}
+		bad := append([]byte{}, img...)
+		put(bad[i:i+k.width], k.min-1)
+		_, _, err := rd.Read(bad)
+		if err == nil || reasonOf(t, err) != schemaread.ReasonClamped {
+			continue
+		}
+		hits = append(hits, i)
 	}
+	require.Len(t, hits, 1, "%s %s: want one wire slot that refuses %d", o.name, k.name, k.min-1)
+	return hits[0]
 }
-
-func sampleDay(rows int) dayFile {
-	d := dayFile{Day: "2026-10-16", At: sp("2026-10-16T23:00:00Z"), Build: sp("v1.5.0-example"), Turns: i64(42),
-		Sources: []label{{"claude"}, {"codex"}, {"opencode"}}}
-	for i := range rows {
-		d.Rows = append(d.Rows, sampleRow(d.Day, i))
-	}
-	return d
-}
-
-func sampleRoster(n int) roster {
-	var r roster
-	for i := range n {
-		r.Participants = append(r.Participants, participant{Name: fmt.Sprintf("Example %03d", i), Lane: fmt.Sprintf("from-example-%03d", i)})
-	}
-	return r
-}
-
-func sampleReceipt() receipt {
-	return receipt{Secret: "EXAMPLE_FAKE_SECRET_NAME", Path: "/etc/example/fake.env", File: "example-seat.yaml",
-		Head: strings.Repeat("0123456789abcdef", 4), Blob: strings.Repeat("fedcba9876", 4), Stamp: "1970-01-01T00:16:40Z"}
-}
-
-// ---------------------------------------------------------------------------
 
 func TestSeatAndTokensRecordsGolden(t *testing.T) {
 	t.Parallel()
 
-	t.Run("generate.go pins the repository's schema pin", func(t *testing.T) {
+	t.Run("SeatEnvironment", func(t *testing.T) {
 		t.Parallel()
-		pin := regexp.MustCompile(`(?m)^//go:generate go run github\.com/mas-bandwidth/schema/v2/cmd/schema@(\S+) generate --lang go --out \. \.\./\.\./schemas/(\S+)$`)
-		own, err := os.ReadFile("generate.go")
-		require.NoError(t, err)
-		m := pin.FindSubmatch(own)
-		require.NotNil(t, m, "generate.go holds the pin line")
-		assert.Equal(t, "seatrec", string(m[2]))
-		pong, err := os.ReadFile(filepath.Join("..", "pongwire", "generate.go"))
-		require.NoError(t, err)
-		pm := pin.FindSubmatch(pong)
-		require.NotNil(t, pm)
-		assert.Equal(t, string(pm[1]), string(m[1]), "one compiler writes the whole tree (schemas/README.md, the pin)")
+		goldenFixed(t, fixedOps[SeatEnvironment]{name: "SEATENVIRONMENT", help: "nova-up -h",
+			measure: SeatEnvironmentFixedMeasure, save: SeatEnvironmentFixedSave,
+			saveWhy: SeatEnvironmentFixedSaveReason, load: SeatEnvironmentFixedLoad,
+			planCount: int(SeatEnvironmentFixedPlan.Count), body: SeatEnvironmentFixedWriteBody,
+			recBytes: SeatEnvironmentFixedRecordBytes, reset: SeatEnvironmentReset,
+			wire: "b81dbc3d74547450d4a948b52d01c3e6facc5703e1ee9d89e3936f129cf530ae"})
 	})
-
-	t.Run("the definitions are variable tables with the code's bounds", func(t *testing.T) {
+	t.Run("DayFile", func(t *testing.T) {
 		t.Parallel()
-		for _, info := range []*wire.TableTypeInfo{
-			wire.SeatEnvironmentTableType(), wire.SeatLoginTableType(), wire.SourceLabelTableType(), wire.DayLineTableType(),
-			wire.DayFileTableType(), wire.ParticipantTableType(), wire.BusRosterTableType(), wire.PlacedReceiptTableType(),
-		} {
-			assert.True(t, info.Variable, "%s is a variable table (S1): it holds text or lists the code does not bound", info.Name)
-			for _, f := range info.Fields {
-				switch {
-				case f.Name == "day" || f.Name == "date":
-					assert.Equal(t, int32(10), f.ArrayBound, "%s.%s: ValidDay's length", info.Name, f.Name)
-				case f.Name == "sources" || f.Name == "rows" || f.Name == "participants":
-					assert.True(t, f.List, "%s.%s: a list the code does not count is open ([]T)", info.Name, f.Name)
-				case f.Kind == 12 || f.Kind == 17:
-					assert.True(t, f.Pointer, "%s.%s: text the code does not bound is *string", info.Name, f.Name)
-				}
-			}
-		}
-		lock, err := os.ReadFile(filepath.Join("..", "..", "schemas", "seatrec", "schema.lock"))
-		require.NoError(t, err)
-		assert.NotContains(t, string(lock), "fixed ", "no fixed layout is locked: the area has no fixed table")
-		baseline, err := os.ReadFile(filepath.Join("..", "..", "schemas", "seatrec", "tables.baseline"))
-		require.NoError(t, err)
-		for _, name := range []string{"SeatEnvironment", "SeatLogin", "SourceLabel", "DayLine", "DayFile", "Participant", "BusRoster", "PlacedReceipt"} {
-			assert.Contains(t, string(baseline), "table "+name+"\n", "tables.baseline records %s", name)
-		}
+		goldenFixed(t, fixedOps[DayFile]{name: "DAYFILE", help: "nova-tokens -h",
+			measure: DayFileFixedMeasure, save: DayFileFixedSave,
+			saveWhy: DayFileFixedSaveReason, load: DayFileFixedLoad,
+			planCount: int(DayFileFixedPlan.Count), body: DayFileFixedWriteBody,
+			recBytes: DayFileFixedRecordBytes, reset: DayFileReset,
+			after: func(v *DayFile) { setText(v.At[:], &v.AtLength, clockStamp()) },
+			wire: "f7fdb7511d930cad0bd9163364289a0cd0e063f781980f6d32e0f83679b97e5e"})
 	})
-
-	t.Run("round trip in every form", func(t *testing.T) {
+	t.Run("BusRoster", func(t *testing.T) {
 		t.Parallel()
-		full := sampleSeat()
-		bare := seatEnv{Version: i32(1)}
-		roundTrip(t, seatTable, seatOf, full)
-		roundTrip(t, seatTable, seatOf, bare)
-		roundTrip(t, dayTable, dayOf, sampleDay(2))
-		dashes := sampleDay(1)
-		dashes.Turns, dashes.Sources, dashes.At, dashes.Build = nil, nil, sp(""), sp("")
-		dashes.Rows[0] = dayLine{Date: dashes.Day, Sources: []label{{"manual"}}}
-		roundTrip(t, dayTable, dayOf, dashes)
-		roundTrip(t, rosterTable, rosterOf, sampleRoster(3))
-		roundTrip(t, receiptTable, receiptOf, sampleReceipt())
-		roundTrip(t, receiptTable, receiptOf, receipt{Secret: "EXAMPLE_LEGACY", Path: "/etc/example/old.env", Stamp: "1970-01-01T00:16:40Z"})
+		goldenFixed(t, fixedOps[BusRoster]{name: "BUSROSTER", help: "nova-tokens -h",
+			measure: BusRosterFixedMeasure, save: BusRosterFixedSave,
+			saveWhy: BusRosterFixedSaveReason, load: BusRosterFixedLoad,
+			planCount: int(BusRosterFixedPlan.Count), body: BusRosterFixedWriteBody,
+			recBytes: BusRosterFixedRecordBytes, reset: BusRosterReset,
+			wire: "1e047c9448bdf0be8f14d4d30f54e9a9cb8f7c4e4639abb81627ea86c189b0dc"})
 	})
-
-	t.Run("records sized by content round-trip", func(t *testing.T) {
+	t.Run("PlacedReceipt", func(t *testing.T) {
 		t.Parallel()
-		// A month of rows in one day file, where attempt 1 capped it at 24.
-		big := sampleDay(100)
-		big.Sources = nil
-		for i := range 40 {
-			big.Sources = append(big.Sources, label{fmt.Sprintf("source-%02d", i)})
-		}
-		big.Rows[99].Sources = big.Sources
-		roundTrip(t, dayTable, dayOf, big)
-		// A roster past the bus envelope's 64 recipients, which laneNames never counted.
-		roundTrip(t, rosterTable, rosterOf, sampleRoster(200))
-		// Long text in every field the code does not bound.
-		long := func(c string, n int) string { return strings.Repeat(c, n) }
-		seat := sampleSeat()
-		seat.ForgeIdentity = "/" + long("f", 4095)
-		seat.NovaSprintRedis = long("h", 1000) + ":6379"
-		seat.Login.Store, seat.Login.Key, seat.Login.Sops = "/"+long("s", 8191), "/"+long("k", 2048), "/"+long("o", 2048)
-		seat.Login.User, seat.Login.As, seat.Login.Secret = long("u", 300), long("a", 300), "EXAMPLE_"+long("X", 300)
-		roundTrip(t, seatTable, seatOf, seat)
-		day := sampleDay(1)
-		day.At, day.Build = sp(long("t", 500)), sp(long("b", 500))
-		day.Rows[0].Model, day.Rows[0].Repo, day.Rows[0].Basis = long("m", 4096), long("r", 4096), long("z", 300)
-		day.Rows[0].Sources = []label{{long("l", 1000)}}
-		roundTrip(t, dayTable, dayOf, day)
-		ros := roster{Participants: []participant{{Name: long("n", 1000), Lane: "from-" + long("e", 1000)}}}
-		roundTrip(t, rosterTable, rosterOf, ros)
-		rec := receipt{Secret: "EXAMPLE_" + long("Q", 500), Path: "/" + long("p", 1<<20), File: long("y", 1000) + ".yaml",
-			Head: long("e", 200), Blob: long("d", 200), Stamp: long("1", 200)}
-		roundTrip(t, receiptTable, receiptOf, rec)
-	})
-
-	t.Run("the JSON text is keyed by the schema's names", func(t *testing.T) {
-		t.Parallel()
-		r := schemaread.NewReader(seatTable.codec())
-		text := write(t, r, read(t, r, sampleSeat()), schemaread.FormJSON)
-		for _, key := range []string{`"version"`, `"forge_identity"`, `"nova_bus_redis"`, `"login"`, `"as"`, `"secret"`} {
-			assert.Contains(t, string(text), key)
-		}
-		assert.NotContains(t, string(text), `"as_name"`, "the seat record's key is \"as\"")
-		rd := schemaread.NewReader(dayTable.codec())
-		text = write(t, rd, read(t, rd, sampleDay(1)), schemaread.FormJSON)
-		for _, key := range []string{`"day"`, `"at"`, `"build"`, `"turns"`, `"rows"`, `"date"`, `"cache_read"`, `"rough"`, `"basis"`, `"sources"`} {
-			assert.Contains(t, string(text), key)
-		}
-	})
-
-	t.Run("damage is refused by name in every form", func(t *testing.T) {
-		t.Parallel()
-		{
-			r := schemaread.NewReader(seatTable.codec())
-			d := read(t, r, sampleSeat())
-			refusesDamage(t, seatTable, write(t, r, d, schemaread.FormBinary), write(t, r, d, schemaread.FormJSON))
-		}
-		{
-			r := schemaread.NewReader(dayTable.codec())
-			d := read(t, r, sampleDay(2))
-			refusesDamage(t, dayTable, write(t, r, d, schemaread.FormBinary), write(t, r, d, schemaread.FormJSON))
-		}
-		{
-			r := schemaread.NewReader(rosterTable.codec())
-			d := read(t, r, sampleRoster(2))
-			refusesDamage(t, rosterTable, write(t, r, d, schemaread.FormBinary), write(t, r, d, schemaread.FormJSON))
-		}
-		{
-			r := schemaread.NewReader(receiptTable.codec())
-			d := read(t, r, sampleReceipt())
-			refusesDamage(t, receiptTable, write(t, r, d, schemaread.FormBinary), write(t, r, d, schemaread.FormJSON))
-		}
-	})
-
-	t.Run("the reader refuses a value past each declared bound", func(t *testing.T) {
-		t.Parallel()
-		// The day file: the day and the row date are 10 bytes, every count is
-		// non-negative. A row date that differs from the day keeps each
-		// at-bound string unique in the image.
-		r := schemaread.NewReader(dayTable.codec())
-		day := sampleDay(1)
-		day.Rows[0].Date = "2026-10-15"
-		day.Rows[0].Input = i64(0x0102030405060708)
-		day.Turns = i64(0x0a0b0c0d0e0f1011)
-		day.Rows[0].Rough = 0x1213141516171819
-		d := read(t, r, day)
-		good, text := write(t, r, d, schemaread.FormBinary), write(t, r, d, schemaread.FormJSON)
-		for _, tc := range []struct {
-			name   string
-			in     []byte
-			reason string
-		}{
-			{"a day of 11 bytes", pastBound(t, good, "2026-10-16"), "clamped"},
-			{"a day of 11 bytes as base64", b64(pastBound(t, good, "2026-10-16")), "clamped"},
-			{"a day of 11 bytes as JSON text", edited(t, text, `"2026-10-16"`, `"2026-10-160"`), "clamped"},
-			{"a row date of 11 bytes as JSON text", edited(t, text, `"2026-10-15"`, `"2026-10-150"`), "clamped"},
-			{"a negative input count", hostile(t, good, 0x0102030405060708, -1), "clamped"},
-			{"a negative input count as base64", b64(hostile(t, good, 0x0102030405060708, -1)), "clamped"},
-			{"a negative input count as JSON text", edited(t, text, fmt.Sprint(0x0102030405060708), "-1"), "clamped"},
-			{"a negative turns", hostile(t, good, 0x0a0b0c0d0e0f1011, -5), "clamped"},
-			{"a negative turns as JSON text", edited(t, text, fmt.Sprint(0x0a0b0c0d0e0f1011), "-5"), "clamped"},
-			{"a negative rough", hostile(t, good, 0x1213141516171819, math.MinInt64), "clamped"},
-			{"a negative rough as JSON text", edited(t, text, fmt.Sprint(0x1213141516171819), "-1"), "clamped"},
-			{"a key given twice", duplicated(text), schemaread.ReasonMalformed},
-		} {
-			assert.Equal(t, tc.reason, readRefusal(t, r, "DAYFILE", tc.in), tc.name)
-		}
-		assert.Positive(t, r.Counts().Refused(schemaread.ReasonClamped))
-
-		// The seat environment: version 1 only. The range is the reader's
-		// constraint (seatrec.schema, version), so an image written by a
-		// writer that ignored it is refused after the load, by name.
-		rs := schemaread.NewReader(seatTable.codec())
-		seat := sampleSeat()
-		seat.Version = i32(2)
-		_, _, err := rs.Read(jsonOf(t, seat))
-		assert.Equal(t, "clamped (version)", refusal(t, "SEAT", err), "a version 2 record as JSON text")
-		v2, _, ok := seatTable.fromJSON(jsonOf(t, seat), &wire.TableReport{})
-		require.True(t, ok)
-		v2wire := seatTable.saveWire(v2)
-		require.NotNil(t, v2wire, "the generated writer, which knows no range, writes version 2")
-		assert.Equal(t, "clamped (version)", readRefusal(t, rs, "SEAT", v2wire), "a version 2 record from a writer that ignored the bound")
-		assert.Equal(t, "clamped (version)", readRefusal(t, rs, "SEAT", b64(v2wire)))
-		seat.Version = nil
-		_, _, err = rs.Read(jsonOf(t, seat))
-		assert.Equal(t, "absent_required (version)", refusal(t, "SEAT", err), "a record with no version")
-		seat = sampleSeat()
-		seat.Login.Secret = ""
-		_, _, err = rs.Read(jsonOf(t, seat))
-		assert.Equal(t, "absent_required (login.secret)", refusal(t, "SEAT", err), "a login with no secret name")
-
-		// The day file's required keys and lists.
-		noRows := sampleDay(0)
-		_, _, err = r.Read(jsonOf(t, noRows))
-		assert.Equal(t, "absent_required (rows)", refusal(t, "DAYFILE", err), "a file with no rows")
-		noAt := sampleDay(1)
-		noAt.At = nil
-		_, _, err = r.Read(jsonOf(t, noAt))
-		assert.Equal(t, "absent_required (at)", refusal(t, "DAYFILE", err), "a version line with no at")
-		noSources := sampleDay(1)
-		noSources.Rows[0].Sources = nil
-		_, _, err = r.Read(jsonOf(t, noSources))
-		assert.Equal(t, "absent_required (rows.sources)", refusal(t, "DAYFILE", err), "a row with an empty sources cell")
-
-		// The roster: one that yields no lane.
-		rr := schemaread.NewReader(rosterTable.codec())
-		_, _, err = rr.Read(jsonOf(t, roster{Participants: []participant{{Name: "Example", Lane: "example"}, {Name: "Other", Lane: "from-"}}}))
-		assert.Equal(t, "absent_required (participants.lane)", refusal(t, "ROSTER", err), "a roster with no from-<slug> lane")
-	})
-
-	t.Run("the writer refuses past each bound and writes nothing", func(t *testing.T) {
-		t.Parallel()
-		r := schemaread.NewReader(dayTable.codec())
-		for _, tc := range []struct {
-			name   string
-			edit   func(*wire.DayFile)
-			reason string
-		}{
-			{"a day of 11 bytes", func(v *wire.DayFile) { v.Day[10], v.DayLength = '9', 11 }, "clamped (day)"},
-			{"a row date of 11 bytes", func(v *wire.DayFile) { r := v.Rows.At(0); r.Date[10], r.DateLength = '9', 11 }, "clamped (rows.date)"},
-			{"a negative input", func(v *wire.DayFile) { v.Rows.At(0).Input = -1 }, "clamped (rows.input)"},
-			{"a negative rough", func(v *wire.DayFile) { v.Rows.At(0).Rough = -1 }, "clamped (rows.rough)"},
-			{"a negative turns", func(v *wire.DayFile) { v.Turns = -1 }, "clamped (turns)"},
-			{"no day", func(v *wire.DayFile) { v.DayLength = 0 }, "absent_required (day)"},
-		} {
-			d := read(t, r, sampleDay(1))
-			tc.edit(d.v)
-			for _, form := range forms {
-				out, err := r.Write(&d, form)
-				assert.Nil(t, out, "%s %s: nothing is written", tc.name, form)
-				assert.Equal(t, tc.reason, refusal(t, "DAYFILE", err), "%s %s", tc.name, form)
-			}
-		}
-		rs := schemaread.NewReader(seatTable.codec())
-		d := read(t, rs, sampleSeat())
-		d.v.Version = 2
-		for _, form := range forms {
-			out, err := rs.Write(&d, form)
-			assert.Nil(t, out)
-			assert.Equal(t, "clamped (version)", refusal(t, "SEAT", err), form)
-		}
-		d.v.VersionPresent = false
-		_, err := rs.Write(&d, schemaread.FormBinary)
-		assert.Equal(t, "absent_required (version)", refusal(t, "SEAT", err))
+		goldenFixed(t, fixedOps[PlacedReceipt]{name: "PLACEDRECEIPT", help: "nova-secrets placed -h",
+			measure: PlacedReceiptFixedMeasure, save: PlacedReceiptFixedSave,
+			saveWhy: PlacedReceiptFixedSaveReason, load: PlacedReceiptFixedLoad,
+			planCount: int(PlacedReceiptFixedPlan.Count), body: PlacedReceiptFixedWriteBody,
+			recBytes: PlacedReceiptFixedRecordBytes, reset: PlacedReceiptReset,
+			after: func(v *PlacedReceipt) { setText(v.Stamp[:], &v.StampLength, clockStamp()) },
+			wire: "93bc3280d45ce055828cff6a3c778a0f5bd7970d332ca8435ac1ecdee26616b1"})
 	})
 }
