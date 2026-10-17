@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -295,12 +296,12 @@ func TestUsagecardTypedHeaderExpansionPreservesRowsModeAndFailure(t *testing.T) 
 				original = strings.Join(legacyColumns, "\t") + "\nshort\n"
 			}
 			require.NoError(t, os.WriteFile(path, []byte(original), 0640))
-			if test == "replace failure" {
-				err := appendCardUsage(path, row, func(string, []byte, os.FileMode) error { return errors.New("injected replacement failure") })
-				require.Error(t, err)
-				assert.Equal(t, original, mustReadCoverFile(t, path))
-				return
-			}
+		if test == "replace failure" {
+			err := appendCardUsage(path, row, coverLockBound, func(string, []byte, os.FileMode) error { return errors.New("injected replacement failure") })
+			require.Error(t, err)
+			assert.Equal(t, original, mustReadCoverFile(t, path))
+			return
+		}
 			err := AppendCardUsage(path, row)
 			if test != "preserves" {
 				require.Error(t, err)
@@ -326,6 +327,16 @@ func TestUsagecardTypedHeaderExpansionPreservesRowsModeAndFailure(t *testing.T) 
 	}
 }
 
+// coverLockBound is the lock bound the concurrent tests use: longer than the
+// test's own -timeout, so no load can make a writer give up before its turn and
+// the tests' outcome never depends on how long a writer takes.
+const coverLockBound = 15 * time.Minute
+
+// coverReplaceUsage is the same atomic replace AppendCardUsage uses.
+func coverReplaceUsage(path string, data []byte, mode os.FileMode) error {
+	return atomicfile.Write(path, data, mode, atomicfile.ExactMode())
+}
+
 func TestUsagecardConcurrentHeaderExpansionLosesNoAppend(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "usage.tsv")
@@ -335,9 +346,39 @@ func TestUsagecardConcurrentHeaderExpansionLosesNoAppend(t *testing.T) {
 	results := make(chan error, writers)
 	for i := range writers {
 		go func() {
-			results <- AppendCardUsage(path, UsageRow{"job": strconv.Itoa(i), "receipt_version": "2", "billing": "subscription", "raw_usage": "fixture"})
+			results <- appendCardUsage(path, UsageRow{"job": strconv.Itoa(i), "receipt_version": "2", "billing": "subscription", "raw_usage": "fixture"}, coverLockBound, coverReplaceUsage)
 		}()
 	}
+	for range writers {
+		require.NoError(t, <-results)
+	}
+	lines := strings.Split(strings.TrimSuffix(mustReadCoverFile(t, path), "\n"), "\n")
+	require.Len(t, lines, writers+2)
+	seen := map[string]bool{}
+	for _, line := range lines[2:] {
+		fields := strings.Split(line, "\t")
+		require.Len(t, fields, len(CardUsageColumns))
+		assert.False(t, seen[fields[0]])
+		seen[fields[0]] = true
+	}
+	assert.Len(t, seen, writers)
+}
+
+func TestUsagecardAppendWaitsItsTurnUnderAnyLoad(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "usage.tsv")
+	legacy := strings.Join(CardUsageColumns[:14], "\t") + "\n" + strings.Repeat("-\t", 13) + "-\n"
+	require.NoError(t, os.WriteFile(path, []byte(legacy), 0640))
+	unlock, err := takeFileLock(path+".lock", coverLockBound)
+	require.NoError(t, err)
+	const writers = 32
+	results := make(chan error, writers)
+	for i := range writers {
+		go func() {
+			results <- appendCardUsage(path, UsageRow{"job": strconv.Itoa(i), "receipt_version": "2", "billing": "subscription", "raw_usage": "fixture"}, coverLockBound, coverReplaceUsage)
+		}()
+	}
+	unlock()
 	for range writers {
 		require.NoError(t, <-results)
 	}
