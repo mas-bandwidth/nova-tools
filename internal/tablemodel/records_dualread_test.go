@@ -174,7 +174,7 @@ func TestTableModelRecordsDualRead(t *testing.T) {
 		// a damaged trace.json is refused by name, never read as an empty trace
 		require.NoError(t, os.WriteFile(path, raw[:len(raw)/2], 0o600))
 		got, err = tm.ReadTraceFile(path)
-		refusal(t, err, "TRACE")
+		tassert.NotNil(t, refusal(t, err, "TRACE"))
 		tassert.True(t, reflect.DeepEqual(tm.Trace{}, got), "a refused trace.json hands back nothing")
 		require.NoError(t, os.WriteFile(path, nil, 0o600))
 		_, err = tm.ReadTraceFile(path)
@@ -274,7 +274,7 @@ func checkRecord[V any](t *testing.T, spec tm.Spec[V], want V) {
 			got, _, err := r.Read(m)
 			flips++
 			if err != nil {
-				refusal(t, err, name)
+				tassert.NotNil(t, refusal(t, err, name))
 				flipsRefused++
 				continue
 			}
@@ -290,7 +290,7 @@ func checkRecord[V any](t *testing.T, spec tm.Spec[V], want V) {
 	_, _, err := r.Read(nil)
 	tassert.Equal(t, schemaread.ReasonUnknownForm, refusal(t, err, name).Reason, "%s: an empty value", name)
 	_, _, err = r.Read([]byte("abcd===="))
-	refusal(t, err, name)
+	tassert.NotNil(t, refusal(t, err, name))
 	tassert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBase64), "%s: an invalid base64 text is counted under its form", name)
 }
 
