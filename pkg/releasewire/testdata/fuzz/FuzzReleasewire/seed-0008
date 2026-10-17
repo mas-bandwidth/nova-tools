@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x02')
+[]byte("{\n  \"tool\": null,\n  \"friend\": null,\n  \"state\": \"None\",\n  \"version\": null,\n  \"detail\": null\n}\n")
