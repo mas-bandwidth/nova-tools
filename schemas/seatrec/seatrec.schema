@@ -1,0 +1,207 @@
+// seatrec.schema: the seat environment, the tokens day file, the tokens bus
+// roster and the secrets place receipt, as binary wire, padded standard
+// base64 of that wire and the schema JSON text form. Its Go is generated into
+// pkg/seatrecwire (go generate ./pkg/seatrecwire).
+//
+// VARIABLE tables (schema owner rule S1, as the coordinator read it for this
+// card: a fixed table is a small bounded struct, kept only where every bound
+// is a bound the code enforces; a variable table is a document sized by its
+// content). Every record here holds text the Go code does not bound, and the
+// day file and the roster hold lists the code does not count, so every table
+// is variable: a list is []T, and text with no bound in the code is *string,
+// a blob at its used size. A string(N) or a min/max is declared only where
+// the code enforces that bound today, and the comment names the code. A
+// value past a declared bound is refused by name on save and on load;
+// nothing is clamped.
+//
+// Every field is a field of the Go struct it replaces and keeps its meaning.
+// No field holds a secret value: a secret is named, and a placed value is
+// identified by the sealed file.
+//
+// A variable table reads an absent field as zero, so a field the Go code
+// requires is required by the reader's constraints (pkg/seatrecwire's golden
+// test states them), never by a bound here.
+package seatrecwire
+
+// SeatLogin is the login object of the seat environment (pkg/seatcred
+// SeatLogin). It names a store login. When login is present, every reference
+// is required (SeatEnvironment.validate, StoreLogin.missing,
+// pkg/seatcred/environment.go:248-258, 275-277). None of the references has
+// a byte cap in the code, so each is *string.
+table SeatLogin
+{
+    // redis: host:port. seatEndpoint (environment.go:288-303) accepts a
+    // numeric port from 1 through 65535 and refuses URL syntax and
+    // credential-bearing forms; it states no byte cap.
+    redis *string
+    // user: non-empty, and it holds no NUL, CR or LF (validate,
+    // environment.go:248-258). No byte cap.
+    user *string
+    // store: the secrets-store path. Blank is an incomplete login
+    // (StoreLogin.missing, environment.go:275-277). No byte cap.
+    store *string
+    // as_name: the seat JSON key "as". "as" is a reserved word in a target
+    // the compiler refuses (SPEC §4.6), so the table spells as_name and the
+    // JSON name stays "as". Blank is an incomplete login. No byte cap.
+    as_name *string | json = "as"
+    // key: the key path. Blank is incomplete. No byte cap.
+    key *string
+    // sops: the sops path. Blank is incomplete. No byte cap.
+    sops *string
+    // secret: the sealed secret's name, never its value. The seat record
+    // requires ^[A-Z_][A-Z0-9_]*$ (environmentSecretName,
+    // environment.go:234). No byte cap.
+    secret *string
+}
+
+// SeatEnvironment is the v1 seat record (seat-environment.json): which
+// sealed file a seat uses and where. An absent text field is a null pointer,
+// which is the key missing from the JSON record.
+table SeatEnvironment
+{
+    // version: LoadSeatEnvironment accepts only 1 and refuses a record with
+    // no version (environment.go:101). Optional, so an absent version is
+    // refused as absent, never read as a default. The compiler takes no
+    // range that excludes zero without a default, and no default on an
+    // optional (SPEC §4.6, SPEC-TABLES §2.3), so the bound 1..1 is the
+    // reader's constraint (pkg/seatrecwire's golden test, seatConstraints),
+    // refused as clamped (version) on read and on write.
+    version ?int32
+    // forge_identity: an absolute directory, when set (validate checks
+    // filepath.IsAbs and that the path is a directory,
+    // environment.go:259-267). No byte cap.
+    forge_identity *string
+    // environmentKeyAllowed allows exactly these three keys, each a
+    // host:port under the same rule as SeatLogin.redis (seatEndpoint,
+    // environment.go:238-247). Absent is the key missing from the
+    // environment object. The Go field is a map; the allowlist is closed, so
+    // the table is these three fields. No byte cap.
+    nova_sprint_redis  *string
+    nova_sprint_server *string
+    nova_bus_redis     *string
+    // login: absent (a null pointer), or one SeatLogin. validate requires
+    // every reference when it is present. ? on a table whose closure holds a
+    // pointer is a named follow-on (SPEC-TABLES §2.3, §15), so the optional
+    // group is a pointer to the table.
+    login *SeatLogin
+}
+
+// SourceLabel is one label in a sources cell. The cell is a comma-separated
+// list (DayFile.Render, ParseDayFile, internal/tokens/dayfile.go:351, 436).
+// The code states no length cap. A list of *string is not a spelling the
+// language has (SPEC-TABLES §2.9), so the label is wrapped.
+table SourceLabel
+{
+    text *string
+}
+
+// DayLine is one day-file row (internal/tokens DayRow). An absent count is
+// the dash cell: a type the source did not report, not a zero. ParseDayFile
+// refuses a negative count and a cell that is neither a non-negative integer
+// nor "-" (dayfile.go:408-418). Counts.Set saturates at math.MaxInt64, which
+// is a legal value; the upper end of each count is that width.
+table DayLine
+{
+    // date: YYYY-MM-DD. A day file is read only under a name ValidDay
+    // accepts (internal/tokens/check.go:99, sum.go:114; ValidDay requires
+    // length 10, tokens.go:537-543), and ParseDayFile refuses a date that is
+    // not that name (dayfile.go:437-440). The declared bound is that length.
+    date string(10)
+    // model, repo: no byte cap in ParseDayFile (dayfile.go:402).
+    model *string
+    repo  *string
+    input       ?int64 | min = 0, max = 9223372036854775807
+    output      ?int64 | min = 0, max = 9223372036854775807
+    cache_write ?int64 | min = 0, max = 9223372036854775807
+    cache_read  ?int64 | min = 0, max = 9223372036854775807
+    reasoning   ?int64 | min = 0, max = 9223372036854775807
+    // rough: ParseDayFile reads it with strconv.Atoi and refuses a negative
+    // (dayfile.go:421-426). Stored as int64, the width of the other counts.
+    rough int64 | min = 0, max = 9223372036854775807
+    // basis: "utc" (internal/tokens UTC) or a zone name with no whitespace
+    // (ValidZone, dayfile.go:428-431). No byte cap.
+    basis *string
+    // sources: the row's sources cell. ParseDayFile refuses an empty cell
+    // (dayfile.go:432-436) and counts none, so the list is open; the
+    // empty-cell refusal stays the Go rule named here.
+    sources []SourceLabel
+}
+
+// DayFile is one tokens day file (internal/tokens DayFile): the version
+// line and its rows. ParseDayFile requires day, at, build and turns on the
+// version line (dayfile.go:353-358), and refuses a file with no rows
+// (dayfile.go:463-465). The legacy twelve-column units header is
+// reader-only and is not a field.
+table DayFile
+{
+    // day: the version line's day, YYYY-MM-DD. ParseDayFile refuses a day
+    // that is not the file's name (dayfile.go:372-374), and the name is one
+    // ValidDay accepts (check.go:99, sum.go:114): length 10.
+    day string(10)
+    // at: the version line's at token. The code requires the key and does
+    // not parse the stamp. No byte cap.
+    at *string
+    // build: the version line's build id. Required. No byte cap.
+    build *string
+    // turns: a non-negative count, or absent for the dash. ParseDayFile
+    // reads a present value with strconv.Atoi and refuses a negative and an
+    // empty value (dayfile.go:361-371). Absent is the dash; a present 0 is a
+    // counted zero.
+    turns ?int64 | min = 0, max = 9223372036854775807
+    // sources: the version line's sources list (dayfile.go:350-352). The key
+    // may be absent, which is an empty list. No count cap.
+    sources []SourceLabel
+    // rows: one per (model, repo). ParseDayFile refuses a file with no rows
+    // and counts none (ParseDayFile, dayfile.go:332-467), so the list is open.
+    rows []DayLine
+}
+
+// Participant is one entry of the roster participants.json holds
+// (internal/tokens laneNames, bus.go:265-290). name is the friend's name.
+// lane is "from-<slug>"; a lane without that prefix, or with an empty slug,
+// is skipped. The code states no byte cap on either.
+table Participant
+{
+    name *string
+    lane *string
+}
+
+// BusRoster is the tokens bus record at internal/tokens/bus.go (laneNames):
+// the participants roster. A roster that yields no lane is refused
+// (bus.go:285-287). The code counts no participants, so the list is open.
+table BusRoster
+{
+    participants []Participant
+}
+
+// PlacedReceipt is one secrets place receipt line (placedReceipt,
+// pkg/secrets/place.go:88-108): what was placed, identified by the sealed
+// file. The line is secret, path, file, head, blob, stamp. Unknown and
+// Legacy are derived on read and are not written. An empty file, head or
+// blob is the dash the line prints. The reader (readReceipts,
+// place.go:448-482) checks no field's length or shape, so no field here is
+// bounded: a bound the writer keeps is named on its field, and a receipt
+// line today's reader accepts is never refused by this table.
+table PlacedReceipt
+{
+    // secret: the secret's name. place requires ^[A-Z][A-Z0-9_]*$
+    // (IsValidEnvVar) and refuses empty. No byte cap. The value is not a
+    // field.
+    secret *string
+    // path: the remote path. No byte cap.
+    path *string
+    // file: the seat file name (<seat>.yaml) the value was sealed in.
+    // Empty is the dash. No byte cap.
+    file *string
+    // head: the store HEAD when place started. The writer checks
+    // isValidHexSHA, 40 or 64 hex characters (place.go:137); the reader
+    // does not.
+    head *string
+    // blob: the git blob id of the sealed file's bytes, written as 40 hex
+    // characters (hex.EncodeToString of a SHA-1, place.go:303); the reader
+    // does not check it.
+    blob *string
+    // stamp: the writer formats time.RFC3339, at most 25 bytes
+    // (place.go:320); the reader accepts any text.
+    stamp *string
+}

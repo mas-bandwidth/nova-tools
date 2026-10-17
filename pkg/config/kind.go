@@ -168,6 +168,27 @@ const (
 	MaxArgvBytes = 4096
 )
 
+// The bounds of a row, refused by name before any write, each at least four
+// times the largest value the fleet's live configuration held when they were
+// set (the longest row name 29 bytes, the longest field value 575, the most
+// loop keys 5, the longest secret name 31). schemas/config/config.schema
+// declares the same numbers as the fixed tables' bounds, and
+// pkg/configwire's golden test pins the two together.
+const (
+	// MaxName is the longest row name in bytes.
+	MaxName = 128
+	// MaxFieldValue is the longest canonical field value in bytes, the argv
+	// aside (MaxArgvBytes bounds that).
+	MaxFieldValue = 2304
+	// MaxKeys is the most secret names a keys field lists.
+	MaxKeys = 32
+	// MaxEnvName is the longest secret name in a keys field.
+	MaxEnvName = 128
+	// MaxHosts is the most machines an inventory lists, so the most hosts
+	// of any group.
+	MaxHosts = 48
+)
+
 // The kinds of this cut (docs/SPEC-CONFIG.md, "The kinds of this cut").
 const (
 	KindMachine  = "machine"
@@ -1051,6 +1072,9 @@ func ValidateName(name string) error {
 	if name == "" {
 		return fmt.Errorf("the name is required: the first argument after the verb")
 	}
+	if len(name) > MaxName {
+		return fmt.Errorf("name of %d bytes: over the maximum of %d bytes (MaxName)", len(name), MaxName)
+	}
 	if !NamePattern.MatchString(name) {
 		return fmt.Errorf("name %q: want lower-case letters, digits and dashes, starting with a letter or digit", name)
 	}
@@ -1061,6 +1085,18 @@ func ValidateName(name string) error {
 // an int as digits, an enum as its word, a list deduplicated and sorted, a
 // wake path in its one spelling. The error names the field and what it wants.
 func (f Field) Canonical(raw string) (string, error) {
+	out, err := f.canonical(raw)
+	if err != nil {
+		return "", err
+	}
+	if f.Type != TypeArgv && len(out) > MaxFieldValue {
+		return "", fmt.Errorf("--%s: %d bytes, over the maximum of %d bytes (MaxFieldValue)", f.Name, len(out), MaxFieldValue)
+	}
+	return out, nil
+}
+
+// canonical is Canonical before the value bound.
+func (f Field) canonical(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	switch f.Type {
 	case TypeText:
@@ -1120,7 +1156,13 @@ func (f Field) Canonical(raw string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("--%s: %v (a secret goes by name, never by value)", f.Name, err)
 		}
+		if len(words) > MaxKeys {
+			return "", fmt.Errorf("--%s: %d secret names, over the maximum of %d (MaxKeys)", f.Name, len(words), MaxKeys)
+		}
 		for _, w := range words {
+			if len(w) > MaxEnvName {
+				return "", fmt.Errorf("--%s: a secret name of %d bytes, over the maximum of %d bytes (MaxEnvName)", f.Name, len(w), MaxEnvName)
+			}
 			if !keyPattern.MatchString(w) {
 				return "", fmt.Errorf("--%s %q: want a comma list of variable names (letters, digits and underscores, not starting with a digit)", f.Name, w)
 			}
@@ -1210,10 +1252,16 @@ func marshalArgv(words []string) ([]byte, error) {
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
-// Argv decodes a canonical TypeArgv value ("" is none).
+// Argv decodes a canonical TypeArgv value ("" is none). A value it cannot read
+// is none too, on purpose: canonicalArgv refused it at add, so an unreadable
+// one is a store fault, and the loop verbs that call this report a loop with
+// no command; the refusal is counted under ARGV (records.go), never silent.
 func Argv(canonical string) []string {
-	var words []string
-	if canonical == "" || json.Unmarshal([]byte(canonical), &words) != nil {
+	if canonical == "" {
+		return nil
+	}
+	words, err := records.ReadArgv(canonical)
+	if err != nil {
 		return nil
 	}
 	return words

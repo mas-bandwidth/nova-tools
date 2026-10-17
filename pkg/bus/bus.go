@@ -19,6 +19,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // The keys (SPEC-BUS.md, the data): one stream per recipient, and one log.
@@ -84,6 +86,8 @@ type Message struct {
 	CC            []string
 	Subject       string
 	Re            string
+	Card          string
+	Head          string
 	Kind          string // one of Kinds; "" is status
 	At            time.Time
 	Body          string
@@ -170,6 +174,12 @@ func (m Message) Fields() map[string]string {
 	if m.ModelActivity {
 		f["model_activity"] = "1"
 	}
+	if m.Card != "" {
+		f["card"] = m.Card
+	}
+	if m.Head != "" {
+		f["head"] = m.Head
+	}
 	if !m.Due.IsZero() {
 		f["deadline"] = m.Due.UTC().Format(time.RFC3339) // an ask's only
 	}
@@ -184,7 +194,7 @@ func Parse(fields map[string]string) Message {
 	due, _ := time.Parse(time.RFC3339, fields["deadline"]) // ignored: as above; none on a message that is no ask
 	return Message{Due: due,
 		Kind: fields["kind"], ID: fields["id"], From: fields["from"], To: list(fields["to"]), CC: list(fields["cc"]),
-		Subject: fields["subject"], Re: fields["re"], At: at, Body: fields["body"],
+		Subject: fields["subject"], Re: fields["re"], Card: fields["card"], Head: fields["head"], At: at, Body: fields["body"],
 	}
 }
 
@@ -208,11 +218,19 @@ type Entry struct {
 	// Stage is the message's receipt state as recv found it, before its
 	// delivered stamp ("" none; stages.go): acted on a message the claim hands
 	// in again after a turn acted on it. Only recv sets it.
-	Stage string
+	Stage  string
+	parsed *Message
 }
 
-// Message is the entry's message.
-func (e Entry) Message() Message { return Parse(e.Fields) }
+// Message is the entry's decoded message when ReadEntries populated it, or
+// the legacy fields otherwise. A native reader uses ReadEntry or ReadEntries
+// so damage is reported instead of silently read from the legacy fields.
+func (e Entry) Message() Message {
+	if e.parsed != nil {
+		return *e.parsed
+	}
+	return Parse(e.Fields)
+}
 
 // Store is the few Redis commands the bus uses, each one round trip. The
 // bus never deletes: no command here removes an entry, a group or a key
@@ -320,6 +338,48 @@ type Bus struct {
 	// later stamp lands. Nil drops it, the overdue alarm standing for it
 	// (stages.go).
 	OnStampError func(err error)
+	// Native is the writer switch of the native binary form (native.go): when
+	// set, every message Send writes carries its typed envelope as the binary
+	// wire in EnvelopeField, beside the legacy text fields, and a message past
+	// one of the envelope's bounds is refused before anything is written. Off,
+	// a send writes the legacy fields alone. Readers learn the field first;
+	// writers switch after (SPEC-BUS.md, the native form).
+	Native bool
+	// Builder is the writer-side envelope check (native.go): when set, Send and
+	// Check construct the message's buswire.Envelope through the generated
+	// builder and refuse a message past any of its bounds before writing, even
+	// while Native is still off.
+	Builder bool
+	// Envelopes is the dual-read envelope reader and its per-form counters
+	// (native.go); a reader is made on first use when nil.
+	Envelopes *EnvelopeReader
+}
+
+func (b *Bus) envelopes() *EnvelopeReader {
+	if b.Envelopes == nil {
+		b.Envelopes = NewEnvelopeReader()
+	}
+	return b.Envelopes
+}
+
+// ReadEntry reads e's message through the bus's EnvelopeReader, counting the
+// form it arrived in and refusing a damaged native field by name.
+func (b *Bus) ReadEntry(e Entry) (Message, schemaread.Form, error) {
+	return b.envelopes().ReadEntry(e.Fields)
+}
+
+// ReadEntries decodes a batch with the bus's shared reader, preserving each
+// decoded message for callers of Entry.Message. A damaged native entry stops
+// the batch with its named refusal; it is never patched from legacy fields.
+func (b *Bus) ReadEntries(es []Entry) ([]Entry, error) {
+	for i := range es {
+		m, _, err := b.ReadEntry(es[i])
+		if err != nil {
+			return nil, err
+		}
+		es[i].parsed = &m
+	}
+	return es, nil
 }
 
 // Refusal is a reason a verb could not run as asked: the input, not the store.
@@ -364,10 +424,14 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	}
 	streams = append(streams, LogKey)
 	marks := slices.Concat(owe(m, friends), askMarks(m), answerMark(m), m.Marks)
-	if m.Token != "" || m.Once != "" {
-		return b.sendOnce(ctx, m, now, streams, marks)
+	fields, err := b.entryFields(m)
+	if err != nil {
+		return Message{}, err
 	}
-	if err := b.Store.AddAll(ctx, streams, m.Fields(), marks...); err != nil {
+	if m.Token != "" || m.Once != "" {
+		return b.sendOnce(ctx, m, now, streams, fields, marks)
+	}
+	if err := b.Store.AddAll(ctx, streams, fields, marks...); err != nil {
 		return Message{}, err
 	}
 	return m, nil
@@ -397,23 +461,41 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, []strin
 	case strings.TrimSpace(m.Body) == "":
 		problems = append(problems, "the body is empty; it wants the message's text")
 	case len(m.Body) > MaxBody:
-		problems = append(problems, fmt.Sprintf("the body is %d bytes, at most %d", len(m.Body), MaxBody))
+		problems = append(problems, fmt.Sprintf("ENVELOPE REFUSED: body over %d bytes (the body is %d bytes, at most %d); run: %s", MaxBody, len(m.Body), MaxBody, EnvelopeHelp))
 	}
 	if m.Kind == "" {
+		if b.Builder {
+			return Message{}, time.Time{}, nil, envelopeRefusal("%s (kind)", schemaread.ReasonAbsentRequired)
+		}
 		m.Kind = KindStatus
 	}
-	if p := CheckKinds(m.Kind); p != "" {
-		problems = append(problems, p)
+	if !b.Builder && !b.Native {
+		if p := CheckKinds(m.Kind); p != "" {
+			problems = append(problems, p)
+		}
 	}
 	problems = append(problems, checkAsk(m)...)
 	if strings.TrimSpace(m.Subject) == "" {
 		problems = append(problems, "the subject is empty; it wants one line saying what the message is")
 	}
-	if p := CheckToken(m.Token); p != "" {
-		problems = append(problems, p)
-	}
 	if len(problems) > 0 {
 		return Message{}, time.Time{}, nil, &Refusal{problems}
+	}
+	if b.Builder || b.Native {
+		// the envelope's bounds, checked through the generated builder before a
+		// store trip or an id is made: a stand-in id of a ULID's length
+		probe := m
+		probe.ID = strings.Repeat("0", 26)
+		probe.At = time.Unix(1, 0).UTC()
+		if probe.Kind == KindAsk {
+			probe.Due = probe.At.Add(probe.Wait)
+		}
+		if _, err := EnvelopeWire(probe); err != nil {
+			return Message{}, time.Time{}, nil, err
+		}
+	}
+	if p := CheckToken(m.Token); p != "" {
+		return Message{}, time.Time{}, nil, &Refusal{[]string{p}}
 	}
 	friends, machines, now, err := b.Store.Members(ctx)
 	if err != nil {
@@ -433,7 +515,23 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, []strin
 		m.Due = m.At.Add(m.Wait) // the store's clock, never the sender's
 	}
 	m.To, m.CC = slices.Compact(slices.Sorted(slices.Values(m.To))), slices.Compact(slices.Sorted(slices.Values(m.CC)))
+	if b.Native {
+		probe := m
+		probe.ID = strings.Repeat("0", 26)
+		if _, err := NativeFields(probe); err != nil {
+			return Message{}, time.Time{}, nil, err
+		}
+	}
 	return m, now, friends, nil
+}
+
+// entryFields is the entry Send writes for m: the legacy text fields, and the
+// native field beside them once the writer has switched (Native).
+func (b *Bus) entryFields(m Message) (map[string]string, error) {
+	if !b.Native {
+		return m.Fields(), nil
+	}
+	return NativeFields(m)
 }
 
 // Recv is one message for the recipient: the oldest one delivered and not
@@ -491,7 +589,12 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 		if len(got) == 0 {
 			break
 		}
-		if len(FilterKinds(got, kinds)) > 0 {
+		m, _, err := b.ReadEntry(got[0])
+		if err != nil {
+			return Entry{}, false, errors.Join(err, release())
+		}
+		got[0].parsed = &m
+		if len(kinds) == 0 || slices.Contains(kinds, m.KindName()) {
 			return b.delivered(ctx, as, got[0]), true, release()
 		}
 		skipped = append(skipped, got[0].Entry)
@@ -504,7 +607,12 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 		if err != nil || len(got) == 0 {
 			return Entry{}, false, err
 		}
-		if len(FilterKinds(got, kinds)) > 0 {
+		m, _, err := b.ReadEntry(got[0])
+		if err != nil {
+			return Entry{}, false, err
+		}
+		got[0].parsed = &m
+		if len(kinds) == 0 || slices.Contains(kinds, m.KindName()) {
 			return b.delivered(ctx, as, got[0]), true, nil
 		}
 		if err := b.Store.Release(ctx, stream, as, got[0].Entry); err != nil {
@@ -615,6 +723,13 @@ func (b *Bus) Peek(ctx context.Context, as string) (pending, fresh []Entry, err 
 		from = "(" + last
 	}
 	fresh, err = b.Store.Range(ctx, StreamOf(as), from, "+", pendingLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	if pending, err = b.ReadEntries(pending); err != nil {
+		return nil, nil, err
+	}
+	fresh, err = b.ReadEntries(fresh)
 	return pending, fresh, err
 }
 
@@ -708,7 +823,11 @@ func (b *Bus) WaitArm(ctx context.Context, as, after string) (string, error) {
 // fresh entry is past the cap on every read. Arm at LogCursor and read
 // with LogForward.
 func (b *Bus) Log(ctx context.Context, from string) ([]Entry, error) {
-	return b.Store.Range(ctx, LogKey, from, "+", logLimit)
+	es, err := b.Store.Range(ctx, LogKey, from, "+", logLimit)
+	if err != nil {
+		return nil, err
+	}
+	return b.ReadEntries(es)
 }
 
 // LogCursor is the log's tail, the cursor a reader arms at so LogForward

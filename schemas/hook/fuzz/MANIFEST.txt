@@ -1,0 +1,15 @@
+# The hook unit's wire-fuzz corpus (make schemawire-conformance), in the schema
+# conformance harness's manifest format (test/conformance/README.md in the
+# schema repository). Each instance is one Ack, Beat or Stamp in two forms that
+# agree: the wire file named here and the JSON text beside it, <name>.json. The
+# wires are what `schema pack` writes from the JSON (the recipe is in
+# pkg/hookwire/ackbeathook_test.go); TestLayer1AckBeatHook holds the generated
+# Save and ToJson to both, byte for byte.
+unit     hook           schemas/hook
+instance ack-acted      hook  Ack    schemas/hook/fuzz/ack-acted.bin
+instance ack-bounds     hook  Ack    schemas/hook/fuzz/ack-bounds.bin
+instance beat-up        hook  Beat   schemas/hook/fuzz/beat-up.bin
+instance beat-down      hook  Beat   schemas/hook/fuzz/beat-down.bin
+instance beat-bounds    hook  Beat   schemas/hook/fuzz/beat-bounds.bin
+instance stamp-typical  hook  Stamp  schemas/hook/fuzz/stamp-typical.bin
+instance stamp-bounds   hook  Stamp  schemas/hook/fuzz/stamp-bounds.bin

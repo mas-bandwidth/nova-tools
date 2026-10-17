@@ -83,7 +83,7 @@ late.
 
 **The verbs, in order.**
 
-1. Send. usage: `nova-bus send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--kind ask --deadline <duration>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]`.
+1. Send. usage: `nova-bus send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--card <id>] [--head <sha>] [--kind <k>] [--kind ask --deadline <duration>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]`.
    `--kind` is one of report, ack, status, request, blocker, ask, timeout or judgment (timeout is
    the bus's own), and readers filter on it. An ask needs `--deadline <duration>`, its server-side wait for the answer
    (`nova-bus send -h`). Answer a message with `--re <id>`. Spec: SPEC-BUS.md, "bus-message-kinds.w1"

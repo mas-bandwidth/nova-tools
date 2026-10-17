@@ -1,0 +1,347 @@
+// release.schema: the release area's records, as binary wire, padded
+// standard base64 of that wire and the schema JSON text form. Its Go is
+// generated into pkg/releasewire (go generate ./pkg/releasewire).
+//
+// Every table here is VARIABLE (schema owner rule S1, as the coordinator
+// ruled for this card on 2026-10-17: a record is a FIXED table only where
+// every one of its bounds is a bound the code enforces; otherwise it is a
+// VARIABLE table with open lists and unbounded text). Each record below
+// holds text the Go code does not bound, or a list it does not count, so no
+// record is fixed and the area has no schema.lock. A list is []T, text with
+// no bound in the code is *string, and a string(N) or an enum is declared
+// only where the code enforces that bound; the comment names the code. A
+// value past a declared bound is refused by name on save and on load;
+// nothing is clamped. A whole-line read limit (the 1 MiB scanner buffer of
+// the TSV readers, the 16 MiB line of the evidence reader) bounds a line,
+// not a field, and is not declared.
+//
+// Every field is a field of the Go record it replaces and keeps its
+// meaning. A variable table reads an absent field as zero, so a field the Go
+// code requires is required by the reader's constraints (pkg/releasewire's
+// golden test states them), never by a bound here.
+//
+// External formats stay as they are and have no table here: the GitHub API
+// and the OpenRouter activity and key answers (pkg/release/edges.go,
+// pkg/release/spendcheck_sources.go getJSON, internal/update/latest.go), the
+// ansible inventory listing the cycle checks only for being an object
+// (pkg/release/cycle.go inventoryObject, no field of it is read), the
+// ansible play output and `go list` output (pkg/release/cycle.go
+// readReceipts, pkg/release/incremental.go parsePackages), the go test -json
+// line as go writes it, the sha256sum SHA256SUMS file (pkg/release/install.go
+// ReadSums; sha256sum -c reads it on the bench), the CHANGELOG and the MOVED
+// note (prose for people), and the RELEASE and CYCLE output lines.
+package releasewire
+
+// Kind of a tool in the update manifest: the closed list
+// internal/update/manifest.go:19 names (Kinds) and kindValid (:26) checks;
+// Load refuses any other kind (:92).
+enum ManifestKind { harness, engine, model, tool, pin }
+
+// The state of one adoption choice: the closed list
+// internal/update/adoption.go:19 names (adoptionStates) and adoptionValid
+// (:21) checks; loadAdoption refuses any other state (:47-50). The file
+// spells "useful-now" with a dash; the enum name is useful_now, the file
+// codec's spelling being the file's.
+enum AdoptionState { evaluated, useful_now, tried, adopted, declined, deferred, unknown, equivalent }
+
+// Word is one element of a list of text: an argument of a command, a
+// file path, a tool name. A list of *string is not a spelling the language
+// has (SPEC-TABLES section 2.9), so the element is wrapped. The code states
+// no length cap on any element.
+table Word
+{
+    text *string
+}
+
+// CycleBuildArgs is the -e extra variable the release cycle hands the tools
+// play (pkg/release/cycle.go:162): the build arguments of the play, the key
+// nova_release_build_args and a list of arguments. The code writes five
+// (--incremental, --gate, report, the reason flag and the reason); the
+// reason is the caller's text and has no length cap, and the list is
+// counted nowhere.
+table CycleBuildArgs
+{
+    nova_release_build_args []Word
+}
+
+// JourneyInstalled is one machine the journeys ran against and the build it
+// had installed (pkg/release/journeygate.go EvidenceHeader.Installed,
+// InstalledReceipt :73). bindEvidence requires a non-blank machine and
+// build and the release revision (:210); none has a byte cap.
+table JourneyInstalled
+{
+    machine  *string
+    build    *string
+    revision *string
+}
+
+// JourneyHeader is the evidence file's first line
+// (journeygate.go EvidenceHeader, :63). Every field is required
+// (:197-215): the evidence kind must equal EvidenceKind (:174), the revision
+// the release revision, functions and schema non-blank, and at least one
+// installed build. No field has a byte cap and the installed list is
+// counted nowhere.
+table JourneyHeader
+{
+    evidence  *string
+    revision  *string
+    functions *string
+    schema    *string
+    installed []JourneyInstalled
+}
+
+// JourneyEvent is the part of a `go test -json` line the gate reads
+// (journeygate.go testEvent, :145): the action, the package, the test
+// and the output. The file's own lines stay go's output; this is the
+// record of what the gate takes from each. pkg is the Go field Package (a
+// reserved word in some targets), its text key "package".
+table JourneyEvent
+{
+    action *string
+    pkg    *string | json = "package"
+    test   *string
+    output *string
+}
+
+// JourneyEvidence is the evidence file read whole (journeygate.go
+// readJourneyEvidence, :155): the header, then the events. A file
+// whose first line is not the header, or with no line, is refused (:174,
+// :190); the events are counted nowhere and a line is bounded only by the
+// reader's 16 MiB scanner buffer (:164).
+table JourneyEvidence
+{
+    header JourneyHeader
+    events []JourneyEvent
+}
+
+// SpendReceiptFriend is one friend's token count in a spend receipts file:
+// the map entry "friends": {"<friend>": <tokens>}
+// (pkg/release/spendcheck_sources.go:190). The map is an open list of
+// entries because its key has no length cap (SPEC-TABLES, the map form
+// needs a bounded key). Tokens is a Go int64 with no range check.
+table SpendReceiptFriend
+{
+    friend_name *string | json = "friend"
+    tokens      int64
+}
+
+// SpendReceipts is the subscription friends' harness receipts file
+// (spendcheck_sources.go FileReceipts.Tokens, :181-199):
+// {"evidence":"spend-receipts","from":<RFC3339>,"to":<RFC3339>,
+// "friends":{...}}. The evidence must equal ReceiptsKind (:172, :192),
+// friends must be present (:192), and the window must be the gate's
+// (:195). The two times are RFC3339 text the reader parses; from_time and
+// to_time keep the keys "from" and "to". Friends are counted nowhere.
+table SpendReceipts
+{
+    evidence  *string
+    from_time *string | json = "from"
+    to_time   *string | json = "to"
+    friends   []SpendReceiptFriend
+}
+
+// SnapshotObserved is one observed value of the update snapshot
+// (internal/update/snapshot.go observed, :14): the raw answer, the
+// status and the time. The snapshot reader skips each value's content
+// (:78-84) and the strict decode refuses any other key (:248).
+table SnapshotObserved
+{
+    raw    *string
+    status *string
+    at     *string
+}
+
+// SnapshotObservedEntry is one entry of an observed map
+// (snapshot.go :18, :22). The map's key is a manifest name, content the
+// tool did not choose: "Tool" and "tool" are distinct and a Unicode name
+// is legal (:53-64), so the key has no length cap and the map is an open
+// list of entries. A name given twice is ambiguous and refused (:124).
+table SnapshotObservedEntry
+{
+    name     *string
+    observed SnapshotObserved
+}
+
+// SnapshotDelivery is one delivery (snapshot.go delivery, :19): the
+// observed map it was delivered with, the delivery id and its time.
+table SnapshotDelivery
+{
+    observed []SnapshotObservedEntry
+    id       *string
+    at       *string
+}
+
+// SnapshotDeliveryEntry is one entry of the delivered map (snapshot.go
+// :23-26), keyed by a delivery scope (SnapshotScope), a key with no length
+// cap.
+table SnapshotDeliveryEntry
+{
+    scope    *string
+    delivery SnapshotDelivery
+}
+
+// UpdateSnapshot is the delivery snapshot nova-update keeps
+// (snapshot.go snapshot, :24; readSnapshot :235, writeSnapshotWith
+// :264): the observed manifest names and what each delivery observed.
+// readSnapshot refuses a snapshot lacking either map (:255); an empty list
+// is the empty map. The nesting depth is bounded by the reader at 32
+// (maxJSONDepth, :51), a bound on the JSON text this table replaces, not
+// on a field.
+table UpdateSnapshot
+{
+    observed  []SnapshotObservedEntry
+    delivered []SnapshotDeliveryEntry
+}
+
+// SnapshotScope is the delivery scope: the JSON array
+// [as, to, host] snapshotScope writes (snapshot.go:310) and uses as the
+// delivered map's key. as_name keeps the position of --as, to the sorted,
+// comma-joined --to list and host the host. No element has a byte cap.
+table SnapshotScope
+{
+    as_name *string
+    to      *string
+    host    *string
+}
+
+// UpdateManifestEntry is one line of the update manifest
+// (internal/update/manifest.go Entry :21; Load :59): name, kind,
+// installed argv, latest, apply argv and owner. Load requires every field
+// non-empty (:86) except that apply may be none, a distinct name (:95),
+// a kind from ManifestKind (:92), and argv with single spaces and no
+// quoting (argv, :29). Installed and apply are lists of the argv words;
+// apply is empty for none or a dash. No field has a byte cap; a line is
+// bounded only by the 1 MiB scanner buffer (:61).
+table UpdateManifestEntry
+{
+    name      *string
+    kind      ManifestKind
+    installed []Word
+    latest    *string
+    apply     []Word
+    owner     *string
+}
+
+// UpdateManifest is the update manifest read whole (manifest.go Load): its
+// entries, counted nowhere.
+table UpdateManifest
+{
+    entries []UpdateManifestEntry
+}
+
+// VersionSnapEntry is one row of the version snapshot (internal/update
+// snapverb.go snapshotHeader :62, rows :271-273; diffverb.go
+// readSnapshotFile :16): name, stamp, revision, platform. A row of any
+// other arity is refused (diffverb.go:34); no field has a byte cap.
+table VersionSnapEntry
+{
+    name     *string
+    stamp    *string
+    revision *string
+    platform *string
+}
+
+// VersionSnapshot is the version snapshot read whole: its rows, counted
+// nowhere (a line is bounded only by the 1 MiB scanner buffer,
+// diffverb.go:23).
+table VersionSnapshot
+{
+    rows []VersionSnapEntry
+}
+
+// AdoptionChoice is one choice of the adoption ledger (internal/update
+// adoption.go adoption :25; loadAdoption :29): tool, friend, state,
+// version and detail. loadAdoption requires every field non-empty (:47), the
+// state from AdoptionState (:50) and no byte cap on any other field.
+table AdoptionChoice
+{
+    tool    *string
+    friend_name *string | json = "friend"
+    state   AdoptionState
+    version *string
+    detail  *string
+}
+
+// AdoptionLedger is the adoption ledger read whole: its rows, counted
+// nowhere.
+table AdoptionLedger
+{
+    rows []AdoptionChoice
+}
+
+// AdoptCheckEntry is one check of the watch --adopt checks file
+// (internal/update/adopt.go AdoptCheck :26; LoadAdopt :34): the
+// check name, its command argv and its owner. LoadAdopt requires every field
+// non-empty (:55), a distinct check name (:59) and argv with single
+// spaces (:62). check_name keeps the file's column "check".
+table AdoptCheckEntry
+{
+    check_name *string | json = "check"
+    command    []Word
+    owner      *string
+}
+
+// AdoptChecks is the checks file read whole: its checks, counted nowhere.
+table AdoptChecks
+{
+    checks []AdoptCheckEntry
+}
+
+// MachineEntry is one line of the machines file adopt reads
+// (pkg/release/adopt.go Machine, Machines :45): a machine name and the
+// optional --bin and --dest overrides of that machine. machineName
+// (adopt.go:27) holds the name to letters, digits, dot, dash, underscore and
+// @, a character class and not a length, so the name has no declared bound;
+// an override column is either non-blank or absent (:78).
+table MachineEntry
+{
+    name *string
+    bin  *string
+    dest *string
+}
+
+// MachineList is the machines file read whole: its machines, at least one
+// (:86-88), counted nowhere.
+table MachineList
+{
+    machines []MachineEntry
+}
+
+// BuildRecord is the note a build keeps beside each platform directory
+// (pkg/release/incremental.go buildRecord :64; encode :73, readRecord
+// :85): the commit (none when the checkout was dirty), the Go version,
+// the stamp shape, the base, the gate and its reason, and the tools
+// rebuilt and reused. go_version keeps the key "go". No field has a byte
+// cap and the tool lists are counted nowhere.
+table BuildRecord
+{
+    commit     *string
+    go_version *string | json = "go"
+    ldflags    *string
+    base_ref   *string | json = "base"
+    gate       *string
+    reason     *string
+    rebuilt    []Word
+    reused     []Word
+}
+
+// PathsFile is the path list `release cut --local-diff` writes (pkg/release
+// cut.go WritePathsFile :600, ReadPathsFile :614): the range it is
+// for, the sha256 of the list (a lowercase hex digest, 64 bytes: sumOf,
+// incremental.go:278, held equal to the recomputed digest at cut.go:654) and
+// the files, in order. The files are counted nowhere.
+table PathsFile
+{
+    range_name *string
+    digest     string(64)
+    files      []Word
+}
+
+// ReleaseDigest is the digest file `release build` writes beside the
+// artifacts (pkg/release/build.go:377 writes it; ReadDigestFile
+// adopt.go:690 reads it): the sha256 of SHA256SUMS, 64 lowercase hex
+// characters (sha256Hex, adopt.go:115, held at :696).
+table ReleaseDigest
+{
+    digest string(64)
+}

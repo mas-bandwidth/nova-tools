@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
@@ -91,6 +90,11 @@ func (c *Conformance) Run(ctx context.Context) CheckResult {
 	case exit != 0:
 		return fail(StageDeliver, fmt.Sprintf("%s's deliver command exited %d", c.Harness, exit))
 	}
+	// The pong is read as every pong is (PongReader.Message): either form,
+	// only the writer's one framing newline dropped, a malformed pong refused
+	// by name and never taken as the answer.
+	pongs := NewPongReader()
+	var refused error
 	for {
 		es, err := c.Store.Range(ctx, bus.LogKey, "("+cursor, "+", LogBatch)
 		if err != nil {
@@ -99,13 +103,24 @@ func (c *Conformance) Run(ctx context.Context) CheckResult {
 		for _, e := range es {
 			cursor = e.Entry
 			m := e.Message()
-			if n, _, _, _, ok := ParsePong(strings.TrimSpace(m.Body)); ok && n == nonce && m.From == c.Friend { // the sender is the message's from, never its body
+			if m.From != c.Friend || !IsPong(m) { // the sender is the message's from, never its body
+				continue
+			}
+			p, _, err := pongs.Message(m)
+			switch {
+			case err != nil:
+				refused = err
+			case p.Nonce == nonce:
 				r.Took = c.Now().Sub(start)
 				return r
 			}
 		}
 		if c.Now().Sub(start) >= c.Within {
-			return fail(StageAct, fmt.Sprintf("no pong %s from %s within %s: the session did not run the line the check carried", nonce, c.Friend, c.Within))
+			why := fmt.Sprintf("no pong %s from %s within %s: the session did not run the line the check carried", nonce, c.Friend, c.Within)
+			if refused != nil {
+				why += "; a pong from " + c.Friend + " was refused: " + refused.Error()
+			}
+			return fail(StageAct, why)
 		}
 		if !c.Wait(ctx) {
 			why := "the wait ended"

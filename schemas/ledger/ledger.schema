@@ -1,0 +1,97 @@
+// ledger.schema: records and keys written by the token ledger, cairn log,
+// fuse box and dogfood receipt packages. The source structs remain the readers
+// and writers until their reader-first migration cards land.
+//
+// Every table here is VARIABLE: each record has unbounded text or a collection
+// whose source has no field-level count bound. A whole-file read limit is not
+// a field bound. Declared field bounds below come from the named Go checks.
+package ledgerwire
+
+enum CairnEvent { open, append }
+enum PublishPolicy { never, manual, deferred, immediate }
+
+// The ledger hash key (the day remains the Redis key suffix), plus the tuple
+// marshalled as its JSON hash field. Day is canonical YYYY-MM-DD at
+// internal/record/ledger.go:89; the tuple's strings have no length caps there.
+table LedgerKey
+{
+    day   string(10)
+    card  *string
+    model *string
+    repo  *string
+}
+
+// The hash value written at internal/record/ledger.go:270. The token slots
+// have a fixed five-element source array; null means Known[i] is false, as
+// LedgerTypes and the value encoder at :179-183 and :265-270 define it.
+table TokenValue
+{
+    amount ?int64
+}
+
+table LedgerValue
+{
+    provider *string
+    tokens   [..5]TokenValue
+    rough    int64
+    sources  *string
+}
+
+// One JSON line appended to log.jsonl at internal/cairn/cairn.go:417-426;
+// event_kind keeps the source JSON key "event".
+// Session and entry are IDs validated by ValidID (128-byte maximum, :73-110);
+// an open line has an empty entry. The event and publication values are the
+// complete values used by open/append and ValidPublish (:55-68, :218-220,
+// :542, :583, :732). Source and stamp have no field-length check.
+table CairnLogRecord
+{
+    event_kind CairnEvent | json = "event"
+    session string(128)
+    entry   string(128)
+    stamp   *string
+    publish PublishPolicy
+    source  *string
+}
+
+// A fuse's recorded time and reason are hand-editable text, with no length
+// bound in internal/fuse/fuse.go:116-120.
+table Fuse
+{
+    at     *string
+    reason *string
+}
+
+table QuarantineEntry
+{
+    surface *string
+    fuse    Fuse
+}
+
+// The box has an optional lockdown and an open map of quarantine surfaces.
+// Neither map size nor surface/reason length is bounded by Fuse (fuse.go:123-126).
+// ReadBox's 1 MiB cap (:222-263) bounds the whole JSON file, not these fields.
+// The map is represented by its unbounded key/value entries because the schema
+// map form requires a bounded key and the source enforces no surface length.
+table FuseBox
+{
+    lockdown   *Fuse
+    quarantine []QuarantineEntry
+}
+
+// A dogfood receipt as serialized by json.Marshal(Receipt) at
+// pkg/dogfood/receipt.go:27-43. Issue is nonnegative when present (Validate
+// at :174-177); closes is the original text, including any accepted surrounding
+// whitespace (:180-182). File is json:"-" and absent.
+// Issue's maximum is Go int's 64-bit representable maximum on supported hosts;
+// json.Unmarshal into int rejects a larger value.
+table DogfoodReceipt
+{
+    tool   *string
+    verb   *string
+    by     *string
+    at     *string
+    ok     bool
+    notes  *string
+    issue  ?int64 | min = 0, max = 9223372036854775807
+    closes *string
+}
