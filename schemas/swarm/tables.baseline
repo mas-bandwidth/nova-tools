@@ -2,24 +2,24 @@ schema-tables-baseline 7
 package swarmwire
 
 table DeclaredModel
-    field provider id=0xd02b4c8c65fb54dc kind=12 size=64
-    field model id=0x9de543933e6e703a kind=12 size=128
+    field provider id=0xd02b4c8c65fb54dc kind=17 type=string
+    field model id=0x9de543933e6e703a kind=17 type=string
 
 table Entry
     field value id=0x7ce4fd9430e80cea kind=17 type=string
 
 table ExitRecord
-    field rc id=0x08dc5507b57b9942 kind=4 min=-1 max=255
-    field signal id=0x5062cd8f7a7fd349 kind=12 size=16
-    field ended id=0x34bb12befe88eb1b kind=12 size=40
-    field survivors id=0xbc658a10e66b2a64 kind=4 min=0 max=1048576
-    field nonce id=0x73a94c71d60dc0d8 kind=12 size=12
-    field attest id=0x907bd39a08f34aac kind=12 size=128
-    field end id=0xc2f00318f053500a kind=12 size=32
-    field spent id=0x22705b8aa011b9a3 kind=4 min=0 max=2147483647
+    field rc id=0x08dc5507b57b9942 kind=5
+    field signal id=0x5062cd8f7a7fd349 kind=17 type=string
+    field ended id=0x34bb12befe88eb1b kind=17 type=string
+    field survivors id=0xbc658a10e66b2a64 kind=5
+    field nonce id=0x73a94c71d60dc0d8 kind=17 type=string
+    field attest id=0x907bd39a08f34aac kind=17 type=string
+    field end id=0xc2f00318f053500a kind=17 type=string
+    field spent id=0x22705b8aa011b9a3 kind=5
     field observed id=0x6a15c2158aa39ba1 kind=1
     field partial id=0xb5d43e6c2878bc7a kind=1
-    field reason id=0x65e8d7f3474f2639 kind=12 size=500
+    field reason id=0x65e8d7f3474f2639 kind=17 type=string
 
 table FenceConfig
     field job_dir id=0x030f206af480f8a8 kind=17 type=string
@@ -32,16 +32,16 @@ table FenceRule
     field action id=0x6568640b035a56df kind=6 min=0 max=2
 
 table HarnessConfigRecord
-    field provider id=0xd02b4c8c65fb54dc kind=12 size=64
-    field model id=0x9de543933e6e703a kind=12 size=128
-    field env_var id=0x5f52c402ed58e01a kind=12 size=128
-    field base_url id=0x9a3b153e9e8f251e kind=12 size=512
+    field provider id=0xd02b4c8c65fb54dc kind=17 type=string
+    field model id=0x9de543933e6e703a kind=17 type=string
+    field env_var id=0x5f52c402ed58e01a kind=17 type=string
+    field base_url id=0x9a3b153e9e8f251e kind=17 type=string
 
 table MemberCarry
-    field card id=0xb5614e90e87b455f kind=12 size=128
-    field attempt id=0x63e618bd2b303dee kind=4 min=0 max=1000000
-    field head id=0x0a8f12cc5f9a0c03 kind=12 size=64
-    field branch id=0x919ec0f651278ba5 kind=12 size=256
+    field card id=0xb5614e90e87b455f kind=17 type=string
+    field attempt id=0x63e618bd2b303dee kind=5 min=0 max=9223372036854775807
+    field head id=0x0a8f12cc5f9a0c03 kind=17 type=string
+    field branch id=0x919ec0f651278ba5 kind=17 type=string
 
 table WorkerRecord
     field name id=0xc4bcadba8e631b86 kind=17 type=string
@@ -59,8 +59,8 @@ table WorkerRecord
     field deadline id=0x4abbaca40bb6fe75 kind=17 type=string
     field board id=0xd0013bb2e083188b kind=17 type=string
     field read_roots id=0xf7df2f140b025f4b kind=14 elem=13 type=Entry array=unbounded
-    field max_turns id=0x6e3350b274605c16 kind=4 min=0 max=2147483647
-    field max_cache_read id=0x18e16aeddf76561d kind=5 min=0 max=9007199254740991
+    field max_turns id=0x6e3350b274605c16 kind=5 min=0 max=9223372036854775807
+    field max_cache_read id=0x18e16aeddf76561d kind=5 min=0 max=9223372036854775807
     field input_limit_phrases id=0xf9d5642cca9049fa kind=14 elem=13 type=Entry array=unbounded
     field launch_grace id=0x98358983bb5d1401 kind=17 type=string
     field keep_data id=0x393f74e7cef3c9d5 kind=1

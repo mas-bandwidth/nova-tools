@@ -1,23 +1,28 @@
-// swarm.schema: the swarm area's records (pkg/swarm, pkg/member), as FIXED
+// swarm.schema: the swarm area's records (pkg/swarm, pkg/member), as VARIABLE
 // tables. Its Go is generated into pkg/swarmwire (go generate ./pkg/swarmwire).
 //
 // FIXED and VARIABLE (owner's rule S1, and the design rule that a fixed table
-// is a struct and a variable table is a document held by pointer). ExitRecord,
-// HarnessConfigRecord, DeclaredModel and MemberCarry are small, bounded
-// structs the swarm tools write and read themselves, so each is a FIXED table:
-// its reader is always the same version or newer; a field is appended at the bottom and never moved, and
-// schema.lock beside this file records the layout a newer build reads
-// backward. Every table has the binary wire and its padded standard base64
-// text (S2), both read strictly through pkg/schemaread.
+// is a struct and a variable table is a document held by pointer). A fixed
+// table needs a declared bound on every text and list it holds, and the rule
+// of this area is that every declared bound is a bound the code enforces
+// today. No record here meets that: each holds text (a path, a name, a model
+// id, a branch, a reason) whose length no code bounds. So every record is a
+// VARIABLE table: text is held at its used size (*string) and lists are
+// unbounded. A fixed table returns the day a record holds only bounded fields.
+// Every table has the binary wire and its padded standard base64 text (S2),
+// and the schema JSON text form, all read strictly through pkg/schemaread.
 //
-// Absence. A fixed table has no absent field: a field a Go struct omits when
-// empty (omitempty) is the empty string, zero or false here, and a reader
-// that needs the field refuses the empty value by name.
+// Absence. An absent field reads as zero, empty or false, as the Go struct's
+// omitempty fields do; a reader that needs the field refuses the empty value
+// by name (the code's own required checks: LoadWorker, DeclareRouteModel,
+// parseCarry).
 //
-// Bounds. A bound the code enforces today is that bound; where the struct is
-// bounded by no code (a path, a name), the bound is the declared ceiling and
-// its comment says so. A value past a bound is refused by name, never
-// clamped.
+// Bounds. A bound here is a bound the code enforces today, and its comment
+// names the code. A Go int is int64 with the range the code refuses outside
+// of (min = 0 where a negative value is refused, no bound where none is; a
+// min is written with int64's own top as its max, because the compiler
+// refuses a min without a max, SPEC 4.6). A
+// value past a bound is refused by name, never clamped.
 //
 // External formats stay: the harness config this swarm writes for OpenCode
 // (opencode.json), provider output and pkg/swarm/headless.go are external and
@@ -60,32 +65,36 @@ table FenceRule
 
 // ExitRecord is <job>/exit.json: the supervisor's durable completion
 // evidence (pkg/swarm/slot.go ExitRecord, rule 18 step 6). An outcome with
-// none is unknown, never guessed.
-fixed table ExitRecord
+// none is unknown, never guessed. A VARIABLE table: swarm.ReadJSON reads it
+// with no bound on any text or integer (pkg/swarm/slot.go ReadJSON), so none
+// is declared here.
+table ExitRecord
 {
     // rc: the harness exit code; -1 when it ended by signal or never exited.
-    rc int32 | min = -1, max = 255
+    // A Go int; no code bounds it.
+    rc int64
     // signal: the signal name that ended the group; empty for none.
-    signal string(16)
+    signal *string
     // ended: when the job ended, RFC 3339 (time.RFC3339).
-    ended string(40)
-    // survivors: processes left alive in the job's group at exit.
-    survivors int32 | min = 0, max = 1048576
+    ended *string
+    // survivors: processes left alive in the job's group at exit. A Go int;
+    // no code bounds it.
+    survivors int64
     // nonce: twelve hex characters from the OS random source, drawn once per
-    // launch (swarm.Nonce).
-    nonce string(12)
+    // launch (swarm.Nonce). The reader does not check its length.
+    nonce *string
     // attest: the per-launch secret the supervisor minted; empty when absent.
-    attest string(128)
+    attest *string
     // end: how a run that did not finish ended (EndProvider, EndBudget,
     // EndDeadline); empty for a finished run.
-    end string(32)
+    end *string
     // spent: what the run spent, in the unit the budget names; zero for none.
-    spent    int32 | min = 0, max = 2147483647
+    // A Go int; no code bounds it.
+    spent    int64
     observed bool
     partial  bool
-    // reason: one line, the end's reason. oneline.TailBytes (500) is the
-    // house ceiling for a tail; a reason is held to it.
-    reason string(500)
+    // reason: the end's reason.
+    reason *string
 }
 
 // WorkerRecord is a worker description (pkg/swarm/worker.go Worker): which
@@ -133,10 +142,11 @@ table WorkerRecord
     // read_roots: absolute directories a job may read. Any count.
     read_roots []Entry
     // max_turns and max_cache_read: the card budget; zero is unset and a
-    // negative value is refused at load (LoadWorker). The code's int is the
-    // range's top.
-    max_turns      int32 | min = 0, max = 2147483647
-    max_cache_read int64 | min = 0, max = 9007199254740991
+    // negative value is refused at load (LoadWorker). Each is a Go int, so
+    // int64 with min 0 and no cap: the max is int64's own top, written only
+    // because the compiler refuses a min without a max (SPEC 4.6).
+    max_turns      int64 | min = 0, max = 9223372036854775807
+    max_cache_read int64 | min = 0, max = 9223372036854775807
     // input_limit_phrases: the provider's own sentences for a request that did
     // not fit. Any count.
     input_limit_phrases []Entry
@@ -146,16 +156,18 @@ table WorkerRecord
 }
 
 // HarnessConfigRecord is what Worker.HarnessConfig writes into a slot's
-// harness config (pkg/swarm/worker.go ~616): the provider's declared model
-// and its key variable, the values read from the worker.
-fixed table HarnessConfigRecord
+// harness config (pkg/swarm/worker.go ~589): the provider's declared model
+// and its key variable, the values read from the worker. A VARIABLE table:
+// LoadWorker bounds none of the four by length.
+table HarnessConfigRecord
 {
-    provider string(64)
-    model    string(128)
-    // env_var: the key variable's NAME, written as {env:NAME}.
-    env_var string(128)
+    provider *string
+    model    *string
+    // env_var: the key variable's NAME, written as {env:NAME} (validEnvName
+    // checks its characters, never its length).
+    env_var *string
     // base_url: written only when non-empty.
-    base_url string(512)
+    base_url *string
 }
 
 // FenceConfig is the input and the result of FencePermission
@@ -180,28 +192,34 @@ table FenceConfig
 }
 
 // DeclaredModel is what DeclareRouteModel declares in a job's harness config
-// (pkg/swarm/declaremodel.go ~26, ~56): the model as a model of its
-// provider, so the harness knows it whatever its catalog holds at start.
-fixed table DeclaredModel
+// (pkg/swarm/declaremodel.go ~20): the model as a model of its provider, so
+// the harness knows it whatever its catalog holds at start. A VARIABLE table:
+// DeclareRouteModel accepts a provider and a model of any length.
+table DeclaredModel
 {
     // provider and model: both are trimmed and non-empty, else the body is
     // returned unchanged.
-    provider string(64)
-    model    string(128)
+    provider *string
+    model    *string
 }
 
 // MemberCarry is a Carry (pkg/member/member.go, CarryLine): where a card's
 // next attempt starts, the one record pkg/member writes into a brief header
 // and reads back (its CARRY: line). The queue and take answers pkg/member
-// parses are nova-sprint's, and are not this table's.
-fixed table MemberCarry
+// parses are nova-sprint's, and are not this table's. A VARIABLE table:
+// CarryLine writes a card and a branch of any length.
+table MemberCarry
 {
     // card: the held card; empty for a finish-PR card.
-    card string(128)
-    // attempt: the attempt the head is the head of; zero for a finish-PR card.
-    attempt int32 | min = 0, max = 1000000
-    // head: a full sha, 40 hex (sha-1) or 64 hex (sha-256); empty when unknown.
-    head string(64)
+    card *string
+    // attempt: the attempt the head is the head of; zero for a finish-PR
+    // card. A Go int: parseCarry refuses one under 1 and CarryLine writes none
+    // under 1, so min 0 (absent) and no cap: the max is int64's own top
+    // (the compiler refuses a min without a max).
+    attempt int64 | min = 0, max = 9223372036854775807
+    // head: a full sha, 40 hex (sha-1) or 64 hex (sha-256); parseCarry
+    // refuses any other, and CarryLine writes what it is given.
+    head *string
     // branch: the PR branch a finish-PR card was pushed to; empty for a widen.
-    branch string(256)
+    branch *string
 }

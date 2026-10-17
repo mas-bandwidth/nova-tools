@@ -8,20 +8,21 @@ package swarmwire
 // pkg/schemaread (owner's rules S1 and S2); a value past each declared bound
 // and a damaged image of each form are refused by name, never clamped.
 //
-// The tables are FIXED tables (S1): a small, bounded record whose reader is
-// the same version or newer. The test walks each table's generated field
-// descriptors, so a field added to the definition is covered the day it is
-// generated and the bounds the test checks are the bounds the definition
-// declares, never a copy of them.
+// Every table is a VARIABLE table (schemas/swarm/swarm.schema, the area's
+// bound rule): the code bounds none of the text these records hold, so text
+// is held at its used size and lists are unbounded. The proof is that long
+// text, long lists and integers across int64's range round-trip, that a value
+// at each declared bound is accepted and one past it is refused by name in
+// every form, and that damaged images of each form are refused by name.
 
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
 	"strings"
 	"testing"
 	"unsafe"
@@ -31,221 +32,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// table is one table's generated functions and what the strict read needs to
-// refuse it by name. required names the fields a reader refuses when empty
-// (S1: a fixed table has no absent field, so an empty value is the absence).
-type table[T any] struct {
-	name     string
-	fields   []TableFieldInfo
-	reset    func(*T)
-	load     func(*T, []byte, *TableReport) bool
-	fromJSON func(*T, []byte, *TableReport) bool
-	measure  func(*T) int64
-	save     func(*T, []byte) int64
-	toMeas   func(*T) int64
-	toJSON   func(*T, []byte) int64
-	saveText func(*T) (string, error)
-	loadText func(string, *TableReport) (*T, error)
-	required []string
-	// typical is a plausible value, set by the table's own function.
-	typical func(*T)
-}
-
-// elementBounds are the text bounds of the element types the tables hold in
-// counted arrays, read from their generated descriptors.
-var elementBounds = map[string][]TableFieldInfo{}
-
-// num reads and sets an integer member whatever its signedness.
-func num(v reflect.Value) int64 {
-	if v.CanInt() {
-		return v.Int()
-	}
-	return int64(v.Uint())
-}
-
-func setNum(v reflect.Value, n int64) {
-	if v.CanInt() {
-		v.SetInt(n)
-	} else {
-		v.SetUint(uint64(n))
-	}
-}
-
-func unsigned(v reflect.Value) bool { return !v.CanInt() }
-
-// goName is the generated Go name of a schema field name.
-func goName(s string) string {
-	var b strings.Builder
-	for _, p := range strings.Split(s, "_") {
-		b.WriteString(strings.ToUpper(p[:1]) + p[1:])
-	}
-	return b.String()
-}
-
-func isString(f TableFieldInfo) bool   { return f.TypeName == "string" && !f.IsArray }
-func isCounted(f TableFieldInfo) bool  { return f.IsArray && f.Counted }
-func elemType(f TableFieldInfo) string { return f.TypeName }
-func isInt(f TableFieldInfo) bool {
-	return f.HasRange && (strings.HasPrefix(f.TypeName, "int") || strings.HasPrefix(f.TypeName, "uint"))
-}
-
-// setText fills a counted string member (a [N]byte and its Length) of the
-// struct s, whose Go name is name; a length past the buffer is stored as the
-// buffer's length (the generated storage cannot hold more).
-func setText(s reflect.Value, name, text string) {
-	buf := s.FieldByName(name)
-	clear := reflect.Zero(buf.Type())
-	buf.Set(clear)
-	n := min(len(text), buf.Len())
-	reflect.Copy(buf, reflect.ValueOf([]byte(text[:n])).Convert(reflect.SliceOf(buf.Type().Elem())))
-	s.FieldByName(name + "Length").SetInt(int64(len(text)))
-}
-
-func getText(s reflect.Value, name string) string {
-	buf := s.FieldByName(name)
-	n := int(s.FieldByName(name + "Length").Int())
-	if n < 0 {
-		return ""
-	}
-	raw := make([]byte, buf.Len())
-	for i := range raw {
-		raw[i] = byte(buf.Index(i).Uint())
-	}
-	if n > len(raw) {
-		return string(raw) + strings.Repeat("?", n-len(raw))
-	}
-	return string(raw[:n])
-}
-
-// codec is the strict read and write over the generated functions. The facade
-// rules are UNION.md section 4.6: refuse every clamp, refuse absence where
-// empty is no value, and validate before writing because the generated writer
-// checks no bound.
-func (tb table[T]) codec() *schemaread.Codec[T] {
-	return &schemaread.Codec[T]{
-		Name:  strings.ToUpper(tb.name),
-		Help:  "nova-swarm -h",
-		Reset: tb.reset,
-		LoadWire: func(v *T, wire []byte) schemaread.Report {
-			var rep TableReport
-			ok := tb.load(v, wire, &rep)
-			return report(rep, ok)
-		},
-		LoadJSON: func(v *T, text []byte) schemaread.Report {
-			var rep TableReport
-			ok := tb.fromJSON(v, text, &rep)
-			return report(rep, ok)
-		},
-		Constraints: tb.constraints,
-		SaveWire: func(v *T) []byte {
-			n := tb.measure(v)
-			if n < 0 {
-				return nil
-			}
-			buf := make([]byte, n)
-			if tb.save(v, buf) != n {
-				return nil
-			}
-			return buf
-		},
-		SaveJSON: func(v *T) []byte {
-			n := tb.toMeas(v)
-			if n < 0 {
-				return nil
-			}
-			buf := make([]byte, n)
-			if tb.toJSON(v, buf) != n {
-				return nil
-			}
-			return buf
-		},
-	}
-}
-
-func report(rep TableReport, ok bool) schemaread.Report {
-	out := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped), Malformed: rep.Malformed || !ok}
-	if rep.Verdict == TableOpenRefused || rep.Verdict == TableOpenDamaged {
-		out.Reason = rep.Err().Error()
-	}
-	return out
-}
-
-// constraints states every bound of the table once, from its descriptors, for
-// the reader and the writer (owner's rule S2: a reader refuses damage by name).
-func (tb table[T]) constraints(v *T, c *schemaread.Checker) {
-	s := reflect.ValueOf(v).Elem()
-	required := map[string]bool{}
-	for _, r := range tb.required {
-		required[r] = true
-	}
-	for _, f := range tb.fields {
-		g := goName(f.Name)
-		switch {
-		case isString(f):
-			text := getText(s, g)
-			c.Required(f.Name, !required[f.Name] || len(text) > 0)
-			c.Text(f.Name, text, int(f.ArrayBound))
-		case isCounted(f):
-			n := int(s.FieldByName(g + "Count").Int())
-			c.Required(f.Name, !required[f.Name] || n > 0)
-			c.Bound(f.Name, int64(n), 0, int64(f.ArrayBound))
-			for i := 0; i < min(n, int(f.ArrayBound)); i++ {
-				el := s.FieldByName(g).Index(i)
-				for _, ef := range elementBounds[elemType(f)] {
-					eg := goName(ef.Name)
-					if isString(ef) {
-						c.Text(f.Name+"."+ef.Name, getText(el, eg), int(ef.ArrayBound))
-					} else if isInt(ef) {
-						n := num(el.FieldByName(eg))
-						c.Required(f.Name+"."+ef.Name, n != 0)
-						c.Bound(f.Name+"."+ef.Name, n, int64(ef.RangeMin), int64(ef.RangeMax))
-					}
-				}
-				if elemType(f) != "FenceRule" {
-					c.Required(f.Name, len(getText(el, "Text")) > 0)
-				}
-			}
-		case isInt(f):
-			n := num(s.FieldByName(g))
-			c.Required(f.Name, !required[f.Name] || n != 0)
-			c.Bound(f.Name, n, int64(f.RangeMin), int64(f.RangeMax))
-		}
-	}
-}
-
-// limit fills every field at its declared limit: text at its full bound,
-// counted arrays full with full elements, integers at the range's top, enums
-// at their last variant, flags set.
-func (tb table[T]) limit() T {
-	var v T
-	tb.reset(&v)
-	s := reflect.ValueOf(&v).Elem()
-	for _, f := range tb.fields {
-		fill(s, f, true)
-	}
-	return v
-}
-
-func fill(s reflect.Value, f TableFieldInfo, top bool) {
-	g := goName(f.Name)
-	switch {
-	case isString(f):
-		setText(s, g, strings.Repeat("a", int(f.ArrayBound)))
-	case isCounted(f):
-		n := int(f.ArrayBound)
-		s.FieldByName(g + "Count").SetInt(int64(n))
-		for i := range n {
-			el := s.FieldByName(g).Index(i)
-			for _, ef := range elementBounds[elemType(f)] {
-				fill(el, ef, top)
-			}
-		}
-	case isInt(f):
-		setNum(s.FieldByName(g), int64(f.RangeMax))
-	case f.TypeName == "bool":
-		s.FieldByName(g).SetBool(true)
-	}
-}
+// unbounded is the text bound of a field no code bounds: the checker still
+// refuses a NUL and invalid UTF-8 (pkg/schemaread Checker.Text), never a
+// length.
+const unbounded = math.MaxInt
 
 // refusal checks the house style of a refusal and returns its reason.
 func refusal(t *testing.T, name string, err error) string {
@@ -263,190 +53,6 @@ func refusal(t *testing.T, name string, err error) string {
 
 var b64 = base64.StdEncoding.EncodeToString
 
-// run is the whole proof of one table.
-func run[T any](t *testing.T, tb table[T]) {
-	t.Helper()
-	r := schemaread.NewReader(tb.codec())
-	var typical T
-	tb.reset(&typical)
-	tb.typical(&typical)
-	limit := tb.limit()
-
-	// every form round-trips, for the typical value and the value at every limit
-	for name, v := range map[string]T{"typical": typical, "limit": limit} {
-		wire, err := r.Write(&v, schemaread.FormBinary)
-		require.NoError(t, err, "%s %s writes", tb.name, name)
-		require.NotEmpty(t, wire)
-		text, err := r.Write(&v, schemaread.FormBase64)
-		require.NoError(t, err)
-		assert.Equal(t, b64(wire), string(text), "%s %s: the text is the padded standard base64 of the whole wire", tb.name, name)
-		js, err := r.Write(&v, schemaread.FormJSON)
-		require.NoError(t, err)
-		for _, f := range tb.fields {
-			assert.Contains(t, string(js), `"`+f.Json+`": `, "%s %s: the text form is keyed by field name", tb.name, name)
-		}
-		for _, in := range []struct {
-			form schemaread.Form
-			data []byte
-		}{{schemaread.FormBinary, wire}, {schemaread.FormBase64, text}, {schemaread.FormJSON, js}} {
-			got, res, err := r.Read(in.data)
-			require.NoError(t, err, "%s %s as %s", tb.name, name, in.form)
-			assert.Equal(t, in.form, res.Form)
-			assert.Equal(t, v, got, "%s %s as %s reads the value", tb.name, name, in.form)
-			again, err := r.Write(&got, in.form)
-			require.NoError(t, err)
-			assert.True(t, bytes.Equal(again, in.data) || in.form == schemaread.FormJSON, "%s %s: a read value writes the same %s", tb.name, name, in.form)
-		}
-		// the generated SaveText and LoadText are the same text transport
-		sv := v
-		gen, err := tb.saveText(&sv)
-		require.NoError(t, err)
-		assert.Equal(t, b64(wire), gen, "%s %s: SaveText is the padded standard base64 of the wire", tb.name, name)
-		back, err := tb.loadText(gen, nil)
-		require.NoError(t, err)
-		assert.Equal(t, v, *back, "%s %s: LoadText reads what SaveText wrote", tb.name, name)
-	}
-	c := r.Counts()
-	assert.Equal(t, uint64(2), c.Reads(schemaread.FormBinary), "%s: each read is counted once, on its form", tb.name)
-	assert.Equal(t, uint64(2), c.Reads(schemaread.FormBase64))
-	assert.Equal(t, uint64(2), c.Reads(schemaread.FormJSON))
-	assert.Equal(t, uint64(0), c.Reads(schemaread.FormLegacy))
-
-	// a value past each declared bound is refused by name by the writer,
-	// before a byte is written
-	overCases := 0
-	for _, f := range tb.fields {
-		g := goName(f.Name)
-		over := func(edit func(s reflect.Value)) string {
-			v := tb.limit()
-			edit(reflect.ValueOf(&v).Elem())
-			out, err := r.Write(&v, schemaread.FormBinary)
-			assert.Nil(t, out, "%s %s past its bound writes nothing", tb.name, f.Name)
-			overCases++
-			return refusal(t, tb.name, err)
-		}
-		switch {
-		case isString(f):
-			assert.Equal(t, "clamped ("+f.Name+")", over(func(s reflect.Value) { setText(s, g, strings.Repeat("a", int(f.ArrayBound)+1)) }), "%s.%s one byte over", tb.name, f.Name)
-			assert.Equal(t, "malformed ("+f.Name+")", over(func(s reflect.Value) { setText(s, g, "a\x00") }), "%s.%s with a NUL", tb.name, f.Name)
-		case isCounted(f):
-			assert.Equal(t, "clamped ("+f.Name+")", over(func(s reflect.Value) { s.FieldByName(g + "Count").SetInt(int64(f.ArrayBound) + 1) }), "%s.%s one entry over", tb.name, f.Name)
-		case isInt(f):
-			assert.Equal(t, "clamped ("+f.Name+")", over(func(s reflect.Value) { setNum(s.FieldByName(g), int64(f.RangeMax)+1) }), "%s.%s one over its max", tb.name, f.Name)
-			if f.RangeMin < 0 || !unsigned(reflect.ValueOf(&limit).Elem().FieldByName(g)) {
-				assert.Equal(t, "clamped ("+f.Name+")", over(func(s reflect.Value) { setNum(s.FieldByName(g), int64(f.RangeMin)-1) }), "%s.%s one under its min", tb.name, f.Name)
-			}
-		}
-	}
-	assert.GreaterOrEqual(t, overCases, len(tb.fields), "%s: every bounded field is probed past its bound", tb.name)
-	// an empty required field is refused by name, by the writer and the reader
-	for _, name := range tb.required {
-		var f TableFieldInfo
-		for _, x := range tb.fields {
-			if x.Name == name {
-				f = x
-			}
-		}
-		v := typical
-		s := reflect.ValueOf(&v).Elem()
-		switch {
-		case isString(f):
-			setText(s, goName(name), "")
-		case isInt(f):
-			setNum(s.FieldByName(goName(name)), 0)
-		case isCounted(f):
-			s.FieldByName(goName(name) + "Count").SetInt(0)
-		}
-		out, err := r.Write(&v, schemaread.FormBinary)
-		assert.Nil(t, out)
-		assert.Equal(t, "absent_required ("+name+")", refusal(t, tb.name, err), "%s.%s empty", tb.name, name)
-		// the same value, written without the check, is refused on the way in
-		raw := tb.codec().SaveWire(&v)
-		require.NotNil(t, raw)
-		_, _, err = r.Read(raw)
-		assert.Equal(t, "absent_required ("+name+")", refusal(t, tb.name, err))
-	}
-
-	// a value past a bound in the JSON text form is refused on the way in
-	// (the generated reader clamps and counts; the strict read refuses)
-	jsonCases := 0
-	base := limit
-	js, err := r.Write(&base, schemaread.FormJSON)
-	require.NoError(t, err)
-	for _, f := range tb.fields {
-		var edited string
-		switch {
-		case isString(f):
-			edited = strings.Replace(string(js), `"`+f.Json+`": "`+strings.Repeat("a", int(f.ArrayBound))+`"`, `"`+f.Json+`": "`+strings.Repeat("a", int(f.ArrayBound)+1)+`"`, 1)
-		case isInt(f):
-			edited = strings.Replace(string(js), fmt.Sprintf(`"%s": %d`, f.Json, int64(f.RangeMax)), fmt.Sprintf(`"%s": %d`, f.Json, int64(f.RangeMax)+1), 1)
-		default:
-			continue
-		}
-		if edited == string(js) {
-			continue
-		}
-		jsonCases++
-		got, _, err := r.Read([]byte(edited))
-		assert.Equal(t, "clamped", refusal(t, tb.name, err), "%s.%s over its bound as JSON text", tb.name, f.Name)
-		var zero T
-		assert.Equal(t, zero, got, "a refused read returns nothing, never a partial value")
-	}
-
-	assert.Positive(t, jsonCases, "%s: some field is probed past its bound as JSON text", tb.name)
-
-	// a damaged image of each form is refused by name, never read as a value
-	wire, err := r.Write(&typical, schemaread.FormBinary)
-	require.NoError(t, err)
-	newer := append([]byte{}, wire...)
-	newer[0] = 9
-	text := b64(wire)
-	for _, tc := range []struct {
-		name   string
-		in     []byte
-		reason string
-	}{
-		{"trailing junk in the wire", append(append([]byte{}, wire...), 0, 1), "wire_damaged"},
-		{"the form byte alone", wire[:1], "wire_damaged"},
-		{"an unknown newer form", newer, "unknown_form"},
-		{"base64 that does not decode", []byte(text[:len(text)-3]), "malformed"},
-		{"base64 with trailing junk", []byte(text + " junk"), "malformed"},
-		{"damaged JSON text", []byte(strings.Replace(string(mustWrite(t, r, &typical, schemaread.FormJSON)), `": `, `" `, 1)), "malformed"},
-		{"empty", nil, "unknown_form"},
-		{"no record at all", []byte("hello swarm"), "malformed"},
-	} {
-		_, _, err := r.Read(tc.in)
-		assert.Equal(t, tc.reason, refusal(t, tb.name, err), "%s: %s", tb.name, tc.name)
-	}
-	// every truncation of the wire is refused, never read as a shorter record
-	for i := range len(wire) {
-		_, _, err := r.Read(wire[:i])
-		assert.Error(t, err, "%s cut at byte %d", tb.name, i)
-	}
-
-	// a deterministic mutation pass over the wire and the base64 text: every
-	// mutant either is refused by name or reads a value that passes every
-	// constraint. Nothing panics and nothing reads out of bound.
-	mutants := 0
-	for _, in := range [][]byte{wire, []byte(text)} {
-		for i := range in {
-			for _, b := range []byte{0x00, in[i] ^ 0x01, in[i] ^ 0x80} {
-				m := append([]byte{}, in...)
-				m[i] = b
-				mutants++
-				got, _, err := r.Read(m)
-				if err != nil {
-					var ref *schemaread.Refusal
-					require.True(t, errors.As(err, &ref), "%s mutant %d: %v", tb.name, mutants, err)
-					continue
-				}
-				require.NoError(t, r.Check(&got), "%s: a mutant that reads passes every constraint", tb.name)
-			}
-		}
-	}
-	assert.Greater(t, mutants, 100)
-}
-
 func mustWrite[T any](t *testing.T, r *schemaread.Reader[T], v *T, form schemaread.Form) []byte {
 	t.Helper()
 	out, err := r.Write(v, form)
@@ -454,133 +60,29 @@ func mustWrite[T any](t *testing.T, r *schemaread.Reader[T], v *T, form schemare
 	return out
 }
 
-func le32(v int32) []byte {
-	u := uint32(v)
-	return []byte{byte(u), byte(u >> 8), byte(u >> 16), byte(u >> 24)}
-}
+func le64(v int64) []byte { return binary.LittleEndian.AppendUint64(nil, uint64(v)) }
 
-// hostile is the wire of a value the generated writer refuses to write (it
-// checks every bound): the value is written with a marker in bounds and the
-// marker bytes are replaced in the wire, exactly what a broken or older
-// writer could put on the wire. The marker must occur exactly once.
-func hostile(t *testing.T, wire, marker, with []byte) []byte {
-	t.Helper()
-	require.NotNil(t, wire)
-	require.Equal(t, 1, bytes.Count(wire, marker), "the marker %x occurs once", marker)
-	return bytes.Replace(wire, marker, with, 1)
-}
+// marker is an in-range integer whose little-endian bytes occur once in a
+// small document's wire, so a test can move exactly that value past its
+// bound: what a broken or older writer could put on the wire.
+const marker int64 = 0x0123456789abcdef
 
-func TestSwarmRecordsGolden(t *testing.T) {
-	t.Parallel()
-
-	// A value a writer could put on the wire past its bound is refused by
-	// name on the way in, as the binary wire and as its base64 text, never
-	// clamped to the bound.
-	t.Run("a wire past a bound is refused, never clamped", func(t *testing.T) {
-		t.Parallel()
-		r := schemaread.NewReader(table[ExitRecord]{
-			name: "ExitRecord", fields: ExitRecordTableFields, reset: ExitRecordReset, load: ExitRecordLoad,
-			fromJSON: ExitRecordFromJson, measure: ExitRecordMeasure, save: ExitRecordSave,
-			toMeas: ExitRecordToJsonMeasure, toJSON: ExitRecordToJson, required: []string{"ended", "nonce"},
-		}.codec())
-		var v ExitRecord
-		ExitRecordReset(&v)
-		setText(reflect.ValueOf(&v).Elem(), "Ended", "2026-10-17T04:00:00Z")
-		setText(reflect.ValueOf(&v).Elem(), "Nonce", "0123456789ab")
-		v.Rc, v.Survivors, v.Spent = 255, 1048576, 77
-		good, err := r.Write(&v, schemaread.FormBinary)
-		require.NoError(t, err)
-		for _, tc := range []struct {
-			name         string
-			marker, with []byte
-		}{
-			{"rc over 255", le32(255), le32(256)},
-			{"survivors over 1048576", le32(1048576), le32(1048577)},
-		} {
-			bad := hostile(t, good, tc.marker, tc.with)
-			for form, in := range map[string][]byte{"binary": bad, "base64": []byte(b64(bad))} {
-				_, _, err := r.Read(in)
-				assert.Equal(t, "clamped", refusal(t, "ExitRecord", err), "%s as %s", tc.name, form)
-			}
-		}
-		v.Rc = -1
-		low, err := r.Write(&v, schemaread.FormBinary)
-		require.NoError(t, err, "rc -1 (no exit) is in bounds")
-		_, _, err = r.Read(hostile(t, low, le32(-1), le32(-2)))
-		assert.Equal(t, "clamped", refusal(t, "ExitRecord", err), "rc under -1")
-	})
-
-	t.Run("the documents (variable tables)", documentsGolden)
-	t.Run("the exit record", func(t *testing.T) {
-		t.Parallel()
-		run(t, table[ExitRecord]{
-			name: "ExitRecord", fields: ExitRecordTableFields, reset: ExitRecordReset, load: ExitRecordLoad,
-			fromJSON: ExitRecordFromJson, measure: ExitRecordMeasure, save: ExitRecordSave,
-			toMeas: ExitRecordToJsonMeasure, toJSON: ExitRecordToJson, saveText: ExitRecordSaveText, loadText: ExitRecordLoadText,
-			required: []string{"ended", "nonce"},
-			typical: func(v *ExitRecord) {
-				v.Rc = 2
-				setText(reflect.ValueOf(v).Elem(), "Ended", "2026-10-17T04:00:00Z")
-				setText(reflect.ValueOf(v).Elem(), "Nonce", "0123456789ab")
-				setText(reflect.ValueOf(v).Elem(), "Reason", "deadline")
-				v.Survivors = 1
-			},
-		})
-	})
-	t.Run("the harness config", func(t *testing.T) {
-		t.Parallel()
-		run(t, table[HarnessConfigRecord]{
-			name: "HarnessConfigRecord", fields: HarnessConfigRecordTableFields, reset: HarnessConfigRecordReset, load: HarnessConfigRecordLoad,
-			fromJSON: HarnessConfigRecordFromJson, measure: HarnessConfigRecordMeasure, save: HarnessConfigRecordSave,
-			toMeas: HarnessConfigRecordToJsonMeasure, toJSON: HarnessConfigRecordToJson, saveText: HarnessConfigRecordSaveText, loadText: HarnessConfigRecordLoadText,
-			required: []string{"provider", "model", "env_var"},
-			typical: func(v *HarnessConfigRecord) {
-				s := reflect.ValueOf(v).Elem()
-				setText(s, "Provider", "deepseek")
-				setText(s, "Model", "deepseek-chat")
-				setText(s, "EnvVar", "DEEPSEEK_API_KEY")
-			},
-		})
-	})
-	t.Run("the declared model", func(t *testing.T) {
-		t.Parallel()
-		run(t, table[DeclaredModel]{
-			name: "DeclaredModel", fields: DeclaredModelTableFields, reset: DeclaredModelReset, load: DeclaredModelLoad,
-			fromJSON: DeclaredModelFromJson, measure: DeclaredModelMeasure, save: DeclaredModelSave,
-			toMeas: DeclaredModelToJsonMeasure, toJSON: DeclaredModelToJson, saveText: DeclaredModelSaveText, loadText: DeclaredModelLoadText,
-			required: []string{"provider", "model"},
-			typical: func(v *DeclaredModel) {
-				setText(reflect.ValueOf(v).Elem(), "Provider", "deepseek")
-				setText(reflect.ValueOf(v).Elem(), "Model", "deepseek-chat")
-			},
-		})
-	})
-	t.Run("the member carry", func(t *testing.T) {
-		t.Parallel()
-		run(t, table[MemberCarry]{
-			name: "MemberCarry", fields: MemberCarryTableFields, reset: MemberCarryReset, load: MemberCarryLoad,
-			fromJSON: MemberCarryFromJson, measure: MemberCarryMeasure, save: MemberCarrySave,
-			toMeas: MemberCarryToJsonMeasure, toJSON: MemberCarryToJson, saveText: MemberCarrySaveText, loadText: MemberCarryLoadText,
-			typical: func(v *MemberCarry) {
-				s := reflect.ValueOf(v).Elem()
-				setText(s, "Card", "recut-widen-r.w1")
-				v.Attempt = 2
-				setText(s, "Head", strings.Repeat("ab12", 10))
-			},
-		})
-	})
-}
-
-// ---- variable tables: WorkerRecord and FenceConfig are documents --------------
+// ---- the plain documents -------------------------------------------------------
 //
-// A variable table is sized by its content: its lists are unbounded and its
-// text carries no bound the code does not enforce, so the proof is that long
-// lists and long text round-trip, that an integer past its range is refused by
-// name, and that damaged images of each form are refused by name. The
-// generated variable Go is region based, so the test works on a plain Go value
-// of each document: a plain value is written through the generated builder (by
-// the schema JSON text, the generated reader of lists) and read back out of
-// the generated region.
+// The generated variable Go is region based, so the test works on a plain Go
+// value of each document: a plain value is written through the generated
+// builder (by the schema JSON text, the generated reader) and read back out
+// of the generated region.
+
+type exitDoc struct {
+	Rc                 int64
+	Signal, Ended      string
+	Survivors          int64
+	Nonce, Attest, End string
+	Spent              int64
+	Observed, Partial  bool
+	Reason             string
+}
 
 type workerDoc struct {
 	Name, Provider, Model, BaseURL, EnvVar, KeyFile, Secret string
@@ -589,12 +91,14 @@ type workerDoc struct {
 	HarnessArgs                                             []string
 	WorkerDir, Deadline, Board                              string
 	ReadRoots                                               []string
-	MaxTurns                                                int32
+	MaxTurns                                                int64
 	MaxCacheRead                                            int64
 	InputLimitPhrases                                       []string
 	LaunchGrace                                             string
 	KeepData                                                bool
 }
+
+type harnessDoc struct{ Provider, Model, EnvVar, BaseURL string }
 
 type ruleDoc struct {
 	Pattern string
@@ -606,6 +110,14 @@ type fenceDoc struct {
 	Reads    []string
 	Rules    []ruleDoc
 	Webfetch uint8
+}
+
+type modelDoc struct{ Provider, Model string }
+
+type carryDoc struct {
+	Card         string
+	Attempt      int64
+	Head, Branch string
 }
 
 func entries(v []string) []any {
@@ -638,6 +150,11 @@ func jsonOf(m map[string]any) []byte {
 	return out
 }
 
+func (d exitDoc) json() []byte {
+	return jsonOf(map[string]any{"rc": d.Rc, "signal": d.Signal, "ended": d.Ended, "survivors": d.Survivors, "nonce": d.Nonce,
+		"attest": d.Attest, "end": d.End, "spent": d.Spent, "observed": d.Observed, "partial": d.Partial, "reason": d.Reason})
+}
+
 func (d workerDoc) json() []byte {
 	return jsonOf(map[string]any{"name": d.Name, "provider": d.Provider, "model": d.Model, "base_url": d.BaseURL,
 		"env_var": d.EnvVar, "key_file": d.KeyFile, "secret": d.Secret, "usage": d.Usage, "worker_class": d.WorkerClass,
@@ -646,22 +163,28 @@ func (d workerDoc) json() []byte {
 		"input_limit_phrases": entries(d.InputLimitPhrases), "launch_grace": d.LaunchGrace, "keep_data": d.KeepData})
 }
 
+func (d harnessDoc) json() []byte {
+	return jsonOf(map[string]any{"provider": d.Provider, "model": d.Model, "env_var": d.EnvVar, "base_url": d.BaseURL})
+}
+
 func (d fenceDoc) json() []byte {
 	rules := make([]any, 0, len(d.Rules))
-	for _, r := range d.Rules {
-		rules = append(rules, jsonOf(map[string]any{"pattern": r.Pattern, "action": r.Action}))
-	}
-	// rules are nested objects, not raw bytes
-	nested := make([]any, 0, len(d.Rules))
 	for _, r := range d.Rules {
 		m := map[string]any{"action": r.Action}
 		if r.Pattern != "" {
 			m["pattern"] = r.Pattern
 		}
-		nested = append(nested, m)
+		rules = append(rules, m)
 	}
-	_ = rules
-	return jsonOf(map[string]any{"job_dir": d.JobDir, "reads": entries(d.Reads), "rules": nested, "webfetch": d.Webfetch})
+	return jsonOf(map[string]any{"job_dir": d.JobDir, "reads": entries(d.Reads), "rules": rules, "webfetch": d.Webfetch})
+}
+
+func (d modelDoc) json() []byte {
+	return jsonOf(map[string]any{"provider": d.Provider, "model": d.Model})
+}
+
+func (d carryDoc) json() []byte {
+	return jsonOf(map[string]any{"card": d.Card, "attempt": d.Attempt, "head": d.Head, "branch": d.Branch})
 }
 
 func text(ref *TableRef) string {
@@ -677,10 +200,19 @@ func list(l *TableList[EntryRow]) []string {
 	return out
 }
 
+func exitOf(e *ExitRecord) exitDoc {
+	return exitDoc{e.Rc, text(&e.Signal), text(&e.Ended), e.Survivors, text(&e.Nonce), text(&e.Attest), text(&e.End),
+		e.Spent, e.Observed, e.Partial, text(&e.Reason)}
+}
+
 func workerOf(w *WorkerRecord) workerDoc {
 	return workerDoc{text(&w.Name), text(&w.Provider), text(&w.Model), text(&w.BaseUrl), text(&w.EnvVar), text(&w.KeyFile), text(&w.Secret),
 		w.Usage, w.WorkerClass, text(&w.Harness), list(&w.HarnessArgs), text(&w.WorkerDir), text(&w.Deadline), text(&w.Board),
 		list(&w.ReadRoots), w.MaxTurns, w.MaxCacheRead, list(&w.InputLimitPhrases), text(&w.LaunchGrace), w.KeepData}
+}
+
+func harnessOf(h *HarnessConfigRecord) harnessDoc {
+	return harnessDoc{text(&h.Provider), text(&h.Model), text(&h.EnvVar), text(&h.BaseUrl)}
 }
 
 func fenceOf(f *FenceConfig) fenceDoc {
@@ -692,41 +224,44 @@ func fenceOf(f *FenceConfig) fenceDoc {
 	return d
 }
 
-// docTable is one variable table's generated functions, on the plain value P.
-type docTable[P any] struct {
-	name     string
-	json     func(P) []byte
-	fromJSON func(text []byte) (P, TableReport, bool) // the generated reader of the JSON text
-	fromWire func(wire []byte) (P, TableReport, bool) // the generated region load
-	toWire   func(P) []byte                           // the generated writer, via the builder
-	toJSON   func(P) []byte                           // the generated ToJson of a built root
-	check    func(P, *schemaread.Checker)
+func modelOf(m *DeclaredModel) modelDoc { return modelDoc{text(&m.Provider), text(&m.Model)} }
+
+func carryOf(c *MemberCarry) carryDoc {
+	return carryDoc{text(&c.Card), c.Attempt, text(&c.Head), text(&c.Branch)}
 }
 
-func (tb docTable[P]) codec() *schemaread.Codec[P] {
-	rep := func(r TableReport, ok bool) schemaread.Report {
-		out := schemaread.Report{Unknown: int(r.Unknown), KindMismatch: int(r.KindMismatch), Clamped: int(r.Clamped), Malformed: r.Malformed || !ok || r.Duplicate > 0}
-		if r.Verdict == TableOpenRefused || r.Verdict == TableOpenDamaged {
-			out.Reason = r.Err().Error()
-		}
-		return out
-	}
-	return &schemaread.Codec[P]{
-		Name: strings.ToUpper(tb.name), Help: "nova-swarm -h",
-		LoadWire: func(v *P, wire []byte) schemaread.Report {
-			p, r, ok := tb.fromWire(wire)
-			*v = p
-			return rep(r, ok)
-		},
-		LoadJSON: func(v *P, text []byte) schemaread.Report {
-			p, r, ok := tb.fromJSON(text)
-			*v = p
-			return rep(r, ok)
-		},
-		Constraints: func(v *P, c *schemaread.Checker) { tb.check(*v, c) },
-		SaveWire:    func(v *P) []byte { return tb.toWire(*v) },
-		SaveJSON:    func(v *P) []byte { return tb.toJSON(*v) },
-	}
+// ---- the generated functions of one variable table ---------------------------
+
+// builder is the generated builder of the root R.
+type builder[R, B any] interface {
+	*B
+	Init(...TableAllocator) bool
+	Lock() bool
+	AsConst() *R
+	Shutdown()
+}
+
+// gen is one variable table's generated functions.
+type gen[R, B any] struct {
+	fromJSON    func(*B, []byte, *TableReport) bool
+	loadMeasure func([]byte) int64
+	load        func(region, wire []byte, report *TableReport) *R
+	measure     func(*R, ...TableWriteContext) int64
+	save        func(*R, []byte, ...TableWriteContext) int64
+	jsonMeasure func(*R, ...TableAllocator) int64
+	toJSON      func(*R, []byte, ...TableAllocator) int64
+	saveText    func(*R, ...TableWriteContext) (string, error)
+	loadText    func(string, *TableReport) (*R, error)
+}
+
+// docTable is one variable table's strict codec on the plain value P, and the
+// generated text transport it is checked against.
+type docTable[P any] struct {
+	name  string
+	codec *schemaread.Codec[P]
+	// saveText and loadText are the generated SaveText and LoadText, on P.
+	saveText func(P) (string, error)
+	loadText func(string) (P, error)
 }
 
 func region(n int64) []byte {
@@ -735,71 +270,135 @@ func region(n int64) []byte {
 	return raw[off : off+uintptr(n)]
 }
 
-func workerTable() docTable[workerDoc] {
-	build := func(d workerDoc) (*WorkerRecord, func()) {
-		var b WorkerRecordBuilder
-		if !b.Init() {
+func strictReport(r TableReport, ok bool) schemaread.Report {
+	out := schemaread.Report{Unknown: int(r.Unknown), KindMismatch: int(r.KindMismatch), Clamped: int(r.Clamped), Malformed: r.Malformed || !ok || r.Duplicate > 0}
+	if r.Verdict == TableOpenRefused || r.Verdict == TableOpenDamaged {
+		out.Reason = r.Err().Error()
+	}
+	return out
+}
+
+// docTableOf is the strict codec over a table's generated functions. The
+// facade rules are UNION.md section 4.6: refuse every clamp, refuse absence
+// where empty is no value, and validate before writing. check states the
+// bounds the code enforces, and only those (the area's bound rule).
+func docTableOf[P, R, B any, PB builder[R, B]](name string, g gen[R, B], toJSON func(P) []byte, of func(*R) P, check func(P, *schemaread.Checker)) docTable[P] {
+	build := func(d P) (*R, func()) {
+		var b B
+		pb := PB(&b)
+		if !pb.Init() {
 			return nil, func() {}
 		}
 		var r TableReport
-		if !WorkerRecordFromJson(&b, d.json(), &r) || !b.Lock() {
-			return nil, b.Shutdown
+		if !g.fromJSON(&b, toJSON(d), &r) || !pb.Lock() {
+			return nil, pb.Shutdown
 		}
-		return b.AsConst(), b.Shutdown
+		return pb.AsConst(), pb.Shutdown
 	}
-	return docTable[workerDoc]{
-		name: "WorkerRecord",
-		json: workerDoc.json,
-		fromJSON: func(text []byte) (workerDoc, TableReport, bool) {
-			var b WorkerRecordBuilder
-			if !b.Init() {
-				return workerDoc{}, TableReport{}, false
-			}
-			defer b.Shutdown()
-			var r TableReport
-			ok := WorkerRecordFromJson(&b, text, &r) && b.Lock()
-			if !ok {
-				return workerDoc{}, r, false
-			}
-			return workerOf(b.AsConst()), r, true
+	var zero P
+	return docTable[P]{
+		name: name,
+		codec: &schemaread.Codec[P]{
+			Name: strings.ToUpper(name), Help: "nova-swarm -h",
+			LoadWire: func(v *P, wire []byte) schemaread.Report {
+				*v = zero
+				n := g.loadMeasure(wire)
+				if n < 0 {
+					return strictReport(TableReport{Malformed: true}, false)
+				}
+				var r TableReport
+				root := g.load(region(n), wire, &r)
+				if root == nil {
+					return strictReport(r, false)
+				}
+				*v = of(root)
+				return strictReport(r, true)
+			},
+			LoadJSON: func(v *P, text []byte) schemaread.Report {
+				*v = zero
+				var b B
+				pb := PB(&b)
+				if !pb.Init() {
+					return strictReport(TableReport{}, false)
+				}
+				defer pb.Shutdown()
+				var r TableReport
+				if !g.fromJSON(&b, text, &r) || !pb.Lock() {
+					return strictReport(r, false)
+				}
+				*v = of(pb.AsConst())
+				return strictReport(r, true)
+			},
+			Constraints: func(v *P, c *schemaread.Checker) { check(*v, c) },
+			SaveWire: func(v *P) []byte {
+				root, done := build(*v)
+				defer done()
+				if root == nil {
+					return nil
+				}
+				buf := make([]byte, g.measure(root))
+				if g.save(root, buf) != int64(len(buf)) {
+					return nil
+				}
+				return buf
+			},
+			SaveJSON: func(v *P) []byte {
+				root, done := build(*v)
+				defer done()
+				if root == nil {
+					return nil
+				}
+				buf := make([]byte, g.jsonMeasure(root))
+				if g.toJSON(root, buf) != int64(len(buf)) {
+					return nil
+				}
+				return buf
+			},
 		},
-		fromWire: func(wire []byte) (workerDoc, TableReport, bool) {
-			n := WorkerRecordLoadMeasure(wire)
-			if n < 0 {
-				return workerDoc{}, TableReport{Malformed: true}, false
-			}
-			var r TableReport
-			w := WorkerRecordLoad(region(n), wire, &r)
-			if w == nil {
-				return workerDoc{}, r, false
-			}
-			return workerOf(w), r, true
-		},
-		toWire: func(d workerDoc) []byte {
-			w, done := build(d)
+		saveText: func(d P) (string, error) {
+			root, done := build(d)
 			defer done()
-			if w == nil {
-				return nil
+			if root == nil {
+				return "", errors.New("the document does not build")
 			}
-			buf := make([]byte, WorkerRecordMeasure(w))
-			if WorkerRecordSave(w, buf) != int64(len(buf)) {
-				return nil
-			}
-			return buf
+			return g.saveText(root)
 		},
-		toJSON: func(d workerDoc) []byte {
-			w, done := build(d)
-			defer done()
-			if w == nil {
-				return nil
+		loadText: func(text string) (P, error) {
+			root, err := g.loadText(text, nil)
+			if err != nil {
+				return zero, err
 			}
-			buf := make([]byte, WorkerRecordToJsonMeasure(w))
-			if WorkerRecordToJson(w, buf) != int64(len(buf)) {
-				return nil
-			}
-			return buf
+			return of(root), nil
 		},
-		check: func(d workerDoc, c *schemaread.Checker) {
+	}
+}
+
+// ---- the six tables, each with the bounds its code enforces ------------------
+
+// exitTable: swarm.ReadJSON reads exit.json with no bound and no required
+// field (pkg/swarm/slot.go ReadJSON), so the check bounds nothing but the
+// text's encoding.
+func exitTable() docTable[exitDoc] {
+	return docTableOf[exitDoc, ExitRecord, ExitRecordBuilder]("ExitRecord",
+		gen[ExitRecord, ExitRecordBuilder]{ExitRecordFromJson, ExitRecordLoadMeasure, ExitRecordLoad, ExitRecordMeasure, ExitRecordSave,
+			ExitRecordToJsonMeasure, ExitRecordToJson, ExitRecordSaveText, ExitRecordLoadText},
+		exitDoc.json, exitOf,
+		func(d exitDoc, c *schemaread.Checker) {
+			for _, f := range [][2]string{{"signal", d.Signal}, {"ended", d.Ended}, {"nonce", d.Nonce}, {"attest", d.Attest}, {"end", d.End}, {"reason", d.Reason}} {
+				c.Text(f[0], f[1], unbounded)
+			}
+		})
+}
+
+// workerTable: LoadWorker's own checks (pkg/swarm/worker.go LoadWorker): the
+// required fields, usage and class from their closed sets, harness_args
+// non-empty, and the budgets non-negative.
+func workerTable() docTable[workerDoc] {
+	return docTableOf[workerDoc, WorkerRecord, WorkerRecordBuilder]("WorkerRecord",
+		gen[WorkerRecord, WorkerRecordBuilder]{WorkerRecordFromJson, WorkerRecordLoadMeasure, WorkerRecordLoad, WorkerRecordMeasure, WorkerRecordSave,
+			WorkerRecordToJsonMeasure, WorkerRecordToJson, WorkerRecordSaveText, WorkerRecordLoadText},
+		workerDoc.json, workerOf,
+		func(d workerDoc, c *schemaread.Checker) {
 			for _, f := range []struct {
 				name, v  string
 				required bool
@@ -807,7 +406,7 @@ func workerTable() docTable[workerDoc] {
 				{"env_var", d.EnvVar, true}, {"key_file", d.KeyFile, false}, {"secret", d.Secret, false}, {"harness", d.Harness, true},
 				{"worker_dir", d.WorkerDir, true}, {"deadline", d.Deadline, true}, {"board", d.Board, false}, {"launch_grace", d.LaunchGrace, false}} {
 				c.Required(f.name, !f.required || f.v != "")
-				c.Text(f.name, f.v, math.MaxInt32)
+				c.Text(f.name, f.v, unbounded)
 			}
 			c.Required("usage", d.Usage != 0)
 			c.Bound("usage", int64(d.Usage), 0, 2)
@@ -816,100 +415,110 @@ func workerTable() docTable[workerDoc] {
 			for _, l := range [][]string{d.HarnessArgs, d.ReadRoots, d.InputLimitPhrases} {
 				for _, s := range l {
 					c.Required("entry", s != "")
-					c.Text("entry", s, math.MaxInt32)
+					c.Text("entry", s, unbounded)
 				}
 			}
-			c.Bound("max_turns", int64(d.MaxTurns), 0, math.MaxInt32)
-			c.Bound("max_cache_read", d.MaxCacheRead, 0, 1<<53-1)
-		},
-	}
+			c.Bound("max_turns", d.MaxTurns, 0, math.MaxInt64)
+			c.Bound("max_cache_read", d.MaxCacheRead, 0, math.MaxInt64)
+		})
 }
 
+// harnessTable: the three fields LoadWorker requires (want) before
+// HarnessConfig writes them; base_url is optional.
+func harnessTable() docTable[harnessDoc] {
+	return docTableOf[harnessDoc, HarnessConfigRecord, HarnessConfigRecordBuilder]("HarnessConfigRecord",
+		gen[HarnessConfigRecord, HarnessConfigRecordBuilder]{HarnessConfigRecordFromJson, HarnessConfigRecordLoadMeasure, HarnessConfigRecordLoad,
+			HarnessConfigRecordMeasure, HarnessConfigRecordSave, HarnessConfigRecordToJsonMeasure, HarnessConfigRecordToJson,
+			HarnessConfigRecordSaveText, HarnessConfigRecordLoadText},
+		harnessDoc.json, harnessOf,
+		func(d harnessDoc, c *schemaread.Checker) {
+			for _, f := range []struct {
+				name, v  string
+				required bool
+			}{{"provider", d.Provider, true}, {"model", d.Model, true}, {"env_var", d.EnvVar, true}, {"base_url", d.BaseURL, false}} {
+				c.Required(f.name, !f.required || f.v != "")
+				c.Text(f.name, f.v, unbounded)
+			}
+		})
+}
+
+// fenceTable: FencePermission writes allow or deny and denies webfetch
+// (pkg/swarm/fence.go FencePermission).
 func fenceTable() docTable[fenceDoc] {
-	build := func(d fenceDoc) (*FenceConfig, func()) {
-		var b FenceConfigBuilder
-		if !b.Init() {
-			return nil, func() {}
-		}
-		var r TableReport
-		if !FenceConfigFromJson(&b, d.json(), &r) || !b.Lock() {
-			return nil, b.Shutdown
-		}
-		return b.AsConst(), b.Shutdown
-	}
-	return docTable[fenceDoc]{
-		name: "FenceConfig",
-		json: fenceDoc.json,
-		fromJSON: func(text []byte) (fenceDoc, TableReport, bool) {
-			var b FenceConfigBuilder
-			if !b.Init() {
-				return fenceDoc{}, TableReport{}, false
-			}
-			defer b.Shutdown()
-			var r TableReport
-			if !FenceConfigFromJson(&b, text, &r) || !b.Lock() {
-				return fenceDoc{}, r, false
-			}
-			return fenceOf(b.AsConst()), r, true
-		},
-		fromWire: func(wire []byte) (fenceDoc, TableReport, bool) {
-			n := FenceConfigLoadMeasure(wire)
-			if n < 0 {
-				return fenceDoc{}, TableReport{Malformed: true}, false
-			}
-			var r TableReport
-			f := FenceConfigLoad(region(n), wire, &r)
-			if f == nil {
-				return fenceDoc{}, r, false
-			}
-			return fenceOf(f), r, true
-		},
-		toWire: func(d fenceDoc) []byte {
-			f, done := build(d)
-			defer done()
-			if f == nil {
-				return nil
-			}
-			buf := make([]byte, FenceConfigMeasure(f))
-			if FenceConfigSave(f, buf) != int64(len(buf)) {
-				return nil
-			}
-			return buf
-		},
-		toJSON: func(d fenceDoc) []byte {
-			f, done := build(d)
-			defer done()
-			if f == nil {
-				return nil
-			}
-			buf := make([]byte, FenceConfigToJsonMeasure(f))
-			if FenceConfigToJson(f, buf) != int64(len(buf)) {
-				return nil
-			}
-			return buf
-		},
-		check: func(d fenceDoc, c *schemaread.Checker) {
+	return docTableOf[fenceDoc, FenceConfig, FenceConfigBuilder]("FenceConfig",
+		gen[FenceConfig, FenceConfigBuilder]{FenceConfigFromJson, FenceConfigLoadMeasure, FenceConfigLoad, FenceConfigMeasure, FenceConfigSave,
+			FenceConfigToJsonMeasure, FenceConfigToJson, FenceConfigSaveText, FenceConfigLoadText},
+		fenceDoc.json, fenceOf,
+		func(d fenceDoc, c *schemaread.Checker) {
 			c.Required("job_dir", d.JobDir != "")
-			c.Text("job_dir", d.JobDir, math.MaxInt32)
+			c.Text("job_dir", d.JobDir, unbounded)
 			for _, s := range d.Reads {
 				c.Required("reads", s != "")
-				c.Text("reads", s, math.MaxInt32)
+				c.Text("reads", s, unbounded)
 			}
 			for _, r := range d.Rules {
 				c.Required("rules", r.Pattern != "" && r.Action != 0)
-				c.Text("rules", r.Pattern, math.MaxInt32)
+				c.Text("rules", r.Pattern, unbounded)
 				c.Bound("rules", int64(r.Action), 0, 2)
 			}
 			c.Required("webfetch", d.Webfetch != 0)
 			c.Bound("webfetch", int64(d.Webfetch), 0, 2)
-		},
-	}
+		})
+}
+
+// modelTable: DeclareRouteModel declares nothing for an empty provider or
+// model (pkg/swarm/declaremodel.go DeclareRouteModel), and bounds no length.
+func modelTable() docTable[modelDoc] {
+	return docTableOf[modelDoc, DeclaredModel, DeclaredModelBuilder]("DeclaredModel",
+		gen[DeclaredModel, DeclaredModelBuilder]{DeclaredModelFromJson, DeclaredModelLoadMeasure, DeclaredModelLoad, DeclaredModelMeasure, DeclaredModelSave,
+			DeclaredModelToJsonMeasure, DeclaredModelToJson, DeclaredModelSaveText, DeclaredModelLoadText},
+		modelDoc.json, modelOf,
+		func(d modelDoc, c *schemaread.Checker) {
+			c.Required("provider", d.Provider != "")
+			c.Text("provider", d.Provider, unbounded)
+			c.Required("model", d.Model != "")
+			c.Text("model", d.Model, unbounded)
+		})
+}
+
+// carryTable: parseCarry's own checks (pkg/member/member.go parseCarry): a
+// head is required, an attempt is never under 1 when written (0 is absent),
+// and an attempt needs a card.
+func carryTable() docTable[carryDoc] {
+	return docTableOf[carryDoc, MemberCarry, MemberCarryBuilder]("MemberCarry",
+		gen[MemberCarry, MemberCarryBuilder]{MemberCarryFromJson, MemberCarryLoadMeasure, MemberCarryLoad, MemberCarryMeasure, MemberCarrySave,
+			MemberCarryToJsonMeasure, MemberCarryToJson, MemberCarrySaveText, MemberCarryLoadText},
+		carryDoc.json, carryOf,
+		func(d carryDoc, c *schemaread.Checker) {
+			c.Text("card", d.Card, unbounded)
+			c.Bound("attempt", d.Attempt, 0, math.MaxInt64)
+			c.Required("card", d.Attempt == 0 || d.Card != "")
+			c.Required("head", d.Head != "")
+			c.Text("head", d.Head, unbounded)
+			c.Text("branch", d.Branch, unbounded)
+		})
+}
+
+// ---- the proof of one table ----------------------------------------------------
+
+// probe is one bound: inside is a document at the bound and is accepted.
+// The binary wire moves the bound's value one past it: with step (the same
+// document a step inside the bound) the one byte that differs between the
+// two is moved on past the bound; otherwise from (the value's little-endian
+// bytes, occurring once) is replaced by to. jsonFrom and jsonTo do the same
+// in the JSON text form. Each is refused by name, as binary, base64 and JSON.
+type probe[P any] struct {
+	inside, step P
+	stepped      bool
+	from, to     []byte
+	jsonFrom     string
+	jsonTo       string
 }
 
 // runDoc is the whole proof of one variable table over its documents.
-func runDoc[P any](t *testing.T, tb docTable[P], docs map[string]P, over map[string]P, patch map[string][2]P) {
+func runDoc[P any](t *testing.T, tb docTable[P], docs map[string]P, over map[string]P, probes map[string]probe[P]) {
 	t.Helper()
-	r := schemaread.NewReader(tb.codec())
+	r := schemaread.NewReader(tb.codec)
 	n := 0
 	for name, d := range docs {
 		wire, err := r.Write(&d, schemaread.FormBinary)
@@ -928,6 +537,13 @@ func runDoc[P any](t *testing.T, tb docTable[P], docs map[string]P, over map[str
 			assert.Equal(t, in.form, res.Form)
 			assert.Equal(t, d, got, "%s %s as %s reads the document", tb.name, name, in.form)
 		}
+		// the generated SaveText and LoadText are the same text transport
+		gen, err := tb.saveText(d)
+		require.NoError(t, err)
+		assert.Equal(t, b64(wire), gen, "%s %s: SaveText is the padded standard base64 of the wire", tb.name, name)
+		back, err := tb.loadText(gen)
+		require.NoError(t, err)
+		assert.Equal(t, d, back, "%s %s: LoadText reads what SaveText wrote", tb.name, name)
 		n++
 	}
 	c := r.Counts()
@@ -942,33 +558,46 @@ func runDoc[P any](t *testing.T, tb docTable[P], docs map[string]P, over map[str
 		assert.Contains(t, []string{"clamped", "absent_required", "malformed"}, strings.Fields(refusal(t, tb.name, err))[0], "%s %s", tb.name, name)
 	}
 
-	// a wire past a bound is refused, never clamped: the one byte that differs between a
-	// document at the bound and one a step inside it is moved past the bound
-	for name, pair := range patch {
-		inside, err := r.Write(&pair[0], schemaread.FormBinary)
-		require.NoError(t, err)
-		atBound, err := r.Write(&pair[1], schemaread.FormBinary)
-		require.NoError(t, err)
-		require.Equal(t, len(inside), len(atBound))
-		at := -1
-		for i := range inside {
-			if inside[i] != atBound[i] {
-				require.Equal(t, -1, at, "%s %s differ at one byte", tb.name, name)
-				at = i
+	// a document at each bound is accepted; one past it, as a writer could put
+	// it on the wire or in the text, is refused by name in every form, never
+	// clamped
+	for name, p := range probes {
+		atBound, err := r.Write(&p.inside, schemaread.FormBinary)
+		require.NoError(t, err, "%s %s: at the bound writes", tb.name, name)
+		_, _, err = r.Read(atBound)
+		require.NoError(t, err, "%s %s: at the bound reads", tb.name, name)
+		var bad []byte
+		if p.stepped {
+			inside, err := r.Write(&p.step, schemaread.FormBinary)
+			require.NoError(t, err)
+			require.Equal(t, len(inside), len(atBound))
+			at := -1
+			for i := range inside {
+				if inside[i] != atBound[i] {
+					require.Equal(t, -1, at, "%s %s differ at one byte", tb.name, name)
+					at = i
+				}
 			}
+			require.GreaterOrEqual(t, at, 0)
+			bad = append([]byte{}, atBound...)
+			bad[at]++
+		} else {
+			require.Equal(t, 1, bytes.Count(atBound, p.from), "%s %s: the bound's bytes occur once", tb.name, name)
+			bad = bytes.Replace(atBound, p.from, p.to, 1)
 		}
-		require.GreaterOrEqual(t, at, 0)
-		bad := append([]byte{}, atBound...)
-		bad[at]++
-		for form, in := range map[string][]byte{"binary": bad, "base64": []byte(b64(bad))} {
-			_, _, err := r.Read(in)
+		js := string(mustWrite(t, r, &p.inside, schemaread.FormJSON))
+		require.Equal(t, 1, strings.Count(js, p.jsonFrom), "%s %s: %q occurs once in %s", tb.name, name, p.jsonFrom, js)
+		badJSON := strings.Replace(js, p.jsonFrom, p.jsonTo, 1)
+		for form, in := range map[string][]byte{"binary": bad, "base64": []byte(b64(bad)), "json": []byte(badJSON)} {
+			got, _, err := r.Read(in)
 			assert.Equal(t, "clamped", refusal(t, tb.name, err), "%s %s as %s", tb.name, name, form)
+			var zero P
+			assert.Equal(t, zero, got, "%s %s as %s: a refused read returns nothing, never a partial value", tb.name, name, form)
 		}
 	}
 
-	// damaged images, by name
-	// the typical document, never the long one: the mutation pass reads every
-	// byte of the image
+	// damaged images, by name; the typical document, never the long one: the
+	// mutation pass reads every byte of the image
 	d, ok := docs["typical"]
 	require.True(t, ok, "%s: the documents name a typical one", tb.name)
 	wire, err := r.Write(&d, schemaread.FormBinary)
@@ -1024,23 +653,58 @@ func many(n int, f func(i int) string) []string {
 	return out
 }
 
-// documentsGolden is the variable tables' proof, run inside TestSwarmRecordsGolden.
-func documentsGolden(t *testing.T) {
-	typicalWorker := workerDoc{Name: "deepseek-1", Provider: "deepseek", Model: "deepseek-chat", EnvVar: "DEEPSEEK_API_KEY", Secret: "DEEPSEEK_API_KEY",
-		Usage: 1, Harness: "opencode", HarnessArgs: []string{"run", "--model", "{model}", "--", "{prompt}"}, WorkerDir: "/home/nova/worker",
-		Deadline: "20m", ReadRoots: []string{"/home/nova/go"}, MaxTurns: 80}
+// topProbe is a uint8 closed set at its top (2, inside) moved to 3, with
+// step the same document at 1; underZero is a non-negative int64 at the
+// marker moved to -1. Both move the value in the wire and in the JSON text.
+func topProbe[P any](inside, step P, field string) probe[P] {
+	return probe[P]{inside: inside, step: step, stepped: true, jsonFrom: fmt.Sprintf(`"%s": 2`, field), jsonTo: fmt.Sprintf(`"%s": 3`, field)}
+}
+
+func underZero[P any](inside P, field string) probe[P] {
+	return probe[P]{inside: inside, from: le64(marker), to: le64(-1), jsonFrom: fmt.Sprintf(`"%s": %d`, field, marker), jsonTo: fmt.Sprintf(`"%s": -1`, field)}
+}
+
+const (
+	kib  = 1024
+	sha1 = "0123456789abcdef0123456789abcdef01234567"
+)
+
+func TestSwarmRecordsGolden(t *testing.T) {
+	t.Parallel()
+
+	t.Run("the exit record", func(t *testing.T) {
+		t.Parallel()
+		typical := exitDoc{Rc: 2, Ended: "2026-10-17T04:00:00Z", Survivors: 1, Nonce: "0123456789ab", Reason: "deadline"}
+		// no text or integer is bounded: int64's whole range and long text round-trip
+		long := exitDoc{Rc: math.MinInt64, Signal: strings.Repeat("S", 10*kib), Ended: strings.Repeat("e", 10*kib), Survivors: math.MaxInt64,
+			Nonce: strings.Repeat("n", 10*kib), Attest: strings.Repeat("a", 10*kib), End: strings.Repeat("d", 10*kib), Spent: math.MaxInt64,
+			Observed: true, Partial: true, Reason: strings.Repeat("r", 100*kib)}
+		high := long
+		high.Rc, high.Survivors, high.Spent = math.MaxInt64, math.MinInt64, math.MinInt64
+		runDoc(t, exitTable(),
+			map[string]exitDoc{"typical": typical, "long": long, "int64 top and bottom": high, "empty": {}},
+			map[string]exitDoc{"a NUL in a reason": {Reason: "a\x00b"}, "invalid UTF-8 in a signal": {Signal: "\xff"}},
+			nil)
+	})
+
 	t.Run("the worker description", func(t *testing.T) {
 		t.Parallel()
-		// no list or text is bounded: 200 entries, entries of 5000 bytes, a 70000-byte path
-		long := typicalWorker
+		typical := workerDoc{Name: "deepseek-1", Provider: "deepseek", Model: "deepseek-chat", EnvVar: "DEEPSEEK_API_KEY", Secret: "DEEPSEEK_API_KEY",
+			Usage: 1, Harness: "opencode", HarnessArgs: []string{"run", "--model", "{model}", "--", "{prompt}"}, WorkerDir: "/home/nova/worker",
+			Deadline: "20m", ReadRoots: []string{"/home/nova/go"}, MaxTurns: 80}
+		// no list or text is bounded: 200 entries, entries of 5000 bytes, a
+		// 70000-byte path, a 10 KB provider and model, and the budgets at
+		// int64's top
+		long := typical
+		long.Provider, long.Model = strings.Repeat("p", 10*kib), strings.Repeat("m", 10*kib)
 		long.HarnessArgs = many(200, func(i int) string { return fmt.Sprintf("--arg-%d", i) })
 		long.ReadRoots = many(200, func(i int) string { return fmt.Sprintf("/read/root/%d/%s", i, strings.Repeat("d", 5000)) })
 		long.InputLimitPhrases = many(200, func(i int) string { return fmt.Sprintf("phrase %d", i) })
 		long.WorkerDir = "/" + strings.Repeat("w", 70000)
-		long.MaxTurns, long.MaxCacheRead, long.Usage, long.WorkerClass, long.KeepData = math.MaxInt32, 1<<53-1, 2, 2, true
-		w := func(edit func(*workerDoc)) workerDoc { d := typicalWorker; edit(&d); return d }
+		long.MaxTurns, long.MaxCacheRead, long.Usage, long.WorkerClass, long.KeepData = math.MaxInt64, math.MaxInt64, 2, 2, true
+		w := func(edit func(*workerDoc)) workerDoc { d := typical; edit(&d); return d }
 		runDoc(t, workerTable(),
-			map[string]workerDoc{"typical": typicalWorker, "long": long},
+			map[string]workerDoc{"typical": typical, "long": long},
 			map[string]workerDoc{
 				"usage 3":           w(func(d *workerDoc) { d.Usage = 3 }),
 				"class 3":           w(func(d *workerDoc) { d.WorkerClass = 3 }),
@@ -1052,17 +716,56 @@ func documentsGolden(t *testing.T) {
 				"a NUL in a model":  w(func(d *workerDoc) { d.Model = "a\x00b" }),
 				"an empty arg":      w(func(d *workerDoc) { d.HarnessArgs = []string{""} }),
 			},
-			map[string][2]workerDoc{
-				"usage over 2":        {w(func(d *workerDoc) { d.Usage = 1 }), w(func(d *workerDoc) { d.Usage = 2 })},
-				"worker_class over 2": {w(func(d *workerDoc) { d.WorkerClass = 1 }), w(func(d *workerDoc) { d.WorkerClass = 2 })},
+			map[string]probe[workerDoc]{
+				"usage over 2":           topProbe(w(func(d *workerDoc) { d.Usage = 2 }), w(func(d *workerDoc) { d.Usage = 1 }), "usage"),
+				"worker_class over 2":    topProbe(w(func(d *workerDoc) { d.WorkerClass = 2 }), w(func(d *workerDoc) { d.WorkerClass = 1 }), "worker_class"),
+				"max_turns under 0":      underZero(w(func(d *workerDoc) { d.MaxTurns = marker }), "max_turns"),
+				"max_cache_read under 0": underZero(w(func(d *workerDoc) { d.MaxCacheRead = marker }), "max_cache_read"),
 			})
 	})
+
+	// int64's top is accepted and a JSON number past it is refused by name,
+	// never wrapped or clamped to the top (the wire cannot carry one past it)
+	t.Run("past int64 in the JSON text", func(t *testing.T) {
+		t.Parallel()
+		r := schemaread.NewReader(carryTable().codec)
+		at := carryDoc{Card: "c", Attempt: math.MaxInt64, Head: sha1}
+		js := string(mustWrite(t, r, &at, schemaread.FormJSON))
+		got, _, err := r.Read([]byte(js))
+		require.NoError(t, err)
+		assert.Equal(t, at, got)
+		for _, past := range []string{"9223372036854775808", "18446744073709551616"} {
+			bad := strings.Replace(js, `"attempt": 9223372036854775807`, `"attempt": `+past, 1)
+			require.NotEqual(t, js, bad)
+			_, _, err := r.Read([]byte(bad))
+			assert.Equal(t, "clamped", refusal(t, "MemberCarry", err), "attempt %s", past)
+		}
+	})
+
+	t.Run("the harness config", func(t *testing.T) {
+		t.Parallel()
+		typical := harnessDoc{Provider: "deepseek", Model: "deepseek-chat", EnvVar: "DEEPSEEK_API_KEY"}
+		long := harnessDoc{Provider: strings.Repeat("p", 10*kib), Model: strings.Repeat("m", 10*kib), EnvVar: strings.Repeat("E", 10*kib),
+			BaseURL: "https://" + strings.Repeat("u", 10*kib)}
+		h := func(edit func(*harnessDoc)) harnessDoc { d := typical; edit(&d); return d }
+		runDoc(t, harnessTable(),
+			map[string]harnessDoc{"typical": typical, "long": long},
+			map[string]harnessDoc{
+				"no provider":      h(func(d *harnessDoc) { d.Provider = "" }),
+				"no model":         h(func(d *harnessDoc) { d.Model = "" }),
+				"no env_var":       h(func(d *harnessDoc) { d.EnvVar = "" }),
+				"a NUL in a model": h(func(d *harnessDoc) { d.Model = "a\x00" }),
+			},
+			nil)
+	})
+
 	t.Run("the fence config", func(t *testing.T) {
 		t.Parallel()
 		typical := fenceDoc{JobDir: "/home/nova/jobs/a", Reads: []string{"/sys/kernel/security/lsm"},
 			Rules:    []ruleDoc{{"/home/nova/jobs/a/*", 1}, {"/home/nova/jobs/a/**", 1}},
 			Webfetch: 2}
 		long := typical
+		long.JobDir = "/" + strings.Repeat("j", 10*kib)
 		long.Reads = many(200, func(i int) string { return fmt.Sprintf("/read/%d/%s", i, strings.Repeat("r", 3000)) })
 		long.Rules = nil
 		for i := range 2 + 4*200 {
@@ -1083,8 +786,41 @@ func documentsGolden(t *testing.T) {
 				"no webfetch": f(func(d *fenceDoc) { d.Webfetch = 0 }),
 				"a NUL path":  f(func(d *fenceDoc) { d.Reads = []string{"/a\x00"} }),
 			},
-			map[string][2]fenceDoc{
-				"webfetch over 2": {f(func(d *fenceDoc) { d.Webfetch = 1 }), f(func(d *fenceDoc) { d.Webfetch = 2 })},
+			map[string]probe[fenceDoc]{
+				"webfetch over 2": topProbe(f(func(d *fenceDoc) { d.Webfetch = 2 }), f(func(d *fenceDoc) { d.Webfetch = 1 }), "webfetch"),
+				"action over 2": topProbe(fenceDoc{JobDir: "/j", Rules: []ruleDoc{{"/j/*", 2}}, Webfetch: 1},
+					fenceDoc{JobDir: "/j", Rules: []ruleDoc{{"/j/*", 1}}, Webfetch: 1}, "action"),
+			})
+	})
+
+	t.Run("the declared model", func(t *testing.T) {
+		t.Parallel()
+		typical := modelDoc{Provider: "deepseek", Model: "deepseek-chat"}
+		// DeclareRouteModel accepts a provider and a model of any length
+		long := modelDoc{Provider: strings.Repeat("p", 10*kib), Model: strings.Repeat("m", 20*kib)}
+		runDoc(t, modelTable(),
+			map[string]modelDoc{"typical": typical, "long": long},
+			map[string]modelDoc{"no provider": {Model: "m"}, "no model": {Provider: "p"}, "a NUL in a provider": {Provider: "p\x00", Model: "m"}},
+			nil)
+	})
+
+	t.Run("the member carry", func(t *testing.T) {
+		t.Parallel()
+		typical := carryDoc{Card: "recut-widen-r.w1", Attempt: 2, Head: sha1}
+		// CarryLine writes a card and a branch of any length, and parseCarry
+		// reads an attempt across int's range
+		long := carryDoc{Card: strings.Repeat("c", 10*kib), Attempt: math.MaxInt64, Head: sha1 + sha1[:24], Branch: "sprint/" + strings.Repeat("b", 5*kib)}
+		pr := carryDoc{Head: sha1, Branch: "sprint/a13-defs-swarm.w4.g1.e21"}
+		runDoc(t, carryTable(),
+			map[string]carryDoc{"typical": typical, "long": long, "a finish-PR carry": pr},
+			map[string]carryDoc{
+				"attempt -1":          {Card: "c", Attempt: -1, Head: sha1},
+				"no head":             {Card: "c", Attempt: 1},
+				"an attempt, no card": {Attempt: 1, Head: sha1},
+				"a NUL in a branch":   {Head: sha1, Branch: "b\x00"},
+			},
+			map[string]probe[carryDoc]{
+				"attempt under 0": underZero(carryDoc{Card: "c", Attempt: marker, Head: sha1}, "attempt"),
 			})
 	})
 }
