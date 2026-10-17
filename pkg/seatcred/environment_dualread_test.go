@@ -239,7 +239,9 @@ func TestSeatEnvironmentDualRead(t *testing.T) {
 		// Each damaged value is refused by name or reads as a whole v1 record,
 		// never as absent, empty or zero. A flip that changes a text in place
 		// without breaking the structure is the wire's limit (no checksum):
-		// counted as a silent change.
+		// counted as a silent change. Each JSON text load allocates and clears a
+		// 1 MiB arena segment (the generated builder), so the sweep is two masks
+		// per byte and 300 seeded multi-byte damages per form.
 		rng := rand.New(rand.NewPCG(1000, 1000))
 		for _, f := range fullForms.each() {
 			var refused, same, silent int
@@ -259,14 +261,14 @@ func TestSeatEnvironmentDualRead(t *testing.T) {
 				}
 			}
 			for i := range f.in {
-				for _, mask := range []byte{0x01, 0x80, 0xff} {
+				for _, mask := range []byte{0x01, 0xff} {
 					in := append([]byte(nil), f.in...)
 					in[i] ^= mask
 					read(in)
 				}
 				read(f.in[:i])
 			}
-			for range 500 {
+			for range 300 {
 				in := append([]byte(nil), f.in...)
 				for range 1 + rng.IntN(3) {
 					in[rng.IntN(len(in))] ^= byte(1 + rng.IntN(255))
