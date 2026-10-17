@@ -85,6 +85,7 @@ pkg/filelock	0.5	@run37411066588	self-hosted
 pkg/fleet	0.0	@run37411066588	self-hosted
 internal/friend	0.3	@local	-
 pkg/friend	2.6	@run37518625834	self-hosted
+pkg/friendfilewire	1.0	@local	-
 internal/fuse	0.0	@run37411066588	self-hosted
 internal/ghevent	0.0	@run37411066588	self-hosted
 internal/ghevent/wire	0.0	@local	-

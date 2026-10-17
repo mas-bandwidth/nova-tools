@@ -1,0 +1,39 @@
+// delivery.schema: the sprint server's answer to friend cards (pkg/friend HeldAnswer,
+// inbox.go:116-119) and the card inside it (HeldCard, :39-56), the record the inbox
+// reads before it writes each BRIEF.md beside its job (SyncInbox, :171-222). Binary
+// wire, padded standard base64 and JSON text; its Go is generated into
+// pkg/friendfilewire.
+//
+// Both tables are VARIABLE (schema owner rule S1): the server of one version answers
+// daemons of another, so an older reader meets a newer writer's fields, and the code
+// enforces a bound on one field only. job is at most 200 bytes (validJob, inbox.go:162,
+// 163; its character set is the same check's, not a length). The brief is the text of the
+// BRIEF.md (the Card table of the card area defines its body), unbounded: SyncInbox
+// writes whatever the server sends. A list of cards has no count bound. Why is
+// json:"-" in the Go struct and is not serialized, so it is no field here. A Go int is
+// int64.
+package friendfilewire
+
+table DeliveryCard
+{
+    card    *string
+    job     string(200)
+    col     *string
+    kind    *string
+    branch  *string
+    tier    *string
+    stream  *string
+    attempt int64
+    gen     int64
+    epoch   uint64
+    repo    *string
+    base_ref *string | json = "base"
+    brief   *string
+    lane    int64
+}
+
+table Delivery
+{
+    friend_name *string | json = "friend"
+    cards  []DeliveryCard
+}

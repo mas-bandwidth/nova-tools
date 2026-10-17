@@ -1,0 +1,143 @@
+schema-tables-baseline 7
+package friendfilewire
+
+table Delivery
+    field friend_name id=0x2bcee2fac7bb6eb5 kind=17 type=string
+    field cards id=0xaf9dac3b097689c4 kind=14 elem=13 type=DeliveryCard array=unbounded
+
+table DeliveryCard
+    field card id=0xb5614e90e87b455f kind=17 type=string
+    field job id=0x45627c193a5b605c kind=12 size=200
+    field col id=0xf604f3190d016791 kind=17 type=string
+    field kind id=0xef9c96d721673243 kind=17 type=string
+    field branch id=0x919ec0f651278ba5 kind=17 type=string
+    field tier id=0x1e6f84ef2eb65989 kind=17 type=string
+    field stream id=0x4f6a36d8e8907985 kind=17 type=string
+    field attempt id=0x63e618bd2b303dee kind=5
+    field gen id=0xd4e26d18faaa8af5 kind=5
+    field epoch id=0xfc9697d1196e6ba6 kind=9
+    field repo id=0x4cac581fbfac663d kind=17 type=string
+    field base_ref id=0xd46f4a3ebed65022 kind=17 type=string
+    field brief id=0xf90e421e2470877f kind=17 type=string
+    field lane id=0x0460ddad9060af0f kind=5
+
+table FriendQueue
+    field tasks id=0x07d8162a04b6c10d kind=14 elem=13 type=FriendTask array=unbounded
+
+table FriendRefusal
+    field verb id=0x673ebb0102773a20 kind=17 type=string
+    field count id=0xb1e5e28e4479a274 kind=5
+
+table FriendStatus
+    field friend_name id=0x2bcee2fac7bb6eb5 kind=17 type=string
+    field harness id=0x211fcbbafe5331ab kind=17 type=string
+    field started id=0xc732f2e2fbe9f15e kind=17 type=string
+    field at id=0x089c4e07b545a968 kind=17 type=string
+    field seat id=0x2d08f118d3f933e8 kind=17 type=string
+    field beats id=0x67fea45e4a3e6082 kind=5
+    field last_beat id=0xea60c9023c49fe1a kind=17 type=string
+    field beat_error id=0x4397007c7f5e1038 kind=17 type=string
+    field store_error id=0x641650763c8d0b0b kind=17 type=string
+    field width id=0xdbdacd932fd1e9bf kind=5
+    field session id=0x3ca2c49553a457d7 kind=17 type=string
+    field session_id id=0xb7d7b5650a590b05 kind=17 type=string
+    field session_reason id=0xc5fb10aa40fcabf4 kind=17 type=string
+    field broken_at id=0x5511ffbeac7291d0 kind=17 type=string
+    field limit_kind id=0x408210b5d955146f kind=17 type=string
+    field limit_until id=0xaa460484f7e77bb3 kind=17 type=string
+    field mode id=0x0d3deba2c41dadb2 kind=17 type=string
+    field lanes id=0xd14829ec544a2fb4 kind=17 type=string
+    field paced id=0x8a2a33a758314d6a kind=5 optional=true
+    field window id=0x71f304ea62c01cbd kind=17 type=string
+    field pacing id=0x8e31065aa027e00d kind=17 type=string
+    field held_known id=0x19122926f9f3e41a kind=1
+    field held id=0x0a9904cc5fa248be kind=5
+    field inbox id=0x961de08f9b26b75b kind=5
+    field missing id=0x8a56a8c8bd19c9c7 kind=5
+    field inbox_error id=0x792404531d6c907a kind=17 type=string
+    field held_from id=0x5f4ae73e88afff4f kind=17 type=string
+    field refused id=0xdd362779f48a4b03 kind=14 elem=13 type=FriendRefusal array=unbounded
+    field last_refusal id=0x7c7af471a8f22fe6 kind=17 type=string
+    field last_refusal_at id=0x237c71d418afddce kind=17 type=string
+    field proof id=0xf96ca0246daa2be9 kind=17 type=string
+    field proof_at id=0xc2c5666060e98d17 kind=17 type=string
+
+table FriendTask
+    field gen id=0xd4e26d18faaa8af5 kind=5
+    field job id=0x45627c193a5b605c kind=17 type=string
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field state id=0xee63aaad45b1b116 kind=17 type=string
+    field deliverable id=0x92f1351d710c0102 kind=17 type=string
+
+table FriendWatch
+    field after id=0xbf82010f6f71eae9 kind=17 type=string
+    field wake_offset id=0xcb01b1d91bf0a1b1 kind=5
+
+table LaneEnd
+    field exit id=0xe79e4d608e807965 kind=5
+    field err id=0xc2fd0518f05dddcc kind=17 type=string
+    field wall id=0x5e76c2f62c1e1615 kind=5
+    field cap id=0xf5e303190ce49c5b kind=17 type=string
+    field rejected id=0xd182d068c109b1a7 kind=17 type=string
+    field turns id=0x7f189dd0bc4902cb kind=5
+    field restart id=0x9e1e242908cbee6c kind=17 type=string
+    field started id=0xc732f2e2fbe9f15e kind=17 type=string
+    field no_report id=0x6ac71b271d6040e1 kind=1
+    field capped id=0xf440984007926fe8 kind=5
+    field tier id=0x1e6f84ef2eb65989 kind=17 type=string
+    field overrun id=0x3c5eb11289517748 kind=5
+    field tail id=0xd94c56ef0798d723 kind=17 type=string
+
+table NoticeEnvelope
+    field local_receiver id=0x93b8471189b8b480 kind=13 type=NoticeReceiver
+    field saved_at id=0x7292c470718967bc kind=17 type=string
+    field hook_epoch id=0x24c223c4ecaf6514 kind=5
+    field hook_role id=0xd26e136f8e0073fb kind=17 type=string
+    field event_id id=0x462dc6cc35c7a0bd kind=17 type=string
+    field challenge id=0x273f002e1ba79f9e kind=17 type=NoticeMessage
+    field messages id=0x0ec1bef4f4de4355 kind=5
+    field senders id=0x6c00e03ae71f1255 kind=14 elem=13 type=NoticeName array=unbounded
+    field recovery_since id=0x8fbf9eff7657e09b kind=17 type=string
+    field recovery_coverage id=0x9d1f00c76880906d kind=17 type=string
+    field recovery_messages id=0xf690792f3c74b303 kind=14 elem=13 type=NoticeMessage array=unbounded
+    field possible_duplicates id=0x8580c70f07ced1b9 kind=1
+
+table NoticeMark
+    field key id=0x3dc94a19365b10ec kind=17 type=string
+    field field id=0x2c5d047ff4e6ffc7 kind=17 type=string
+    field value id=0x7ce4fd9430e80cea kind=17 type=string
+    field clear id=0xf531f89544a910a2 kind=1
+    field forward id=0x1e65942e132f4f7a kind=1
+    field once id=0x070eceb46ad585c4 kind=1
+
+table NoticeMessage
+    field model_activity id=0xdac99c68d1d84a7e kind=1
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field from id=0x7f845078d7a5c0b5 kind=12 size=64
+    field to id=0x08c83907b56ac0a4 kind=14 elem=13 type=NoticeName array=unbounded
+    field cc id=0x08a24d07b54a1363 kind=14 elem=13 type=NoticeName array=unbounded
+    field subject id=0x9640735281e90c0f kind=17 type=string
+    field re id=0x08dc4f07b57b8f10 kind=17 type=string
+    field card id=0xb5614e90e87b455f kind=17 type=string
+    field head id=0x0a8f12cc5f9a0c03 kind=17 type=string
+    field kind id=0xef9c96d721673243 kind=17 type=string
+    field at id=0x089c4e07b545a968 kind=17 type=string
+    field body id=0xcd4de79bc6c93295 kind=12 size=1048576
+    field wait id=0x5e81a4f62c27eaa0 kind=5
+    field due id=0xca643d18f43490d5 kind=17 type=string
+    field token id=0x26c4b17d50b3c152 kind=12 size=128
+    field once id=0x070eceb46ad585c4 kind=17 type=string
+    field marks id=0x9077d4a4e1726e29 kind=14 elem=13 type=NoticeMark array=unbounded
+
+table NoticeName
+    field s id=0xaf63ee4c86020b22 kind=12 size=64
+
+table NoticeReceiver
+    field identity id=0xe90f184c6aa3ffbb kind=17 type=string
+    field redis id=0xa30c3ff3148ac374 kind=17 type=string
+    field proof id=0xf96ca0246daa2be9 kind=17 type=string
+    field acknowledge id=0xe1d811da25ba0773 kind=17 type=string
+
+## history
+### 2026-10-17 (UTC) — first baseline
+- baseline created over 13 tables — data written BEFORE this point is not covered by it
