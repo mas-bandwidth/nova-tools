@@ -209,16 +209,13 @@ table ModelReplayEvent
 }
 
 // ModelStep is one configuration of a suite and the result it must reach
-// (steps.go:25-32 Step). workers: TLC workers, at least 1: MemberSteps refuses
-// a plan with fewer (steps.go:109-111), the one bound of these records the
-// code enforces. The compiler takes no min without a max (SPEC §4.6), so max is
-// the largest int64: no upper bound is declared; the compiler also wants a
-// default in range, so an absent workers reads as 1.
+// (steps.go:25-32 Step). workers: TLC workers, any int64: RunSteps and
+// tlc.Run pass the value through unchanged, so no bound is declared.
 table ModelStep
 {
     name     *string
     module   *string
-    workers  int64 = 1 | min = 1, max = 9223372036854775807
+    workers  int64
     kind     *string
     property *string
     met      *string

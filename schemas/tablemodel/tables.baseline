@@ -95,7 +95,7 @@ table ModelState
 table ModelStep
     field name id=0xc4bcadba8e631b86 kind=17 type=string
     field module id=0x43e6a23362b6dadd kind=17 type=string
-    field workers id=0xe4dede02383cb9cc kind=5 min=1 max=9223372036854775807 default=1
+    field workers id=0xe4dede02383cb9cc kind=5
     field kind id=0xef9c96d721673243 kind=17 type=string
     field property id=0x58da6b1ccd7c4488 kind=17 type=string
     field met id=0x081d4d1917795689 kind=17 type=string

@@ -3108,7 +3108,7 @@ func ConvergeStateAt(slot *int64, arena ...*TableArena) *ConvergeStateRow {
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 func (c ConvergeStateCook) Type() *TableCookInfo { return &tableCookRecords[0] }
 
-const tableCookBuildVersion uint64 = 0x189e2d4aadf0240d
+const tableCookBuildVersion uint64 = 0xfb2fcd6eeb6926c2
 
 // TableByteOrder selects the target order, independently of the writing host.
 type TableByteOrder uint8

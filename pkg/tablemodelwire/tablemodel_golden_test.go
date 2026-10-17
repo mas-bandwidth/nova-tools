@@ -16,10 +16,9 @@ package tablemodelwire
 //     trace with 200 model modules and module names of 4096 bytes: the list
 //     and the text have no bound because replay.go hashModels (170-184) has
 //     none;
-//   - the one bound the code enforces on these records, ModelStep.workers is at
-//     least 1 (steps.go:109), is accepted at 1 and refused by name at 0 on
-//     write and on read in every form, never clamped; and the largest int64
-//     is accepted where Go's int holds it;
+//   - ModelStep.workers is a plain int64, since RunSteps and tlc.Run pass any
+//     value through: 0, -1, the smallest and the largest int64 round-trip in
+//     every form, and no field of these tables declares a range;
 //   - a damaged image of each form is refused by name, for every table;
 //   - the SHA-256 of each sample's wire is pinned, so a change of layout or
 //     encoding shows as a changed digest.
@@ -172,16 +171,6 @@ func readReport(rep TableReport, ok bool) schemaread.Report {
 	return out
 }
 
-// rangeTop is a range's upper end as an int64: the descriptor holds it as a
-// float64, which cannot hold the largest int64, so a top at or past 2^63 is the
-// largest int64.
-func rangeTop(f TableFieldInfo) int64 {
-	if f.RangeMax >= math.MaxInt64 {
-		return math.MaxInt64
-	}
-	return int64(f.RangeMax)
-}
-
 // openBound is true for a field that declares no bound: a text without a limit
 // and a list without a count read their bound as 0 or as the open sentinel.
 func openBound(f TableFieldInfo) bool { return f.ArrayBound == 0 || f.ArrayBound == math.MaxInt32 }
@@ -200,29 +189,10 @@ func (o ops) field(t *testing.T, name string) TableFieldInfo {
 }
 
 // codec is the strict read and write of one table over its generated functions
-// (schema-tables union research section 4.6). Only ModelStep declares a bound
-// (workers, at least 1: steps.go:109), so only it has a constraint; the
-// generated writer checks none, so the write side runs the same bound before a
-// byte is written.
+// (schema-tables union research section 4.6). No field of these tables declares
+// a bound, so the codec has no constraint.
 func (o ops) codec(t *testing.T) *schemaread.Codec[doc] {
 	var constraints func(*doc, *schemaread.Checker)
-	if o.name == "ModelStep" {
-		workers := o.field(t, "workers")
-		constraints = func(d *doc, c *schemaread.Checker) {
-			var v struct {
-				Workers *json.Number `json:"workers"`
-			}
-			dec := json.NewDecoder(strings.NewReader(string(d.canon)))
-			dec.UseNumber()
-			if err := dec.Decode(&v); err != nil || v.Workers == nil {
-				c.Required("workers", false)
-				return
-			}
-			n, err := v.Workers.Int64()
-			c.Required("workers", err == nil)
-			c.Bound("workers", n, int64(workers.RangeMin), rangeTop(workers))
-		}
-	}
 	return &schemaread.Codec[doc]{
 		Name:  strings.ToUpper(o.name),
 		Help:  modelsHelp,
@@ -763,7 +733,7 @@ func testRecordBounds(t *testing.T) {
 		}
 	}
 	workers := step.field(t, "workers")
-	require.Equal(t, int64(1), int64(workers.RangeMin), "steps.go:109 refuses fewer than one worker")
+	require.False(t, workers.HasRange, "workers declares no range: RunSteps and tlc.Run take any value")
 
 	base := func(w int64) obj {
 		return obj{"name": "MCTableMachine", "module": "MCTableMachine.tla", "workers": w, "kind": "pass", "property": "", "met": "pass"}
@@ -773,8 +743,8 @@ func testRecordBounds(t *testing.T) {
 		return rd.Write(&doc{canon: marshal(t, base(w))}, form)
 	}
 
-	// at the bound: 1 is accepted in every form, and so is the top of int64
-	for _, w := range []int64{1, 2, 1024, math.MaxInt64} {
+	// any int64 is accepted in every form
+	for _, w := range []int64{0, -1, 1, 2, 1024, math.MinInt64, math.MaxInt64} {
 		for _, form := range forms {
 			img, err := write(w, form)
 			require.NoError(t, err, "workers %d %s", w, form)
@@ -784,88 +754,21 @@ func testRecordBounds(t *testing.T) {
 		}
 	}
 
-	// one past the bound: 0 is refused by name on write, in every form
-	for _, form := range forms {
-		img, err := write(0, form)
-		assert.Nil(t, img)
-		assert.Equal(t, "clamped (workers)", refusal(t, step.name, err), "write of workers 0 as %s", form)
-	}
-	for _, w := range []int64{-1, math.MinInt64} {
-		_, err := write(w, schemaread.FormBinary)
-		assert.Equal(t, "clamped (workers)", refusal(t, step.name, err), "write of workers %d", w)
-	}
-
-	// the generated writer itself refuses workers 0, by name
-	bld := new(ModelStepBuilder)
-	require.True(t, bld.Init())
-	var rep TableReport
-	require.True(t, ModelStepFromJson(bld, marshal(t, base(1)), &rep))
-	bld.GetRoot().Workers = 0
-	require.True(t, bld.Lock())
-	n, err := ModelStepMeasureReason(bld.AsConst())
-	assert.Equal(t, int64(-1), n)
-	require.Error(t, err)
-	assert.Equal(t, "invalid_value", err.Error(), "the generated writer refuses workers 0 by name")
-	bld.Shutdown()
-
-	// one past the bound on read: an image of workers 0, which no checked
-	// writer writes, is refused by name in every form, never clamped
-	// (workers 1 is the default and rides as absent, so the image is forged
-	// from a wire that carries workers 2)
-	_, wire2, ok := step.fromJSON(marshal(t, base(2)), &rep)
-	require.True(t, ok)
-	forged := forgeWorkers(t, wire2, 2, 0)
-	for _, img := range [][]byte{forged, []byte(base64.StdEncoding.EncodeToString(forged)), marshal(t, base(0))} {
-		rd2 := schemaread.NewReader(step.codec(t))
-		_, _, err := rd2.Read(img)
-		assert.Equal(t, "clamped", refusal(t, step.name, err), "read of workers 0 as %s", rd2.Detect(img))
-		assert.Equal(t, uint64(1), rd2.Counts().Refused("clamped"))
-	}
-
 	// the counts of a form are per form
 	assert.Equal(t, uint64(0), rd.Counts().Reads(schemaread.FormLegacy))
-	assert.Equal(t, uint64(4), rd.Counts().Reads(schemaread.FormBinary))
+	assert.Equal(t, uint64(7), rd.Counts().Reads(schemaread.FormBinary))
 
 	// past int64 is refused by name in the JSON form
-	_, _, err = rd.Read([]byte(`{"workers": 9223372036854775808, "name": "x"}`))
+	_, _, err := rd.Read([]byte(`{"workers": 9223372036854775808, "name": "x"}`))
 	reason := refusal(t, step.name, err)
 	assert.Contains(t, []string{"malformed", "clamped", "kind_mismatch"}, reason, "a number past int64")
 
-	// the schema declares exactly this one bound and no other: no text and no
-	// list carries a bound, and no integer but workers carries a range
+	// the schema declares no range: no text and no list carries a bound, and
+	// no integer carries a range
 	for _, o := range modelOps {
 		for _, f := range o.fields {
-			ranged := f.HasRange
-			if o.name == "ModelStep" && f.Name == "workers" {
-				assert.True(t, ranged)
-				continue
-			}
-			assert.False(t, ranged, "%s.%s declares a range", o.name, f.Name)
+			assert.False(t, f.HasRange, "%s.%s declares a range", o.name, f.Name)
 			assert.True(t, openBound(f), "%s.%s declares a bound", o.name, f.Name)
 		}
 	}
-}
-
-// forgeWorkers returns wire with the int64 at the workers field changed from
-// from to to: the image an unchecked writer would write.
-func forgeWorkers(t *testing.T, wire []byte, from, to int64) []byte {
-	t.Helper()
-	le := func(v int64) []byte {
-		b := make([]byte, 8)
-		for i := range b {
-			b[i] = byte(uint64(v) >> (8 * i))
-		}
-		return b
-	}
-	idx := -1
-	for i := 1; i+8 <= len(wire); i++ {
-		if wire[i-1] == 5 && string(wire[i:i+8]) == string(le(from)) {
-			idx = i
-			break
-		}
-	}
-	require.NotEqual(t, -1, idx, "the workers field is in the wire")
-	out := append([]byte{}, wire...)
-	copy(out[idx:], le(to))
-	return out
 }

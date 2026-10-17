@@ -13342,7 +13342,7 @@ func ModelReplayEventFieldsEach(holder *TableList[ModelDetailRow], visit func(*M
 func ModelStepReset(value *ModelStep) {
 	value.Name = 0
 	value.Module = 0
-	value.Workers = 1
+	value.Workers = 0
 	value.Kind = 0
 	value.Property = 0
 	value.Met = 0
@@ -13405,12 +13405,9 @@ func ModelStepSaveBodyFields(w *TableWriter, value *ModelStep) bool {
 		}
 	}
 	{
-		if value.Workers != 1 {
+		if value.Workers != 0 {
 			if ref := w.Ids.refAtHit(74, 0xe4dede02383cb9cc); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
-			}
-			if value.Workers < 1 {
-				return false
 			}
 			w.Put64(uint64(value.Workers))
 		}
@@ -13546,13 +13543,6 @@ func ModelStepLoadBody(r *TableReader, value *ModelStep) bool {
 					}
 					{
 						v := r.Signed(kind)
-						if v < 1 {
-							v = 1
-							r.Report.Clamped++
-						} else if v > 9223372036854775807 {
-							v = 9223372036854775807
-							r.Report.Clamped++
-						}
 						value.Workers = int64(v)
 					}
 					r.Report.Widened++
@@ -13571,13 +13561,6 @@ func ModelStepLoadBody(r *TableReader, value *ModelStep) bool {
 			}
 			{
 				v := int64(r.Get64())
-				if v < 1 {
-					v = 1
-					r.Report.Clamped++
-				} else if v > 9223372036854775807 {
-					v = 9223372036854775807
-					r.Report.Clamped++
-				}
 				value.Workers = int64(v)
 			}
 		case 0xef9c96d721673243: // kind
@@ -13718,12 +13701,9 @@ func ModelStepSaveBodyFieldsRetain(w *TableRetainWriter, value *ModelStep) bool 
 		}
 	}
 	{
-		if value.Workers != 1 {
+		if value.Workers != 0 {
 			if ref := w.Ids.refAtHit(74, 0xe4dede02383cb9cc); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
-			}
-			if value.Workers < 1 {
-				return false
 			}
 			w.Put64(uint64(value.Workers))
 		}
@@ -13863,13 +13843,6 @@ func ModelStepLoadBodyRetain(r *TableRetainReader, value *ModelStep) bool {
 					}
 					{
 						v := r.Signed(kind)
-						if v < 1 {
-							v = 1
-							r.Report.Clamped++
-						} else if v > 9223372036854775807 {
-							v = 9223372036854775807
-							r.Report.Clamped++
-						}
 						value.Workers = int64(v)
 					}
 					r.Report.Widened++
@@ -13888,13 +13861,6 @@ func ModelStepLoadBodyRetain(r *TableRetainReader, value *ModelStep) bool {
 			}
 			{
 				v := int64(r.Get64())
-				if v < 1 {
-					v = 1
-					r.Report.Clamped++
-				} else if v > 9223372036854775807 {
-					v = 9223372036854775807
-					r.Report.Clamped++
-				}
 				value.Workers = int64(v)
 			}
 		case 0xef9c96d721673243: // kind
@@ -18487,7 +18453,7 @@ var ModelStepTableFields = []TableFieldInfo{
 	{Name: "workers", Json: "workers", TypeName: "int64", DeclaredTypeName: "int64", Id: 0xe4dede02383cb9cc, Kind: 5, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(ModelStep{}.Workers)), ElemSize: uint32(unsafe.Sizeof(ModelStep{}.Workers)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
 		CookOffset: 16, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
-		HasRange: true, RangeMin: 1.0, RangeMax: 9.223372036854776e+18, EnumMax: -1,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
 		VariantId:   nil,

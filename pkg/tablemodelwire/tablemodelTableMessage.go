@@ -5619,13 +5619,6 @@ func ModelStepLoadMessageBodyRetain(r *TableRetainMessageReader, value *ModelSte
 					}
 					{
 						v := payload1.Signed(entry.Shape.Kind)
-						if v < 1 {
-							v = 1
-							r.Report.Clamped++
-						} else if v > 9223372036854775807 {
-							v = 9223372036854775807
-							r.Report.Clamped++
-						}
 						value.Workers = int64(v)
 					}
 				}
@@ -5753,9 +5746,9 @@ func ModelStepSaveMessageBody(w *TableMessageWriter, value *ModelStep) bool {
 		}
 	}
 	{
-		if value.Workers != 1 {
+		if value.Workers != 0 {
 			w.Put(41, TableMessageRefBitsHere)
-			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 5, Packing: 1, Bits: 63, Base: [2]uint64{0x1, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Workers), uint64(0))
+			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 5, Packing: 0, Bits: 64, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Workers), uint64(0))
 		}
 	}
 	{
@@ -5902,13 +5895,6 @@ func ModelStepLoadMessageBody(r *TableMessageReader, value *ModelStep) bool {
 					}
 					{
 						v := payload46.Signed(entry.Shape.Kind)
-						if v < 1 {
-							v = 1
-							r.Report.Clamped++
-						} else if v > 9223372036854775807 {
-							v = 9223372036854775807
-							r.Report.Clamped++
-						}
 						value.Workers = int64(v)
 					}
 				}
