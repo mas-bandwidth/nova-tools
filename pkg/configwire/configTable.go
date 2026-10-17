@@ -18,7 +18,7 @@ import "unsafe"
 type FieldPair struct {
 	Name        [32]byte // string(MaxFieldName): max length, used length beside it
 	NameLength  int32
-	Value       [1024]byte // string(MaxFieldValue): max length, used length beside it
+	Value       [2304]byte // string(MaxFieldValue): max length, used length beside it
 	ValueLength int32
 }
 
@@ -42,7 +42,7 @@ type RowFields struct {
 // declared defaults restored by ConfigRowReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type ConfigRow struct {
 	Kind            ConfigKind
-	Name            [64]byte // string(MaxName): max length, used length beside it
+	Name            [128]byte // string(MaxName): max length, used length beside it
 	NameLength      int32
 	Fields          RowFields
 	CreatedAt       [32]byte // string(32): max length, used length beside it
@@ -52,25 +52,26 @@ type ConfigRow struct {
 }
 
 // One history row (pkg/config Change, written pg.go record, read pg.go
-// History): the write's kind, name and op, the row before and the row after
-// (an add has no before and a remove has no after: the has_ flags say which
-// ride), who made it, why (the --reason, empty when none), and when (RFC 3339
-// UTC). The reason rides here, apart from the fields, as Change.Reason does.
+// History): the write's kind, name and op, which sides of the change ride
+// (an add has no before and a remove has no after: the has_ flags say which),
+// who made it, why (the --reason, empty when none), and when (RFC 3339 UTC).
+// The reason rides here, apart from the fields, as Change.Reason does. The
+// before and the after are RowFields records that follow this header, the
+// before first, as pg.go keeps them in two columns: two rows at the field
+// bound do not fit one 65536 byte record, so each side is a record of its own.
 // ConfigChange — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by ConfigChangeReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type ConfigChange struct {
 	Id           int64
 	Kind         ConfigKind
-	Name         [64]byte // string(MaxName): max length, used length beside it
+	Name         [128]byte // string(MaxName): max length, used length beside it
 	NameLength   int32
 	Op           ChangeOp
 	HasBefore    bool
-	Before       RowFields
 	HasAfter     bool
-	After        RowFields
-	Actor        [64]byte // string(MaxName): max length, used length beside it
+	Actor        [128]byte // string(MaxName): max length, used length beside it
 	ActorLength  int32
-	Reason       [256]byte // string(256): max length, used length beside it
+	Reason       [2304]byte // string(MaxFieldValue): max length, used length beside it
 	ReasonLength int32
 	At           [32]byte // string(32): max length, used length beside it
 	AtLength     int32
@@ -105,11 +106,11 @@ type CanonicalWord struct {
 // MachineView — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by MachineViewReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type MachineView struct {
-	Name         [64]byte // string(MaxName): max length, used length beside it
+	Name         [128]byte // string(MaxName): max length, used length beside it
 	NameLength   int32
-	User         [64]byte // string(MaxName): max length, used length beside it
+	User         [2304]byte // string(MaxFieldValue): max length, used length beside it
 	UserLength   int32
-	Seat         [64]byte // string(MaxName): max length, used length beside it
+	Seat         [2304]byte // string(MaxFieldValue): max length, used length beside it
 	SeatLength   int32
 	Slots        int32
 	Runners      int32
@@ -129,20 +130,20 @@ type MachineView struct {
 // InventoryLoop — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by InventoryLoopReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type InventoryLoop struct {
-	Machine       [64]byte // string(MaxName): max length, used length beside it
+	Machine       [128]byte // string(MaxName): max length, used length beside it
 	MachineLength int32
-	Name          [64]byte // string(MaxName): max length, used length beside it
+	Name          [128]byte // string(MaxName): max length, used length beside it
 	NameLength    int32
 	Argv          [4096]byte // string(MaxArgvBytes): max length, used length beside it
 	ArgvLength    int32
-	Seat          [64]byte // string(MaxName): max length, used length beside it
+	Seat          [2304]byte // string(MaxFieldValue): max length, used length beside it
 	SeatLength    int32
 	Keys          [32]EnvName // used count beside it; count in [0, 32]
 	KeysCount     int32
 	Every         int32
 	Keepalive     bool
 	Enabled       bool
-	Log           [512]byte // string(512): max length, used length beside it
+	Log           [2304]byte // string(MaxFieldValue): max length, used length beside it
 	LogLength     int32
 }
 
@@ -155,7 +156,7 @@ type InventoryLoop struct {
 // HostView — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by HostViewReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type HostView struct {
-	AnsibleHost         [64]byte // string(MaxName): max length, used length beside it
+	AnsibleHost         [128]byte // string(MaxName): max length, used length beside it
 	AnsibleHostLength   int32
 	Kind                ConfigKind
 	Slots               int32
@@ -170,20 +171,20 @@ type HostView struct {
 	NovaArch            [32]byte // string(32): max length, used length beside it
 	NovaArchLength      int32
 	NovaTla             bool
-	RegistrySeat        [64]byte // string(MaxName): max length, used length beside it
+	RegistrySeat        [2304]byte // string(MaxFieldValue): max length, used length beside it
 	RegistrySeatLength  int32
 	RegistryRoles       [64]byte // string(64): max length, used length beside it
 	RegistryRolesLength int32
-	AnsibleUser         [64]byte // string(MaxName): max length, used length beside it
+	AnsibleUser         [2304]byte // string(MaxFieldValue): max length, used length beside it
 	AnsibleUserLength   int32
-	NovaSeat            [64]byte // string(MaxName): max length, used length beside it
+	NovaSeat            [2304]byte // string(MaxFieldValue): max length, used length beside it
 	NovaSeatLength      int32
-	NovaRedisAddr       [64]byte // string(MaxName): max length, used length beside it
+	NovaRedisAddr       [2304]byte // string(MaxFieldValue): max length, used length beside it
 	NovaRedisAddrLength int32
-	NovaBusAddr         [64]byte // string(MaxName): max length, used length beside it
+	NovaBusAddr         [2304]byte // string(MaxFieldValue): max length, used length beside it
 	NovaBusAddrLength   int32
 	NovaRedisPort       int32
-	NovaPgDsn           [256]byte // string(256): max length, used length beside it
+	NovaPgDsn           [2304]byte // string(MaxFieldValue): max length, used length beside it
 	NovaPgDsnLength     int32
 	Local               bool
 }
@@ -193,7 +194,7 @@ type HostView struct {
 // HostName — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by HostNameReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type HostName struct {
-	Name       [64]byte // string(MaxName): max length, used length beside it
+	Name       [128]byte // string(MaxName): max length, used length beside it
 	NameLength int32
 }
 
@@ -202,7 +203,7 @@ type HostName struct {
 // EnvName — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by EnvNameReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type EnvName struct {
-	Name       [64]byte // string(MaxEnvName): max length, used length beside it
+	Name       [128]byte // string(MaxEnvName): max length, used length beside it
 	NameLength int32
 }
 
@@ -210,7 +211,7 @@ type EnvName struct {
 // HostGroup — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by HostGroupReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type HostGroup struct {
-	Hosts      [64]HostName // used count beside it; count in [0, 64]
+	Hosts      [48]HostName // used count beside it; count in [0, 48]
 	HostsCount int32
 }
 
@@ -235,7 +236,7 @@ type Inventory struct {
 	StoreDeployer   HostGroup
 	Runners         HostGroup
 	Tla             HostGroup
-	NovaStore       [64]byte // string(MaxName): max length, used length beside it
+	NovaStore       [2304]byte // string(MaxFieldValue): max length, used length beside it
 	NovaStoreLength int32
 	Revs            [8]KindRev // used count beside it; count in [0, 8]
 	RevsCount       int32
@@ -249,7 +250,7 @@ type Inventory struct {
 // BenchBeat — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by BenchBeatReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type BenchBeat struct {
-	Host           [64]byte // string(MaxName): max length, used length beside it
+	Host           [128]byte // string(MaxName): max length, used length beside it
 	HostLength     int32
 	AtMs           int64
 	Load1          [16]byte // string(16): max length, used length beside it
@@ -516,7 +517,7 @@ func FieldPairSaveBody(w *TableWriter, value *FieldPair) bool {
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(79, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(78, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.NameLength < 0 || value.NameLength > 32 {
@@ -562,14 +563,14 @@ func FieldPairSaveBody(w *TableWriter, value *FieldPair) bool {
 		}
 	}
 	{
-		if value.ValueLength < 0 || value.ValueLength > 1024 {
+		if value.ValueLength < 0 || value.ValueLength > 2304 {
 			return false
 		}
 		if value.ValueLength > 0 {
 			if ref := w.Ids.refAtHit(55, 0x7ce4fd9430e80cea); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.ValueLength < 0 || value.ValueLength > 1024 {
+			if value.ValueLength < 0 || value.ValueLength > 2304 {
 				return false
 			}
 			{
@@ -703,8 +704,8 @@ func FieldPairLoadBody(r *TableReader, value *FieldPair) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 1024 {
-				keep = tableUtf8Clamp(sub.Buffer, 1024)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.Value[:])
@@ -1211,7 +1212,7 @@ func ConfigRowMeasureReason(value *ConfigRow) (int64, error) {
 func ConfigRowSaveBody(w *TableWriter, value *ConfigRow) bool {
 	{
 		if value.Kind != ConfigKindNone {
-			if ref := w.Ids.refAtHit(99, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(97, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -1226,7 +1227,7 @@ func ConfigRowSaveBody(w *TableWriter, value *ConfigRow) bool {
 			case ConfigKindFriend:
 				w.IdAt(67, 0x9f57a2661b8a7e2d)
 			case ConfigKindSprint:
-				w.IdAt(101, 0xf3b65f24b2611635)
+				w.IdAt(99, 0xf3b65f24b2611635)
 			case ConfigKindLoop:
 				w.IdAt(37, 0x4efee5b48a4593cb)
 			case ConfigKindProvider:
@@ -1241,14 +1242,14 @@ func ConfigRowSaveBody(w *TableWriter, value *ConfigRow) bool {
 		}
 	}
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(79, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(78, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
 			{
@@ -1322,7 +1323,7 @@ func ConfigRowSaveBody(w *TableWriter, value *ConfigRow) bool {
 			return false
 		}
 		if value.CreatedAtLength > 0 {
-			if ref := w.Ids.refAtHit(84, 0xd468b6d1bff13979); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(83, 0xd468b6d1bff13979); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.CreatedAtLength < 0 || value.CreatedAtLength > 32 {
@@ -1372,7 +1373,7 @@ func ConfigRowSaveBody(w *TableWriter, value *ConfigRow) bool {
 			return false
 		}
 		if value.UpdatedAtLength > 0 {
-			if ref := w.Ids.refAtHit(82, 0xcad12968ef0374e0); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(81, 0xcad12968ef0374e0); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.UpdatedAtLength < 0 || value.UpdatedAtLength > 32 {
@@ -1509,8 +1510,8 @@ func ConfigRowLoadBody(r *TableReader, value *ConfigRow) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 128 {
+				keep = tableUtf8Clamp(sub.Buffer, 128)
 				r.Report.Clamped++
 			}
 			clear(value.Name[:])
@@ -1693,9 +1694,7 @@ func ConfigChangeReset(value *ConfigChange) {
 	value.NameLength = 0
 	value.Op = ChangeOpNone
 	value.HasBefore = false
-	RowFieldsReset(&value.Before)
 	value.HasAfter = false
-	RowFieldsReset(&value.After)
 	clear(value.Actor[:])
 	value.ActorLength = 0
 	clear(value.Reason[:])
@@ -1744,7 +1743,7 @@ func ConfigChangeSaveBody(w *TableWriter, value *ConfigChange) bool {
 	}
 	{
 		if value.Kind != ConfigKindNone {
-			if ref := w.Ids.refAtHit(99, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(97, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -1759,7 +1758,7 @@ func ConfigChangeSaveBody(w *TableWriter, value *ConfigChange) bool {
 			case ConfigKindFriend:
 				w.IdAt(67, 0x9f57a2661b8a7e2d)
 			case ConfigKindSprint:
-				w.IdAt(101, 0xf3b65f24b2611635)
+				w.IdAt(99, 0xf3b65f24b2611635)
 			case ConfigKindLoop:
 				w.IdAt(37, 0x4efee5b48a4593cb)
 			case ConfigKindProvider:
@@ -1774,14 +1773,14 @@ func ConfigChangeSaveBody(w *TableWriter, value *ConfigChange) bool {
 		}
 	}
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(79, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(78, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
 			{
@@ -1834,11 +1833,11 @@ func ConfigChangeSaveBody(w *TableWriter, value *ConfigChange) bool {
 					w.putLebWide(0)
 				}
 			case ChangeOpAdd:
-				w.IdAt(105, 0xf9aee319a006c9b4)
+				w.IdAt(103, 0xf9aee319a006c9b4)
 			case ChangeOpSet:
 				w.IdAt(64, 0x9844a719fa9b1a83)
 			case ChangeOpRemove:
-				w.IdAt(97, 0xea4f08110bb8f15d)
+				w.IdAt(95, 0xea4f08110bb8f15d)
 			default:
 				return false
 			}
@@ -1857,33 +1856,6 @@ func ConfigChangeSaveBody(w *TableWriter, value *ConfigChange) bool {
 		}
 	}
 	{
-		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(87, 0xd89aa06245afb2be)
-		start := w.Ids.Count
-		n := RowFieldsMeasureBody(&value.Before, w.Ids)
-		if n < 0 || w.Ids.Overflow {
-			return false
-		}
-		if n > 1 {
-			if w.Measuring {
-				w.Advance(tableLebBytes(ref) + 1 + tableLebBytes(uint64(n)) + n)
-			} else {
-				w.Ids.Truncate(start)
-				if !w.headerPair(ref, 13) {
-					w.headerRest(ref, 13)
-				}
-				if !w.putLebPair(uint64(n)) {
-					w.putLebWide(uint64(n))
-				}
-				if !RowFieldsSaveBody(w, &value.Before) {
-					return false
-				}
-			}
-		} else {
-			w.Ids.Truncate(mark)
-		}
-	}
-	{
 		if value.HasAfter != false {
 			if ref := w.Ids.refAtHit(8, 0x0b0f529af221d41e); !w.headerPair(ref, 1) {
 				w.headerRest(ref, 1)
@@ -1896,41 +1868,14 @@ func ConfigChangeSaveBody(w *TableWriter, value *ConfigChange) bool {
 		}
 	}
 	{
-		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(78, 0xbf82010f6f71eae9)
-		start := w.Ids.Count
-		n := RowFieldsMeasureBody(&value.After, w.Ids)
-		if n < 0 || w.Ids.Overflow {
-			return false
-		}
-		if n > 1 {
-			if w.Measuring {
-				w.Advance(tableLebBytes(ref) + 1 + tableLebBytes(uint64(n)) + n)
-			} else {
-				w.Ids.Truncate(start)
-				if !w.headerPair(ref, 13) {
-					w.headerRest(ref, 13)
-				}
-				if !w.putLebPair(uint64(n)) {
-					w.putLebWide(uint64(n))
-				}
-				if !RowFieldsSaveBody(w, &value.After) {
-					return false
-				}
-			}
-		} else {
-			w.Ids.Truncate(mark)
-		}
-	}
-	{
-		if value.ActorLength < 0 || value.ActorLength > 64 {
+		if value.ActorLength < 0 || value.ActorLength > 128 {
 			return false
 		}
 		if value.ActorLength > 0 {
-			if ref := w.Ids.refAtHit(90, 0xdcccc5391c47d4da); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(88, 0xdcccc5391c47d4da); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.ActorLength < 0 || value.ActorLength > 64 {
+			if value.ActorLength < 0 || value.ActorLength > 128 {
 				return false
 			}
 			{
@@ -1973,14 +1918,14 @@ func ConfigChangeSaveBody(w *TableWriter, value *ConfigChange) bool {
 		}
 	}
 	{
-		if value.ReasonLength < 0 || value.ReasonLength > 256 {
+		if value.ReasonLength < 0 || value.ReasonLength > 2304 {
 			return false
 		}
 		if value.ReasonLength > 0 {
 			if ref := w.Ids.refAtHit(45, 0x65e8d7f3474f2639); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.ReasonLength < 0 || value.ReasonLength > 256 {
+			if value.ReasonLength < 0 || value.ReasonLength > 2304 {
 				return false
 			}
 			{
@@ -2193,8 +2138,8 @@ func ConfigChangeLoadBody(r *TableReader, value *ConfigChange) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 128 {
+				keep = tableUtf8Clamp(sub.Buffer, 128)
 				r.Report.Clamped++
 			}
 			clear(value.Name[:])
@@ -2242,25 +2187,6 @@ func ConfigChangeLoadBody(r *TableReader, value *ConfigChange) bool {
 				return false
 			}
 			value.HasBefore = r.Get8() != 0
-		case 0xd89aa06245afb2be: // before
-			if kind != 13 {
-				r.Report.KindMismatch++
-				if !r.Skip(kind) {
-					r.Report.Malformed = true
-					return false
-				}
-				break
-			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
-			}
-			RowFieldsLoadBody(&sub, &value.Before)
-			if sub.Offset != int64(len(sub.Buffer)) {
-				r.Report.Malformed = true
-				RowFieldsReset(&value.Before)
-			}
 		case 0x0b0f529af221d41e: // has_after
 			if kind != 1 {
 				r.Report.KindMismatch++
@@ -2275,25 +2201,6 @@ func ConfigChangeLoadBody(r *TableReader, value *ConfigChange) bool {
 				return false
 			}
 			value.HasAfter = r.Get8() != 0
-		case 0xbf82010f6f71eae9: // after
-			if kind != 13 {
-				r.Report.KindMismatch++
-				if !r.Skip(kind) {
-					r.Report.Malformed = true
-					return false
-				}
-				break
-			}
-			sub, ok := r.Body()
-			if !ok {
-				r.Report.Malformed = true
-				return false
-			}
-			RowFieldsLoadBody(&sub, &value.After)
-			if sub.Offset != int64(len(sub.Buffer)) {
-				r.Report.Malformed = true
-				RowFieldsReset(&value.After)
-			}
 		case 0xdcccc5391c47d4da: // actor
 			if kind != 12 {
 				r.Report.KindMismatch++
@@ -2315,8 +2222,8 @@ func ConfigChangeLoadBody(r *TableReader, value *ConfigChange) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 128 {
+				keep = tableUtf8Clamp(sub.Buffer, 128)
 				r.Report.Clamped++
 			}
 			clear(value.Actor[:])
@@ -2343,8 +2250,8 @@ func ConfigChangeLoadBody(r *TableReader, value *ConfigChange) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 256 {
-				keep = tableUtf8Clamp(sub.Buffer, 256)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.Reason[:])
@@ -2710,7 +2617,7 @@ func CanonicalWordReset(value *CanonicalWord) {
 func CanonicalWordMeasureBody(value *CanonicalWord, ids *TableIds) int64 {
 	bytes := int64(1)
 	if value.Kind != ConfigKindNone {
-		ref := ids.refAtHit(99, 0xef9c96d721673243)
+		ref := ids.refAtHit(97, 0xef9c96d721673243)
 		var vref uint64
 		switch value.Kind {
 		case ConfigKindNone:
@@ -2721,7 +2628,7 @@ func CanonicalWordMeasureBody(value *CanonicalWord, ids *TableIds) int64 {
 		case ConfigKindFriend:
 			vref = ids.refAtHit(67, 0x9f57a2661b8a7e2d)
 		case ConfigKindSprint:
-			vref = ids.refAtHit(101, 0xf3b65f24b2611635)
+			vref = ids.refAtHit(99, 0xf3b65f24b2611635)
 		case ConfigKindLoop:
 			vref = ids.refAtHit(37, 0x4efee5b48a4593cb)
 		case ConfigKindProvider:
@@ -2753,15 +2660,15 @@ func CanonicalWordMeasureBody(value *CanonicalWord, ids *TableIds) int64 {
 		case FieldTypeRef:
 			vref = ids.refAtHit(68, 0x9ff1e019feac1ee2)
 		case FieldTypeBool:
-			vref = ids.refAtHit(103, 0xf7bdd5a7c820889d)
+			vref = ids.refAtHit(101, 0xf7bdd5a7c820889d)
 		case FieldTypeKeys:
-			vref = ids.refAtHit(85, 0xd5c688de734bde0d)
+			vref = ids.refAtHit(84, 0xd5c688de734bde0d)
 		case FieldTypeArgv:
 			vref = ids.refAtHit(2, 0x06f62e8b554b3843)
 		case FieldTypeSeq:
 			vref = ids.refAtHit(65, 0x9844aa19fa9b1f9c)
 		case FieldTypeDecimal:
-			vref = ids.refAtHit(107, 0xff65309aa41b72ac)
+			vref = ids.refAtHit(105, 0xff65309aa41b72ac)
 		default:
 			return -1
 		}
@@ -2773,11 +2680,11 @@ func CanonicalWordMeasureBody(value *CanonicalWord, ids *TableIds) int64 {
 		switch value.Op {
 		case ChangeOpNone:
 		case ChangeOpAdd:
-			vref = ids.refAtHit(105, 0xf9aee319a006c9b4)
+			vref = ids.refAtHit(103, 0xf9aee319a006c9b4)
 		case ChangeOpSet:
 			vref = ids.refAtHit(64, 0x9844a719fa9b1a83)
 		case ChangeOpRemove:
-			vref = ids.refAtHit(97, 0xea4f08110bb8f15d)
+			vref = ids.refAtHit(95, 0xea4f08110bb8f15d)
 		default:
 			return -1
 		}
@@ -2811,7 +2718,7 @@ func CanonicalWordMeasureReason(value *CanonicalWord) (int64, error) {
 func CanonicalWordSaveBody(w *TableWriter, value *CanonicalWord) bool {
 	{
 		if value.Kind != ConfigKindNone {
-			if ref := w.Ids.refAtHit(99, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(97, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -2826,7 +2733,7 @@ func CanonicalWordSaveBody(w *TableWriter, value *CanonicalWord) bool {
 			case ConfigKindFriend:
 				w.IdAt(67, 0x9f57a2661b8a7e2d)
 			case ConfigKindSprint:
-				w.IdAt(101, 0xf3b65f24b2611635)
+				w.IdAt(99, 0xf3b65f24b2611635)
 			case ConfigKindLoop:
 				w.IdAt(37, 0x4efee5b48a4593cb)
 			case ConfigKindProvider:
@@ -2863,15 +2770,15 @@ func CanonicalWordSaveBody(w *TableWriter, value *CanonicalWord) bool {
 			case FieldTypeRef:
 				w.IdAt(68, 0x9ff1e019feac1ee2)
 			case FieldTypeBool:
-				w.IdAt(103, 0xf7bdd5a7c820889d)
+				w.IdAt(101, 0xf7bdd5a7c820889d)
 			case FieldTypeKeys:
-				w.IdAt(85, 0xd5c688de734bde0d)
+				w.IdAt(84, 0xd5c688de734bde0d)
 			case FieldTypeArgv:
 				w.IdAt(2, 0x06f62e8b554b3843)
 			case FieldTypeSeq:
 				w.IdAt(65, 0x9844aa19fa9b1f9c)
 			case FieldTypeDecimal:
-				w.IdAt(107, 0xff65309aa41b72ac)
+				w.IdAt(105, 0xff65309aa41b72ac)
 			default:
 				return false
 			}
@@ -2888,11 +2795,11 @@ func CanonicalWordSaveBody(w *TableWriter, value *CanonicalWord) bool {
 					w.putLebWide(0)
 				}
 			case ChangeOpAdd:
-				w.IdAt(105, 0xf9aee319a006c9b4)
+				w.IdAt(103, 0xf9aee319a006c9b4)
 			case ChangeOpSet:
 				w.IdAt(64, 0x9844a719fa9b1a83)
 			case ChangeOpRemove:
-				w.IdAt(97, 0xea4f08110bb8f15d)
+				w.IdAt(95, 0xea4f08110bb8f15d)
 			default:
 				return false
 			}
@@ -3193,14 +3100,14 @@ func MachineViewMeasureReason(value *MachineView) (int64, error) {
 }
 func MachineViewSaveBody(w *TableWriter, value *MachineView) bool {
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(79, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(78, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
 			{
@@ -3243,14 +3150,14 @@ func MachineViewSaveBody(w *TableWriter, value *MachineView) bool {
 		}
 	}
 	{
-		if value.UserLength < 0 || value.UserLength > 64 {
+		if value.UserLength < 0 || value.UserLength > 2304 {
 			return false
 		}
 		if value.UserLength > 0 {
 			if ref := w.Ids.refAtHit(56, 0x7d6780e4032b48f2); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.UserLength < 0 || value.UserLength > 64 {
+			if value.UserLength < 0 || value.UserLength > 2304 {
 				return false
 			}
 			{
@@ -3293,14 +3200,14 @@ func MachineViewSaveBody(w *TableWriter, value *MachineView) bool {
 		}
 	}
 	{
-		if value.SeatLength < 0 || value.SeatLength > 64 {
+		if value.SeatLength < 0 || value.SeatLength > 2304 {
 			return false
 		}
 		if value.SeatLength > 0 {
 			if ref := w.Ids.refAtHit(21, 0x2d08f118d3f933e8); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.SeatLength < 0 || value.SeatLength > 64 {
+			if value.SeatLength < 0 || value.SeatLength > 2304 {
 				return false
 			}
 			{
@@ -3344,7 +3251,7 @@ func MachineViewSaveBody(w *TableWriter, value *MachineView) bool {
 	}
 	{
 		if value.Slots != 0 {
-			if ref := w.Ids.refAtHit(93, 0xe68c2e6bb1ee5646); !w.headerPair(ref, 4) {
+			if ref := w.Ids.refAtHit(91, 0xe68c2e6bb1ee5646); !w.headerPair(ref, 4) {
 				w.headerRest(ref, 4)
 			}
 			if value.Slots < 0 || value.Slots > 100000 {
@@ -3429,7 +3336,7 @@ func MachineViewSaveBody(w *TableWriter, value *MachineView) bool {
 	if value.WidthPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(89, 0xdbdacd932fd1e9bf); !w.headerPair(ref, 4) {
+				if ref := w.Ids.refAtHit(87, 0xdbdacd932fd1e9bf); !w.headerPair(ref, 4) {
 					w.headerRest(ref, 4)
 				}
 				if value.Width < 0 || value.Width > 100000 {
@@ -3503,8 +3410,8 @@ func MachineViewLoadBody(r *TableReader, value *MachineView) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 128 {
+				keep = tableUtf8Clamp(sub.Buffer, 128)
 				r.Report.Clamped++
 			}
 			clear(value.Name[:])
@@ -3531,8 +3438,8 @@ func MachineViewLoadBody(r *TableReader, value *MachineView) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.User[:])
@@ -3559,8 +3466,8 @@ func MachineViewLoadBody(r *TableReader, value *MachineView) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.Seat[:])
@@ -3886,14 +3793,14 @@ func InventoryLoopMeasureReason(value *InventoryLoop) (int64, error) {
 func InventoryLoopSaveBody(w *TableWriter, value *InventoryLoop) bool {
 	var arrayLengths [32]int64
 	{
-		if value.MachineLength < 0 || value.MachineLength > 64 {
+		if value.MachineLength < 0 || value.MachineLength > 128 {
 			return false
 		}
 		if value.MachineLength > 0 {
 			if ref := w.Ids.refAtHit(24, 0x385157cb98d7be6e); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.MachineLength < 0 || value.MachineLength > 64 {
+			if value.MachineLength < 0 || value.MachineLength > 128 {
 				return false
 			}
 			{
@@ -3936,14 +3843,14 @@ func InventoryLoopSaveBody(w *TableWriter, value *InventoryLoop) bool {
 		}
 	}
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(79, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(78, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
 			{
@@ -4036,14 +3943,14 @@ func InventoryLoopSaveBody(w *TableWriter, value *InventoryLoop) bool {
 		}
 	}
 	{
-		if value.SeatLength < 0 || value.SeatLength > 64 {
+		if value.SeatLength < 0 || value.SeatLength > 2304 {
 			return false
 		}
 		if value.SeatLength > 0 {
 			if ref := w.Ids.refAtHit(21, 0x2d08f118d3f933e8); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.SeatLength < 0 || value.SeatLength > 64 {
+			if value.SeatLength < 0 || value.SeatLength > 2304 {
 				return false
 			}
 			{
@@ -4175,14 +4082,14 @@ func InventoryLoopSaveBody(w *TableWriter, value *InventoryLoop) bool {
 		}
 	}
 	{
-		if value.LogLength < 0 || value.LogLength > 512 {
+		if value.LogLength < 0 || value.LogLength > 2304 {
 			return false
 		}
 		if value.LogLength > 0 {
 			if ref := w.Ids.refAtHit(10, 0x125073191daf5431); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.LogLength < 0 || value.LogLength > 512 {
+			if value.LogLength < 0 || value.LogLength > 2304 {
 				return false
 			}
 			{
@@ -4288,8 +4195,8 @@ func InventoryLoopLoadBody(r *TableReader, value *InventoryLoop) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 128 {
+				keep = tableUtf8Clamp(sub.Buffer, 128)
 				r.Report.Clamped++
 			}
 			clear(value.Machine[:])
@@ -4316,8 +4223,8 @@ func InventoryLoopLoadBody(r *TableReader, value *InventoryLoop) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 128 {
+				keep = tableUtf8Clamp(sub.Buffer, 128)
 				r.Report.Clamped++
 			}
 			clear(value.Name[:])
@@ -4372,8 +4279,8 @@ func InventoryLoopLoadBody(r *TableReader, value *InventoryLoop) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.Seat[:])
@@ -4524,8 +4431,8 @@ func InventoryLoopLoadBody(r *TableReader, value *InventoryLoop) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 512 {
-				keep = tableUtf8Clamp(sub.Buffer, 512)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.Log[:])
@@ -4691,14 +4598,14 @@ func HostViewMeasureReason(value *HostView) (int64, error) {
 }
 func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 	{
-		if value.AnsibleHostLength < 0 || value.AnsibleHostLength > 64 {
+		if value.AnsibleHostLength < 0 || value.AnsibleHostLength > 128 {
 			return false
 		}
 		if value.AnsibleHostLength > 0 {
 			if ref := w.Ids.refAtHit(72, 0xb1c8aea63f05c6a6); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.AnsibleHostLength < 0 || value.AnsibleHostLength > 64 {
+			if value.AnsibleHostLength < 0 || value.AnsibleHostLength > 128 {
 				return false
 			}
 			{
@@ -4742,7 +4649,7 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 	}
 	{
 		if value.Kind != ConfigKindNone {
-			if ref := w.Ids.refAtHit(99, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(97, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -4757,7 +4664,7 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 			case ConfigKindFriend:
 				w.IdAt(67, 0x9f57a2661b8a7e2d)
 			case ConfigKindSprint:
-				w.IdAt(101, 0xf3b65f24b2611635)
+				w.IdAt(99, 0xf3b65f24b2611635)
 			case ConfigKindLoop:
 				w.IdAt(37, 0x4efee5b48a4593cb)
 			case ConfigKindProvider:
@@ -4773,7 +4680,7 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 	}
 	{
 		if value.Slots != 0 {
-			if ref := w.Ids.refAtHit(93, 0xe68c2e6bb1ee5646); !w.headerPair(ref, 4) {
+			if ref := w.Ids.refAtHit(91, 0xe68c2e6bb1ee5646); !w.headerPair(ref, 4) {
 				w.headerRest(ref, 4)
 			}
 			if value.Slots < 0 || value.Slots > 100000 {
@@ -4820,7 +4727,7 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 	if value.CoresPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(83, 0xce57648e554861b7); !w.headerPair(ref, 4) {
+				if ref := w.Ids.refAtHit(82, 0xce57648e554861b7); !w.headerPair(ref, 4) {
 					w.headerRest(ref, 4)
 				}
 				if value.Cores < 0 || value.Cores > 100000 {
@@ -4932,7 +4839,7 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 	}
 	{
 		if value.NovaTla != false {
-			if ref := w.Ids.refAtHit(88, 0xd8f8d8f10d8e04a3); !w.headerPair(ref, 1) {
+			if ref := w.Ids.refAtHit(86, 0xd8f8d8f10d8e04a3); !w.headerPair(ref, 1) {
 				w.headerRest(ref, 1)
 			}
 			if value.NovaTla {
@@ -4943,14 +4850,14 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 		}
 	}
 	{
-		if value.RegistrySeatLength < 0 || value.RegistrySeatLength > 64 {
+		if value.RegistrySeatLength < 0 || value.RegistrySeatLength > 2304 {
 			return false
 		}
 		if value.RegistrySeatLength > 0 {
-			if ref := w.Ids.refAtHit(95, 0xe958329ba5d0f79a); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(93, 0xe958329ba5d0f79a); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.RegistrySeatLength < 0 || value.RegistrySeatLength > 64 {
+			if value.RegistrySeatLength < 0 || value.RegistrySeatLength > 2304 {
 				return false
 			}
 			{
@@ -5043,14 +4950,14 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 		}
 	}
 	{
-		if value.AnsibleUserLength < 0 || value.AnsibleUserLength > 64 {
+		if value.AnsibleUserLength < 0 || value.AnsibleUserLength > 2304 {
 			return false
 		}
 		if value.AnsibleUserLength > 0 {
-			if ref := w.Ids.refAtHit(80, 0xc4e745c36c36b777); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(79, 0xc4e745c36c36b777); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.AnsibleUserLength < 0 || value.AnsibleUserLength > 64 {
+			if value.AnsibleUserLength < 0 || value.AnsibleUserLength > 2304 {
 				return false
 			}
 			{
@@ -5093,14 +5000,14 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 		}
 	}
 	{
-		if value.NovaSeatLength < 0 || value.NovaSeatLength > 64 {
+		if value.NovaSeatLength < 0 || value.NovaSeatLength > 2304 {
 			return false
 		}
 		if value.NovaSeatLength > 0 {
 			if ref := w.Ids.refAtHit(33, 0x4855d99334fa9891); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NovaSeatLength < 0 || value.NovaSeatLength > 64 {
+			if value.NovaSeatLength < 0 || value.NovaSeatLength > 2304 {
 				return false
 			}
 			{
@@ -5143,14 +5050,14 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 		}
 	}
 	{
-		if value.NovaRedisAddrLength < 0 || value.NovaRedisAddrLength > 64 {
+		if value.NovaRedisAddrLength < 0 || value.NovaRedisAddrLength > 2304 {
 			return false
 		}
 		if value.NovaRedisAddrLength > 0 {
 			if ref := w.Ids.refAtHit(1, 0x05634bfc542c0cef); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NovaRedisAddrLength < 0 || value.NovaRedisAddrLength > 64 {
+			if value.NovaRedisAddrLength < 0 || value.NovaRedisAddrLength > 2304 {
 				return false
 			}
 			{
@@ -5193,14 +5100,14 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 		}
 	}
 	{
-		if value.NovaBusAddrLength < 0 || value.NovaBusAddrLength > 64 {
+		if value.NovaBusAddrLength < 0 || value.NovaBusAddrLength > 2304 {
 			return false
 		}
 		if value.NovaBusAddrLength > 0 {
-			if ref := w.Ids.refAtHit(96, 0xe986e31e72a72e3c); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(94, 0xe986e31e72a72e3c); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NovaBusAddrLength < 0 || value.NovaBusAddrLength > 64 {
+			if value.NovaBusAddrLength < 0 || value.NovaBusAddrLength > 2304 {
 				return false
 			}
 			{
@@ -5254,14 +5161,14 @@ func HostViewSaveBody(w *TableWriter, value *HostView) bool {
 		}
 	}
 	{
-		if value.NovaPgDsnLength < 0 || value.NovaPgDsnLength > 256 {
+		if value.NovaPgDsnLength < 0 || value.NovaPgDsnLength > 2304 {
 			return false
 		}
 		if value.NovaPgDsnLength > 0 {
 			if ref := w.Ids.refAtHit(73, 0xb5c535c3a59c23eb); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NovaPgDsnLength < 0 || value.NovaPgDsnLength > 256 {
+			if value.NovaPgDsnLength < 0 || value.NovaPgDsnLength > 2304 {
 				return false
 			}
 			{
@@ -5379,8 +5286,8 @@ func HostViewLoadBody(r *TableReader, value *HostView) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 128 {
+				keep = tableUtf8Clamp(sub.Buffer, 128)
 				r.Report.Clamped++
 			}
 			clear(value.AnsibleHost[:])
@@ -5724,8 +5631,8 @@ func HostViewLoadBody(r *TableReader, value *HostView) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.RegistrySeat[:])
@@ -5780,8 +5687,8 @@ func HostViewLoadBody(r *TableReader, value *HostView) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.AnsibleUser[:])
@@ -5808,8 +5715,8 @@ func HostViewLoadBody(r *TableReader, value *HostView) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.NovaSeat[:])
@@ -5836,8 +5743,8 @@ func HostViewLoadBody(r *TableReader, value *HostView) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.NovaRedisAddr[:])
@@ -5864,8 +5771,8 @@ func HostViewLoadBody(r *TableReader, value *HostView) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.NovaBusAddr[:])
@@ -5935,8 +5842,8 @@ func HostViewLoadBody(r *TableReader, value *HostView) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 256 {
-				keep = tableUtf8Clamp(sub.Buffer, 256)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.NovaPgDsn[:])
@@ -6087,14 +5994,14 @@ func HostNameMeasureReason(value *HostName) (int64, error) {
 }
 func HostNameSaveBody(w *TableWriter, value *HostName) bool {
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(79, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(78, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
 			{
@@ -6200,8 +6107,8 @@ func HostNameLoadBody(r *TableReader, value *HostName) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 128 {
+				keep = tableUtf8Clamp(sub.Buffer, 128)
 				r.Report.Clamped++
 			}
 			clear(value.Name[:])
@@ -6338,14 +6245,14 @@ func EnvNameMeasureReason(value *EnvName) (int64, error) {
 }
 func EnvNameSaveBody(w *TableWriter, value *EnvName) bool {
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
-			if ref := w.Ids.refAtHit(79, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(78, 0xc4bcadba8e631b86); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
 			{
@@ -6451,8 +6358,8 @@ func EnvNameLoadBody(r *TableReader, value *EnvName) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 128 {
+				keep = tableUtf8Clamp(sub.Buffer, 128)
 				r.Report.Clamped++
 			}
 			clear(value.Name[:])
@@ -6590,16 +6497,16 @@ func HostGroupMeasureReason(value *HostGroup) (int64, error) {
 	return size, nil
 }
 func HostGroupSaveBody(w *TableWriter, value *HostGroup) bool {
-	var arrayLengths [64]int64
+	var arrayLengths [48]int64
 	{
-		if value.HostsCount < 0 || value.HostsCount > 64 {
+		if value.HostsCount < 0 || value.HostsCount > 48 {
 			return false
 		}
 		if value.HostsCount > 0 {
 			if ref := w.Ids.refAtHit(26, 0x3b28df7b43e00694); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
-			if value.HostsCount < 0 || value.HostsCount > 64 {
+			if value.HostsCount < 0 || value.HostsCount > 48 {
 				return false
 			}
 			{
@@ -6716,8 +6623,8 @@ func HostGroupLoadBody(r *TableReader, value *HostGroup) bool {
 						break
 					}
 					keep := count
-					if keep > 64 {
-						keep = 64
+					if keep > 48 {
+						keep = 48
 						r.Report.Clamped++
 					}
 					previous := value.HostsCount
@@ -6844,7 +6751,7 @@ func KindRevReset(value *KindRev) {
 func KindRevMeasureBody(value *KindRev, ids *TableIds) int64 {
 	bytes := int64(1)
 	if value.Kind != ConfigKindNone {
-		ref := ids.refAtHit(99, 0xef9c96d721673243)
+		ref := ids.refAtHit(97, 0xef9c96d721673243)
 		var vref uint64
 		switch value.Kind {
 		case ConfigKindNone:
@@ -6855,7 +6762,7 @@ func KindRevMeasureBody(value *KindRev, ids *TableIds) int64 {
 		case ConfigKindFriend:
 			vref = ids.refAtHit(67, 0x9f57a2661b8a7e2d)
 		case ConfigKindSprint:
-			vref = ids.refAtHit(101, 0xf3b65f24b2611635)
+			vref = ids.refAtHit(99, 0xf3b65f24b2611635)
 		case ConfigKindLoop:
 			vref = ids.refAtHit(37, 0x4efee5b48a4593cb)
 		case ConfigKindProvider:
@@ -6900,7 +6807,7 @@ func KindRevMeasureReason(value *KindRev) (int64, error) {
 func KindRevSaveBody(w *TableWriter, value *KindRev) bool {
 	{
 		if value.Kind != ConfigKindNone {
-			if ref := w.Ids.refAtHit(99, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(97, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -6915,7 +6822,7 @@ func KindRevSaveBody(w *TableWriter, value *KindRev) bool {
 			case ConfigKindFriend:
 				w.IdAt(67, 0x9f57a2661b8a7e2d)
 			case ConfigKindSprint:
-				w.IdAt(101, 0xf3b65f24b2611635)
+				w.IdAt(99, 0xf3b65f24b2611635)
 			case ConfigKindLoop:
 				w.IdAt(37, 0x4efee5b48a4593cb)
 			case ConfigKindProvider:
@@ -7199,7 +7106,7 @@ func InventorySaveBody(w *TableWriter, value *Inventory) bool {
 	var arrayLengths [8]int64
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(94, 0xe6f09b190519daa4)
+		ref := w.Ids.refAtHit(92, 0xe6f09b190519daa4)
 		start := w.Ids.Count
 		n := HostGroupMeasureBody(&value.All, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -7226,7 +7133,7 @@ func InventorySaveBody(w *TableWriter, value *Inventory) bool {
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(104, 0xf7e235fde4a67611)
+		ref := w.Ids.refAtHit(102, 0xf7e235fde4a67611)
 		start := w.Ids.Count
 		n := HostGroupMeasureBody(&value.Adopt, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -7414,14 +7321,14 @@ func InventorySaveBody(w *TableWriter, value *Inventory) bool {
 		}
 	}
 	{
-		if value.NovaStoreLength < 0 || value.NovaStoreLength > 64 {
+		if value.NovaStoreLength < 0 || value.NovaStoreLength > 2304 {
 			return false
 		}
 		if value.NovaStoreLength > 0 {
 			if ref := w.Ids.refAtHit(71, 0xae91b3b1f9738641); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.NovaStoreLength < 0 || value.NovaStoreLength > 64 {
+			if value.NovaStoreLength < 0 || value.NovaStoreLength > 2304 {
 				return false
 			}
 			{
@@ -7733,8 +7640,8 @@ func InventoryLoadBody(r *TableReader, value *Inventory) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 2304 {
+				keep = tableUtf8Clamp(sub.Buffer, 2304)
 				r.Report.Clamped++
 			}
 			clear(value.NovaStore[:])
@@ -7937,14 +7844,14 @@ func BenchBeatMeasureReason(value *BenchBeat) (int64, error) {
 }
 func BenchBeatSaveBody(w *TableWriter, value *BenchBeat) bool {
 	{
-		if value.HostLength < 0 || value.HostLength > 64 {
+		if value.HostLength < 0 || value.HostLength > 128 {
 			return false
 		}
 		if value.HostLength > 0 {
 			if ref := w.Ids.refAtHit(28, 0x4077f8cc7eaf4d6f); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.HostLength < 0 || value.HostLength > 64 {
+			if value.HostLength < 0 || value.HostLength > 128 {
 				return false
 			}
 			{
@@ -8052,7 +7959,7 @@ func BenchBeatSaveBody(w *TableWriter, value *BenchBeat) bool {
 			return false
 		}
 		if value.NcpuLength > 0 {
-			if ref := w.Ids.refAtHit(86, 0xd6860fba989743c5); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(85, 0xd6860fba989743c5); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.NcpuLength < 0 || value.NcpuLength > 8 {
@@ -8096,7 +8003,7 @@ func BenchBeatSaveBody(w *TableWriter, value *BenchBeat) bool {
 			return false
 		}
 		if value.CpuLength > 0 {
-			if ref := w.Ids.refAtHit(102, 0xf5a8fa190cb314c9); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(100, 0xf5a8fa190cb314c9); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.CpuLength < 0 || value.CpuLength > 16 {
@@ -8355,8 +8262,8 @@ func BenchBeatLoadBody(r *TableReader, value *BenchBeat) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 64 {
-				keep = tableUtf8Clamp(sub.Buffer, 64)
+			if keep > 128 {
+				keep = tableUtf8Clamp(sub.Buffer, 128)
 				r.Report.Clamped++
 			}
 			clear(value.Host[:])
@@ -8685,7 +8592,7 @@ func MemberBeatMeasureBody(value *MemberBeat, ids *TableIds) int64 {
 		return -1
 	}
 	if value.Cores != 0 {
-		bytes += tableLebBytes(ids.refAtHit(83, 0xce57648e554861b7)) + 1 + 4
+		bytes += tableLebBytes(ids.refAtHit(82, 0xce57648e554861b7)) + 1 + 4
 	} // cores
 	if ids.Overflow {
 		return -1
@@ -8723,7 +8630,7 @@ func MemberBeatSaveBody(w *TableWriter, value *MemberBeat) bool {
 	}
 	{
 		if value.Cores != 0 {
-			if ref := w.Ids.refAtHit(83, 0xce57648e554861b7); !w.headerPair(ref, 4) {
+			if ref := w.Ids.refAtHit(82, 0xce57648e554861b7); !w.headerPair(ref, 4) {
 				w.headerRest(ref, 4)
 			}
 			if value.Cores < 0 || value.Cores > 100000 {
@@ -9104,7 +9011,7 @@ func MachineBeatSaveBody(w *TableWriter, value *MachineBeat) bool {
 			return false
 		}
 		if value.CoresLength > 0 {
-			if ref := w.Ids.refAtHit(83, 0xce57648e554861b7); !w.headerPair(ref, 12) {
+			if ref := w.Ids.refAtHit(82, 0xce57648e554861b7); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
 			if value.CoresLength < 0 || value.CoresLength > 8 {
@@ -9529,7 +9436,7 @@ func FieldPairFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, 
 	n := 0
 	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(FieldPair{}.NameLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(FieldPair{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
 	n++
-	out[n] = TableFixedEntry{Src: src + 36, Dst: dst + uint32(unsafe.Offsetof(FieldPair{}.ValueLength)), Size: 1024, Aux: dst + uint32(unsafe.Offsetof(FieldPair{}.Value)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // value
+	out[n] = TableFixedEntry{Src: src + 36, Dst: dst + uint32(unsafe.Offsetof(FieldPair{}.ValueLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(FieldPair{}.Value)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // value
 	n++
 	return n
 }
@@ -9538,7 +9445,7 @@ func FieldPairFixedWriteBody(b []byte, value *FieldPair) {
 	tableFixedPut32(b[0:], uint32(value.NameLength))
 	copy(b[0:][4:], value.Name[:min(uint32(value.NameLength), 32)])
 	tableFixedPut32(b[36:], uint32(value.ValueLength))
-	copy(b[36:][4:], value.Value[:min(uint32(value.ValueLength), 1024)])
+	copy(b[36:][4:], value.Value[:min(uint32(value.ValueLength), 2304)])
 }
 
 func RowFieldsFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
@@ -9546,11 +9453,11 @@ func RowFieldsFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, 
 	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(RowFields{}.PairsCount)), Size: 24, Guard: tableFixedNoGuard, Op: tableFixedCount} // pairs count
 	n++
 	for i := uint32(0); i < 24; i++ {
-		es := src + 4 + i*1064
+		es := src + 4 + i*2344
 		ed := dst + uint32(unsafe.Offsetof(RowFields{}.Pairs)) + i*uint32(unsafe.Sizeof(FieldPair{}))
 		n += FieldPairFixedLeaves(out[n:], links[n:], es, ed)
 	}
-	out[n] = TableFixedEntry{Src: src + 25540, Dst: dst + uint32(unsafe.Offsetof(RowFields{}.ArgvLength)), Size: 4096, Aux: dst + uint32(unsafe.Offsetof(RowFields{}.Argv)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // argv
+	out[n] = TableFixedEntry{Src: src + 56260, Dst: dst + uint32(unsafe.Offsetof(RowFields{}.ArgvLength)), Size: 4096, Aux: dst + uint32(unsafe.Offsetof(RowFields{}.Argv)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // argv
 	n++
 	return n
 }
@@ -9560,13 +9467,13 @@ func RowFieldsFixedWriteBody(b []byte, value *RowFields) {
 	{
 		livei := min(max(int64(value.PairsCount), 0), 24)
 		for i := int64(0); i < livei; i++ {
-			clear(b[4:][i*1064 : i*1064+1064])
-			FieldPairFixedWriteBody(b[4:][i*1064:], &value.Pairs[i])
+			clear(b[4:][i*2344 : i*2344+2344])
+			FieldPairFixedWriteBody(b[4:][i*2344:], &value.Pairs[i])
 		}
-		clear(b[4:][livei*1064 : 25536])
+		clear(b[4:][livei*2344 : 56256])
 	}
-	tableFixedPut32(b[25540:], uint32(value.ArgvLength))
-	copy(b[25540:][4:], value.Argv[:min(uint32(value.ArgvLength), 4096)])
+	tableFixedPut32(b[56260:], uint32(value.ArgvLength))
+	copy(b[56260:][4:], value.Argv[:min(uint32(value.ArgvLength), 4096)])
 }
 
 func ConfigRowFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
@@ -9577,16 +9484,16 @@ func ConfigRowFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, 
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 1, Dst: dst + uint32(unsafe.Offsetof(ConfigRow{}.NameLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(ConfigRow{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
+	out[n] = TableFixedEntry{Src: src + 1, Dst: dst + uint32(unsafe.Offsetof(ConfigRow{}.NameLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(ConfigRow{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
 	n++
 	{
-		es := src + 69
+		es := src + 133
 		ed := dst + uint32(unsafe.Offsetof(ConfigRow{}.Fields))
 		n += RowFieldsFixedLeaves(out[n:], links[n:], es, ed)
 	}
-	out[n] = TableFixedEntry{Src: src + 29709, Dst: dst + uint32(unsafe.Offsetof(ConfigRow{}.CreatedAtLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(ConfigRow{}.CreatedAt)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // created_at
+	out[n] = TableFixedEntry{Src: src + 60493, Dst: dst + uint32(unsafe.Offsetof(ConfigRow{}.CreatedAtLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(ConfigRow{}.CreatedAt)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // created_at
 	n++
-	out[n] = TableFixedEntry{Src: src + 29745, Dst: dst + uint32(unsafe.Offsetof(ConfigRow{}.UpdatedAtLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(ConfigRow{}.UpdatedAt)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // updated_at
+	out[n] = TableFixedEntry{Src: src + 60529, Dst: dst + uint32(unsafe.Offsetof(ConfigRow{}.UpdatedAtLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(ConfigRow{}.UpdatedAt)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // updated_at
 	n++
 	return n
 }
@@ -9594,12 +9501,12 @@ func ConfigRowFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, 
 func ConfigRowFixedWriteBody(b []byte, value *ConfigRow) {
 	tableFixedPut8(b[0:], uint8(value.Kind))
 	tableFixedPut32(b[1:], uint32(value.NameLength))
-	copy(b[1:][4:], value.Name[:min(uint32(value.NameLength), 64)])
-	RowFieldsFixedWriteBody(b[69:], &value.Fields)
-	tableFixedPut32(b[29709:], uint32(value.CreatedAtLength))
-	copy(b[29709:][4:], value.CreatedAt[:min(uint32(value.CreatedAtLength), 32)])
-	tableFixedPut32(b[29745:], uint32(value.UpdatedAtLength))
-	copy(b[29745:][4:], value.UpdatedAt[:min(uint32(value.UpdatedAtLength), 32)])
+	copy(b[1:][4:], value.Name[:min(uint32(value.NameLength), 128)])
+	RowFieldsFixedWriteBody(b[133:], &value.Fields)
+	tableFixedPut32(b[60493:], uint32(value.CreatedAtLength))
+	copy(b[60493:][4:], value.CreatedAt[:min(uint32(value.CreatedAtLength), 32)])
+	tableFixedPut32(b[60529:], uint32(value.UpdatedAtLength))
+	copy(b[60529:][4:], value.UpdatedAt[:min(uint32(value.UpdatedAtLength), 32)])
 }
 
 func ConfigChangeFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
@@ -9616,41 +9523,31 @@ func ConfigChangeFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLin
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 9, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.NameLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
+	out[n] = TableFixedEntry{Src: src + 9, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.NameLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
 	n++
 	{
-		es := src + 77
+		es := src + 141
 		ed := dst + uint32(unsafe.Offsetof(ConfigChange{}.Op))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
 	{
-		es := src + 78
+		es := src + 142
 		ed := dst + uint32(unsafe.Offsetof(ConfigChange{}.HasBefore))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool}
 		n++
 	}
 	{
-		es := src + 79
-		ed := dst + uint32(unsafe.Offsetof(ConfigChange{}.Before))
-		n += RowFieldsFixedLeaves(out[n:], links[n:], es, ed)
-	}
-	{
-		es := src + 29719
+		es := src + 143
 		ed := dst + uint32(unsafe.Offsetof(ConfigChange{}.HasAfter))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool}
 		n++
 	}
-	{
-		es := src + 29720
-		ed := dst + uint32(unsafe.Offsetof(ConfigChange{}.After))
-		n += RowFieldsFixedLeaves(out[n:], links[n:], es, ed)
-	}
-	out[n] = TableFixedEntry{Src: src + 59360, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.ActorLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.Actor)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // actor
+	out[n] = TableFixedEntry{Src: src + 144, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.ActorLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.Actor)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // actor
 	n++
-	out[n] = TableFixedEntry{Src: src + 59428, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.ReasonLength)), Size: 256, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.Reason)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // reason
+	out[n] = TableFixedEntry{Src: src + 276, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.ReasonLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.Reason)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // reason
 	n++
-	out[n] = TableFixedEntry{Src: src + 59688, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.AtLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.At)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // at
+	out[n] = TableFixedEntry{Src: src + 2584, Dst: dst + uint32(unsafe.Offsetof(ConfigChange{}.AtLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(ConfigChange{}.At)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // at
 	n++
 	return n
 }
@@ -9659,30 +9556,28 @@ func ConfigChangeFixedWriteBody(b []byte, value *ConfigChange) {
 	tableFixedPut64(b[0:], uint64(value.Id))
 	tableFixedPut8(b[8:], uint8(value.Kind))
 	tableFixedPut32(b[9:], uint32(value.NameLength))
-	copy(b[9:][4:], value.Name[:min(uint32(value.NameLength), 64)])
-	tableFixedPut8(b[77:], uint8(value.Op))
+	copy(b[9:][4:], value.Name[:min(uint32(value.NameLength), 128)])
+	tableFixedPut8(b[141:], uint8(value.Op))
 	{
 		p := uint8(0)
 		if value.HasBefore {
 			p = 1
 		}
-		tableFixedPut8(b[78:], p)
+		tableFixedPut8(b[142:], p)
 	}
-	RowFieldsFixedWriteBody(b[79:], &value.Before)
 	{
 		p := uint8(0)
 		if value.HasAfter {
 			p = 1
 		}
-		tableFixedPut8(b[29719:], p)
+		tableFixedPut8(b[143:], p)
 	}
-	RowFieldsFixedWriteBody(b[29720:], &value.After)
-	tableFixedPut32(b[59360:], uint32(value.ActorLength))
-	copy(b[59360:][4:], value.Actor[:min(uint32(value.ActorLength), 64)])
-	tableFixedPut32(b[59428:], uint32(value.ReasonLength))
-	copy(b[59428:][4:], value.Reason[:min(uint32(value.ReasonLength), 256)])
-	tableFixedPut32(b[59688:], uint32(value.AtLength))
-	copy(b[59688:][4:], value.At[:min(uint32(value.AtLength), 32)])
+	tableFixedPut32(b[144:], uint32(value.ActorLength))
+	copy(b[144:][4:], value.Actor[:min(uint32(value.ActorLength), 128)])
+	tableFixedPut32(b[276:], uint32(value.ReasonLength))
+	copy(b[276:][4:], value.Reason[:min(uint32(value.ReasonLength), 2304)])
+	tableFixedPut32(b[2584:], uint32(value.AtLength))
+	copy(b[2584:][4:], value.At[:min(uint32(value.AtLength), 32)])
 }
 
 func FileHeaderFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
@@ -9744,36 +9639,36 @@ func CanonicalWordFixedWriteBody(b []byte, value *CanonicalWord) {
 
 func MachineViewFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(MachineView{}.NameLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(MachineView{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
+	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(MachineView{}.NameLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(MachineView{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
 	n++
-	out[n] = TableFixedEntry{Src: src + 68, Dst: dst + uint32(unsafe.Offsetof(MachineView{}.UserLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(MachineView{}.User)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // user
+	out[n] = TableFixedEntry{Src: src + 132, Dst: dst + uint32(unsafe.Offsetof(MachineView{}.UserLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(MachineView{}.User)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // user
 	n++
-	out[n] = TableFixedEntry{Src: src + 136, Dst: dst + uint32(unsafe.Offsetof(MachineView{}.SeatLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(MachineView{}.Seat)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // seat
+	out[n] = TableFixedEntry{Src: src + 2440, Dst: dst + uint32(unsafe.Offsetof(MachineView{}.SeatLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(MachineView{}.Seat)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // seat
 	n++
 	{
-		es := src + 204
+		es := src + 4748
 		ed := dst + uint32(unsafe.Offsetof(MachineView{}.Slots))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
 	{
-		es := src + 208
+		es := src + 4752
 		ed := dst + uint32(unsafe.Offsetof(MachineView{}.Runners))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 212, Dst: dst + uint32(unsafe.Offsetof(MachineView{}.RolesLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(MachineView{}.Roles)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // roles
+	out[n] = TableFixedEntry{Src: src + 4756, Dst: dst + uint32(unsafe.Offsetof(MachineView{}.RolesLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(MachineView{}.Roles)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // roles
 	n++
 	{
-		es := src + 280
+		es := src + 4824
 		ed := dst + uint32(unsafe.Offsetof(MachineView{}.Tla))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 281, Dst: dst + uint32(unsafe.Offsetof(MachineView{}.WidthPresent)), Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool} // width present
+	out[n] = TableFixedEntry{Src: src + 4825, Dst: dst + uint32(unsafe.Offsetof(MachineView{}.WidthPresent)), Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool} // width present
 	n++
 	{
-		es := src + 282
+		es := src + 4826
 		ed := dst + uint32(unsafe.Offsetof(MachineView{}.Width))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
@@ -9783,199 +9678,199 @@ func MachineViewFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink
 
 func MachineViewFixedWriteBody(b []byte, value *MachineView) {
 	tableFixedPut32(b[0:], uint32(value.NameLength))
-	copy(b[0:][4:], value.Name[:min(uint32(value.NameLength), 64)])
-	tableFixedPut32(b[68:], uint32(value.UserLength))
-	copy(b[68:][4:], value.User[:min(uint32(value.UserLength), 64)])
-	tableFixedPut32(b[136:], uint32(value.SeatLength))
-	copy(b[136:][4:], value.Seat[:min(uint32(value.SeatLength), 64)])
-	tableFixedPut32(b[204:], uint32(value.Slots))
-	tableFixedPut32(b[208:], uint32(value.Runners))
-	tableFixedPut32(b[212:], uint32(value.RolesLength))
-	copy(b[212:][4:], value.Roles[:min(uint32(value.RolesLength), 64)])
+	copy(b[0:][4:], value.Name[:min(uint32(value.NameLength), 128)])
+	tableFixedPut32(b[132:], uint32(value.UserLength))
+	copy(b[132:][4:], value.User[:min(uint32(value.UserLength), 2304)])
+	tableFixedPut32(b[2440:], uint32(value.SeatLength))
+	copy(b[2440:][4:], value.Seat[:min(uint32(value.SeatLength), 2304)])
+	tableFixedPut32(b[4748:], uint32(value.Slots))
+	tableFixedPut32(b[4752:], uint32(value.Runners))
+	tableFixedPut32(b[4756:], uint32(value.RolesLength))
+	copy(b[4756:][4:], value.Roles[:min(uint32(value.RolesLength), 64)])
 	{
 		p := uint8(0)
 		if value.Tla {
 			p = 1
 		}
-		tableFixedPut8(b[280:], p)
+		tableFixedPut8(b[4824:], p)
 	}
 	{
 		p := uint8(0)
 		if value.WidthPresent {
 			p = 1
 		}
-		tableFixedPut8(b[281:], p)
+		tableFixedPut8(b[4825:], p)
 	}
 	if value.WidthPresent {
-		tableFixedPut32(b[282:], uint32(value.Width))
+		tableFixedPut32(b[4826:], uint32(value.Width))
 	}
 }
 
 func EnvNameFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(EnvName{}.NameLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(EnvName{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
+	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(EnvName{}.NameLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(EnvName{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
 	n++
 	return n
 }
 
 func EnvNameFixedWriteBody(b []byte, value *EnvName) {
 	tableFixedPut32(b[0:], uint32(value.NameLength))
-	copy(b[0:][4:], value.Name[:min(uint32(value.NameLength), 64)])
+	copy(b[0:][4:], value.Name[:min(uint32(value.NameLength), 128)])
 }
 
 func InventoryLoopFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.MachineLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(InventoryLoop{}.Machine)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // machine
+	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.MachineLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(InventoryLoop{}.Machine)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // machine
 	n++
-	out[n] = TableFixedEntry{Src: src + 68, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.NameLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(InventoryLoop{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
+	out[n] = TableFixedEntry{Src: src + 132, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.NameLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(InventoryLoop{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
 	n++
-	out[n] = TableFixedEntry{Src: src + 136, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.ArgvLength)), Size: 4096, Aux: dst + uint32(unsafe.Offsetof(InventoryLoop{}.Argv)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // argv
+	out[n] = TableFixedEntry{Src: src + 264, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.ArgvLength)), Size: 4096, Aux: dst + uint32(unsafe.Offsetof(InventoryLoop{}.Argv)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // argv
 	n++
-	out[n] = TableFixedEntry{Src: src + 4236, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.SeatLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(InventoryLoop{}.Seat)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // seat
+	out[n] = TableFixedEntry{Src: src + 4364, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.SeatLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(InventoryLoop{}.Seat)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // seat
 	n++
-	out[n] = TableFixedEntry{Src: src + 4304, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.KeysCount)), Size: 32, Guard: tableFixedNoGuard, Op: tableFixedCount} // keys count
+	out[n] = TableFixedEntry{Src: src + 6672, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.KeysCount)), Size: 32, Guard: tableFixedNoGuard, Op: tableFixedCount} // keys count
 	n++
 	for i := uint32(0); i < 32; i++ {
-		es := src + 4308 + i*68
+		es := src + 6676 + i*132
 		ed := dst + uint32(unsafe.Offsetof(InventoryLoop{}.Keys)) + i*uint32(unsafe.Sizeof(EnvName{}))
 		n += EnvNameFixedLeaves(out[n:], links[n:], es, ed)
 	}
 	{
-		es := src + 6484
+		es := src + 10900
 		ed := dst + uint32(unsafe.Offsetof(InventoryLoop{}.Every))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
 	{
-		es := src + 6488
+		es := src + 10904
 		ed := dst + uint32(unsafe.Offsetof(InventoryLoop{}.Keepalive))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool}
 		n++
 	}
 	{
-		es := src + 6489
+		es := src + 10905
 		ed := dst + uint32(unsafe.Offsetof(InventoryLoop{}.Enabled))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 6490, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.LogLength)), Size: 512, Aux: dst + uint32(unsafe.Offsetof(InventoryLoop{}.Log)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // log
+	out[n] = TableFixedEntry{Src: src + 10906, Dst: dst + uint32(unsafe.Offsetof(InventoryLoop{}.LogLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(InventoryLoop{}.Log)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // log
 	n++
 	return n
 }
 
 func InventoryLoopFixedWriteBody(b []byte, value *InventoryLoop) {
 	tableFixedPut32(b[0:], uint32(value.MachineLength))
-	copy(b[0:][4:], value.Machine[:min(uint32(value.MachineLength), 64)])
-	tableFixedPut32(b[68:], uint32(value.NameLength))
-	copy(b[68:][4:], value.Name[:min(uint32(value.NameLength), 64)])
-	tableFixedPut32(b[136:], uint32(value.ArgvLength))
-	copy(b[136:][4:], value.Argv[:min(uint32(value.ArgvLength), 4096)])
-	tableFixedPut32(b[4236:], uint32(value.SeatLength))
-	copy(b[4236:][4:], value.Seat[:min(uint32(value.SeatLength), 64)])
-	tableFixedPut32(b[4304:], uint32(value.KeysCount))
+	copy(b[0:][4:], value.Machine[:min(uint32(value.MachineLength), 128)])
+	tableFixedPut32(b[132:], uint32(value.NameLength))
+	copy(b[132:][4:], value.Name[:min(uint32(value.NameLength), 128)])
+	tableFixedPut32(b[264:], uint32(value.ArgvLength))
+	copy(b[264:][4:], value.Argv[:min(uint32(value.ArgvLength), 4096)])
+	tableFixedPut32(b[4364:], uint32(value.SeatLength))
+	copy(b[4364:][4:], value.Seat[:min(uint32(value.SeatLength), 2304)])
+	tableFixedPut32(b[6672:], uint32(value.KeysCount))
 	{
 		livei := min(max(int64(value.KeysCount), 0), 32)
 		for i := int64(0); i < livei; i++ {
-			clear(b[4308:][i*68 : i*68+68])
-			EnvNameFixedWriteBody(b[4308:][i*68:], &value.Keys[i])
+			clear(b[6676:][i*132 : i*132+132])
+			EnvNameFixedWriteBody(b[6676:][i*132:], &value.Keys[i])
 		}
-		clear(b[4308:][livei*68 : 2176])
+		clear(b[6676:][livei*132 : 4224])
 	}
-	tableFixedPut32(b[6484:], uint32(value.Every))
+	tableFixedPut32(b[10900:], uint32(value.Every))
 	{
 		p := uint8(0)
 		if value.Keepalive {
 			p = 1
 		}
-		tableFixedPut8(b[6488:], p)
+		tableFixedPut8(b[10904:], p)
 	}
 	{
 		p := uint8(0)
 		if value.Enabled {
 			p = 1
 		}
-		tableFixedPut8(b[6489:], p)
+		tableFixedPut8(b[10905:], p)
 	}
-	tableFixedPut32(b[6490:], uint32(value.LogLength))
-	copy(b[6490:][4:], value.Log[:min(uint32(value.LogLength), 512)])
+	tableFixedPut32(b[10906:], uint32(value.LogLength))
+	copy(b[10906:][4:], value.Log[:min(uint32(value.LogLength), 2304)])
 }
 
 func HostViewFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(HostView{}.AnsibleHostLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(HostView{}.AnsibleHost)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // ansible_host
+	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(HostView{}.AnsibleHostLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(HostView{}.AnsibleHost)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // ansible_host
 	n++
 	{
-		es := src + 68
+		es := src + 132
 		ed := dst + uint32(unsafe.Offsetof(HostView{}.Kind))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
 	{
-		es := src + 69
+		es := src + 133
 		ed := dst + uint32(unsafe.Offsetof(HostView{}.Slots))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
 	{
-		es := src + 73
+		es := src + 137
 		ed := dst + uint32(unsafe.Offsetof(HostView{}.SlotsCapacity))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
 	{
-		es := src + 77
+		es := src + 141
 		ed := dst + uint32(unsafe.Offsetof(HostView{}.Runners))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 81, Dst: dst + uint32(unsafe.Offsetof(HostView{}.SlotsSharePresent)), Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool} // slots_share present
+	out[n] = TableFixedEntry{Src: src + 145, Dst: dst + uint32(unsafe.Offsetof(HostView{}.SlotsSharePresent)), Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool} // slots_share present
 	n++
 	{
-		es := src + 82
+		es := src + 146
 		ed := dst + uint32(unsafe.Offsetof(HostView{}.SlotsShare))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 86, Dst: dst + uint32(unsafe.Offsetof(HostView{}.CoresPresent)), Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool} // cores present
+	out[n] = TableFixedEntry{Src: src + 150, Dst: dst + uint32(unsafe.Offsetof(HostView{}.CoresPresent)), Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool} // cores present
 	n++
 	{
-		es := src + 87
+		es := src + 151
 		ed := dst + uint32(unsafe.Offsetof(HostView{}.Cores))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 91, Dst: dst + uint32(unsafe.Offsetof(HostView{}.BenchOsLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(HostView{}.BenchOs)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // bench_os
+	out[n] = TableFixedEntry{Src: src + 155, Dst: dst + uint32(unsafe.Offsetof(HostView{}.BenchOsLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(HostView{}.BenchOs)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // bench_os
 	n++
-	out[n] = TableFixedEntry{Src: src + 127, Dst: dst + uint32(unsafe.Offsetof(HostView{}.NovaArchLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(HostView{}.NovaArch)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_arch
+	out[n] = TableFixedEntry{Src: src + 191, Dst: dst + uint32(unsafe.Offsetof(HostView{}.NovaArchLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(HostView{}.NovaArch)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_arch
 	n++
 	{
-		es := src + 163
+		es := src + 227
 		ed := dst + uint32(unsafe.Offsetof(HostView{}.NovaTla))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 164, Dst: dst + uint32(unsafe.Offsetof(HostView{}.RegistrySeatLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(HostView{}.RegistrySeat)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // registry_seat
+	out[n] = TableFixedEntry{Src: src + 228, Dst: dst + uint32(unsafe.Offsetof(HostView{}.RegistrySeatLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(HostView{}.RegistrySeat)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // registry_seat
 	n++
-	out[n] = TableFixedEntry{Src: src + 232, Dst: dst + uint32(unsafe.Offsetof(HostView{}.RegistryRolesLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(HostView{}.RegistryRoles)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // registry_roles
+	out[n] = TableFixedEntry{Src: src + 2536, Dst: dst + uint32(unsafe.Offsetof(HostView{}.RegistryRolesLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(HostView{}.RegistryRoles)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // registry_roles
 	n++
-	out[n] = TableFixedEntry{Src: src + 300, Dst: dst + uint32(unsafe.Offsetof(HostView{}.AnsibleUserLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(HostView{}.AnsibleUser)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // ansible_user
+	out[n] = TableFixedEntry{Src: src + 2604, Dst: dst + uint32(unsafe.Offsetof(HostView{}.AnsibleUserLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(HostView{}.AnsibleUser)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // ansible_user
 	n++
-	out[n] = TableFixedEntry{Src: src + 368, Dst: dst + uint32(unsafe.Offsetof(HostView{}.NovaSeatLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(HostView{}.NovaSeat)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_seat
+	out[n] = TableFixedEntry{Src: src + 4912, Dst: dst + uint32(unsafe.Offsetof(HostView{}.NovaSeatLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(HostView{}.NovaSeat)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_seat
 	n++
-	out[n] = TableFixedEntry{Src: src + 436, Dst: dst + uint32(unsafe.Offsetof(HostView{}.NovaRedisAddrLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(HostView{}.NovaRedisAddr)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_redis_addr
+	out[n] = TableFixedEntry{Src: src + 7220, Dst: dst + uint32(unsafe.Offsetof(HostView{}.NovaRedisAddrLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(HostView{}.NovaRedisAddr)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_redis_addr
 	n++
-	out[n] = TableFixedEntry{Src: src + 504, Dst: dst + uint32(unsafe.Offsetof(HostView{}.NovaBusAddrLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(HostView{}.NovaBusAddr)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_bus_addr
+	out[n] = TableFixedEntry{Src: src + 9528, Dst: dst + uint32(unsafe.Offsetof(HostView{}.NovaBusAddrLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(HostView{}.NovaBusAddr)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_bus_addr
 	n++
 	{
-		es := src + 572
+		es := src + 11836
 		ed := dst + uint32(unsafe.Offsetof(HostView{}.NovaRedisPort))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 576, Dst: dst + uint32(unsafe.Offsetof(HostView{}.NovaPgDsnLength)), Size: 256, Aux: dst + uint32(unsafe.Offsetof(HostView{}.NovaPgDsn)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_pg_dsn
+	out[n] = TableFixedEntry{Src: src + 11840, Dst: dst + uint32(unsafe.Offsetof(HostView{}.NovaPgDsnLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(HostView{}.NovaPgDsn)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_pg_dsn
 	n++
 	{
-		es := src + 836
+		es := src + 14148
 		ed := dst + uint32(unsafe.Offsetof(HostView{}.Local))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool}
 		n++
@@ -9985,84 +9880,84 @@ func HostViewFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, s
 
 func HostViewFixedWriteBody(b []byte, value *HostView) {
 	tableFixedPut32(b[0:], uint32(value.AnsibleHostLength))
-	copy(b[0:][4:], value.AnsibleHost[:min(uint32(value.AnsibleHostLength), 64)])
-	tableFixedPut8(b[68:], uint8(value.Kind))
-	tableFixedPut32(b[69:], uint32(value.Slots))
-	tableFixedPut32(b[73:], uint32(value.SlotsCapacity))
-	tableFixedPut32(b[77:], uint32(value.Runners))
+	copy(b[0:][4:], value.AnsibleHost[:min(uint32(value.AnsibleHostLength), 128)])
+	tableFixedPut8(b[132:], uint8(value.Kind))
+	tableFixedPut32(b[133:], uint32(value.Slots))
+	tableFixedPut32(b[137:], uint32(value.SlotsCapacity))
+	tableFixedPut32(b[141:], uint32(value.Runners))
 	{
 		p := uint8(0)
 		if value.SlotsSharePresent {
 			p = 1
 		}
-		tableFixedPut8(b[81:], p)
+		tableFixedPut8(b[145:], p)
 	}
 	if value.SlotsSharePresent {
-		tableFixedPut32(b[82:], uint32(value.SlotsShare))
+		tableFixedPut32(b[146:], uint32(value.SlotsShare))
 	}
 	{
 		p := uint8(0)
 		if value.CoresPresent {
 			p = 1
 		}
-		tableFixedPut8(b[86:], p)
+		tableFixedPut8(b[150:], p)
 	}
 	if value.CoresPresent {
-		tableFixedPut32(b[87:], uint32(value.Cores))
+		tableFixedPut32(b[151:], uint32(value.Cores))
 	}
-	tableFixedPut32(b[91:], uint32(value.BenchOsLength))
-	copy(b[91:][4:], value.BenchOs[:min(uint32(value.BenchOsLength), 32)])
-	tableFixedPut32(b[127:], uint32(value.NovaArchLength))
-	copy(b[127:][4:], value.NovaArch[:min(uint32(value.NovaArchLength), 32)])
+	tableFixedPut32(b[155:], uint32(value.BenchOsLength))
+	copy(b[155:][4:], value.BenchOs[:min(uint32(value.BenchOsLength), 32)])
+	tableFixedPut32(b[191:], uint32(value.NovaArchLength))
+	copy(b[191:][4:], value.NovaArch[:min(uint32(value.NovaArchLength), 32)])
 	{
 		p := uint8(0)
 		if value.NovaTla {
 			p = 1
 		}
-		tableFixedPut8(b[163:], p)
+		tableFixedPut8(b[227:], p)
 	}
-	tableFixedPut32(b[164:], uint32(value.RegistrySeatLength))
-	copy(b[164:][4:], value.RegistrySeat[:min(uint32(value.RegistrySeatLength), 64)])
-	tableFixedPut32(b[232:], uint32(value.RegistryRolesLength))
-	copy(b[232:][4:], value.RegistryRoles[:min(uint32(value.RegistryRolesLength), 64)])
-	tableFixedPut32(b[300:], uint32(value.AnsibleUserLength))
-	copy(b[300:][4:], value.AnsibleUser[:min(uint32(value.AnsibleUserLength), 64)])
-	tableFixedPut32(b[368:], uint32(value.NovaSeatLength))
-	copy(b[368:][4:], value.NovaSeat[:min(uint32(value.NovaSeatLength), 64)])
-	tableFixedPut32(b[436:], uint32(value.NovaRedisAddrLength))
-	copy(b[436:][4:], value.NovaRedisAddr[:min(uint32(value.NovaRedisAddrLength), 64)])
-	tableFixedPut32(b[504:], uint32(value.NovaBusAddrLength))
-	copy(b[504:][4:], value.NovaBusAddr[:min(uint32(value.NovaBusAddrLength), 64)])
-	tableFixedPut32(b[572:], uint32(value.NovaRedisPort))
-	tableFixedPut32(b[576:], uint32(value.NovaPgDsnLength))
-	copy(b[576:][4:], value.NovaPgDsn[:min(uint32(value.NovaPgDsnLength), 256)])
+	tableFixedPut32(b[228:], uint32(value.RegistrySeatLength))
+	copy(b[228:][4:], value.RegistrySeat[:min(uint32(value.RegistrySeatLength), 2304)])
+	tableFixedPut32(b[2536:], uint32(value.RegistryRolesLength))
+	copy(b[2536:][4:], value.RegistryRoles[:min(uint32(value.RegistryRolesLength), 64)])
+	tableFixedPut32(b[2604:], uint32(value.AnsibleUserLength))
+	copy(b[2604:][4:], value.AnsibleUser[:min(uint32(value.AnsibleUserLength), 2304)])
+	tableFixedPut32(b[4912:], uint32(value.NovaSeatLength))
+	copy(b[4912:][4:], value.NovaSeat[:min(uint32(value.NovaSeatLength), 2304)])
+	tableFixedPut32(b[7220:], uint32(value.NovaRedisAddrLength))
+	copy(b[7220:][4:], value.NovaRedisAddr[:min(uint32(value.NovaRedisAddrLength), 2304)])
+	tableFixedPut32(b[9528:], uint32(value.NovaBusAddrLength))
+	copy(b[9528:][4:], value.NovaBusAddr[:min(uint32(value.NovaBusAddrLength), 2304)])
+	tableFixedPut32(b[11836:], uint32(value.NovaRedisPort))
+	tableFixedPut32(b[11840:], uint32(value.NovaPgDsnLength))
+	copy(b[11840:][4:], value.NovaPgDsn[:min(uint32(value.NovaPgDsnLength), 2304)])
 	{
 		p := uint8(0)
 		if value.Local {
 			p = 1
 		}
-		tableFixedPut8(b[836:], p)
+		tableFixedPut8(b[14148:], p)
 	}
 }
 
 func HostNameFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(HostName{}.NameLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(HostName{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
+	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(HostName{}.NameLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(HostName{}.Name)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // name
 	n++
 	return n
 }
 
 func HostNameFixedWriteBody(b []byte, value *HostName) {
 	tableFixedPut32(b[0:], uint32(value.NameLength))
-	copy(b[0:][4:], value.Name[:min(uint32(value.NameLength), 64)])
+	copy(b[0:][4:], value.Name[:min(uint32(value.NameLength), 128)])
 }
 
 func HostGroupFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(HostGroup{}.HostsCount)), Size: 64, Guard: tableFixedNoGuard, Op: tableFixedCount} // hosts count
+	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(HostGroup{}.HostsCount)), Size: 48, Guard: tableFixedNoGuard, Op: tableFixedCount} // hosts count
 	n++
-	for i := uint32(0); i < 64; i++ {
-		es := src + 4 + i*68
+	for i := uint32(0); i < 48; i++ {
+		es := src + 4 + i*132
 		ed := dst + uint32(unsafe.Offsetof(HostGroup{}.Hosts)) + i*uint32(unsafe.Sizeof(HostName{}))
 		n += HostNameFixedLeaves(out[n:], links[n:], es, ed)
 	}
@@ -10072,12 +9967,12 @@ func HostGroupFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, 
 func HostGroupFixedWriteBody(b []byte, value *HostGroup) {
 	tableFixedPut32(b[0:], uint32(value.HostsCount))
 	{
-		livei := min(max(int64(value.HostsCount), 0), 64)
+		livei := min(max(int64(value.HostsCount), 0), 48)
 		for i := int64(0); i < livei; i++ {
-			clear(b[4:][i*68 : i*68+68])
-			HostNameFixedWriteBody(b[4:][i*68:], &value.Hosts[i])
+			clear(b[4:][i*132 : i*132+132])
+			HostNameFixedWriteBody(b[4:][i*132:], &value.Hosts[i])
 		}
-		clear(b[4:][livei*68 : 4352])
+		clear(b[4:][livei*132 : 6336])
 	}
 }
 
@@ -10111,46 +10006,46 @@ func InventoryFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, 
 		n += HostGroupFixedLeaves(out[n:], links[n:], es, ed)
 	}
 	{
-		es := src + 4356
+		es := src + 6340
 		ed := dst + uint32(unsafe.Offsetof(Inventory{}.Adopt))
 		n += HostGroupFixedLeaves(out[n:], links[n:], es, ed)
 	}
 	{
-		es := src + 8712
+		es := src + 12680
 		ed := dst + uint32(unsafe.Offsetof(Inventory{}.Benches))
 		n += HostGroupFixedLeaves(out[n:], links[n:], es, ed)
 	}
 	{
-		es := src + 13068
+		es := src + 19020
 		ed := dst + uint32(unsafe.Offsetof(Inventory{}.Coordinator))
 		n += HostGroupFixedLeaves(out[n:], links[n:], es, ed)
 	}
 	{
-		es := src + 17424
+		es := src + 25360
 		ed := dst + uint32(unsafe.Offsetof(Inventory{}.Store))
 		n += HostGroupFixedLeaves(out[n:], links[n:], es, ed)
 	}
 	{
-		es := src + 21780
+		es := src + 31700
 		ed := dst + uint32(unsafe.Offsetof(Inventory{}.StoreDeployer))
 		n += HostGroupFixedLeaves(out[n:], links[n:], es, ed)
 	}
 	{
-		es := src + 26136
+		es := src + 38040
 		ed := dst + uint32(unsafe.Offsetof(Inventory{}.Runners))
 		n += HostGroupFixedLeaves(out[n:], links[n:], es, ed)
 	}
 	{
-		es := src + 30492
+		es := src + 44380
 		ed := dst + uint32(unsafe.Offsetof(Inventory{}.Tla))
 		n += HostGroupFixedLeaves(out[n:], links[n:], es, ed)
 	}
-	out[n] = TableFixedEntry{Src: src + 34848, Dst: dst + uint32(unsafe.Offsetof(Inventory{}.NovaStoreLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(Inventory{}.NovaStore)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_store
+	out[n] = TableFixedEntry{Src: src + 50720, Dst: dst + uint32(unsafe.Offsetof(Inventory{}.NovaStoreLength)), Size: 2304, Aux: dst + uint32(unsafe.Offsetof(Inventory{}.NovaStore)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // nova_store
 	n++
-	out[n] = TableFixedEntry{Src: src + 34916, Dst: dst + uint32(unsafe.Offsetof(Inventory{}.RevsCount)), Size: 8, Guard: tableFixedNoGuard, Op: tableFixedCount} // revs count
+	out[n] = TableFixedEntry{Src: src + 53028, Dst: dst + uint32(unsafe.Offsetof(Inventory{}.RevsCount)), Size: 8, Guard: tableFixedNoGuard, Op: tableFixedCount} // revs count
 	n++
 	for i := uint32(0); i < 8; i++ {
-		es := src + 34920 + i*9
+		es := src + 53032 + i*9
 		ed := dst + uint32(unsafe.Offsetof(Inventory{}.Revs)) + i*uint32(unsafe.Sizeof(KindRev{}))
 		n += KindRevFixedLeaves(out[n:], links[n:], es, ed)
 	}
@@ -10159,67 +10054,67 @@ func InventoryFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, 
 
 func InventoryFixedWriteBody(b []byte, value *Inventory) {
 	HostGroupFixedWriteBody(b[0:], &value.All)
-	HostGroupFixedWriteBody(b[4356:], &value.Adopt)
-	HostGroupFixedWriteBody(b[8712:], &value.Benches)
-	HostGroupFixedWriteBody(b[13068:], &value.Coordinator)
-	HostGroupFixedWriteBody(b[17424:], &value.Store)
-	HostGroupFixedWriteBody(b[21780:], &value.StoreDeployer)
-	HostGroupFixedWriteBody(b[26136:], &value.Runners)
-	HostGroupFixedWriteBody(b[30492:], &value.Tla)
-	tableFixedPut32(b[34848:], uint32(value.NovaStoreLength))
-	copy(b[34848:][4:], value.NovaStore[:min(uint32(value.NovaStoreLength), 64)])
-	tableFixedPut32(b[34916:], uint32(value.RevsCount))
+	HostGroupFixedWriteBody(b[6340:], &value.Adopt)
+	HostGroupFixedWriteBody(b[12680:], &value.Benches)
+	HostGroupFixedWriteBody(b[19020:], &value.Coordinator)
+	HostGroupFixedWriteBody(b[25360:], &value.Store)
+	HostGroupFixedWriteBody(b[31700:], &value.StoreDeployer)
+	HostGroupFixedWriteBody(b[38040:], &value.Runners)
+	HostGroupFixedWriteBody(b[44380:], &value.Tla)
+	tableFixedPut32(b[50720:], uint32(value.NovaStoreLength))
+	copy(b[50720:][4:], value.NovaStore[:min(uint32(value.NovaStoreLength), 2304)])
+	tableFixedPut32(b[53028:], uint32(value.RevsCount))
 	{
 		livei := min(max(int64(value.RevsCount), 0), 8)
 		for i := int64(0); i < livei; i++ {
-			clear(b[34920:][i*9 : i*9+9])
-			KindRevFixedWriteBody(b[34920:][i*9:], &value.Revs[i])
+			clear(b[53032:][i*9 : i*9+9])
+			KindRevFixedWriteBody(b[53032:][i*9:], &value.Revs[i])
 		}
-		clear(b[34920:][livei*9 : 72])
+		clear(b[53032:][livei*9 : 72])
 	}
 }
 
 func BenchBeatFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.HostLength)), Size: 64, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Host)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // host
+	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.HostLength)), Size: 128, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Host)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // host
 	n++
 	{
-		es := src + 68
+		es := src + 132
 		ed := dst + uint32(unsafe.Offsetof(BenchBeat{}.AtMs))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 8, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 76, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.Load1Length)), Size: 16, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Load1)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // load1
+	out[n] = TableFixedEntry{Src: src + 140, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.Load1Length)), Size: 16, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Load1)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // load1
 	n++
-	out[n] = TableFixedEntry{Src: src + 96, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.NcpuLength)), Size: 8, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Ncpu)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // ncpu
+	out[n] = TableFixedEntry{Src: src + 160, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.NcpuLength)), Size: 8, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Ncpu)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // ncpu
 	n++
-	out[n] = TableFixedEntry{Src: src + 108, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.CpuLength)), Size: 16, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Cpu)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // cpu
+	out[n] = TableFixedEntry{Src: src + 172, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.CpuLength)), Size: 16, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Cpu)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // cpu
 	n++
-	out[n] = TableFixedEntry{Src: src + 128, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.OsLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Os)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // os
+	out[n] = TableFixedEntry{Src: src + 192, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.OsLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Os)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // os
 	n++
-	out[n] = TableFixedEntry{Src: src + 164, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.ArchLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Arch)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // arch
+	out[n] = TableFixedEntry{Src: src + 228, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.ArchLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.Arch)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // arch
 	n++
-	out[n] = TableFixedEntry{Src: src + 200, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.MemoryGbLength)), Size: 16, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.MemoryGb)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // memory_gb
+	out[n] = TableFixedEntry{Src: src + 264, Dst: dst + uint32(unsafe.Offsetof(BenchBeat{}.MemoryGbLength)), Size: 16, Aux: dst + uint32(unsafe.Offsetof(BenchBeat{}.MemoryGb)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // memory_gb
 	n++
 	return n
 }
 
 func BenchBeatFixedWriteBody(b []byte, value *BenchBeat) {
 	tableFixedPut32(b[0:], uint32(value.HostLength))
-	copy(b[0:][4:], value.Host[:min(uint32(value.HostLength), 64)])
-	tableFixedPut64(b[68:], uint64(value.AtMs))
-	tableFixedPut32(b[76:], uint32(value.Load1Length))
-	copy(b[76:][4:], value.Load1[:min(uint32(value.Load1Length), 16)])
-	tableFixedPut32(b[96:], uint32(value.NcpuLength))
-	copy(b[96:][4:], value.Ncpu[:min(uint32(value.NcpuLength), 8)])
-	tableFixedPut32(b[108:], uint32(value.CpuLength))
-	copy(b[108:][4:], value.Cpu[:min(uint32(value.CpuLength), 16)])
-	tableFixedPut32(b[128:], uint32(value.OsLength))
-	copy(b[128:][4:], value.Os[:min(uint32(value.OsLength), 32)])
-	tableFixedPut32(b[164:], uint32(value.ArchLength))
-	copy(b[164:][4:], value.Arch[:min(uint32(value.ArchLength), 32)])
-	tableFixedPut32(b[200:], uint32(value.MemoryGbLength))
-	copy(b[200:][4:], value.MemoryGb[:min(uint32(value.MemoryGbLength), 16)])
+	copy(b[0:][4:], value.Host[:min(uint32(value.HostLength), 128)])
+	tableFixedPut64(b[132:], uint64(value.AtMs))
+	tableFixedPut32(b[140:], uint32(value.Load1Length))
+	copy(b[140:][4:], value.Load1[:min(uint32(value.Load1Length), 16)])
+	tableFixedPut32(b[160:], uint32(value.NcpuLength))
+	copy(b[160:][4:], value.Ncpu[:min(uint32(value.NcpuLength), 8)])
+	tableFixedPut32(b[172:], uint32(value.CpuLength))
+	copy(b[172:][4:], value.Cpu[:min(uint32(value.CpuLength), 16)])
+	tableFixedPut32(b[192:], uint32(value.OsLength))
+	copy(b[192:][4:], value.Os[:min(uint32(value.OsLength), 32)])
+	tableFixedPut32(b[228:], uint32(value.ArchLength))
+	copy(b[228:][4:], value.Arch[:min(uint32(value.ArchLength), 32)])
+	tableFixedPut32(b[264:], uint32(value.MemoryGbLength))
+	copy(b[264:][4:], value.MemoryGb[:min(uint32(value.MemoryGbLength), 16)])
 }
 
 func MemberBeatFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
@@ -10306,8 +10201,6 @@ func ConfigChangeFixedClampBody(value *ConfigChange, clamped *int32) {
 		value.Op = ChangeOpNone
 		(*clamped)++
 	}
-	RowFieldsFixedClampBody(&value.Before, clamped)
-	RowFieldsFixedClampBody(&value.After, clamped)
 }
 
 // FileHeader's read-side bounds.
@@ -10554,7 +10447,7 @@ func FieldPairFixedCheckBody(value *FieldPair) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.ValueLength); uint(n) > 1024 {
+	if n := int(value.ValueLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.Value[:n]
@@ -10598,7 +10491,7 @@ func FieldPairFixedCheckBodyExact(value *FieldPair) bool {
 	if uint32(value.NameLength) > 32 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
 		return false
 	}
-	if uint32(value.ValueLength) > 1024 || !tableFixedUtf8Ok(value.Value[:value.ValueLength]) {
+	if uint32(value.ValueLength) > 2304 || !tableFixedUtf8Ok(value.Value[:value.ValueLength]) {
 		return false
 	}
 	return true
@@ -10676,7 +10569,7 @@ func ConfigRowFixedCheckBody(value *ConfigRow) bool {
 	if uint64(value.Kind) > 8 {
 		return false
 	}
-	if n := int(value.NameLength); uint(n) > 64 {
+	if n := int(value.NameLength); uint(n) > 128 {
 		return false
 	} else {
 		p := value.Name[:n]
@@ -10779,7 +10672,7 @@ func ConfigRowFixedCheckBodyExact(value *ConfigRow) bool {
 	if uint64(value.Kind) > 8 {
 		return false
 	}
-	if uint32(value.NameLength) > 64 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
+	if uint32(value.NameLength) > 128 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
 		return false
 	}
 	if !RowFieldsFixedCheckBody(&value.Fields) {
@@ -10800,7 +10693,7 @@ func ConfigChangeFixedCheckBody(value *ConfigChange) bool {
 	if uint64(value.Kind) > 8 {
 		return false
 	}
-	if n := int(value.NameLength); uint(n) > 64 {
+	if n := int(value.NameLength); uint(n) > 128 {
 		return false
 	} else {
 		p := value.Name[:n]
@@ -10831,13 +10724,7 @@ func ConfigChangeFixedCheckBody(value *ConfigChange) bool {
 	if uint64(value.Op) > 3 {
 		return false
 	}
-	if !RowFieldsFixedCheckBody(&value.Before) {
-		return false
-	}
-	if !RowFieldsFixedCheckBody(&value.After) {
-		return false
-	}
-	if n := int(value.ActorLength); uint(n) > 64 {
+	if n := int(value.ActorLength); uint(n) > 128 {
 		return false
 	} else {
 		p := value.Actor[:n]
@@ -10865,7 +10752,7 @@ func ConfigChangeFixedCheckBody(value *ConfigChange) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.ReasonLength); uint(n) > 256 {
+	if n := int(value.ReasonLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.Reason[:n]
@@ -10937,22 +10824,16 @@ func ConfigChangeFixedCheckBodyExact(value *ConfigChange) bool {
 	if uint64(value.Kind) > 8 {
 		return false
 	}
-	if uint32(value.NameLength) > 64 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
+	if uint32(value.NameLength) > 128 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
 		return false
 	}
 	if uint64(value.Op) > 3 {
 		return false
 	}
-	if !RowFieldsFixedCheckBody(&value.Before) {
+	if uint32(value.ActorLength) > 128 || !tableFixedUtf8Ok(value.Actor[:value.ActorLength]) {
 		return false
 	}
-	if !RowFieldsFixedCheckBody(&value.After) {
-		return false
-	}
-	if uint32(value.ActorLength) > 64 || !tableFixedUtf8Ok(value.Actor[:value.ActorLength]) {
-		return false
-	}
-	if uint32(value.ReasonLength) > 256 || !tableFixedUtf8Ok(value.Reason[:value.ReasonLength]) {
+	if uint32(value.ReasonLength) > 2304 || !tableFixedUtf8Ok(value.Reason[:value.ReasonLength]) {
 		return false
 	}
 	if uint32(value.AtLength) > 32 || !tableFixedUtf8Ok(value.At[:value.AtLength]) {
@@ -10988,7 +10869,7 @@ func CanonicalWordFixedCheckBody(value *CanonicalWord) bool {
 // MachineView's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
 func MachineViewFixedCheckBody(value *MachineView) bool {
 	var z, hi uint64
-	if n := int(value.NameLength); uint(n) > 64 {
+	if n := int(value.NameLength); uint(n) > 128 {
 		return false
 	} else {
 		p := value.Name[:n]
@@ -11016,7 +10897,7 @@ func MachineViewFixedCheckBody(value *MachineView) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.UserLength); uint(n) > 64 {
+	if n := int(value.UserLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.User[:n]
@@ -11044,7 +10925,7 @@ func MachineViewFixedCheckBody(value *MachineView) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.SeatLength); uint(n) > 64 {
+	if n := int(value.SeatLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.Seat[:n]
@@ -11124,13 +11005,13 @@ func MachineViewFixedCheckBody(value *MachineView) bool {
 // tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
 func MachineViewFixedCheckBodyExact(value *MachineView) bool {
 	_ = value
-	if uint32(value.NameLength) > 64 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
+	if uint32(value.NameLength) > 128 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
 		return false
 	}
-	if uint32(value.UserLength) > 64 || !tableFixedUtf8Ok(value.User[:value.UserLength]) {
+	if uint32(value.UserLength) > 2304 || !tableFixedUtf8Ok(value.User[:value.UserLength]) {
 		return false
 	}
-	if uint32(value.SeatLength) > 64 || !tableFixedUtf8Ok(value.Seat[:value.SeatLength]) {
+	if uint32(value.SeatLength) > 2304 || !tableFixedUtf8Ok(value.Seat[:value.SeatLength]) {
 		return false
 	}
 	if value.Slots < 0 || value.Slots > 100000 {
@@ -11153,7 +11034,7 @@ func MachineViewFixedCheckBodyExact(value *MachineView) bool {
 // EnvName's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
 func EnvNameFixedCheckBody(value *EnvName) bool {
 	var z, hi uint64
-	if n := int(value.NameLength); uint(n) > 64 {
+	if n := int(value.NameLength); uint(n) > 128 {
 		return false
 	} else {
 		p := value.Name[:n]
@@ -11194,7 +11075,7 @@ func EnvNameFixedCheckBody(value *EnvName) bool {
 // tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
 func EnvNameFixedCheckBodyExact(value *EnvName) bool {
 	_ = value
-	if uint32(value.NameLength) > 64 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
+	if uint32(value.NameLength) > 128 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
 		return false
 	}
 	return true
@@ -11203,7 +11084,7 @@ func EnvNameFixedCheckBodyExact(value *EnvName) bool {
 // InventoryLoop's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
 func InventoryLoopFixedCheckBody(value *InventoryLoop) bool {
 	var z, hi uint64
-	if n := int(value.MachineLength); uint(n) > 64 {
+	if n := int(value.MachineLength); uint(n) > 128 {
 		return false
 	} else {
 		p := value.Machine[:n]
@@ -11231,7 +11112,7 @@ func InventoryLoopFixedCheckBody(value *InventoryLoop) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.NameLength); uint(n) > 64 {
+	if n := int(value.NameLength); uint(n) > 128 {
 		return false
 	} else {
 		p := value.Name[:n]
@@ -11287,7 +11168,7 @@ func InventoryLoopFixedCheckBody(value *InventoryLoop) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.SeatLength); uint(n) > 64 {
+	if n := int(value.SeatLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.Seat[:n]
@@ -11326,7 +11207,7 @@ func InventoryLoopFixedCheckBody(value *InventoryLoop) bool {
 	if value.Every < 0 || value.Every > 31536000 {
 		return false
 	}
-	if n := int(value.LogLength); uint(n) > 512 {
+	if n := int(value.LogLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.Log[:n]
@@ -11367,16 +11248,16 @@ func InventoryLoopFixedCheckBody(value *InventoryLoop) bool {
 // tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
 func InventoryLoopFixedCheckBodyExact(value *InventoryLoop) bool {
 	_ = value
-	if uint32(value.MachineLength) > 64 || !tableFixedUtf8Ok(value.Machine[:value.MachineLength]) {
+	if uint32(value.MachineLength) > 128 || !tableFixedUtf8Ok(value.Machine[:value.MachineLength]) {
 		return false
 	}
-	if uint32(value.NameLength) > 64 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
+	if uint32(value.NameLength) > 128 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
 		return false
 	}
 	if uint32(value.ArgvLength) > 4096 || !tableFixedUtf8Ok(value.Argv[:value.ArgvLength]) {
 		return false
 	}
-	if uint32(value.SeatLength) > 64 || !tableFixedUtf8Ok(value.Seat[:value.SeatLength]) {
+	if uint32(value.SeatLength) > 2304 || !tableFixedUtf8Ok(value.Seat[:value.SeatLength]) {
 		return false
 	}
 	if value.KeysCount < 0 || value.KeysCount > 32 {
@@ -11390,7 +11271,7 @@ func InventoryLoopFixedCheckBodyExact(value *InventoryLoop) bool {
 	if value.Every < 0 || value.Every > 31536000 {
 		return false
 	}
-	if uint32(value.LogLength) > 512 || !tableFixedUtf8Ok(value.Log[:value.LogLength]) {
+	if uint32(value.LogLength) > 2304 || !tableFixedUtf8Ok(value.Log[:value.LogLength]) {
 		return false
 	}
 	return true
@@ -11399,7 +11280,7 @@ func InventoryLoopFixedCheckBodyExact(value *InventoryLoop) bool {
 // HostView's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
 func HostViewFixedCheckBody(value *HostView) bool {
 	var z, hi uint64
-	if n := int(value.AnsibleHostLength); uint(n) > 64 {
+	if n := int(value.AnsibleHostLength); uint(n) > 128 {
 		return false
 	} else {
 		p := value.AnsibleHost[:n]
@@ -11505,7 +11386,7 @@ func HostViewFixedCheckBody(value *HostView) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.RegistrySeatLength); uint(n) > 64 {
+	if n := int(value.RegistrySeatLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.RegistrySeat[:n]
@@ -11561,7 +11442,7 @@ func HostViewFixedCheckBody(value *HostView) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.AnsibleUserLength); uint(n) > 64 {
+	if n := int(value.AnsibleUserLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.AnsibleUser[:n]
@@ -11589,7 +11470,7 @@ func HostViewFixedCheckBody(value *HostView) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.NovaSeatLength); uint(n) > 64 {
+	if n := int(value.NovaSeatLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.NovaSeat[:n]
@@ -11617,7 +11498,7 @@ func HostViewFixedCheckBody(value *HostView) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.NovaRedisAddrLength); uint(n) > 64 {
+	if n := int(value.NovaRedisAddrLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.NovaRedisAddr[:n]
@@ -11645,7 +11526,7 @@ func HostViewFixedCheckBody(value *HostView) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if n := int(value.NovaBusAddrLength); uint(n) > 64 {
+	if n := int(value.NovaBusAddrLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.NovaBusAddr[:n]
@@ -11676,7 +11557,7 @@ func HostViewFixedCheckBody(value *HostView) bool {
 	if value.NovaRedisPort < 0 || value.NovaRedisPort > 65535 {
 		return false
 	}
-	if n := int(value.NovaPgDsnLength); uint(n) > 256 {
+	if n := int(value.NovaPgDsnLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.NovaPgDsn[:n]
@@ -11717,7 +11598,7 @@ func HostViewFixedCheckBody(value *HostView) bool {
 // tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
 func HostViewFixedCheckBodyExact(value *HostView) bool {
 	_ = value
-	if uint32(value.AnsibleHostLength) > 64 || !tableFixedUtf8Ok(value.AnsibleHost[:value.AnsibleHostLength]) {
+	if uint32(value.AnsibleHostLength) > 128 || !tableFixedUtf8Ok(value.AnsibleHost[:value.AnsibleHostLength]) {
 		return false
 	}
 	if uint64(value.Kind) > 8 {
@@ -11748,28 +11629,28 @@ func HostViewFixedCheckBodyExact(value *HostView) bool {
 	if uint32(value.NovaArchLength) > 32 || !tableFixedUtf8Ok(value.NovaArch[:value.NovaArchLength]) {
 		return false
 	}
-	if uint32(value.RegistrySeatLength) > 64 || !tableFixedUtf8Ok(value.RegistrySeat[:value.RegistrySeatLength]) {
+	if uint32(value.RegistrySeatLength) > 2304 || !tableFixedUtf8Ok(value.RegistrySeat[:value.RegistrySeatLength]) {
 		return false
 	}
 	if uint32(value.RegistryRolesLength) > 64 || !tableFixedUtf8Ok(value.RegistryRoles[:value.RegistryRolesLength]) {
 		return false
 	}
-	if uint32(value.AnsibleUserLength) > 64 || !tableFixedUtf8Ok(value.AnsibleUser[:value.AnsibleUserLength]) {
+	if uint32(value.AnsibleUserLength) > 2304 || !tableFixedUtf8Ok(value.AnsibleUser[:value.AnsibleUserLength]) {
 		return false
 	}
-	if uint32(value.NovaSeatLength) > 64 || !tableFixedUtf8Ok(value.NovaSeat[:value.NovaSeatLength]) {
+	if uint32(value.NovaSeatLength) > 2304 || !tableFixedUtf8Ok(value.NovaSeat[:value.NovaSeatLength]) {
 		return false
 	}
-	if uint32(value.NovaRedisAddrLength) > 64 || !tableFixedUtf8Ok(value.NovaRedisAddr[:value.NovaRedisAddrLength]) {
+	if uint32(value.NovaRedisAddrLength) > 2304 || !tableFixedUtf8Ok(value.NovaRedisAddr[:value.NovaRedisAddrLength]) {
 		return false
 	}
-	if uint32(value.NovaBusAddrLength) > 64 || !tableFixedUtf8Ok(value.NovaBusAddr[:value.NovaBusAddrLength]) {
+	if uint32(value.NovaBusAddrLength) > 2304 || !tableFixedUtf8Ok(value.NovaBusAddr[:value.NovaBusAddrLength]) {
 		return false
 	}
 	if value.NovaRedisPort < 0 || value.NovaRedisPort > 65535 {
 		return false
 	}
-	if uint32(value.NovaPgDsnLength) > 256 || !tableFixedUtf8Ok(value.NovaPgDsn[:value.NovaPgDsnLength]) {
+	if uint32(value.NovaPgDsnLength) > 2304 || !tableFixedUtf8Ok(value.NovaPgDsn[:value.NovaPgDsnLength]) {
 		return false
 	}
 	return true
@@ -11778,7 +11659,7 @@ func HostViewFixedCheckBodyExact(value *HostView) bool {
 // HostName's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
 func HostNameFixedCheckBody(value *HostName) bool {
 	var z, hi uint64
-	if n := int(value.NameLength); uint(n) > 64 {
+	if n := int(value.NameLength); uint(n) > 128 {
 		return false
 	} else {
 		p := value.Name[:n]
@@ -11819,7 +11700,7 @@ func HostNameFixedCheckBody(value *HostName) bool {
 // tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
 func HostNameFixedCheckBodyExact(value *HostName) bool {
 	_ = value
-	if uint32(value.NameLength) > 64 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
+	if uint32(value.NameLength) > 128 || !tableFixedUtf8Ok(value.Name[:value.NameLength]) {
 		return false
 	}
 	return true
@@ -11828,7 +11709,7 @@ func HostNameFixedCheckBodyExact(value *HostName) bool {
 // HostGroup's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
 func HostGroupFixedCheckBody(value *HostGroup) bool {
 	_ = value
-	if value.HostsCount < 0 || value.HostsCount > 64 {
+	if value.HostsCount < 0 || value.HostsCount > 48 {
 		return false
 	}
 	for i := int64(value.HostsCount) - 1; i >= 0; i-- {
@@ -11878,7 +11759,7 @@ func InventoryFixedCheckBody(value *Inventory) bool {
 	if !HostGroupFixedCheckBody(&value.Tla) {
 		return false
 	}
-	if n := int(value.NovaStoreLength); uint(n) > 64 {
+	if n := int(value.NovaStoreLength); uint(n) > 2304 {
 		return false
 	} else {
 		p := value.NovaStore[:n]
@@ -11951,7 +11832,7 @@ func InventoryFixedCheckBodyExact(value *Inventory) bool {
 	if !HostGroupFixedCheckBody(&value.Tla) {
 		return false
 	}
-	if uint32(value.NovaStoreLength) > 64 || !tableFixedUtf8Ok(value.NovaStore[:value.NovaStoreLength]) {
+	if uint32(value.NovaStoreLength) > 2304 || !tableFixedUtf8Ok(value.NovaStore[:value.NovaStoreLength]) {
 		return false
 	}
 	if value.RevsCount < 0 || value.RevsCount > 8 {
@@ -11968,7 +11849,7 @@ func InventoryFixedCheckBodyExact(value *Inventory) bool {
 // BenchBeat's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
 func BenchBeatFixedCheckBody(value *BenchBeat) bool {
 	var z, hi uint64
-	if n := int(value.HostLength); uint(n) > 64 {
+	if n := int(value.HostLength); uint(n) > 128 {
 		return false
 	} else {
 		p := value.Host[:n]
@@ -12174,7 +12055,7 @@ func BenchBeatFixedCheckBody(value *BenchBeat) bool {
 // tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
 func BenchBeatFixedCheckBodyExact(value *BenchBeat) bool {
 	_ = value
-	if uint32(value.HostLength) > 64 || !tableFixedUtf8Ok(value.Host[:value.HostLength]) {
+	if uint32(value.HostLength) > 128 || !tableFixedUtf8Ok(value.Host[:value.HostLength]) {
 		return false
 	}
 	if value.AtMs < 0 || value.AtMs > 253402300799999 {
@@ -12397,15 +12278,15 @@ func FieldPairFixedClamp(value *FieldPair, report *TableReport) {
 
 // ---- FieldPair, the fixed form ----
 
-const FieldPairFixedBodyBytes = 1064
+const FieldPairFixedBodyBytes = 2344
 const FieldPairFixedRecordBytes = 8 + FieldPairFixedBodyBytes
-const FieldPairFixedHash = 0xdb8db1a8ffb51c8a
+const FieldPairFixedHash = 0xded9aea60cab908a
 
 var FieldPairFixedLayout = []byte{
-	0x03, 0x00, 0x00, 0x00, 0xc7, 0xb8, 0xa9, 0x72, 0x79, 0x6d, 0xca, 0x21, 0x0d, 0x28, 0x04, 0x00,
+	0x03, 0x00, 0x00, 0x00, 0xc7, 0xb8, 0xa9, 0x72, 0x79, 0x6d, 0xca, 0x21, 0x0d, 0x28, 0x09, 0x00,
 	0x00, 0x02, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x24, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c, 0x0c, 0x04,
-	0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
 var FieldPairFixedDst = []TableFixedDst{
@@ -12418,14 +12299,14 @@ var FieldPairFixedPlan = tableFixedBuildPlan(FieldPairFixedLeaves, 2)
 
 var FieldPairFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0xdb8db1a8ffb51c8a,
+		Hash:        0xded9aea60cab908a,
 		LayoutBytes: 55,
-		Record:      1072,
+		Record:      2352,
 		Layout: []byte{
-			0x03, 0x00, 0x00, 0x00, 0xc7, 0xb8, 0xa9, 0x72, 0x79, 0x6d, 0xca, 0x21, 0x0d, 0x28, 0x04, 0x00,
+			0x03, 0x00, 0x00, 0x00, 0xc7, 0xb8, 0xa9, 0x72, 0x79, 0x6d, 0xca, 0x21, 0x0d, 0x28, 0x09, 0x00,
 			0x00, 0x02, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x24, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c, 0x0c, 0x04,
-			0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
 	},
 }
@@ -12645,17 +12526,17 @@ func RowFieldsFixedClamp(value *RowFields, report *TableReport) {
 
 // ---- RowFields, the fixed form ----
 
-const RowFieldsFixedBodyBytes = 29640
+const RowFieldsFixedBodyBytes = 60360
 const RowFieldsFixedRecordBytes = 8 + RowFieldsFixedBodyBytes
-const RowFieldsFixedHash = 0x56d78da886d94c22
+const RowFieldsFixedHash = 0x8b0bf6aaa436a802
 
 var RowFieldsFixedLayout = []byte{
-	0x06, 0x00, 0x00, 0x00, 0x82, 0x54, 0x73, 0x3e, 0x04, 0x75, 0xfe, 0x8c, 0x0d, 0xc8, 0x73, 0x00,
-	0x00, 0x02, 0x00, 0x00, 0x00, 0x26, 0x1e, 0x1e, 0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4, 0x63,
+	0x06, 0x00, 0x00, 0x00, 0x82, 0x54, 0x73, 0x3e, 0x04, 0x75, 0xfe, 0x8c, 0x0d, 0xc8, 0xeb, 0x00,
+	0x00, 0x02, 0x00, 0x00, 0x00, 0x26, 0x1e, 0x1e, 0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4, 0xdb,
 	0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x28,
-	0x04, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c,
+	0x09, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c,
 	0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c,
-	0x0c, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d, 0x49,
+	0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d, 0x49,
 	0x89, 0x0c, 0x04, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
@@ -12672,16 +12553,16 @@ var RowFieldsFixedPlan = tableFixedBuildPlan(RowFieldsFixedLeaves, 50)
 
 var RowFieldsFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x56d78da886d94c22,
+		Hash:        0x8b0bf6aaa436a802,
 		LayoutBytes: 106,
-		Record:      29648,
+		Record:      60368,
 		Layout: []byte{
-			0x06, 0x00, 0x00, 0x00, 0x82, 0x54, 0x73, 0x3e, 0x04, 0x75, 0xfe, 0x8c, 0x0d, 0xc8, 0x73, 0x00,
-			0x00, 0x02, 0x00, 0x00, 0x00, 0x26, 0x1e, 0x1e, 0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4, 0x63,
+			0x06, 0x00, 0x00, 0x00, 0x82, 0x54, 0x73, 0x3e, 0x04, 0x75, 0xfe, 0x8c, 0x0d, 0xc8, 0xeb, 0x00,
+			0x00, 0x02, 0x00, 0x00, 0x00, 0x26, 0x1e, 0x1e, 0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4, 0xdb,
 			0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x28,
-			0x04, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c,
+			0x09, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c,
 			0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c,
-			0x0c, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d, 0x49,
+			0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d, 0x49,
 			0x89, 0x0c, 0x04, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
 	},
@@ -12754,7 +12635,7 @@ func RowFieldsFixedSave(values []RowFields, buffer []byte) int64 {
 	at := buffer[TableFixedHeaderBytes+4+len(RowFieldsFixedLayout):]
 	for k := range values {
 		tableFixedPut64(at, RowFieldsFixedHash)
-		clear(at[25548:29648])
+		clear(at[56268:60368])
 		RowFieldsFixedWriteBody(at[8:], &values[k])
 		at = at[RowFieldsFixedRecordBytes:]
 	}
@@ -12902,12 +12783,12 @@ func ConfigRowFixedClamp(value *ConfigRow, report *TableReport) {
 
 // ---- ConfigRow, the fixed form ----
 
-const ConfigRowFixedBodyBytes = 29781
+const ConfigRowFixedBodyBytes = 60565
 const ConfigRowFixedRecordBytes = 8 + ConfigRowFixedBodyBytes
-const ConfigRowFixedHash = 0xff8a6e842fe1c3a2
+const ConfigRowFixedHash = 0x4b9cd5e2f62b3812
 
 var ConfigRowFixedLayout = []byte{
-	0x13, 0x00, 0x00, 0x00, 0x35, 0x53, 0xd9, 0x4c, 0xbb, 0x76, 0x0d, 0xe0, 0x0d, 0x55, 0x74, 0x00,
+	0x13, 0x00, 0x00, 0x00, 0x35, 0x53, 0xd9, 0x4c, 0xbb, 0x76, 0x0d, 0xe0, 0x0d, 0x95, 0xec, 0x00,
 	0x00, 0x05, 0x00, 0x00, 0x00, 0x43, 0x32, 0x67, 0x21, 0xd7, 0x96, 0x9c, 0xef, 0x1e, 0x01, 0x00,
 	0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0xce, 0x46, 0xc6, 0x6b, 0x87, 0x22, 0xd6, 0x5d, 0x20, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaf, 0x79, 0xa2, 0xfb, 0x0a, 0xe0, 0x53, 0x0a, 0x20,
@@ -12918,12 +12799,12 @@ var ConfigRowFixedLayout = []byte{
 	0x69, 0x58, 0x7f, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3e, 0x6a, 0x4d, 0x26,
 	0xa8, 0xe2, 0x06, 0x44, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x69, 0xcd, 0x26,
 	0x30, 0xfb, 0x85, 0xfd, 0x48, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86, 0x1b,
-	0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdc,
-	0x7e, 0x84, 0x24, 0x6d, 0x59, 0x0e, 0x49, 0x0d, 0xc8, 0x73, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
-	0x26, 0x1e, 0x1e, 0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4, 0x63, 0x00, 0x00, 0x01, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x28, 0x04, 0x00, 0x00, 0x02, 0x00,
+	0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdc,
+	0x7e, 0x84, 0x24, 0x6d, 0x59, 0x0e, 0x49, 0x0d, 0xc8, 0xeb, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+	0x26, 0x1e, 0x1e, 0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4, 0xdb, 0x00, 0x00, 0x01, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x28, 0x09, 0x00, 0x00, 0x02, 0x00,
 	0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x24, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c, 0x0c, 0x04, 0x04, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c, 0x0c, 0x04, 0x09, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d, 0x49, 0x89, 0x0c, 0x04, 0x10, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x79, 0x39, 0xf1, 0xbf, 0xd1, 0xb6, 0x68, 0xd4, 0x0c, 0x24, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x74, 0x03, 0xef, 0x68, 0x29, 0xd1, 0xca, 0x0c, 0x24,
@@ -12956,11 +12837,11 @@ var ConfigRowFixedPlan = tableFixedBuildPlan(ConfigRowFixedLeaves, 54)
 
 var ConfigRowFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0xff8a6e842fe1c3a2,
+		Hash:        0x4b9cd5e2f62b3812,
 		LayoutBytes: 327,
-		Record:      29789,
+		Record:      60573,
 		Layout: []byte{
-			0x13, 0x00, 0x00, 0x00, 0x35, 0x53, 0xd9, 0x4c, 0xbb, 0x76, 0x0d, 0xe0, 0x0d, 0x55, 0x74, 0x00,
+			0x13, 0x00, 0x00, 0x00, 0x35, 0x53, 0xd9, 0x4c, 0xbb, 0x76, 0x0d, 0xe0, 0x0d, 0x95, 0xec, 0x00,
 			0x00, 0x05, 0x00, 0x00, 0x00, 0x43, 0x32, 0x67, 0x21, 0xd7, 0x96, 0x9c, 0xef, 0x1e, 0x01, 0x00,
 			0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0xce, 0x46, 0xc6, 0x6b, 0x87, 0x22, 0xd6, 0x5d, 0x20, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaf, 0x79, 0xa2, 0xfb, 0x0a, 0xe0, 0x53, 0x0a, 0x20,
@@ -12971,12 +12852,12 @@ var ConfigRowFixedKnown = []TableFixedKnownLayout{
 			0x69, 0x58, 0x7f, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3e, 0x6a, 0x4d, 0x26,
 			0xa8, 0xe2, 0x06, 0x44, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x69, 0xcd, 0x26,
 			0x30, 0xfb, 0x85, 0xfd, 0x48, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86, 0x1b,
-			0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdc,
-			0x7e, 0x84, 0x24, 0x6d, 0x59, 0x0e, 0x49, 0x0d, 0xc8, 0x73, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
-			0x26, 0x1e, 0x1e, 0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4, 0x63, 0x00, 0x00, 0x01, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x28, 0x04, 0x00, 0x00, 0x02, 0x00,
+			0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdc,
+			0x7e, 0x84, 0x24, 0x6d, 0x59, 0x0e, 0x49, 0x0d, 0xc8, 0xeb, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+			0x26, 0x1e, 0x1e, 0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4, 0xdb, 0x00, 0x00, 0x01, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x28, 0x09, 0x00, 0x00, 0x02, 0x00,
 			0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x24, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c, 0x0c, 0x04, 0x04, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c, 0x0c, 0x04, 0x09, 0x00, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d, 0x49, 0x89, 0x0c, 0x04, 0x10, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x79, 0x39, 0xf1, 0xbf, 0xd1, 0xb6, 0x68, 0xd4, 0x0c, 0x24, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x74, 0x03, 0xef, 0x68, 0x29, 0xd1, 0xca, 0x0c, 0x24,
@@ -13200,13 +13081,13 @@ func ConfigChangeFixedClamp(value *ConfigChange, report *TableReport) {
 
 // ---- ConfigChange, the fixed form ----
 
-const ConfigChangeFixedBodyBytes = 59724
+const ConfigChangeFixedBodyBytes = 2620
 const ConfigChangeFixedRecordBytes = 8 + ConfigChangeFixedBodyBytes
-const ConfigChangeFixedHash = 0x46bc36e62bbeefec
+const ConfigChangeFixedHash = 0x9d151fbf35f717b1
 
 var ConfigChangeFixedLayout = []byte{
-	0x21, 0x00, 0x00, 0x00, 0xa3, 0xd3, 0x35, 0x4b, 0x72, 0x52, 0x8e, 0xe2, 0x0d, 0x4c, 0xe9, 0x00,
-	0x00, 0x0b, 0x00, 0x00, 0x00, 0xc0, 0x3a, 0x5c, 0xb5, 0x07, 0x2e, 0xb7, 0x08, 0x05, 0x08, 0x00,
+	0x15, 0x00, 0x00, 0x00, 0xa3, 0xd3, 0x35, 0x4b, 0x72, 0x52, 0x8e, 0xe2, 0x0d, 0x3c, 0x0a, 0x00,
+	0x00, 0x09, 0x00, 0x00, 0x00, 0xc0, 0x3a, 0x5c, 0xb5, 0x07, 0x2e, 0xb7, 0x08, 0x05, 0x08, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x43, 0x32, 0x67, 0x21, 0xd7, 0x96, 0x9c, 0xef, 0x1e, 0x01,
 	0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0xce, 0x46, 0xc6, 0x6b, 0x87, 0x22, 0xd6, 0x5d, 0x20,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaf, 0x79, 0xa2, 0xfb, 0x0a, 0xe0, 0x53, 0x0a,
@@ -13217,30 +13098,17 @@ var ConfigChangeFixedLayout = []byte{
 	0xb3, 0x69, 0x58, 0x7f, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3e, 0x6a, 0x4d,
 	0x26, 0xa8, 0xe2, 0x06, 0x44, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x69, 0xcd,
 	0x26, 0x30, 0xfb, 0x85, 0xfd, 0x48, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86,
-	0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x0a, 0x60, 0x56, 0xb5, 0x07, 0x56, 0xb0, 0x08, 0x1e, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
 	0x00, 0xb4, 0xc9, 0x06, 0xa0, 0x19, 0xe3, 0xae, 0xf9, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x83, 0x1a, 0x9b, 0xfa, 0x19, 0xa7, 0x44, 0x98, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x5d, 0xf1, 0xb8, 0x0b, 0x11, 0x08, 0x4f, 0xea, 0x20, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x2f, 0xaf, 0xc3, 0x09, 0xef, 0x33, 0x1f, 0x51, 0x01, 0x01, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0xbe, 0xb2, 0xaf, 0x45, 0x62, 0xa0, 0x9a, 0xd8, 0x0d, 0xc8, 0x73,
-	0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x26, 0x1e, 0x1e, 0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4,
-	0x63, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
-	0x28, 0x04, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4,
-	0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4,
-	0x7c, 0x0c, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d,
-	0x49, 0x89, 0x0c, 0x04, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1e, 0xd4, 0x21, 0xf2, 0x9a,
-	0x52, 0x0f, 0x0b, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe9, 0xea, 0x71, 0x6f,
-	0x0f, 0x01, 0x82, 0xbf, 0x0d, 0xc8, 0x73, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x26, 0x1e, 0x1e,
-	0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4, 0x63, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x28, 0x04, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x86,
-	0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c, 0x0c, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d, 0x49, 0x89, 0x0c, 0x04, 0x10, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0xda, 0xd4, 0x47, 0x1c, 0x39, 0xc5, 0xcc, 0xdc, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x39, 0x26, 0x4f, 0x47, 0xf3, 0xd7, 0xe8, 0x65, 0x0c, 0x04, 0x01, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x68, 0xa9, 0x45, 0xb5, 0x07, 0x4e, 0x9c, 0x08, 0x0c, 0x24, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x1e, 0xd4, 0x21, 0xf2, 0x9a, 0x52, 0x0f, 0x0b, 0x01, 0x01, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xda, 0xd4, 0x47, 0x1c, 0x39, 0xc5, 0xcc, 0xdc, 0x0c, 0x84,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x39, 0x26, 0x4f, 0x47, 0xf3, 0xd7, 0xe8, 0x65, 0x0c,
+	0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0xa9, 0x45, 0xb5, 0x07, 0x4e, 0x9c, 0x08,
+	0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
 var ConfigChangeFixedDst = []TableFixedDst{
@@ -13260,35 +13128,23 @@ var ConfigChangeFixedDst = []TableFixedDst{
 	{0, 0, 0, 0, 0, 0}, // Add
 	{0, 0, 0, 0, 0, 0}, // Set
 	{0, 0, 0, 0, 0, 0}, // Remove
-	{uint32(unsafe.Offsetof(ConfigChange{}.HasBefore)), 0, 0, 0, 0, 0},                                                                         // has_before
-	{uint32(unsafe.Offsetof(ConfigChange{}.Before)), 0, 0, 0, 0, 0},                                                                            // before
-	{uint32(unsafe.Offsetof(RowFields{}.Pairs)), uint32(unsafe.Sizeof(FieldPair{})), uint32(unsafe.Offsetof(RowFields{}.PairsCount)), 1, 0, 0}, // pairs
-	{0, 0, 0, 0, 0, 0}, // element
-	{uint32(unsafe.Offsetof(FieldPair{}.NameLength)), 0, uint32(unsafe.Offsetof(FieldPair{}.Name)), 0, 1, 1},                                   // name
-	{uint32(unsafe.Offsetof(FieldPair{}.ValueLength)), 0, uint32(unsafe.Offsetof(FieldPair{}.Value)), 0, 1, 1},                                 // value
-	{uint32(unsafe.Offsetof(RowFields{}.ArgvLength)), 0, uint32(unsafe.Offsetof(RowFields{}.Argv)), 0, 1, 1},                                   // argv
-	{uint32(unsafe.Offsetof(ConfigChange{}.HasAfter)), 0, 0, 0, 0, 0},                                                                          // has_after
-	{uint32(unsafe.Offsetof(ConfigChange{}.After)), 0, 0, 0, 0, 0},                                                                             // after
-	{uint32(unsafe.Offsetof(RowFields{}.Pairs)), uint32(unsafe.Sizeof(FieldPair{})), uint32(unsafe.Offsetof(RowFields{}.PairsCount)), 1, 0, 0}, // pairs
-	{0, 0, 0, 0, 0, 0}, // element
-	{uint32(unsafe.Offsetof(FieldPair{}.NameLength)), 0, uint32(unsafe.Offsetof(FieldPair{}.Name)), 0, 1, 1},           // name
-	{uint32(unsafe.Offsetof(FieldPair{}.ValueLength)), 0, uint32(unsafe.Offsetof(FieldPair{}.Value)), 0, 1, 1},         // value
-	{uint32(unsafe.Offsetof(RowFields{}.ArgvLength)), 0, uint32(unsafe.Offsetof(RowFields{}.Argv)), 0, 1, 1},           // argv
+	{uint32(unsafe.Offsetof(ConfigChange{}.HasBefore)), 0, 0, 0, 0, 0},                                                 // has_before
+	{uint32(unsafe.Offsetof(ConfigChange{}.HasAfter)), 0, 0, 0, 0, 0},                                                  // has_after
 	{uint32(unsafe.Offsetof(ConfigChange{}.ActorLength)), 0, uint32(unsafe.Offsetof(ConfigChange{}.Actor)), 0, 1, 1},   // actor
 	{uint32(unsafe.Offsetof(ConfigChange{}.ReasonLength)), 0, uint32(unsafe.Offsetof(ConfigChange{}.Reason)), 0, 1, 1}, // reason
 	{uint32(unsafe.Offsetof(ConfigChange{}.AtLength)), 0, uint32(unsafe.Offsetof(ConfigChange{}.At)), 0, 1, 1},         // at
 }
 
-var ConfigChangeFixedPlan = tableFixedBuildPlan(ConfigChangeFixedLeaves, 109)
+var ConfigChangeFixedPlan = tableFixedBuildPlan(ConfigChangeFixedLeaves, 9)
 
 var ConfigChangeFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x46bc36e62bbeefec,
-		LayoutBytes: 565,
-		Record:      59732,
+		Hash:        0x9d151fbf35f717b1,
+		LayoutBytes: 361,
+		Record:      2628,
 		Layout: []byte{
-			0x21, 0x00, 0x00, 0x00, 0xa3, 0xd3, 0x35, 0x4b, 0x72, 0x52, 0x8e, 0xe2, 0x0d, 0x4c, 0xe9, 0x00,
-			0x00, 0x0b, 0x00, 0x00, 0x00, 0xc0, 0x3a, 0x5c, 0xb5, 0x07, 0x2e, 0xb7, 0x08, 0x05, 0x08, 0x00,
+			0x15, 0x00, 0x00, 0x00, 0xa3, 0xd3, 0x35, 0x4b, 0x72, 0x52, 0x8e, 0xe2, 0x0d, 0x3c, 0x0a, 0x00,
+			0x00, 0x09, 0x00, 0x00, 0x00, 0xc0, 0x3a, 0x5c, 0xb5, 0x07, 0x2e, 0xb7, 0x08, 0x05, 0x08, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x43, 0x32, 0x67, 0x21, 0xd7, 0x96, 0x9c, 0xef, 0x1e, 0x01,
 			0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0xce, 0x46, 0xc6, 0x6b, 0x87, 0x22, 0xd6, 0x5d, 0x20,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaf, 0x79, 0xa2, 0xfb, 0x0a, 0xe0, 0x53, 0x0a,
@@ -13299,30 +13155,17 @@ var ConfigChangeFixedKnown = []TableFixedKnownLayout{
 			0xb3, 0x69, 0x58, 0x7f, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3e, 0x6a, 0x4d,
 			0x26, 0xa8, 0xe2, 0x06, 0x44, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x69, 0xcd,
 			0x26, 0x30, 0xfb, 0x85, 0xfd, 0x48, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86,
-			0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 			0x0a, 0x60, 0x56, 0xb5, 0x07, 0x56, 0xb0, 0x08, 0x1e, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
 			0x00, 0xb4, 0xc9, 0x06, 0xa0, 0x19, 0xe3, 0xae, 0xf9, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 			0x00, 0x00, 0x83, 0x1a, 0x9b, 0xfa, 0x19, 0xa7, 0x44, 0x98, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
 			0x00, 0x00, 0x00, 0x5d, 0xf1, 0xb8, 0x0b, 0x11, 0x08, 0x4f, 0xea, 0x20, 0x00, 0x00, 0x00, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x2f, 0xaf, 0xc3, 0x09, 0xef, 0x33, 0x1f, 0x51, 0x01, 0x01, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0xbe, 0xb2, 0xaf, 0x45, 0x62, 0xa0, 0x9a, 0xd8, 0x0d, 0xc8, 0x73,
-			0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x26, 0x1e, 0x1e, 0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4,
-			0x63, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
-			0x28, 0x04, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4,
-			0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4,
-			0x7c, 0x0c, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d,
-			0x49, 0x89, 0x0c, 0x04, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1e, 0xd4, 0x21, 0xf2, 0x9a,
-			0x52, 0x0f, 0x0b, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe9, 0xea, 0x71, 0x6f,
-			0x0f, 0x01, 0x82, 0xbf, 0x0d, 0xc8, 0x73, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x26, 0x1e, 0x1e,
-			0x39, 0xa7, 0x38, 0x44, 0x54, 0x0e, 0xc4, 0x63, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x28, 0x04, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x86,
-			0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0xea, 0x0c, 0xe8, 0x30, 0x94, 0xfd, 0xe4, 0x7c, 0x0c, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d, 0x49, 0x89, 0x0c, 0x04, 0x10, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0xda, 0xd4, 0x47, 0x1c, 0x39, 0xc5, 0xcc, 0xdc, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x39, 0x26, 0x4f, 0x47, 0xf3, 0xd7, 0xe8, 0x65, 0x0c, 0x04, 0x01, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x68, 0xa9, 0x45, 0xb5, 0x07, 0x4e, 0x9c, 0x08, 0x0c, 0x24, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x1e, 0xd4, 0x21, 0xf2, 0x9a, 0x52, 0x0f, 0x0b, 0x01, 0x01, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xda, 0xd4, 0x47, 0x1c, 0x39, 0xc5, 0xcc, 0xdc, 0x0c, 0x84,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x39, 0x26, 0x4f, 0x47, 0xf3, 0xd7, 0xe8, 0x65, 0x0c,
+			0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0xa9, 0x45, 0xb5, 0x07, 0x4e, 0x9c, 0x08,
+			0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
 	},
 }
@@ -14109,16 +13952,16 @@ func MachineViewFixedClamp(value *MachineView, report *TableReport) {
 
 // ---- MachineView, the fixed form ----
 
-const MachineViewFixedBodyBytes = 286
+const MachineViewFixedBodyBytes = 4830
 const MachineViewFixedRecordBytes = 8 + MachineViewFixedBodyBytes
-const MachineViewFixedHash = 0x06fa4738bae56d18
+const MachineViewFixedHash = 0x85ddbb56a7ea3eaf
 
 var MachineViewFixedLayout = []byte{
-	0x0a, 0x00, 0x00, 0x00, 0x4f, 0x6c, 0x64, 0x96, 0x5c, 0x6a, 0x72, 0xa9, 0x0d, 0x1e, 0x01, 0x00,
-	0x00, 0x08, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf2, 0x48, 0x2b, 0x03, 0xe4, 0x80, 0x67, 0x7d, 0x0c, 0x44,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe8, 0x33, 0xf9, 0xd3, 0x18, 0xf1, 0x08, 0x2d, 0x0c,
-	0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x56, 0xee, 0xb1, 0x6b, 0x2e, 0x8c, 0xe6,
+	0x0a, 0x00, 0x00, 0x00, 0x4f, 0x6c, 0x64, 0x96, 0x5c, 0x6a, 0x72, 0xa9, 0x0d, 0xde, 0x12, 0x00,
+	0x00, 0x08, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf2, 0x48, 0x2b, 0x03, 0xe4, 0x80, 0x67, 0x7d, 0x0c, 0x04,
+	0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe8, 0x33, 0xf9, 0xd3, 0x18, 0xf1, 0x08, 0x2d, 0x0c,
+	0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x56, 0xee, 0xb1, 0x6b, 0x2e, 0x8c, 0xe6,
 	0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x76, 0xf4, 0x0e, 0xb5, 0x3f, 0xf3,
 	0x83, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3e, 0x00, 0x30, 0x24, 0x46, 0x04,
 	0x4d, 0x58, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd4, 0x34, 0x6e, 0x44, 0x19,
@@ -14144,15 +13987,15 @@ var MachineViewFixedPlan = tableFixedBuildPlan(MachineViewFixedLeaves, 9)
 
 var MachineViewFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x06fa4738bae56d18,
+		Hash:        0x85ddbb56a7ea3eaf,
 		LayoutBytes: 174,
-		Record:      294,
+		Record:      4838,
 		Layout: []byte{
-			0x0a, 0x00, 0x00, 0x00, 0x4f, 0x6c, 0x64, 0x96, 0x5c, 0x6a, 0x72, 0xa9, 0x0d, 0x1e, 0x01, 0x00,
-			0x00, 0x08, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf2, 0x48, 0x2b, 0x03, 0xe4, 0x80, 0x67, 0x7d, 0x0c, 0x44,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe8, 0x33, 0xf9, 0xd3, 0x18, 0xf1, 0x08, 0x2d, 0x0c,
-			0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x56, 0xee, 0xb1, 0x6b, 0x2e, 0x8c, 0xe6,
+			0x0a, 0x00, 0x00, 0x00, 0x4f, 0x6c, 0x64, 0x96, 0x5c, 0x6a, 0x72, 0xa9, 0x0d, 0xde, 0x12, 0x00,
+			0x00, 0x08, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf2, 0x48, 0x2b, 0x03, 0xe4, 0x80, 0x67, 0x7d, 0x0c, 0x04,
+			0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe8, 0x33, 0xf9, 0xd3, 0x18, 0xf1, 0x08, 0x2d, 0x0c,
+			0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x56, 0xee, 0xb1, 0x6b, 0x2e, 0x8c, 0xe6,
 			0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x76, 0xf4, 0x0e, 0xb5, 0x3f, 0xf3,
 			0x83, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3e, 0x00, 0x30, 0x24, 0x46, 0x04,
 			0x4d, 0x58, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd4, 0x34, 0x6e, 0x44, 0x19,
@@ -14378,24 +14221,24 @@ func InventoryLoopFixedClamp(value *InventoryLoop, report *TableReport) {
 
 // ---- InventoryLoop, the fixed form ----
 
-const InventoryLoopFixedBodyBytes = 7006
+const InventoryLoopFixedBodyBytes = 13214
 const InventoryLoopFixedRecordBytes = 8 + InventoryLoopFixedBodyBytes
-const InventoryLoopFixedHash = 0xee29a0178783bfae
+const InventoryLoopFixedHash = 0x277405565f5378f6
 
 var InventoryLoopFixedLayout = []byte{
-	0x0c, 0x00, 0x00, 0x00, 0x35, 0x9e, 0xe3, 0x74, 0x7b, 0x62, 0x05, 0x6e, 0x0d, 0x5e, 0x1b, 0x00,
-	0x00, 0x09, 0x00, 0x00, 0x00, 0x6e, 0xbe, 0xd7, 0x98, 0xcb, 0x57, 0x51, 0x38, 0x0c, 0x44, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44,
+	0x0c, 0x00, 0x00, 0x00, 0x35, 0x9e, 0xe3, 0x74, 0x7b, 0x62, 0x05, 0x6e, 0x0d, 0x9e, 0x33, 0x00,
+	0x00, 0x09, 0x00, 0x00, 0x00, 0x6e, 0xbe, 0xd7, 0x98, 0xcb, 0x57, 0x51, 0x38, 0x0c, 0x84, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d, 0x49, 0x89, 0x0c,
 	0x04, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe8, 0x33, 0xf9, 0xd3, 0x18, 0xf1, 0x08, 0x2d,
-	0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2d, 0x3e, 0xbd, 0x5c, 0xd7, 0x87, 0x19,
-	0x58, 0x0e, 0x84, 0x08, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba,
-	0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0xc9, 0xd1, 0x79,
+	0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2d, 0x3e, 0xbd, 0x5c, 0xd7, 0x87, 0x19,
+	0x58, 0x0e, 0x84, 0x10, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba,
+	0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0xc9, 0xd1, 0x79,
 	0x00, 0x97, 0x53, 0x11, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa9, 0xf3, 0xa6,
 	0xfd, 0xcd, 0x8b, 0xfa, 0x38, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9e, 0x28,
 	0x56, 0x6b, 0x80, 0x85, 0xd8, 0x70, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x31,
-	0x54, 0xaf, 0x1d, 0x19, 0x73, 0x50, 0x12, 0x0c, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x54, 0xaf, 0x1d, 0x19, 0x73, 0x50, 0x12, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
 var InventoryLoopFixedDst = []TableFixedDst{
@@ -14417,23 +14260,23 @@ var InventoryLoopFixedPlan = tableFixedBuildPlan(InventoryLoopFixedLeaves, 41)
 
 var InventoryLoopFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0xee29a0178783bfae,
+		Hash:        0x277405565f5378f6,
 		LayoutBytes: 208,
-		Record:      7014,
+		Record:      13222,
 		Layout: []byte{
-			0x0c, 0x00, 0x00, 0x00, 0x35, 0x9e, 0xe3, 0x74, 0x7b, 0x62, 0x05, 0x6e, 0x0d, 0x5e, 0x1b, 0x00,
-			0x00, 0x09, 0x00, 0x00, 0x00, 0x6e, 0xbe, 0xd7, 0x98, 0xcb, 0x57, 0x51, 0x38, 0x0c, 0x44, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44,
+			0x0c, 0x00, 0x00, 0x00, 0x35, 0x9e, 0xe3, 0x74, 0x7b, 0x62, 0x05, 0x6e, 0x0d, 0x9e, 0x33, 0x00,
+			0x00, 0x09, 0x00, 0x00, 0x00, 0x6e, 0xbe, 0xd7, 0x98, 0xcb, 0x57, 0x51, 0x38, 0x0c, 0x84, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x98, 0xbc, 0x3e, 0x84, 0x2d, 0x49, 0x89, 0x0c,
 			0x04, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe8, 0x33, 0xf9, 0xd3, 0x18, 0xf1, 0x08, 0x2d,
-			0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2d, 0x3e, 0xbd, 0x5c, 0xd7, 0x87, 0x19,
-			0x58, 0x0e, 0x84, 0x08, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba,
-			0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0xc9, 0xd1, 0x79,
+			0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2d, 0x3e, 0xbd, 0x5c, 0xd7, 0x87, 0x19,
+			0x58, 0x0e, 0x84, 0x10, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba,
+			0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0xc9, 0xd1, 0x79,
 			0x00, 0x97, 0x53, 0x11, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa9, 0xf3, 0xa6,
 			0xfd, 0xcd, 0x8b, 0xfa, 0x38, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9e, 0x28,
 			0x56, 0x6b, 0x80, 0x85, 0xd8, 0x70, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x31,
-			0x54, 0xaf, 0x1d, 0x19, 0x73, 0x50, 0x12, 0x0c, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x54, 0xaf, 0x1d, 0x19, 0x73, 0x50, 0x12, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
 	},
 }
@@ -14505,8 +14348,8 @@ func InventoryLoopFixedSave(values []InventoryLoop, buffer []byte) int64 {
 	at := buffer[TableFixedHeaderBytes+4+len(InventoryLoopFixedLayout):]
 	for k := range values {
 		tableFixedPut64(at, InventoryLoopFixedHash)
-		clear(at[8:4312])
-		clear(at[6492:7014])
+		clear(at[8:6680])
+		clear(at[10908:13222])
 		InventoryLoopFixedWriteBody(at[8:], &values[k])
 		at = at[InventoryLoopFixedRecordBytes:]
 	}
@@ -14654,13 +14497,13 @@ func HostViewFixedClamp(value *HostView, report *TableReport) {
 
 // ---- HostView, the fixed form ----
 
-const HostViewFixedBodyBytes = 837
+const HostViewFixedBodyBytes = 14149
 const HostViewFixedRecordBytes = 8 + HostViewFixedBodyBytes
-const HostViewFixedHash = 0xf9be53a4d2881a43
+const HostViewFixedHash = 0x14a68d9c82ada3bc
 
 var HostViewFixedLayout = []byte{
-	0x1e, 0x00, 0x00, 0x00, 0x7a, 0x4d, 0xdc, 0x41, 0xef, 0xd7, 0x97, 0x5a, 0x0d, 0x45, 0x03, 0x00,
-	0x00, 0x13, 0x00, 0x00, 0x00, 0xa6, 0xc6, 0x05, 0x3f, 0xa6, 0xae, 0xc8, 0xb1, 0x0c, 0x44, 0x00,
+	0x1e, 0x00, 0x00, 0x00, 0x7a, 0x4d, 0xdc, 0x41, 0xef, 0xd7, 0x97, 0x5a, 0x0d, 0x45, 0x37, 0x00,
+	0x00, 0x13, 0x00, 0x00, 0x00, 0xa6, 0xc6, 0x05, 0x3f, 0xa6, 0xae, 0xc8, 0xb1, 0x0c, 0x84, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x43, 0x32, 0x67, 0x21, 0xd7, 0x96, 0x9c, 0xef, 0x1e, 0x01,
 	0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0xce, 0x46, 0xc6, 0x6b, 0x87, 0x22, 0xd6, 0x5d, 0x20,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaf, 0x79, 0xa2, 0xfb, 0x0a, 0xe0, 0x53, 0x0a,
@@ -14682,14 +14525,14 @@ var HostViewFixedLayout = []byte{
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x88, 0x62, 0x67, 0xf7, 0xfd, 0xad, 0x46, 0x7c, 0x0c,
 	0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa3, 0x04, 0x8e, 0x0d, 0xf1, 0xd8, 0xf8, 0xd8,
 	0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9a, 0xf7, 0xd0, 0xa5, 0x9b, 0x32, 0x58,
-	0xe9, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0xc1, 0x04, 0xca, 0xf1, 0xc9,
+	0xe9, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0xc1, 0x04, 0xca, 0xf1, 0xc9,
 	0x2e, 0x05, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x77, 0xb7, 0x36, 0x6c, 0xc3,
-	0x45, 0xe7, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0x98, 0xfa, 0x34,
-	0x93, 0xd9, 0x55, 0x48, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xef, 0x0c, 0x2c,
-	0x54, 0xfc, 0x4b, 0x63, 0x05, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3c, 0x2e,
-	0xa7, 0x72, 0x1e, 0xe3, 0x86, 0xe9, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x57,
+	0x45, 0xe7, 0xc4, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0x98, 0xfa, 0x34,
+	0x93, 0xd9, 0x55, 0x48, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xef, 0x0c, 0x2c,
+	0x54, 0xfc, 0x4b, 0x63, 0x05, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3c, 0x2e,
+	0xa7, 0x72, 0x1e, 0xe3, 0x86, 0xe9, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x57,
 	0x3d, 0xd0, 0x97, 0x6d, 0x22, 0x1d, 0x9c, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0xeb, 0x23, 0x9c, 0xa5, 0xc3, 0x35, 0xc5, 0xb5, 0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0xeb, 0x23, 0x9c, 0xa5, 0xc3, 0x35, 0xc5, 0xb5, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0xe8, 0x80, 0xa6, 0xf3, 0xb6, 0x1f, 0x9f, 0x24, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00,
 }
@@ -14731,12 +14574,12 @@ var HostViewFixedPlan = tableFixedBuildPlan(HostViewFixedLeaves, 21)
 
 var HostViewFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0xf9be53a4d2881a43,
+		Hash:        0x14a68d9c82ada3bc,
 		LayoutBytes: 514,
-		Record:      845,
+		Record:      14157,
 		Layout: []byte{
-			0x1e, 0x00, 0x00, 0x00, 0x7a, 0x4d, 0xdc, 0x41, 0xef, 0xd7, 0x97, 0x5a, 0x0d, 0x45, 0x03, 0x00,
-			0x00, 0x13, 0x00, 0x00, 0x00, 0xa6, 0xc6, 0x05, 0x3f, 0xa6, 0xae, 0xc8, 0xb1, 0x0c, 0x44, 0x00,
+			0x1e, 0x00, 0x00, 0x00, 0x7a, 0x4d, 0xdc, 0x41, 0xef, 0xd7, 0x97, 0x5a, 0x0d, 0x45, 0x37, 0x00,
+			0x00, 0x13, 0x00, 0x00, 0x00, 0xa6, 0xc6, 0x05, 0x3f, 0xa6, 0xae, 0xc8, 0xb1, 0x0c, 0x84, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x43, 0x32, 0x67, 0x21, 0xd7, 0x96, 0x9c, 0xef, 0x1e, 0x01,
 			0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0xce, 0x46, 0xc6, 0x6b, 0x87, 0x22, 0xd6, 0x5d, 0x20,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaf, 0x79, 0xa2, 0xfb, 0x0a, 0xe0, 0x53, 0x0a,
@@ -14758,14 +14601,14 @@ var HostViewFixedKnown = []TableFixedKnownLayout{
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x88, 0x62, 0x67, 0xf7, 0xfd, 0xad, 0x46, 0x7c, 0x0c,
 			0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa3, 0x04, 0x8e, 0x0d, 0xf1, 0xd8, 0xf8, 0xd8,
 			0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9a, 0xf7, 0xd0, 0xa5, 0x9b, 0x32, 0x58,
-			0xe9, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0xc1, 0x04, 0xca, 0xf1, 0xc9,
+			0xe9, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0xc1, 0x04, 0xca, 0xf1, 0xc9,
 			0x2e, 0x05, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x77, 0xb7, 0x36, 0x6c, 0xc3,
-			0x45, 0xe7, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0x98, 0xfa, 0x34,
-			0x93, 0xd9, 0x55, 0x48, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xef, 0x0c, 0x2c,
-			0x54, 0xfc, 0x4b, 0x63, 0x05, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3c, 0x2e,
-			0xa7, 0x72, 0x1e, 0xe3, 0x86, 0xe9, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x57,
+			0x45, 0xe7, 0xc4, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0x98, 0xfa, 0x34,
+			0x93, 0xd9, 0x55, 0x48, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xef, 0x0c, 0x2c,
+			0x54, 0xfc, 0x4b, 0x63, 0x05, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3c, 0x2e,
+			0xa7, 0x72, 0x1e, 0xe3, 0x86, 0xe9, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x57,
 			0x3d, 0xd0, 0x97, 0x6d, 0x22, 0x1d, 0x9c, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0xeb, 0x23, 0x9c, 0xa5, 0xc3, 0x35, 0xc5, 0xb5, 0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0xeb, 0x23, 0x9c, 0xa5, 0xc3, 0x35, 0xc5, 0xb5, 0x0c, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00,
 			0x00, 0xe8, 0x80, 0xa6, 0xf3, 0xb6, 0x1f, 0x9f, 0x24, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
 			0x00, 0x00,
 		},
@@ -14987,13 +14830,13 @@ func HostNameFixedClamp(value *HostName, report *TableReport) {
 
 // ---- HostName, the fixed form ----
 
-const HostNameFixedBodyBytes = 68
+const HostNameFixedBodyBytes = 132
 const HostNameFixedRecordBytes = 8 + HostNameFixedBodyBytes
-const HostNameFixedHash = 0xc9811b58b4040b8c
+const HostNameFixedHash = 0x381421630c0a0c0c
 
 var HostNameFixedLayout = []byte{
-	0x02, 0x00, 0x00, 0x00, 0xac, 0xbd, 0xb7, 0xc6, 0x29, 0x6d, 0x89, 0xf3, 0x0d, 0x44, 0x00, 0x00,
-	0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00,
+	0x02, 0x00, 0x00, 0x00, 0xac, 0xbd, 0xb7, 0xc6, 0x29, 0x6d, 0x89, 0xf3, 0x0d, 0x84, 0x00, 0x00,
+	0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
@@ -15006,12 +14849,12 @@ var HostNameFixedPlan = tableFixedBuildPlan(HostNameFixedLeaves, 1)
 
 var HostNameFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0xc9811b58b4040b8c,
+		Hash:        0x381421630c0a0c0c,
 		LayoutBytes: 38,
-		Record:      76,
+		Record:      140,
 		Layout: []byte{
-			0x02, 0x00, 0x00, 0x00, 0xac, 0xbd, 0xb7, 0xc6, 0x29, 0x6d, 0x89, 0xf3, 0x0d, 0x44, 0x00, 0x00,
-			0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00,
+			0x02, 0x00, 0x00, 0x00, 0xac, 0xbd, 0xb7, 0xc6, 0x29, 0x6d, 0x89, 0xf3, 0x0d, 0x84, 0x00, 0x00,
+			0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
 	},
@@ -15232,13 +15075,13 @@ func EnvNameFixedClamp(value *EnvName, report *TableReport) {
 
 // ---- EnvName, the fixed form ----
 
-const EnvNameFixedBodyBytes = 68
+const EnvNameFixedBodyBytes = 132
 const EnvNameFixedRecordBytes = 8 + EnvNameFixedBodyBytes
-const EnvNameFixedHash = 0x106fbaa5c9dbb297
+const EnvNameFixedHash = 0xd291706d77de7597
 
 var EnvNameFixedLayout = []byte{
-	0x02, 0x00, 0x00, 0x00, 0xcf, 0x77, 0x40, 0x1b, 0x4f, 0x59, 0xe1, 0xeb, 0x0d, 0x44, 0x00, 0x00,
-	0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00,
+	0x02, 0x00, 0x00, 0x00, 0xcf, 0x77, 0x40, 0x1b, 0x4f, 0x59, 0xe1, 0xeb, 0x0d, 0x84, 0x00, 0x00,
+	0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
@@ -15251,12 +15094,12 @@ var EnvNameFixedPlan = tableFixedBuildPlan(EnvNameFixedLeaves, 1)
 
 var EnvNameFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x106fbaa5c9dbb297,
+		Hash:        0xd291706d77de7597,
 		LayoutBytes: 38,
-		Record:      76,
+		Record:      140,
 		Layout: []byte{
-			0x02, 0x00, 0x00, 0x00, 0xcf, 0x77, 0x40, 0x1b, 0x4f, 0x59, 0xe1, 0xeb, 0x0d, 0x44, 0x00, 0x00,
-			0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00,
+			0x02, 0x00, 0x00, 0x00, 0xcf, 0x77, 0x40, 0x1b, 0x4f, 0x59, 0xe1, 0xeb, 0x0d, 0x84, 0x00, 0x00,
+			0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
 	},
@@ -15477,16 +15320,16 @@ func HostGroupFixedClamp(value *HostGroup, report *TableReport) {
 
 // ---- HostGroup, the fixed form ----
 
-const HostGroupFixedBodyBytes = 4356
+const HostGroupFixedBodyBytes = 6340
 const HostGroupFixedRecordBytes = 8 + HostGroupFixedBodyBytes
-const HostGroupFixedHash = 0x25e2b13e14851d89
+const HostGroupFixedHash = 0x44490979b82a12f3
 
 var HostGroupFixedLayout = []byte{
-	0x04, 0x00, 0x00, 0x00, 0xb6, 0xb7, 0x67, 0x61, 0xd1, 0x4f, 0xb7, 0x7c, 0x0d, 0x04, 0x11, 0x00,
-	0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04, 0x11,
-	0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x44,
+	0x04, 0x00, 0x00, 0x00, 0xb6, 0xb7, 0x67, 0x61, 0xd1, 0x4f, 0xb7, 0x7c, 0x0d, 0xc4, 0x18, 0x00,
+	0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4, 0x18,
+	0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x84,
 	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c,
-	0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
 var HostGroupFixedDst = []TableFixedDst{
@@ -15496,19 +15339,19 @@ var HostGroupFixedDst = []TableFixedDst{
 	{uint32(unsafe.Offsetof(HostName{}.NameLength)), 0, uint32(unsafe.Offsetof(HostName{}.Name)), 0, 1, 1}, // name
 }
 
-var HostGroupFixedPlan = tableFixedBuildPlan(HostGroupFixedLeaves, 65)
+var HostGroupFixedPlan = tableFixedBuildPlan(HostGroupFixedLeaves, 49)
 
 var HostGroupFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x25e2b13e14851d89,
+		Hash:        0x44490979b82a12f3,
 		LayoutBytes: 72,
-		Record:      4364,
+		Record:      6348,
 		Layout: []byte{
-			0x04, 0x00, 0x00, 0x00, 0xb6, 0xb7, 0x67, 0x61, 0xd1, 0x4f, 0xb7, 0x7c, 0x0d, 0x04, 0x11, 0x00,
-			0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04, 0x11,
-			0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x44,
+			0x04, 0x00, 0x00, 0x00, 0xb6, 0xb7, 0x67, 0x61, 0xd1, 0x4f, 0xb7, 0x7c, 0x0d, 0xc4, 0x18, 0x00,
+			0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4, 0x18,
+			0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x84,
 			0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c,
-			0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
 	},
 }
@@ -15999,47 +15842,47 @@ func InventoryFixedClamp(value *Inventory, report *TableReport) {
 
 // ---- Inventory, the fixed form ----
 
-const InventoryFixedBodyBytes = 34992
+const InventoryFixedBodyBytes = 53104
 const InventoryFixedRecordBytes = 8 + InventoryFixedBodyBytes
-const InventoryFixedHash = 0x62e08ec50c75e07c
+const InventoryFixedHash = 0x5c098637ac4585c0
 
 var InventoryFixedLayout = []byte{
-	0x2e, 0x00, 0x00, 0x00, 0x3f, 0x0f, 0x0e, 0x8a, 0xeb, 0x05, 0x0d, 0x1f, 0x0d, 0xb0, 0x88, 0x00,
-	0x00, 0x0a, 0x00, 0x00, 0x00, 0xa4, 0xda, 0x19, 0x05, 0x19, 0x9b, 0xf0, 0xe6, 0x0d, 0x04, 0x11,
-	0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04,
-	0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
-	0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4,
-	0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x76, 0xa6, 0xe4, 0xfd, 0x35, 0xe2,
-	0xf7, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf,
-	0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e,
-	0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45, 0xfb, 0x39,
-	0xfe, 0xd9, 0xfc, 0x23, 0x66, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06,
-	0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-	0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0xf1, 0x13, 0x41, 0x97, 0x8d, 0x03, 0xcd, 0x20, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00,
-	0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00,
-	0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x8e, 0xbd, 0xb0, 0x76, 0xad, 0x54, 0xee, 0x44, 0x0d, 0x04, 0x11,
-	0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04,
-	0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
-	0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4,
-	0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x3c, 0xcc, 0x03, 0xca, 0x6c, 0x15,
-	0xbd, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf,
-	0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e,
-	0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x76, 0xf4,
-	0x0e, 0xb5, 0x3f, 0xf3, 0x83, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06,
-	0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-	0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0xd4, 0x34, 0x6e, 0x44, 0x19, 0xdd, 0x03, 0x57, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00,
-	0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00,
-	0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x41, 0x86, 0x73, 0xf9, 0xb1, 0xb3, 0x91, 0xae, 0x0c, 0x44, 0x00,
+	0x2e, 0x00, 0x00, 0x00, 0x3f, 0x0f, 0x0e, 0x8a, 0xeb, 0x05, 0x0d, 0x1f, 0x0d, 0x70, 0xcf, 0x00,
+	0x00, 0x0a, 0x00, 0x00, 0x00, 0xa4, 0xda, 0x19, 0x05, 0x19, 0x9b, 0xf0, 0xe6, 0x0d, 0xc4, 0x18,
+	0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4,
+	0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
+	0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4,
+	0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x76, 0xa6, 0xe4, 0xfd, 0x35, 0xe2,
+	0xf7, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf,
+	0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e,
+	0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45, 0xfb, 0x39,
+	0xfe, 0xd9, 0xfc, 0x23, 0x66, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06,
+	0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+	0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0xf1, 0x13, 0x41, 0x97, 0x8d, 0x03, 0xcd, 0x20, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00,
+	0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00,
+	0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x8e, 0xbd, 0xb0, 0x76, 0xad, 0x54, 0xee, 0x44, 0x0d, 0xc4, 0x18,
+	0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4,
+	0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
+	0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4,
+	0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x3c, 0xcc, 0x03, 0xca, 0x6c, 0x15,
+	0xbd, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf,
+	0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e,
+	0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x76, 0xf4,
+	0x0e, 0xb5, 0x3f, 0xf3, 0x83, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06,
+	0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+	0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0xd4, 0x34, 0x6e, 0x44, 0x19, 0xdd, 0x03, 0x57, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00,
+	0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00,
+	0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x41, 0x86, 0x73, 0xf9, 0xb1, 0xb3, 0x91, 0xae, 0x0c, 0x04, 0x09,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x13, 0x16, 0xbd, 0xbf, 0x1f, 0x5c, 0xc0, 0x4c, 0x0e, 0x4c,
 	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
 	0x09, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x43, 0x32, 0x67, 0x21, 0xd7, 0x96, 0x9c, 0xef,
@@ -16105,50 +15948,50 @@ var InventoryFixedDst = []TableFixedDst{
 	{uint32(unsafe.Offsetof(KindRev{}.Rev)), 0, 0, 0, 0, 0}, // rev
 }
 
-var InventoryFixedPlan = tableFixedBuildPlan(InventoryFixedLeaves, 538)
+var InventoryFixedPlan = tableFixedBuildPlan(InventoryFixedLeaves, 410)
 
 var InventoryFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x62e08ec50c75e07c,
+		Hash:        0x5c098637ac4585c0,
 		LayoutBytes: 786,
-		Record:      35000,
+		Record:      53112,
 		Layout: []byte{
-			0x2e, 0x00, 0x00, 0x00, 0x3f, 0x0f, 0x0e, 0x8a, 0xeb, 0x05, 0x0d, 0x1f, 0x0d, 0xb0, 0x88, 0x00,
-			0x00, 0x0a, 0x00, 0x00, 0x00, 0xa4, 0xda, 0x19, 0x05, 0x19, 0x9b, 0xf0, 0xe6, 0x0d, 0x04, 0x11,
-			0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04,
-			0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
-			0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4,
-			0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x76, 0xa6, 0xe4, 0xfd, 0x35, 0xe2,
-			0xf7, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf,
-			0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e,
-			0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45, 0xfb, 0x39,
-			0xfe, 0xd9, 0xfc, 0x23, 0x66, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06,
-			0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-			0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0xf1, 0x13, 0x41, 0x97, 0x8d, 0x03, 0xcd, 0x20, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00,
-			0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00,
-			0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x8e, 0xbd, 0xb0, 0x76, 0xad, 0x54, 0xee, 0x44, 0x0d, 0x04, 0x11,
-			0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04,
-			0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
-			0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4,
-			0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x3c, 0xcc, 0x03, 0xca, 0x6c, 0x15,
-			0xbd, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf,
-			0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e,
-			0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x76, 0xf4,
-			0x0e, 0xb5, 0x3f, 0xf3, 0x83, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06,
-			0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-			0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0xd4, 0x34, 0x6e, 0x44, 0x19, 0xdd, 0x03, 0x57, 0x0d, 0x04, 0x11, 0x00, 0x00, 0x01, 0x00,
-			0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0x04, 0x11, 0x00, 0x00, 0x01,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x44, 0x00, 0x00, 0x00,
-			0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x41, 0x86, 0x73, 0xf9, 0xb1, 0xb3, 0x91, 0xae, 0x0c, 0x44, 0x00,
+			0x2e, 0x00, 0x00, 0x00, 0x3f, 0x0f, 0x0e, 0x8a, 0xeb, 0x05, 0x0d, 0x1f, 0x0d, 0x70, 0xcf, 0x00,
+			0x00, 0x0a, 0x00, 0x00, 0x00, 0xa4, 0xda, 0x19, 0x05, 0x19, 0x9b, 0xf0, 0xe6, 0x0d, 0xc4, 0x18,
+			0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4,
+			0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
+			0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4,
+			0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x76, 0xa6, 0xe4, 0xfd, 0x35, 0xe2,
+			0xf7, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf,
+			0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e,
+			0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45, 0xfb, 0x39,
+			0xfe, 0xd9, 0xfc, 0x23, 0x66, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06,
+			0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+			0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0xf1, 0x13, 0x41, 0x97, 0x8d, 0x03, 0xcd, 0x20, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00,
+			0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00,
+			0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x8e, 0xbd, 0xb0, 0x76, 0xad, 0x54, 0xee, 0x44, 0x0d, 0xc4, 0x18,
+			0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4,
+			0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
+			0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4,
+			0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x3c, 0xcc, 0x03, 0xca, 0x6c, 0x15,
+			0xbd, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf,
+			0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e,
+			0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x76, 0xf4,
+			0x0e, 0xb5, 0x3f, 0xf3, 0x83, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x94, 0x06,
+			0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+			0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0xd4, 0x34, 0x6e, 0x44, 0x19, 0xdd, 0x03, 0x57, 0x0d, 0xc4, 0x18, 0x00, 0x00, 0x01, 0x00,
+			0x00, 0x00, 0x94, 0x06, 0xe0, 0x43, 0x7b, 0xdf, 0x28, 0x3b, 0x0e, 0xc4, 0x18, 0x00, 0x00, 0x01,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x84, 0x00, 0x00, 0x00,
+			0x01, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x84, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x41, 0x86, 0x73, 0xf9, 0xb1, 0xb3, 0x91, 0xae, 0x0c, 0x04, 0x09,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x13, 0x16, 0xbd, 0xbf, 0x1f, 0x5c, 0xc0, 0x4c, 0x0e, 0x4c,
 			0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
 			0x09, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x43, 0x32, 0x67, 0x21, 0xd7, 0x96, 0x9c, 0xef,
@@ -16234,7 +16077,7 @@ func InventoryFixedSave(values []Inventory, buffer []byte) int64 {
 	at := buffer[TableFixedHeaderBytes+4+len(InventoryFixedLayout):]
 	for k := range values {
 		tableFixedPut64(at, InventoryFixedHash)
-		clear(at[8:34924])
+		clear(at[8:53036])
 		InventoryFixedWriteBody(at[8:], &values[k])
 		at = at[InventoryFixedRecordBytes:]
 	}
@@ -16382,13 +16225,13 @@ func BenchBeatFixedClamp(value *BenchBeat, report *TableReport) {
 
 // ---- BenchBeat, the fixed form ----
 
-const BenchBeatFixedBodyBytes = 220
+const BenchBeatFixedBodyBytes = 284
 const BenchBeatFixedRecordBytes = 8 + BenchBeatFixedBodyBytes
-const BenchBeatFixedHash = 0x43ea80aef2c7c40f
+const BenchBeatFixedHash = 0x3270a7fa5f15f992
 
 var BenchBeatFixedLayout = []byte{
-	0x09, 0x00, 0x00, 0x00, 0x59, 0xc4, 0xc2, 0x56, 0x36, 0x3a, 0x3e, 0x83, 0x0d, 0xdc, 0x00, 0x00,
-	0x00, 0x08, 0x00, 0x00, 0x00, 0x6f, 0x4d, 0xaf, 0x7e, 0xcc, 0xf8, 0x77, 0x40, 0x0c, 0x44, 0x00,
+	0x09, 0x00, 0x00, 0x00, 0x59, 0xc4, 0xc2, 0x56, 0x36, 0x3a, 0x3e, 0x83, 0x0d, 0x1c, 0x01, 0x00,
+	0x00, 0x08, 0x00, 0x00, 0x00, 0x6f, 0x4d, 0xaf, 0x7e, 0xcc, 0xf8, 0x77, 0x40, 0x0c, 0x84, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc1, 0xfd, 0x00, 0xbf, 0x81, 0xbf, 0xfd, 0x41, 0x05, 0x08,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x72, 0xf7, 0xeb, 0xb6, 0x02, 0xce, 0x15, 0x0c,
 	0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc5, 0x43, 0x97, 0x98, 0xba, 0x0f, 0x86, 0xd6,
@@ -16415,12 +16258,12 @@ var BenchBeatFixedPlan = tableFixedBuildPlan(BenchBeatFixedLeaves, 8)
 
 var BenchBeatFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x43ea80aef2c7c40f,
+		Hash:        0x3270a7fa5f15f992,
 		LayoutBytes: 157,
-		Record:      228,
+		Record:      292,
 		Layout: []byte{
-			0x09, 0x00, 0x00, 0x00, 0x59, 0xc4, 0xc2, 0x56, 0x36, 0x3a, 0x3e, 0x83, 0x0d, 0xdc, 0x00, 0x00,
-			0x00, 0x08, 0x00, 0x00, 0x00, 0x6f, 0x4d, 0xaf, 0x7e, 0xcc, 0xf8, 0x77, 0x40, 0x0c, 0x44, 0x00,
+			0x09, 0x00, 0x00, 0x00, 0x59, 0xc4, 0xc2, 0x56, 0x36, 0x3a, 0x3e, 0x83, 0x0d, 0x1c, 0x01, 0x00,
+			0x00, 0x08, 0x00, 0x00, 0x00, 0x6f, 0x4d, 0xaf, 0x7e, 0xcc, 0xf8, 0x77, 0x40, 0x0c, 0x84, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc1, 0xfd, 0x00, 0xbf, 0x81, 0xbf, 0xfd, 0x41, 0x05, 0x08,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x72, 0xf7, 0xeb, 0xb6, 0x02, 0xce, 0x15, 0x0c,
 			0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc5, 0x43, 0x97, 0x98, 0xba, 0x0f, 0x86, 0xd6,
@@ -17153,8 +16996,8 @@ var FieldPairTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "value", Json: "value", TypeName: "string", DeclaredTypeName: "string", Id: 0x7ce4fd9430e80cea, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 1024, Offset: uint32(unsafe.Offsetof(FieldPair{}.Value)), ElemSize: uint32(unsafe.Sizeof(FieldPair{}.Value)), CountOffset: uint32(unsafe.Offsetof(FieldPair{}.ValueLength)), PresentOffset: 0xffffffff,
-		CookOffset: 40, CookElemSize: 1, CookCountOffset: 1068, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(FieldPair{}.Value)), ElemSize: uint32(unsafe.Sizeof(FieldPair{}.Value)), CountOffset: uint32(unsafe.Offsetof(FieldPair{}.ValueLength)), PresentOffset: 0xffffffff,
+		CookOffset: 40, CookElemSize: 1, CookCountOffset: 2348, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17169,7 +17012,7 @@ var FieldPairTableFields = []TableFieldInfo{
 var FieldPairTableInfo TableTypeInfo
 
 func init() {
-	FieldPairTableInfo = TableTypeInfo{Name: "FieldPair", Size: uint32(unsafe.Sizeof(FieldPair{})), NumFields: 2, Fields: FieldPairTableFields, Reset: func(storage unsafe.Pointer) { FieldPairReset((*FieldPair)(storage)) }, Doc: "One field of a row: its name and its canonical text (ints as digits, lists\nsorted and comma joined, empty for an empty value). Values are text end to\nend (pkg/config Row), so the descriptor, not the row, knows the type.", NumTags: 0, Tags: nil, Id: 0x21ca6d7972a9b8c7, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return FieldPairSaveBody(w, (*FieldPair)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return FieldPairLoadBody(&r, (*FieldPair)(p)) }, CookSize: 1072, CookAlign: 4}
+	FieldPairTableInfo = TableTypeInfo{Name: "FieldPair", Size: uint32(unsafe.Sizeof(FieldPair{})), NumFields: 2, Fields: FieldPairTableFields, Reset: func(storage unsafe.Pointer) { FieldPairReset((*FieldPair)(storage)) }, Doc: "One field of a row: its name and its canonical text (ints as digits, lists\nsorted and comma joined, empty for an empty value). Values are text end to\nend (pkg/config Row), so the descriptor, not the row, knows the type.", NumTags: 0, Tags: nil, Id: 0x21ca6d7972a9b8c7, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return FieldPairSaveBody(w, (*FieldPair)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return FieldPairLoadBody(&r, (*FieldPair)(p)) }, CookSize: 2352, CookAlign: 4}
 }
 
 // FieldPairTableType returns FieldPair's reflection descriptor.
@@ -17179,7 +17022,7 @@ func FieldPairTableType() *TableTypeInfo { return &FieldPairTableInfo }
 var RowFieldsTableFields = []TableFieldInfo{
 	{Name: "pairs", Json: "pairs", TypeName: "FieldPair", DeclaredTypeName: "FieldPair", Id: 0x544438a7391e1e26, Kind: 13, IsArray: true, Counted: true, Optional: false,
 		ArrayBound: 24, Offset: uint32(unsafe.Offsetof(RowFields{}.Pairs)), ElemSize: uint32(unsafe.Sizeof(RowFields{}.Pairs[0])), CountOffset: uint32(unsafe.Offsetof(RowFields{}.PairsCount)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1072, CookCountOffset: 25728, CookPresentOffset: 4294967295,
+		CookOffset: 0, CookElemSize: 2352, CookCountOffset: 56448, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17190,7 +17033,7 @@ var RowFieldsTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "argv", Json: "argv", TypeName: "string", DeclaredTypeName: "string", Id: 0x89492d843ebc9863, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 4096, Offset: uint32(unsafe.Offsetof(RowFields{}.Argv)), ElemSize: uint32(unsafe.Sizeof(RowFields{}.Argv)), CountOffset: uint32(unsafe.Offsetof(RowFields{}.ArgvLength)), PresentOffset: 0xffffffff,
-		CookOffset: 25732, CookElemSize: 1, CookCountOffset: 29832, CookPresentOffset: 4294967295,
+		CookOffset: 56452, CookElemSize: 1, CookCountOffset: 60552, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17205,7 +17048,7 @@ var RowFieldsTableFields = []TableFieldInfo{
 var RowFieldsTableInfo TableTypeInfo
 
 func init() {
-	RowFieldsTableInfo = TableTypeInfo{Name: "RowFields", Size: uint32(unsafe.Sizeof(RowFields{})), NumFields: 2, Fields: RowFieldsTableFields, Reset: func(storage unsafe.Pointer) { RowFieldsReset((*RowFields)(storage)) }, Doc: "A row's fields, the map pkg/config Row.Fields and Change.Before and After\nhold. The loop kind's argv is the one field the code bounds above a\nkilobyte, so it rides its own slot: a pair named argv is never written, the\nslot is. Pairs are kept in name order, which makes the image of a row\nunique.", NumTags: 0, Tags: nil, Id: 0x8cfe75043e735482, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return RowFieldsSaveBody(w, (*RowFields)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return RowFieldsLoadBody(&r, (*RowFields)(p)) }, CookSize: 29836, CookAlign: 4}
+	RowFieldsTableInfo = TableTypeInfo{Name: "RowFields", Size: uint32(unsafe.Sizeof(RowFields{})), NumFields: 2, Fields: RowFieldsTableFields, Reset: func(storage unsafe.Pointer) { RowFieldsReset((*RowFields)(storage)) }, Doc: "A row's fields, the map pkg/config Row.Fields and Change.Before and After\nhold. The loop kind's argv is the one field the code bounds above a\nkilobyte, so it rides its own slot: a pair named argv is never written, the\nslot is. Pairs are kept in name order, which makes the image of a row\nunique.", NumTags: 0, Tags: nil, Id: 0x8cfe75043e735482, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return RowFieldsSaveBody(w, (*RowFields)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return RowFieldsLoadBody(&r, (*RowFields)(p)) }, CookSize: 60556, CookAlign: 4}
 }
 
 // RowFieldsTableType returns RowFields's reflection descriptor.
@@ -17225,8 +17068,8 @@ var ConfigRowTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "name", Json: "name", TypeName: "string", DeclaredTypeName: "string", Id: 0xc4bcadba8e631b86, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(ConfigRow{}.Name)), ElemSize: uint32(unsafe.Sizeof(ConfigRow{}.Name)), CountOffset: uint32(unsafe.Offsetof(ConfigRow{}.NameLength)), PresentOffset: 0xffffffff,
-		CookOffset: 1, CookElemSize: 1, CookCountOffset: 68, CookPresentOffset: 4294967295,
+		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(ConfigRow{}.Name)), ElemSize: uint32(unsafe.Sizeof(ConfigRow{}.Name)), CountOffset: uint32(unsafe.Offsetof(ConfigRow{}.NameLength)), PresentOffset: 0xffffffff,
+		CookOffset: 1, CookElemSize: 1, CookCountOffset: 132, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17237,7 +17080,7 @@ var ConfigRowTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "fields", Json: "fields", TypeName: "RowFields", DeclaredTypeName: "RowFields", Id: 0x490e596d24847edc, Kind: 13, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(ConfigRow{}.Fields)), ElemSize: uint32(unsafe.Sizeof(ConfigRow{}.Fields)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 72, CookElemSize: 29836, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 136, CookElemSize: 60556, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17248,7 +17091,7 @@ var ConfigRowTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "created_at", Json: "created_at", TypeName: "string", DeclaredTypeName: "string", Id: 0xd468b6d1bff13979, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(ConfigRow{}.CreatedAt)), ElemSize: uint32(unsafe.Sizeof(ConfigRow{}.CreatedAt)), CountOffset: uint32(unsafe.Offsetof(ConfigRow{}.CreatedAtLength)), PresentOffset: 0xffffffff,
-		CookOffset: 29908, CookElemSize: 1, CookCountOffset: 29944, CookPresentOffset: 4294967295,
+		CookOffset: 60692, CookElemSize: 1, CookCountOffset: 60728, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17259,7 +17102,7 @@ var ConfigRowTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "updated_at", Json: "updated_at", TypeName: "string", DeclaredTypeName: "string", Id: 0xcad12968ef0374e0, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(ConfigRow{}.UpdatedAt)), ElemSize: uint32(unsafe.Sizeof(ConfigRow{}.UpdatedAt)), CountOffset: uint32(unsafe.Offsetof(ConfigRow{}.UpdatedAtLength)), PresentOffset: 0xffffffff,
-		CookOffset: 29948, CookElemSize: 1, CookCountOffset: 29984, CookPresentOffset: 4294967295,
+		CookOffset: 60732, CookElemSize: 1, CookCountOffset: 60768, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17274,7 +17117,7 @@ var ConfigRowTableFields = []TableFieldInfo{
 var ConfigRowTableInfo TableTypeInfo
 
 func init() {
-	ConfigRowTableInfo = TableTypeInfo{Name: "ConfigRow", Size: uint32(unsafe.Sizeof(ConfigRow{})), NumFields: 5, Fields: ConfigRowTableFields, Reset: func(storage unsafe.Pointer) { ConfigRowReset((*ConfigRow)(storage)) }, Doc: "One row of a kind (pkg/config Row): its name and its fields, and the two\nstamps, RFC 3339 UTC, empty for a row a store has not stamped.", NumTags: 0, Tags: nil, Id: 0xe00d76bb4cd95335, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ConfigRowSaveBody(w, (*ConfigRow)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ConfigRowLoadBody(&r, (*ConfigRow)(p)) }, CookSize: 29988, CookAlign: 4}
+	ConfigRowTableInfo = TableTypeInfo{Name: "ConfigRow", Size: uint32(unsafe.Sizeof(ConfigRow{})), NumFields: 5, Fields: ConfigRowTableFields, Reset: func(storage unsafe.Pointer) { ConfigRowReset((*ConfigRow)(storage)) }, Doc: "One row of a kind (pkg/config Row): its name and its fields, and the two\nstamps, RFC 3339 UTC, empty for a row a store has not stamped.", NumTags: 0, Tags: nil, Id: 0xe00d76bb4cd95335, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ConfigRowSaveBody(w, (*ConfigRow)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ConfigRowLoadBody(&r, (*ConfigRow)(p)) }, CookSize: 60772, CookAlign: 4}
 }
 
 // ConfigRowTableType returns ConfigRow's reflection descriptor.
@@ -17305,8 +17148,8 @@ var ConfigChangeTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "name", Json: "name", TypeName: "string", DeclaredTypeName: "string", Id: 0xc4bcadba8e631b86, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(ConfigChange{}.Name)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.Name)), CountOffset: uint32(unsafe.Offsetof(ConfigChange{}.NameLength)), PresentOffset: 0xffffffff,
-		CookOffset: 9, CookElemSize: 1, CookCountOffset: 76, CookPresentOffset: 4294967295,
+		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(ConfigChange{}.Name)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.Name)), CountOffset: uint32(unsafe.Offsetof(ConfigChange{}.NameLength)), PresentOffset: 0xffffffff,
+		CookOffset: 9, CookElemSize: 1, CookCountOffset: 140, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17317,7 +17160,7 @@ var ConfigChangeTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "op", Json: "op", TypeName: "ChangeOp", DeclaredTypeName: "ChangeOp", Id: 0x8b05607b556600a, Kind: 30, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(ConfigChange{}.Op)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.Op)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 80, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 144, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: 3,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    func(v uint64) string { return EnumNameChangeOp(ChangeOp(v)) },
@@ -17328,7 +17171,7 @@ var ConfigChangeTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "has_before", Json: "has_before", TypeName: "bool", DeclaredTypeName: "bool", Id: 0x511f33ef09c3af2f, Kind: 1, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(ConfigChange{}.HasBefore)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.HasBefore)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 81, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 145, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17336,21 +17179,10 @@ var ConfigChangeTableFields = []TableFieldInfo{
 		KeyTypeName: "", KeyName: nil, KeyId: nil,
 		Arms:  nil,
 		Guard: "", Table: nil,
-		Doc: TableDocNone, NumTags: 0, Tags: nil},
-	{Name: "before", Json: "before", TypeName: "RowFields", DeclaredTypeName: "RowFields", Id: 0xd89aa06245afb2be, Kind: 13, IsArray: false, Counted: false, Optional: false,
-		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(ConfigChange{}.Before)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.Before)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 84, CookElemSize: 29836, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
-		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
-		EnumName:    nil,
-		VariantId:   nil,
-		KeyTypeName: "", KeyName: nil, KeyId: nil,
-		Arms:  nil,
-		Guard: "", Table: RowFieldsTableType,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "has_after", Json: "has_after", TypeName: "bool", DeclaredTypeName: "bool", Id: 0xb0f529af221d41e, Kind: 1, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(ConfigChange{}.HasAfter)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.HasAfter)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 29920, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 146, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17359,20 +17191,9 @@ var ConfigChangeTableFields = []TableFieldInfo{
 		Arms:  nil,
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
-	{Name: "after", Json: "after", TypeName: "RowFields", DeclaredTypeName: "RowFields", Id: 0xbf82010f6f71eae9, Kind: 13, IsArray: false, Counted: false, Optional: false,
-		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(ConfigChange{}.After)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.After)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 29924, CookElemSize: 29836, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
-		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
-		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
-		EnumName:    nil,
-		VariantId:   nil,
-		KeyTypeName: "", KeyName: nil, KeyId: nil,
-		Arms:  nil,
-		Guard: "", Table: RowFieldsTableType,
-		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "actor", Json: "actor", TypeName: "string", DeclaredTypeName: "string", Id: 0xdcccc5391c47d4da, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(ConfigChange{}.Actor)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.Actor)), CountOffset: uint32(unsafe.Offsetof(ConfigChange{}.ActorLength)), PresentOffset: 0xffffffff,
-		CookOffset: 59760, CookElemSize: 1, CookCountOffset: 59828, CookPresentOffset: 4294967295,
+		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(ConfigChange{}.Actor)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.Actor)), CountOffset: uint32(unsafe.Offsetof(ConfigChange{}.ActorLength)), PresentOffset: 0xffffffff,
+		CookOffset: 147, CookElemSize: 1, CookCountOffset: 276, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17382,8 +17203,8 @@ var ConfigChangeTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "reason", Json: "reason", TypeName: "string", DeclaredTypeName: "string", Id: 0x65e8d7f3474f2639, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(ConfigChange{}.Reason)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.Reason)), CountOffset: uint32(unsafe.Offsetof(ConfigChange{}.ReasonLength)), PresentOffset: 0xffffffff,
-		CookOffset: 59832, CookElemSize: 1, CookCountOffset: 60092, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(ConfigChange{}.Reason)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.Reason)), CountOffset: uint32(unsafe.Offsetof(ConfigChange{}.ReasonLength)), PresentOffset: 0xffffffff,
+		CookOffset: 280, CookElemSize: 1, CookCountOffset: 2588, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17394,7 +17215,7 @@ var ConfigChangeTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "at", Json: "at", TypeName: "string", DeclaredTypeName: "string", Id: 0x89c4e07b545a968, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(ConfigChange{}.At)), ElemSize: uint32(unsafe.Sizeof(ConfigChange{}.At)), CountOffset: uint32(unsafe.Offsetof(ConfigChange{}.AtLength)), PresentOffset: 0xffffffff,
-		CookOffset: 60096, CookElemSize: 1, CookCountOffset: 60132, CookPresentOffset: 4294967295,
+		CookOffset: 2592, CookElemSize: 1, CookCountOffset: 2628, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17409,7 +17230,7 @@ var ConfigChangeTableFields = []TableFieldInfo{
 var ConfigChangeTableInfo TableTypeInfo
 
 func init() {
-	ConfigChangeTableInfo = TableTypeInfo{Name: "ConfigChange", Size: uint32(unsafe.Sizeof(ConfigChange{})), NumFields: 11, Fields: ConfigChangeTableFields, Reset: func(storage unsafe.Pointer) { ConfigChangeReset((*ConfigChange)(storage)) }, Doc: "One history row (pkg/config Change, written pg.go record, read pg.go\nHistory): the write's kind, name and op, the row before and the row after\n(an add has no before and a remove has no after: the has_ flags say which\nride), who made it, why (the --reason, empty when none), and when (RFC 3339\nUTC). The reason rides here, apart from the fields, as Change.Reason does.", NumTags: 0, Tags: nil, Id: 0xe28e52724b35d3a3, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ConfigChangeSaveBody(w, (*ConfigChange)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ConfigChangeLoadBody(&r, (*ConfigChange)(p)) }, CookSize: 60136, CookAlign: 8}
+	ConfigChangeTableInfo = TableTypeInfo{Name: "ConfigChange", Size: uint32(unsafe.Sizeof(ConfigChange{})), NumFields: 9, Fields: ConfigChangeTableFields, Reset: func(storage unsafe.Pointer) { ConfigChangeReset((*ConfigChange)(storage)) }, Doc: "One history row (pkg/config Change, written pg.go record, read pg.go\nHistory): the write's kind, name and op, which sides of the change ride\n(an add has no before and a remove has no after: the has_ flags say which),\nwho made it, why (the --reason, empty when none), and when (RFC 3339 UTC).\nThe reason rides here, apart from the fields, as Change.Reason does. The\nbefore and the after are RowFields records that follow this header, the\nbefore first, as pg.go keeps them in two columns: two rows at the field\nbound do not fit one 65536 byte record, so each side is a record of its own.", NumTags: 0, Tags: nil, Id: 0xe28e52724b35d3a3, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ConfigChangeSaveBody(w, (*ConfigChange)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ConfigChangeLoadBody(&r, (*ConfigChange)(p)) }, CookSize: 2632, CookAlign: 8}
 }
 
 // ConfigChangeTableType returns ConfigChange's reflection descriptor.
@@ -17501,8 +17322,8 @@ func CanonicalWordTableType() *TableTypeInfo { return &CanonicalWordTableInfo }
 // MachineViewTableFields is MachineView's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var MachineViewTableFields = []TableFieldInfo{
 	{Name: "name", Json: "name", TypeName: "string", DeclaredTypeName: "string", Id: 0xc4bcadba8e631b86, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(MachineView{}.Name)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.Name)), CountOffset: uint32(unsafe.Offsetof(MachineView{}.NameLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 68, CookPresentOffset: 4294967295,
+		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(MachineView{}.Name)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.Name)), CountOffset: uint32(unsafe.Offsetof(MachineView{}.NameLength)), PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 1, CookCountOffset: 132, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17512,8 +17333,8 @@ var MachineViewTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "user", Json: "user", TypeName: "string", DeclaredTypeName: "string", Id: 0x7d6780e4032b48f2, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(MachineView{}.User)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.User)), CountOffset: uint32(unsafe.Offsetof(MachineView{}.UserLength)), PresentOffset: 0xffffffff,
-		CookOffset: 72, CookElemSize: 1, CookCountOffset: 140, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(MachineView{}.User)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.User)), CountOffset: uint32(unsafe.Offsetof(MachineView{}.UserLength)), PresentOffset: 0xffffffff,
+		CookOffset: 136, CookElemSize: 1, CookCountOffset: 2444, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17523,8 +17344,8 @@ var MachineViewTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "seat", Json: "seat", TypeName: "string", DeclaredTypeName: "string", Id: 0x2d08f118d3f933e8, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(MachineView{}.Seat)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.Seat)), CountOffset: uint32(unsafe.Offsetof(MachineView{}.SeatLength)), PresentOffset: 0xffffffff,
-		CookOffset: 144, CookElemSize: 1, CookCountOffset: 212, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(MachineView{}.Seat)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.Seat)), CountOffset: uint32(unsafe.Offsetof(MachineView{}.SeatLength)), PresentOffset: 0xffffffff,
+		CookOffset: 2448, CookElemSize: 1, CookCountOffset: 4756, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17535,7 +17356,7 @@ var MachineViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "slots", Json: "slots", TypeName: "int32", DeclaredTypeName: "int32", Id: 0xe68c2e6bb1ee5646, Kind: 4, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(MachineView{}.Slots)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.Slots)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 216, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 4760, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17546,7 +17367,7 @@ var MachineViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "runners", Json: "runners", TypeName: "int32", DeclaredTypeName: "int32", Id: 0x83f33fb50ef47638, Kind: 4, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(MachineView{}.Runners)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.Runners)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 220, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 4764, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17557,7 +17378,7 @@ var MachineViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "roles", Json: "roles", TypeName: "string", DeclaredTypeName: "string", Id: 0x584d04462430003e, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(MachineView{}.Roles)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.Roles)), CountOffset: uint32(unsafe.Offsetof(MachineView{}.RolesLength)), PresentOffset: 0xffffffff,
-		CookOffset: 224, CookElemSize: 1, CookCountOffset: 292, CookPresentOffset: 4294967295,
+		CookOffset: 4768, CookElemSize: 1, CookCountOffset: 4836, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17568,7 +17389,7 @@ var MachineViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "tla", Json: "tla", TypeName: "bool", DeclaredTypeName: "bool", Id: 0x5703dd19446e34d4, Kind: 1, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(MachineView{}.Tla)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.Tla)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 296, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 4840, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17579,7 +17400,7 @@ var MachineViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "width", Json: "width", TypeName: "int32", DeclaredTypeName: "int32", Id: 0xdbdacd932fd1e9bf, Kind: 4, IsArray: false, Counted: false, Optional: true,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(MachineView{}.Width)), ElemSize: uint32(unsafe.Sizeof(MachineView{}.Width)), CountOffset: 0xffffffff, PresentOffset: uint32(unsafe.Offsetof(MachineView{}.WidthPresent)),
-		CookOffset: 300, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 304,
+		CookOffset: 4844, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4848,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17594,7 +17415,7 @@ var MachineViewTableFields = []TableFieldInfo{
 var MachineViewTableInfo TableTypeInfo
 
 func init() {
-	MachineViewTableInfo = TableTypeInfo{Name: "MachineView", Size: uint32(unsafe.Sizeof(MachineView{})), NumFields: 8, Fields: MachineViewTableFields, Reset: func(storage unsafe.Pointer) { MachineViewReset((*MachineView)(storage)) }, Doc: "A machine's view as the Redis view holds it (the machine:<name> hash the\ninventory reads, pkg/config Snapshot.Machines): its login, seat, slots,\nrunners, explicit roles as the canonical comma list, tla flag, and the width\nwhen the row names one (the nullable width; absent defaults to half the\nbeat cores).", NumTags: 0, Tags: nil, Id: 0xa9726a5c96646c4f, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return MachineViewSaveBody(w, (*MachineView)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return MachineViewLoadBody(&r, (*MachineView)(p)) }, CookSize: 308, CookAlign: 4}
+	MachineViewTableInfo = TableTypeInfo{Name: "MachineView", Size: uint32(unsafe.Sizeof(MachineView{})), NumFields: 8, Fields: MachineViewTableFields, Reset: func(storage unsafe.Pointer) { MachineViewReset((*MachineView)(storage)) }, Doc: "A machine's view as the Redis view holds it (the machine:<name> hash the\ninventory reads, pkg/config Snapshot.Machines): its login, seat, slots,\nrunners, explicit roles as the canonical comma list, tla flag, and the width\nwhen the row names one (the nullable width; absent defaults to half the\nbeat cores).", NumTags: 0, Tags: nil, Id: 0xa9726a5c96646c4f, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return MachineViewSaveBody(w, (*MachineView)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return MachineViewLoadBody(&r, (*MachineView)(p)) }, CookSize: 4852, CookAlign: 4}
 }
 
 // MachineViewTableType returns MachineView's reflection descriptor.
@@ -17603,8 +17424,8 @@ func MachineViewTableType() *TableTypeInfo { return &MachineViewTableInfo }
 // InventoryLoopTableFields is InventoryLoop's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var InventoryLoopTableFields = []TableFieldInfo{
 	{Name: "machine", Json: "machine", TypeName: "string", DeclaredTypeName: "string", Id: 0x385157cb98d7be6e, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Machine)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Machine)), CountOffset: uint32(unsafe.Offsetof(InventoryLoop{}.MachineLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 68, CookPresentOffset: 4294967295,
+		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Machine)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Machine)), CountOffset: uint32(unsafe.Offsetof(InventoryLoop{}.MachineLength)), PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 1, CookCountOffset: 132, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17614,8 +17435,8 @@ var InventoryLoopTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "name", Json: "name", TypeName: "string", DeclaredTypeName: "string", Id: 0xc4bcadba8e631b86, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Name)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Name)), CountOffset: uint32(unsafe.Offsetof(InventoryLoop{}.NameLength)), PresentOffset: 0xffffffff,
-		CookOffset: 72, CookElemSize: 1, CookCountOffset: 140, CookPresentOffset: 4294967295,
+		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Name)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Name)), CountOffset: uint32(unsafe.Offsetof(InventoryLoop{}.NameLength)), PresentOffset: 0xffffffff,
+		CookOffset: 136, CookElemSize: 1, CookCountOffset: 268, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17626,7 +17447,7 @@ var InventoryLoopTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "argv", Json: "argv", TypeName: "string", DeclaredTypeName: "string", Id: 0x89492d843ebc9863, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 4096, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Argv)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Argv)), CountOffset: uint32(unsafe.Offsetof(InventoryLoop{}.ArgvLength)), PresentOffset: 0xffffffff,
-		CookOffset: 144, CookElemSize: 1, CookCountOffset: 4244, CookPresentOffset: 4294967295,
+		CookOffset: 272, CookElemSize: 1, CookCountOffset: 4372, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17636,8 +17457,8 @@ var InventoryLoopTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "seat", Json: "seat", TypeName: "string", DeclaredTypeName: "string", Id: 0x2d08f118d3f933e8, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Seat)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Seat)), CountOffset: uint32(unsafe.Offsetof(InventoryLoop{}.SeatLength)), PresentOffset: 0xffffffff,
-		CookOffset: 4248, CookElemSize: 1, CookCountOffset: 4316, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Seat)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Seat)), CountOffset: uint32(unsafe.Offsetof(InventoryLoop{}.SeatLength)), PresentOffset: 0xffffffff,
+		CookOffset: 4376, CookElemSize: 1, CookCountOffset: 6684, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17648,7 +17469,7 @@ var InventoryLoopTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "keys", Json: "keys", TypeName: "EnvName", DeclaredTypeName: "EnvName", Id: 0x581987d75cbd3e2d, Kind: 13, IsArray: true, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Keys)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Keys[0])), CountOffset: uint32(unsafe.Offsetof(InventoryLoop{}.KeysCount)), PresentOffset: 0xffffffff,
-		CookOffset: 4320, CookElemSize: 72, CookCountOffset: 6624, CookPresentOffset: 4294967295,
+		CookOffset: 6688, CookElemSize: 136, CookCountOffset: 11040, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17659,7 +17480,7 @@ var InventoryLoopTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "every", Json: "every", TypeName: "int32", DeclaredTypeName: "int32", Id: 0x1153970079d1c964, Kind: 4, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Every)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Every)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 6628, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 11044, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 3.1536e+07, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17670,7 +17491,7 @@ var InventoryLoopTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "keepalive", Json: "keepalive", TypeName: "bool", DeclaredTypeName: "bool", Id: 0x38fa8bcdfda6f3a9, Kind: 1, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Keepalive)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Keepalive)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 6632, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 11048, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17681,7 +17502,7 @@ var InventoryLoopTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "enabled", Json: "enabled", TypeName: "bool", DeclaredTypeName: "bool", Id: 0x70d885806b56289e, Kind: 1, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Enabled)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Enabled)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 6633, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 11049, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17691,8 +17512,8 @@ var InventoryLoopTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "log", Json: "log", TypeName: "string", DeclaredTypeName: "string", Id: 0x125073191daf5431, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 512, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Log)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Log)), CountOffset: uint32(unsafe.Offsetof(InventoryLoop{}.LogLength)), PresentOffset: 0xffffffff,
-		CookOffset: 6634, CookElemSize: 1, CookCountOffset: 7148, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(InventoryLoop{}.Log)), ElemSize: uint32(unsafe.Sizeof(InventoryLoop{}.Log)), CountOffset: uint32(unsafe.Offsetof(InventoryLoop{}.LogLength)), PresentOffset: 0xffffffff,
+		CookOffset: 11050, CookElemSize: 1, CookCountOffset: 13356, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17707,7 +17528,7 @@ var InventoryLoopTableFields = []TableFieldInfo{
 var InventoryLoopTableInfo TableTypeInfo
 
 func init() {
-	InventoryLoopTableInfo = TableTypeInfo{Name: "InventoryLoop", Size: uint32(unsafe.Sizeof(InventoryLoop{})), NumFields: 9, Fields: InventoryLoopTableFields, Reset: func(storage unsafe.Pointer) { InventoryLoopReset((*InventoryLoop)(storage)) }, Doc: "One loop as the inventory carries it (pkg/config InventoryLoop, written\ninventory.go, read parseLoop): its machine, name, the argv in the loop\nview's canonical JSON text (a list of at most 64 strings in at most\nMaxArgvBytes bytes; the view carries it as that text), the seat, the\nsecret names (a sorted list, only with a seat), every (seconds, 0 for a\nkept-alive loop), keepalive, enabled and the log path.", NumTags: 0, Tags: nil, Id: 0x6e05627b74e39e35, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return InventoryLoopSaveBody(w, (*InventoryLoop)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return InventoryLoopLoadBody(&r, (*InventoryLoop)(p)) }, CookSize: 7152, CookAlign: 4}
+	InventoryLoopTableInfo = TableTypeInfo{Name: "InventoryLoop", Size: uint32(unsafe.Sizeof(InventoryLoop{})), NumFields: 9, Fields: InventoryLoopTableFields, Reset: func(storage unsafe.Pointer) { InventoryLoopReset((*InventoryLoop)(storage)) }, Doc: "One loop as the inventory carries it (pkg/config InventoryLoop, written\ninventory.go, read parseLoop): its machine, name, the argv in the loop\nview's canonical JSON text (a list of at most 64 strings in at most\nMaxArgvBytes bytes; the view carries it as that text), the seat, the\nsecret names (a sorted list, only with a seat), every (seconds, 0 for a\nkept-alive loop), keepalive, enabled and the log path.", NumTags: 0, Tags: nil, Id: 0x6e05627b74e39e35, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return InventoryLoopSaveBody(w, (*InventoryLoop)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return InventoryLoopLoadBody(&r, (*InventoryLoop)(p)) }, CookSize: 13360, CookAlign: 4}
 }
 
 // InventoryLoopTableType returns InventoryLoop's reflection descriptor.
@@ -17716,8 +17537,8 @@ func InventoryLoopTableType() *TableTypeInfo { return &InventoryLoopTableInfo }
 // HostViewTableFields is HostView's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var HostViewTableFields = []TableFieldInfo{
 	{Name: "ansible_host", Json: "ansible_host", TypeName: "string", DeclaredTypeName: "string", Id: 0xb1c8aea63f05c6a6, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(HostView{}.AnsibleHost)), ElemSize: uint32(unsafe.Sizeof(HostView{}.AnsibleHost)), CountOffset: uint32(unsafe.Offsetof(HostView{}.AnsibleHostLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 68, CookPresentOffset: 4294967295,
+		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(HostView{}.AnsibleHost)), ElemSize: uint32(unsafe.Sizeof(HostView{}.AnsibleHost)), CountOffset: uint32(unsafe.Offsetof(HostView{}.AnsibleHostLength)), PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 1, CookCountOffset: 132, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17728,7 +17549,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "kind", Json: "kind", TypeName: "ConfigKind", DeclaredTypeName: "ConfigKind", Id: 0xef9c96d721673243, Kind: 30, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HostView{}.Kind)), ElemSize: uint32(unsafe.Sizeof(HostView{}.Kind)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 72, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 136, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: 8,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    func(v uint64) string { return EnumNameConfigKind(ConfigKind(v)) },
@@ -17739,7 +17560,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "slots", Json: "slots", TypeName: "int32", DeclaredTypeName: "int32", Id: 0xe68c2e6bb1ee5646, Kind: 4, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HostView{}.Slots)), ElemSize: uint32(unsafe.Sizeof(HostView{}.Slots)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 76, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 140, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17750,7 +17571,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "slots_capacity", Json: "slots_capacity", TypeName: "int32", DeclaredTypeName: "int32", Id: 0x20f324b35a35e44f, Kind: 4, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HostView{}.SlotsCapacity)), ElemSize: uint32(unsafe.Sizeof(HostView{}.SlotsCapacity)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 80, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 144, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17761,7 +17582,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "runners", Json: "runners", TypeName: "int32", DeclaredTypeName: "int32", Id: 0x83f33fb50ef47638, Kind: 4, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HostView{}.Runners)), ElemSize: uint32(unsafe.Sizeof(HostView{}.Runners)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 84, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 148, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17772,7 +17593,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "slots_share", Json: "slots_share", TypeName: "int32", DeclaredTypeName: "int32", Id: 0x2fe64655e6b18812, Kind: 4, IsArray: false, Counted: false, Optional: true,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HostView{}.SlotsShare)), ElemSize: uint32(unsafe.Sizeof(HostView{}.SlotsShare)), CountOffset: 0xffffffff, PresentOffset: uint32(unsafe.Offsetof(HostView{}.SlotsSharePresent)),
-		CookOffset: 88, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 92,
+		CookOffset: 152, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 156,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17783,7 +17604,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "cores", Json: "cores", TypeName: "int32", DeclaredTypeName: "int32", Id: 0xce57648e554861b7, Kind: 4, IsArray: false, Counted: false, Optional: true,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HostView{}.Cores)), ElemSize: uint32(unsafe.Sizeof(HostView{}.Cores)), CountOffset: 0xffffffff, PresentOffset: uint32(unsafe.Offsetof(HostView{}.CoresPresent)),
-		CookOffset: 96, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 100,
+		CookOffset: 160, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 164,
 		HasRange: true, RangeMin: 0.0, RangeMax: 100000.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17794,7 +17615,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "bench_os", Json: "bench_os", TypeName: "string", DeclaredTypeName: "string", Id: 0x2012766b2ddb813c, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(HostView{}.BenchOs)), ElemSize: uint32(unsafe.Sizeof(HostView{}.BenchOs)), CountOffset: uint32(unsafe.Offsetof(HostView{}.BenchOsLength)), PresentOffset: 0xffffffff,
-		CookOffset: 101, CookElemSize: 1, CookCountOffset: 136, CookPresentOffset: 4294967295,
+		CookOffset: 165, CookElemSize: 1, CookCountOffset: 200, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17805,7 +17626,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "nova_arch", Json: "nova_arch", TypeName: "string", DeclaredTypeName: "string", Id: 0x7c46adfdf7676288, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(HostView{}.NovaArch)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaArch)), CountOffset: uint32(unsafe.Offsetof(HostView{}.NovaArchLength)), PresentOffset: 0xffffffff,
-		CookOffset: 140, CookElemSize: 1, CookCountOffset: 176, CookPresentOffset: 4294967295,
+		CookOffset: 204, CookElemSize: 1, CookCountOffset: 240, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17816,7 +17637,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "nova_tla", Json: "nova_tla", TypeName: "bool", DeclaredTypeName: "bool", Id: 0xd8f8d8f10d8e04a3, Kind: 1, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HostView{}.NovaTla)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaTla)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 180, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 244, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17826,8 +17647,8 @@ var HostViewTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "registry_seat", Json: "registry_seat", TypeName: "string", DeclaredTypeName: "string", Id: 0xe958329ba5d0f79a, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(HostView{}.RegistrySeat)), ElemSize: uint32(unsafe.Sizeof(HostView{}.RegistrySeat)), CountOffset: uint32(unsafe.Offsetof(HostView{}.RegistrySeatLength)), PresentOffset: 0xffffffff,
-		CookOffset: 181, CookElemSize: 1, CookCountOffset: 248, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(HostView{}.RegistrySeat)), ElemSize: uint32(unsafe.Sizeof(HostView{}.RegistrySeat)), CountOffset: uint32(unsafe.Offsetof(HostView{}.RegistrySeatLength)), PresentOffset: 0xffffffff,
+		CookOffset: 245, CookElemSize: 1, CookCountOffset: 2552, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17838,7 +17659,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "registry_roles", Json: "registry_roles", TypeName: "string", DeclaredTypeName: "string", Id: 0x52ec9f1ca04c1bc, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(HostView{}.RegistryRoles)), ElemSize: uint32(unsafe.Sizeof(HostView{}.RegistryRoles)), CountOffset: uint32(unsafe.Offsetof(HostView{}.RegistryRolesLength)), PresentOffset: 0xffffffff,
-		CookOffset: 252, CookElemSize: 1, CookCountOffset: 320, CookPresentOffset: 4294967295,
+		CookOffset: 2556, CookElemSize: 1, CookCountOffset: 2624, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17848,8 +17669,8 @@ var HostViewTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "ansible_user", Json: "ansible_user", TypeName: "string", DeclaredTypeName: "string", Id: 0xc4e745c36c36b777, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(HostView{}.AnsibleUser)), ElemSize: uint32(unsafe.Sizeof(HostView{}.AnsibleUser)), CountOffset: uint32(unsafe.Offsetof(HostView{}.AnsibleUserLength)), PresentOffset: 0xffffffff,
-		CookOffset: 324, CookElemSize: 1, CookCountOffset: 392, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(HostView{}.AnsibleUser)), ElemSize: uint32(unsafe.Sizeof(HostView{}.AnsibleUser)), CountOffset: uint32(unsafe.Offsetof(HostView{}.AnsibleUserLength)), PresentOffset: 0xffffffff,
+		CookOffset: 2628, CookElemSize: 1, CookCountOffset: 4936, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17859,8 +17680,8 @@ var HostViewTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "nova_seat", Json: "nova_seat", TypeName: "string", DeclaredTypeName: "string", Id: 0x4855d99334fa9891, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(HostView{}.NovaSeat)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaSeat)), CountOffset: uint32(unsafe.Offsetof(HostView{}.NovaSeatLength)), PresentOffset: 0xffffffff,
-		CookOffset: 396, CookElemSize: 1, CookCountOffset: 464, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(HostView{}.NovaSeat)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaSeat)), CountOffset: uint32(unsafe.Offsetof(HostView{}.NovaSeatLength)), PresentOffset: 0xffffffff,
+		CookOffset: 4940, CookElemSize: 1, CookCountOffset: 7248, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17870,8 +17691,8 @@ var HostViewTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "nova_redis_addr", Json: "nova_redis_addr", TypeName: "string", DeclaredTypeName: "string", Id: 0x5634bfc542c0cef, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(HostView{}.NovaRedisAddr)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaRedisAddr)), CountOffset: uint32(unsafe.Offsetof(HostView{}.NovaRedisAddrLength)), PresentOffset: 0xffffffff,
-		CookOffset: 468, CookElemSize: 1, CookCountOffset: 536, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(HostView{}.NovaRedisAddr)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaRedisAddr)), CountOffset: uint32(unsafe.Offsetof(HostView{}.NovaRedisAddrLength)), PresentOffset: 0xffffffff,
+		CookOffset: 7252, CookElemSize: 1, CookCountOffset: 9560, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17881,8 +17702,8 @@ var HostViewTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "nova_bus_addr", Json: "nova_bus_addr", TypeName: "string", DeclaredTypeName: "string", Id: 0xe986e31e72a72e3c, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(HostView{}.NovaBusAddr)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaBusAddr)), CountOffset: uint32(unsafe.Offsetof(HostView{}.NovaBusAddrLength)), PresentOffset: 0xffffffff,
-		CookOffset: 540, CookElemSize: 1, CookCountOffset: 608, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(HostView{}.NovaBusAddr)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaBusAddr)), CountOffset: uint32(unsafe.Offsetof(HostView{}.NovaBusAddrLength)), PresentOffset: 0xffffffff,
+		CookOffset: 9564, CookElemSize: 1, CookCountOffset: 11872, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17893,7 +17714,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "nova_redis_port", Json: "nova_redis_port", TypeName: "int32", DeclaredTypeName: "int32", Id: 0x9c1d226d97d03d57, Kind: 4, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HostView{}.NovaRedisPort)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaRedisPort)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 612, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 11876, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 65535.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17903,8 +17724,8 @@ var HostViewTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "nova_pg_dsn", Json: "nova_pg_dsn", TypeName: "string", DeclaredTypeName: "string", Id: 0xb5c535c3a59c23eb, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(HostView{}.NovaPgDsn)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaPgDsn)), CountOffset: uint32(unsafe.Offsetof(HostView{}.NovaPgDsnLength)), PresentOffset: 0xffffffff,
-		CookOffset: 616, CookElemSize: 1, CookCountOffset: 876, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(HostView{}.NovaPgDsn)), ElemSize: uint32(unsafe.Sizeof(HostView{}.NovaPgDsn)), CountOffset: uint32(unsafe.Offsetof(HostView{}.NovaPgDsnLength)), PresentOffset: 0xffffffff,
+		CookOffset: 11880, CookElemSize: 1, CookCountOffset: 14188, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17915,7 +17736,7 @@ var HostViewTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "local", Json: "local", TypeName: "bool", DeclaredTypeName: "bool", Id: 0x249f1fb6f3a680e8, Kind: 1, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(HostView{}.Local)), ElemSize: uint32(unsafe.Sizeof(HostView{}.Local)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 880, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 14192, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17930,7 +17751,7 @@ var HostViewTableFields = []TableFieldInfo{
 var HostViewTableInfo TableTypeInfo
 
 func init() {
-	HostViewTableInfo = TableTypeInfo{Name: "HostView", Size: uint32(unsafe.Sizeof(HostView{})), NumFields: 19, Fields: HostViewTableFields, Reset: func(storage unsafe.Pointer) { HostViewReset((*HostView)(storage)) }, Doc: "One host's variables in the inventory (pkg/config BuildInventory, the\nhostvars map): the facts the machine row and its beat give, the fleet's\nstore, bus and port, and whether the host is the machine the command runs\non. An empty value is left out of the Ansible JSON; here it is the empty\nstring, and the optionals are the facts that may be absent: slots_share\n(the width), cores, and the beat's os and arch.", NumTags: 0, Tags: nil, Id: 0x5a97d7ef41dc4d7a, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return HostViewSaveBody(w, (*HostView)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return HostViewLoadBody(&r, (*HostView)(p)) }, CookSize: 884, CookAlign: 4}
+	HostViewTableInfo = TableTypeInfo{Name: "HostView", Size: uint32(unsafe.Sizeof(HostView{})), NumFields: 19, Fields: HostViewTableFields, Reset: func(storage unsafe.Pointer) { HostViewReset((*HostView)(storage)) }, Doc: "One host's variables in the inventory (pkg/config BuildInventory, the\nhostvars map): the facts the machine row and its beat give, the fleet's\nstore, bus and port, and whether the host is the machine the command runs\non. An empty value is left out of the Ansible JSON; here it is the empty\nstring, and the optionals are the facts that may be absent: slots_share\n(the width), cores, and the beat's os and arch.", NumTags: 0, Tags: nil, Id: 0x5a97d7ef41dc4d7a, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return HostViewSaveBody(w, (*HostView)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return HostViewLoadBody(&r, (*HostView)(p)) }, CookSize: 14196, CookAlign: 4}
 }
 
 // HostViewTableType returns HostView's reflection descriptor.
@@ -17939,8 +17760,8 @@ func HostViewTableType() *TableTypeInfo { return &HostViewTableInfo }
 // HostNameTableFields is HostName's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var HostNameTableFields = []TableFieldInfo{
 	{Name: "name", Json: "name", TypeName: "string", DeclaredTypeName: "string", Id: 0xc4bcadba8e631b86, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(HostName{}.Name)), ElemSize: uint32(unsafe.Sizeof(HostName{}.Name)), CountOffset: uint32(unsafe.Offsetof(HostName{}.NameLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 68, CookPresentOffset: 4294967295,
+		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(HostName{}.Name)), ElemSize: uint32(unsafe.Sizeof(HostName{}.Name)), CountOffset: uint32(unsafe.Offsetof(HostName{}.NameLength)), PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 1, CookCountOffset: 132, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17955,7 +17776,7 @@ var HostNameTableFields = []TableFieldInfo{
 var HostNameTableInfo TableTypeInfo
 
 func init() {
-	HostNameTableInfo = TableTypeInfo{Name: "HostName", Size: uint32(unsafe.Sizeof(HostName{})), NumFields: 1, Fields: HostNameTableFields, Reset: func(storage unsafe.Pointer) { HostNameReset((*HostName)(storage)) }, Doc: "A host name in a group (the shape of a row name, at most MaxName bytes). An\narray of strings is a bounded array of this wrapper (the compiler's rule: an array of string(N) is not supported).", NumTags: 0, Tags: nil, Id: 0xf3896d29c6b7bdac, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return HostNameSaveBody(w, (*HostName)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return HostNameLoadBody(&r, (*HostName)(p)) }, CookSize: 72, CookAlign: 4}
+	HostNameTableInfo = TableTypeInfo{Name: "HostName", Size: uint32(unsafe.Sizeof(HostName{})), NumFields: 1, Fields: HostNameTableFields, Reset: func(storage unsafe.Pointer) { HostNameReset((*HostName)(storage)) }, Doc: "A host name in a group (the shape of a row name, at most MaxName bytes). An\narray of strings is a bounded array of this wrapper (the compiler's rule: an array of string(N) is not supported).", NumTags: 0, Tags: nil, Id: 0xf3896d29c6b7bdac, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return HostNameSaveBody(w, (*HostName)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return HostNameLoadBody(&r, (*HostName)(p)) }, CookSize: 136, CookAlign: 4}
 }
 
 // HostNameTableType returns HostName's reflection descriptor.
@@ -17964,8 +17785,8 @@ func HostNameTableType() *TableTypeInfo { return &HostNameTableInfo }
 // EnvNameTableFields is EnvName's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var EnvNameTableFields = []TableFieldInfo{
 	{Name: "name", Json: "name", TypeName: "string", DeclaredTypeName: "string", Id: 0xc4bcadba8e631b86, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(EnvName{}.Name)), ElemSize: uint32(unsafe.Sizeof(EnvName{}.Name)), CountOffset: uint32(unsafe.Offsetof(EnvName{}.NameLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 68, CookPresentOffset: 4294967295,
+		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(EnvName{}.Name)), ElemSize: uint32(unsafe.Sizeof(EnvName{}.Name)), CountOffset: uint32(unsafe.Offsetof(EnvName{}.NameLength)), PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 1, CookCountOffset: 132, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -17980,7 +17801,7 @@ var EnvNameTableFields = []TableFieldInfo{
 var EnvNameTableInfo TableTypeInfo
 
 func init() {
-	EnvNameTableInfo = TableTypeInfo{Name: "EnvName", Size: uint32(unsafe.Sizeof(EnvName{})), NumFields: 1, Fields: EnvNameTableFields, Reset: func(storage unsafe.Pointer) { EnvNameReset((*EnvName)(storage)) }, Doc: "A secret's environment variable name in a loop's keys list (letters, digits\nand underscores, not starting with a digit: pkg/config keyPattern).", NumTags: 0, Tags: nil, Id: 0xebe1594f1b4077cf, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return EnvNameSaveBody(w, (*EnvName)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return EnvNameLoadBody(&r, (*EnvName)(p)) }, CookSize: 72, CookAlign: 4}
+	EnvNameTableInfo = TableTypeInfo{Name: "EnvName", Size: uint32(unsafe.Sizeof(EnvName{})), NumFields: 1, Fields: EnvNameTableFields, Reset: func(storage unsafe.Pointer) { EnvNameReset((*EnvName)(storage)) }, Doc: "A secret's environment variable name in a loop's keys list (letters, digits\nand underscores, not starting with a digit: pkg/config keyPattern).", NumTags: 0, Tags: nil, Id: 0xebe1594f1b4077cf, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return EnvNameSaveBody(w, (*EnvName)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return EnvNameLoadBody(&r, (*EnvName)(p)) }, CookSize: 136, CookAlign: 4}
 }
 
 // EnvNameTableType returns EnvName's reflection descriptor.
@@ -17989,8 +17810,8 @@ func EnvNameTableType() *TableTypeInfo { return &EnvNameTableInfo }
 // HostGroupTableFields is HostGroup's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var HostGroupTableFields = []TableFieldInfo{
 	{Name: "hosts", Json: "hosts", TypeName: "HostName", DeclaredTypeName: "HostName", Id: 0x3b28df7b43e00694, Kind: 13, IsArray: true, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(HostGroup{}.Hosts)), ElemSize: uint32(unsafe.Sizeof(HostGroup{}.Hosts[0])), CountOffset: uint32(unsafe.Offsetof(HostGroup{}.HostsCount)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 72, CookCountOffset: 4608, CookPresentOffset: 4294967295,
+		ArrayBound: 48, Offset: uint32(unsafe.Offsetof(HostGroup{}.Hosts)), ElemSize: uint32(unsafe.Sizeof(HostGroup{}.Hosts[0])), CountOffset: uint32(unsafe.Offsetof(HostGroup{}.HostsCount)), PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 136, CookCountOffset: 6528, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18005,7 +17826,7 @@ var HostGroupTableFields = []TableFieldInfo{
 var HostGroupTableInfo TableTypeInfo
 
 func init() {
-	HostGroupTableInfo = TableTypeInfo{Name: "HostGroup", Size: uint32(unsafe.Sizeof(HostGroup{})), NumFields: 1, Fields: HostGroupTableFields, Reset: func(storage unsafe.Pointer) { HostGroupReset((*HostGroup)(storage)) }, Doc: "A group of the inventory: its hosts, at most MaxHosts of them.", NumTags: 0, Tags: nil, Id: 0x7cb74fd16167b7b6, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return HostGroupSaveBody(w, (*HostGroup)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return HostGroupLoadBody(&r, (*HostGroup)(p)) }, CookSize: 4612, CookAlign: 4}
+	HostGroupTableInfo = TableTypeInfo{Name: "HostGroup", Size: uint32(unsafe.Sizeof(HostGroup{})), NumFields: 1, Fields: HostGroupTableFields, Reset: func(storage unsafe.Pointer) { HostGroupReset((*HostGroup)(storage)) }, Doc: "A group of the inventory: its hosts, at most MaxHosts of them.", NumTags: 0, Tags: nil, Id: 0x7cb74fd16167b7b6, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return HostGroupSaveBody(w, (*HostGroup)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return HostGroupLoadBody(&r, (*HostGroup)(p)) }, CookSize: 6532, CookAlign: 4}
 }
 
 // HostGroupTableType returns HostGroup's reflection descriptor.
@@ -18051,7 +17872,7 @@ func KindRevTableType() *TableTypeInfo { return &KindRevTableInfo }
 var InventoryTableFields = []TableFieldInfo{
 	{Name: "all", Json: "all", TypeName: "HostGroup", DeclaredTypeName: "HostGroup", Id: 0xe6f09b190519daa4, Kind: 13, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Inventory{}.All)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.All)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 4612, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 0, CookElemSize: 6532, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18062,7 +17883,7 @@ var InventoryTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "adopt", Json: "adopt", TypeName: "HostGroup", DeclaredTypeName: "HostGroup", Id: 0xf7e235fde4a67611, Kind: 13, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Inventory{}.Adopt)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.Adopt)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 4612, CookElemSize: 4612, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 6532, CookElemSize: 6532, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18073,7 +17894,7 @@ var InventoryTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "benches", Json: "benches", TypeName: "HostGroup", DeclaredTypeName: "HostGroup", Id: 0x6623fcd9fe39fb45, Kind: 13, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Inventory{}.Benches)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.Benches)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 9224, CookElemSize: 4612, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 13064, CookElemSize: 6532, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18084,7 +17905,7 @@ var InventoryTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "coordinator", Json: "coordinator", TypeName: "HostGroup", DeclaredTypeName: "HostGroup", Id: 0x20cd038d974113f1, Kind: 13, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Inventory{}.Coordinator)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.Coordinator)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 13836, CookElemSize: 4612, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 19596, CookElemSize: 6532, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18095,7 +17916,7 @@ var InventoryTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "store", Json: "store", TypeName: "HostGroup", DeclaredTypeName: "HostGroup", Id: 0x44ee54ad76b0bd8e, Kind: 13, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Inventory{}.Store)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.Store)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 18448, CookElemSize: 4612, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 26128, CookElemSize: 6532, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18106,7 +17927,7 @@ var InventoryTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "store_deployer", Json: "store_deployer", TypeName: "HostGroup", DeclaredTypeName: "HostGroup", Id: 0xbd156cca03cc3c3f, Kind: 13, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Inventory{}.StoreDeployer)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.StoreDeployer)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 23060, CookElemSize: 4612, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 32660, CookElemSize: 6532, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18117,7 +17938,7 @@ var InventoryTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "runners", Json: "runners", TypeName: "HostGroup", DeclaredTypeName: "HostGroup", Id: 0x83f33fb50ef47638, Kind: 13, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Inventory{}.Runners)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.Runners)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 27672, CookElemSize: 4612, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 39192, CookElemSize: 6532, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18128,7 +17949,7 @@ var InventoryTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "tla", Json: "tla", TypeName: "HostGroup", DeclaredTypeName: "HostGroup", Id: 0x5703dd19446e34d4, Kind: 13, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Inventory{}.Tla)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.Tla)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 32284, CookElemSize: 4612, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 45724, CookElemSize: 6532, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18138,8 +17959,8 @@ var InventoryTableFields = []TableFieldInfo{
 		Guard: "", Table: HostGroupTableType,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "nova_store", Json: "nova_store", TypeName: "string", DeclaredTypeName: "string", Id: 0xae91b3b1f9738641, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(Inventory{}.NovaStore)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.NovaStore)), CountOffset: uint32(unsafe.Offsetof(Inventory{}.NovaStoreLength)), PresentOffset: 0xffffffff,
-		CookOffset: 36896, CookElemSize: 1, CookCountOffset: 36964, CookPresentOffset: 4294967295,
+		ArrayBound: 2304, Offset: uint32(unsafe.Offsetof(Inventory{}.NovaStore)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.NovaStore)), CountOffset: uint32(unsafe.Offsetof(Inventory{}.NovaStoreLength)), PresentOffset: 0xffffffff,
+		CookOffset: 52256, CookElemSize: 1, CookCountOffset: 54564, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18150,7 +17971,7 @@ var InventoryTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "revs", Json: "revs", TypeName: "KindRev", DeclaredTypeName: "KindRev", Id: 0x4cc05c1fbfbd1613, Kind: 13, IsArray: true, Counted: true, Optional: false,
 		ArrayBound: 8, Offset: uint32(unsafe.Offsetof(Inventory{}.Revs)), ElemSize: uint32(unsafe.Sizeof(Inventory{}.Revs[0])), CountOffset: uint32(unsafe.Offsetof(Inventory{}.RevsCount)), PresentOffset: 0xffffffff,
-		CookOffset: 36968, CookElemSize: 16, CookCountOffset: 37096, CookPresentOffset: 4294967295,
+		CookOffset: 54568, CookElemSize: 16, CookCountOffset: 54696, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18165,7 +17986,7 @@ var InventoryTableFields = []TableFieldInfo{
 var InventoryTableInfo TableTypeInfo
 
 func init() {
-	InventoryTableInfo = TableTypeInfo{Name: "Inventory", Size: uint32(unsafe.Sizeof(Inventory{})), NumFields: 10, Fields: InventoryTableFields, Reset: func(storage unsafe.Pointer) { InventoryReset((*Inventory)(storage)) }, Doc: "The inventory (pkg/config AnsibleInventory): the groups the plays select,\nthe store host and the revisions of the applied kinds (nova_config_rev).", NumTags: 0, Tags: nil, Id: 0x1f0d05eb8a0e0f3f, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return InventorySaveBody(w, (*Inventory)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return InventoryLoadBody(&r, (*Inventory)(p)) }, CookSize: 37104, CookAlign: 8}
+	InventoryTableInfo = TableTypeInfo{Name: "Inventory", Size: uint32(unsafe.Sizeof(Inventory{})), NumFields: 10, Fields: InventoryTableFields, Reset: func(storage unsafe.Pointer) { InventoryReset((*Inventory)(storage)) }, Doc: "The inventory (pkg/config AnsibleInventory): the groups the plays select,\nthe store host and the revisions of the applied kinds (nova_config_rev).", NumTags: 0, Tags: nil, Id: 0x1f0d05eb8a0e0f3f, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return InventorySaveBody(w, (*Inventory)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return InventoryLoadBody(&r, (*Inventory)(p)) }, CookSize: 54704, CookAlign: 8}
 }
 
 // InventoryTableType returns Inventory's reflection descriptor.
@@ -18174,8 +17995,8 @@ func InventoryTableType() *TableTypeInfo { return &InventoryTableInfo }
 // BenchBeatTableFields is BenchBeat's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var BenchBeatTableFields = []TableFieldInfo{
 	{Name: "host", Json: "host", TypeName: "string", DeclaredTypeName: "string", Id: 0x4077f8cc7eaf4d6f, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(BenchBeat{}.Host)), ElemSize: uint32(unsafe.Sizeof(BenchBeat{}.Host)), CountOffset: uint32(unsafe.Offsetof(BenchBeat{}.HostLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 68, CookPresentOffset: 4294967295,
+		ArrayBound: 128, Offset: uint32(unsafe.Offsetof(BenchBeat{}.Host)), ElemSize: uint32(unsafe.Sizeof(BenchBeat{}.Host)), CountOffset: uint32(unsafe.Offsetof(BenchBeat{}.HostLength)), PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 1, CookCountOffset: 132, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18186,7 +18007,7 @@ var BenchBeatTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "at_ms", Json: "at_ms", TypeName: "int64", DeclaredTypeName: "int64", Id: 0x41fdbf81bf00fdc1, Kind: 5, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(BenchBeat{}.AtMs)), ElemSize: uint32(unsafe.Sizeof(BenchBeat{}.AtMs)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 72, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 136, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 2.53402300799999e+14, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18197,7 +18018,7 @@ var BenchBeatTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "load1", Json: "load1", TypeName: "string", DeclaredTypeName: "string", Id: 0x15ce02b6ebf77208, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 16, Offset: uint32(unsafe.Offsetof(BenchBeat{}.Load1)), ElemSize: uint32(unsafe.Sizeof(BenchBeat{}.Load1)), CountOffset: uint32(unsafe.Offsetof(BenchBeat{}.Load1Length)), PresentOffset: 0xffffffff,
-		CookOffset: 80, CookElemSize: 1, CookCountOffset: 100, CookPresentOffset: 4294967295,
+		CookOffset: 144, CookElemSize: 1, CookCountOffset: 164, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18208,7 +18029,7 @@ var BenchBeatTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "ncpu", Json: "ncpu", TypeName: "string", DeclaredTypeName: "string", Id: 0xd6860fba989743c5, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 8, Offset: uint32(unsafe.Offsetof(BenchBeat{}.Ncpu)), ElemSize: uint32(unsafe.Sizeof(BenchBeat{}.Ncpu)), CountOffset: uint32(unsafe.Offsetof(BenchBeat{}.NcpuLength)), PresentOffset: 0xffffffff,
-		CookOffset: 104, CookElemSize: 1, CookCountOffset: 116, CookPresentOffset: 4294967295,
+		CookOffset: 168, CookElemSize: 1, CookCountOffset: 180, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18219,7 +18040,7 @@ var BenchBeatTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "cpu", Json: "cpu", TypeName: "string", DeclaredTypeName: "string", Id: 0xf5a8fa190cb314c9, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 16, Offset: uint32(unsafe.Offsetof(BenchBeat{}.Cpu)), ElemSize: uint32(unsafe.Sizeof(BenchBeat{}.Cpu)), CountOffset: uint32(unsafe.Offsetof(BenchBeat{}.CpuLength)), PresentOffset: 0xffffffff,
-		CookOffset: 120, CookElemSize: 1, CookCountOffset: 140, CookPresentOffset: 4294967295,
+		CookOffset: 184, CookElemSize: 1, CookCountOffset: 204, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18230,7 +18051,7 @@ var BenchBeatTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "os", Json: "os", TypeName: "string", DeclaredTypeName: "string", Id: 0x8b05507b5565e57, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(BenchBeat{}.Os)), ElemSize: uint32(unsafe.Sizeof(BenchBeat{}.Os)), CountOffset: uint32(unsafe.Offsetof(BenchBeat{}.OsLength)), PresentOffset: 0xffffffff,
-		CookOffset: 144, CookElemSize: 1, CookCountOffset: 180, CookPresentOffset: 4294967295,
+		CookOffset: 208, CookElemSize: 1, CookCountOffset: 244, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18241,7 +18062,7 @@ var BenchBeatTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "arch", Json: "arch", TypeName: "string", DeclaredTypeName: "string", Id: 0x893c43843eb23369, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(BenchBeat{}.Arch)), ElemSize: uint32(unsafe.Sizeof(BenchBeat{}.Arch)), CountOffset: uint32(unsafe.Offsetof(BenchBeat{}.ArchLength)), PresentOffset: 0xffffffff,
-		CookOffset: 184, CookElemSize: 1, CookCountOffset: 220, CookPresentOffset: 4294967295,
+		CookOffset: 248, CookElemSize: 1, CookCountOffset: 284, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18252,7 +18073,7 @@ var BenchBeatTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "memory_gb", Json: "memory_gb", TypeName: "string", DeclaredTypeName: "string", Id: 0xb807c42e059a310a, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 16, Offset: uint32(unsafe.Offsetof(BenchBeat{}.MemoryGb)), ElemSize: uint32(unsafe.Sizeof(BenchBeat{}.MemoryGb)), CountOffset: uint32(unsafe.Offsetof(BenchBeat{}.MemoryGbLength)), PresentOffset: 0xffffffff,
-		CookOffset: 224, CookElemSize: 1, CookCountOffset: 244, CookPresentOffset: 4294967295,
+		CookOffset: 288, CookElemSize: 1, CookCountOffset: 308, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -18267,7 +18088,7 @@ var BenchBeatTableFields = []TableFieldInfo{
 var BenchBeatTableInfo TableTypeInfo
 
 func init() {
-	BenchBeatTableInfo = TableTypeInfo{Name: "BenchBeat", Size: uint32(unsafe.Sizeof(BenchBeat{})), NumFields: 8, Fields: BenchBeatTableFields, Reset: func(storage unsafe.Pointer) { BenchBeatReset((*BenchBeat)(storage)) }, Doc: "The bench hash beside the member beat (pkg/config BeatKey, bench:<m>:beat,\nwritten by the bench that runs on the machine, read by nova-config): host,\nat (unix milliseconds), load1, ncpu, cpu, and os, arch and memory_gb when\nthe beat carries them. A hash value is text; load1, ncpu, cpu and memory_gb\nkeep the text the writer gave.", NumTags: 0, Tags: nil, Id: 0x833e3a3656c2c459, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return BenchBeatSaveBody(w, (*BenchBeat)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return BenchBeatLoadBody(&r, (*BenchBeat)(p)) }, CookSize: 248, CookAlign: 8}
+	BenchBeatTableInfo = TableTypeInfo{Name: "BenchBeat", Size: uint32(unsafe.Sizeof(BenchBeat{})), NumFields: 8, Fields: BenchBeatTableFields, Reset: func(storage unsafe.Pointer) { BenchBeatReset((*BenchBeat)(storage)) }, Doc: "The bench hash beside the member beat (pkg/config BeatKey, bench:<m>:beat,\nwritten by the bench that runs on the machine, read by nova-config): host,\nat (unix milliseconds), load1, ncpu, cpu, and os, arch and memory_gb when\nthe beat carries them. A hash value is text; load1, ncpu, cpu and memory_gb\nkeep the text the writer gave.", NumTags: 0, Tags: nil, Id: 0x833e3a3656c2c459, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return BenchBeatSaveBody(w, (*BenchBeat)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return BenchBeatLoadBody(&r, (*BenchBeat)(p)) }, CookSize: 312, CookAlign: 8}
 }
 
 // BenchBeatTableType returns BenchBeat's reflection descriptor.

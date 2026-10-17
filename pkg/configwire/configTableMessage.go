@@ -21,7 +21,7 @@ func FieldPairSaveMessageBody(w *TableMessageWriter, value *FieldPair) bool {
 			return false
 		}
 		if value.NameLength > 0 {
-			w.Put(25, TableMessageRefBitsHere)
+			w.Put(23, TableMessageRefBitsHere)
 			if value.NameLength < 0 || value.NameLength > 32 {
 				return false
 			}
@@ -30,15 +30,15 @@ func FieldPairSaveMessageBody(w *TableMessageWriter, value *FieldPair) bool {
 		}
 	}
 	{
-		if value.ValueLength < 0 || value.ValueLength > 1024 {
+		if value.ValueLength < 0 || value.ValueLength > 2304 {
 			return false
 		}
 		if value.ValueLength > 0 {
-			w.Put(26, TableMessageRefBitsHere)
-			if value.ValueLength < 0 || value.ValueLength > 1024 {
+			w.Put(24, TableMessageRefBitsHere)
+			if value.ValueLength < 0 || value.ValueLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.ValueLength), 11)
+			w.Put(uint64(value.ValueLength), 12)
 			w.Raw(value.Value[:value.ValueLength])
 		}
 	}
@@ -182,7 +182,7 @@ func FieldPairLoadMessageBody(r *TableMessageReader, value *FieldPair) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(1024)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -229,7 +229,7 @@ func RowFieldsSaveMessageBody(w *TableMessageWriter, value *RowFields) bool {
 			return false
 		}
 		if value.PairsCount > 0 {
-			w.Put(71, TableMessageRefBitsHere)
+			w.Put(69, TableMessageRefBitsHere)
 			if value.PairsCount < 0 || value.PairsCount > 24 {
 				return false
 			}
@@ -246,7 +246,7 @@ func RowFieldsSaveMessageBody(w *TableMessageWriter, value *RowFields) bool {
 			return false
 		}
 		if value.ArgvLength > 0 {
-			w.Put(58, TableMessageRefBitsHere)
+			w.Put(56, TableMessageRefBitsHere)
 			if value.ArgvLength < 0 || value.ArgvLength > 4096 {
 				return false
 			}
@@ -468,15 +468,15 @@ func ConfigRowSaveMessageBody(w *TableMessageWriter, value *ConfigRow) bool {
 		}
 	}
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
 			w.Put(14, TableMessageRefBitsHere)
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
-			w.Put(uint64(value.NameLength), 7)
+			w.Put(uint64(value.NameLength), 8)
 			w.Raw(value.Name[:value.NameLength])
 		}
 	}
@@ -488,7 +488,7 @@ func ConfigRowSaveMessageBody(w *TableMessageWriter, value *ConfigRow) bool {
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(22, TableMessageRefBitsHere)
+			w.Put(20, TableMessageRefBitsHere)
 			if !RowFieldsSaveMessageBody(w, &value.Fields) {
 				return false
 			}
@@ -499,7 +499,7 @@ func ConfigRowSaveMessageBody(w *TableMessageWriter, value *ConfigRow) bool {
 			return false
 		}
 		if value.CreatedAtLength > 0 {
-			w.Put(23, TableMessageRefBitsHere)
+			w.Put(21, TableMessageRefBitsHere)
 			if value.CreatedAtLength < 0 || value.CreatedAtLength > 32 {
 				return false
 			}
@@ -512,7 +512,7 @@ func ConfigRowSaveMessageBody(w *TableMessageWriter, value *ConfigRow) bool {
 			return false
 		}
 		if value.UpdatedAtLength > 0 {
-			w.Put(24, TableMessageRefBitsHere)
+			w.Put(22, TableMessageRefBitsHere)
 			if value.UpdatedAtLength < 0 || value.UpdatedAtLength > 32 {
 				return false
 			}
@@ -655,7 +655,7 @@ func ConfigRowLoadMessageBody(r *TableMessageReader, value *ConfigRow) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -830,15 +830,15 @@ func ConfigChangeSaveMessageBody(w *TableMessageWriter, value *ConfigChange) boo
 		}
 	}
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
 			w.Put(14, TableMessageRefBitsHere)
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
-			w.Put(uint64(value.NameLength), 7)
+			w.Put(uint64(value.NameLength), 8)
 			w.Raw(value.Name[:value.NameLength])
 		}
 	}
@@ -871,22 +871,8 @@ func ConfigChangeSaveMessageBody(w *TableMessageWriter, value *ConfigChange) boo
 		}
 	}
 	{
-		probe := *w
-		probe.Measuring = true
-		probe.Bits = 0
-		if !RowFieldsSaveMessageBody(&probe, &value.Before) {
-			return false
-		}
-		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(16, TableMessageRefBitsHere)
-			if !RowFieldsSaveMessageBody(w, &value.Before) {
-				return false
-			}
-		}
-	}
-	{
 		if value.HasAfter != false {
-			w.Put(17, TableMessageRefBitsHere)
+			w.Put(16, TableMessageRefBitsHere)
 			if value.HasAfter {
 				w.Put(1, 1)
 			} else {
@@ -895,42 +881,28 @@ func ConfigChangeSaveMessageBody(w *TableMessageWriter, value *ConfigChange) boo
 		}
 	}
 	{
-		probe := *w
-		probe.Measuring = true
-		probe.Bits = 0
-		if !RowFieldsSaveMessageBody(&probe, &value.After) {
-			return false
-		}
-		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(18, TableMessageRefBitsHere)
-			if !RowFieldsSaveMessageBody(w, &value.After) {
-				return false
-			}
-		}
-	}
-	{
-		if value.ActorLength < 0 || value.ActorLength > 64 {
+		if value.ActorLength < 0 || value.ActorLength > 128 {
 			return false
 		}
 		if value.ActorLength > 0 {
-			w.Put(19, TableMessageRefBitsHere)
-			if value.ActorLength < 0 || value.ActorLength > 64 {
+			w.Put(17, TableMessageRefBitsHere)
+			if value.ActorLength < 0 || value.ActorLength > 128 {
 				return false
 			}
-			w.Put(uint64(value.ActorLength), 7)
+			w.Put(uint64(value.ActorLength), 8)
 			w.Raw(value.Actor[:value.ActorLength])
 		}
 	}
 	{
-		if value.ReasonLength < 0 || value.ReasonLength > 256 {
+		if value.ReasonLength < 0 || value.ReasonLength > 2304 {
 			return false
 		}
 		if value.ReasonLength > 0 {
-			w.Put(20, TableMessageRefBitsHere)
-			if value.ReasonLength < 0 || value.ReasonLength > 256 {
+			w.Put(18, TableMessageRefBitsHere)
+			if value.ReasonLength < 0 || value.ReasonLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.ReasonLength), 9)
+			w.Put(uint64(value.ReasonLength), 12)
 			w.Raw(value.Reason[:value.ReasonLength])
 		}
 	}
@@ -939,7 +911,7 @@ func ConfigChangeSaveMessageBody(w *TableMessageWriter, value *ConfigChange) boo
 			return false
 		}
 		if value.AtLength > 0 {
-			w.Put(21, TableMessageRefBitsHere)
+			w.Put(19, TableMessageRefBitsHere)
 			if value.AtLength < 0 || value.AtLength > 32 {
 				return false
 			}
@@ -1117,7 +1089,7 @@ func ConfigChangeLoadMessageBody(r *TableMessageReader, value *ConfigChange) boo
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -1199,28 +1171,6 @@ func ConfigChangeLoadMessageBody(r *TableMessageReader, value *ConfigChange) boo
 					r.Report.Widened++
 				}
 			}
-		case 0xd89aa06245afb2be:
-			{
-				widened := false
-				if entry.Shape.Kind != 13 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				if !RowFieldsLoadMessageBody(r, &value.Before) {
-					return false
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
 		case 0x0b0f529af221d41e:
 			{
 				widened := false
@@ -1248,28 +1198,6 @@ func ConfigChangeLoadMessageBody(r *TableMessageReader, value *ConfigChange) boo
 						return false
 					}
 					value.HasAfter = payload6.Get8() != 0
-				}
-				if widened {
-					r.Report.Widened++
-				}
-			}
-		case 0xbf82010f6f71eae9:
-			{
-				widened := false
-				if entry.Shape.Kind != 13 || entry.Element.Kind != 0 {
-					if false {
-						widened = true
-					} else {
-						r.Report.KindMismatch++
-						if !tableMessageSkip(&r.Bits, r.Vocabulary, r.IndexBits, entry, 0) {
-							r.Report.Malformed = true
-							return false
-						}
-						break
-					}
-				}
-				if !RowFieldsLoadMessageBody(r, &value.After) {
-					return false
 				}
 				if widened {
 					r.Report.Widened++
@@ -1306,7 +1234,7 @@ func ConfigChangeLoadMessageBody(r *TableMessageReader, value *ConfigChange) boo
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -1349,7 +1277,7 @@ func ConfigChangeLoadMessageBody(r *TableMessageReader, value *ConfigChange) boo
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(256)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -1436,7 +1364,7 @@ func ConfigChangeLoadMessages(values []ConfigChange, vocabulary *TableVocabulary
 func FileHeaderSaveMessageBody(w *TableMessageWriter, value *FileHeader) bool {
 	{
 		if value.Schema != 0 {
-			w.Put(27, TableMessageRefBitsHere)
+			w.Put(25, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 17, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Schema), uint64(0))
 		}
 	}
@@ -1885,53 +1813,53 @@ func CanonicalWordLoadMessages(values []CanonicalWord, vocabulary *TableVocabula
 }
 func MachineViewSaveMessageBody(w *TableMessageWriter, value *MachineView) bool {
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
 			w.Put(14, TableMessageRefBitsHere)
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
-			w.Put(uint64(value.NameLength), 7)
+			w.Put(uint64(value.NameLength), 8)
 			w.Raw(value.Name[:value.NameLength])
 		}
 	}
 	{
-		if value.UserLength < 0 || value.UserLength > 64 {
+		if value.UserLength < 0 || value.UserLength > 2304 {
 			return false
 		}
 		if value.UserLength > 0 {
-			w.Put(67, TableMessageRefBitsHere)
-			if value.UserLength < 0 || value.UserLength > 64 {
+			w.Put(65, TableMessageRefBitsHere)
+			if value.UserLength < 0 || value.UserLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.UserLength), 7)
+			w.Put(uint64(value.UserLength), 12)
 			w.Raw(value.User[:value.UserLength])
 		}
 	}
 	{
-		if value.SeatLength < 0 || value.SeatLength > 64 {
+		if value.SeatLength < 0 || value.SeatLength > 2304 {
 			return false
 		}
 		if value.SeatLength > 0 {
-			w.Put(59, TableMessageRefBitsHere)
-			if value.SeatLength < 0 || value.SeatLength > 64 {
+			w.Put(57, TableMessageRefBitsHere)
+			if value.SeatLength < 0 || value.SeatLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.SeatLength), 7)
+			w.Put(uint64(value.SeatLength), 12)
 			w.Raw(value.Seat[:value.SeatLength])
 		}
 	}
 	{
 		if value.Slots != 0 {
-			w.Put(30, TableMessageRefBitsHere)
+			w.Put(28, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 17, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Slots), uint64(0))
 		}
 	}
 	{
 		if value.Runners != 0 {
-			w.Put(32, TableMessageRefBitsHere)
+			w.Put(30, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 17, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Runners), uint64(0))
 		}
 	}
@@ -1940,7 +1868,7 @@ func MachineViewSaveMessageBody(w *TableMessageWriter, value *MachineView) bool 
 			return false
 		}
 		if value.RolesLength > 0 {
-			w.Put(68, TableMessageRefBitsHere)
+			w.Put(66, TableMessageRefBitsHere)
 			if value.RolesLength < 0 || value.RolesLength > 64 {
 				return false
 			}
@@ -1950,7 +1878,7 @@ func MachineViewSaveMessageBody(w *TableMessageWriter, value *MachineView) bool 
 	}
 	{
 		if value.Tla != false {
-			w.Put(69, TableMessageRefBitsHere)
+			w.Put(67, TableMessageRefBitsHere)
 			if value.Tla {
 				w.Put(1, 1)
 			} else {
@@ -1961,7 +1889,7 @@ func MachineViewSaveMessageBody(w *TableMessageWriter, value *MachineView) bool 
 	{
 		if value.WidthPresent {
 			if true {
-				w.Put(70, TableMessageRefBitsHere)
+				w.Put(68, TableMessageRefBitsHere)
 				tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 17, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Width), uint64(0))
 			}
 		}
@@ -2063,7 +1991,7 @@ func MachineViewLoadMessageBody(r *TableMessageReader, value *MachineView) bool 
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -2106,7 +2034,7 @@ func MachineViewLoadMessageBody(r *TableMessageReader, value *MachineView) bool 
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -2149,7 +2077,7 @@ func MachineViewLoadMessageBody(r *TableMessageReader, value *MachineView) bool 
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -2394,28 +2322,28 @@ func MachineViewLoadMessages(values []MachineView, vocabulary *TableVocabulary, 
 }
 func InventoryLoopSaveMessageBody(w *TableMessageWriter, value *InventoryLoop) bool {
 	{
-		if value.MachineLength < 0 || value.MachineLength > 64 {
+		if value.MachineLength < 0 || value.MachineLength > 128 {
 			return false
 		}
 		if value.MachineLength > 0 {
-			w.Put(57, TableMessageRefBitsHere)
-			if value.MachineLength < 0 || value.MachineLength > 64 {
+			w.Put(55, TableMessageRefBitsHere)
+			if value.MachineLength < 0 || value.MachineLength > 128 {
 				return false
 			}
-			w.Put(uint64(value.MachineLength), 7)
+			w.Put(uint64(value.MachineLength), 8)
 			w.Raw(value.Machine[:value.MachineLength])
 		}
 	}
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
 			w.Put(14, TableMessageRefBitsHere)
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
-			w.Put(uint64(value.NameLength), 7)
+			w.Put(uint64(value.NameLength), 8)
 			w.Raw(value.Name[:value.NameLength])
 		}
 	}
@@ -2424,7 +2352,7 @@ func InventoryLoopSaveMessageBody(w *TableMessageWriter, value *InventoryLoop) b
 			return false
 		}
 		if value.ArgvLength > 0 {
-			w.Put(58, TableMessageRefBitsHere)
+			w.Put(56, TableMessageRefBitsHere)
 			if value.ArgvLength < 0 || value.ArgvLength > 4096 {
 				return false
 			}
@@ -2433,15 +2361,15 @@ func InventoryLoopSaveMessageBody(w *TableMessageWriter, value *InventoryLoop) b
 		}
 	}
 	{
-		if value.SeatLength < 0 || value.SeatLength > 64 {
+		if value.SeatLength < 0 || value.SeatLength > 2304 {
 			return false
 		}
 		if value.SeatLength > 0 {
-			w.Put(59, TableMessageRefBitsHere)
-			if value.SeatLength < 0 || value.SeatLength > 64 {
+			w.Put(57, TableMessageRefBitsHere)
+			if value.SeatLength < 0 || value.SeatLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.SeatLength), 7)
+			w.Put(uint64(value.SeatLength), 12)
 			w.Raw(value.Seat[:value.SeatLength])
 		}
 	}
@@ -2450,7 +2378,7 @@ func InventoryLoopSaveMessageBody(w *TableMessageWriter, value *InventoryLoop) b
 			return false
 		}
 		if value.KeysCount > 0 {
-			w.Put(60, TableMessageRefBitsHere)
+			w.Put(58, TableMessageRefBitsHere)
 			if value.KeysCount < 0 || value.KeysCount > 32 {
 				return false
 			}
@@ -2464,13 +2392,13 @@ func InventoryLoopSaveMessageBody(w *TableMessageWriter, value *InventoryLoop) b
 	}
 	{
 		if value.Every != 0 {
-			w.Put(61, TableMessageRefBitsHere)
+			w.Put(59, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 25, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Every), uint64(0))
 		}
 	}
 	{
 		if value.Keepalive != false {
-			w.Put(62, TableMessageRefBitsHere)
+			w.Put(60, TableMessageRefBitsHere)
 			if value.Keepalive {
 				w.Put(1, 1)
 			} else {
@@ -2480,7 +2408,7 @@ func InventoryLoopSaveMessageBody(w *TableMessageWriter, value *InventoryLoop) b
 	}
 	{
 		if value.Enabled != false {
-			w.Put(63, TableMessageRefBitsHere)
+			w.Put(61, TableMessageRefBitsHere)
 			if value.Enabled {
 				w.Put(1, 1)
 			} else {
@@ -2489,15 +2417,15 @@ func InventoryLoopSaveMessageBody(w *TableMessageWriter, value *InventoryLoop) b
 		}
 	}
 	{
-		if value.LogLength < 0 || value.LogLength > 512 {
+		if value.LogLength < 0 || value.LogLength > 2304 {
 			return false
 		}
 		if value.LogLength > 0 {
-			w.Put(64, TableMessageRefBitsHere)
-			if value.LogLength < 0 || value.LogLength > 512 {
+			w.Put(62, TableMessageRefBitsHere)
+			if value.LogLength < 0 || value.LogLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.LogLength), 10)
+			w.Put(uint64(value.LogLength), 12)
 			w.Raw(value.Log[:value.LogLength])
 		}
 	}
@@ -2598,7 +2526,7 @@ func InventoryLoopLoadMessageBody(r *TableMessageReader, value *InventoryLoop) b
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -2641,7 +2569,7 @@ func InventoryLoopLoadMessageBody(r *TableMessageReader, value *InventoryLoop) b
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -2727,7 +2655,7 @@ func InventoryLoopLoadMessageBody(r *TableMessageReader, value *InventoryLoop) b
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -2932,7 +2860,7 @@ func InventoryLoopLoadMessageBody(r *TableMessageReader, value *InventoryLoop) b
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(512)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -2975,15 +2903,15 @@ func InventoryLoopLoadMessages(values []InventoryLoop, vocabulary *TableVocabula
 }
 func HostViewSaveMessageBody(w *TableMessageWriter, value *HostView) bool {
 	{
-		if value.AnsibleHostLength < 0 || value.AnsibleHostLength > 64 {
+		if value.AnsibleHostLength < 0 || value.AnsibleHostLength > 128 {
 			return false
 		}
 		if value.AnsibleHostLength > 0 {
-			w.Put(29, TableMessageRefBitsHere)
-			if value.AnsibleHostLength < 0 || value.AnsibleHostLength > 64 {
+			w.Put(27, TableMessageRefBitsHere)
+			if value.AnsibleHostLength < 0 || value.AnsibleHostLength > 128 {
 				return false
 			}
-			w.Put(uint64(value.AnsibleHostLength), 7)
+			w.Put(uint64(value.AnsibleHostLength), 8)
 			w.Raw(value.AnsibleHost[:value.AnsibleHostLength])
 		}
 	}
@@ -3007,26 +2935,26 @@ func HostViewSaveMessageBody(w *TableMessageWriter, value *HostView) bool {
 	}
 	{
 		if value.Slots != 0 {
-			w.Put(30, TableMessageRefBitsHere)
+			w.Put(28, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 17, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Slots), uint64(0))
 		}
 	}
 	{
 		if value.SlotsCapacity != 0 {
-			w.Put(31, TableMessageRefBitsHere)
+			w.Put(29, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 17, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.SlotsCapacity), uint64(0))
 		}
 	}
 	{
 		if value.Runners != 0 {
-			w.Put(32, TableMessageRefBitsHere)
+			w.Put(30, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 17, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Runners), uint64(0))
 		}
 	}
 	{
 		if value.SlotsSharePresent {
 			if true {
-				w.Put(33, TableMessageRefBitsHere)
+				w.Put(31, TableMessageRefBitsHere)
 				tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 17, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.SlotsShare), uint64(0))
 			}
 		}
@@ -3034,7 +2962,7 @@ func HostViewSaveMessageBody(w *TableMessageWriter, value *HostView) bool {
 	{
 		if value.CoresPresent {
 			if true {
-				w.Put(34, TableMessageRefBitsHere)
+				w.Put(32, TableMessageRefBitsHere)
 				tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 17, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Cores), uint64(0))
 			}
 		}
@@ -3044,7 +2972,7 @@ func HostViewSaveMessageBody(w *TableMessageWriter, value *HostView) bool {
 			return false
 		}
 		if value.BenchOsLength > 0 {
-			w.Put(35, TableMessageRefBitsHere)
+			w.Put(33, TableMessageRefBitsHere)
 			if value.BenchOsLength < 0 || value.BenchOsLength > 32 {
 				return false
 			}
@@ -3057,7 +2985,7 @@ func HostViewSaveMessageBody(w *TableMessageWriter, value *HostView) bool {
 			return false
 		}
 		if value.NovaArchLength > 0 {
-			w.Put(36, TableMessageRefBitsHere)
+			w.Put(34, TableMessageRefBitsHere)
 			if value.NovaArchLength < 0 || value.NovaArchLength > 32 {
 				return false
 			}
@@ -3067,7 +2995,7 @@ func HostViewSaveMessageBody(w *TableMessageWriter, value *HostView) bool {
 	}
 	{
 		if value.NovaTla != false {
-			w.Put(37, TableMessageRefBitsHere)
+			w.Put(35, TableMessageRefBitsHere)
 			if value.NovaTla {
 				w.Put(1, 1)
 			} else {
@@ -3076,15 +3004,15 @@ func HostViewSaveMessageBody(w *TableMessageWriter, value *HostView) bool {
 		}
 	}
 	{
-		if value.RegistrySeatLength < 0 || value.RegistrySeatLength > 64 {
+		if value.RegistrySeatLength < 0 || value.RegistrySeatLength > 2304 {
 			return false
 		}
 		if value.RegistrySeatLength > 0 {
-			w.Put(38, TableMessageRefBitsHere)
-			if value.RegistrySeatLength < 0 || value.RegistrySeatLength > 64 {
+			w.Put(36, TableMessageRefBitsHere)
+			if value.RegistrySeatLength < 0 || value.RegistrySeatLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.RegistrySeatLength), 7)
+			w.Put(uint64(value.RegistrySeatLength), 12)
 			w.Raw(value.RegistrySeat[:value.RegistrySeatLength])
 		}
 	}
@@ -3093,7 +3021,7 @@ func HostViewSaveMessageBody(w *TableMessageWriter, value *HostView) bool {
 			return false
 		}
 		if value.RegistryRolesLength > 0 {
-			w.Put(39, TableMessageRefBitsHere)
+			w.Put(37, TableMessageRefBitsHere)
 			if value.RegistryRolesLength < 0 || value.RegistryRolesLength > 64 {
 				return false
 			}
@@ -3102,79 +3030,79 @@ func HostViewSaveMessageBody(w *TableMessageWriter, value *HostView) bool {
 		}
 	}
 	{
-		if value.AnsibleUserLength < 0 || value.AnsibleUserLength > 64 {
+		if value.AnsibleUserLength < 0 || value.AnsibleUserLength > 2304 {
 			return false
 		}
 		if value.AnsibleUserLength > 0 {
-			w.Put(40, TableMessageRefBitsHere)
-			if value.AnsibleUserLength < 0 || value.AnsibleUserLength > 64 {
+			w.Put(38, TableMessageRefBitsHere)
+			if value.AnsibleUserLength < 0 || value.AnsibleUserLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.AnsibleUserLength), 7)
+			w.Put(uint64(value.AnsibleUserLength), 12)
 			w.Raw(value.AnsibleUser[:value.AnsibleUserLength])
 		}
 	}
 	{
-		if value.NovaSeatLength < 0 || value.NovaSeatLength > 64 {
+		if value.NovaSeatLength < 0 || value.NovaSeatLength > 2304 {
 			return false
 		}
 		if value.NovaSeatLength > 0 {
-			w.Put(41, TableMessageRefBitsHere)
-			if value.NovaSeatLength < 0 || value.NovaSeatLength > 64 {
+			w.Put(39, TableMessageRefBitsHere)
+			if value.NovaSeatLength < 0 || value.NovaSeatLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.NovaSeatLength), 7)
+			w.Put(uint64(value.NovaSeatLength), 12)
 			w.Raw(value.NovaSeat[:value.NovaSeatLength])
 		}
 	}
 	{
-		if value.NovaRedisAddrLength < 0 || value.NovaRedisAddrLength > 64 {
+		if value.NovaRedisAddrLength < 0 || value.NovaRedisAddrLength > 2304 {
 			return false
 		}
 		if value.NovaRedisAddrLength > 0 {
-			w.Put(42, TableMessageRefBitsHere)
-			if value.NovaRedisAddrLength < 0 || value.NovaRedisAddrLength > 64 {
+			w.Put(40, TableMessageRefBitsHere)
+			if value.NovaRedisAddrLength < 0 || value.NovaRedisAddrLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.NovaRedisAddrLength), 7)
+			w.Put(uint64(value.NovaRedisAddrLength), 12)
 			w.Raw(value.NovaRedisAddr[:value.NovaRedisAddrLength])
 		}
 	}
 	{
-		if value.NovaBusAddrLength < 0 || value.NovaBusAddrLength > 64 {
+		if value.NovaBusAddrLength < 0 || value.NovaBusAddrLength > 2304 {
 			return false
 		}
 		if value.NovaBusAddrLength > 0 {
-			w.Put(43, TableMessageRefBitsHere)
-			if value.NovaBusAddrLength < 0 || value.NovaBusAddrLength > 64 {
+			w.Put(41, TableMessageRefBitsHere)
+			if value.NovaBusAddrLength < 0 || value.NovaBusAddrLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.NovaBusAddrLength), 7)
+			w.Put(uint64(value.NovaBusAddrLength), 12)
 			w.Raw(value.NovaBusAddr[:value.NovaBusAddrLength])
 		}
 	}
 	{
 		if value.NovaRedisPort != 0 {
-			w.Put(44, TableMessageRefBitsHere)
+			w.Put(42, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 16, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.NovaRedisPort), uint64(0))
 		}
 	}
 	{
-		if value.NovaPgDsnLength < 0 || value.NovaPgDsnLength > 256 {
+		if value.NovaPgDsnLength < 0 || value.NovaPgDsnLength > 2304 {
 			return false
 		}
 		if value.NovaPgDsnLength > 0 {
-			w.Put(45, TableMessageRefBitsHere)
-			if value.NovaPgDsnLength < 0 || value.NovaPgDsnLength > 256 {
+			w.Put(43, TableMessageRefBitsHere)
+			if value.NovaPgDsnLength < 0 || value.NovaPgDsnLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.NovaPgDsnLength), 9)
+			w.Put(uint64(value.NovaPgDsnLength), 12)
 			w.Raw(value.NovaPgDsn[:value.NovaPgDsnLength])
 		}
 	}
 	{
 		if value.Local != false {
-			w.Put(46, TableMessageRefBitsHere)
+			w.Put(44, TableMessageRefBitsHere)
 			if value.Local {
 				w.Put(1, 1)
 			} else {
@@ -3279,7 +3207,7 @@ func HostViewLoadMessageBody(r *TableMessageReader, value *HostView) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -3690,7 +3618,7 @@ func HostViewLoadMessageBody(r *TableMessageReader, value *HostView) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -3776,7 +3704,7 @@ func HostViewLoadMessageBody(r *TableMessageReader, value *HostView) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -3819,7 +3747,7 @@ func HostViewLoadMessageBody(r *TableMessageReader, value *HostView) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -3862,7 +3790,7 @@ func HostViewLoadMessageBody(r *TableMessageReader, value *HostView) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -3905,7 +3833,7 @@ func HostViewLoadMessageBody(r *TableMessageReader, value *HostView) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -3990,7 +3918,7 @@ func HostViewLoadMessageBody(r *TableMessageReader, value *HostView) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(256)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -4065,15 +3993,15 @@ func HostViewLoadMessages(values []HostView, vocabulary *TableVocabulary, data [
 }
 func HostNameSaveMessageBody(w *TableMessageWriter, value *HostName) bool {
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
 			w.Put(14, TableMessageRefBitsHere)
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
-			w.Put(uint64(value.NameLength), 7)
+			w.Put(uint64(value.NameLength), 8)
 			w.Raw(value.Name[:value.NameLength])
 		}
 	}
@@ -4174,7 +4102,7 @@ func HostNameLoadMessageBody(r *TableMessageReader, value *HostName) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -4217,15 +4145,15 @@ func HostNameLoadMessages(values []HostName, vocabulary *TableVocabulary, data [
 }
 func EnvNameSaveMessageBody(w *TableMessageWriter, value *EnvName) bool {
 	{
-		if value.NameLength < 0 || value.NameLength > 64 {
+		if value.NameLength < 0 || value.NameLength > 128 {
 			return false
 		}
 		if value.NameLength > 0 {
 			w.Put(14, TableMessageRefBitsHere)
-			if value.NameLength < 0 || value.NameLength > 64 {
+			if value.NameLength < 0 || value.NameLength > 128 {
 				return false
 			}
-			w.Put(uint64(value.NameLength), 7)
+			w.Put(uint64(value.NameLength), 8)
 			w.Raw(value.Name[:value.NameLength])
 		}
 	}
@@ -4326,7 +4254,7 @@ func EnvNameLoadMessageBody(r *TableMessageReader, value *EnvName) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -4369,15 +4297,15 @@ func EnvNameLoadMessages(values []EnvName, vocabulary *TableVocabulary, data []b
 }
 func HostGroupSaveMessageBody(w *TableMessageWriter, value *HostGroup) bool {
 	{
-		if value.HostsCount < 0 || value.HostsCount > 64 {
+		if value.HostsCount < 0 || value.HostsCount > 48 {
 			return false
 		}
 		if value.HostsCount > 0 {
-			w.Put(28, TableMessageRefBitsHere)
-			if value.HostsCount < 0 || value.HostsCount > 64 {
+			w.Put(26, TableMessageRefBitsHere)
+			if value.HostsCount < 0 || value.HostsCount > 48 {
 				return false
 			}
-			w.Put(uint64(value.HostsCount)-0, 7)
+			w.Put(uint64(value.HostsCount)-0, 6)
 			for i := 0; i < int(value.HostsCount); i++ {
 				if !HostNameSaveMessageBody(w, &value.Hosts[i]) {
 					return false
@@ -4479,7 +4407,7 @@ func HostGroupLoadMessageBody(r *TableMessageReader, value *HostGroup) bool {
 					}
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
-					keep := min(n, uint64(64))
+					keep := min(n, uint64(48))
 					if keep < n {
 						r.Report.Clamped++
 					}
@@ -4557,7 +4485,7 @@ func KindRevSaveMessageBody(w *TableMessageWriter, value *KindRev) bool {
 	}
 	{
 		if value.Rev != 0 {
-			w.Put(65, TableMessageRefBitsHere)
+			w.Put(63, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 5, Packing: 1, Bits: 53, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Rev), uint64(0))
 		}
 	}
@@ -4745,7 +4673,7 @@ func InventorySaveMessageBody(w *TableMessageWriter, value *Inventory) bool {
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(47, TableMessageRefBitsHere)
+			w.Put(45, TableMessageRefBitsHere)
 			if !HostGroupSaveMessageBody(w, &value.All) {
 				return false
 			}
@@ -4759,7 +4687,7 @@ func InventorySaveMessageBody(w *TableMessageWriter, value *Inventory) bool {
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(48, TableMessageRefBitsHere)
+			w.Put(46, TableMessageRefBitsHere)
 			if !HostGroupSaveMessageBody(w, &value.Adopt) {
 				return false
 			}
@@ -4773,7 +4701,7 @@ func InventorySaveMessageBody(w *TableMessageWriter, value *Inventory) bool {
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(49, TableMessageRefBitsHere)
+			w.Put(47, TableMessageRefBitsHere)
 			if !HostGroupSaveMessageBody(w, &value.Benches) {
 				return false
 			}
@@ -4787,7 +4715,7 @@ func InventorySaveMessageBody(w *TableMessageWriter, value *Inventory) bool {
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(50, TableMessageRefBitsHere)
+			w.Put(48, TableMessageRefBitsHere)
 			if !HostGroupSaveMessageBody(w, &value.Coordinator) {
 				return false
 			}
@@ -4801,7 +4729,7 @@ func InventorySaveMessageBody(w *TableMessageWriter, value *Inventory) bool {
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(51, TableMessageRefBitsHere)
+			w.Put(49, TableMessageRefBitsHere)
 			if !HostGroupSaveMessageBody(w, &value.Store) {
 				return false
 			}
@@ -4815,7 +4743,7 @@ func InventorySaveMessageBody(w *TableMessageWriter, value *Inventory) bool {
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(52, TableMessageRefBitsHere)
+			w.Put(50, TableMessageRefBitsHere)
 			if !HostGroupSaveMessageBody(w, &value.StoreDeployer) {
 				return false
 			}
@@ -4829,7 +4757,7 @@ func InventorySaveMessageBody(w *TableMessageWriter, value *Inventory) bool {
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(53, TableMessageRefBitsHere)
+			w.Put(51, TableMessageRefBitsHere)
 			if !HostGroupSaveMessageBody(w, &value.Runners) {
 				return false
 			}
@@ -4843,22 +4771,22 @@ func InventorySaveMessageBody(w *TableMessageWriter, value *Inventory) bool {
 			return false
 		}
 		if probe.Bits > TableMessageRefBitsHere {
-			w.Put(54, TableMessageRefBitsHere)
+			w.Put(52, TableMessageRefBitsHere)
 			if !HostGroupSaveMessageBody(w, &value.Tla) {
 				return false
 			}
 		}
 	}
 	{
-		if value.NovaStoreLength < 0 || value.NovaStoreLength > 64 {
+		if value.NovaStoreLength < 0 || value.NovaStoreLength > 2304 {
 			return false
 		}
 		if value.NovaStoreLength > 0 {
-			w.Put(55, TableMessageRefBitsHere)
-			if value.NovaStoreLength < 0 || value.NovaStoreLength > 64 {
+			w.Put(53, TableMessageRefBitsHere)
+			if value.NovaStoreLength < 0 || value.NovaStoreLength > 2304 {
 				return false
 			}
-			w.Put(uint64(value.NovaStoreLength), 7)
+			w.Put(uint64(value.NovaStoreLength), 12)
 			w.Raw(value.NovaStore[:value.NovaStoreLength])
 		}
 	}
@@ -4867,7 +4795,7 @@ func InventorySaveMessageBody(w *TableMessageWriter, value *Inventory) bool {
 			return false
 		}
 		if value.RevsCount > 0 {
-			w.Put(56, TableMessageRefBitsHere)
+			w.Put(54, TableMessageRefBitsHere)
 			if value.RevsCount < 0 || value.RevsCount > 8 {
 				return false
 			}
@@ -5152,7 +5080,7 @@ func InventoryLoadMessageBody(r *TableMessageReader, value *Inventory) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(2304)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -5251,15 +5179,15 @@ func InventoryLoadMessages(values []Inventory, vocabulary *TableVocabulary, data
 }
 func BenchBeatSaveMessageBody(w *TableMessageWriter, value *BenchBeat) bool {
 	{
-		if value.HostLength < 0 || value.HostLength > 64 {
+		if value.HostLength < 0 || value.HostLength > 128 {
 			return false
 		}
 		if value.HostLength > 0 {
 			w.Put(1, TableMessageRefBitsHere)
-			if value.HostLength < 0 || value.HostLength > 64 {
+			if value.HostLength < 0 || value.HostLength > 128 {
 				return false
 			}
-			w.Put(uint64(value.HostLength), 7)
+			w.Put(uint64(value.HostLength), 8)
 			w.Raw(value.Host[:value.HostLength])
 		}
 	}
@@ -5444,7 +5372,7 @@ func BenchBeatLoadMessageBody(r *TableMessageReader, value *BenchBeat) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(64)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(128)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -5794,7 +5722,7 @@ func MemberBeatSaveMessageBody(w *TableMessageWriter, value *MemberBeat) bool {
 	}
 	{
 		if value.Cores != 0 {
-			w.Put(34, TableMessageRefBitsHere)
+			w.Put(32, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 17, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Cores), uint64(0))
 		}
 	}
@@ -6009,7 +5937,7 @@ func MachineBeatSaveMessageBody(w *TableMessageWriter, value *MachineBeat) bool 
 			return false
 		}
 		if value.CoresLength > 0 {
-			w.Put(66, TableMessageRefBitsHere)
+			w.Put(64, TableMessageRefBitsHere)
 			if value.CoresLength < 0 || value.CoresLength > 8 {
 				return false
 			}
@@ -6035,7 +5963,7 @@ func MachineBeatSaveMessageBody(w *TableMessageWriter, value *MachineBeat) bool 
 			return false
 		}
 		if value.AtLength > 0 {
-			w.Put(21, TableMessageRefBitsHere)
+			w.Put(19, TableMessageRefBitsHere)
 			if value.AtLength < 0 || value.AtLength > 32 {
 				return false
 			}

@@ -18,11 +18,11 @@ const ProtocolId uint64 = 0x367dceb63e6664bb
 // nonzero reserved bits, or an interior null in a string (SPEC §4.3, §4.7).
 var ErrValidation = errors.New("configwire: wire validation failed")
 
-// MaxName is the longest row, machine, host and friend name. The code enforces
-// the shape only (pkg/config NamePattern: lower-case letters, digits and
-// dashes); 64 is the bound nova-bus puts on a sender name, and no fleet name
-// is near it.
-const MaxName = 64
+// MaxName is the longest row, machine, host and friend name, in bytes
+// (pkg/config MaxName, refused by ValidateName and the inventory's name
+// checks): the shape is NamePattern (lower-case letters, digits and dashes)
+// and the length is at most 128; the longest live name is 29 bytes.
+const MaxName = 128
 
 // MaxRowFields is the most fields a row carries: the widest kind today is the
 // route kind with 23 fields (pkg/config Kinds); one slot is spare.
@@ -32,28 +32,32 @@ const MaxRowFields = 24
 // (the sprint kind).
 const MaxFieldName = 32
 
-// MaxFieldValue is the longest field value but the argv. The code bounds only
-// the argv (below); a free text field has no bound there, so 1024 is a new
-// bound, chosen so a row and a change holding two rows stay under the 65536
-// byte record.
-const MaxFieldValue = 1024
+// MaxFieldValue is the longest canonical field value but the argv, in bytes
+// (pkg/config MaxFieldValue, refused by Field.Canonical for every type but
+// argv, which has its own bound below): the longest live value is 575 bytes
+// (a tier's route list). A row's 24 pairs at this bound stay under the 65536
+// byte record, and a change holds its two rows as two such records.
+const MaxFieldValue = 2304
 
 // MaxArgvBytes is the longest argv in its canonical JSON spelling
 // (pkg/config MaxArgvBytes: at most 64 words and 4096 bytes).
 const MaxArgvBytes = 4096
 
-// MaxKeys is the most secret names a loop lists; the code bounds none, so 32
-// is a new bound far over a loop today.
+// MaxKeys is the most secret names a loop lists (pkg/config MaxKeys, refused
+// by Field.Canonical for a keys field and by the inventory's loop parse): the
+// most a live loop lists is 5.
 const MaxKeys = 32
 
 // MaxEnvName is the longest environment variable name in a loop keys list
-// (the code bounds none; 64 is a new bound).
-const MaxEnvName = 64
+// (pkg/config MaxEnvName, the same two refusals): the longest live name is 31
+// bytes.
+const MaxEnvName = 128
 
-// MaxHosts is the most hosts an inventory group lists. The code bounds none;
-// 64 is a new bound over the fleet today and keeps the eight groups under the
-// record limit.
-const MaxHosts = 64
+// MaxHosts is the most hosts an inventory group lists (pkg/config MaxHosts,
+// refused by BuildInventory and the fixture reader): the fleet has 11
+// machines. Eight groups of 48 names of 128 bytes stay under the record
+// limit.
+const MaxHosts = 48
 
 // MaxRevs is the most kinds config:decl carries a revision for (one per kind,
 // eight today).

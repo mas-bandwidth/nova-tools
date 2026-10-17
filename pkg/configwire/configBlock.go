@@ -190,7 +190,7 @@ type FieldPairBlockProjection struct {
 	Name         [33]byte // string(32): max length, used length beside it
 	_            [3]byte  // generated padding
 	NameLength   int32
-	Value        [1025]byte // string(1024): max length, used length beside it
+	Value        [2305]byte // string(2304): max length, used length beside it
 	_            [3]byte    // generated padding
 	ValueLength  int32
 }
@@ -224,8 +224,8 @@ type ConfigRowBlockProjection struct {
 	BuildVersion    uint64 // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
 	ByteOrder       uint64 // generated: 1 little, 2 big
 	Kind            ConfigKind
-	Name            [65]byte // string(64): max length, used length beside it
-	_               [2]byte  // generated padding
+	Name            [129]byte // string(128): max length, used length beside it
+	_               [2]byte   // generated padding
 	NameLength      int32
 	Fields          RowFieldsRow
 	CreatedAt       [33]byte // string(32): max length, used length beside it
@@ -250,21 +250,16 @@ type ConfigChangeBlockProjection struct {
 	ByteOrder    uint64 // generated: 1 little, 2 big
 	Id           int64
 	Kind         ConfigKind
-	Name         [65]byte // string(64): max length, used length beside it
-	_            [2]byte  // generated padding
+	Name         [129]byte // string(128): max length, used length beside it
+	_            [2]byte   // generated padding
 	NameLength   int32
 	Op           ChangeOp
 	HasBefore    bool
-	_            [2]byte // generated padding
-	Before       RowFieldsRow
 	HasAfter     bool
-	_            [3]byte // generated padding
-	After        RowFieldsRow
-	Actor        [65]byte // string(64): max length, used length beside it
-	_            [3]byte  // generated padding
+	Actor        [129]byte // string(128): max length, used length beside it
 	ActorLength  int32
-	Reason       [257]byte // string(256): max length, used length beside it
-	_            [3]byte   // generated padding
+	Reason       [2305]byte // string(2304): max length, used length beside it
+	_            [3]byte    // generated padding
 	ReasonLength int32
 	At           [33]byte // string(32): max length, used length beside it
 	_            [3]byte  // generated padding
@@ -312,17 +307,17 @@ type CanonicalWordBlockProjection struct {
 // It is a SEPARATE record from MachineViewRow: a table can be both a block root and
 // another block's row, and the two differ by the prologue.
 type MachineViewBlockProjection struct {
-	Magic        uint64   // generated: identifies a schema block
-	BuildVersion uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder    uint64   // generated: 1 little, 2 big
-	Name         [65]byte // string(64): max length, used length beside it
-	_            [3]byte  // generated padding
+	Magic        uint64    // generated: identifies a schema block
+	BuildVersion uint64    // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
+	ByteOrder    uint64    // generated: 1 little, 2 big
+	Name         [129]byte // string(128): max length, used length beside it
+	_            [3]byte   // generated padding
 	NameLength   int32
-	User         [65]byte // string(64): max length, used length beside it
-	_            [3]byte  // generated padding
+	User         [2305]byte // string(2304): max length, used length beside it
+	_            [3]byte    // generated padding
 	UserLength   int32
-	Seat         [65]byte // string(64): max length, used length beside it
-	_            [3]byte  // generated padding
+	Seat         [2305]byte // string(2304): max length, used length beside it
+	_            [3]byte    // generated padding
 	SeatLength   int32
 	Slots        int32
 	Runners      int32
@@ -344,27 +339,27 @@ type MachineViewBlockProjection struct {
 // It is a SEPARATE record from InventoryLoopRow: a table can be both a block root and
 // another block's row, and the two differ by the prologue.
 type InventoryLoopBlockProjection struct {
-	Magic         uint64   // generated: identifies a schema block
-	BuildVersion  uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder     uint64   // generated: 1 little, 2 big
-	Machine       [65]byte // string(64): max length, used length beside it
-	_             [3]byte  // generated padding
+	Magic         uint64    // generated: identifies a schema block
+	BuildVersion  uint64    // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
+	ByteOrder     uint64    // generated: 1 little, 2 big
+	Machine       [129]byte // string(128): max length, used length beside it
+	_             [3]byte   // generated padding
 	MachineLength int32
-	Name          [65]byte // string(64): max length, used length beside it
-	_             [3]byte  // generated padding
+	Name          [129]byte // string(128): max length, used length beside it
+	_             [3]byte   // generated padding
 	NameLength    int32
 	Argv          [4097]byte // string(4096): max length, used length beside it
 	_             [3]byte    // generated padding
 	ArgvLength    int32
-	Seat          [65]byte // string(64): max length, used length beside it
-	_             [3]byte  // generated padding
+	Seat          [2305]byte // string(2304): max length, used length beside it
+	_             [3]byte    // generated padding
 	SeatLength    int32
 	Keys          TableBlockTriple // [..32]EnvName, laid out of line
 	Every         int32
 	Keepalive     bool
 	Enabled       bool
-	Log           [513]byte // string(512): max length, used length beside it
-	_             [1]byte   // generated padding
+	Log           [2305]byte // string(2304): max length, used length beside it
+	_             [1]byte    // generated padding
 	LogLength     int32
 	_             [4]byte // generated padding
 }
@@ -377,11 +372,11 @@ type InventoryLoopBlockProjection struct {
 // It is a SEPARATE record from HostViewRow: a table can be both a block root and
 // another block's row, and the two differ by the prologue.
 type HostViewBlockProjection struct {
-	Magic               uint64   // generated: identifies a schema block
-	BuildVersion        uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder           uint64   // generated: 1 little, 2 big
-	AnsibleHost         [65]byte // string(64): max length, used length beside it
-	_                   [3]byte  // generated padding
+	Magic               uint64    // generated: identifies a schema block
+	BuildVersion        uint64    // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
+	ByteOrder           uint64    // generated: 1 little, 2 big
+	AnsibleHost         [129]byte // string(128): max length, used length beside it
+	_                   [3]byte   // generated padding
 	AnsibleHostLength   int32
 	Kind                ConfigKind
 	_                   [3]byte // generated padding
@@ -400,27 +395,27 @@ type HostViewBlockProjection struct {
 	_                   [3]byte  // generated padding
 	NovaArchLength      int32
 	NovaTla             bool
-	RegistrySeat        [65]byte // string(64): max length, used length beside it
-	_                   [2]byte  // generated padding
+	RegistrySeat        [2305]byte // string(2304): max length, used length beside it
+	_                   [2]byte    // generated padding
 	RegistrySeatLength  int32
 	RegistryRoles       [65]byte // string(64): max length, used length beside it
 	_                   [3]byte  // generated padding
 	RegistryRolesLength int32
-	AnsibleUser         [65]byte // string(64): max length, used length beside it
-	_                   [3]byte  // generated padding
+	AnsibleUser         [2305]byte // string(2304): max length, used length beside it
+	_                   [3]byte    // generated padding
 	AnsibleUserLength   int32
-	NovaSeat            [65]byte // string(64): max length, used length beside it
-	_                   [3]byte  // generated padding
+	NovaSeat            [2305]byte // string(2304): max length, used length beside it
+	_                   [3]byte    // generated padding
 	NovaSeatLength      int32
-	NovaRedisAddr       [65]byte // string(64): max length, used length beside it
-	_                   [3]byte  // generated padding
+	NovaRedisAddr       [2305]byte // string(2304): max length, used length beside it
+	_                   [3]byte    // generated padding
 	NovaRedisAddrLength int32
-	NovaBusAddr         [65]byte // string(64): max length, used length beside it
-	_                   [3]byte  // generated padding
+	NovaBusAddr         [2305]byte // string(2304): max length, used length beside it
+	_                   [3]byte    // generated padding
 	NovaBusAddrLength   int32
 	NovaRedisPort       int32
-	NovaPgDsn           [257]byte // string(256): max length, used length beside it
-	_                   [3]byte   // generated padding
+	NovaPgDsn           [2305]byte // string(2304): max length, used length beside it
+	_                   [3]byte    // generated padding
 	NovaPgDsnLength     int32
 	Local               bool
 	_                   [7]byte // generated padding
@@ -434,11 +429,11 @@ type HostViewBlockProjection struct {
 // It is a SEPARATE record from HostNameRow: a table can be both a block root and
 // another block's row, and the two differ by the prologue.
 type HostNameBlockProjection struct {
-	Magic        uint64   // generated: identifies a schema block
-	BuildVersion uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder    uint64   // generated: 1 little, 2 big
-	Name         [65]byte // string(64): max length, used length beside it
-	_            [3]byte  // generated padding
+	Magic        uint64    // generated: identifies a schema block
+	BuildVersion uint64    // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
+	ByteOrder    uint64    // generated: 1 little, 2 big
+	Name         [129]byte // string(128): max length, used length beside it
+	_            [3]byte   // generated padding
 	NameLength   int32
 }
 
@@ -450,11 +445,11 @@ type HostNameBlockProjection struct {
 // It is a SEPARATE record from EnvNameRow: a table can be both a block root and
 // another block's row, and the two differ by the prologue.
 type EnvNameBlockProjection struct {
-	Magic        uint64   // generated: identifies a schema block
-	BuildVersion uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder    uint64   // generated: 1 little, 2 big
-	Name         [65]byte // string(64): max length, used length beside it
-	_            [3]byte  // generated padding
+	Magic        uint64    // generated: identifies a schema block
+	BuildVersion uint64    // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
+	ByteOrder    uint64    // generated: 1 little, 2 big
+	Name         [129]byte // string(128): max length, used length beside it
+	_            [3]byte   // generated padding
 	NameLength   int32
 }
 
@@ -469,7 +464,7 @@ type HostGroupBlockProjection struct {
 	Magic        uint64           // generated: identifies a schema block
 	BuildVersion uint64           // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
 	ByteOrder    uint64           // generated: 1 little, 2 big
-	Hosts        TableBlockTriple // [..64]HostName, laid out of line
+	Hosts        TableBlockTriple // [..48]HostName, laid out of line
 }
 
 // KindRevBlockProjection — the block PROJECTION: the table's own instance as it
@@ -507,8 +502,8 @@ type InventoryBlockProjection struct {
 	StoreDeployer   HostGroupRow
 	Runners         HostGroupRow
 	Tla             HostGroupRow
-	NovaStore       [65]byte // string(64): max length, used length beside it
-	_               [3]byte  // generated padding
+	NovaStore       [2305]byte // string(2304): max length, used length beside it
+	_               [3]byte    // generated padding
 	NovaStoreLength int32
 	Revs            TableBlockTriple // [..8]KindRev, laid out of line
 }
@@ -521,11 +516,11 @@ type InventoryBlockProjection struct {
 // It is a SEPARATE record from BenchBeatRow: a table can be both a block root and
 // another block's row, and the two differ by the prologue.
 type BenchBeatBlockProjection struct {
-	Magic          uint64   // generated: identifies a schema block
-	BuildVersion   uint64   // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
-	ByteOrder      uint64   // generated: 1 little, 2 big
-	Host           [65]byte // string(64): max length, used length beside it
-	_              [3]byte  // generated padding
+	Magic          uint64    // generated: identifies a schema block
+	BuildVersion   uint64    // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
+	ByteOrder      uint64    // generated: 1 little, 2 big
+	Host           [129]byte // string(128): max length, used length beside it
+	_              [3]byte   // generated padding
 	HostLength     int32
 	AtMs           int64
 	Load1          [17]byte // string(16): max length, used length beside it
@@ -597,40 +592,40 @@ type MachineBeatBlockProjection struct {
 // model disagrees with the one the compiler derived stops the program where
 // it starts, rather than pointing at a row and reading the wrong bytes.
 func init() {
-	tableBlockLayoutSize("EnvNameRow", unsafe.Sizeof(EnvNameRow{}), 72)
+	tableBlockLayoutSize("EnvNameRow", unsafe.Sizeof(EnvNameRow{}), 136)
 	tableBlockLayoutSize("EnvNameRow alignment", unsafe.Alignof(EnvNameRow{}), 4)
 	tableBlockLayoutOffset("EnvNameRow.Name", unsafe.Offsetof(EnvNameRow{}.Name), 0)
-	tableBlockLayoutSize("FieldPairRow", unsafe.Sizeof(FieldPairRow{}), 1072)
+	tableBlockLayoutSize("FieldPairRow", unsafe.Sizeof(FieldPairRow{}), 2352)
 	tableBlockLayoutSize("FieldPairRow alignment", unsafe.Alignof(FieldPairRow{}), 4)
 	tableBlockLayoutOffset("FieldPairRow.Name", unsafe.Offsetof(FieldPairRow{}.Name), 0)
 	tableBlockLayoutOffset("FieldPairRow.Value", unsafe.Offsetof(FieldPairRow{}.Value), 40)
-	tableBlockLayoutSize("HostGroupRow", unsafe.Sizeof(HostGroupRow{}), 4612)
+	tableBlockLayoutSize("HostGroupRow", unsafe.Sizeof(HostGroupRow{}), 6532)
 	tableBlockLayoutSize("HostGroupRow alignment", unsafe.Alignof(HostGroupRow{}), 4)
 	tableBlockLayoutOffset("HostGroupRow.Hosts", unsafe.Offsetof(HostGroupRow{}.Hosts), 0)
-	tableBlockLayoutSize("HostNameRow", unsafe.Sizeof(HostNameRow{}), 72)
+	tableBlockLayoutSize("HostNameRow", unsafe.Sizeof(HostNameRow{}), 136)
 	tableBlockLayoutSize("HostNameRow alignment", unsafe.Alignof(HostNameRow{}), 4)
 	tableBlockLayoutOffset("HostNameRow.Name", unsafe.Offsetof(HostNameRow{}.Name), 0)
 	tableBlockLayoutSize("KindRevRow", unsafe.Sizeof(KindRevRow{}), 16)
 	tableBlockLayoutSize("KindRevRow alignment", unsafe.Alignof(KindRevRow{}), 8)
 	tableBlockLayoutOffset("KindRevRow.Kind", unsafe.Offsetof(KindRevRow{}.Kind), 0)
 	tableBlockLayoutOffset("KindRevRow.Rev", unsafe.Offsetof(KindRevRow{}.Rev), 8)
-	tableBlockLayoutSize("RowFieldsRow", unsafe.Sizeof(RowFieldsRow{}), 29836)
+	tableBlockLayoutSize("RowFieldsRow", unsafe.Sizeof(RowFieldsRow{}), 60556)
 	tableBlockLayoutSize("RowFieldsRow alignment", unsafe.Alignof(RowFieldsRow{}), 4)
 	tableBlockLayoutOffset("RowFieldsRow.Pairs", unsafe.Offsetof(RowFieldsRow{}.Pairs), 0)
-	tableBlockLayoutOffset("RowFieldsRow.Argv", unsafe.Offsetof(RowFieldsRow{}.Argv), 25732)
-	tableBlockLayoutSize("BenchBeatBlockProjection", unsafe.Sizeof(BenchBeatBlockProjection{}), 272)
+	tableBlockLayoutOffset("RowFieldsRow.Argv", unsafe.Offsetof(RowFieldsRow{}.Argv), 56452)
+	tableBlockLayoutSize("BenchBeatBlockProjection", unsafe.Sizeof(BenchBeatBlockProjection{}), 336)
 	tableBlockLayoutSize("BenchBeatBlockProjection alignment", unsafe.Alignof(BenchBeatBlockProjection{}), 8)
 	tableBlockLayoutOffset("BenchBeatBlockProjection.Magic", unsafe.Offsetof(BenchBeatBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("BenchBeatBlockProjection.BuildVersion", unsafe.Offsetof(BenchBeatBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("BenchBeatBlockProjection.ByteOrder", unsafe.Offsetof(BenchBeatBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("BenchBeatBlockProjection.Host", unsafe.Offsetof(BenchBeatBlockProjection{}.Host), 24)
-	tableBlockLayoutOffset("BenchBeatBlockProjection.AtMs", unsafe.Offsetof(BenchBeatBlockProjection{}.AtMs), 96)
-	tableBlockLayoutOffset("BenchBeatBlockProjection.Load1", unsafe.Offsetof(BenchBeatBlockProjection{}.Load1), 104)
-	tableBlockLayoutOffset("BenchBeatBlockProjection.Ncpu", unsafe.Offsetof(BenchBeatBlockProjection{}.Ncpu), 128)
-	tableBlockLayoutOffset("BenchBeatBlockProjection.Cpu", unsafe.Offsetof(BenchBeatBlockProjection{}.Cpu), 144)
-	tableBlockLayoutOffset("BenchBeatBlockProjection.Os", unsafe.Offsetof(BenchBeatBlockProjection{}.Os), 168)
-	tableBlockLayoutOffset("BenchBeatBlockProjection.Arch", unsafe.Offsetof(BenchBeatBlockProjection{}.Arch), 208)
-	tableBlockLayoutOffset("BenchBeatBlockProjection.MemoryGb", unsafe.Offsetof(BenchBeatBlockProjection{}.MemoryGb), 248)
+	tableBlockLayoutOffset("BenchBeatBlockProjection.AtMs", unsafe.Offsetof(BenchBeatBlockProjection{}.AtMs), 160)
+	tableBlockLayoutOffset("BenchBeatBlockProjection.Load1", unsafe.Offsetof(BenchBeatBlockProjection{}.Load1), 168)
+	tableBlockLayoutOffset("BenchBeatBlockProjection.Ncpu", unsafe.Offsetof(BenchBeatBlockProjection{}.Ncpu), 192)
+	tableBlockLayoutOffset("BenchBeatBlockProjection.Cpu", unsafe.Offsetof(BenchBeatBlockProjection{}.Cpu), 208)
+	tableBlockLayoutOffset("BenchBeatBlockProjection.Os", unsafe.Offsetof(BenchBeatBlockProjection{}.Os), 232)
+	tableBlockLayoutOffset("BenchBeatBlockProjection.Arch", unsafe.Offsetof(BenchBeatBlockProjection{}.Arch), 272)
+	tableBlockLayoutOffset("BenchBeatBlockProjection.MemoryGb", unsafe.Offsetof(BenchBeatBlockProjection{}.MemoryGb), 312)
 	tableBlockLayoutSize("CanonicalWordBlockProjection", unsafe.Sizeof(CanonicalWordBlockProjection{}), 32)
 	tableBlockLayoutSize("CanonicalWordBlockProjection alignment", unsafe.Alignof(CanonicalWordBlockProjection{}), 8)
 	tableBlockLayoutOffset("CanonicalWordBlockProjection.Magic", unsafe.Offsetof(CanonicalWordBlockProjection{}.Magic), 0)
@@ -640,7 +635,7 @@ func init() {
 	tableBlockLayoutOffset("CanonicalWordBlockProjection.FieldType", unsafe.Offsetof(CanonicalWordBlockProjection{}.FieldType), 25)
 	tableBlockLayoutOffset("CanonicalWordBlockProjection.Op", unsafe.Offsetof(CanonicalWordBlockProjection{}.Op), 26)
 	tableBlockLayoutOffset("CanonicalWordBlockProjection.Singleton", unsafe.Offsetof(CanonicalWordBlockProjection{}.Singleton), 27)
-	tableBlockLayoutSize("ConfigChangeBlockProjection", unsafe.Sizeof(ConfigChangeBlockProjection{}), 60160)
+	tableBlockLayoutSize("ConfigChangeBlockProjection", unsafe.Sizeof(ConfigChangeBlockProjection{}), 2656)
 	tableBlockLayoutSize("ConfigChangeBlockProjection alignment", unsafe.Alignof(ConfigChangeBlockProjection{}), 8)
 	tableBlockLayoutOffset("ConfigChangeBlockProjection.Magic", unsafe.Offsetof(ConfigChangeBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("ConfigChangeBlockProjection.BuildVersion", unsafe.Offsetof(ConfigChangeBlockProjection{}.BuildVersion), 8)
@@ -648,31 +643,29 @@ func init() {
 	tableBlockLayoutOffset("ConfigChangeBlockProjection.Id", unsafe.Offsetof(ConfigChangeBlockProjection{}.Id), 24)
 	tableBlockLayoutOffset("ConfigChangeBlockProjection.Kind", unsafe.Offsetof(ConfigChangeBlockProjection{}.Kind), 32)
 	tableBlockLayoutOffset("ConfigChangeBlockProjection.Name", unsafe.Offsetof(ConfigChangeBlockProjection{}.Name), 33)
-	tableBlockLayoutOffset("ConfigChangeBlockProjection.Op", unsafe.Offsetof(ConfigChangeBlockProjection{}.Op), 104)
-	tableBlockLayoutOffset("ConfigChangeBlockProjection.HasBefore", unsafe.Offsetof(ConfigChangeBlockProjection{}.HasBefore), 105)
-	tableBlockLayoutOffset("ConfigChangeBlockProjection.Before", unsafe.Offsetof(ConfigChangeBlockProjection{}.Before), 108)
-	tableBlockLayoutOffset("ConfigChangeBlockProjection.HasAfter", unsafe.Offsetof(ConfigChangeBlockProjection{}.HasAfter), 29944)
-	tableBlockLayoutOffset("ConfigChangeBlockProjection.After", unsafe.Offsetof(ConfigChangeBlockProjection{}.After), 29948)
-	tableBlockLayoutOffset("ConfigChangeBlockProjection.Actor", unsafe.Offsetof(ConfigChangeBlockProjection{}.Actor), 59784)
-	tableBlockLayoutOffset("ConfigChangeBlockProjection.Reason", unsafe.Offsetof(ConfigChangeBlockProjection{}.Reason), 59856)
-	tableBlockLayoutOffset("ConfigChangeBlockProjection.At", unsafe.Offsetof(ConfigChangeBlockProjection{}.At), 60120)
-	tableBlockLayoutSize("ConfigRowBlockProjection", unsafe.Sizeof(ConfigRowBlockProjection{}), 30016)
+	tableBlockLayoutOffset("ConfigChangeBlockProjection.Op", unsafe.Offsetof(ConfigChangeBlockProjection{}.Op), 168)
+	tableBlockLayoutOffset("ConfigChangeBlockProjection.HasBefore", unsafe.Offsetof(ConfigChangeBlockProjection{}.HasBefore), 169)
+	tableBlockLayoutOffset("ConfigChangeBlockProjection.HasAfter", unsafe.Offsetof(ConfigChangeBlockProjection{}.HasAfter), 170)
+	tableBlockLayoutOffset("ConfigChangeBlockProjection.Actor", unsafe.Offsetof(ConfigChangeBlockProjection{}.Actor), 171)
+	tableBlockLayoutOffset("ConfigChangeBlockProjection.Reason", unsafe.Offsetof(ConfigChangeBlockProjection{}.Reason), 304)
+	tableBlockLayoutOffset("ConfigChangeBlockProjection.At", unsafe.Offsetof(ConfigChangeBlockProjection{}.At), 2616)
+	tableBlockLayoutSize("ConfigRowBlockProjection", unsafe.Sizeof(ConfigRowBlockProjection{}), 60800)
 	tableBlockLayoutSize("ConfigRowBlockProjection alignment", unsafe.Alignof(ConfigRowBlockProjection{}), 8)
 	tableBlockLayoutOffset("ConfigRowBlockProjection.Magic", unsafe.Offsetof(ConfigRowBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("ConfigRowBlockProjection.BuildVersion", unsafe.Offsetof(ConfigRowBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("ConfigRowBlockProjection.ByteOrder", unsafe.Offsetof(ConfigRowBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("ConfigRowBlockProjection.Kind", unsafe.Offsetof(ConfigRowBlockProjection{}.Kind), 24)
 	tableBlockLayoutOffset("ConfigRowBlockProjection.Name", unsafe.Offsetof(ConfigRowBlockProjection{}.Name), 25)
-	tableBlockLayoutOffset("ConfigRowBlockProjection.Fields", unsafe.Offsetof(ConfigRowBlockProjection{}.Fields), 96)
-	tableBlockLayoutOffset("ConfigRowBlockProjection.CreatedAt", unsafe.Offsetof(ConfigRowBlockProjection{}.CreatedAt), 29932)
-	tableBlockLayoutOffset("ConfigRowBlockProjection.UpdatedAt", unsafe.Offsetof(ConfigRowBlockProjection{}.UpdatedAt), 29972)
-	tableBlockLayoutSize("EnvNameBlockProjection", unsafe.Sizeof(EnvNameBlockProjection{}), 96)
+	tableBlockLayoutOffset("ConfigRowBlockProjection.Fields", unsafe.Offsetof(ConfigRowBlockProjection{}.Fields), 160)
+	tableBlockLayoutOffset("ConfigRowBlockProjection.CreatedAt", unsafe.Offsetof(ConfigRowBlockProjection{}.CreatedAt), 60716)
+	tableBlockLayoutOffset("ConfigRowBlockProjection.UpdatedAt", unsafe.Offsetof(ConfigRowBlockProjection{}.UpdatedAt), 60756)
+	tableBlockLayoutSize("EnvNameBlockProjection", unsafe.Sizeof(EnvNameBlockProjection{}), 160)
 	tableBlockLayoutSize("EnvNameBlockProjection alignment", unsafe.Alignof(EnvNameBlockProjection{}), 8)
 	tableBlockLayoutOffset("EnvNameBlockProjection.Magic", unsafe.Offsetof(EnvNameBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("EnvNameBlockProjection.BuildVersion", unsafe.Offsetof(EnvNameBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("EnvNameBlockProjection.ByteOrder", unsafe.Offsetof(EnvNameBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("EnvNameBlockProjection.Name", unsafe.Offsetof(EnvNameBlockProjection{}.Name), 24)
-	tableBlockLayoutSize("FieldPairBlockProjection", unsafe.Sizeof(FieldPairBlockProjection{}), 1096)
+	tableBlockLayoutSize("FieldPairBlockProjection", unsafe.Sizeof(FieldPairBlockProjection{}), 2376)
 	tableBlockLayoutSize("FieldPairBlockProjection alignment", unsafe.Alignof(FieldPairBlockProjection{}), 8)
 	tableBlockLayoutOffset("FieldPairBlockProjection.Magic", unsafe.Offsetof(FieldPairBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("FieldPairBlockProjection.BuildVersion", unsafe.Offsetof(FieldPairBlockProjection{}.BuildVersion), 8)
@@ -691,68 +684,68 @@ func init() {
 	tableBlockLayoutOffset("HostGroupBlockProjection.BuildVersion", unsafe.Offsetof(HostGroupBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("HostGroupBlockProjection.ByteOrder", unsafe.Offsetof(HostGroupBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("HostGroupBlockProjection.Hosts", unsafe.Offsetof(HostGroupBlockProjection{}.Hosts), 24)
-	tableBlockLayoutSize("HostGroup.Hosts stride", unsafe.Sizeof(HostNameRow{}), 72)
-	tableBlockLayoutSize("HostNameBlockProjection", unsafe.Sizeof(HostNameBlockProjection{}), 96)
+	tableBlockLayoutSize("HostGroup.Hosts stride", unsafe.Sizeof(HostNameRow{}), 136)
+	tableBlockLayoutSize("HostNameBlockProjection", unsafe.Sizeof(HostNameBlockProjection{}), 160)
 	tableBlockLayoutSize("HostNameBlockProjection alignment", unsafe.Alignof(HostNameBlockProjection{}), 8)
 	tableBlockLayoutOffset("HostNameBlockProjection.Magic", unsafe.Offsetof(HostNameBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("HostNameBlockProjection.BuildVersion", unsafe.Offsetof(HostNameBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("HostNameBlockProjection.ByteOrder", unsafe.Offsetof(HostNameBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("HostNameBlockProjection.Name", unsafe.Offsetof(HostNameBlockProjection{}.Name), 24)
-	tableBlockLayoutSize("HostViewBlockProjection", unsafe.Sizeof(HostViewBlockProjection{}), 912)
+	tableBlockLayoutSize("HostViewBlockProjection", unsafe.Sizeof(HostViewBlockProjection{}), 14224)
 	tableBlockLayoutSize("HostViewBlockProjection alignment", unsafe.Alignof(HostViewBlockProjection{}), 8)
 	tableBlockLayoutOffset("HostViewBlockProjection.Magic", unsafe.Offsetof(HostViewBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("HostViewBlockProjection.BuildVersion", unsafe.Offsetof(HostViewBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("HostViewBlockProjection.ByteOrder", unsafe.Offsetof(HostViewBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("HostViewBlockProjection.AnsibleHost", unsafe.Offsetof(HostViewBlockProjection{}.AnsibleHost), 24)
-	tableBlockLayoutOffset("HostViewBlockProjection.Kind", unsafe.Offsetof(HostViewBlockProjection{}.Kind), 96)
-	tableBlockLayoutOffset("HostViewBlockProjection.Slots", unsafe.Offsetof(HostViewBlockProjection{}.Slots), 100)
-	tableBlockLayoutOffset("HostViewBlockProjection.SlotsCapacity", unsafe.Offsetof(HostViewBlockProjection{}.SlotsCapacity), 104)
-	tableBlockLayoutOffset("HostViewBlockProjection.Runners", unsafe.Offsetof(HostViewBlockProjection{}.Runners), 108)
-	tableBlockLayoutOffset("HostViewBlockProjection.SlotsShare", unsafe.Offsetof(HostViewBlockProjection{}.SlotsShare), 112)
-	tableBlockLayoutOffset("HostViewBlockProjection.Cores", unsafe.Offsetof(HostViewBlockProjection{}.Cores), 120)
-	tableBlockLayoutOffset("HostViewBlockProjection.BenchOs", unsafe.Offsetof(HostViewBlockProjection{}.BenchOs), 125)
-	tableBlockLayoutOffset("HostViewBlockProjection.NovaArch", unsafe.Offsetof(HostViewBlockProjection{}.NovaArch), 164)
-	tableBlockLayoutOffset("HostViewBlockProjection.NovaTla", unsafe.Offsetof(HostViewBlockProjection{}.NovaTla), 204)
-	tableBlockLayoutOffset("HostViewBlockProjection.RegistrySeat", unsafe.Offsetof(HostViewBlockProjection{}.RegistrySeat), 205)
-	tableBlockLayoutOffset("HostViewBlockProjection.RegistryRoles", unsafe.Offsetof(HostViewBlockProjection{}.RegistryRoles), 276)
-	tableBlockLayoutOffset("HostViewBlockProjection.AnsibleUser", unsafe.Offsetof(HostViewBlockProjection{}.AnsibleUser), 348)
-	tableBlockLayoutOffset("HostViewBlockProjection.NovaSeat", unsafe.Offsetof(HostViewBlockProjection{}.NovaSeat), 420)
-	tableBlockLayoutOffset("HostViewBlockProjection.NovaRedisAddr", unsafe.Offsetof(HostViewBlockProjection{}.NovaRedisAddr), 492)
-	tableBlockLayoutOffset("HostViewBlockProjection.NovaBusAddr", unsafe.Offsetof(HostViewBlockProjection{}.NovaBusAddr), 564)
-	tableBlockLayoutOffset("HostViewBlockProjection.NovaRedisPort", unsafe.Offsetof(HostViewBlockProjection{}.NovaRedisPort), 636)
-	tableBlockLayoutOffset("HostViewBlockProjection.NovaPgDsn", unsafe.Offsetof(HostViewBlockProjection{}.NovaPgDsn), 640)
-	tableBlockLayoutOffset("HostViewBlockProjection.Local", unsafe.Offsetof(HostViewBlockProjection{}.Local), 904)
-	tableBlockLayoutSize("InventoryBlockProjection", unsafe.Sizeof(InventoryBlockProjection{}), 37008)
+	tableBlockLayoutOffset("HostViewBlockProjection.Kind", unsafe.Offsetof(HostViewBlockProjection{}.Kind), 160)
+	tableBlockLayoutOffset("HostViewBlockProjection.Slots", unsafe.Offsetof(HostViewBlockProjection{}.Slots), 164)
+	tableBlockLayoutOffset("HostViewBlockProjection.SlotsCapacity", unsafe.Offsetof(HostViewBlockProjection{}.SlotsCapacity), 168)
+	tableBlockLayoutOffset("HostViewBlockProjection.Runners", unsafe.Offsetof(HostViewBlockProjection{}.Runners), 172)
+	tableBlockLayoutOffset("HostViewBlockProjection.SlotsShare", unsafe.Offsetof(HostViewBlockProjection{}.SlotsShare), 176)
+	tableBlockLayoutOffset("HostViewBlockProjection.Cores", unsafe.Offsetof(HostViewBlockProjection{}.Cores), 184)
+	tableBlockLayoutOffset("HostViewBlockProjection.BenchOs", unsafe.Offsetof(HostViewBlockProjection{}.BenchOs), 189)
+	tableBlockLayoutOffset("HostViewBlockProjection.NovaArch", unsafe.Offsetof(HostViewBlockProjection{}.NovaArch), 228)
+	tableBlockLayoutOffset("HostViewBlockProjection.NovaTla", unsafe.Offsetof(HostViewBlockProjection{}.NovaTla), 268)
+	tableBlockLayoutOffset("HostViewBlockProjection.RegistrySeat", unsafe.Offsetof(HostViewBlockProjection{}.RegistrySeat), 269)
+	tableBlockLayoutOffset("HostViewBlockProjection.RegistryRoles", unsafe.Offsetof(HostViewBlockProjection{}.RegistryRoles), 2580)
+	tableBlockLayoutOffset("HostViewBlockProjection.AnsibleUser", unsafe.Offsetof(HostViewBlockProjection{}.AnsibleUser), 2652)
+	tableBlockLayoutOffset("HostViewBlockProjection.NovaSeat", unsafe.Offsetof(HostViewBlockProjection{}.NovaSeat), 4964)
+	tableBlockLayoutOffset("HostViewBlockProjection.NovaRedisAddr", unsafe.Offsetof(HostViewBlockProjection{}.NovaRedisAddr), 7276)
+	tableBlockLayoutOffset("HostViewBlockProjection.NovaBusAddr", unsafe.Offsetof(HostViewBlockProjection{}.NovaBusAddr), 9588)
+	tableBlockLayoutOffset("HostViewBlockProjection.NovaRedisPort", unsafe.Offsetof(HostViewBlockProjection{}.NovaRedisPort), 11900)
+	tableBlockLayoutOffset("HostViewBlockProjection.NovaPgDsn", unsafe.Offsetof(HostViewBlockProjection{}.NovaPgDsn), 11904)
+	tableBlockLayoutOffset("HostViewBlockProjection.Local", unsafe.Offsetof(HostViewBlockProjection{}.Local), 14216)
+	tableBlockLayoutSize("InventoryBlockProjection", unsafe.Sizeof(InventoryBlockProjection{}), 54608)
 	tableBlockLayoutSize("InventoryBlockProjection alignment", unsafe.Alignof(InventoryBlockProjection{}), 8)
 	tableBlockLayoutOffset("InventoryBlockProjection.Magic", unsafe.Offsetof(InventoryBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("InventoryBlockProjection.BuildVersion", unsafe.Offsetof(InventoryBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("InventoryBlockProjection.ByteOrder", unsafe.Offsetof(InventoryBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("InventoryBlockProjection.All", unsafe.Offsetof(InventoryBlockProjection{}.All), 24)
-	tableBlockLayoutOffset("InventoryBlockProjection.Adopt", unsafe.Offsetof(InventoryBlockProjection{}.Adopt), 4636)
-	tableBlockLayoutOffset("InventoryBlockProjection.Benches", unsafe.Offsetof(InventoryBlockProjection{}.Benches), 9248)
-	tableBlockLayoutOffset("InventoryBlockProjection.Coordinator", unsafe.Offsetof(InventoryBlockProjection{}.Coordinator), 13860)
-	tableBlockLayoutOffset("InventoryBlockProjection.Store", unsafe.Offsetof(InventoryBlockProjection{}.Store), 18472)
-	tableBlockLayoutOffset("InventoryBlockProjection.StoreDeployer", unsafe.Offsetof(InventoryBlockProjection{}.StoreDeployer), 23084)
-	tableBlockLayoutOffset("InventoryBlockProjection.Runners", unsafe.Offsetof(InventoryBlockProjection{}.Runners), 27696)
-	tableBlockLayoutOffset("InventoryBlockProjection.Tla", unsafe.Offsetof(InventoryBlockProjection{}.Tla), 32308)
-	tableBlockLayoutOffset("InventoryBlockProjection.NovaStore", unsafe.Offsetof(InventoryBlockProjection{}.NovaStore), 36920)
-	tableBlockLayoutOffset("InventoryBlockProjection.Revs", unsafe.Offsetof(InventoryBlockProjection{}.Revs), 36992)
+	tableBlockLayoutOffset("InventoryBlockProjection.Adopt", unsafe.Offsetof(InventoryBlockProjection{}.Adopt), 6556)
+	tableBlockLayoutOffset("InventoryBlockProjection.Benches", unsafe.Offsetof(InventoryBlockProjection{}.Benches), 13088)
+	tableBlockLayoutOffset("InventoryBlockProjection.Coordinator", unsafe.Offsetof(InventoryBlockProjection{}.Coordinator), 19620)
+	tableBlockLayoutOffset("InventoryBlockProjection.Store", unsafe.Offsetof(InventoryBlockProjection{}.Store), 26152)
+	tableBlockLayoutOffset("InventoryBlockProjection.StoreDeployer", unsafe.Offsetof(InventoryBlockProjection{}.StoreDeployer), 32684)
+	tableBlockLayoutOffset("InventoryBlockProjection.Runners", unsafe.Offsetof(InventoryBlockProjection{}.Runners), 39216)
+	tableBlockLayoutOffset("InventoryBlockProjection.Tla", unsafe.Offsetof(InventoryBlockProjection{}.Tla), 45748)
+	tableBlockLayoutOffset("InventoryBlockProjection.NovaStore", unsafe.Offsetof(InventoryBlockProjection{}.NovaStore), 52280)
+	tableBlockLayoutOffset("InventoryBlockProjection.Revs", unsafe.Offsetof(InventoryBlockProjection{}.Revs), 54592)
 	tableBlockLayoutSize("Inventory.Revs stride", unsafe.Sizeof(KindRevRow{}), 16)
-	tableBlockLayoutSize("InventoryLoopBlockProjection", unsafe.Sizeof(InventoryLoopBlockProjection{}), 4888)
+	tableBlockLayoutSize("InventoryLoopBlockProjection", unsafe.Sizeof(InventoryLoopBlockProjection{}), 9048)
 	tableBlockLayoutSize("InventoryLoopBlockProjection alignment", unsafe.Alignof(InventoryLoopBlockProjection{}), 8)
 	tableBlockLayoutOffset("InventoryLoopBlockProjection.Magic", unsafe.Offsetof(InventoryLoopBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("InventoryLoopBlockProjection.BuildVersion", unsafe.Offsetof(InventoryLoopBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("InventoryLoopBlockProjection.ByteOrder", unsafe.Offsetof(InventoryLoopBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("InventoryLoopBlockProjection.Machine", unsafe.Offsetof(InventoryLoopBlockProjection{}.Machine), 24)
-	tableBlockLayoutOffset("InventoryLoopBlockProjection.Name", unsafe.Offsetof(InventoryLoopBlockProjection{}.Name), 96)
-	tableBlockLayoutOffset("InventoryLoopBlockProjection.Argv", unsafe.Offsetof(InventoryLoopBlockProjection{}.Argv), 168)
-	tableBlockLayoutOffset("InventoryLoopBlockProjection.Seat", unsafe.Offsetof(InventoryLoopBlockProjection{}.Seat), 4272)
-	tableBlockLayoutOffset("InventoryLoopBlockProjection.Keys", unsafe.Offsetof(InventoryLoopBlockProjection{}.Keys), 4344)
-	tableBlockLayoutOffset("InventoryLoopBlockProjection.Every", unsafe.Offsetof(InventoryLoopBlockProjection{}.Every), 4360)
-	tableBlockLayoutOffset("InventoryLoopBlockProjection.Keepalive", unsafe.Offsetof(InventoryLoopBlockProjection{}.Keepalive), 4364)
-	tableBlockLayoutOffset("InventoryLoopBlockProjection.Enabled", unsafe.Offsetof(InventoryLoopBlockProjection{}.Enabled), 4365)
-	tableBlockLayoutOffset("InventoryLoopBlockProjection.Log", unsafe.Offsetof(InventoryLoopBlockProjection{}.Log), 4366)
-	tableBlockLayoutSize("InventoryLoop.Keys stride", unsafe.Sizeof(EnvNameRow{}), 72)
+	tableBlockLayoutOffset("InventoryLoopBlockProjection.Name", unsafe.Offsetof(InventoryLoopBlockProjection{}.Name), 160)
+	tableBlockLayoutOffset("InventoryLoopBlockProjection.Argv", unsafe.Offsetof(InventoryLoopBlockProjection{}.Argv), 296)
+	tableBlockLayoutOffset("InventoryLoopBlockProjection.Seat", unsafe.Offsetof(InventoryLoopBlockProjection{}.Seat), 4400)
+	tableBlockLayoutOffset("InventoryLoopBlockProjection.Keys", unsafe.Offsetof(InventoryLoopBlockProjection{}.Keys), 6712)
+	tableBlockLayoutOffset("InventoryLoopBlockProjection.Every", unsafe.Offsetof(InventoryLoopBlockProjection{}.Every), 6728)
+	tableBlockLayoutOffset("InventoryLoopBlockProjection.Keepalive", unsafe.Offsetof(InventoryLoopBlockProjection{}.Keepalive), 6732)
+	tableBlockLayoutOffset("InventoryLoopBlockProjection.Enabled", unsafe.Offsetof(InventoryLoopBlockProjection{}.Enabled), 6733)
+	tableBlockLayoutOffset("InventoryLoopBlockProjection.Log", unsafe.Offsetof(InventoryLoopBlockProjection{}.Log), 6734)
+	tableBlockLayoutSize("InventoryLoop.Keys stride", unsafe.Sizeof(EnvNameRow{}), 136)
 	tableBlockLayoutSize("KindRevBlockProjection", unsafe.Sizeof(KindRevBlockProjection{}), 40)
 	tableBlockLayoutSize("KindRevBlockProjection alignment", unsafe.Alignof(KindRevBlockProjection{}), 8)
 	tableBlockLayoutOffset("KindRevBlockProjection.Magic", unsafe.Offsetof(KindRevBlockProjection{}.Magic), 0)
@@ -770,19 +763,19 @@ func init() {
 	tableBlockLayoutOffset("MachineBeatBlockProjection.Cores", unsafe.Offsetof(MachineBeatBlockProjection{}.Cores), 104)
 	tableBlockLayoutOffset("MachineBeatBlockProjection.MemoryGb", unsafe.Offsetof(MachineBeatBlockProjection{}.MemoryGb), 120)
 	tableBlockLayoutOffset("MachineBeatBlockProjection.At", unsafe.Offsetof(MachineBeatBlockProjection{}.At), 144)
-	tableBlockLayoutSize("MachineViewBlockProjection", unsafe.Sizeof(MachineViewBlockProjection{}), 336)
+	tableBlockLayoutSize("MachineViewBlockProjection", unsafe.Sizeof(MachineViewBlockProjection{}), 4880)
 	tableBlockLayoutSize("MachineViewBlockProjection alignment", unsafe.Alignof(MachineViewBlockProjection{}), 8)
 	tableBlockLayoutOffset("MachineViewBlockProjection.Magic", unsafe.Offsetof(MachineViewBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("MachineViewBlockProjection.BuildVersion", unsafe.Offsetof(MachineViewBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("MachineViewBlockProjection.ByteOrder", unsafe.Offsetof(MachineViewBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("MachineViewBlockProjection.Name", unsafe.Offsetof(MachineViewBlockProjection{}.Name), 24)
-	tableBlockLayoutOffset("MachineViewBlockProjection.User", unsafe.Offsetof(MachineViewBlockProjection{}.User), 96)
-	tableBlockLayoutOffset("MachineViewBlockProjection.Seat", unsafe.Offsetof(MachineViewBlockProjection{}.Seat), 168)
-	tableBlockLayoutOffset("MachineViewBlockProjection.Slots", unsafe.Offsetof(MachineViewBlockProjection{}.Slots), 240)
-	tableBlockLayoutOffset("MachineViewBlockProjection.Runners", unsafe.Offsetof(MachineViewBlockProjection{}.Runners), 244)
-	tableBlockLayoutOffset("MachineViewBlockProjection.Roles", unsafe.Offsetof(MachineViewBlockProjection{}.Roles), 248)
-	tableBlockLayoutOffset("MachineViewBlockProjection.Tla", unsafe.Offsetof(MachineViewBlockProjection{}.Tla), 320)
-	tableBlockLayoutOffset("MachineViewBlockProjection.Width", unsafe.Offsetof(MachineViewBlockProjection{}.Width), 324)
+	tableBlockLayoutOffset("MachineViewBlockProjection.User", unsafe.Offsetof(MachineViewBlockProjection{}.User), 160)
+	tableBlockLayoutOffset("MachineViewBlockProjection.Seat", unsafe.Offsetof(MachineViewBlockProjection{}.Seat), 2472)
+	tableBlockLayoutOffset("MachineViewBlockProjection.Slots", unsafe.Offsetof(MachineViewBlockProjection{}.Slots), 4784)
+	tableBlockLayoutOffset("MachineViewBlockProjection.Runners", unsafe.Offsetof(MachineViewBlockProjection{}.Runners), 4788)
+	tableBlockLayoutOffset("MachineViewBlockProjection.Roles", unsafe.Offsetof(MachineViewBlockProjection{}.Roles), 4792)
+	tableBlockLayoutOffset("MachineViewBlockProjection.Tla", unsafe.Offsetof(MachineViewBlockProjection{}.Tla), 4864)
+	tableBlockLayoutOffset("MachineViewBlockProjection.Width", unsafe.Offsetof(MachineViewBlockProjection{}.Width), 4868)
 	tableBlockLayoutSize("MemberBeatBlockProjection", unsafe.Sizeof(MemberBeatBlockProjection{}), 40)
 	tableBlockLayoutSize("MemberBeatBlockProjection alignment", unsafe.Alignof(MemberBeatBlockProjection{}), 8)
 	tableBlockLayoutOffset("MemberBeatBlockProjection.Magic", unsafe.Offsetof(MemberBeatBlockProjection{}.Magic), 0)
@@ -797,7 +790,7 @@ func init() {
 	tableBlockLayoutOffset("RowFieldsBlockProjection.ByteOrder", unsafe.Offsetof(RowFieldsBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("RowFieldsBlockProjection.Pairs", unsafe.Offsetof(RowFieldsBlockProjection{}.Pairs), 24)
 	tableBlockLayoutOffset("RowFieldsBlockProjection.Argv", unsafe.Offsetof(RowFieldsBlockProjection{}.Argv), 40)
-	tableBlockLayoutSize("RowFields.Pairs stride", unsafe.Sizeof(FieldPairRow{}), 1072)
+	tableBlockLayoutSize("RowFields.Pairs stride", unsafe.Sizeof(FieldPairRow{}), 2352)
 }
 
 // tableBlockLayoutSize refuses a record this runtime lays out at a different
@@ -832,23 +825,23 @@ var tableBlockRecords = make([]TableBlockInfo, 23)
 // goroutine with no synchronisation.
 func init() {
 	tableBlockRecords[0] = TableBlockInfo{
-		Name: "BenchBeat", BuildVersion: BuildVersion, Size: 272, Align: 8, NumFields: 8,
+		Name: "BenchBeat", BuildVersion: BuildVersion, Size: 336, Align: 8, NumFields: 8,
 		Fields: []TableBlockFieldInfo{
-			{Name: "host", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "at_ms", Offset: 96, Size: 8, Kind: 5, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "host", Offset: 24, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 156, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "at_ms", Offset: 160, Size: 8, Kind: 5, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "load1", Offset: 104, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 124, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "load1", Offset: 168, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 188, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "ncpu", Offset: 128, Size: 16, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 140, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "ncpu", Offset: 192, Size: 16, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 204, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "cpu", Offset: 144, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 164, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "cpu", Offset: 208, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 228, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "os", Offset: 168, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 204, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "os", Offset: 232, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 268, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "arch", Offset: 208, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 244, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "arch", Offset: 272, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 308, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "memory_gb", Offset: 248, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 268, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "memory_gb", Offset: 312, Size: 24, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 332, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
@@ -866,61 +859,57 @@ func init() {
 		},
 	}
 	tableBlockRecords[2] = TableBlockInfo{
-		Name: "ConfigChange", BuildVersion: BuildVersion, Size: 60160, Align: 8, NumFields: 11,
+		Name: "ConfigChange", BuildVersion: BuildVersion, Size: 2656, Align: 8, NumFields: 9,
 		Fields: []TableBlockFieldInfo{
 			{Name: "id", Offset: 24, Size: 8, Kind: 5, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "kind", Offset: 32, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "name", Offset: 33, Size: 71, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 100, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "op", Offset: 104, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "name", Offset: 33, Size: 135, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 164, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "op", Offset: 168, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "has_before", Offset: 105, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "has_before", Offset: 169, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "before", Offset: 108, Size: 29836, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 29836, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[22] }},
-			{Name: "has_after", Offset: 29944, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "has_after", Offset: 170, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "after", Offset: 29948, Size: 29836, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 29836, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[22] }},
-			{Name: "actor", Offset: 59784, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 59852, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "reason", Offset: 59856, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60116, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "at", Offset: 60120, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60156, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "actor", Offset: 171, Size: 133, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 300, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "reason", Offset: 304, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2612, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "at", Offset: 2616, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2652, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[3] = TableBlockInfo{
-		Name: "ConfigRow", BuildVersion: BuildVersion, Size: 30016, Align: 8, NumFields: 5,
+		Name: "ConfigRow", BuildVersion: BuildVersion, Size: 60800, Align: 8, NumFields: 5,
 		Fields: []TableBlockFieldInfo{
 			{Name: "kind", Offset: 24, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "name", Offset: 25, Size: 71, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "fields", Offset: 96, Size: 29836, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 29836, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[22] }},
-			{Name: "created_at", Offset: 29932, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 29968, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "name", Offset: 25, Size: 135, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 156, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "fields", Offset: 160, Size: 60556, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 60556, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[22] }},
+			{Name: "created_at", Offset: 60716, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60752, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "updated_at", Offset: 29972, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 30008, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "updated_at", Offset: 60756, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60792, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[4] = TableBlockInfo{
-		Name: "EnvName", BuildVersion: BuildVersion, Size: 96, Align: 8, NumFields: 1,
+		Name: "EnvName", BuildVersion: BuildVersion, Size: 160, Align: 8, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
-			{Name: "name", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "name", Offset: 24, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 156, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[5] = TableBlockInfo{
-		Name: "FieldPair", BuildVersion: BuildVersion, Size: 1096, Align: 8, NumFields: 2,
+		Name: "FieldPair", BuildVersion: BuildVersion, Size: 2376, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "name", Offset: 24, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "value", Offset: 64, Size: 1032, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 1092, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 1024, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "value", Offset: 64, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2372, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[6] = TableBlockInfo{
@@ -933,106 +922,106 @@ func init() {
 	tableBlockRecords[7] = TableBlockInfo{
 		Name: "HostGroup", BuildVersion: BuildVersion, Size: 40, Align: 8, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
-			{Name: "hosts", Offset: 24, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 24, CountOffset: 32, StrideOffset: 36, Stride: 72,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[20] }},
+			{Name: "hosts", Offset: 24, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 24, CountOffset: 32, StrideOffset: 36, Stride: 136,
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 48, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[20] }},
 		},
 	}
 	tableBlockRecords[8] = TableBlockInfo{
-		Name: "HostName", BuildVersion: BuildVersion, Size: 96, Align: 8, NumFields: 1,
+		Name: "HostName", BuildVersion: BuildVersion, Size: 160, Align: 8, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
-			{Name: "name", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "name", Offset: 24, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 156, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[9] = TableBlockInfo{
-		Name: "HostView", BuildVersion: BuildVersion, Size: 912, Align: 8, NumFields: 19,
+		Name: "HostView", BuildVersion: BuildVersion, Size: 14224, Align: 8, NumFields: 19,
 		Fields: []TableBlockFieldInfo{
-			{Name: "ansible_host", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "kind", Offset: 96, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "ansible_host", Offset: 24, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 156, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "kind", Offset: 160, Size: 1, Kind: 7, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "slots", Offset: 100, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "slots", Offset: 164, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "slots_capacity", Offset: 104, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "slots_capacity", Offset: 168, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "runners", Offset: 108, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "runners", Offset: 172, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "slots_share", Offset: 112, Size: 5, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 4, PresentOffset: 116, Element: nil},
-			{Name: "cores", Offset: 120, Size: 5, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 4, PresentOffset: 124, Element: nil},
-			{Name: "bench_os", Offset: 125, Size: 39, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 160, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "slots_share", Offset: 176, Size: 5, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 4, PresentOffset: 180, Element: nil},
+			{Name: "cores", Offset: 184, Size: 5, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 4, PresentOffset: 188, Element: nil},
+			{Name: "bench_os", Offset: 189, Size: 39, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 224, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "nova_arch", Offset: 164, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 200, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "nova_arch", Offset: 228, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 264, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "nova_tla", Offset: 204, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "nova_tla", Offset: 268, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "registry_seat", Offset: 205, Size: 71, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 272, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "registry_seat", Offset: 269, Size: 2311, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2576, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "registry_roles", Offset: 2580, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2648, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "registry_roles", Offset: 276, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 344, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "ansible_user", Offset: 348, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 416, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "nova_seat", Offset: 420, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 488, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "nova_redis_addr", Offset: 492, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 560, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "nova_bus_addr", Offset: 564, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 632, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "nova_redis_port", Offset: 636, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "ansible_user", Offset: 2652, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4960, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "nova_seat", Offset: 4964, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 7272, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "nova_redis_addr", Offset: 7276, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 9584, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "nova_bus_addr", Offset: 9588, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 11896, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "nova_redis_port", Offset: 11900, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "nova_pg_dsn", Offset: 640, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 900, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "local", Offset: 904, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "nova_pg_dsn", Offset: 11904, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 14212, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "local", Offset: 14216, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[10] = TableBlockInfo{
-		Name: "Inventory", BuildVersion: BuildVersion, Size: 37008, Align: 8, NumFields: 10,
+		Name: "Inventory", BuildVersion: BuildVersion, Size: 54608, Align: 8, NumFields: 10,
 		Fields: []TableBlockFieldInfo{
-			{Name: "all", Offset: 24, Size: 4612, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4612, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
-			{Name: "adopt", Offset: 4636, Size: 4612, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4612, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
-			{Name: "benches", Offset: 9248, Size: 4612, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4612, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
-			{Name: "coordinator", Offset: 13860, Size: 4612, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4612, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
-			{Name: "store", Offset: 18472, Size: 4612, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4612, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
-			{Name: "store_deployer", Offset: 23084, Size: 4612, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4612, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
-			{Name: "runners", Offset: 27696, Size: 4612, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4612, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
-			{Name: "tla", Offset: 32308, Size: 4612, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4612, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
-			{Name: "nova_store", Offset: 36920, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 36988, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "revs", Offset: 36992, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 36992, CountOffset: 37000, StrideOffset: 37004, Stride: 16,
+			{Name: "all", Offset: 24, Size: 6532, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 6532, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
+			{Name: "adopt", Offset: 6556, Size: 6532, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 6532, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
+			{Name: "benches", Offset: 13088, Size: 6532, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 6532, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
+			{Name: "coordinator", Offset: 19620, Size: 6532, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 6532, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
+			{Name: "store", Offset: 26152, Size: 6532, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 6532, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
+			{Name: "store_deployer", Offset: 32684, Size: 6532, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 6532, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
+			{Name: "runners", Offset: 39216, Size: 6532, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 6532, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
+			{Name: "tla", Offset: 45748, Size: 6532, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 6532, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[19] }},
+			{Name: "nova_store", Offset: 52280, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 54588, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "revs", Offset: 54592, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 54592, CountOffset: 54600, StrideOffset: 54604, Stride: 16,
 				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[21] }},
 		},
 	}
 	tableBlockRecords[11] = TableBlockInfo{
-		Name: "InventoryLoop", BuildVersion: BuildVersion, Size: 4888, Align: 8, NumFields: 9,
+		Name: "InventoryLoop", BuildVersion: BuildVersion, Size: 9048, Align: 8, NumFields: 9,
 		Fields: []TableBlockFieldInfo{
-			{Name: "machine", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "name", Offset: 96, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 164, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "argv", Offset: 168, Size: 4104, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4268, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "machine", Offset: 24, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 156, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "name", Offset: 160, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 292, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "argv", Offset: 296, Size: 4104, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4396, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 4096, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "seat", Offset: 4272, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4340, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "keys", Offset: 4344, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 4344, CountOffset: 4352, StrideOffset: 4356, Stride: 72,
+			{Name: "seat", Offset: 4400, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 6708, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "keys", Offset: 6712, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 6712, CountOffset: 6720, StrideOffset: 6724, Stride: 136,
 				IsArray: true, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[17] }},
-			{Name: "every", Offset: 4360, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "every", Offset: 6728, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "keepalive", Offset: 4364, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "keepalive", Offset: 6732, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "enabled", Offset: 4365, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "enabled", Offset: 6733, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "log", Offset: 4366, Size: 518, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4880, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "log", Offset: 6734, Size: 2310, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 9040, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[12] = TableBlockInfo{
@@ -1060,24 +1049,24 @@ func init() {
 		},
 	}
 	tableBlockRecords[14] = TableBlockInfo{
-		Name: "MachineView", BuildVersion: BuildVersion, Size: 336, Align: 8, NumFields: 8,
+		Name: "MachineView", BuildVersion: BuildVersion, Size: 4880, Align: 8, NumFields: 8,
 		Fields: []TableBlockFieldInfo{
-			{Name: "name", Offset: 24, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 92, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "user", Offset: 96, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 164, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "seat", Offset: 168, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 236, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "slots", Offset: 240, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "name", Offset: 24, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 156, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "user", Offset: 160, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2468, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "seat", Offset: 2472, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4780, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "slots", Offset: 4784, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "runners", Offset: 244, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "runners", Offset: 4788, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "roles", Offset: 248, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 316, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "roles", Offset: 4792, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4860, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "tla", Offset: 320, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "tla", Offset: 4864, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "width", Offset: 324, Size: 5, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 4, PresentOffset: 328, Element: nil},
+			{Name: "width", Offset: 4868, Size: 5, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: false, Optional: true, ArrayBound: 0, ElemSize: 4, PresentOffset: 4872, Element: nil},
 		},
 	}
 	tableBlockRecords[15] = TableBlockInfo{
@@ -1092,40 +1081,40 @@ func init() {
 	tableBlockRecords[16] = TableBlockInfo{
 		Name: "RowFields", BuildVersion: BuildVersion, Size: 4144, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
-			{Name: "pairs", Offset: 24, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 24, CountOffset: 32, StrideOffset: 36, Stride: 1072,
+			{Name: "pairs", Offset: 24, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 24, CountOffset: 32, StrideOffset: 36, Stride: 2352,
 				IsArray: true, Counted: true, Optional: false, ArrayBound: 24, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[18] }},
 			{Name: "argv", Offset: 40, Size: 4104, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4140, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 4096, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[17] = TableBlockInfo{
-		Name: "EnvName", BuildVersion: BuildVersion, Size: 72, Align: 4, NumFields: 1,
+		Name: "EnvName", BuildVersion: BuildVersion, Size: 136, Align: 4, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
-			{Name: "name", Offset: 0, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 68, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "name", Offset: 0, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 132, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[18] = TableBlockInfo{
-		Name: "FieldPair", BuildVersion: BuildVersion, Size: 1072, Align: 4, NumFields: 2,
+		Name: "FieldPair", BuildVersion: BuildVersion, Size: 2352, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
 			{Name: "name", Offset: 0, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 36, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "value", Offset: 40, Size: 1032, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 1068, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 1024, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "value", Offset: 40, Size: 2312, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2348, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 2304, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[19] = TableBlockInfo{
-		Name: "HostGroup", BuildVersion: BuildVersion, Size: 4612, Align: 4, NumFields: 1,
+		Name: "HostGroup", BuildVersion: BuildVersion, Size: 6532, Align: 4, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
-			{Name: "hosts", Offset: 0, Size: 4612, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 4608, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 72, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[20] }},
+			{Name: "hosts", Offset: 0, Size: 6532, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 6528, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 48, ElemSize: 136, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[20] }},
 		},
 	}
 	tableBlockRecords[20] = TableBlockInfo{
-		Name: "HostName", BuildVersion: BuildVersion, Size: 72, Align: 4, NumFields: 1,
+		Name: "HostName", BuildVersion: BuildVersion, Size: 136, Align: 4, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
-			{Name: "name", Offset: 0, Size: 72, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 68, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "name", Offset: 0, Size: 136, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 132, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 128, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[21] = TableBlockInfo{
@@ -1138,11 +1127,11 @@ func init() {
 		},
 	}
 	tableBlockRecords[22] = TableBlockInfo{
-		Name: "RowFields", BuildVersion: BuildVersion, Size: 29836, Align: 4, NumFields: 2,
+		Name: "RowFields", BuildVersion: BuildVersion, Size: 60556, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
-			{Name: "pairs", Offset: 0, Size: 25732, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 25728, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 24, ElemSize: 1072, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[18] }},
-			{Name: "argv", Offset: 25732, Size: 4104, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 29832, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "pairs", Offset: 0, Size: 56452, Kind: 13, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 56448, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 24, ElemSize: 2352, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[18] }},
+			{Name: "argv", Offset: 56452, Size: 4104, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 60552, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 4096, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
@@ -1153,7 +1142,7 @@ func init() {
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const FieldPairBlockMaxBytes int64 = 1152
+const FieldPairBlockMaxBytes int64 = 2432
 
 // FieldPairBlock is FieldPair's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -1183,10 +1172,10 @@ func (block *FieldPairBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 1096 {
+	if bytes < 2376 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 1096)
+	header := unsafe.Slice((*byte)(base), 2376)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -1200,7 +1189,7 @@ func (block *FieldPairBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(1096)
+	used := int64(2376)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -1267,7 +1256,7 @@ func FieldPairBlockBegin(b *FieldPairBlock, s *FieldPairBlockStorage, c FieldPai
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(1096)
+	offset := int64(2376)
 	*b = FieldPairBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -1276,7 +1265,7 @@ func FieldPairBlockBytes(b *FieldPairBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(1096)
+	used := int64(2376)
 	return (used + 63) &^ int64(63)
 }
 
@@ -1293,7 +1282,7 @@ func (b *FieldPairBlock) Type() *TableBlockInfo { return &tableBlockRecords[5] }
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const RowFieldsBlockMaxBytes int64 = 29888
+const RowFieldsBlockMaxBytes int64 = 60608
 
 // RowFieldsBlock is RowFields's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -1315,7 +1304,7 @@ type RowFieldsBlock struct {
 // never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
 // package constants because §11 gives a language whose accessors are members
 // exactly that latitude: a member claims nothing at file scope.
-func (b *RowFieldsBlock) PairsStride() int64           { return 1072 }
+func (b *RowFieldsBlock) PairsStride() int64           { return 2352 }
 func (b *RowFieldsBlock) PairsMax() int64              { return 24 }
 func (b *RowFieldsBlock) PairsProjectionOffset() int64 { return 24 }
 
@@ -1474,8 +1463,8 @@ func RowFieldsBlockBegin(b *RowFieldsBlock, s *RowFieldsBlockStorage, c RowField
 	p.ByteOrder = TableBlockByteOrder
 	offset := int64(4144)
 	offset = (offset + 63) &^ int64(63)
-	p.Pairs = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Pairs), Stride: 1072}
-	offset += int64(c.Pairs) * 1072
+	p.Pairs = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Pairs), Stride: 2352}
+	offset += int64(c.Pairs) * 2352
 	*b = RowFieldsBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -1504,7 +1493,7 @@ func (b *RowFieldsBlock) Type() *TableBlockInfo { return &tableBlockRecords[16] 
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const ConfigRowBlockMaxBytes int64 = 30016
+const ConfigRowBlockMaxBytes int64 = 60800
 
 // ConfigRowBlock is ConfigRow's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -1534,10 +1523,10 @@ func (block *ConfigRowBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 30016 {
+	if bytes < 60800 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 30016)
+	header := unsafe.Slice((*byte)(base), 60800)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -1551,7 +1540,7 @@ func (block *ConfigRowBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(30016)
+	used := int64(60800)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -1618,7 +1607,7 @@ func ConfigRowBlockBegin(b *ConfigRowBlock, s *ConfigRowBlockStorage, c ConfigRo
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(30016)
+	offset := int64(60800)
 	*b = ConfigRowBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -1627,7 +1616,7 @@ func ConfigRowBlockBytes(b *ConfigRowBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(30016)
+	used := int64(60800)
 	return (used + 63) &^ int64(63)
 }
 
@@ -1644,7 +1633,7 @@ func (b *ConfigRowBlock) Type() *TableBlockInfo { return &tableBlockRecords[3] }
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const ConfigChangeBlockMaxBytes int64 = 60160
+const ConfigChangeBlockMaxBytes int64 = 2688
 
 // ConfigChangeBlock is ConfigChange's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -1674,10 +1663,10 @@ func (block *ConfigChangeBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 60160 {
+	if bytes < 2656 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 60160)
+	header := unsafe.Slice((*byte)(base), 2656)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -1691,7 +1680,7 @@ func (block *ConfigChangeBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(60160)
+	used := int64(2656)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -1758,7 +1747,7 @@ func ConfigChangeBlockBegin(b *ConfigChangeBlock, s *ConfigChangeBlockStorage, c
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(60160)
+	offset := int64(2656)
 	*b = ConfigChangeBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -1767,7 +1756,7 @@ func ConfigChangeBlockBytes(b *ConfigChangeBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(60160)
+	used := int64(2656)
 	return (used + 63) &^ int64(63)
 }
 
@@ -2064,7 +2053,7 @@ func (b *CanonicalWordBlock) Type() *TableBlockInfo { return &tableBlockRecords[
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const MachineViewBlockMaxBytes int64 = 384
+const MachineViewBlockMaxBytes int64 = 4928
 
 // MachineViewBlock is MachineView's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -2094,10 +2083,10 @@ func (block *MachineViewBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 336 {
+	if bytes < 4880 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 336)
+	header := unsafe.Slice((*byte)(base), 4880)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -2111,7 +2100,7 @@ func (block *MachineViewBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(336)
+	used := int64(4880)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -2178,7 +2167,7 @@ func MachineViewBlockBegin(b *MachineViewBlock, s *MachineViewBlockStorage, c Ma
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(336)
+	offset := int64(4880)
 	*b = MachineViewBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -2187,7 +2176,7 @@ func MachineViewBlockBytes(b *MachineViewBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(336)
+	used := int64(4880)
 	return (used + 63) &^ int64(63)
 }
 
@@ -2204,7 +2193,7 @@ func (b *MachineViewBlock) Type() *TableBlockInfo { return &tableBlockRecords[14
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const InventoryLoopBlockMaxBytes int64 = 7232
+const InventoryLoopBlockMaxBytes int64 = 13440
 
 // InventoryLoopBlock is InventoryLoop's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -2226,9 +2215,9 @@ type InventoryLoopBlock struct {
 // never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
 // package constants because §11 gives a language whose accessors are members
 // exactly that latitude: a member claims nothing at file scope.
-func (b *InventoryLoopBlock) KeysStride() int64           { return 72 }
+func (b *InventoryLoopBlock) KeysStride() int64           { return 136 }
 func (b *InventoryLoopBlock) KeysMax() int64              { return 32 }
-func (b *InventoryLoopBlock) KeysProjectionOffset() int64 { return 4344 }
+func (b *InventoryLoopBlock) KeysProjectionOffset() int64 { return 6712 }
 
 // Keys is ITERATED, not indexed by hand: the accessor points at each row where
 // it lies, at the pitch the INSTANCE gives, for the count the instance gives.
@@ -2259,10 +2248,10 @@ func (block *InventoryLoopBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 4888 {
+	if bytes < 9048 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 4888)
+	header := unsafe.Slice((*byte)(base), 9048)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -2276,7 +2265,7 @@ func (block *InventoryLoopBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(4888)
+	used := int64(9048)
 	{
 		// EVERY NUMBER BELOW COMES FROM THE INSTANCE, so the arithmetic is
 		// unsigned and each term is BOUNDED BEFORE IT IS ADDED. A forged
@@ -2296,7 +2285,7 @@ func (block *InventoryLoopBlock) Open(base unsafe.Pointer, bytes int64) error {
 		if count > 32 {
 			return TableRefuseBadLayout
 		}
-		if offsetOf < 4888 || offsetOf%64 != 0 {
+		if offsetOf < 9048 || offsetOf%64 != 0 {
 			return TableRefuseBadLayout
 		}
 		if offsetOf > uint64(bytes) {
@@ -2383,10 +2372,10 @@ func InventoryLoopBlockBegin(b *InventoryLoopBlock, s *InventoryLoopBlockStorage
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(4888)
+	offset := int64(9048)
 	offset = (offset + 63) &^ int64(63)
-	p.Keys = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Keys), Stride: 72}
-	offset += int64(c.Keys) * 72
+	p.Keys = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Keys), Stride: 136}
+	offset += int64(c.Keys) * 136
 	*b = InventoryLoopBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -2395,7 +2384,7 @@ func InventoryLoopBlockBytes(b *InventoryLoopBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(4888)
+	used := int64(9048)
 	if end := int64(b.Projection.Keys.OffsetOf) + int64(b.Projection.Keys.Count)*int64(b.Projection.Keys.Stride); end > used {
 		used = end
 	}
@@ -2415,7 +2404,7 @@ func (b *InventoryLoopBlock) Type() *TableBlockInfo { return &tableBlockRecords[
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const HostViewBlockMaxBytes int64 = 960
+const HostViewBlockMaxBytes int64 = 14272
 
 // HostViewBlock is HostView's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -2445,10 +2434,10 @@ func (block *HostViewBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 912 {
+	if bytes < 14224 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 912)
+	header := unsafe.Slice((*byte)(base), 14224)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -2462,7 +2451,7 @@ func (block *HostViewBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(912)
+	used := int64(14224)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -2529,7 +2518,7 @@ func HostViewBlockBegin(b *HostViewBlock, s *HostViewBlockStorage, c HostViewCou
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(912)
+	offset := int64(14224)
 	*b = HostViewBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -2538,7 +2527,7 @@ func HostViewBlockBytes(b *HostViewBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(912)
+	used := int64(14224)
 	return (used + 63) &^ int64(63)
 }
 
@@ -2555,7 +2544,7 @@ func (b *HostViewBlock) Type() *TableBlockInfo { return &tableBlockRecords[9] }
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const HostNameBlockMaxBytes int64 = 128
+const HostNameBlockMaxBytes int64 = 192
 
 // HostNameBlock is HostName's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -2585,10 +2574,10 @@ func (block *HostNameBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 96 {
+	if bytes < 160 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 96)
+	header := unsafe.Slice((*byte)(base), 160)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -2602,7 +2591,7 @@ func (block *HostNameBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(96)
+	used := int64(160)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -2669,7 +2658,7 @@ func HostNameBlockBegin(b *HostNameBlock, s *HostNameBlockStorage, c HostNameCou
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(96)
+	offset := int64(160)
 	*b = HostNameBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -2678,7 +2667,7 @@ func HostNameBlockBytes(b *HostNameBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(96)
+	used := int64(160)
 	return (used + 63) &^ int64(63)
 }
 
@@ -2695,7 +2684,7 @@ func (b *HostNameBlock) Type() *TableBlockInfo { return &tableBlockRecords[8] }
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const EnvNameBlockMaxBytes int64 = 128
+const EnvNameBlockMaxBytes int64 = 192
 
 // EnvNameBlock is EnvName's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -2725,10 +2714,10 @@ func (block *EnvNameBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 96 {
+	if bytes < 160 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 96)
+	header := unsafe.Slice((*byte)(base), 160)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -2742,7 +2731,7 @@ func (block *EnvNameBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(96)
+	used := int64(160)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -2809,7 +2798,7 @@ func EnvNameBlockBegin(b *EnvNameBlock, s *EnvNameBlockStorage, c EnvNameCounts,
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(96)
+	offset := int64(160)
 	*b = EnvNameBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -2818,7 +2807,7 @@ func EnvNameBlockBytes(b *EnvNameBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(96)
+	used := int64(160)
 	return (used + 63) &^ int64(63)
 }
 
@@ -2835,7 +2824,7 @@ func (b *EnvNameBlock) Type() *TableBlockInfo { return &tableBlockRecords[4] }
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const HostGroupBlockMaxBytes int64 = 4672
+const HostGroupBlockMaxBytes int64 = 6592
 
 // HostGroupBlock is HostGroup's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -2857,8 +2846,8 @@ type HostGroupBlock struct {
 // never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
 // package constants because §11 gives a language whose accessors are members
 // exactly that latitude: a member claims nothing at file scope.
-func (b *HostGroupBlock) HostsStride() int64           { return 72 }
-func (b *HostGroupBlock) HostsMax() int64              { return 64 }
+func (b *HostGroupBlock) HostsStride() int64           { return 136 }
+func (b *HostGroupBlock) HostsMax() int64              { return 48 }
 func (b *HostGroupBlock) HostsProjectionOffset() int64 { return 24 }
 
 // Hosts is ITERATED, not indexed by hand: the accessor points at each row where
@@ -2924,7 +2913,7 @@ func (block *HostGroupBlock) Open(base unsafe.Pointer, bytes int64) error {
 		// past the DECLARED MAXIMUM: the producer side refuses this too, because
 		// a consumer that sizes anything by the maximum would overflow on a
 		// count the maximum does not bound
-		if count > 64 {
+		if count > 48 {
 			return TableRefuseBadLayout
 		}
 		if offsetOf < 40 || offsetOf%64 != 0 {
@@ -3001,9 +2990,9 @@ func HostGroupBlockBegin(b *HostGroupBlock, s *HostGroupBlockStorage, c HostGrou
 	if b == nil {
 		return false
 	}
-	if c.Hosts < 0 || c.Hosts > 64 {
+	if c.Hosts < 0 || c.Hosts > 48 {
 		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "hosts", Count: int64(c.Hosts), Maximum: 64}
+			*refusal = TableBlockRefusal{Array: "hosts", Count: int64(c.Hosts), Maximum: 48}
 		}
 		return false
 	}
@@ -3016,8 +3005,8 @@ func HostGroupBlockBegin(b *HostGroupBlock, s *HostGroupBlockStorage, c HostGrou
 	p.ByteOrder = TableBlockByteOrder
 	offset := int64(40)
 	offset = (offset + 63) &^ int64(63)
-	p.Hosts = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Hosts), Stride: 72}
-	offset += int64(c.Hosts) * 72
+	p.Hosts = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Hosts), Stride: 136}
+	offset += int64(c.Hosts) * 136
 	*b = HostGroupBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -3186,7 +3175,7 @@ func (b *KindRevBlock) Type() *TableBlockInfo { return &tableBlockRecords[12] }
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const InventoryBlockMaxBytes int64 = 37184
+const InventoryBlockMaxBytes int64 = 54784
 
 // InventoryBlock is Inventory's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -3210,7 +3199,7 @@ type InventoryBlock struct {
 // exactly that latitude: a member claims nothing at file scope.
 func (b *InventoryBlock) RevsStride() int64           { return 16 }
 func (b *InventoryBlock) RevsMax() int64              { return 8 }
-func (b *InventoryBlock) RevsProjectionOffset() int64 { return 36992 }
+func (b *InventoryBlock) RevsProjectionOffset() int64 { return 54592 }
 
 // Revs is ITERATED, not indexed by hand: the accessor points at each row where
 // it lies, at the pitch the INSTANCE gives, for the count the instance gives.
@@ -3241,10 +3230,10 @@ func (block *InventoryBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 37008 {
+	if bytes < 54608 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 37008)
+	header := unsafe.Slice((*byte)(base), 54608)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -3258,7 +3247,7 @@ func (block *InventoryBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(37008)
+	used := int64(54608)
 	{
 		// EVERY NUMBER BELOW COMES FROM THE INSTANCE, so the arithmetic is
 		// unsigned and each term is BOUNDED BEFORE IT IS ADDED. A forged
@@ -3278,7 +3267,7 @@ func (block *InventoryBlock) Open(base unsafe.Pointer, bytes int64) error {
 		if count > 8 {
 			return TableRefuseBadLayout
 		}
-		if offsetOf < 37008 || offsetOf%64 != 0 {
+		if offsetOf < 54608 || offsetOf%64 != 0 {
 			return TableRefuseBadLayout
 		}
 		if offsetOf > uint64(bytes) {
@@ -3365,7 +3354,7 @@ func InventoryBlockBegin(b *InventoryBlock, s *InventoryBlockStorage, c Inventor
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(37008)
+	offset := int64(54608)
 	offset = (offset + 63) &^ int64(63)
 	p.Revs = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Revs), Stride: 16}
 	offset += int64(c.Revs) * 16
@@ -3377,7 +3366,7 @@ func InventoryBlockBytes(b *InventoryBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(37008)
+	used := int64(54608)
 	if end := int64(b.Projection.Revs.OffsetOf) + int64(b.Projection.Revs.Count)*int64(b.Projection.Revs.Stride); end > used {
 		used = end
 	}
@@ -3397,7 +3386,7 @@ func (b *InventoryBlock) Type() *TableBlockInfo { return &tableBlockRecords[10] 
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const BenchBeatBlockMaxBytes int64 = 320
+const BenchBeatBlockMaxBytes int64 = 384
 
 // BenchBeatBlock is BenchBeat's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -3427,10 +3416,10 @@ func (block *BenchBeatBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 272 {
+	if bytes < 336 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 272)
+	header := unsafe.Slice((*byte)(base), 336)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -3444,7 +3433,7 @@ func (block *BenchBeatBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(272)
+	used := int64(336)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -3511,7 +3500,7 @@ func BenchBeatBlockBegin(b *BenchBeatBlock, s *BenchBeatBlockStorage, c BenchBea
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(272)
+	offset := int64(336)
 	*b = BenchBeatBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -3520,7 +3509,7 @@ func BenchBeatBlockBytes(b *BenchBeatBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(272)
+	used := int64(336)
 	return (used + 63) &^ int64(63)
 }
 

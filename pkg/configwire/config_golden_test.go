@@ -54,7 +54,7 @@ var wirePins = map[string]string{
 	"FieldPair":     "59ec5e459a5a3377c269748d98e140640f3a5461d331bfc05e45872eb0b15406",
 	"RowFields":     "647cb1d7faf107cced57aefe3a0567256f69827ed5f7eab3ebcfb21599cf8b90",
 	"ConfigRow":     "6786bc07b0ccd60373ae1d191a98a81498fd264a39d3794c7463f460197c8c1f",
-	"ConfigChange":  "e69ca43f301434c866c94935985cfd67797f98e44c9d73b48aebeb6e39cc9a39",
+	"ConfigChange":  "43bb2336fb48c9104076d94e889f4fc249f61a7c89c60f8186c8c9f322b03ae1",
 	"FileHeader":    "c5452e2d4faf77df5075a9bd48bf45034dfc3b56eccd727494dd79d4a2cac554",
 	"CanonicalWord": "b06b0463c43169dbad127b595d81e5c0a99c4172fb0304b759d2d5bb152dbafb",
 	"MachineView":   "8222283aba4b227f5c1905584e4f1b35da9eb090feeb2a4b7b63a3697c5734dd",
@@ -146,10 +146,6 @@ func sampleConfigChange() ConfigChange {
 	put(v.Name[:], &v.NameLength, "sprint-loop")
 	v.Op = ChangeOpSet
 	v.HasBefore, v.HasAfter = true, true
-	v.Before = rowFieldsFrom(loopFields())
-	after := loopFields()
-	after["every"] = "120"
-	v.After = rowFieldsFrom(after)
 	put(v.Actor[:], &v.ActorLength, "rowan")
 	put(v.Reason[:], &v.ReasonLength, "slow the loop while the store moves")
 	put(v.At[:], &v.AtLength, "2026-10-16T04:07:01Z")
@@ -850,9 +846,21 @@ func TestConfigRowsGolden(t *testing.T) {
 		assert.GreaterOrEqual(t, MaxRowFields, widest, "a row of the widest kind fits")
 		assert.GreaterOrEqual(t, MaxFieldName, longest, "the longest field name fits")
 		assert.Equal(t, int32(MaxRowFields), fieldInfo(t, RowFieldsTableFields, "pairs").ArrayBound)
-		assert.Less(t, ConfigChangeCookMeasure(new(ConfigChange)), int64(65536), "a change holds two rows under the record limit")
-		// a name the store accepts fits
-		assert.LessOrEqual(t, len(strings.Repeat("a", MaxName)), MaxName)
+		assert.Less(t, ConfigChangeCookMeasure(new(ConfigChange)), int64(65536), "a change header stays under the record limit")
+		assert.Less(t, RowFieldsCookMeasure(new(RowFields)), int64(65536), "a change side stays under the record limit")
+		assert.Less(t, ConfigRowCookMeasure(new(ConfigRow)), int64(65536), "a row at every bound stays under the record limit")
+		assert.Less(t, InventoryCookMeasure(new(Inventory)), int64(65536), "eight groups at the host bound stay under the record limit")
+		// every bound the schema names is the number pkg/config refuses past
+		assert.EqualValues(t, config.MaxName, MaxName)
+		assert.EqualValues(t, config.MaxFieldValue, MaxFieldValue)
+		assert.EqualValues(t, config.MaxKeys, MaxKeys)
+		assert.EqualValues(t, config.MaxEnvName, MaxEnvName)
+		assert.EqualValues(t, config.MaxHosts, MaxHosts)
+		assert.Equal(t, int32(MaxName), fieldInfo(t, ConfigRowTableFields, "name").ArrayBound)
+		assert.Equal(t, int32(MaxFieldValue), fieldInfo(t, FieldPairTableFields, "value").ArrayBound)
+		assert.Equal(t, int32(MaxKeys), fieldInfo(t, InventoryLoopTableFields, "keys").ArrayBound)
+		assert.Equal(t, int32(MaxHosts), fieldInfo(t, HostGroupTableFields, "hosts").ArrayBound)
+		assert.Equal(t, int32(MaxEnvName), fieldInfo(t, EnvNameTableFields, "name").ArrayBound)
 	})
 
 	// The canonical kind, op and field type words are the code's, in order.
@@ -920,12 +928,7 @@ func TestConfigRowsGolden(t *testing.T) {
 			v.Id, v.Kind = 9, ConfigKindTier
 			put(v.Name[:], &v.NameLength, "tiers")
 			v.Op = map[string]ChangeOp{config.OpAdd: ChangeOpAdd, config.OpSet: ChangeOpSet, config.OpRemove: ChangeOpRemove}[op]
-			if op != config.OpAdd {
-				v.HasBefore, v.Before = true, rowFieldsFrom(map[string]string{"note": "before"})
-			}
-			if op != config.OpRemove {
-				v.HasAfter, v.After = true, rowFieldsFrom(map[string]string{"note": "after"})
-			}
+			v.HasBefore, v.HasAfter = op != config.OpAdd, op != config.OpRemove
 			put(v.Actor[:], &v.ActorLength, "rowan")
 			in, err := changes.Write(&v, schemaread.FormBase64)
 			require.NoError(t, err, op)
@@ -934,6 +937,21 @@ func TestConfigRowsGolden(t *testing.T) {
 			assert.Equal(t, v, got, op)
 			assert.Equal(t, op != config.OpAdd, got.HasBefore, "an add has no before")
 			assert.Equal(t, op != config.OpRemove, got.HasAfter, "a remove has no after")
+		}
+		// the two sides ride as RowFields records after the header, a side
+		// holding a full-width row at the field bound
+		sides := (&table[RowFields]{name: "RowFields", fields: RowFieldsTableFields}).bare(RowFieldsReset, RowFieldsMeasureReason, RowFieldsSave, RowFieldsLoad)
+		wide := map[string]string{}
+		for i := 0; i < MaxRowFields; i++ {
+			wide[fmt.Sprintf("f%02d", i)] = strings.Repeat("v", MaxFieldValue)
+		}
+		for _, side := range []map[string]string{{"note": "before"}, {"note": "after"}, wide} {
+			in := rowFieldsFrom(side)
+			wire, err := sides.Write(&in, schemaread.FormBinary)
+			require.NoError(t, err)
+			got, _, err := sides.Read(wire)
+			require.NoError(t, err)
+			assert.Equal(t, side, fieldsOf(&got))
 		}
 	})
 
@@ -1030,6 +1048,135 @@ func TestConfigRowsGolden(t *testing.T) {
 		assert.Equal(t, beat.OS, string(gotB.Os[:gotB.OsLength]))
 		assert.Equal(t, beat.At, string(gotB.At[:gotB.AtLength]))
 	})
+}
+
+// ---- the bounds pkg/config refuses past ---------------------------------
+
+// refusedFor runs f and returns its refusal text, failing when there is none.
+func refusedFor(t *testing.T, err error, bound string) {
+	t.Helper()
+	require.Error(t, err, bound)
+	assert.Contains(t, err.Error(), bound, "the refusal names the bound")
+}
+
+func fieldOf(t *testing.T, kind, name string) config.Field {
+	t.Helper()
+	k, ok := config.Lookup(kind)
+	require.True(t, ok, kind)
+	f, ok := k.Field(name)
+	require.True(t, ok, name)
+	return f
+}
+
+func TestConfigRowNameBound(t *testing.T) {
+	t.Parallel()
+	assert.NoError(t, config.ValidateName(strings.Repeat("a", config.MaxName)), "a name at the bound is a name")
+	refusedFor(t, config.ValidateName(strings.Repeat("a", config.MaxName+1)), "MaxName")
+}
+
+func TestConfigFieldValueBound(t *testing.T) {
+	t.Parallel()
+	note := fieldOf(t, config.KindMachine, "note")
+	got, err := note.Canonical(strings.Repeat("n", config.MaxFieldValue))
+	require.NoError(t, err, "a value at the bound is a value")
+	assert.Len(t, got, config.MaxFieldValue)
+	_, err = note.Canonical(strings.Repeat("n", config.MaxFieldValue+1))
+	refusedFor(t, err, "MaxFieldValue")
+	// a list is bounded by its canonical spelling
+	routes := fieldOf(t, config.KindTier, "routes")
+	_, err = routes.Canonical(strings.Repeat("r,", config.MaxFieldValue) + "r")
+	refusedFor(t, err, "MaxFieldValue")
+}
+
+func TestConfigLoopKeysCountBound(t *testing.T) {
+	t.Parallel()
+	keys := fieldOf(t, config.KindLoop, "keys")
+	var ok, over []string
+	for i := 0; i < config.MaxKeys+1; i++ {
+		over = append(over, fmt.Sprintf("K%02d", i))
+	}
+	ok = over[:config.MaxKeys]
+	_, err := keys.Canonical(strings.Join(ok, ","))
+	assert.NoError(t, err, "keys at the bound")
+	_, err = keys.Canonical(strings.Join(over, ","))
+	refusedFor(t, err, "MaxKeys")
+	// the inventory's loop parse refuses the same list from a stored view
+	snap := loopSnapshot(map[string]string{"seat": "studio", "keys": strings.Join(over, ",")})
+	_, err = config.BuildInventory(snap, "studio")
+	refusedFor(t, err, "MaxKeys")
+	snap = loopSnapshot(map[string]string{"seat": "studio", "keys": strings.Join(ok, ",")})
+	_, err = config.BuildInventory(snap, "studio")
+	assert.NoError(t, err)
+}
+
+func TestConfigLoopKeyNameBound(t *testing.T) {
+	t.Parallel()
+	keys := fieldOf(t, config.KindLoop, "keys")
+	_, err := keys.Canonical(strings.Repeat("K", config.MaxEnvName))
+	assert.NoError(t, err, "a secret name at the bound")
+	_, err = keys.Canonical(strings.Repeat("K", config.MaxEnvName+1))
+	refusedFor(t, err, "MaxEnvName")
+	snap := loopSnapshot(map[string]string{"seat": "studio", "keys": strings.Repeat("K", config.MaxEnvName+1)})
+	_, err = config.BuildInventory(snap, "studio")
+	refusedFor(t, err, "MaxEnvName")
+}
+
+func TestConfigInventoryHostsBound(t *testing.T) {
+	t.Parallel()
+	build := func(n int) error {
+		snap := &config.Snapshot{Machines: map[string]config.View{}, Fleet: testFleet("m00"), Revs: map[string]int64{config.KindFleet: 1}}
+		for i := 0; i < n; i++ {
+			roles := "bench"
+			if i == 0 {
+				roles = "bench,coordination,services"
+			}
+			snap.Machines[fmt.Sprintf("m%02d", i)] = config.View{"user": "nova", "seat": "s", "slots": "1", "runners": "0", "roles": roles, "tla": "false"}
+		}
+		_, err := config.BuildInventory(snap, "m00")
+		return err
+	}
+	assert.NoError(t, build(config.MaxHosts), "hosts at the bound")
+	refusedFor(t, build(config.MaxHosts+1), "MaxHosts")
+}
+
+func TestConfigInventoryHostNameBound(t *testing.T) {
+	t.Parallel()
+	build := func(name string) error {
+		snap := &config.Snapshot{Machines: map[string]config.View{name: {"user": "nova", "seat": "s", "slots": "1", "runners": "0", "roles": "bench,coordination,services", "tla": "false"}},
+			Fleet: testFleet(name), Revs: map[string]int64{config.KindFleet: 1}}
+		_, err := config.BuildInventory(snap, name)
+		return err
+	}
+	assert.NoError(t, build(strings.Repeat("h", config.MaxName)), "a host name at the bound")
+	refusedFor(t, build(strings.Repeat("h", config.MaxName+1)), "MaxName")
+}
+
+func TestConfigLoopNameBound(t *testing.T) {
+	t.Parallel()
+	snap := loopSnapshot(nil)
+	snap.Loops = map[string]config.View{strings.Repeat("l", config.MaxName+1): snap.Loops["l"]}
+	_, err := config.BuildInventory(snap, "studio")
+	refusedFor(t, err, "MaxName")
+}
+
+// testFleet is the applied fleet row of a store and coordinator machine.
+func testFleet(store string) config.View {
+	return config.View{"store": store, "coordinator": store, "redis_port": "6379", "pg_dsn": "postgres://nova@" + store + ":5432/config", "loops_dir": "/home/nova/loops", "bus": store + ":6381"}
+}
+
+// loopSnapshot is a one-machine inventory with one loop named l whose view
+// carries the given extra fields.
+func loopSnapshot(extra map[string]string) *config.Snapshot {
+	loop := config.View{"machine": "studio", "argv": `["/bin/true"]`, "every": "60", "keepalive": "false", "enabled": "true", "log": "/tmp/l.log"}
+	for k, v := range extra {
+		loop[k] = v
+	}
+	return &config.Snapshot{
+		Machines: map[string]config.View{"studio": {"user": "nova", "seat": "studio", "slots": "1", "runners": "0", "roles": "bench,coordination,services", "tla": "false"}},
+		Fleet:    testFleet("studio"),
+		Loops:    map[string]config.View{"l": loop},
+		Revs:     map[string]int64{config.KindFleet: 1},
+	}
 }
 
 func fieldInfo(t *testing.T, fields []TableFieldInfo, name string) TableFieldInfo {

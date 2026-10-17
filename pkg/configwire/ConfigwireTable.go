@@ -24,8 +24,8 @@ import (
 // EnvNameRow — a block row, or a record one nests by value. `Row` is a CLAIMED
 // suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
 type EnvNameRow struct {
-	Name       [65]byte // string(64): max length, used length beside it
-	_          [3]byte  // generated padding
+	Name       [129]byte // string(128): max length, used length beside it
+	_          [3]byte   // generated padding
 	NameLength int32
 }
 
@@ -35,7 +35,7 @@ type FieldPairRow struct {
 	Name        [33]byte // string(32): max length, used length beside it
 	_           [3]byte  // generated padding
 	NameLength  int32
-	Value       [1025]byte // string(1024): max length, used length beside it
+	Value       [2305]byte // string(2304): max length, used length beside it
 	_           [3]byte    // generated padding
 	ValueLength int32
 }
@@ -43,15 +43,15 @@ type FieldPairRow struct {
 // HostGroupRow — a block row, or a record one nests by value. `Row` is a CLAIMED
 // suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
 type HostGroupRow struct {
-	Hosts      [64]HostNameRow
+	Hosts      [48]HostNameRow
 	HostsCount int32
 }
 
 // HostNameRow — a block row, or a record one nests by value. `Row` is a CLAIMED
 // suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
 type HostNameRow struct {
-	Name       [65]byte // string(64): max length, used length beside it
-	_          [3]byte  // generated padding
+	Name       [129]byte // string(128): max length, used length beside it
+	_          [3]byte   // generated padding
 	NameLength int32
 }
 
@@ -76,8 +76,8 @@ type RowFieldsRow struct {
 // BenchBeatRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type BenchBeatRow struct {
-	Host           [65]byte // string(64): buffer, used length beside it
-	_              [3]byte  // generated padding
+	Host           [129]byte // string(128): buffer, used length beside it
+	_              [3]byte   // generated padding
 	HostLength     int32
 	AtMs           int64
 	Load1          [17]byte // string(16): buffer, used length beside it
@@ -114,21 +114,16 @@ type CanonicalWordRow struct {
 type ConfigChangeRow struct {
 	Id           int64
 	Kind         ConfigKind
-	Name         [65]byte // string(64): buffer, used length beside it
-	_            [2]byte  // generated padding
+	Name         [129]byte // string(128): buffer, used length beside it
+	_            [2]byte   // generated padding
 	NameLength   int32
 	Op           ChangeOp
 	HasBefore    bool
-	_            [2]byte // generated padding
-	Before       RowFieldsRow
 	HasAfter     bool
-	_            [3]byte // generated padding
-	After        RowFieldsRow
-	Actor        [65]byte // string(64): buffer, used length beside it
-	_            [3]byte  // generated padding
+	Actor        [129]byte // string(128): buffer, used length beside it
 	ActorLength  int32
-	Reason       [257]byte // string(256): buffer, used length beside it
-	_            [3]byte   // generated padding
+	Reason       [2305]byte // string(2304): buffer, used length beside it
+	_            [3]byte    // generated padding
 	ReasonLength int32
 	At           [33]byte // string(32): buffer, used length beside it
 	_            [3]byte  // generated padding
@@ -139,8 +134,8 @@ type ConfigChangeRow struct {
 // §11), so no declaration in the unit can take it.
 type ConfigRowRow struct {
 	Kind            ConfigKind
-	Name            [65]byte // string(64): buffer, used length beside it
-	_               [2]byte  // generated padding
+	Name            [129]byte // string(128): buffer, used length beside it
+	_               [2]byte   // generated padding
 	NameLength      int32
 	Fields          RowFieldsRow
 	CreatedAt       [33]byte // string(32): buffer, used length beside it
@@ -160,8 +155,8 @@ type FileHeaderRow struct {
 // HostViewRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type HostViewRow struct {
-	AnsibleHost         [65]byte // string(64): buffer, used length beside it
-	_                   [3]byte  // generated padding
+	AnsibleHost         [129]byte // string(128): buffer, used length beside it
+	_                   [3]byte   // generated padding
 	AnsibleHostLength   int32
 	Kind                ConfigKind
 	_                   [3]byte // generated padding
@@ -180,27 +175,27 @@ type HostViewRow struct {
 	_                   [3]byte  // generated padding
 	NovaArchLength      int32
 	NovaTla             bool
-	RegistrySeat        [65]byte // string(64): buffer, used length beside it
-	_                   [2]byte  // generated padding
+	RegistrySeat        [2305]byte // string(2304): buffer, used length beside it
+	_                   [2]byte    // generated padding
 	RegistrySeatLength  int32
 	RegistryRoles       [65]byte // string(64): buffer, used length beside it
 	_                   [3]byte  // generated padding
 	RegistryRolesLength int32
-	AnsibleUser         [65]byte // string(64): buffer, used length beside it
-	_                   [3]byte  // generated padding
+	AnsibleUser         [2305]byte // string(2304): buffer, used length beside it
+	_                   [3]byte    // generated padding
 	AnsibleUserLength   int32
-	NovaSeat            [65]byte // string(64): buffer, used length beside it
-	_                   [3]byte  // generated padding
+	NovaSeat            [2305]byte // string(2304): buffer, used length beside it
+	_                   [3]byte    // generated padding
 	NovaSeatLength      int32
-	NovaRedisAddr       [65]byte // string(64): buffer, used length beside it
-	_                   [3]byte  // generated padding
+	NovaRedisAddr       [2305]byte // string(2304): buffer, used length beside it
+	_                   [3]byte    // generated padding
 	NovaRedisAddrLength int32
-	NovaBusAddr         [65]byte // string(64): buffer, used length beside it
-	_                   [3]byte  // generated padding
+	NovaBusAddr         [2305]byte // string(2304): buffer, used length beside it
+	_                   [3]byte    // generated padding
 	NovaBusAddrLength   int32
 	NovaRedisPort       int32
-	NovaPgDsn           [257]byte // string(256): buffer, used length beside it
-	_                   [3]byte   // generated padding
+	NovaPgDsn           [2305]byte // string(2304): buffer, used length beside it
+	_                   [3]byte    // generated padding
 	NovaPgDsnLength     int32
 	Local               bool
 	_                   [3]byte // generated padding
@@ -217,8 +212,8 @@ type InventoryRow struct {
 	StoreDeployer   HostGroupRow
 	Runners         HostGroupRow
 	Tla             HostGroupRow
-	NovaStore       [65]byte // string(64): buffer, used length beside it
-	_               [3]byte  // generated padding
+	NovaStore       [2305]byte // string(2304): buffer, used length beside it
+	_               [3]byte    // generated padding
 	NovaStoreLength int32
 	Revs            [8]KindRevRow
 	RevsCount       int32
@@ -228,25 +223,25 @@ type InventoryRow struct {
 // InventoryLoopRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type InventoryLoopRow struct {
-	Machine       [65]byte // string(64): buffer, used length beside it
-	_             [3]byte  // generated padding
+	Machine       [129]byte // string(128): buffer, used length beside it
+	_             [3]byte   // generated padding
 	MachineLength int32
-	Name          [65]byte // string(64): buffer, used length beside it
-	_             [3]byte  // generated padding
+	Name          [129]byte // string(128): buffer, used length beside it
+	_             [3]byte   // generated padding
 	NameLength    int32
 	Argv          [4097]byte // string(4096): buffer, used length beside it
 	_             [3]byte    // generated padding
 	ArgvLength    int32
-	Seat          [65]byte // string(64): buffer, used length beside it
-	_             [3]byte  // generated padding
+	Seat          [2305]byte // string(2304): buffer, used length beside it
+	_             [3]byte    // generated padding
 	SeatLength    int32
 	Keys          [32]EnvNameRow
 	KeysCount     int32
 	Every         int32
 	Keepalive     bool
 	Enabled       bool
-	Log           [513]byte // string(512): buffer, used length beside it
-	_             [1]byte   // generated padding
+	Log           [2305]byte // string(2304): buffer, used length beside it
+	_             [1]byte    // generated padding
 	LogLength     int32
 }
 
@@ -273,14 +268,14 @@ type MachineBeatRow struct {
 // MachineViewRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type MachineViewRow struct {
-	Name         [65]byte // string(64): buffer, used length beside it
-	_            [3]byte  // generated padding
+	Name         [129]byte // string(128): buffer, used length beside it
+	_            [3]byte   // generated padding
 	NameLength   int32
-	User         [65]byte // string(64): buffer, used length beside it
-	_            [3]byte  // generated padding
+	User         [2305]byte // string(2304): buffer, used length beside it
+	_            [3]byte    // generated padding
 	UserLength   int32
-	Seat         [65]byte // string(64): buffer, used length beside it
-	_            [3]byte  // generated padding
+	Seat         [2305]byte // string(2304): buffer, used length beside it
+	_            [3]byte    // generated padding
 	SeatLength   int32
 	Slots        int32
 	Runners      int32
@@ -305,7 +300,7 @@ type MemberBeatRow struct {
 // BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
 // one digest a block carries and BlockOpen compares, and the fact §3.3's
 // announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0x9f9cd718ddd32585
+const BuildVersion uint64 = 0xf9a1a135e5b2825f
 
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema
@@ -799,7 +794,7 @@ func (r *TableReport) Err() error {
 	return nil
 }
 
-const tableIdCapacity = 109
+const tableIdCapacity = 107
 const tableIdBuckets = 256
 
 // TableIds interns the writer's ids in first-use order. Bucket links are
