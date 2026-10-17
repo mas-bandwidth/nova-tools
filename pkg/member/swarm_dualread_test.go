@@ -135,12 +135,12 @@ func TestMemberOwnRecordsDualRead(t *testing.T) {
 		"legacy": []byte("c attempt -1 head=" + dualSha),
 	} {
 		_, _, err := bad.Read(body)
-		ref := carryRefused(t, err, "clamped %s", form)
+		reason := carryRefused(t, err, "clamped %s", form)
 		refused++
 		if form == "legacy" {
-			assert.Equal(t, schemaread.ReasonMalformed, ref.Reason, form)
+			assert.Equal(t, schemaread.ReasonMalformed, reason, form)
 		} else {
-			assert.Equal(t, schemaread.ReasonClamped, ref.Reason, form)
+			assert.Equal(t, schemaread.ReasonClamped, reason, form)
 		}
 	}
 	// And CarryOf never reads a refused line as a carry.
@@ -195,16 +195,16 @@ func carryWrite(t *testing.T, r *schemaread.Reader[Carry], want Carry, form sche
 	return b
 }
 
-// carryRefused asserts err is the carry's refusal by name and returns it.
-func carryRefused(t *testing.T, err error, msg string, args ...any) *schemaread.Refusal {
+// carryRefused asserts err is the carry's refusal by name and returns its reason.
+func carryRefused(t *testing.T, err error, msg string, args ...any) string {
 	t.Helper()
 	var ref *schemaread.Refusal
 	if !assert.True(t, errors.As(err, &ref), append([]any{msg + ": not a refusal: %v"}, append(args, err)...)...) {
-		return &schemaread.Refusal{}
+		return ""
 	}
 	assert.Equal(t, "MEMBER_CARRY", ref.Name)
 	assert.Regexp(t, carryRefusalLine, err.Error())
-	return ref
+	return ref.Reason
 }
 
 // carryNegativeWire is a MemberCarry table image whose attempt is -1. The generated
