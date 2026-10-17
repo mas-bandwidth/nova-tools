@@ -30,7 +30,7 @@ func TestQuietHeartbeatUsesActivityAndAnOutstandingDeadline(t *testing.T) {
 		{"idle friend", hook.Friend, 10 * time.Minute, false},
 		{"busy friend", hook.Friend, 5 * time.Minute, true},
 		{"comms", hook.Comms, 10 * time.Minute, false},
-		{"coordinator", hook.Coordinator, 30 * time.Minute, false},
+		{"coordinator", hook.Coordinator, hook.CoordinatorEvery, false}, // 10m: the owner, 2026-10-16
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

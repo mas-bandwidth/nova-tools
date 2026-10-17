@@ -68,7 +68,7 @@ the record's state, role, and epoch in the same step.
 | `BeatEvery` | 1 min | server pass interval; every hooked bus-role name is checked |
 | `BusyQuietAfter` | 5 min | quiet threshold for a friend holding ready or working sprint cards |
 | `QuietAfter` | 10 min | quiet threshold for an idle friend or comms name |
-| `CoordinatorEvery` | 30 min | coordinator quiet threshold |
+| `CoordinatorEvery` | 10 min | coordinator challenge period: its own bus sends never hold it off, and a challenge it leaves unanswered past `AnswerBound` unhooks it (the owner, 2026-10-16) |
 | `DownAfter` | 5 min | silence required in addition to an outstanding challenge past `AnswerBound` before down |
 | `ChallengeEvery` | 30 min | standalone loop cadence; Codex, DeepSeek and Antigravity bootstrap once and receive server challenges; the server checks every hooked bus-role name |
 | `AnswerBound` | 5 min | every challenge's answer window |
@@ -146,7 +146,7 @@ Every line runs as printed:
   a silence window (a challenge that lapsed unanswered falls back to the silence window, not a new one each
   pass). Once she has proved, every hooked coordinator, friend or comms name uses the latest
   proof or explicit model send, with the arming as the lower boundary. A friend holding ready or
-  working cards has a 5m quiet window, an idle friend or comms name 10m, and a coordinator 30m. The
+  working cards has a 5m quiet window, an idle friend or comms name 10m, and a coordinator 10m from its last answer (its own sends are no activity). The
   server batches authoritative `friend cards <name> --json` reads through `--sprint-server`; an unknown
   row uses 5m and prints a fault. The selected policy is recorded as `quiet_after`, not a copied work
   counter. A proof reaches renewal at `ProofTTL - AnswerBound - 2*BeatEvery` (33m after proof
@@ -186,8 +186,8 @@ Every line runs as printed:
   With uninterrupted minute passes and successful challenge delivery, silence is detected after
   the quiet window plus the 5m answer
   bound, rounded to the next pass at each strict boundary: at most 12m for a busy friend, 17m for
-  an idle friend/comms name, and 37m for a coordinator (`quiet + AnswerBound + 2*BeatEvery`). A server outage adds its duration; stale-server detection remains
-  two pass intervals. Independently of delivery, the reader backstop is 17m / 22m / 42m for busy friend /
+  an idle friend/comms name, and 17m for a coordinator (`quiet + AnswerBound + 2*BeatEvery`). A server outage adds its duration; stale-server detection remains
+  two pass intervals. Independently of delivery, the reader backstop is 17m / 22m / 22m for busy friend /
   idle friend or comms / coordinator at the defaults. This reader decision does not fabricate a delivered
   challenge or an unhook event. The model checks all prior invariants and liveness, role quiet and detection
   bounds, daemon non-activity, and proof renewal. Legacy short-cadence configurations overapproximate
