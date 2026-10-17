@@ -281,32 +281,27 @@ func TestBriefRemedy(t *testing.T) {
 	assert.Contains(t, BriefRemedy("paths-read-marker"), PathsReadRemedy)
 }
 
-// The new-model-is-heavy-or-above rule: a card whose NEW names a new .tla module
-// writes a model, and is tier heavy or above, so heavy and frontier lint clean
-// and pro and flash are refused naming the rule; a card that only edits models,
-// .cfg files or the ledgers under tla/ is any tier (the owner, 2026-10-17: "I
-// think models at heavy is fine, and touching models can be pro now").
+// The tla-is-heavy-or-above rule: a card whose PATHS covers tla/ is tier heavy
+// or above, so heavy and frontier lint clean and pro and flash are refused
+// naming the rule (the owner downgraded the frontier TLA+ to heavy, since
+// nova-config accepts no frontier route; v1.2.17).
 func TestATLACardIsHeavyOrAbove(t *testing.T) {
 	t.Parallel()
-	lint := func(line1, header string) []CardHeaderFinding {
-		// the model gate (model-gate-named) is named, so only the tier rule speaks
-		fs, _ := LintBrief([]byte(line1+"\n"+header+"\nGATE-NEEDS: linux, tla\n\nTHE TASK. the model\n\nSTEP 0. Run the model: go run ./tools/tlacheck groups --root . --stale.\n"), BriefBase{})
-		return fs
+	lint := func(line1 string) []string {
+		fs, _ := LintBrief([]byte(line1+"\nPATHS: tla/Model.tla\n\nTHE TASK. the model\n"), BriefBase{})
+		var out []string
+		for _, f := range fs {
+			out = append(out, f.Check)
+		}
+		return out
 	}
-	newModel := "PATHS: tla/Bar.tla,tla/Bar.cfg\nNEW: tla/Bar.tla,tla/Bar.cfg"
-	assert.Empty(t, lint("card x tier: heavy", newModel), "heavy card with NEW tla/Bar.tla passes: heavy is the rule's floor")
-	assert.Empty(t, lint("card x tier: frontier", newModel), "frontier is above heavy and lints clean")
-	assert.Empty(t, lint("card x tier: pro", "PATHS: tla/Foo.tla"), "pro card editing tla/Foo.tla passes")
-	assert.Empty(t, lint("card x tier: pro", "PATHS: tla/Foo.tla,tla/Foo.cfg,tla/COVERAGE.tsv,tla/RUNS.tsv\nNEW: tla/Foo2.cfg"), "a new .cfg for an existing model is no new model")
+	assert.Empty(t, lint("card x tier: heavy"), "heavy is the rule's floor and lints clean")
+	assert.Empty(t, lint("card x tier: frontier"), "frontier is above heavy and lints clean")
 	for _, below := range []string{"pro", "flash"} {
-		fs := lint("card x tier: "+below, newModel)
-		require.Equal(t, []string{"new-model-is-heavy-or-above"}, checksOf(fs), "%s card with NEW tla/Bar.tla is refused", below)
+		fs, _ := LintBrief([]byte("card x tier: "+below+"\nPATHS: tla/Model.tla\n\nTHE TASK. the model\n"), BriefBase{})
+		require.Equal(t, []string{"tla-is-heavy-or-above"}, checksOf(fs), below)
 		assert.Contains(t, fs[0].Excerpt, "not heavy or frontier", below)
-		assert.Contains(t, fs[0].Excerpt, "tla/Bar.tla", below)
-		assert.Contains(t, BriefRemedy("new-model-is-heavy-or-above"), "heavy", below)
-	}
-	for _, old := range []string{"tla-is-heavy-or-above", "tla-is-frontier"} {
-		assert.Equal(t, BriefRemedy("new-model-is-heavy-or-above"), BriefRemedy(old), "the old token %s is an alias for one release", old)
+		assert.Contains(t, BriefRemedy("tla-is-heavy-or-above"), "heavy", below)
 	}
 }
 
@@ -364,23 +359,21 @@ func TestLintBriefWithoutATree(t *testing.T) {
 		assert.Equal(t, "paths-cover-named", fs[1].Check)
 	})
 
-	t.Run("tier-set and new-model-is-heavy-or-above fix line 1", func(t *testing.T) {
+	t.Run("tier-set and tla-is-heavy-or-above fix line 1", func(t *testing.T) {
 		t.Parallel()
-		fs, fix := LintBrief(brief("card x tier: -", "PATHS: tla/Model.tla\nNEW: tla/Model.tla\nGATE-NEEDS: linux, tla", "x\n\nSTEP 0. Run the model: go run ./tools/tlacheck groups --root . --stale."), BriefBase{})
-		assert.Equal(t, []string{"tier-set", "new-model-is-heavy-or-above"}, checks(fs))
+		fs, fix := LintBrief(brief("card x tier: -", "PATHS: tla/Model.tla", "x"), BriefBase{})
+		assert.Equal(t, []string{"tier-set", "tla-is-heavy-or-above"}, checks(fs))
 		assert.Equal(t, 1, fs[0].Line)
 		assert.Contains(t, fs[1].Excerpt, "line 1 names tier -, not heavy or frontier")
 		assert.Equal(t, BriefFix{"card x tier: heavy"}, fix)
-		fs, fix = LintBrief(brief("card x", "PATHS: pkg/a/*.go,tla/\nNEW: tla/*.tla\nGATE-NEEDS: linux, tla", "x\n\nSTEP 0. Run the model: go run ./tools/tlacheck groups --root . --stale."), BriefBase{})
-		assert.Equal(t, []string{"tier-set", "new-model-is-heavy-or-above"}, checks(fs))
+		fs, fix = LintBrief(brief("card x", "PATHS: pkg/a/*.go,tla/", "x"), BriefBase{})
+		assert.Equal(t, []string{"tier-set", "tla-is-heavy-or-above"}, checks(fs))
 		assert.Equal(t, BriefFix{"card x tier: heavy"}, fix)
-		fs, fix = LintBrief(brief("card x tier: frontier", "PATHS: tla/\nNEW: tla/Bar.tla\nGATE-NEEDS: linux, tla", "x\n\nSTEP 0. Run the model: go run ./tools/tlacheck groups --root . --stale."), BriefBase{})
+		fs, fix = LintBrief(brief("card x tier: frontier", "PATHS: tla/", "x"), BriefBase{})
 		assert.Empty(t, fs)
 		assert.Nil(t, fix)
-		fs, _ = LintBrief(brief("card x tier: heavy", "PATHS: tla/\nNEW: tla/Bar.tla\nGATE-NEEDS: linux, tla", "x\n\nSTEP 0. Run the model: go run ./tools/tlacheck groups --root . --stale."), BriefBase{})
+		fs, _ = LintBrief(brief("card x tier: heavy", "PATHS: tla/", "x"), BriefBase{})
 		assert.Empty(t, fs, "heavy is the rule's floor")
-		fs, _ = LintBrief(brief("card x tier: pro", "PATHS: tla/", "x"), BriefBase{})
-		assert.Empty(t, fs, "editing the models in tla/ is any tier")
 		fs, _ = LintBrief(brief("card x tier: pro", "PATHS: pkg/tla/x.go", "x"), BriefBase{})
 		assert.Empty(t, fs, "tla inside another path is not the model")
 	})
