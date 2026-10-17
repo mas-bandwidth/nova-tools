@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x01')
+[]byte("{\n  \"epoch\": 9223372036854775807,\n  \"at_ms\": 9223372036854775807,\n  \"by\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n}\n")
