@@ -57,11 +57,18 @@ import (
 //   - removes a mirror's leftover temporary packs (an aborted fetch's tmp_pack_*, .tmp-*)
 //     older than an hour when nothing may be fetching into it or working in it; never git
 //     prune, which can delete objects a clone borrowing the mirror is reading;
+//   - removes each --scratch match (a job's or a worker's scratch directory or file) that
+//     nothing changed for --scratch-age, that this login owns, that no live process names
+//     or holds, and whose git repositories hold no uncommitted or unpushed work
+//     (diskguard_scratch.go);
+//   - under --trim-recent-under-gb free, holds every Go build cache under a quarter of its
+//     cap with its recently used entries included: a build that loses an entry it is
+//     reading fails, and a full disk fails every build;
 //   - warns, under --disk-floor, on its own output, which is its loop log.
 //
 // One line per action, with the bytes it freed; one line at the end. Nothing is removed
-// through a link, and nothing under /tmp: the guard looks only where it is told and where
-// the fleet's layout puts these things.
+// through a link, and nothing under /tmp but a --scratch match: the guard looks only where
+// it is told and where the fleet's layout puts these things.
 
 // The guard's defaults: the order of magnitude the owner named for a build cache (10 GiB,
 // the member's own), a module cache's larger, a log's size and copies, how long a pool
@@ -94,6 +101,11 @@ type guard struct {
 	floor, stopFloor           int64
 	logKeep                    int
 	poolIdle, cloneAge         time.Duration
+	scratchAge                 time.Duration
+	scratchPaths, scratchKeep  []string // the --scratch matches, and the names never swept
+	recentUnder                int64    // --trim-recent-under-gb in bytes: under it a trim takes recent entries too (0: never)
+	uid                        int      // the login's uid: a scratch entry another owns is never swept (-1: none is)
+	gitWork                    func(repo string) string
 	now                        time.Time
 	home                       string
 	procs                      func() ([]string, error)
@@ -232,6 +244,7 @@ func (g *guard) run() int {
 	g.modules()
 	g.pools()
 	g.landClones()
+	g.scratch()
 	g.mirrors()
 	// The floors read every volume this pass reads, the home volume and each --root, never
 	// the home volume alone: a root under the stop floor stops the loops, and the free the
@@ -364,10 +377,15 @@ func rotate(path string, keep int, dry bool) (freed int64, err error) {
 // and every pass said freed=0 and only warned). So under the watermark, twice --disk-floor
 // on the tightest volume the guard reads, every cache is held under a quarter of its cap.
 func (g *guard) buildCaches() {
-	limit, pressure := g.cacheMax, ""
+	limit, pressure, floor := g.cacheMax, "", time.Duration(0)
 	if free, low := g.underWatermark(); low {
 		limit = g.cacheMax / guardPressureDiv
 		pressure = fmt.Sprintf("PRESSURE free=%d watermark=%d: every go build cache is held under cap=%d this run", free, 2*g.floor, limit)
+	}
+	if free, read := g.tightestFree(); read && g.recentUnder > 0 && free < uint64(g.recentUnder) {
+		// A full disk fails every build; losing an entry fails only the build reading it.
+		limit, floor = g.cacheMax/guardPressureDiv, time.Nanosecond
+		pressure = fmt.Sprintf("PRESSURE free=%d under=%d: every go build cache is held under cap=%d this run, entries used in the last two hours included", free, g.recentUnder, limit)
 	}
 	for _, dir := range g.caches {
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
@@ -378,7 +396,7 @@ func (g *guard) buildCaches() {
 			pressure = ""
 		}
 		t := &gocache.Trim{}
-		b := gocache.Bounds{Limit: limit, Slack: limit / 5, Dirs: gocache.Subdirs, Remove: math.MaxInt}
+		b := gocache.Bounds{Limit: limit, Slack: limit / 5, Floor: floor, Dirs: gocache.Subdirs, Remove: math.MaxInt}
 		if c := t.Round(dir, g.now, b); c.Size <= limit { // measures, removes nothing
 			continue
 		}
@@ -402,14 +420,25 @@ func (g *guard) underWatermark() (uint64, bool) {
 	if g.floor <= 0 {
 		return 0, false
 	}
-	var free uint64
-	read := false
+	free, read := g.tightestFree()
+	return free, read && free < uint64(2*g.floor)
+}
+
+// tightestFree is the least free of the volumes the guard reads (the home volume and each
+// --root), and whether any could be read.
+func (g *guard) tightestFree() (free uint64, read bool) {
 	for _, p := range append([]string{g.home}, g.roots...) {
 		if n, err := g.free(p); err == nil && (!read || n < free) {
 			free, read = n, true
 		}
 	}
-	return free, read && free < uint64(2*g.floor)
+	return free, read
+}
+
+// owned is whether fi is the login's own: a scratch entry another user owns is never swept.
+func (g *guard) owned(fi os.FileInfo) bool {
+	uid, ok := fileOwner(fi)
+	return ok && g.uid >= 0 && uid == g.uid
 }
 
 // modules empties a module cache over its cap, only while no go command runs and no
@@ -828,7 +857,7 @@ func fetching(list []string, repo string) string {
 // cmdDiskGuard is `nova-swarm disk-guard`: one pass of the guard over this machine.
 func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("disk-guard")
-	var roots, scans, caches []string
+	var roots, scans, caches, scratch, scratchKeep []string
 	f.fs.Var(stringListValue{&roots}, "root", "a member's or reader's root `dir` (again for more): its pool is <root>/slots, its caches <root>/cache/go-build and go-mod")
 	f.fs.Var(stringListValue{&scans}, "scan", "a `dir` each of whose subdirectories holding slots/ is a root (again for more)")
 	f.fs.Var(stringListValue{&caches}, "cache", "another Go build cache, a `dir` or a glob such as ~/runner-*/_cache/go-build (again for more); the login's own is always held")
@@ -840,6 +869,10 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	poolIdle := f.fs.Duration("pool-idle", guardPoolIdle, "how long a pool's slots must be still, with no process naming it, before it is swept, a `duration` of at least 10m (default 30m)")
 	land := f.fs.String("land", "", "the `dir` nova-sprint land keeps its clones in (default <the user's cache directory>/nova-sprint/land)")
 	cloneAge := f.fs.Duration("clone-age", guardCloneAge, "how long a land clone must be unused before it is removed, a `duration` (default 24h)")
+	f.fs.Var(stringListValue{&scratch}, "scratch", "a job's scratch `glob` such as ~/rowan-jobs/* or /tmp/go-build* (again for more): each match nothing changed for --scratch-age, owned by this login, held by no live process and whose git repositories hold no uncommitted or unpushed work is removed; never one under ~/nova-bench")
+	f.fs.Var(stringListValue{&scratchKeep}, "scratch-keep", "a `name` pattern a --scratch match is never removed under (again for more), beside *-working, *secret*, stella-* and johnny-*")
+	scratchAge := f.fs.Duration("scratch-age", guardScratchAge, "how long nothing in a --scratch match must have changed before it is removed, a `duration` of at least 2h (default 24h)")
+	recentGB := f.fs.Int("trim-recent-under-gb", 0, "the free `GiB` under which every Go build cache is held under a quarter of its cap with its entries used in the last two hours included (default 0: never)")
 	mirror := f.fs.String("mirrors", "~/nova-bench/mirror", "the `dir` of the bench's mirrors, whose temporary packs older than an hour are removed (default ~/nova-bench/mirror)")
 	dry := f.fs.Bool("dry-run", false, "judge every rule and print each line with WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE, removing and rotating nothing")
 	floor := f.fs.Int("disk-floor", guardFloorGiB, "the free `GiB` under which the run warns, the members' own floor (default 10; 0 warns never)")
@@ -863,6 +896,17 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	}
 	if *cloneAge <= 0 {
 		f.add("--clone-age is a positive duration, got " + oneline.Field(cloneAge.String()))
+	}
+	if *scratchAge < 2*time.Hour {
+		f.add("--scratch-age is at least 2h, got " + oneline.Field(scratchAge.String()))
+	}
+	if *recentGB < 0 {
+		f.add(fmt.Sprintf("--trim-recent-under-gb is 0 or more GiB, got %d", *recentGB))
+	}
+	for _, k := range scratchKeep {
+		if _, err := filepath.Match(k, ""); err != nil {
+			f.add(fmt.Sprintf("--scratch-keep %q is not a name pattern", k))
+		}
 	}
 	if *poolIdle < leftoverIdle {
 		f.add("--pool-idle is at least " + leftoverIdle.String() + ", the member's own stillness rule, got " + oneline.Field(poolIdle.String()))
@@ -888,7 +932,14 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 		floor: int64(*floor) * gib, stopFloor: int64(*stopFloor) * gib, poolIdle: *poolIdle, cloneAge: *cloneAge, now: time.Now(), home: home,
 		logDir: tilde(*logs), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
 		dry: *dry, procs: processList, held: heldPaths, free: diskFree, cleanMod: cleanModCache, dirty: landDirty, out: stdout,
+		scratchAge: *scratchAge, scratchKeep: append(append([]string{}, guardScratchKeep...), scratchKeep...),
+		recentUnder: int64(*recentGB) * gib, uid: os.Getuid(), gitWork: scratchGitWork,
 	}
+	paths, err := scratchMatches(scratch, tilde, home, []string{filepath.Join(home, "nova-bench")})
+	if err != nil {
+		return refuse(stderr, " disk-guard", err.Error())
+	}
+	g.scratchPaths = paths
 	if runtime.GOOS != "linux" {
 		lsof, note := findLsof(exec.LookPath, lsofAt, isExecutable)
 		g.held = func() ([]string, error) { return lsofHeld(lsof) }

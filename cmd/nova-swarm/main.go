@@ -73,7 +73,7 @@ usage:
                          fleet row's width; --width overrides it, and --pass names environment secrets to
                          hand to children. A reader runs the reads of the readers table; this machine opens
                          no store. --no-wall runs each child with no wall. nova-swarm member -h has the rest.)
-  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--stop-floor <GiB>] [--dry-run]
+  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--scratch <glob>]... [--scratch-keep <name>]... [--scratch-age <duration>] [--trim-recent-under-gb <GiB>] [--mirrors <dir>] [--disk-floor <GiB>] [--stop-floor <GiB>] [--dry-run]
                        (one pass over this machine, run every few minutes by the disk-guard loop row
                         fleet/loops.yml adds to every machine: it trims every Go build cache over
                         --cache-max-gb, empties a module cache over --modcache-max-gb, rotates loop logs

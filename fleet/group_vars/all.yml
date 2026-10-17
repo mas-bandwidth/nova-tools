@@ -38,7 +38,11 @@ nova_retire_units: []
 # roots, a stopped loop's too; the glob holds the CI runners' Go build caches.
 nova_disk_guard: true
 nova_disk_guard_every: 900
-nova_disk_guard_args: ["--scan", "~/nova-bench/run", "--cache", "~/runner-*/_cache/go-build"]
+# The scratch globs are a job's and a worker's leftovers (diskguard_scratch.go has the rules
+# that keep work); under 30 GiB free the build caches lose recent entries too.
+nova_disk_guard_args: ["--scan", "~/nova-bench/run", "--cache", "~/runner-*/_cache/go-build",
+  "--scratch", "~/rowan-jobs/*", "--scratch", "~/jobs/*", "--scratch", "~/tmp/*",
+  "--scratch", "/tmp/go-build*", "--scratch", "/tmp/tmp.*", "--trim-recent-under-gb", "30"]
 
 # The loop records loops.yml renders and restarts, by name (a list, or one
 # comma-separated word); empty is every record of the machine. Under it every

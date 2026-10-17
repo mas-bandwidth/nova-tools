@@ -56,3 +56,42 @@ func TestDiskGuardKeepsALandCloneAProcessWorksIn(t *testing.T) {
 	g.landClones()
 	assert.NoDirExists(t, clone, "with the process gone the clone goes: %s", out.String())
 }
+
+// The scratch rule's git check on real repositories: a clone whose commits its remote has
+// holds no work; the same clone with a commit of its own, or a change to a tracked file,
+// holds work; an untracked file alone does not. The check never rewrites the index, so it
+// never makes an entry look used.
+func TestScratchGitWorkOnRealRepositories(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	git := func(at string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", at, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	origin := filepath.Join(dir, "origin.git")
+	require.NoError(t, exec.Command("git", "init", "-q", "--bare", origin).Run())
+	clone := filepath.Join(dir, "clone")
+	require.NoError(t, exec.Command("git", "clone", "-q", origin, clone).Run())
+	require.NoError(t, os.WriteFile(filepath.Join(clone, "a"), []byte("a\n"), 0o644))
+	git(clone, "add", "a")
+	git(clone, "commit", "-q", "-m", "a")
+	git(clone, "push", "-q", "origin", "HEAD")
+	assert.Equal(t, "", scratchGitWork(clone))
+
+	require.NoError(t, os.WriteFile(filepath.Join(clone, "untracked"), []byte("u\n"), 0o644))
+	assert.Equal(t, "", scratchGitWork(clone), "an untracked file alone is no work")
+
+	index := filepath.Join(clone, ".git", "index")
+	old := time.Now().Add(-48 * time.Hour)
+	require.NoError(t, os.Chtimes(index, old, old))
+	require.NoError(t, os.WriteFile(filepath.Join(clone, "a"), []byte("changed\n"), 0o644))
+	assert.Contains(t, scratchGitWork(clone), "has uncommitted work")
+	fi, err := os.Stat(index)
+	require.NoError(t, err)
+	assert.True(t, fi.ModTime().Equal(old), "the check never rewrites the index")
+
+	git(clone, "commit", "-q", "-am", "local")
+	assert.Contains(t, scratchGitWork(clone), "has commits no remote has")
+}
