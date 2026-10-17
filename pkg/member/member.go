@@ -36,6 +36,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/answerwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
@@ -1793,10 +1794,13 @@ func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Pack
 			fmt.Fprintf(m.out, "take refused: %s\n", strings.TrimSpace(string(out)))
 			return 0, nil
 		}
-		var t takeOut
-		if err := json.Unmarshal(out, &t); err != nil {
-			// an answer that is not the take's JSON is no answer: nothing is started
-			return 0, []byte(fmt.Sprintf("take: not JSON: %v", err))
+		// the take answer reads both table and text forms through takeReader (the
+		// TakeOut table of schemas/answer; owner's rules S1 and S2, readers first): a
+		// damaged value is refused by name, never read as absent or empty, and the
+		// read is counted under its form
+		t, _, err := takeReader().Read(out)
+		if err != nil {
+			return 0, []byte(err.Error())
 		}
 		packets = t.Packets
 	}
@@ -1815,6 +1819,122 @@ func orWords(out []byte) []byte {
 		return []byte{}
 	}
 	return out
+}
+
+// takeReader is the take answer's strict reader (owner's rules S1 and S2; the
+// TakeOut table of schemas/answer): the record reads the table wire, the padded
+// standard base64 of that wire, the schema JSON text and the legacy JSON nova-sprint
+// writes today (one and the same text, since the schema mirrors the take --json
+// shape). A damaged value is refused by name (`TAKE_OUT REFUSED: <reason>; run:
+// nova-swarm member -h`) and each read is counted under its form. Writers stay
+// legacy, so the read counters are the cutover's evidence (S4).
+func takeReader() *schemaread.Reader[takeOut] {
+	return schemaread.NewReader(&schemaread.Codec[takeOut]{
+		Name: "TAKE_OUT", Help: "nova-swarm member -h",
+		LoadWire: func(v *takeOut, wire []byte) schemaread.Report {
+			*v = takeOut{}
+			n := answerwire.TakeOutLoadMeasure(wire)
+			if n < 0 {
+				return takeStrict(answerwire.TableReport{Malformed: true}, false)
+			}
+			var r answerwire.TableReport
+			root := answerwire.TakeOutLoad(takeRegion(n), wire, &r)
+			if root == nil {
+				return takeStrict(r, false)
+			}
+			*v = takeOfRoot(root)
+			return takeStrict(r, true)
+		},
+		LoadJSON: func(v *takeOut, text []byte) schemaread.Report {
+			*v = takeOut{}
+			return takeBuilt(text, func(root *answerwire.TakeOut) { *v = takeOfRoot(root) })
+		},
+		Constraints: func(v *takeOut, c *schemaread.Checker) {
+			c.Bound("packets", int64(len(v.Packets)), 0, 1024)
+			for _, p := range v.Packets {
+				c.Required("card", p.Card != "")
+				c.Text("card", p.Card, 160)
+				c.Text("kind", p.Kind, 16)
+				c.Text("as", p.As, 64)
+			}
+		},
+		SaveWire: func(v *takeOut) []byte {
+			var out []byte
+			takeBuilt(takeJSONText(*v), func(root *answerwire.TakeOut) {
+				buf := make([]byte, answerwire.TakeOutMeasure(root))
+				if answerwire.TakeOutSave(root, buf) == int64(len(buf)) {
+					out = buf
+				}
+			})
+			return out
+		},
+		SaveJSON: func(v *takeOut) []byte {
+			var out []byte
+			takeBuilt(takeJSONText(*v), func(root *answerwire.TakeOut) {
+				buf := make([]byte, answerwire.TakeOutToJsonMeasure(root))
+				if answerwire.TakeOutToJson(root, buf) == int64(len(buf)) {
+					out = buf
+				}
+			})
+			return out
+		},
+	})
+}
+
+// takeStrict is a generated TableReport as the strict read decides on it.
+func takeStrict(r answerwire.TableReport, ok bool) schemaread.Report {
+	out := schemaread.Report{Unknown: int(r.Unknown), KindMismatch: int(r.KindMismatch), Clamped: int(r.Clamped), Malformed: r.Malformed || !ok || r.Duplicate > 0 || r.MissingRequired > 0}
+	if r.Verdict == answerwire.TableOpenRefused || r.Verdict == answerwire.TableOpenDamaged {
+		out.Reason = r.Err().Error()
+	}
+	return out
+}
+
+// takeBuilt hands use the TakeOut table the schema JSON text builds, while its
+// builder is alive. The legacy writer (nova-sprint's take --json) emits an
+// empty take as `"packets": null` and a packet with no notes as `"notes": null`,
+// which the schema reads as arrays, so a null list is normalised to the empty
+// list before the build (the reader accepts the legacy JSON and the schema JSON
+// alike; owner's rules S2).
+func takeBuilt(text []byte, use func(*answerwire.TakeOut)) schemaread.Report {
+	text = bytes.ReplaceAll(text, []byte(`"notes":null`), []byte(`"notes":[]`))
+	text = bytes.ReplaceAll(text, []byte(`"notes": null`), []byte(`"notes":[]`))
+	text = bytes.Replace(text, []byte(`"packets":null`), []byte(`"packets":[]`), 1)
+	text = bytes.Replace(text, []byte(`"packets": null`), []byte(`"packets":[]`), 1)
+	var b answerwire.TakeOutBuilder
+	if !b.Init() {
+		return takeStrict(answerwire.TableReport{}, false)
+	}
+	defer b.Shutdown()
+	var r answerwire.TableReport
+	if !answerwire.TakeOutFromJson(&b, text, &r) || !b.Lock() {
+		return takeStrict(r, false)
+	}
+	use(b.AsConst())
+	return takeStrict(r, true)
+}
+
+// takeJSONText is t as the schema JSON text the generated TakeOut reader reads:
+// the same shape nova-sprint's take --json writes today (the legacy form).
+func takeJSONText(t takeOut) []byte {
+	b, _ := json.Marshal(t) // a takeOut of text and a list always marshals
+	return b
+}
+
+// takeOfRoot is a loaded TakeOut table as a takeOut.
+func takeOfRoot(r *answerwire.TakeOut) takeOut {
+	text := make([]byte, answerwire.TakeOutToJsonMeasure(r))
+	n := answerwire.TakeOutToJson(r, text)
+	var t takeOut
+	_ = json.Unmarshal(text[:n], &t)
+	return t
+}
+
+// takeRegion is a 64-byte aligned region of n bytes for a table load.
+func takeRegion(n int64) []byte {
+	raw := make([]byte, n+63)
+	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
+	return raw[off : off+uintptr(n)]
 }
 
 // card is the queue's card of the id.
