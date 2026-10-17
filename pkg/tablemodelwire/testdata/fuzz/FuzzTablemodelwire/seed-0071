@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x17')
+[]byte("{\n  \"verb\": null,\n  \"args\": [],\n  \"actor\": null,\n  \"hasReceipt\": false,\n  \"receipt\": {\n    \"fields\": []\n  },\n  \"model\": null,\n  \"state\": {\n    \"live\": [],\n    \"rows\": [],\n    \"binds\": [],\n    \"data\": [],\n    \"place\": [],\n    \"active\": 0,\n    \"seen\": []\n  }\n}\n")
