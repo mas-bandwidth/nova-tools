@@ -64,8 +64,11 @@
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
    :origin "v1.2.4 cut note")
-  (fix "worker-writes-result-before-deadline" :release "v1.2.6" :status "planned"
-   :title "A worker writes its result before the route deadline"
-   :text "Children on some direct routes work to the route deadline and never write their result file;
-    give the route a longer deadline or reserve a margin to write the result."
-   :origin "fault inventory, 2026-10-10")))
+  (fix "worker-writes-result-before-deadline" :release "v1.2.6" :status "in-progress"
+   :title "A card ended at its deadline with commits reports where its work is"
+   :text "Children on the direct routes worked to the route deadline, were killed by it, and left no
+    result file even when a commit had been pushed; the pool scored them no-result. When the deadline
+    ends a card that left commits past the remote default branch and published nothing, the run writes
+    RESULT.md naming the branch, the head, the commit count and whether it was pushed, marked as the
+    machinery's own so it never counts as the card's result."
+   :origin "fault inventory, 2026-10-10 (fault 9, c13)")))

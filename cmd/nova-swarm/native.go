@@ -203,6 +203,7 @@ type nativeRunResult struct {
 	lost         bool              // the provider read died after the request may have been accepted
 	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
+	deadlined    bool              // the deadline timer killed the child at its wall bound
 	survivors    string            // what the harness left in its group when it exited on its own: "", <pgid>:reaped or <pgid>:alive
 	starts       int               // the harness starts tried when every one failed (harnessStartFailed), else 0
 	// THE JOB'S OWN FIGURE (the budget rule keeps two numbers apart: the row is the launch's and
@@ -1254,6 +1255,7 @@ func watch(s *nativeRunState, st *nativeStarted) *nativeWatched {
 		nativeKillGroup(st.pgid, st.started)
 		<-st.done
 		s.res.rc = -1
+		s.res.deadlined = true
 	case end := <-st.idleC:
 		st.stopDeadline()
 		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
@@ -1482,6 +1484,15 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 			if cause, ok := providerEnd(s.prep.cfg.headless(), s.prep.dataHome, s.providerMark, s.runStart, s.res.rc, tailSince(s.outLog, s.captureMark)); ok {
 				fmt.Fprintln(errOut, oneline.Escape(providerLine(s.prep.cfg.label, s.res.wallSeconds, s.prep.cfg.model, cause)))
 			}
+		}
+	}
+	if s.res.deadlined {
+		// A card killed at its deadline that left commits and no report is not a model that
+		// chose to publish nothing: write where the work is (swarm.WriteDeadlineResult).
+		if path, wrote, err := swarm.WriteDeadlineResult(s.prep.jobDir, s.prep.cfg.label); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the deadline report could not be written: %s\n", oneline.Escape(err.Error()))
+		} else if wrote {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the card was ended at its deadline with commits and published no report of its own; one naming its branch and head was written to %s\n", oneline.Field(path))
 		}
 	}
 	if s.prep.decided != "" {

@@ -1093,7 +1093,7 @@ func nativeLeftAResult(job string) bool {
 		filepath.Join(job, "RESULT.md"),
 		filepath.Join(job, "repo", "RESULT.md"),
 	} {
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && !swarm.AskedReport(p) {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && !swarm.AskedReport(p) && !swarm.DeadlineReport(p) {
 			return true
 		}
 	}
