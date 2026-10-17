@@ -637,13 +637,17 @@ func newWorkerViewReader() *schemaread.Reader[workerViewDoc] {
 	return schemaread.NewReader(codec)
 }
 
+// workerViewReads is the worker view's one reader, so its per-form read counters
+// accumulate across reads (owner's rule S4).
+var workerViewReads = newWorkerViewReader()
+
 // ParseView reads the worker view's answer for this friend: each work card on her row, its job
 // the inbox directory its brief path names, and no brief (Why says so). It reads
-// the view through newWorkerViewReader: the binary wire, the padded standard
+// the view through workerViewReads: the binary wire, the padded standard
 // base64 of it, the schema JSON text, or the legacy form the sprint server writes
 // (S2), refused by name when damaged and never read as absent, empty or zero.
 func ParseView(friend, out string) ([]HeldCard, error) {
-	doc, _, err := newWorkerViewReader().Read([]byte(strings.TrimSpace(out)))
+	doc, _, err := workerViewReads.Read([]byte(strings.TrimSpace(out)))
 	if err != nil {
 		return nil, fmt.Errorf("the worker view is not readable: %w", err)
 	}

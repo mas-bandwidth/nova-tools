@@ -24,16 +24,16 @@ func TestFriendWorkerViewDualRead(t *testing.T) {
 		workCard("taken.w2", "working"),
 		workCard("dealt.w3", "ready"))
 
-	r := newWorkerViewReader()
-
-	doc, res, err := r.Read([]byte(legacy))
+	legacyBefore := workerViewReads.Counts().Snapshot()
+	doc, res, err := workerViewReads.Read([]byte(legacy))
 	require.NoError(t, err)
 	assert.Equal(t, schemaread.FormLegacy, res.Form)
-	assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormLegacy))
+	legacyAfter := workerViewReads.Counts().Snapshot()
+	assert.Equal(t, uint64(1), legacyAfter["legacy"]-legacyBefore["legacy"], "the legacy read is counted under the legacy form")
 
-	bin, err := r.Write(&doc, schemaread.FormBinary)
+	bin, err := workerViewReads.Write(&doc, schemaread.FormBinary)
 	require.NoError(t, err)
-	js, err := r.Write(&doc, schemaread.FormJSON)
+	js, err := workerViewReads.Write(&doc, schemaread.FormJSON)
 	require.NoError(t, err)
 	b64 := []byte(base64.StdEncoding.EncodeToString(bin))
 
@@ -73,8 +73,8 @@ func TestFriendWorkerViewDualRead(t *testing.T) {
 		{"json clamped", schemaread.FormJSON, []byte(clamped)},
 	} {
 		t.Run("refused "+m.name, func(t *testing.T) {
-			before := r.Counts().Reads(m.form)
-			z, res, err := r.Read(m.in)
+			before := workerViewReads.Counts().Reads(m.form)
+			z, res, err := workerViewReads.Read(m.in)
 			require.Error(t, err, "a damaged or clamped value is refused, never read as absent, empty or zero")
 			var ref *schemaread.Refusal
 			require.ErrorAs(t, err, &ref)
@@ -82,7 +82,7 @@ func TestFriendWorkerViewDualRead(t *testing.T) {
 			assert.Contains(t, ref.Error(), "; run: "+ViewHelp)
 			assert.Equal(t, m.form, res.Form)
 			assert.Zero(t, z.v, "a refused read leaves no value")
-			assert.Equal(t, before+1, r.Counts().Reads(m.form), "the refusal is counted under the form read")
+			assert.Equal(t, before+1, workerViewReads.Counts().Reads(m.form), "the refusal is counted under the form read")
 		})
 	}
 }
