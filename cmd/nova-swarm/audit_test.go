@@ -265,6 +265,15 @@ var swarmAudit = audit.Config{
 		// package's stream, and the one value this binary takes from it -- the
 		// chosen id -- is put through oneline.Field before it is printed.
 		`"github.com/mas-bandwidth/nova-tools/pkg/decide"`,
+		// decidewire and schemaread (memberattempt.go) are the attempt decision's
+		// table wire and the strict write-side bound: the member writes the
+		// decision as the padded standard base64 of the generated table's binary
+		// image (S2). Neither writes a stream of this binary: the bytes the
+		// decider returns become a record line the finish carries to the sprint's
+		// server, never a line this binary prints, and schemaread's refusal is
+		// returned as an error to the caller, never printed here.
+		`"github.com/mas-bandwidth/nova-tools/pkg/decidewire"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/schemaread"`,
 		// events (nova-tools #2563) writes the card-end entry to the cards:done stream, and
 		// it IS a writer of this package's stream: `native` hands events.Writer the run's
 		// own stderr so a card that could not be measured says so. It cannot write past
