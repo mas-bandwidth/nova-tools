@@ -66,7 +66,8 @@ const manifestProblemCap = 50
 // every other form is read through pkg/schemaread with the generated
 // UpdateManifest table, refused by name when malformed or clamped, never read
 // as absent, empty or zero. Reads are counted per record and per form; the
-// per-form counters are the reader's (S3, the evidence a cutover landed).
+// per-form counters are the reader's (S2, and S4: the evidence a cutover
+// landed).
 func Load(r io.Reader) ([]Entry, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -393,6 +394,10 @@ func entriesFromTable(v *wire.UpdateManifest) ([]Entry, error) {
 		switch scheme {
 		case "github", "npm", "brew", "ollama":
 		case "local":
+			// The locator is an argv, as the legacy form checks it.
+			if _, err := argv(loc); err != nil {
+				add("latest: %v", err)
+			}
 		default:
 			add("unknown source %s (use github,npm,brew,ollama,local)", scheme)
 			continue
