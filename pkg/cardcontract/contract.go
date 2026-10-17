@@ -5,6 +5,7 @@
 package cardcontract
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,8 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unsafe"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	wire "github.com/mas-bandwidth/nova-tools/pkg/decidewire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
@@ -129,18 +133,204 @@ func WriteFrame(path string, f Frame) error {
 	return atomicfile.Write(path, append(b, '\n'), 0o644)
 }
 
-// ReadFrame reads the frame at path; a frame with no kind or no card is refused.
+// The frame's one strict read (owner's rules S2 and S4, readers first; C13):
+// ReadFrame reads the frame from the binary image of the decide Frame table,
+// the padded standard base64 of that image, the table's schema JSON text and
+// the legacy JSON WriteFrame writes today, refuses a damaged value by name
+// (`FRAME REFUSED: <reason>; run: nova-swarm -h`) and counts each read under
+// its form. Writers stay legacy (WriteFrame), so the per-form counters are
+// the cutover's evidence.
+const (
+	frameRecord = "FRAME"
+	frameHelp   = "nova-swarm -h"
+)
+
+// frameDoc is one read of the frame: the record every form reads to, and the
+// region the table forms hold it in.
+type frameDoc struct {
+	rec    Frame
+	region []byte
+}
+
+// frameReads is the frame's one reader, so its per-form counters accumulate.
+var frameReads = frameReader()
+
+func frameReader() *schemaread.Reader[frameDoc] {
+	return schemaread.NewReader(&schemaread.Codec[frameDoc]{
+		Name:  frameRecord,
+		Help:  frameHelp,
+		Reset: func(d *frameDoc) { *d = frameDoc{} },
+		Measure: func(w []byte) error {
+			_, err := wire.FrameLoadMeasureReason(w)
+			return err
+		},
+		LoadWire:   frameLoadWire,
+		LoadJSON:   frameLoadJSON,
+		Legacy:     frameLegacy,
+		LoadLegacy: frameLoadLegacy,
+	})
+}
+
+// frameStrict is one generated TableReport as the strict read decides on it.
+func frameStrict(r wire.TableReport, ok bool) schemaread.Report {
+	out := schemaread.Report{Unknown: int(r.Unknown), KindMismatch: int(r.KindMismatch), Clamped: int(r.Clamped), Malformed: r.Malformed || !ok || r.Duplicate > 0}
+	if r.Verdict == wire.TableOpenRefused || r.Verdict == wire.TableOpenDamaged {
+		out.Reason = r.Err().Error()
+	}
+	return out
+}
+
+// frameBuilt hands use the Frame table the schema JSON text builds, while its
+// builder is alive.
+func frameBuilt(text []byte, use func(*wire.Frame)) schemaread.Report {
+	var b wire.FrameBuilder
+	if !b.Init() {
+		return frameStrict(wire.TableReport{}, false)
+	}
+	defer b.Shutdown()
+	var r wire.TableReport
+	if !wire.FrameFromJson(&b, text, &r) || !b.Lock() {
+		return frameStrict(r, false)
+	}
+	use(b.AsConst())
+	return frameStrict(r, true)
+}
+
+// frameRegion is a 64-byte aligned region of n bytes for a table load.
+func frameRegion(n int64) []byte {
+	raw := make([]byte, n+63)
+	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
+	return raw[off : off+uintptr(n)]
+}
+
+// frameLoadWire loads the table's binary image; base64 reaches it decoded.
+func frameLoadWire(d *frameDoc, w []byte) schemaread.Report {
+	n, err := wire.FrameLoadMeasureReason(w)
+	if err != nil || n < 0 {
+		return schemaread.Report{Malformed: true}
+	}
+	var r wire.TableReport
+	d.region = frameRegion(n)
+	root := wire.FrameLoad(d.region, w, &r)
+	if root == nil {
+		return frameStrict(r, false)
+	}
+	d.rec = frameOfRoot(root)
+	return frameStrict(r, true)
+}
+
+// frameLoadJSON loads the table's schema JSON text.
+func frameLoadJSON(d *frameDoc, text []byte) schemaread.Report {
+	return frameBuilt(text, func(root *wire.Frame) { d.rec = frameOfRoot(root) })
+}
+
+// frameLoadLegacy loads the legacy JSON WriteFrame writes today, exactly as it
+// has always been read: a strict decode into the frame. The legacy form is the
+// one the current writer emits, and it reads to the same record as the table
+// forms (S2, C13). Its stage is a list of strings, where the table's schema
+// text writes it as a list of {path} objects.
+func frameLoadLegacy(d *frameDoc, in []byte) schemaread.Report {
+	if err := json.Unmarshal(in, &d.rec); err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	return schemaread.Report{}
+}
+
+// frameLegacy is true when in is the legacy JSON object: one naming none of
+// the table's later fields (recipes and the decide answers), which the legacy
+// writer never writes; an object that is not JSON is legacy too, so its
+// damage is named by the table read.
+func frameLegacy(in []byte) bool {
+	t := bytes.TrimLeft(in, " \t\r\n")
+	return len(t) > 0 && t[0] == '{' && !frameTableJSON(t)
+}
+
+// frameTableJSON reports whether the object's top level names a field only
+// the schema JSON text has.
+func frameTableJSON(t []byte) bool {
+	d := json.NewDecoder(bytes.NewReader(t))
+	if tok, err := d.Token(); err != nil || tok != json.Delim('{') {
+		return false
+	}
+	for d.More() {
+		key, err := d.Token()
+		if err != nil {
+			return false
+		}
+		switch key {
+		case "recipes", "decide_bounce", "decide_review", "decide_gate_flaky", "decide_gate_preexisting":
+			return true
+		}
+		var skip json.RawMessage
+		if err := d.Decode(&skip); err != nil {
+			return false
+		}
+	}
+	return false
+}
+
+// frameOfRoot is a loaded Frame table as the frame the member hands native.
+func frameOfRoot(r *wire.Frame) Frame {
+	f := Frame{
+		Kind:                  frameKindName(r.Kind),
+		Card:                  frameText(&r.Card),
+		Attempt:               int(r.Attempt),
+		Tier:                  frameText(&r.Tier),
+		Model:                 frameText(&r.Model),
+		Repo:                  frameText(&r.Repo),
+		BaseRef:               frameText(&r.BaseRef),
+		StageSha:              frameText(&r.StageSha),
+		Branch:                frameText(&r.Branch),
+		PrevHead:              frameText(&r.PrevHead),
+		PrevFrom:              int(r.PrevAttempt),
+		Why:                   frameText(&r.Why),
+		Finding:               frameText(&r.Finding),
+		Fix:                   frameText(&r.Fix),
+		ReviewBase:            frameText(&r.ReviewBase),
+		Recipes:               frameText(&r.Recipes),
+		DecideBounce:          frameText(&r.DecideBounce),
+		DecideReview:          frameText(&r.DecideReview),
+		DecideGateFlaky:       frameText(&r.DecideGateFlaky),
+		DecideGatePreexisting: frameText(&r.DecideGatePreexisting),
+	}
+	wire.FrameStageEach(&r.Stage, func(p *wire.StagePath) bool {
+		f.Stage = append(f.Stage, frameText(&p.Path))
+		return true
+	})
+	return f
+}
+
+// frameText is the text of a table string.
+func frameText(ref *wire.TableRef) string {
+	v := wire.TableStringAt(ref)
+	return string(v.Data[:v.Length])
+}
+
+// frameKindName is a FrameKind ordinal as the frame's kind word.
+func frameKindName(k wire.FrameKind) string {
+	switch k {
+	case wire.FrameKindWork:
+		return "work"
+	case wire.FrameKindRead:
+		return "read"
+	}
+	return ""
+}
+
+// ReadFrame reads the frame at path in every form (S2, C13); a frame with no
+// kind or no card is refused.
 func ReadFrame(path string) (Frame, error) {
-	var f Frame
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return f, err
+		return Frame{}, err
 	}
-	if err := json.Unmarshal(b, &f); err != nil {
-		return f, fmt.Errorf("the frame %s is not JSON: %w", path, err)
+	d, _, err := frameReads.Read(b)
+	if err != nil {
+		return Frame{}, fmt.Errorf("the frame %s is invalid: %w", path, err)
 	}
+	f := d.rec
 	if (f.Kind != "work" && f.Kind != "read") || f.Card == "" {
-		return f, fmt.Errorf("the frame %s wants kind work or read and a card, got kind %q card %q", path, f.Kind, f.Card)
+		return Frame{}, fmt.Errorf("the frame %s wants kind work or read and a card, got kind %q card %q", path, f.Kind, f.Card)
 	}
 	return f, nil
 }
