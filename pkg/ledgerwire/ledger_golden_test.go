@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
-	"unsafe"
 
 	cairnsource "github.com/mas-bandwidth/nova-tools/internal/cairn"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
@@ -19,14 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var retainedBuilders []any
-var retainedBuildersMu sync.Mutex
-
-func keepBuilder(v any) {
-	retainedBuildersMu.Lock()
-	retainedBuilders = append(retainedBuilders, v)
-	retainedBuildersMu.Unlock()
-}
 func reportOf(rep *TableReport, ok bool) schemaread.Report {
 	out := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped), Malformed: rep.Malformed || !ok}
 	if rep.Verdict == TableOpenRefused || rep.Verdict == TableOpenDamaged {
@@ -36,74 +26,72 @@ func reportOf(rep *TableReport, ok bool) schemaread.Report {
 	}
 	return out
 }
-func rebase(src, dst unsafe.Pointer, info *TableCookInfo) {
-	for _, f := range info.Fields {
-		s, d := unsafe.Add(src, uintptr(f.Offset)), unsafe.Add(dst, uintptr(f.Offset))
-		if f.IsPointer || (info.Name == "FuseBox" && f.Name == "quarantine") {
-			a, b := (*int64)(s), (*int64)(d)
-			if *a != 0 {
-				*b = *a + int64(uintptr(s)-uintptr(d))
-			}
-			continue
-		}
-		if f.Record == nil || f.Storage != TableCookStorageRecord {
-			continue
-		}
-		n := int32(1)
-		if f.IsArray {
-			n = f.ArrayBound
-		}
-		for i := int32(0); i < n; i++ {
-			rebase(unsafe.Add(s, uintptr(i*f.ElemSize)), unsafe.Add(d, uintptr(i*f.ElemSize)), f.Record())
-		}
-	}
-}
 
 type decodeBuilder[T any, B any] func(*B, []byte, *TableReport) bool
 type encode[T any] func(*T) []byte
 
-func makeCodec[T comparable, B any](name, help string, input []byte, newBuilder func() *B, init func(*B) bool, root func(*B) *T, fromJSON, loadWire decodeBuilder[T, B], cook *TableCookInfo, reset func(*T), measure func([]byte) (int64, error), saveWire, saveJSON encode[T]) (*schemaread.Codec[T], *T) {
-	makeValue := func(data []byte, load decodeBuilder[T, B]) (*T, schemaread.Report) {
-		zero := new(T)
+type stableTable[T any] struct {
+	root  *T
+	owner any
+	input []byte
+}
+
+func makeCodec[T any, B any](name, help string, input []byte, newBuilder func() *B, init, lock func(*B) bool, root func(*B) *T, fromJSON, loadWire decodeBuilder[T, B], reset func(*T), measure func([]byte) (int64, error), saveWire, saveJSON encode[T]) (*schemaread.Codec[stableTable[T]], stableTable[T]) {
+	makeValue := func(data []byte, load decodeBuilder[T, B]) (stableTable[T], schemaread.Report) {
+		var zero stableTable[T]
 		b := newBuilder()
 		if !init(b) {
 			return zero, schemaread.Report{Malformed: true}
 		}
 		var rep TableReport
 		ok := load(b, data, &rep)
-		p := root(b)
-		if p != nil {
-			*zero = *p
-			rebase(unsafe.Pointer(p), unsafe.Pointer(zero), cook)
+		if !ok || !lock(b) {
+			return zero, reportOf(&rep, false)
 		}
-		keepBuilder(b)
-		return zero, reportOf(&rep, ok)
+		p := root(b)
+		if p == nil {
+			return zero, schemaread.Report{Malformed: true}
+		}
+		return stableTable[T]{root: p, owner: b, input: append([]byte(nil), data...)}, reportOf(&rep, ok)
 	}
 	want, rep := makeValue(input, fromJSON)
 	if rep.Malformed || rep.Clamped != 0 {
 		panic(fmt.Sprintf("%s fixture rejected: %v", name, rep))
 	}
-	c := &schemaread.Codec[T]{Name: name, Help: help, Reset: reset, Measure: func(wire []byte) error { _, err := measure(wire); return err },
-		LoadWire: func(v *T, data []byte) schemaread.Report {
+	c := &schemaread.Codec[stableTable[T]]{Name: name, Help: help, Reset: func(v *stableTable[T]) {
+		if v.root != nil {
+			reset(v.root)
+		}
+	}, Measure: func(wire []byte) error { _, err := measure(wire); return err },
+		LoadWire: func(v *stableTable[T], data []byte) schemaread.Report {
 			p, result := makeValue(data, loadWire)
-			*v = *p
-			rebase(unsafe.Pointer(p), unsafe.Pointer(v), cook)
+			*v = p
 			return result
 		},
-		LoadJSON: func(v *T, data []byte) schemaread.Report {
+		LoadJSON: func(v *stableTable[T], data []byte) schemaread.Report {
 			p, result := makeValue(data, fromJSON)
-			*v = *p
-			rebase(unsafe.Pointer(p), unsafe.Pointer(v), cook)
+			*v = p
 			return result
-		}, SaveWire: saveWire, SaveJSON: saveJSON}
+		}, SaveWire: func(v *stableTable[T]) []byte {
+			if v.root == nil {
+				return nil
+			}
+			return saveWire(v.root)
+		}, SaveJSON: func(v *stableTable[T]) []byte {
+			if v.root == nil {
+				return nil
+			}
+			return saveJSON(v.root)
+		}}
 	return c, want
 }
-func roundTrip[T comparable](t *testing.T, c *schemaread.Codec[T], want *T) {
+func roundTrip[T any](t *testing.T, c *schemaread.Codec[stableTable[T]], want stableTable[T]) {
 	t.Helper()
 	r := schemaread.NewReader(c)
-	wantWire, wantJSON := c.SaveWire(want), c.SaveJSON(want)
+	wantWire, wantJSON := c.SaveWire(&want), c.SaveJSON(&want)
+	assert.JSONEq(t, string(want.input), string(wantJSON), "source fixture retains its nonempty JSON fields")
 	for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
-		out, err := r.Write(want, form)
+		out, err := r.Write(&want, form)
 		require.NoError(t, err, "write %s", form)
 		got, result, err := r.Read(out)
 		require.NoError(t, err, "read %s", form)
@@ -119,9 +107,9 @@ func roundTrip[T comparable](t *testing.T, c *schemaread.Codec[T], want *T) {
 		form  schemaread.Form
 		image []byte
 	}{
-		{schemaread.FormBinary, c.SaveWire(want)[:1]},
-		{schemaread.FormBase64, []byte(base64.StdEncoding.EncodeToString(c.SaveWire(want))[:3])},
-		{schemaread.FormJSON, c.SaveJSON(want)[:1]},
+		{schemaread.FormBinary, c.SaveWire(&want)[:1]},
+		{schemaread.FormBase64, []byte(base64.StdEncoding.EncodeToString(c.SaveWire(&want))[:3])},
+		{schemaread.FormJSON, c.SaveJSON(&want)[:1]},
 	}
 	for _, tc := range bad {
 		_, _, err := r.Read(tc.image)
@@ -130,11 +118,11 @@ func roundTrip[T comparable](t *testing.T, c *schemaread.Codec[T], want *T) {
 	}
 }
 
-func testTable[T comparable](t *testing.T, name string, c *schemaread.Codec[T], want *T) {
+func testTable[T any](t *testing.T, name string, c *schemaread.Codec[stableTable[T]], want stableTable[T]) {
 	t.Run(name, func(t *testing.T) { t.Parallel(); roundTrip(t, c, want) })
 }
 
-func refuseJSON[T any](t *testing.T, c *schemaread.Codec[T], text string, field string) {
+func refuseJSON[T any](t *testing.T, c *schemaread.Codec[stableTable[T]], text string, field string) {
 	t.Helper()
 	_, _, err := schemaread.NewReader(c).Read([]byte(text))
 	var refusal *schemaread.Refusal
@@ -144,7 +132,7 @@ func refuseJSON[T any](t *testing.T, c *schemaread.Codec[T], text string, field 
 
 func TestLedgersRecordsGolden(t *testing.T) {
 	t.Parallel()
-	key, keyWant := makeCodec("LEDGER_KEY", "ledger key", []byte(`{"day":"2026-10-17","card":"a13-defs-ledgers.w2","model":"gpt-6-luna","repo":"mas-bandwidth/nova-tools"}`), func() *LedgerKeyBuilder { return &LedgerKeyBuilder{} }, func(b *LedgerKeyBuilder) bool { return b.Init() }, func(b *LedgerKeyBuilder) *LedgerKey { return b.GetRoot() }, LedgerKeyFromJson, LedgerKeyLoadBuilder, (&LedgerKeyCook{}).Type(), LedgerKeyReset, LedgerKeyLoadMeasureReason, func(v *LedgerKey) []byte {
+	key, keyWant := makeCodec("LEDGER_KEY", "ledger key", []byte(`{"day":"2026-10-17","card":"a13-defs-ledgers.w2","model":"gpt-6-luna","repo":"mas-bandwidth/nova-tools"}`), func() *LedgerKeyBuilder { return &LedgerKeyBuilder{} }, func(b *LedgerKeyBuilder) bool { return b.Init() }, func(b *LedgerKeyBuilder) bool { return b.Lock() }, func(b *LedgerKeyBuilder) *LedgerKey { return b.AsConst() }, LedgerKeyFromJson, LedgerKeyLoadBuilder, LedgerKeyReset, LedgerKeyLoadMeasureReason, func(v *LedgerKey) []byte {
 		n := LedgerKeyMeasure(v)
 		if n < 0 {
 			return nil
@@ -167,7 +155,7 @@ func TestLedgersRecordsGolden(t *testing.T) {
 	})
 	testTable(t, "LedgerKey", key, keyWant)
 
-	token, tokenWant := makeCodec("TOKEN_VALUE", "token value", []byte(`{"amount":123}`), func() *TokenValueBuilder { return &TokenValueBuilder{} }, func(b *TokenValueBuilder) bool { return b.Init() }, func(b *TokenValueBuilder) *TokenValue { return b.GetRoot() }, TokenValueFromJson, TokenValueLoadBuilder, (&TokenValueCook{}).Type(), TokenValueReset, TokenValueLoadMeasureReason, func(v *TokenValue) []byte {
+	token, tokenWant := makeCodec("TOKEN_VALUE", "token value", []byte(`{"amount":123}`), func() *TokenValueBuilder { return &TokenValueBuilder{} }, func(b *TokenValueBuilder) bool { return b.Init() }, func(b *TokenValueBuilder) bool { return b.Lock() }, func(b *TokenValueBuilder) *TokenValue { return b.AsConst() }, TokenValueFromJson, TokenValueLoadBuilder, TokenValueReset, TokenValueLoadMeasureReason, func(v *TokenValue) []byte {
 		n := TokenValueMeasure(v)
 		if n < 0 {
 			return nil
@@ -190,7 +178,7 @@ func TestLedgersRecordsGolden(t *testing.T) {
 	})
 	testTable(t, "TokenValue", token, tokenWant)
 
-	ledgerValue, ledgerValueWant := makeCodec("LEDGER_VALUE", "ledger value", []byte(`{"provider":"openai","tokens":[{"amount":100},{"amount":20},{"amount":3},{"amount":4},{"amount":5}],"rough":132,"sources":"fixture"}`), func() *LedgerValueBuilder { return &LedgerValueBuilder{} }, func(b *LedgerValueBuilder) bool { return b.Init() }, func(b *LedgerValueBuilder) *LedgerValue { return b.GetRoot() }, LedgerValueFromJson, LedgerValueLoadBuilder, (&LedgerValueCook{}).Type(), LedgerValueReset, LedgerValueLoadMeasureReason, func(v *LedgerValue) []byte {
+	ledgerValue, ledgerValueWant := makeCodec("LEDGER_VALUE", "ledger value", []byte(`{"provider":"openai","tokens":[{"amount":100},{"amount":20},{"amount":3},{"amount":4},{"amount":5}],"rough":132,"sources":"fixture"}`), func() *LedgerValueBuilder { return &LedgerValueBuilder{} }, func(b *LedgerValueBuilder) bool { return b.Init() }, func(b *LedgerValueBuilder) bool { return b.Lock() }, func(b *LedgerValueBuilder) *LedgerValue { return b.AsConst() }, LedgerValueFromJson, LedgerValueLoadBuilder, LedgerValueReset, LedgerValueLoadMeasureReason, func(v *LedgerValue) []byte {
 		n := LedgerValueMeasure(v)
 		if n < 0 {
 			return nil
@@ -283,7 +271,7 @@ func TestLedgersRecordsGolden(t *testing.T) {
 		assert.Equal(t, int32(5), tokenField.ArrayBound)
 	})
 
-	cairn, cairnWant := makeCodec("CAIRN_LOG_RECORD", "cairn log", []byte(`{"event":"open","session":"session-1","entry":"","stamp":"2026-10-17T12:00:00Z","publish":"manual","source":"fixture"}`), func() *CairnLogRecordBuilder { return &CairnLogRecordBuilder{} }, func(b *CairnLogRecordBuilder) bool { return b.Init() }, func(b *CairnLogRecordBuilder) *CairnLogRecord { return b.GetRoot() }, CairnLogRecordFromJson, CairnLogRecordLoadBuilder, (&CairnLogRecordCook{}).Type(), CairnLogRecordReset, CairnLogRecordLoadMeasureReason, func(v *CairnLogRecord) []byte {
+	cairn, cairnWant := makeCodec("CAIRN_LOG_RECORD", "cairn log", []byte(`{"event":"open","session":"session-1","entry":"","stamp":"2026-10-17T12:00:00Z","publish":"manual","source":"fixture"}`), func() *CairnLogRecordBuilder { return &CairnLogRecordBuilder{} }, func(b *CairnLogRecordBuilder) bool { return b.Init() }, func(b *CairnLogRecordBuilder) bool { return b.Lock() }, func(b *CairnLogRecordBuilder) *CairnLogRecord { return b.AsConst() }, CairnLogRecordFromJson, CairnLogRecordLoadBuilder, CairnLogRecordReset, CairnLogRecordLoadMeasureReason, func(v *CairnLogRecord) []byte {
 		n := CairnLogRecordMeasure(v)
 		if n < 0 {
 			return nil
@@ -304,9 +292,12 @@ func TestLedgersRecordsGolden(t *testing.T) {
 		}
 		return o
 	})
-	cairn.Constraints = func(v *CairnLogRecord, check *schemaread.Checker) {
-		check.Bound("event_kind", int64(v.EventKind), 1, 2)
-		check.Bound("publish", int64(v.Publish), 1, 4)
+	cairn.Constraints = func(v *stableTable[CairnLogRecord], check *schemaread.Checker) {
+		if v.root == nil {
+			return
+		}
+		check.Bound("event_kind", int64(v.root.EventKind), 1, 2)
+		check.Bound("publish", int64(v.root.Publish), 1, 4)
 	}
 	testTable(t, "CairnLogRecord", cairn, cairnWant)
 	t.Run("source cairn log maps event and publish", func(t *testing.T) {
@@ -338,7 +329,7 @@ func TestLedgersRecordsGolden(t *testing.T) {
 		assert.Equal(t, "event", eventField.Json, "the table field preserves the source key")
 	})
 
-	fuse, fuseWant := makeCodec("FUSE", "fuse", []byte(`{"at":"2026-10-17T12:00:00Z","reason":"fixture"}`), func() *FuseBuilder { return &FuseBuilder{} }, func(b *FuseBuilder) bool { return b.Init() }, func(b *FuseBuilder) *Fuse { return b.GetRoot() }, FuseFromJson, FuseLoadBuilder, (&FuseCook{}).Type(), FuseReset, FuseLoadMeasureReason, func(v *Fuse) []byte {
+	fuse, fuseWant := makeCodec("FUSE", "fuse", []byte(`{"at":"2026-10-17T12:00:00Z","reason":"fixture"}`), func() *FuseBuilder { return &FuseBuilder{} }, func(b *FuseBuilder) bool { return b.Init() }, func(b *FuseBuilder) bool { return b.Lock() }, func(b *FuseBuilder) *Fuse { return b.AsConst() }, FuseFromJson, FuseLoadBuilder, FuseReset, FuseLoadMeasureReason, func(v *Fuse) []byte {
 		n := FuseMeasure(v)
 		if n < 0 {
 			return nil
@@ -361,7 +352,7 @@ func TestLedgersRecordsGolden(t *testing.T) {
 	})
 	testTable(t, "Fuse", fuse, fuseWant)
 
-	entry, entryWant := makeCodec("QUARANTINE_ENTRY", "quarantine entry", []byte(`{"surface":"fixture","fuse":{"at":"2026-10-17T12:00:00Z","reason":"fixture"}}`), func() *QuarantineEntryBuilder { return &QuarantineEntryBuilder{} }, func(b *QuarantineEntryBuilder) bool { return b.Init() }, func(b *QuarantineEntryBuilder) *QuarantineEntry { return b.GetRoot() }, QuarantineEntryFromJson, QuarantineEntryLoadBuilder, (&QuarantineEntryCook{}).Type(), QuarantineEntryReset, QuarantineEntryLoadMeasureReason, func(v *QuarantineEntry) []byte {
+	entry, entryWant := makeCodec("QUARANTINE_ENTRY", "quarantine entry", []byte(`{"surface":"fixture","fuse":{"at":"2026-10-17T12:00:00Z","reason":"fixture"}}`), func() *QuarantineEntryBuilder { return &QuarantineEntryBuilder{} }, func(b *QuarantineEntryBuilder) bool { return b.Init() }, func(b *QuarantineEntryBuilder) bool { return b.Lock() }, func(b *QuarantineEntryBuilder) *QuarantineEntry { return b.AsConst() }, QuarantineEntryFromJson, QuarantineEntryLoadBuilder, QuarantineEntryReset, QuarantineEntryLoadMeasureReason, func(v *QuarantineEntry) []byte {
 		n := QuarantineEntryMeasure(v)
 		if n < 0 {
 			return nil
@@ -384,7 +375,7 @@ func TestLedgersRecordsGolden(t *testing.T) {
 	})
 	testTable(t, "QuarantineEntry", entry, entryWant)
 
-	box, boxWant := makeCodec("FUSE_BOX", "fuse box", []byte(`{"lockdown":{"at":"2026-10-17T12:00:00Z","reason":"fixture"},"quarantine":[{"surface":"fixture","fuse":{"at":"2026-10-17T12:00:00Z","reason":"quarantined"}}]}`), func() *FuseBoxBuilder { return &FuseBoxBuilder{} }, func(b *FuseBoxBuilder) bool { return b.Init() }, func(b *FuseBoxBuilder) *FuseBox { return b.GetRoot() }, FuseBoxFromJson, FuseBoxLoadBuilder, (&FuseBoxCook{}).Type(), FuseBoxReset, FuseBoxLoadMeasureReason, func(v *FuseBox) []byte {
+	box, boxWant := makeCodec("FUSE_BOX", "fuse box", []byte(`{"lockdown":{"at":"2026-10-17T12:00:00Z","reason":"fixture"},"quarantine":[{"surface":"fixture","fuse":{"at":"2026-10-17T12:00:00Z","reason":"quarantined"}}]}`), func() *FuseBoxBuilder { return &FuseBoxBuilder{} }, func(b *FuseBoxBuilder) bool { return b.Init() }, func(b *FuseBoxBuilder) bool { return b.Lock() }, func(b *FuseBoxBuilder) *FuseBox { return b.AsConst() }, FuseBoxFromJson, FuseBoxLoadBuilder, FuseBoxReset, FuseBoxLoadMeasureReason, func(v *FuseBox) []byte {
 		n := FuseBoxMeasure(v)
 		if n < 0 {
 			return nil
@@ -407,7 +398,7 @@ func TestLedgersRecordsGolden(t *testing.T) {
 	})
 	testTable(t, "FuseBox", box, boxWant)
 
-	receipt, receiptWant := makeCodec("DOGFOOD_RECEIPT", "dogfood receipt", []byte(`{"tool":"nova-tools","verb":"test","by":"fixture","at":"2026-10-17T12:00:00Z","ok":true,"notes":"fixture","issue":12,"closes":"deadbeef"}`), func() *DogfoodReceiptBuilder { return &DogfoodReceiptBuilder{} }, func(b *DogfoodReceiptBuilder) bool { return b.Init() }, func(b *DogfoodReceiptBuilder) *DogfoodReceipt { return b.GetRoot() }, DogfoodReceiptFromJson, DogfoodReceiptLoadBuilder, (&DogfoodReceiptCook{}).Type(), DogfoodReceiptReset, DogfoodReceiptLoadMeasureReason, func(v *DogfoodReceipt) []byte {
+	receipt, receiptWant := makeCodec("DOGFOOD_RECEIPT", "dogfood receipt", []byte(`{"tool":"nova-tools","verb":"test","by":"fixture","at":"2026-10-17T12:00:00Z","ok":true,"notes":"fixture","issue":12,"closes":"deadbeef"}`), func() *DogfoodReceiptBuilder { return &DogfoodReceiptBuilder{} }, func(b *DogfoodReceiptBuilder) bool { return b.Init() }, func(b *DogfoodReceiptBuilder) bool { return b.Lock() }, func(b *DogfoodReceiptBuilder) *DogfoodReceipt { return b.AsConst() }, DogfoodReceiptFromJson, DogfoodReceiptLoadBuilder, DogfoodReceiptReset, DogfoodReceiptLoadMeasureReason, func(v *DogfoodReceipt) []byte {
 		n := DogfoodReceiptMeasure(v)
 		if n < 0 {
 			return nil
