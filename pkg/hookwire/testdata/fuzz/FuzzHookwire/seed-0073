@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x01')
+[]byte("ewogICJmcmllbmRfbmFtZSI6ICJhZGEiLAogICJzZW50X21zIjogMTc5MjAwMDAwMDAwMCwKICAiYWN0aXZlX21zIjogMTc5MTk5OTk5MDAwMCwKICAicmVhc29uIjogIiIsCiAgInN0b3BfcmV0dXJucyI6IDAKfQo=")
