@@ -53,12 +53,12 @@ func TestFuseBoxDualRead(t *testing.T) {
 
 	// Damage of each form is refused by name, never read as absent or empty.
 	malformed := map[string][]byte{
-		"truncated wire": wire[:len(wire)-4],
-		"flipped wire":   flip(wire),
-		"truncated b64": b64[:len(b64)-4],
-		"flipped b64":   []byte(base64.StdEncoding.EncodeToString(flip(wire))),
+		"truncated wire":   wire[:len(wire)-4],
+		"flipped wire":     flip(wire),
+		"truncated b64":    b64[:len(b64)-4],
+		"flipped b64":      []byte(base64.StdEncoding.EncodeToString(flip(wire))),
 		"truncated legacy": []byte(`{"lockdown":{"at":"x"`),
-		"not a box legacy":  []byte(`null`),
+		"not a box legacy": []byte(`null`),
 	}
 	for name, in := range malformed {
 		_, _, err := r.Read(in)
