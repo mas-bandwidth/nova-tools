@@ -59,6 +59,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `sandbox/` | OS isolation primitives (seatbelt/landlock) | `go test ./pkg/sandbox` | `go test ./pkg/sandbox` |
 | `schemaread/` | the one strict read of a generated table: binary, padded base64 and JSON forms, refusals by name, a per-form read counter, and the writer-side check | `go test ./pkg/schemaread` | `go test ./pkg/schemaread` |
 | `seatcred/` | a seat's Redis login read through the secrets library (--seat, NOVA_SEAT) | `go test ./pkg/seatcred/...` | `go test ./pkg/seatcred/...` |
+| `seatrecwire/` | the seat, tokens and secrets-place records' variable-table wire, generated from schemas/seatrec by the pinned schema compiler (generate.go): the seat environment, the tokens day file, the tokens bus roster and the place receipt | `go test ./pkg/seatrecwire` | `make schemawire-check` |
 | `secretcheck/` | the harness of the rule that no secret reaches an error: secret-shaped inputs, a driver, and the table and allowlist comparisons | `go test ./pkg/secretcheck` | `go test ./pkg/secretcheck` |
 | `secrets/` | zero-leak memory and file vault | `go test ./pkg/secrets` | `go test ./pkg/secrets` |
 | `sexp/` | the bounded reader of a restricted-Lisp data file (lists, keywords, strings, integers, symbols; nothing evaluated): the roadmap's and nova-sprint's work file | `go test ./pkg/sexp` | `go test ./pkg/sexp` |
