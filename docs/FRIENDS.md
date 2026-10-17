@@ -182,6 +182,8 @@ what it lacks; `HOLD` and `FAIL` come back failed to the coordinator with the
 paragraph. A sprint card is not counted among the
 inbox's jobs: the friends table counts it from the sprint.
 
+Friend sync wakes a friend at most once per pass, never once per card. After her cards of the pass are written it sends one bus message, kind status, to a friend who was delivered at least one card: the subject is `cards dealt: N (<id>, <id>, ...)`, the ids cut at ten with "and M more", and the body is her inbox directory and the one-line start sentence. A friend delivered nothing is not written to. That collapse is her row's mode `batch`, the default, read from the store's friend row. Mode `one-shot` keeps one message per card, which is what her runner starts a lane from. The per-card inbox file stays the record either way: a collapsed message that fails to send is said once on sync's line and noted once, naming the pass and not each card, and the briefs stand.
+
 A friend pulls her own view of the sprint whenever she wants it with one curl, `curl -s
 http://<tailnet address>:<port>/friend/<name>` (the coordinator's dashboard pull port,
 `7395` by default; `/api/friend/<name>` is the same as JSON), and reads the sprint line,

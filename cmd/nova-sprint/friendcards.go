@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -386,6 +387,27 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	if err != nil {
 		return 0, 0, err
 	}
+	// The mode is the store's friend row, which this pass's sync just wrote,
+	// not the config row still in hand: one-shot keeps a message per card
+	// (her runner starts a lane from it); batch, the default, is told once
+	// after her cards of the pass are written (wakeFriendPass).
+	spec, err := st.FriendSpecOf(ctx, name)
+	if err != nil {
+		return 0, 0, err
+	}
+	oneShot := spec.Mode == config.FriendModeOneShot
+	var dealt []dealtWake
+	// Registered before writeQueueFile's defer, so it runs after that write:
+	// she is told once the queue file names the cards this pass delivered.
+	// A send that fails does not drop the error a delivery already returned.
+	defer func() {
+		if oneShot || len(dealt) == 0 {
+			return
+		}
+		if werr := a.wakeFriendPass(ctx, st, name, dir, dealt, say); err == nil {
+			err = werr
+		}
+	}()
 	defer func() {
 		if err == nil {
 			err = writeQueueFile(dir, states, left, packets)
@@ -393,8 +415,11 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	}()
 	for i, p := range packets {
 		if p.Kind == "read" {
-			d, f, err := a.friendReadOf(ctx, st, name, dir, p, cards[i], say)
+			d, f, w, err := a.friendReadOf(ctx, st, name, dir, p, cards[i], oneShot, say)
 			delivered, finished = delivered+d, finished+f
+			if w != nil {
+				dealt = append(dealt, *w)
+			}
 			if err != nil {
 				return delivered, finished, err
 			}
@@ -419,8 +444,12 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 				delivered++
 				line := fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch)
 				say(line)
-				if err := a.wakeFriend(ctx, st, name, p, brief, line, say); err != nil {
-					return delivered, finished, err
+				if oneShot {
+					if err := a.wakeFriend(ctx, st, name, p, brief, line, say); err != nil {
+						return delivered, finished, err
+					}
+				} else {
+					dealt = append(dealt, dealtWake{card: p.Card, primary: p.Primary, stream: p.Stream, kind: p.Kind})
 				}
 			case !errors.Is(err, fs.ErrExist):
 				return delivered, finished, err
@@ -574,19 +603,104 @@ func (a *app) enrollBus(ctx context.Context, name string, say func(string)) {
 	}
 }
 
-// wakeFriend tells the friend of the card just delivered, one bus message from
-// the coordinator (the store's actor) to her: her daemon pushes it into her
-// session, which the inbox file alone never does. Her name is made a known
-// bus name first (enrollBus), so a bud whose row exists is told. The message is a
-// courtesy and the inbox file is the record: a send that fails never fails
-// the delivery; it is said on sync's line and written on the card's story as
-// one happened note (NFriendNotWoken), so the coordinator sees she was not
-// told.
+// The one-line start a wake gives her. A read pushes nothing; work names the branch.
+const (
+	friendWakeWork = "Read it and start; its STATUS line says where to push and where to report."
+	friendWakeRead = "It is a read: read it and start; its STATUS line says where to report, and nothing is pushed."
+)
+
+// passWakeCut is how many card ids a pass wake names before "and M more".
+const passWakeCut = 10
+
+// dealtWake is one card this pass wrote into a batch friend's inbox, held
+// until she is told once. The inbox file is already the record.
+type dealtWake struct {
+	card    string
+	primary string
+	stream  string
+	kind    string
+}
+
+// passWakeIDs is the card ids of a pass wake, in the order they were delivered.
+func passWakeIDs(cards []dealtWake) []string {
+	ids := make([]string, len(cards))
+	for i, c := range cards {
+		ids[i] = c.card
+	}
+	return ids
+}
+
+// passWakeList is ids cut at passWakeCut: every id, or the first ten and "and M more".
+func passWakeList(ids []string) string {
+	if len(ids) <= passWakeCut {
+		return strings.Join(ids, ", ")
+	}
+	return strings.Join(ids[:passWakeCut], ", ") + fmt.Sprintf(" and %d more", len(ids)-passWakeCut)
+}
+
+// passWakeSubject is the one bus subject of a batch friend's pass.
+func passWakeSubject(ids []string) string {
+	return fmt.Sprintf("cards dealt: %d (%s)", len(ids), passWakeList(ids))
+}
+
+// passWakeBody is her inbox directory and the one-line start. A pass that
+// delivered only reads uses the read sentence; any work card uses the work one.
+func passWakeBody(dir string, cards []dealtWake) string {
+	start := friendWakeWork
+	onlyRead := true
+	for _, c := range cards {
+		if c.kind != "read" {
+			onlyRead = false
+			break
+		}
+	}
+	if onlyRead {
+		start = friendWakeRead
+	}
+	return filepath.Join(dir, "inbox") + "\n" + start
+}
+
+// passPrimaries is the primaries of a pass wake, once each, in delivery order.
+func passPrimaries(cards []dealtWake) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, c := range cards {
+		if c.primary == "" || seen[c.primary] {
+			continue
+		}
+		seen[c.primary] = true
+		out = append(out, c.primary)
+	}
+	return out
+}
+
+// passStream is the stream every card of the pass shares, else "".
+func passStream(cards []dealtWake) string {
+	if len(cards) == 0 {
+		return ""
+	}
+	s := cards[0].stream
+	for _, c := range cards[1:] {
+		if c.stream != s {
+			return ""
+		}
+	}
+	return s
+}
+
+// wakeFriend tells a one-shot friend of the card just delivered, one bus
+// message from the coordinator (the store's actor) to her: her runner starts
+// a lane from it, which the inbox file alone never does. Her name is made a
+// known bus name first (enrollBus), so a bud whose row exists is told. The
+// message is a courtesy and the inbox file is the record: a send that fails
+// never fails the delivery; it is said on sync's line and written on the
+// card's story as one happened note (NFriendNotWoken), so the coordinator
+// sees she was not told. A batch friend is not told here (wakeFriendPass).
 func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sprint.Packet, brief, line string, say func(string)) error {
 	a.enrollBus(ctx, name, say)
-	start := "Read it and start; its STATUS line says where to push and where to report."
+	start := friendWakeWork
 	if p.Kind == "read" {
-		start = "It is a read: read it and start; its STATUS line says where to report, and nothing is pushed."
+		start = friendWakeRead
 	}
 	m := bus.Message{From: st.Actor, To: []string{name}, Subject: "card " + p.Card + " dealt: " + line,
 		Body: "Your sprint card " + p.Card + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is in your inbox: " + brief + "\n" + start}
@@ -598,6 +712,37 @@ func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sp
 	say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s card=%s: the bus message to her was not sent (%s); the inbox file stands, tell her by hand", name, p.Card, why))
 	n := sprint.Note{Kind: sprint.Happened, Type: sprint.NFriendNotWoken, Stream: p.Stream, Primaries: []string{p.Primary}, Who: st.Actor, Attempt: p.Attempt,
 		What: fmt.Sprintf("%s was dealt %s into %s, and the bus message to her failed: %s; tell her by hand: nova-bus send --as %s --to %s --subject 'card %s dealt' --body '%s'", name, p.Card, brief, why, st.Actor, name, p.Card, brief)}
+	res, err := st.Run(ctx, store.NoteStep("friend sync", n))
+	if err == nil && len(res.Refused) > 0 {
+		err = errors.New(res.Refused[0].Why)
+	}
+	return err
+}
+
+// wakeFriendPass tells a batch friend, once, of every card this pass wrote
+// into her inbox. One message per card became a steer each (the owner,
+// 2026-10-07: stop). The subject names the count and the ids, cut at ten.
+// The body is her inbox directory and the one-line start, kind status. A
+// friend with nothing delivered this pass is not called. The inbox files are
+// the record: a send that fails is one line and one happened note
+// (NFriendNotWoken) naming the pass, not each card, and the deliveries stand.
+func (a *app) wakeFriendPass(ctx context.Context, st *store.Store, name, dir string, cards []dealtWake, say func(string)) error {
+	a.enrollBus(ctx, name, say)
+	inbox := filepath.Join(dir, "inbox")
+	subject := passWakeSubject(passWakeIDs(cards))
+	m := bus.Message{
+		From: st.Actor, To: []string{name}, Subject: subject, Kind: bus.KindStatus,
+		Body: passWakeBody(dir, cards),
+	}
+	err := a.bus(ctx, m, say)
+	if err == nil {
+		return nil
+	}
+	why := oneline.Escape(err.Error())
+	label := fmt.Sprintf("%d(%s)", len(cards), passWakeList(passWakeIDs(cards)))
+	say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s pass=%s: the bus message to her was not sent (%s); the inbox files stand, tell her by hand", name, label, why))
+	n := sprint.Note{Kind: sprint.Happened, Type: sprint.NFriendNotWoken, Stream: passStream(cards), Primaries: passPrimaries(cards), Count: len(cards), Who: st.Actor,
+		What: fmt.Sprintf("%s was not told of this pass (%s): %d cards into %s, and the bus message to her failed: %s; tell her by hand: nova-bus send --as %s --to %s --subject '%s' --body '%s'", name, label, len(cards), inbox, why, st.Actor, name, subject, inbox)}
 	res, err := st.Run(ctx, store.NoteStep("friend sync", n))
 	if err == nil && len(res.Refused) > 0 {
 		err = errors.New(res.Refused[0].Why)
@@ -672,20 +817,20 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 // minutes on the sprint clock), and the close retires the fleet card
 // (sprint.FriendReadClose). It is not a work finish. The job directory is
 // the card id, the path the ask writes, so a brief already there is kept.
-func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, say func(string)) (delivered, finished int, err error) {
+func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, oneShot bool, say func(string)) (delivered, finished int, wake *dealtWake, err error) {
 	job := friendJobOf(p)
 	in, why, err := friendInbox(dir, p)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	if why != "" {
 		say(fmt.Sprintf("FRIEND-READ REFUSED friend=%s card=%s: %s; nothing was written", name, oneline.Field(p.Card), oneline.Escape(why)))
-		return 0, 0, nil
+		return 0, 0, nil, nil
 	}
 	brief := filepath.Join(in, "BRIEF.md")
 	if _, err := os.Lstat(brief); errors.Is(err, fs.ErrNotExist) {
 		if err := os.MkdirAll(in, 0o755); err != nil {
-			return 0, 0, err
+			return 0, 0, nil, err
 		}
 		text := friendReadText(st, name, p, c)
 		switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {
@@ -693,24 +838,28 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 			delivered++
 			line := fmt.Sprintf("FRIEND-READ DELIVERED friend=%s card=%s job=%s", name, p.Card, oneline.Field(job))
 			say(line)
-			if err := a.wakeFriend(ctx, st, name, p, brief, line, say); err != nil {
-				return delivered, finished, err
+			if oneShot {
+				if err := a.wakeFriend(ctx, st, name, p, brief, line, say); err != nil {
+					return delivered, finished, nil, err
+				}
+			} else {
+				wake = &dealtWake{card: p.Card, primary: p.Primary, stream: p.Stream, kind: p.Kind}
 			}
 		case !errors.Is(err, fs.ErrExist):
-			return delivered, finished, err
+			return delivered, finished, nil, err
 		}
 	} else if err != nil {
-		return delivered, finished, err
+		return delivered, finished, nil, err
 	}
 	report, why, _, err := friendReadReport(dir, job) // a read close takes no report time; the work finish does
 	if err != nil {
-		return delivered, finished, err
+		return delivered, finished, wake, err
 	}
 	if report == "" {
 		if why != "" {
 			say(fmt.Sprintf("FRIEND-READ REFUSED friend=%s card=%s: %s; the card is left working, and the next sync reads it again", name, oneline.Field(p.Card), oneline.Escape(why)))
 		}
-		return delivered, finished, nil
+		return delivered, finished, wake, nil
 	}
 	primary, reportCopy, epoch := p.Primary, report, p.Epoch
 	step := store.Step{Verb: "read", Named: true, Mirrors: true, Load: []string{sprint.Fleet, sprint.Work},
@@ -720,15 +869,15 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 		}}
 	res, err := st.Run(ctx, step)
 	if err != nil {
-		return delivered, finished, err
+		return delivered, finished, wake, err
 	}
 	if len(res.Refused) > 0 {
 		say(fmt.Sprintf("FRIEND-READ REFUSED friend=%s card=%s: %s", name, p.Card, oneline.Escape(res.Refused[0].Why)))
-		return delivered, finished, nil
+		return delivered, finished, wake, nil
 	}
 	finished++
 	say(fmt.Sprintf("FRIEND-READ finished friend=%s card=%s", name, p.Card))
-	return delivered, finished, nil
+	return delivered, finished, wake, nil
 }
 
 // queueFile is the friend's queue file under her working directory, nova-friend's
