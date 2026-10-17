@@ -287,7 +287,7 @@ func sampleFrame() Frame {
 	v.Attempt = 1
 	put(v.Tier[:], &v.TierLength, "pro")
 	put(v.Model[:], &v.ModelLength, "anthropic/claude-opus")
-	put(v.Repo[:], &v.RepoLength, "https://github.com/mas-bandwidth/nova-tools.git")
+	put(v.Repo[:], &v.RepoLength, "/work/nova-tools")
 	put(v.BaseRef[:], &v.BaseRefLength, "sprint/v15-schema-tables")
 	put(v.StageSha[:], &v.StageShaLength, "d03635a82bde0000000000000000000000000000")
 	put(v.Branch[:], &v.BranchLength, "sprint/a13-defs-decide.w1.g1.e21")
