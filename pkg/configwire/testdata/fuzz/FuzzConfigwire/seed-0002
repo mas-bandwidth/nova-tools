@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x00')
+[]byte("{\n  \"host\": \"\",\n  \"at_ms\": 0,\n  \"load1\": \"\",\n  \"ncpu\": \"\",\n  \"cpu\": \"\",\n  \"os\": \"\",\n  \"arch\": \"\",\n  \"memory_gb\": \"\"\n}\n")

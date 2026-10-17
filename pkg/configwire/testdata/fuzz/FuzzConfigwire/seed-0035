@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x0b')
+[]byte("{\n  \"machine\": \"\",\n  \"name\": \"\",\n  \"argv\": \"\",\n  \"seat\": \"\",\n  \"keys\": [],\n  \"every\": 0,\n  \"keepalive\": false,\n  \"enabled\": false,\n  \"log\": \"\"\n}\n")
