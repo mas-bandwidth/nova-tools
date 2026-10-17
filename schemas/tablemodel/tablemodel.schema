@@ -19,9 +19,10 @@
 //     size of the file (readregular.DefaultMax), never per stream or per field.
 //
 // So every list below is open (a variable table's []T) and every text is
-// unbounded. The one bound the code does enforce on a record's value is
-// declared: ModelStep.workers is at least 1 (steps.go:109, MemberSteps refuses
-// a plan with fewer). Integers that Go declares as int are int64, the width of
+// unbounded. MemberSteps refuses a plan with fewer than 1 worker at plan time
+// (steps.go:109), but the stored ModelStep.workers field is a plain int64 that
+// declares no range, so no record value carries a declared bound. Integers that
+// Go declares as int are int64, the width of
 // int on the platforms the tools build for, so nothing narrows. No fixed table
 // remains, so there is no schema.lock; tables.baseline records the tables.
 //
