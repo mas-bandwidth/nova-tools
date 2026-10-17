@@ -1,0 +1,76 @@
+schema-tables-baseline 7
+package swarmwire
+
+table DeclaredModel
+    field provider id=0xd02b4c8c65fb54dc kind=12 size=64
+    field model id=0x9de543933e6e703a kind=12 size=128
+
+table ExitRecord
+    field rc id=0x08dc5507b57b9942 kind=4 min=-1 max=255
+    field signal id=0x5062cd8f7a7fd349 kind=12 size=16
+    field ended id=0x34bb12befe88eb1b kind=12 size=40
+    field survivors id=0xbc658a10e66b2a64 kind=4 min=0 max=1048576
+    field nonce id=0x73a94c71d60dc0d8 kind=12 size=12
+    field attest id=0x907bd39a08f34aac kind=12 size=128
+    field end id=0xc2f00318f053500a kind=12 size=32
+    field spent id=0x22705b8aa011b9a3 kind=4 min=0 max=2147483647
+    field observed id=0x6a15c2158aa39ba1 kind=1
+    field partial id=0xb5d43e6c2878bc7a kind=1
+    field reason id=0x65e8d7f3474f2639 kind=12 size=500
+
+table FenceConfig
+    field job_dir id=0x030f206af480f8a8 kind=12 size=512
+    field reads id=0x8935b4f305f36a82 kind=14 elem=13 type=Path array=bounded bound=8
+    field rules id=0x67124f6a285153c0 kind=14 elem=13 type=FenceRule array=bounded bound=34
+    field webfetch id=0x58848fa93e04d3ef kind=6 min=0 max=2
+
+table FenceRule
+    field pattern id=0x0b7a1e4bea695f89 kind=12 size=512
+    field action id=0x6568640b035a56df kind=6 min=0 max=2
+
+table HarnessArg
+    field text id=0xfa04f4ef1995407e kind=12 size=512
+
+table HarnessConfigRecord
+    field provider id=0xd02b4c8c65fb54dc kind=12 size=64
+    field model id=0x9de543933e6e703a kind=12 size=128
+    field env_var id=0x5f52c402ed58e01a kind=12 size=128
+    field base_url id=0x9a3b153e9e8f251e kind=12 size=512
+
+table MemberCarry
+    field card id=0xb5614e90e87b455f kind=12 size=128
+    field attempt id=0x63e618bd2b303dee kind=4 min=0 max=1000000
+    field head id=0x0a8f12cc5f9a0c03 kind=12 size=64
+    field branch id=0x919ec0f651278ba5 kind=12 size=256
+
+table Path
+    field text id=0xfa04f4ef1995407e kind=12 size=512
+
+table Phrase
+    field text id=0xfa04f4ef1995407e kind=12 size=256
+
+table WorkerRecord
+    field name id=0xc4bcadba8e631b86 kind=12 size=64
+    field provider id=0xd02b4c8c65fb54dc kind=12 size=64
+    field model id=0x9de543933e6e703a kind=12 size=128
+    field base_url id=0x9a3b153e9e8f251e kind=12 size=512
+    field env_var id=0x5f52c402ed58e01a kind=12 size=128
+    field key_file id=0x59f4ff1e856996af kind=12 size=512
+    field secret id=0xab23f0eec020c951 kind=12 size=128
+    field usage id=0x1e1702714db75ac8 kind=6 min=0 max=2
+    field worker_class id=0x715b9112503b65d0 kind=6 min=0 max=2
+    field harness id=0x211fcbbafe5331ab kind=12 size=256
+    field harness_args id=0xe15a71de737c1c11 kind=14 elem=13 type=HarnessArg array=bounded bound=16
+    field worker_dir id=0xf6b3b625055a22af kind=12 size=512
+    field deadline id=0x4abbaca40bb6fe75 kind=12 size=32
+    field board id=0xd0013bb2e083188b kind=12 size=256
+    field read_roots id=0xf7df2f140b025f4b kind=14 elem=13 type=Path array=bounded bound=8
+    field max_turns id=0x6e3350b274605c16 kind=4 min=0 max=2147483647
+    field max_cache_read id=0x18e16aeddf76561d kind=5 min=0 max=9007199254740991
+    field input_limit_phrases id=0xf9d5642cca9049fa kind=14 elem=13 type=Phrase array=bounded bound=16
+    field launch_grace id=0x98358983bb5d1401 kind=12 size=32
+    field keep_data id=0x393f74e7cef3c9d5 kind=1
+
+## history
+### 2026-10-17 (UTC) — first baseline
+- baseline created over 10 tables — data written BEFORE this point is not covered by it

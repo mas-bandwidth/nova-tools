@@ -1,0 +1,208 @@
+// swarm.schema: the swarm area's records (pkg/swarm, pkg/member), as FIXED
+// tables. Its Go is generated into pkg/swarmwire (go generate ./pkg/swarmwire).
+//
+// A FIXED table (owner's rule S1): each is a small, bounded record the swarm
+// tools write and read themselves, so its reader is always the same version
+// or newer; a field is appended at the bottom and never moved, and
+// schema.lock beside this file records the layout a newer build reads
+// backward. Every table has the binary wire and its padded standard base64
+// text (S2), both read strictly through pkg/schemaread.
+//
+// Absence. A fixed table has no absent field: a field a Go struct omits when
+// empty (omitempty) is the empty string, zero or false here, and a reader
+// that needs the field refuses the empty value by name.
+//
+// Bounds. A bound the code enforces today is that bound; where the struct is
+// bounded by no code (a path, a name), the bound is the declared ceiling and
+// its comment says so. A value past a bound is refused by name, never
+// clamped.
+//
+// External formats stay: the harness config this swarm writes for OpenCode
+// (opencode.json), provider output and pkg/swarm/headless.go are external and
+// are read and written as they are. The tables below are the swarm's own
+// inputs to those writers and its own durable records.
+package swarmwire
+
+// The three small sets below are uint8 with a declared range rather than
+// schema enums: an enum in a table's closure makes the generated Go import
+// the type wire's serialize.go, and generated table Go imports only the
+// standard library (schemas/README.md). Zero is "none declared" in each.
+//
+//   usage        0 none, 1 opencode, 2 none-reported (pkg/swarm UsageOpenCode,
+//                UsageNone): LoadWorker refuses zero ("usage is required")
+//   worker_class 0 empty (reads as paid), 1 paid, 2 public (WorkerClassPaid,
+//                WorkerClassPublic)
+//   action       0 none (refused by the reader), 1 allow, 2 deny (FenceAllow,
+//                FenceDeny); `ask` is never written: a run with no terminal
+//                auto-rejects it and the model stops
+
+// Path is an absolute path. No code bounds a path's length; 512 is the
+// declared ceiling. A type, because an array of string(N) is not supported:
+// the element is wrapped.
+fixed table Path
+{
+    text string(512)
+}
+
+// HarnessArg is one element of a harness invocation (Worker.HarnessArgs).
+fixed table HarnessArg
+{
+    text string(512)
+}
+
+// Phrase is one provider sentence (Worker.InputLimitPhrases).
+fixed table Phrase
+{
+    text string(256)
+}
+
+// FenceRule is one external_directory pattern and its action
+// (pkg/swarm/fence.go FencePermission).
+fixed table FenceRule
+{
+    // pattern: a job or read path with a wildcard suffix (FenceJobPatterns,
+    // FenceReadPatterns). No code bound; 512 is the declared ceiling.
+    pattern string(512)
+    action  uint8       | min = 0, max = 2
+}
+
+// ExitRecord is <job>/exit.json: the supervisor's durable completion
+// evidence (pkg/swarm/slot.go ExitRecord, rule 18 step 6). An outcome with
+// none is unknown, never guessed.
+fixed table ExitRecord
+{
+    // rc: the harness exit code; -1 when it ended by signal or never exited.
+    rc int32 | min = -1, max = 255
+    // signal: the signal name that ended the group; empty for none.
+    signal string(16)
+    // ended: when the job ended, RFC 3339 (time.RFC3339).
+    ended string(40)
+    // survivors: processes left alive in the job's group at exit.
+    survivors int32 | min = 0, max = 1048576
+    // nonce: twelve hex characters from the OS random source, drawn once per
+    // launch (swarm.Nonce).
+    nonce string(12)
+    // attest: the per-launch secret the supervisor minted; empty when absent.
+    attest string(128)
+    // end: how a run that did not finish ended (EndProvider, EndBudget,
+    // EndDeadline); empty for a finished run.
+    end string(32)
+    // spent: what the run spent, in the unit the budget names; zero for none.
+    spent    int32 | min = 0, max = 2147483647
+    observed bool
+    partial  bool
+    // reason: one line, the end's reason. oneline.TailBytes (500) is the
+    // house ceiling for a tail; a reason is held to it.
+    reason string(500)
+}
+
+// WorkerRecord is a worker description (pkg/swarm/worker.go Worker): which
+// provider, model, key and harness a worker runs. LoadWorker's checks (an
+// absolute path, a duration, one of key_file and secret) stay in the loader;
+// this table carries the bounds of each field and the counts of each list.
+fixed table WorkerRecord
+{
+    // name: the name this worker is called on a RUN POOL line.
+    name string(64)
+    // provider: the provider id the harness config declares.
+    provider string(64)
+    // model: the model id.
+    model string(128)
+    // base_url: the provider's base URL; empty for the harness default.
+    base_url string(512)
+    // env_var: the NAME of the environment variable the provider reads,
+    // never its value (validEnvName).
+    env_var string(128)
+    // key_file: the key file's absolute path; empty when secret is set
+    // (exactly one of the two is).
+    key_file string(512)
+    // secret: the NAME of the variable nova-secrets exec delivers; empty
+    // when key_file is set.
+    secret string(128)
+    usage  uint8       | min = 0, max = 2
+    // worker_class: spelled worker_class because class is a reserved word in
+    // C++ and the compiler refuses it in every language's unit (the worker
+    // description's own key is class).
+    worker_class uint8 | min = 0, max = 2
+    // harness: the harness command, found on PATH.
+    harness string(256)
+    // harness_args: the invocation; one must place {model}. No code bound on
+    // the count; 16 is the declared ceiling.
+    harness_args [..16]HarnessArg
+    // worker_dir: the home copy of the worker's own directory, absolute.
+    worker_dir string(512)
+    // deadline: a Go duration such as 20m (time.ParseDuration).
+    deadline string(32)
+    board    string(256)
+    // read_roots: absolute directories a job may read. No code bound on the
+    // count; 8 is the declared ceiling.
+    read_roots [..8]Path
+    // max_turns and max_cache_read: the card budget; zero is unset and a
+    // negative value is refused at load (LoadWorker).
+    max_turns      int32 | min = 0, max = 2147483647
+    max_cache_read int64 | min = 0, max = 9007199254740991
+    // input_limit_phrases: the provider's own sentences for a request that did
+    // not fit. No code bound on the count; 16 is the declared ceiling.
+    input_limit_phrases [..16]Phrase
+    // launch_grace: a positive Go duration; empty is DefaultLaunchGrace.
+    launch_grace string(32)
+    keep_data    bool
+}
+
+// HarnessConfigRecord is what Worker.HarnessConfig writes into a slot's
+// harness config (pkg/swarm/worker.go ~616): the provider's declared model
+// and its key variable, the values read from the worker.
+fixed table HarnessConfigRecord
+{
+    provider string(64)
+    model    string(128)
+    // env_var: the key variable's NAME, written as {env:NAME}.
+    env_var string(128)
+    // base_url: written only when non-empty.
+    base_url string(512)
+}
+
+// FenceConfig is the input and the result of FencePermission
+// (pkg/swarm/fence.go ~114, ~146): the job directory and the card's READ:
+// paths in, the external_directory rules and the webfetch action out.
+fixed table FenceConfig
+{
+    // job_dir: the job directory, absolute.
+    job_dir string(512)
+    // reads: the absolute read-only paths a card named on a READ: line. No
+    // code bound on the count; 8 is the declared ceiling.
+    reads [..8]Path
+    // rules: the patterns FencePermission writes: two for the job
+    // (FenceJobPatterns) and up to four for each read (FenceReadPatterns):
+    // 2 + 4 * 8.
+    rules [..34]FenceRule
+    // webfetch: the network tool is never left to prompt; Deny today.
+    webfetch uint8 | min = 0, max = 2
+}
+
+// DeclaredModel is what DeclareRouteModel declares in a job's harness config
+// (pkg/swarm/declaremodel.go ~26, ~56): the model as a model of its
+// provider, so the harness knows it whatever its catalog holds at start.
+fixed table DeclaredModel
+{
+    // provider and model: both are trimmed and non-empty, else the body is
+    // returned unchanged.
+    provider string(64)
+    model    string(128)
+}
+
+// MemberCarry is a Carry (pkg/member/member.go, CarryLine): where a card's
+// next attempt starts, the one record pkg/member writes into a brief header
+// and reads back (its CARRY: line). The queue and take answers pkg/member
+// parses are nova-sprint's, and are not this table's.
+fixed table MemberCarry
+{
+    // card: the held card; empty for a finish-PR card.
+    card string(128)
+    // attempt: the attempt the head is the head of; zero for a finish-PR card.
+    attempt int32 | min = 0, max = 1000000
+    // head: a full sha, 40 hex (sha-1) or 64 hex (sha-256); empty when unknown.
+    head string(64)
+    // branch: the PR branch a finish-PR card was pushed to; empty for a widen.
+    branch string(256)
+}
