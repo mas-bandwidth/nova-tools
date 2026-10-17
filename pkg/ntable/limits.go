@@ -19,7 +19,7 @@ const (
 	LimitColumns          = 1000               // columns per table
 	LimitRows             = 100000             // rows per table
 	LimitManifestProps    = 64                 // properties a manifest sets, expects or expects absent (each)
-	LimitTableProps       = 64                 // properties a table holds at an epoch
+	LimitTableProps       = 1024               // properties a table holds at an epoch
 	LimitReceiptBytes     = LimitManifestBytes // the encoded batch delta of one receipt
 	LimitBatchValueBytes  = 16 << 20           // bytes of the field values a batch's entries name, before and after
 	limitNameManifest     = "manifest bytes"

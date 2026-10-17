@@ -139,7 +139,7 @@ do
     set_fields = 128, unset_fields = 1000, field_guards = 1000, one_of_options = 1000,
     read_set_members = 1024,
     columns = 1000, rows = 100000,
-    manifest_props = 64, table_props = 64,
+    manifest_props = 64, table_props = 1024,
     receipt_bytes = 1048576, batch_value_bytes = 16777216,
   }
   T.limit_names = {

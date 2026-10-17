@@ -315,3 +315,49 @@ func TestRowSetAndViewSetRefuseOverlongTextBeforeSending(t *testing.T) {
 		})
 	}
 }
+
+// overFunction is T.limits, T.limit_names and T.over as table.lua holds them,
+// cut out of the file.
+func overFunction(t *testing.T) string {
+	t.Helper()
+	src, err := os.ReadFile("../nsprint/fn/lua/table.lua")
+	require.NoError(t, err)
+	m := regexp.MustCompile(`(?s)  T\.limits = \{.*?\n  function T\.over\(.*?\n  end\n`).Find(src)
+	require.NotNil(t, m, "table.lua has no T.limits through T.over")
+	return string(m)
+}
+
+// A table holds 1024 properties at an epoch: the server accepts a table at the
+// bound and refuses one over it by name, with the bound and the count found, and
+// the Go side holds the same bound. T.over runs here as the script holds it, on
+// a stand-in T.refuse that returns the refusal as table.lua builds it.
+func TestTablePropsBoundAccepts1024AndRefuses1025(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, 1024, LimitTableProps, "a table holds 1024 properties at an epoch")
+	assert.Equal(t, 64, LimitManifestProps, "a manifest sets at most 64 properties")
+	L := lua.NewState()
+	defer L.Close()
+	script := `
+T = {}
+function T.refuse(reason, ...) return {'REFUSED', reason, ...} end
+` + overFunction(t) + `
+at = T.over('table_props', 1024)
+overT = T.over('table_props', 1025)
+`
+	require.NoError(t, L.DoString(script))
+	assert.Equal(t, lua.LNil, L.GetGlobal("at"), "1024 properties: the server refuses at the bound")
+	overT, ok := L.GetGlobal("overT").(*lua.LTable)
+	require.True(t, ok, "1025 properties: the server accepts one over the bound")
+	got := []string{}
+	for i := 1; i <= overT.Len(); i++ {
+		got = append(got, overT.RawGetInt(i).String())
+	}
+	assert.Equal(t, []string{"REFUSED", "LIMIT", "properties per table", "1024", "1025"}, got)
+
+	assert.NoError(t, over(limitNameTableProps, LimitTableProps, 1024, ""), "1024 properties at the bound")
+	err := over(limitNameTableProps, LimitTableProps, 1025, "")
+	var le *LimitError
+	require.ErrorAs(t, err, &le)
+	assert.Equal(t, LimitError{Name: "properties per table", Bound: 1024, Observed: 1025}, *le)
+	assert.EqualError(t, err, fmt.Sprintf("%s: properties per table: bound 1024, observed 1025", ErrLimit))
+}
