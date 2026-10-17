@@ -86,10 +86,61 @@ func TestSwarmConfigRecordsDualRead(t *testing.T) {
 		assert.NotEqual(t, "", ref.Reason, name)
 	}
 	assert.Equal(t, uint64(len(damaged)), r.Counts().Refused("malformed")+r.Counts().Refused("unknown_form")+r.Counts().Refused("absent_required"))
+
+	// The declared model record (pkg/swarm/declaremodel.go) is read alike from
+	// its fixed binary image, the padded standard base64 of that image, and the
+	// legacy JSON its writer carries today; damage is refused by name and reads
+	// are counted per form.
+	dm := declaredModelReader()
+	dwant := declaredModelDoc{Provider: "deepseek", Model: "deepseek-chat"}
+	dwire := writeDeclaredModel(t, dm, &dwant, schemaread.FormBinary)
+	db64 := writeDeclaredModel(t, dm, &dwant, schemaread.FormBase64)
+	djs := writeDeclaredModel(t, dm, &dwant, schemaread.FormJSON)
+	dlegacy := []byte(`{"provider": "deepseek", "model": "deepseek-chat"}`)
+	for name, f := range map[string]struct {
+		body []byte
+		form schemaread.Form
+	}{
+		"binary": {dwire, schemaread.FormBinary},
+		"base64": {db64, schemaread.FormBase64},
+		"json":   {djs, schemaread.FormLegacy},
+		"legacy": {dlegacy, schemaread.FormLegacy},
+	} {
+		got, res, err := dm.Read(f.body)
+		require.NoError(t, err, name)
+		assert.Equal(t, f.form, res.Form, name)
+		assert.Equal(t, dwant, got, name)
+	}
+	assert.Equal(t, uint64(1), dm.Counts().Reads(schemaread.FormBinary))
+	assert.Equal(t, uint64(1), dm.Counts().Reads(schemaread.FormBase64))
+	assert.Equal(t, uint64(2), dm.Counts().Reads(schemaread.FormLegacy))
+	for name, damaged := range map[string][]byte{
+		"truncated-wire": dwire[:len(dwire)-1],
+		"truncated-b64":  db64[:len(db64)-2],
+		"truncated-json": djs[:len(djs)/2],
+		"bad-json":       []byte(`{"provider":`),
+		"bad-legacy":     []byte(`{"provider": 7}`),
+		"empty":          {},
+	} {
+		_, _, err := dm.Read(damaged)
+		require.Error(t, err, name)
+		ref := exitRefusal(t, err)
+		assert.Equal(t, "DECLARED_MODEL", ref.Name, name)
+		assert.NotEqual(t, "", ref.Reason, name)
+	}
+	assert.Equal(t, uint64(6), dm.Counts().Refused("malformed")+dm.Counts().Refused("unknown_form")+dm.Counts().Refused("absent_required"))
 }
 
 // writeExit writes want in form via the reader's writer side.
 func writeExit(t *testing.T, r *schemaread.Reader[exitDoc], want *exitDoc, form schemaread.Form) []byte {
+	t.Helper()
+	out, err := r.Write(want, form)
+	require.NoError(t, err)
+	return out
+}
+
+// writeDeclaredModel writes want in form via the reader's writer side.
+func writeDeclaredModel(t *testing.T, r *schemaread.Reader[declaredModelDoc], want *declaredModelDoc, form schemaread.Form) []byte {
 	t.Helper()
 	out, err := r.Write(want, form)
 	require.NoError(t, err)
