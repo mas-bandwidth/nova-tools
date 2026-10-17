@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x00')
+[]byte("{\n  \"friend_name\": \"f\",\n  \"nonce\": \"123456\",\n  \"queue\": 0,\n  \"working\": 0,\n  \"width\": 0,\n  \"sent_ms\": 1\n}\n")
