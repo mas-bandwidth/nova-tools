@@ -6,12 +6,23 @@ This is the work after the point releases. The release plan (the owner, 2026-10-
 
 ## Scheduled in releases
 
+| feature | done | release |
+|---|:---:|---|
+| Rename nova-swarm to nova-worker | ❌ | v1.5 |
+| Documentation pass with the rename | ❌ | v1.5 |
+
 These were roadmap items and now have a release. They are listed here so nobody looks for them below.
 
 - **Rename nova-swarm to nova-worker** (v1.5). The tool runs one-task AI workers, and its help already says so. The rename covers the binary and its cmd directory, help text, docs, the fleet's ansible plays and launchd units (in their own repository), seat names, and open cards. A nova-swarm shim keeps working for one release. No tool is named swarm after it.
 - **Documentation pass with the rename** (v1.5). Plain English throughout, every doc matching the renamed tool. They are called workers everywhere; the one exception is README.md, where the bees are pictured.
 
 ## Done
+
+| feature | done | date |
+|---|:---:|---|
+| Tier defaults on direct providers | ✅ | 2026-10-09 |
+| nova-sprint split out of nova-tools | ✅ | 2026-10-10 |
+| nova-bus wait has no stale git lock or lane file to recover | ✅ | 2026-10-10 |
 
 Decided and in place. Recorded so the items that measure them have their starting point.
 
@@ -31,6 +42,14 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
 
 ## Lessons from Prime Agent's rewrite
+
+| feature | done | release | cards | in code |
+|---|:---:|---|---:|---|
+| One-shot workers per card, friends included | ❌ | — | — | partial |
+| Orchestration on small nodes, builds in disposable sandboxes | ❌ | — | — | partial |
+| A differential parity harness for rewrites | ❌ | — | — | — |
+| A performance hillclimb loop | ❌ | — | — | — |
+| Parity checks are not proof: dogfooding stays required | ❌ | — | — | — |
 
 Prime Intellect's write-up of rewriting Prime Agent with AI workers (https://www.primeintellect.ai/blog/prime-agent-rust) names what made a large AI-built rewrite hold together. Each item is one of those lessons, checked against nova's code at dev 9ff68178: what already exists is named by file and line, and the item covers the rest.
 
@@ -69,6 +88,17 @@ A parity harness or a verifier shows only what it exercises. A path no golden co
 Why it waits: A rule for the stages above; it lands with them.
 
 ## Measure and rate
+
+| feature | done | release | cards | in code |
+|---|:---:|---|---:|---|
+| Measure each tier against clean results | ❌ | — | — | — |
+| Rate every tool cold at the v1.4 release | ❌ | — | 29 | — |
+| Captured spend matches the provider's account | ❌ | v1.5 | — | — |
+| Pin the upstream provider per route and log it in usage rows | ❌ | after v1.4 | — | — |
+| nova-tokens publishes day rows and reports cost per unit | ❌ | after v1.4 | — | — |
+| One swarm card template per model family, measured by ok rate | ❌ | after v1.4 | — | — |
+| Worker efficiency: avoid a full repository clone for every job | ❌ | after v1.4 | — | — |
+| Cut turns per card: stateless model calls and capped reasoning on reads | ❌ | after v1.4 | — | — |
 
 Measurements and ratings that only mean something once the code under them stops changing.
 
@@ -135,6 +165,33 @@ Target: after v1.4
 From: issue #855; issue #856
 
 ## Friends
+
+| feature | done | release | cards | in code |
+|---|:---:|---|---:|---|
+| New friend routes and verbs | ❌ | — | 9 | — |
+| The DSH harness | ❌ | — | — | partial |
+| Wake a coordinator with verbs, not scripts | ❌ | after v1.4 | — | — |
+| A broken session or a limit means down | ❌ | v1.3 | — | — |
+| One-shot friend lanes replace the hand-written runner scripts | ❌ | after v1.4 | — | — |
+| A broken friend session renews itself | ❌ | v1.5 | — | — |
+| Friends and machines noticed back up and made current | ❌ | v1.3 | — | — |
+| Mark bus messages by sender authority in a friend's session | ❌ | after v1.4 | — | — |
+| Per-card token cap and cheaper deliveries for per-token friends | ❌ | after v1.4 | — | — |
+| Run every friend lane inside a wall profile taken from its friend row | ❌ | after v1.4 | — | — |
+| The harness prints its error lines so an unknown error records its cause | ❌ | v1.5 | — | — |
+| nova-friend scopes presence to a foreground harness wait | ❌ | after v1.4 | — | — |
+| nova-bus gives each session of one participant its own cursor | ❌ | after v1.4 | — | — |
+| The pool dispatcher asks the model ladder | ❌ | after v1.4 | — | — |
+| Token, call, cost and in-flight limits per card and per route | ❌ | after v1.4 | — | — |
+| Classify provider errors and re-queue on another route | ❌ | v1.5 | — | — |
+| Fix darwin cards that go silent under the wall and are idle-killed | ❌ | v1.5 | — | — |
+| Record request timings so a wall names the provider, sandbox or model | ❌ | after v1.4 | — | — |
+| Cut the memory each card's harness process holds | ❌ | after v1.4 | — | — |
+| Worker benches: remote deadline and idle kill, one bench line per bench | ❌ | v1.5 | — | — |
+| Messages reach each harness's open session reliably | ❌ | v1.3 | — | — |
+| The friend daemon serves its reader row through one-shot lanes | ❌ | v1.5 | — | — |
+| One lane engine keeps a one-shot friend at width | ❌ | v1.5 | — | — |
+| Pin the friend harness version, including under the lane wall | ❌ | v1.3 | — | — |
 
 New ways for friends to connect and work.
 
@@ -331,6 +388,106 @@ Target: v1.3
 From: card from the sprint store (2026-10-10)
 
 ## Setup, release and operations
+
+| feature | done | release | cards | in code |
+|---|:---:|---|---:|---|
+| Policy numbers and tool timings as settings | ❌ | — | 2 | — |
+| Setup planners and credential seats | ❌ | — | 7 | — |
+| One dependency-aware doctor | ❌ | — | 1 | — |
+| The functional tier in containers, layers 2 to 8 | ❌ | — | 6 | partial |
+| nova-bus2 output lines state the reason, counts and digests a caller needs | ❌ | v1.3 | — | — |
+| nova-bus2 finds its Redis address and caller identity without per-call flags | ❌ | after v1.4 | — | — |
+| nova-bus2 refuses a Redis address outside loopback and the tailnet range | ❌ | after v1.4 | — | — |
+| nova-bus and nova-friend do not need the sprint store | ❌ | after v1.4 | — | — |
+| A verb that runs a card or read on a remote bench machine | ❌ | after v1.4 | — | — |
+| Make a symlink spelling of a granted path readable in the darwin sandbox | ❌ | v1.5 | — | — |
+| Harden nova-fuse box writes, box parsing and refusal lines | ❌ | v1.5 | — | — |
+| Bound the work done on very large or hostile input files | ❌ | v1.5 | — | — |
+| Reserve the view key family in table member and epoch keys | ❌ | v1.5 | — | — |
+| Make the secrets gate tell hand-sealed files from verb-made ones | ❌ | v1.5 | — | — |
+| Bound every network wait in the bus client | ❌ | v1.3 | — | — |
+| Check CI tool classes | ❌ | v1.5 | — | — |
+| Allow directory lookup in the darwin sandbox profile | ❌ | v1.2.14 | — | — |
+| Push notifications are required before inbox tools work | ❌ | after v1.4 | — | — |
+| Adopting a new build is an automated pipeline | ❌ | after v1.4 | — | — |
+| nova-tokens reads the Redis bus log | ❌ | v1.5 | — | — |
+| A route says where it is applied: friends, fleet or local | ❌ | after v1.4 | — | — |
+| nova-tokens gains the daily collate verb | ❌ | after v1.4 | — | — |
+| nova-ci prints merge-queue status and detects flaky tests | ❌ | after v1.4 | — | — |
+| install-redis-server puts the pinned Redis first and testredis refuses others | ❌ | v1.2.12 | — | — |
+| Loop logs rotate by size and age | ❌ | v1.5 | — | — |
+| The bench hygiene script refuses an unsafe HOME | ❌ | v1.2.11 | — | — |
+| Darwin benches exclude work trees and temp dirs from indexing | ❌ | v1.5 | — | — |
+| A card cannot spoof the native result or the idle watch | ❌ | v1.5 | — | — |
+| The smoke job drops its hosted windows leg | ❌ | v1.2.14 | — | — |
+| Release upload must respect the draft then publish sequence | ❌ | v1.5 | — | — |
+| Fleet scripts run under bash 3.2 and are linted for it | ❌ | v1.5 | — | — |
+| Secrets seal leaves the store on a branch; add a bulk-add verb | ❌ | v1.5 | — | — |
+| A missed or wedged fleet sample never reads as zero | ❌ | v1.5 | — | — |
+| Bench standard covers real differences and checks reliably | ❌ | v1.5 | — | — |
+| Adopt levels the fleet at a frozen sha from the nearest bench | ❌ | after v1.4 | — | — |
+| Harvest refuses a returned branch based on a stale head | ❌ | v1.5 | — | — |
+| Enforce the per-machine card ceiling before launch | ❌ | v1.5 | — | — |
+| Bus draft never overwrites a file and send refuses the template | ❌ | v1.3 | — | — |
+| Run a branch's gate on a bench as one verb | ❌ | after v1.4 | — | — |
+| Pinned base staging works on darwin launchers | ❌ | v1.5 | — | — |
+| Fleet capacity lives in one config, applied without restarts | ❌ | v1.5 | — | — |
+| nova-check nocode reads the staged index by destination | ❌ | after v1.4 | — | — |
+| Stage card repositories from the bench mirror at the named base, never from the network | ❌ | v1.5 | — | — |
+| Preflight the worker start and mark a bench that cannot run cards as down | ❌ | v1.5 | — | — |
+| Pin toolchains and declare a card environment on every bench | ❌ | v1.5 | — | — |
+| Set sshd limits and supervise coordinator loops on every host | ❌ | v1.5 | — | — |
+| Ship bench and loop logs to one queryable place | ❌ | after v1.4 | — | — |
+| Bus and swarm listings say what they read and cap their output | ❌ | v1.5 | — | — |
+| Hygiene checks share one source with the harvest lists | ❌ | v1.5 | — | — |
+| The sandbox wrap verb prints denial lines and platform notes | ❌ | v1.5 | — | — |
+| Card environment is an allowlist and harvest refuses files from outside the job tree | ❌ | after v1.4 | — | — |
+| nova-tokens fold ingests a whole session store for one provider | ❌ | after v1.4 | — | — |
+| Tools use REST with conditional requests and a shared fact cache for GitHub | ❌ | v1.5 | — | — |
+| Push one notice when a human-path step or decision passes its deadline | ❌ | after v1.4 | — | — |
+| Release adopt picks each machine's platform from the registry | ❌ | v1.5 | — | — |
+| Every card, lane and pool removes what it made when it ends | ❌ | v1.5 | — | — |
+| nova-tokens ledger and report accept a Redis user | ❌ | v1.5 | — | — |
+| nova-swarm slots list prints a summary line and the live leases | ❌ | v1.2.14 | — | — |
+| Manage the tailnet policy file through GitOps | ❌ | after v1.4 | — | — |
+| Bus over Redis streams: post, read, pending, tail, list, reply | ❌ | after v1.4 | — | — |
+| CI hygiene and one CI of record | ❌ | after v1.4 | — | — |
+| Every CI job fits the two-minute cap | ❌ | v1.5 | — | — |
+| Redis ACL rows have one source rendered by the play | ❌ | after v1.4 | — | — |
+| CI package selection covers tests that read docs | ❌ | v1.5 | — | — |
+| The old-age remedy names the platform's own install path | ❌ | v1.2.14 | — | — |
+| Config rows carry a note and history carries a reason | ❌ | after v1.4 | — | — |
+| Every machine has a disk guard that cleans and caps caches | ❌ | v1.5 | — | — |
+| Verbs list secrets stores and map a role to its secret | ❌ | after v1.4 | — | — |
+| An absent promotion branch must not excuse deletions | ❌ | v1.2.14 | — | — |
+| Link checks skip quotes and code and handle root-relative URLs | ❌ | v1.5 | — | — |
+| nova-check gains timestamps and commitments verbs | ❌ | after v1.4 | — | — |
+| nova-version snapshot appears in help and honours a manifest | ❌ | v1.5 | — | — |
+| nova-sandbox toolchain flag on darwin for cc, make and sqlite3 | ❌ | after v1.4 | — | — |
+| Certify a fleet machine leg by leg inside the wall | ❌ | after v1.4 | — | — |
+| Close the open nova-sandbox gaps on Linux before certifying walled legs | ❌ | v1.5 | — | — |
+| Job clones get their git identity from the pool and cannot link outside the job root | ❌ | v1.5 | — | — |
+| Fleet machines sleep when idle and stay awake and reachable while leased | ❌ | after v1.4 | — | — |
+| A generated adoption ledger of tools and verbs with a stage and evidence per row | ❌ | after v1.4 | — | — |
+| nova-bus wait --on-note wake, addressing and refusals | ❌ | after v1.4 | — | — |
+| nova-bus receipt --verdict and a distinct send process name | ❌ | after v1.4 | — | — |
+| Declare the fleet as infrastructure code, one module per role | ❌ | after v1.4 | — | — |
+| Forbid any secret in fleet infrastructure state or output | ❌ | after v1.4 | — | — |
+| CI and cards share a machine without starving CI | ❌ | v1.5 | — | — |
+| Redis Layer 1 client contract with file fallback and four named uses | ❌ | after v1.4 | — | — |
+| nova-redis spill and recall with owner prefix and required TTL | ❌ | after v1.4 | — | — |
+| nova-redis: status, check, presence, local-only bind, auth from secrets | ❌ | after v1.4 | — | — |
+| Make adopt obey the stated precedence among digest sources | ❌ | v1.2.14 | — | — |
+| Add nova-version moved, reading each build and refusing with one remedy | ❌ | after v1.4 | — | — |
+| Add nova-update apply --sha: build the whole set under one stamp | ❌ | after v1.4 | — | — |
+| A bench run lives and dies inside its own directory | ❌ | v1.5 | — | — |
+| Friend daemons run on nova-tools alone, proven by a cold setup | ❌ | v1.3 | — | — |
+| A nova-config write reaches the fleet copy by itself within seconds | ❌ | v1.5 | — | — |
+| nova-delete moves one literal path to quarantine and refuses anything else | ❌ | v1.5 | — | — |
+| Every default path derives from one nova root | ❌ | v1.5 | — | — |
+| Fix the text scanners: large input speed and host names with digits | ❌ | v1.5 | — | — |
+| The bus trims acknowledged keepalive messages | ❌ | v1.5 | — | — |
+| The release checks where its sums came from and its tag | ❌ | v1.5 | — | — |
 
 Setting machines up, installing and releasing safely, and the checks that keep a fleet honest.
 
@@ -1114,6 +1271,24 @@ From: nova-tools PR #5571 cold read
 
 ## Docs, models and the repository
 
+| feature | done | release | cards | in code |
+|---|:---:|---|---:|---|
+| The TLA+ ledger union | ❌ | — | — | — |
+| Generate the CLI reference from the tools and check it in CI | ❌ | v1.5 | — | — |
+| Architecture, glossary, onboarding and per-tool readmes | ❌ | v1.5 | — | — |
+| nova-decide help: small schema and one result line | ❌ | v1.5 | — | — |
+| A TLA+ model of atomic table batches and a replay check against real Redis | ❌ | after v1.4 | — | — |
+| Align child instructions with the staged job profile and name report destinations | ❌ | v1.5 | — | — |
+| SPEC-WORK records which harnesses a process can wake | ❌ | v1.5 | — | — |
+| A nova-swarm verb prints the providers table and the launcher argv | ❌ | after v1.4 | — | — |
+| Every verb answers --help with accurate usage and runnable examples | ❌ | v1.5 | — | — |
+| The standard-library rule matches go.mod and is enforced | ❌ | v1.5 | — | — |
+| Move each toolwork spec section into the spec of the tool that holds it | ❌ | v1.5 | — | — |
+| TLA+ model of bench slot leases | ❌ | v1.5 | — | — |
+| TLA+ model: one live run holds a swarm job lease | ❌ | v1.5 | — | — |
+| TLA+ models for the core state packages | ❌ | v1.5 | — | — |
+| TLA+ models for friend lanes, delivery, presence and session checks | ❌ | v1.5 | — | — |
+
 Documentation suites, the TLA+ ledger, and where nova-sprint's code lives.
 
 ### The TLA+ ledger union
@@ -1236,6 +1411,19 @@ From: card from the sprint store (2026-10-10); card moved out of the sprint (wor
 
 ## Far
 
+| feature | done | release | cards | in code |
+|---|:---:|---|---:|---|
+| Thousands of self-organizing workers | ❌ | — | — | — |
+| Atomic batches across several tables and gap-refusing receipt pages | ❌ | after v1.4 | — | — |
+| nova-local: run local models, and local as a provider per fleet machine | ❌ | after v1.4 | — | — |
+| Evaluate a model gateway for timeouts, retries and cost rows | ❌ | after v1.4 | — | — |
+| Evaluate plan-then-execute cards and worktree-isolated subagents | ❌ | after v1.4 | — | — |
+| One unix user per seat so a friend's key is not readable by every process | ❌ | after v1.4 | — | — |
+| A bench credential store with find and put on any platform | ❌ | after v1.4 | — | — |
+| nova-guard screens outbound text | ❌ | after v1.4 | — | — |
+| A decider interface with an untrusted frame and a generic classify verb | ❌ | after v1.4 | — | — |
+| Browse shared moments and recall original words with context | ❌ | after v1.4 | — | — |
+
 Directions, not plans. Nothing in v1.x builds toward these yet.
 
 ### Thousands of self-organizing workers
@@ -1317,6 +1505,46 @@ Target: after v1.4
 From: issue #223; issue #224
 
 ## Tests and test tiers
+
+| feature | done | release | cards | in code |
+|---|:---:|---|---:|---|
+| Class tests for the CI spec and for unit socket handling | ❌ | v1.5 | — | — |
+| Contract tests between the tools: bus, check, config, release, secrets, tokens, version | ❌ | v1.5 | — | — |
+| Make serial tests parallel-safe and empty the serial-tests ledger | ❌ | v1.5 | — | — |
+| Bring slow test packages under their time budget | ❌ | v1.5 | — | — |
+| Per-package test harness steps | ❌ | v1.5 | — | — |
+| Model-based tests for the bus and config packages | ❌ | v1.5 | — | — |
+| Adopt the testify assertion library in tests | ❌ | v1.5 | — | — |
+| Package tests run in a hermetic environment | ❌ | v1.5 | — | — |
+| Tests use an injected clock and never wait on the wall clock | ❌ | v1.5 | — | — |
+| Goroutine leak checks in tests | ❌ | v1.5 | — | — |
+| Fix the red DSN keyword flag test in config | ❌ | v1.2.12 | — | — |
+| Fix the flaky deferred delivery test in the friend package | ❌ | v1.2.12 | — | — |
+| Class test that nothing rewrites a shared ref | ❌ | v1.5 | — | — |
+| Class test that secret-shaped inputs never appear in errors | ❌ | v1.5 | — | — |
+| An install verification matrix runs across darwin, linux and wsl2 | ❌ | v1.5 | — | — |
+| Tests pin the surviving mutation gaps in swarm and ci | ❌ | v1.5 | — | — |
+| Run Darwin-only functional packages on the Mac pool and repair functional fixtures | ❌ | v1.5 | — | — |
+| Shorten test waits, compact table tests and run tests in parallel | ❌ | v1.5 | — | — |
+| The wall clock bound law sees string flags and sub second units | ❌ | v1.5 | — | — |
+| TestARouteAtItsCapHoldsTheRestBack no longer depends on test order | ❌ | v1.5 | — | — |
+| A swarm test hangs the whole package under the gate's capped flags | ❌ | v1.2.12 | — | — |
+| Add tests that guard code reverted without any test failing | ❌ | v1.5 | — | — |
+| Fake harness hangs inside the wall; document no-wall | ❌ | v1.5 | — | — |
+| Tests pin every rule each tool's spec states | ❌ | v1.5 | — | — |
+| Confirm the demanded secrets tests assert their rules | ❌ | v1.5 | — | — |
+| Test swarm profile catalog validation, paths, digest and read bounds | ❌ | v1.5 | — | — |
+| Implement and test attempt evidence publication and the protected launch record | ❌ | after v1.4 | — | — |
+| Fix the sandbox unix-socket wall test racing its listener | ❌ | v1.2.12 | — | — |
+| Class guards: tests never write into the tree or reach the real store | ❌ | v1.5 | — | — |
+| Two suites: mocked parallel unit tests and isolated functional programs | ❌ | v1.5 | — | — |
+| The generality text scan covers html, js and css | ❌ | v1.2.14 | — | — |
+| The help-time budget is not a wall-clock unit test | ❌ | v1.2.12 | — | — |
+| Monthly token report equals the folded day files | ❌ | v1.5 | — | — |
+| Every documented transcript is executed line for line | ❌ | v1.5 | — | — |
+| Swarm puller: atomic card take, capacity line, and lease required | ❌ | v1.5 | — | — |
+| Unit tests for the friend state directory choice and watch cursor | ❌ | v1.5 | — | — |
+| Unit tests for the TLA check bench, transport lines and fetch | ❌ | v1.5 | — | — |
 
 Test tiers, test speed and flaky tests.
 
@@ -1617,6 +1845,45 @@ Target: v1.5
 From: card from the sprint store (2026-10-10)
 
 ## Cleanup, dead code and debt
+
+| feature | done | release | cards | in code |
+|---|:---:|---|---:|---|
+| Delete unreachable code and shrink the dead code ledger | ❌ | v1.5 | — | — |
+| Remove host, machine and person names from code, docs and fixtures | ❌ | v1.5 | — | — |
+| Shrink the named-paths ledger to empty | ❌ | v1.5 | — | — |
+| Remove the last forge auto-merge spelling from the secrets seal | ❌ | v1.5 | — | — |
+| One status grammar for the release verbs | ❌ | v1.5 | — | — |
+| Prose pass over each tool package | ❌ | v1.5 | — | — |
+| Read-through of each tool package for defects and debt | ❌ | v1.5 | — | — |
+| Fix the defects found by cold reads of the tools | ❌ | v1.5 | — | — |
+| Shrink every tool package in small ordered steps | ❌ | v1.5 | — | — |
+| No shell scripts in anything that ships | ❌ | v1.5 | — | — |
+| Make ntable tests vet-clean | ❌ | v1.2.12 | — | — |
+| Class tests for duplicate function bodies and unused verbs and flags | ❌ | v1.5 | — | — |
+| Operator and stopgap scripts become tested verbs | ❌ | v1.5 | — | — |
+| Re-land and wire script-card self-verification | ❌ | v1.5 | — | — |
+| Tools open Redis through the redisconn package | ❌ | v1.5 | — | — |
+| A reconcile verb compares self-check answer files to the baseline | ❌ | after v1.4 | — | — |
+| nova-check flags exec.CommandContext calls without a deadline | ❌ | after v1.4 | — | — |
+| Listing verbs take a max flag and stdin input is bounded | ❌ | after v1.4 | — | — |
+| Cairn open works on a bench store and an append is one critical section | ❌ | v1.5 | — | — |
+| CI ledger failures name their shard and zero-debt shards stay clean | ❌ | v1.5 | — | — |
+| Docs and code comments describe current behavior only | ❌ | v1.5 | — | — |
+| Contain the default temp directory; refuse symlinks on swarm auth, config, usage writes | ❌ | v1.5 | — | — |
+| Read kind classification from the one name file | ❌ | v1.5 | — | — |
+| Run go fix and the modernize analyzers over the tree | ❌ | v1.5 | — | — |
+| nova-sandbox reports the right cause and the right backend | ❌ | v1.5 | — | — |
+| nova-self-talk detects plain first person absolutes | ❌ | v1.5 | — | — |
+| nova-swarm native reports an honest result and one reason | ❌ | v1.5 | — | — |
+| decide events carry confidence and floor only when present | ❌ | v1.2.14 | — | — |
+| Move the remaining ssh exec sites onto the shared bench runner | ❌ | v1.5 | — | — |
+| A batch create of unplaced table members scans every cell | ❌ | v1.5 | — | — |
+| Fix four defects the tokens prose pass left | ❌ | v1.5 | — | — |
+| One hygiene check package for identity, diff bounds, stray files and key shapes | ❌ | after v1.4 | — | — |
+| Parameterise the nova-check nocode classifier into one shared function | ❌ | v1.5 | — | — |
+| Split the large bus and fuse tool files into verb files | ❌ | v1.5 | — | — |
+| Move each tool onto the shared toolkit packages | ❌ | v1.5 | — | — |
+| The dead-code check reaches library packages again | ❌ | v1.5 | — | — |
 
 Shrinking, dead code removal, lint and debt work that waits for the code under it to settle.
 
