@@ -51,6 +51,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-version", "build identity and version CLI", "go test ./cmd/nova-version", "go test ./cmd/nova-version"),
 
 	// internal/
+	E("pkg/answerwire", "the worker answers, the bus send-token record and the hook judgment record as table wires, generated from schemas/answer by the pinned schema compiler (generate.go)", "go test ./pkg/answerwire", "make schemawire-check"),
 	E("pkg/atomicfile", "atomic file write: standard-library rename beside the target", "go test ./pkg/atomicfile", "go test ./pkg/atomicfile"),
 	E("pkg/bounded", "bounded readers and byte buffers", "go test ./pkg/bounded", "go test ./pkg/bounded"),
 	E("pkg/bench", "the one bench runner: copy a tree to a per-run directory on the Linux bench, run one command there under nice with the bench cache, remove the directory it made, fall back when the host does not answer", "go test ./pkg/bench", "go test ./pkg/bench"),
