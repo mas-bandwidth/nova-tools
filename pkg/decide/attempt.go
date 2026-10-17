@@ -2,7 +2,6 @@ package decide
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -123,8 +122,8 @@ func AttemptDecision(ctx context.Context, b Backend, card string, attempt int, b
 // (Check) and its op id over its state (AttemptOp). A decision that does not fit is an error,
 // and the server records nothing of it.
 func ParseAttempt(raw []byte) (Decision, error) {
-	var d Decision
-	if err := json.Unmarshal(raw, &d); err != nil {
+	d, _, err := ParseAttemptReader.Read(raw)
+	if err != nil {
 		return Decision{}, fmt.Errorf("the attempt decision is not JSON of a record's decision: %w", err)
 	}
 	s := AttemptSchema()
