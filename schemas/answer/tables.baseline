@@ -1,0 +1,196 @@
+schema-tables-baseline 7
+package answerwire
+
+table 91b232840ce3bbf2.6f59dc211cdd74f0
+    field key id=0x3dc94a19365b10ec kind=12 size=16
+    field value id=0x7ce4fd9430e80cea kind=13 type=TierRoute
+
+table HeldAnswer
+    field friend_name id=0x2bcee2fac7bb6eb5 kind=12 size=64
+    field cards id=0xaf9dac3b097689c4 kind=14 elem=13 type=HeldCard array=unbounded
+
+table HeldCard
+    field card id=0xb5614e90e87b455f kind=12 size=160
+    field job id=0x45627c193a5b605c kind=12 size=160
+    field col id=0xf604f3190d016791 kind=12 size=32
+    field kind id=0xef9c96d721673243 kind=12 size=16
+    field branch id=0x919ec0f651278ba5 kind=12 size=256
+    field tier id=0x1e6f84ef2eb65989 kind=12 size=16
+    field stream id=0x4f6a36d8e8907985 kind=12 size=128
+    field attempt id=0x63e618bd2b303dee kind=8 min=0 max=100000
+    field gen id=0xd4e26d18faaa8af5 kind=8 min=0 max=100000
+    field epoch id=0xfc9697d1196e6ba6 kind=9
+    field repo id=0x4cac581fbfac663d kind=12 size=128
+    field base_branch id=0xce7ab7bf2ce42bc5 kind=12 size=256
+    field brief id=0xf90e421e2470877f kind=12 size=512
+    field lane id=0x0460ddad9060af0f kind=8 min=0 max=1024
+
+table HolderCard
+    field id id=0x08b72e07b55c3ac0 kind=12 size=160
+    field holder id=0x630853b55c723d4f kind=12 size=64
+
+table HoldersView
+    field view id=0xfe46f400c6b86658 kind=12 size=32
+    field schema id=0x758d17ff764667b6 kind=8 min=0 max=1000
+    field cards id=0xaf9dac3b097689c4 kind=14 elem=13 type=HolderCard array=unbounded
+
+table JudgmentRec
+    field id id=0x08b72e07b55c3ac0 kind=12 size=64
+    field to id=0x08c83907b56ac0a4 kind=14 elem=13 type=Name array=bounded bound=64
+    field subject id=0x9640735281e90c0f kind=12 size=200
+    field due_ms id=0x26095ca7d9d66c8e kind=5
+    field overdue id=0xa0fcb61231764b6b kind=1
+
+table Line
+    field s id=0xaf63ee4c86020b22 kind=17 type=string
+
+table Name
+    field s id=0xaf63ee4c86020b22 kind=12 size=64
+
+table Packet
+    field billing id=0x4005570295afd25c kind=12 size=32
+    field card id=0xb5614e90e87b455f kind=12 size=160
+    field kind id=0xef9c96d721673243 kind=7 enum=PacketKind
+    field as_name id=0x8e5c9519cf8cfeb5 kind=12 size=64
+    field primary id=0xbf31137ff783e939 kind=12 size=64
+    field stream id=0x4f6a36d8e8907985 kind=12 size=128
+    field attempt id=0x63e618bd2b303dee kind=8 min=0 max=100000
+    field gen id=0xd4e26d18faaa8af5 kind=8 min=0 max=100000
+    field epoch id=0xfc9697d1196e6ba6 kind=9
+    field brief id=0xf90e421e2470877f kind=12 size=512
+    field rules id=0x67124f6a285153c0 kind=12 size=512
+    field fix id=0xdc9e7e18fec93bb8 kind=17 type=string
+    field finding id=0x35ceaba76a4aabe6 kind=17 type=string
+    field why id=0x5ec5ea1948914a79 kind=17 type=string
+    field notes id=0x40906c71b95bdbaa kind=14 elem=13 type=Line array=unbounded
+    field branch id=0x919ec0f651278ba5 kind=12 size=256
+    field base_branch id=0xce7ab7bf2ce42bc5 kind=12 size=256
+    field base_head id=0x9069304ae8bb5623 kind=12 size=64
+    field base_attempt id=0x93187a82f702c88e kind=8 min=0 max=100000
+    field worker id=0xa51a677d5b590177 kind=12 size=64
+    field head id=0x0a8f12cc5f9a0c03 kind=12 size=64
+    field work_branch id=0x8e3fa378a6b7f3ed kind=12 size=256
+    field work_base id=0x8433717273a41760 kind=12 size=256
+    field report id=0xadae49645df2840b kind=17 type=string
+    field route id=0x3127fb469f19ebde kind=12 size=64
+    field model id=0x9de543933e6e703a kind=12 size=128
+    field tokens id=0x93fab8f021712b13 kind=12 size=32
+    field usd id=0x4c52b1193dcce7e7 kind=12 size=32
+    field harness id=0x211fcbbafe5331ab kind=12 size=32
+    field deadline id=0x4abbaca40bb6fe75 kind=8 min=0 max=100000000
+    field rate_rpm id=0x1e9c7e26c6e7e535 kind=8 min=0 max=100000000
+    field rate_concurrent id=0xb6e7951a47a01bd9 kind=8 min=0 max=1000000
+    field tier id=0x1e6f84ef2eb65989 kind=12 size=16
+    field decide_bounce id=0x364f8f1334dc227a kind=12 size=32
+    field decide_review id=0xb17ac487d29d6e42 kind=12 size=32
+    field decide_gate_flaky id=0x51b5e2696d2d0b97 kind=12 size=32
+    field decide_gate_preexisting id=0x2b7d15b2bf924552 kind=12 size=32
+
+table Prices
+    field input id=0x1ebbae8f5810b65b kind=12 size=32
+    field cache_read id=0x779748cd7970e246 kind=12 size=32
+    field cache_write id=0x313c6440b18aae09 kind=12 size=32
+    field output id=0x150f53f8651b4384 kind=12 size=32
+    field reasoning_as_output id=0x06027144dbe6a614 kind=1 optional=true
+    field long_context id=0x2e9ace113fac97c7 kind=5
+    field input_long id=0x61d5c725b939d1aa kind=12 size=32
+    field output_long id=0x4a2b6cd47cb37eaf kind=12 size=32
+    field request id=0x6f4743b8bc5b4eb2 kind=12 size=32
+    field billing id=0x4005570295afd25c kind=12 size=32
+    field gateway_percent id=0x0594613d9a1a71c3 kind=12 size=32
+    field source id=0x76dbdc228f782db8 kind=12 size=256
+    field as_of id=0x4dc694bbeb944e67 kind=12 size=64
+
+table QueueCard
+    field id id=0x08b72e07b55c3ac0 kind=12 size=160
+    field table_name id=0x6bcb6e85b78cf363 kind=12 size=64
+    field row id=0x8a0bc1196111ad9b kind=12 size=160
+    field col id=0xf604f3190d016791 kind=12 size=32
+    field gen id=0xd4e26d18faaa8af5 kind=8 min=0 max=100000
+    field attempt id=0x63e618bd2b303dee kind=8 min=0 max=100000
+    field packet id=0x7c0ea75a95a79411 kind=17 type=Packet
+
+table QueueOut
+    field as_name id=0x8e5c9519cf8cfeb5 kind=12 size=64
+    field epoch id=0xfc9697d1196e6ba6 kind=9
+    field width id=0xdbdacd932fd1e9bf kind=8 min=0 max=1024
+    field cards id=0xaf9dac3b097689c4 kind=14 elem=13 type=QueueCard array=unbounded
+    field reader id=0x196268f31c5eca56 kind=1 optional=true
+    field machine id=0x385157cb98d7be6e kind=7 enum=MachineState
+
+table Request
+    field verbs id=0xe6d215b730981b09 kind=14 elem=13 type=Verb array=unbounded
+
+table Response
+    field results id=0x5378e22204d21ef5 kind=14 elem=13 type=VerbResult array=unbounded
+
+table Route
+    field name id=0xc4bcadba8e631b86 kind=12 size=64
+    field tier id=0x1e6f84ef2eb65989 kind=12 size=16
+    field provider id=0xd02b4c8c65fb54dc kind=12 size=64
+    field model id=0x9de543933e6e703a kind=12 size=128
+    field harness id=0x211fcbbafe5331ab kind=12 size=32
+    field enabled id=0x70d885806b56289e kind=1
+    field prices id=0x926e3c1ad17843fb kind=13 type=Prices
+
+table RouteStat
+    field route id=0x3127fb469f19ebde kind=13 type=Route
+
+table RoutesView
+    field tier_routes id=0x6f59dc211cdd74f0 kind=14 elem=13 array=map keykind=12 keybound=16
+    field routes id=0xa0dba600590b76f7 kind=14 elem=13 type=RouteStat array=unbounded
+
+table SentRecord
+    field fingerprint id=0x20e1350fb261bb7b kind=12 size=64
+    field id id=0x08b72e07b55c3ac0 kind=12 size=64
+    field at id=0x089c4e07b545a968 kind=36
+
+table TakeOut
+    field packets id=0x747ac0ec4bc12286 kind=14 elem=13 type=Packet array=unbounded
+
+table TierRoute
+    field names id=0xafb728fff268814f kind=14 elem=13 type=Name array=bounded bound=64
+
+table Verb
+    field words id=0x4f75245e7323918a kind=14 elem=13 type=Line array=unbounded
+
+table VerbResult
+    field code id=0x0bb51791194b4414 kind=4 optional=true min=0 max=255
+    field stdout id=0x42e6d785a74f8c66 kind=17 type=string
+    field stderr id=0x104ce5858b0a80b5 kind=17 type=string
+    field outcome id=0x75fe2a8465b02e53 kind=7 enum=Outcome
+    field changed id=0xdf38879af614707b kind=7 enum=Changed
+
+table ViewCard
+    field id id=0x08b72e07b55c3ac0 kind=12 size=160
+    field st id=0x08d94207b5794322 kind=12 size=32
+    field brief id=0xf90e421e2470877f kind=12 size=512
+
+table WorkerView
+    field view id=0xfe46f400c6b86658 kind=12 size=32
+    field as_name id=0x8e5c9519cf8cfeb5 kind=12 size=64
+    field kind id=0xef9c96d721673243 kind=12 size=32
+    field epoch id=0xfc9697d1196e6ba6 kind=9
+    field cards id=0xaf9dac3b097689c4 kind=14 elem=13 type=ViewCard array=unbounded
+
+enum Changed
+    variant yes id=0xb53f7a197981b790
+    variant no id=0x08b35907b5589afa
+    variant unknown id=0x498865c7bd1f3959
+
+enum MachineState
+    variant RUNNING id=0xc65e3d9c97b69b6c
+    variant STOPPED id=0xb2458e9315f19aae
+
+enum Outcome
+    variant accepted id=0xcccea1532e9244a0
+    variant refused id=0xdd362779f48a4b03
+    variant unknown id=0x498865c7bd1f3959
+
+enum PacketKind
+    variant work id=0x7058edf6366825c0
+    variant read id=0x4ce6531fbfddd605
+
+## history
+### 2026-10-17 (UTC) — first baseline
+- baseline created over 24 tables — data written BEFORE this point is not covered by it

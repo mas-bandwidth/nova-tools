@@ -1,0 +1,21 @@
+// hookrec.schema: the hook's open-judgment record (hook Store: the value of a
+// JudgmentsKey field), stored when a judgment opens and read by every pass
+// that re-pushes an overdue one. A VARIABLE table: a newer hook may write a
+// field an older hook reads past. The hook lease stamp (hook.go JSONStamps)
+// is pkg/hookwire's Stamp already, and is not defined twice. Generated Go
+// lives in pkg/answerwire.
+package answerwire
+
+table JudgmentRec
+{
+    // id: the message id the judgment is about (a ULID; the bus bound 64).
+    id      string(64)
+    // to: the recipients, bus names (hook checkName: 1 to 64 bytes). The bus
+    // holds no count bound; 64 is the envelope's.
+    to      [..64]Name
+    // subject: one line, at most the bus's 200 bytes.
+    subject string(200)
+    // due_ms: the deadline, Unix milliseconds.
+    due_ms  int64
+    overdue bool
+}

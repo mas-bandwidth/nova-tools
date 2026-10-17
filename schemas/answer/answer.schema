@@ -1,0 +1,326 @@
+// answer.schema: the answers a worker reads from nova-sprint, and the request
+// and result its verbs travel in. One VARIABLE table for each answer, because
+// every one of them is read across versions: an older worker meets a newer
+// server's answer, skips and counts a field it does not know, and a newer
+// worker meets an older server's answer, which is missing a field it knows.
+// Generated Go lives in pkg/answerwire (go generate ./pkg/answerwire).
+//
+// Each table replaces a Go struct that was read as JSON: its fields are that
+// struct's, its json keys are that struct's keys (a field whose name differs
+// from its key says `json = "..."`, schema section 16.4), and its bounds are
+// the bounds the code enforces (named in the comment of the field), or, where
+// the code holds none, the schema-table design's (said so). The reader that
+// wraps the generated Go (pkg/schemaread) refuses every clamp, so a value
+// past a bound is refused by name, never read shortened.
+//
+// A variable table reads an absent field as zero. A field whose absence is an
+// answer (an exit code, a queue's reader flag, a price's reasoning rule) is an
+// optional (?T) whose presence the reader checks.
+package answerwire
+
+// Name is one name of the bus: lowercase letters, digits and hyphens, at most
+// pkg/bus MaxName (64) bytes. An element table, so a list of names is an array
+// of tables and a name can grow fields without a new wire kind.
+table Name
+{
+    s string(64)
+}
+
+// Line is one line of text a list holds (a verb's word, a packet's note). An
+// element table for the same reason as Name.
+table Line
+{
+    s *string
+}
+
+// Verb is one verb of a request: the words nova-sprint runs, in order.
+table Verb
+{
+    // words: the verb's argv, a verb then its arguments. pkg/sprintwire holds
+    // no count bound on one verb; MaxRequest (1 MiB) bounds the whole body.
+    // Unbounded ([]T) because the bounded form reserves its maximum inline in
+    // every element; the reader holds the count bound (4096 words, a ceiling
+    // MaxRequest makes unreachable).
+    words []Line
+}
+
+// Request is a worker's verbs, in the order to run them (pkg/sprintwire
+// Request, json "verbs").
+table Request
+{
+    // verbs: at most pkg/sprintwire MaxVerbs (256) a batch. Unbounded in the
+    // schema (the bounded form reserves 256 verbs inline); the reader holds
+    // the count bound.
+    verbs []Verb
+}
+
+// Outcome is what a verb did, apart from its exit code (pkg/sprintwire
+// Result.Outcome). Append only: a variant's ordinal is its wire value. The
+// implicit None (0) is a result that names none, which an older server wrote.
+enum Outcome { accepted, refused, unknown }
+
+// Changed says whether a verb wrote (pkg/sprintwire Result.Changed). The
+// implicit None (0) is a result that names none.
+enum Changed { yes, no, unknown }
+
+// VerbResult is one verb's answer (named so the Rust form's Result alias is free): nova-sprint's exit code and what it printed
+// (pkg/sprintwire Result).
+table VerbResult
+{
+    // code: the exit code. Optional and required by the reader: an answer with
+    // no exit code is no answer, never exit 0 (pkg/sprintwire Client.Do).
+    code    ?int32 | min = 0, max = 255
+    // stdout and stderr: what the verb printed. Pointers to the used size,
+    // and required by the reader (a result that names neither is no answer);
+    // the response as a whole is capped by the client at 64 MiB.
+    stdout  *string
+    stderr  *string
+    outcome Outcome
+    changed Changed
+}
+
+// Response is the answers, one a verb, in the request's order (pkg/sprintwire
+// Response, json "results").
+table Response
+{
+    // results: one for each verb of the request, so at most MaxVerbs (256),
+    // held by the reader (an unbounded array declares no count).
+    results []VerbResult
+}
+
+// HeldCard is one card of her row as the server's `friend cards` answer says
+// it (pkg/friend HeldCard).
+table HeldCard
+{
+    // card: the card id. No code bound; the longest id of the sprint is under
+    // 100 bytes, and 160 leaves room for a generation suffix.
+    card    string(160)
+    // job: the inbox directory of its brief.
+    job     string(160)
+    // col: the column the card stands in (working, ready, ...).
+    col     string(32)
+    kind    string(16)
+    branch  string(256)
+    tier    string(16)
+    stream  string(128)
+    attempt uint32 | min = 0, max = 100000
+    gen     uint32 | min = 0, max = 100000
+    epoch   uint64
+    repo    string(128)
+    // base_branch: the branch the card lands on (the key stays "base"; base is a reserved word in C#).
+    base_branch string(256) | json = "base"
+    brief   string(512)
+    // lane: the lane of her row the server says holds the card (take --lane),
+    // 0 for none.
+    lane    uint32 | min = 0, max = 1024
+}
+
+// HeldAnswer is the server's answer to `friend cards <friend>`: every card on
+// her row (pkg/friend HeldAnswer).
+table HeldAnswer
+{
+    // friend_name: whose row it is (friend is a reserved word in C++ and the
+    // compiler refuses it in every language's unit); the key stays "friend".
+    friend_name string(64) | json = "friend"
+    // cards: a row holds a few dozen; the reader holds the schema-table design's
+    // ceiling of 1024 (an unbounded array declares no count).
+    cards       []HeldCard
+}
+
+// ViewCard is one work card of the worker view (pkg/friend workerView).
+table ViewCard
+{
+    id    string(160)
+    // st: the card's column.
+    st    string(32)
+    // brief: where its brief is delivered, ~/ai/<friend>/working/inbox/<job>/BRIEF.md.
+    brief string(512)
+}
+
+// WorkerView is the part of `nova-sprint view worker --as <friend> --json`
+// (schema 1) the daemon reads (pkg/friend workerView and viewEpoch). It also
+// carries the sprint's epoch, the view's own row-level field.
+table WorkerView
+{
+    view  string(32)
+    // as_name: the friend the view is for (the key stays "as").
+    as_name string(64) | json = "as"
+    kind  string(32)
+    epoch uint64
+    // cards: the worker's work cards; the reader holds the design's ceiling of 1024.
+    cards []ViewCard
+}
+
+// HolderCard is one card of the server's `view cards` document (cmd/nova-friend
+// parseHolders): the card and the working fleet row that holds it.
+table HolderCard
+{
+    id     string(160)
+    holder string(64)
+}
+
+// HoldersView is the server's `view cards` document, schema 1
+// (cmd/nova-friend parseHolders).
+table HoldersView
+{
+    view   string(32)
+    schema uint32 | min = 0, max = 1000
+    // cards: every card of the fleet's rows; the reader holds the design's ceiling of 4096.
+    cards  []HolderCard
+}
+
+// Prices is one route's price sheet (pkg/cardcost Prices): every amount is a
+// canonical decimal string, empty when not set.
+table Prices
+{
+    input              string(32)
+    cache_read         string(32)
+    cache_write        string(32)
+    output             string(32)
+    // reasoning_as_output: optional, because a route that does not say bills
+    // reasoning as output (pkg/friend RoutePriceOf, pkg/cardcost PricesOf).
+    reasoning_as_output ?bool
+    long_context       int64
+    input_long         string(32)
+    output_long        string(32)
+    request            string(32)
+    // billing: subscription, plan, metered, ...
+    billing            string(32)
+    gateway_percent    string(32)
+    source             string(256)
+    as_of              string(64)
+}
+
+// Route is one route of the sprint's `routes --json` (pkg/friend
+// codexRouteModels, RoutePriceOf): the fields the daemon reads.
+table Route
+{
+    name     string(64)
+    tier     string(16)
+    provider string(64)
+    model    string(128)
+    harness  string(32)
+    enabled  bool
+    prices   Prices
+}
+
+// RouteStat is one row of the routes view: the route and, beside it, what the
+// view says of it. The daemon reads only the route.
+table RouteStat
+{
+    route Route
+}
+
+// TierRoute is one tier's applied route array (nova-config): the route names
+// the tier is applied to.
+table TierRoute
+{
+    names [..64]Name
+}
+
+// RoutesView is the sprint's `routes --json` answer (pkg/friend
+// codexRouteModels and RoutePriceOf).
+table RoutesView
+{
+    // tier_routes: tier name to the applied route names. Absent when the
+    // server is from before the projection, which the reader refuses.
+    tier_routes map[string(16)]TierRoute
+    // routes: the sprint's routes; the reader holds the design's ceiling of 256.
+    routes      []RouteStat
+}
+
+// PacketKind is the kind of a packet (pkg/member Packet.Kind): a work card or
+// a read. The implicit None (0) is a packet that names none.
+enum PacketKind { work, read }
+
+// Packet is what a card hands the member, as `nova-sprint queue --json` and
+// `take --json` print it (pkg/member Packet).
+table Packet
+{
+    billing     string(32)
+    card        string(160)
+    kind        PacketKind
+    as_name     string(64) | json = "as"
+    primary     string(64)
+    stream      string(128)
+    attempt     uint32 | min = 0, max = 100000
+    gen         uint32 | min = 0, max = 100000
+    epoch       uint64
+    brief       string(512)
+    // rules: the held rules file the card names, empty when it carries its own.
+    rules       string(512)
+    fix         *string
+    // finding and why: a rework's words; the sprint bounds a card's text field
+    // (sprint.MaxCardTextBytes), the reader bounds them at 64 KiB here.
+    finding     *string
+    why         *string
+    // notes: one line each. No code bound on the count; the reader holds the
+    // design's 256 (an unbounded array declares no count).
+    notes       []Line
+    branch      string(256)
+    base_branch string(256) | json = "base"
+    base_head   string(64)
+    // base_attempt: the attempt base_head is the head of.
+    base_attempt uint32 | min = 0, max = 100000
+    worker      string(64)
+    head        string(64)
+    work_branch string(256)
+    work_base   string(256)
+    report      *string
+    // route, model, tokens, usd, harness, deadline: a work card's route as the
+    // deal drew it; empty when the store has no route.
+    route       string(64)
+    model       string(128)
+    tokens      string(32)
+    usd         string(32)
+    harness     string(32)
+    deadline    uint32 | min = 0, max = 100000000
+    rate_rpm    uint32 | min = 0, max = 100000000
+    rate_concurrent uint32 | min = 0, max = 1000000
+    tier        string(16)
+    decide_bounce string(32)
+    decide_review string(32)
+    decide_gate_flaky string(32)
+    decide_gate_preexisting string(32)
+}
+
+// QueueCard is one card of `nova-sprint queue --as <me> --json` (pkg/member
+// queueCard). Its packet is present only for a card the member asked one for.
+table QueueCard
+{
+    id      string(160)
+    table_name string(64) | json = "table"
+    row     string(160)
+    col     string(32)
+    gen     uint32 | min = 0, max = 100000
+    attempt uint32 | min = 0, max = 100000
+    packet  *Packet
+}
+
+// MachineState is the machine's state word as the queue's server read it
+// (cmd/nova-sprint queue --json). The implicit None (0) is a server from
+// before the word.
+enum MachineState { RUNNING, STOPPED }
+
+// QueueOut is the answer to `nova-sprint queue --as <me> --json` (pkg/member
+// queueOut).
+table QueueOut
+{
+    as_name string(64) | json = "as"
+    epoch   uint64
+    // width: the worker's width from its fleet row (0: no row).
+    width   uint32 | min = 0, max = 1024
+    // cards: the worker's queue; the reader holds the design's ceiling of 4096.
+    cards   []QueueCard
+    // reader: whether the name is a row of the readers table; absent from a
+    // server from before the field, which is not false.
+    reader  ?bool
+    machine MachineState
+}
+
+// TakeOut is the answer to `nova-sprint take --json` (pkg/member takeOut).
+table TakeOut
+{
+    // packets: a take hands at most --limit packets; the reader holds the design's ceiling of 1024.
+    packets []Packet
+}

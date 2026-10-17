@@ -1,0 +1,17 @@
+// token.schema: the bus send-token record (pkg/bus sentRecord), what the store
+// keeps of a send under a token so a retry answers the message the first send
+// wrote. A VARIABLE table: a newer bus may write a field an older bus reads
+// past. Generated Go lives in pkg/answerwire.
+package answerwire
+
+table SentRecord
+{
+    // fingerprint: the send's arguments as check normalised them, a SHA-256
+    // hex digest (64 bytes).
+    fingerprint string(64)
+    // id: the message id the send wrote, a ULID (26 bytes; the bus bound 64).
+    id          string(64)
+    // at: when the store stamped the message. A timestamp: its text form is
+    // RFC 3339 as the json key "at" holds it today.
+    at          timestamp
+}

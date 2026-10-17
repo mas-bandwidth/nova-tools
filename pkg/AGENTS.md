@@ -4,6 +4,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
+| `answerwire/` | the worker answers, the bus send-token record and the hook judgment record as table wires, generated from schemas/answer by the pinned schema compiler (generate.go) | `go test ./pkg/answerwire` | `make schemawire-check` |
 | `atomicfile/` | atomic file write: standard-library rename beside the target | `go test ./pkg/atomicfile` | `go test ./pkg/atomicfile` |
 | `bench/` | the one bench runner: copy a tree to a per-run directory on the Linux bench, run one command there under nice with the bench cache, remove the directory it made, fall back when the host does not answer | `go test ./pkg/bench` | `go test ./pkg/bench` |
 | `binstamp/` | a binary file's stamp: a loop stops when its own binary was replaced | `go test ./pkg/binstamp` | `go test ./pkg/binstamp` |
