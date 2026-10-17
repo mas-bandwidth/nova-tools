@@ -40,9 +40,9 @@ func TestUpdateManifestDualRead(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name string
-		form schemaread.Form
-		in   []byte
+		name  string
+		form  schemaread.Form
+		in    []byte
 		count func() uint64
 	}{{"binary", schemaread.FormBinary, bin, func() uint64 { return manifestRead.Counts().Reads(schemaread.FormBinary) }}, {"base64", schemaread.FormBase64, b64, func() uint64 { return manifestRead.Counts().Reads(schemaread.FormBase64) }}, {"json", schemaread.FormJSON, sample, func() uint64 { return manifestRead.Counts().Reads(schemaread.FormJSON) }}, {"legacy", schemaread.FormLegacy, legacy, func() uint64 { return manifestLegacyReads.Load() }}} {
 		t.Run(tc.name, func(t *testing.T) {
