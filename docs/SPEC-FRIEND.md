@@ -262,16 +262,21 @@ clamped (a count past its schema bound, a nonce past 32 bytes) or incomplete
 form (`binary`, `base64`, `json`, `legacy`) and each refusal under its reason;
 `reach` prints a refusal and the counters as notes (`PONG READS ...`).
 
-The writer stays legacy: readers change first, fleet-wide, and the per-form
-counter is the evidence a cutover reads before `PongLine` switches.
-`ParsePong`, the reader before this one, is kept as the old reader the
-switch must keep working; it reads no table pong as a pong. The delivery
+The writer has switched (C30): readers changed first, fleet-wide, with the
+per-form counter as the evidence, and `nova-friend pong` now writes the table
+pong as the padded standard base64 of its binary wire (`PongReader.WriteTable`
+in `schemaread.FormBase64`; a bus body is a text transport). A pong past the
+table's bounds is refused at exit 2 with one `PONG REFUSED` line and nothing
+is sent; the writer never falls back to `PongLine`. `PongLine` is kept for the
+legacy line an old writer still sends during the switch, which `PongReader`
+reads and counts under `legacy`. `ParsePong`, the reader before this one,
+reads no table pong as a pong. The delivery
 check (`check --harness`, `pkg/friend/conformance.go`) reads its pong with
 `PongReader.Message` as `reach` does, and names a refused pong in its
 act-stage failure.
 
 A bus body keeps every byte but the one framing newline the writer adds
-(`nova-friend pong` sends `PongLine` and `\n`): a pong with any other
+(`nova-friend pong` sends the table pong and `\n`): a pong with any other
 whitespace (a trailing space or tab, a second newline, a carriage return, a
 leading space or tab) is `malformed`, never normalised into a good pong.
 

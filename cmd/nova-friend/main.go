@@ -764,9 +764,12 @@ command, no prompt pattern for the harness, tmux missing or failing).`,
 ping named, read from the status file) and records it in the state directory (--state-dir, as the
 check's line names the daemon's; else ~/.nova-friend/<me>), where the daemon reads it. The note on
 the bus is the answer: a pong file that cannot be written is said and the answer stands. The name is the daemon's: a
- --as that is not the friend whose state is there is refused. The pong note is
- written as the table form (the binary wire of the typed pong, read strictly by the reader), and a value past the schema's bound is refused, never falling back to the legacy line. --dry-run checks the note as send checks it and prints
-the line it would send; nothing is sent and no pong file is written.`,
+--as that is not the friend whose state is there is refused. The note's body is the pong in the table
+form: the padded standard base64 of the pong table's binary wire, which every pong reader reads strictly
+beside the legacy line. A value past the table's bounds (a nonce over 32 bytes, a count past its range)
+is refused at exit 2 with one PONG REFUSED line and nothing is sent; the writer never falls back to the
+legacy line. --dry-run checks the note as send checks it and prints the form it would send; nothing is
+sent and no pong file is written.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the friend the daemon in --dir runs as")
 					f.Required("nonce", "the nonce the PING carried")
@@ -2329,7 +2332,11 @@ func (w world) pong(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	body, err := friend.NewPongReader().WriteTable(friend.Pong{Friend: name, Nonce: nonce, Queue: queue, Working: working, Width: width, Sent: w.now().UTC()}, schemaread.FormBinary)
+	// C30 (UNION.md section 6): the writer switches to the table form and
+	// refuses on any validation failure instead of falling back to the legacy
+	// line. S2: a bus body is a text transport, so the pong rides as the padded
+	// standard base64 of its binary wire (the form byte and framing check kept).
+	body, err := friend.NewPongReader().WriteTable(friend.Pong{Friend: name, Nonce: nonce, Queue: queue, Working: working, Width: width, Sent: w.now().UTC()}, schemaread.FormBase64)
 	if err != nil {
 		var ref *schemaread.Refusal
 		if errors.As(err, &ref) {
@@ -2343,7 +2350,7 @@ func (w world) pong(c *tool.Call) *tool.Out {
 		if _, err := b.Check(context.Background(), pong); err != nil {
 			return answer(err)
 		}
-		return tool.Done().Fact("nonce", nonce).Fact("to", to).Fact("form", "binary")
+		return tool.Done().Fact("nonce", nonce).Fact("to", to).Fact("form", "base64")
 	}
 	m, err := b.Send(context.Background(), pong)
 	if err != nil {

@@ -18,8 +18,9 @@ import (
 // PongLine is a session's pong as it travels on the bus: pong <nonce>
 // queue=<n> working=<n> width=<n>. A session sends it to answer a reach step
 // or a delivery check (nova-friend pong); liveness is the nova-hook record's
-// alone, never a pong. It is the one pong writer, and it writes the legacy
-// line: readers change first (PongReader), writers after.
+// alone, never a pong. It is the legacy line an old writer sends: the pong
+// writer has switched to the table form (PongReader.WriteTable, C30), and
+// PongLine stays for the readers' legacy form and its tests.
 func PongLine(nonce string, queue, working, width int) string {
 	return fmt.Sprintf("pong %s queue=%d working=%d width=%d", nonce, queue, working, width)
 }
