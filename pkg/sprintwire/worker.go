@@ -5,10 +5,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // Worker runs a worker's sprint verbs on the sprint's server: each verb's
@@ -93,10 +97,24 @@ func Classify(code int, stdout, stderr []byte, answered bool) Answer {
 	return Refused
 }
 
+// resultReads counts the worker's reads of a verb's Result (the worker record
+// of the sprint answer): every read, and each refusal by what was refused, so a
+// cutover sees what its readers met (S4, the per-form counter of the
+// reader-first order C13; the Response itself is counted per form by
+// answerReads).
+var resultReads struct {
+	read, results, outcome atomic.Uint64
+}
+
 // Answer is what became of the result's write: the server's own Outcome when it
 // names one (accepted, refused or unknown), else Classify reading the code and the
-// words, for a server that names no outcome.
+// words, for a server that names no outcome. An outcome word it does not know is
+// unreadable, and is never read as no outcome (which would let Classify call a
+// write accepted): it is a counted refusal of the word, and the answer is Unknown,
+// what an outcome that cannot be read says of the write (the strict read's rule:
+// damage is refused, never read as absent; schemas/answer Outcome).
 func (r Result) Answer() Answer {
+	resultReads.read.Add(1)
 	switch r.Outcome {
 	case "accepted":
 		return Accepted
@@ -104,8 +122,19 @@ func (r Result) Answer() Answer {
 		return Refused
 	case "unknown":
 		return Unknown
+	case "":
+		return Classify(r.Code, []byte(r.Stdout), []byte(r.Stderr), true)
 	}
-	return Classify(r.Code, []byte(r.Stdout), []byte(r.Stderr), true)
+	resultReads.outcome.Add(1)
+	return Unknown
+}
+
+// errResults is the refusal of an answer that is not one result for the one verb
+// sent: nothing is known of what ran, so it is a try that did not answer, never a
+// result read from a list that has none (the strict read's rule).
+func errResults(n int) error {
+	resultReads.results.Add(1)
+	return &schemaread.Refusal{Name: "Result", Reason: schemaread.ReasonMalformed, Field: fmt.Sprintf("results: %d for 1 verb", n), Help: "nova-sprint -h"}
 }
 
 // RunAnswer is Run with what became of the write (Result.Answer): the server's own
@@ -131,6 +160,10 @@ func (w *Worker) RunAnswer(args ...string) (code int, out []byte, answer Answer)
 	for try := 0; try < Tries && ctx.Err() == nil; try++ {
 		var res []Result
 		if res, err = w.Send(ctx, args); err != nil {
+			continue
+		}
+		if len(res) != 1 {
+			err = errResults(len(res))
 			continue
 		}
 		r := res[0]
