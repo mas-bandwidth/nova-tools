@@ -1,5 +1,12 @@
 # nova-tools changelog
 
+## v1.5.2 — 2026-10-17
+
+Hotfix: a nova table holds 1024 properties at an epoch, not 64.
+
+- `ntable.LimitTableProps`, the function library's `T.limits.table_props` and the SPEC-NOVA-TABLE.md bound move from 64 to 1024. The sprint store's work table holds one `base_landed.<sha>` property per repo and base, and on 2026-10-17 it reached 65 and every tick drain was refused (`properties per table: bound 64, observed 65`). The properties one manifest sets stay at 64.
+- The store runs the new bound once this build's function library is loaded (the adopt's window loads it with `nova-redis fn load`).
+
 ## v1.5.1 — 2026-10-17
 
 Worker sandboxes sized to the machine, so ordinary parallel builds are no longer killed as runaways.
