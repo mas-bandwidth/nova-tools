@@ -1,0 +1,64 @@
+schema-tables-baseline 7
+package ledgerwire
+
+table CairnLogRecord
+    field event_kind id=0x517a4505d602bca2 kind=7 enum=CairnEvent
+    field session id=0x3ca2c49553a457d7 kind=12 size=128
+    field entry id=0xbe2a85bf4c0ca913 kind=12 size=128
+    field stamp id=0xee7ba9ad45c64144 kind=17 type=string
+    field publish id=0xe2bfe8411c472768 kind=7 enum=PublishPolicy
+    field source id=0x76dbdc228f782db8 kind=17 type=string
+
+table DogfoodReceipt
+    field tool id=0x2fe3f0ef38a252c7 kind=17 type=string
+    field verb id=0x673ebb0102773a20 kind=17 type=string
+    field by id=0x08a64b07b54df8d4 kind=17 type=string
+    field at id=0x089c4e07b545a968 kind=17 type=string
+    field ok id=0x08b05d07b5566bef kind=1
+    field notes id=0x40906c71b95bdbaa kind=17 type=string
+    field issue id=0x1c54d4fa8357f520 kind=5 optional=true min=0 max=9223372036854775807
+    field closes id=0x8553185090e84610 kind=17 type=ReceiptID
+
+table Fuse
+    field at id=0x089c4e07b545a968 kind=17 type=string
+    field reason id=0x65e8d7f3474f2639 kind=17 type=string
+
+table FuseBox
+    field lockdown id=0x587fb5f7217333da kind=17 type=Fuse
+    field quarantine id=0x7ecc5a61e15573d1 kind=14 elem=13 type=QuarantineEntry array=unbounded
+
+table LedgerKey
+    field day id=0xca8d3918f4578f1d kind=12 size=10
+    field card id=0xb5614e90e87b455f kind=17 type=string
+    field model id=0x9de543933e6e703a kind=17 type=string
+    field repo id=0x4cac581fbfac663d kind=17 type=string
+
+table LedgerValue
+    field provider id=0xd02b4c8c65fb54dc kind=17 type=string
+    field tokens id=0x93fab8f021712b13 kind=14 elem=13 type=TokenValue array=bounded bound=5
+    field rough id=0x30f50e469eeeb28e kind=5
+    field sources id=0x6fc4d9b9c935cff1 kind=17 type=string
+
+table QuarantineEntry
+    field surface id=0x18260d59cf7e151c kind=17 type=string
+    field fuse id=0x868e6d78db2c3430 kind=13 type=Fuse
+
+table ReceiptID
+    field value id=0x7ce4fd9430e80cea kind=12 size=8
+
+table TokenValue
+    field amount id=0x8113fe7ea2b16969 kind=5 optional=true
+
+enum CairnEvent
+    variant open id=0xf84f97b4633670e9
+    variant append id=0x3e7fe942f71f1e61
+
+enum PublishPolicy
+    variant never id=0xcbd8031e3d026dc9
+    variant manual id=0x567e8790c5b15043
+    variant deferred id=0xdbbcbbece325734a
+    variant immediate id=0xed261b159d41113a
+
+## history
+### 2026-10-17 (UTC) — first baseline
+- baseline created over 9 tables — data written BEFORE this point is not covered by it
