@@ -296,12 +296,12 @@ func TestUsagecardTypedHeaderExpansionPreservesRowsModeAndFailure(t *testing.T) 
 				original = strings.Join(legacyColumns, "\t") + "\nshort\n"
 			}
 			require.NoError(t, os.WriteFile(path, []byte(original), 0640))
-		if test == "replace failure" {
-			err := appendCardUsage(path, row, coverLockBound, func(string, []byte, os.FileMode) error { return errors.New("injected replacement failure") })
-			require.Error(t, err)
-			assert.Equal(t, original, mustReadCoverFile(t, path))
-			return
-		}
+			if test == "replace failure" {
+				err := appendCardUsage(path, row, coverLockBound, func(string, []byte, os.FileMode) error { return errors.New("injected replacement failure") })
+				require.Error(t, err)
+				assert.Equal(t, original, mustReadCoverFile(t, path))
+				return
+			}
 			err := AppendCardUsage(path, row)
 			if test != "preserves" {
 				require.Error(t, err)
