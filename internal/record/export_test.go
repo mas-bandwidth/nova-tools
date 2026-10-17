@@ -57,3 +57,22 @@ func (r *ledgerReaders) FieldText(e LedgerEntry, form schemaread.Form) (field, v
 	}
 	return field, value, nil
 }
+
+// PrepareLedgerDays builds a batch's table-form fields as ReplaceLedgerDays
+// writes them (the switched writer), keyed by day hash: a test writes them to
+// a t.TempDir() and reads them back through the dual reader.
+func (s *RedisLedger) PrepareLedgerDays(days []LedgerDay) (map[string]map[string]string, error) {
+	prepared, err := s.prepareDays(days)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]map[string]string, len(prepared))
+	for _, p := range prepared {
+		fields := make(map[string]string, len(p.fields)/2)
+		for i := 0; i < len(p.fields); i += 2 {
+			fields[p.fields[i].(string)] = p.fields[i+1].(string)
+		}
+		out[p.key] = fields
+	}
+	return out, nil
+}

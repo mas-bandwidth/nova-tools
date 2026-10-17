@@ -181,14 +181,6 @@ func MonthDays(month string) ([]string, error) {
 	return days, nil
 }
 
-// ledgerValue is a hash field's value; a nil token is a type no source reported.
-type ledgerValue struct {
-	Provider string    `json:"provider"`
-	Tokens   [5]*int64 `json:"tokens"`
-	Rough    int       `json:"rough"`
-	Sources  string    `json:"sources"`
-}
-
 // RedisLedger is the ledger on the fleet Redis. It dials nothing itself: the caller opens
 // the client, and Close closes it.
 type RedisLedger struct {
@@ -246,40 +238,9 @@ func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) e
 	if len(days) == 0 {
 		return nil
 	}
-	seenDays := make(map[string]bool, len(days))
-	type preparedDay struct {
-		key    string
-		fields []any
-	}
-	prepared := make([]preparedDay, 0, len(days))
-	for _, d := range days {
-		if seenDays[d.Day] {
-			return fmt.Errorf("the day %s appears twice in the batch", d.Day)
-		}
-		seenDays[d.Day] = true
-		if err := CheckLedgerDay(d.Day, d.Entries); err != nil {
-			return err
-		}
-		fields := make([]any, 0, 2*len(d.Entries))
-		for _, e := range d.Entries {
-			f, err := json.Marshal([3]string{e.Card, e.Model, e.Repo})
-			if err != nil {
-				return err
-			}
-			v := ledgerValue{Provider: e.Provider, Rough: e.Rough, Sources: e.Sources}
-			for i := range e.Tokens {
-				if e.Known[i] {
-					n := e.Tokens[i]
-					v.Tokens[i] = &n
-				}
-			}
-			b, err := json.Marshal(v)
-			if err != nil {
-				return err
-			}
-			fields = append(fields, string(f), string(b))
-		}
-		prepared = append(prepared, preparedDay{key: LedgerKey(d.Day), fields: fields})
+	prepared, err := s.prepareDays(days)
+	if err != nil {
+		return err
 	}
 	keys := make([]string, len(prepared))
 	args := make([]any, 0, len(prepared)*2)
@@ -295,6 +256,57 @@ func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) e
 		return err
 	}
 	return nil
+}
+
+// preparedDay is one day's hash key and its field/value pairs, ready for EVAL.
+type preparedDay struct {
+	key    string
+	fields []any
+}
+
+// prepareDays builds a batch's table-form fields (the owner's S2 and S4, the
+// writer side of the reader card): each hash field is the LedgerKey table and
+// its value the LedgerValue table of schemas/ledger, written as the padded
+// standard base64 of the wire where the record lives in a text line or file.
+// A value a table cannot hold is refused by name before a byte is written,
+// and the legacy form is never written as a fallback.
+func (s *RedisLedger) prepareDays(days []LedgerDay) ([]preparedDay, error) {
+	seenDays := make(map[string]bool, len(days))
+	prepared := make([]preparedDay, 0, len(days))
+	for _, d := range days {
+		if seenDays[d.Day] {
+			return nil, fmt.Errorf("the day %s appears twice in the batch", d.Day)
+		}
+		seenDays[d.Day] = true
+		if err := CheckLedgerDay(d.Day, d.Entries); err != nil {
+			return nil, err
+		}
+		fields := make([]any, 0, 2*len(d.Entries))
+		for _, e := range d.Entries {
+			k := ledgerKeyText{Day: e.Day, Card: e.Card, Model: e.Model, Repo: e.Repo}
+			v := ledgerValueText{Provider: e.Provider, Rough: int64(e.Rough), Sources: e.Sources, Tokens: make([]ledgerTokenText, len(e.Tokens))}
+			for i := range e.Tokens {
+				if e.Known[i] {
+					n := e.Tokens[i]
+					v.Tokens[i].Amount = &n
+				}
+			}
+			f, err := ledgerRead.keys.Write(&k, schemaread.FormBase64)
+			if err != nil {
+				return nil, err
+			}
+			b, err := ledgerRead.values.Write(&v, schemaread.FormBase64)
+			if err != nil {
+				return nil, err
+			}
+			if len(f) == 0 || len(b) == 0 {
+				return nil, &schemaread.Refusal{Name: "LEDGER_KEY", Reason: schemaread.ReasonUnknownForm, Help: LedgerHelp}
+			}
+			fields = append(fields, string(f), string(b))
+		}
+		prepared = append(prepared, preparedDay{key: LedgerKey(d.Day), fields: fields})
+	}
+	return prepared, nil
 }
 
 const replaceLedgerDaysScript = `
