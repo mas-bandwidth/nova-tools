@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x00')
+[]byte("{\n  \"card\": null,\n  \"job\": \"\",\n  \"col\": null,\n  \"kind\": null,\n  \"branch\": null,\n  \"tier\": null,\n  \"stream\": null,\n  \"attempt\": 0,\n  \"gen\": 0,\n  \"epoch\": 0,\n  \"repo\": null,\n  \"base\": null,\n  \"brief\": null,\n  \"lane\": 0\n}\n")
