@@ -132,6 +132,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/subproc", "the one door a child process goes through: a named deadline per kind, WaitDelay, and a cancellable context for long-lived children", "go test ./pkg/subproc", "go test ./pkg/subproc"),
 	E("pkg/swarm", "the native card runner: staging, the wall, budgets, slot leases and card lint", "go test ./pkg/swarm", "go test ./pkg/swarm"),
 	E("pkg/tablemodelwire", "the table model's and the convergence verb's variable-table wire, generated from schemas/tablemodel by the pinned schema compiler (generate.go)", "go test ./pkg/tablemodelwire", "make schemawire-check"),
+	E("pkg/swarmwire", "the swarm area's variable-table wire (exit record, worker description, harness config, fence config, declared model, member carry), generated from schemas/swarm by the pinned schema compiler (generate.go)", "go test ./pkg/swarmwire", "make schemawire-check"),
 	E("pkg/testbin", "places a built program into a test dir", "go test ./pkg/testbin", "go test ./pkg/testbin"),
 	E("pkg/testgit", "the one git identity for tests that commit in a scratch repository, and the hosted runner's identity-less git for reproducing it", "go test ./pkg/testgit", "go test ./pkg/testgit"),
 	E("pkg/testguard", "host seam and leak interception", "go test ./pkg/testguard", "go test ./pkg/testguard"),

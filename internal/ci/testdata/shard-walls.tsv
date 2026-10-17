@@ -140,6 +140,7 @@ internal/shippedsmoke	0.0	@local	-
 pkg/sprintwire	0.2	@local	-
 pkg/subproc	0.6	@local	-
 pkg/swarm	5.1	@run37518625834	self-hosted
+pkg/swarmwire	0.5	@local	-
 internal/tablemodel	0.3	@local	-
 pkg/tablemodelwire	0.5	@local	-
 pkg/testbin	0.0	@run37411066588	self-hosted
