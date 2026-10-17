@@ -48,6 +48,7 @@ fleet/toolchainapply/baddigest	24.2	@local	-
 fleet/toolchainapply/drift	29.4	@local	-
 fleet/toolchainapply/idempotent	30.2	@local	-
 hook	0.3	@local	-
+pkg/answerwire	0.5	@local	-
 pkg/atomicfile	1.4	@run37411066588	self-hosted
 pkg/bench	0.1	@local	-
 pkg/binstamp	0.1	@local	-
