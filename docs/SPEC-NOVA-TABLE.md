@@ -438,7 +438,7 @@ A test compares the shared constants with this table:
 | columns per table | 1000 |
 | rows per table | 100000 |
 | properties per manifest | 64 |
-| properties per table | 64 |
+| properties per table | 1024 |
 | receipt bytes | 1048576 |
 | value bytes per batch | 16777216 |
 

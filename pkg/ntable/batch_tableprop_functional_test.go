@@ -7,6 +7,7 @@ package ntable_test
 // the values it expects; the table read carries them back.
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
@@ -76,17 +77,22 @@ func TestRefusePROPGUARDWritesNothing(t *testing.T) {
 func TestPropLimitAndValidation(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
-	m := propBatch(probeRev(ctx, c), "many", nil)
-	m.Props = map[string]string{}
-	for i := 0; i < ntable.LimitManifestProps; i++ {
-		m.Props["p"+string(rune('a'+i%26))+string(rune('a'+i/26))] = "v"
+	// A manifest sets at most LimitManifestProps; the table is filled to its
+	// bound, LimitTableProps, over several manifests, each its own transaction.
+	for batch := 0; batch < ntable.LimitTableProps/ntable.LimitManifestProps; batch++ {
+		m := propBatch(probeRev(ctx, c), fmt.Sprintf("many-%d", batch), nil)
+		m.Props = map[string]string{}
+		for i := 0; i < ntable.LimitManifestProps; i++ {
+			m.Props[fmt.Sprintf("p%d", batch*ntable.LimitManifestProps+i)] = "v"
+		}
+		_, err := ntable.ApplyBatch(ctx, c, m)
+		require.NoError(t, err, "%d properties", (batch+1)*ntable.LimitManifestProps)
 	}
-	_, err := ntable.ApplyBatch(ctx, c, m)
-	require.NoError(t, err, "64 properties")
 	more := propBatch(probeRev(ctx, c), "more", nil)
 	more.Props = map[string]string{"one_more": "v"}
-	_, err = ntable.ApplyBatch(ctx, c, more)
-	require.ErrorIs(t, err, ntable.ErrLimit, "a 65th property: %v", err)
+	_, err := ntable.ApplyBatch(ctx, c, more)
+	require.ErrorIs(t, err, ntable.ErrLimit, "property %d: %v", ntable.LimitTableProps+1, err)
+	require.ErrorContains(t, err, fmt.Sprintf("properties per table: bound %d, observed %d", ntable.LimitTableProps, ntable.LimitTableProps+1))
 	raw := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + probeRev(ctx, c) + `","operation_id":"bad","members":[],"props":{"bad name":"v"}}`
 	ans, err := rawApply(ctx, c, raw)
 	require.True(t, replyOpens(ans, err, "REFUSED"), "an invalid property name: %v %v", ans, err)
