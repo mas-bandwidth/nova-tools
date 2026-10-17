@@ -1,0 +1,26 @@
+schema-lock 7
+package decidewire
+
+fixed table Bars layout=0xe377518b955ddf94 lineage=0x6c873340a8c0bc5a
+    field bounce id=0x5307024caeff199d kind=11 width=8 default=0.0
+    field review id=0x0e9718950b3dd3a1 kind=11 width=8 default=0.0
+    lineage wire=0xfbaba4174510cfd9 record=16 bytes=030000004b3cdea8a7f0a0c10d10000000020000009d19ffae4c0207530b0800000000000000a1d33d0b9518970e0b0800000000000000
+
+fixed table GateBars layout=0x20157ee651df9651 lineage=0x9740b8608917e928
+    field flaky id=0x177aa3a985d4593e kind=11 width=8 default=0.0
+    field pre_existing id=0x343fb63c1a0792a6 kind=11 width=8 default=0.0
+    lineage wire=0xe318374dc3739b13 record=16 bytes=0300000070e1a9048855b3a50d10000000020000003e59d485a9a37a170b0800000000000000a692071a3cb63f340b0800000000000000
+
+fixed table RawTokens layout=0x31f489bd2cab84ad lineage=0x381ec2c84c86629a
+    field input_tokens id=0xb5158be5a9bbd92e kind=5 width=9 default=0 min=0 max=9223372036854775807 optional
+    field output_tokens id=0x72e601d58ddec77f kind=5 width=9 default=0 min=0 max=9223372036854775807 optional
+    field cached_tokens id=0xc161e80ef0ed9236 kind=5 width=9 default=0 min=0 max=9223372036854775807 optional
+    field cache_write_tokens id=0xd4452d66eea0a56c kind=5 width=9 default=0 min=0 max=9223372036854775807 optional
+    field cache_read_tokens id=0x5e9ce08dbd7c5ed1 kind=5 width=9 default=0 min=0 max=9223372036854775807 optional
+    field reasoning_tokens id=0x050b4c773e5abe4a kind=5 width=9 default=0 min=0 max=9223372036854775807 optional
+    lineage wire=0x521b10632b5348dd record=54 bytes=0d000000afa33524f9a86dd30d36000000060000002ed9bba9e58b15b52309000000010000002ed9bba9e58b15b50508000000000000007fc7de8dd501e6722309000000010000007fc7de8dd501e6720508000000000000003692edf00ee861c12309000000010000003692edf00ee861c10508000000000000006ca5a0ee662d45d42309000000010000006ca5a0ee662d45d4050800000000000000d15e7cbd8de09c5e230900000001000000d15e7cbd8de09c5e0508000000000000004abe5a3e774c0b052309000000010000004abe5a3e774c0b05050800000000000000 digest=520000000000000000ffffffffffffff7f520000000000000000ffffffffffffff7f520000000000000000ffffffffffffff7f520000000000000000ffffffffffffff7f520000000000000000ffffffffffffff7f520000000000000000ffffffffffffff7f
+
+fixed table Usage layout=0x97cf407982163c97 lineage=0x03bd1ccf068af4bf
+    field input_tokens id=0xb5158be5a9bbd92e kind=5 width=8 default=0
+    field output_tokens id=0x72e601d58ddec77f kind=5 width=8 default=0
+    lineage wire=0xb6b35738c9d9d3c8 record=16 bytes=030000002802ced7d2e95b340d10000000020000002ed9bba9e58b15b50508000000000000007fc7de8dd501e672050800000000000000
