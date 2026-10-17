@@ -2,7 +2,11 @@ package swarm
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarmwire"
 )
 
 // DeclareRouteModel names a launch's model in the job's harness config as a model of its
@@ -58,4 +62,123 @@ func DeclareRouteModel(body []byte, provider, model string) ([]byte, bool) {
 		return body, false
 	}
 	return out, true
+}
+
+// declaredModelDoc is the declared model record as the schema reads it: the
+// plain value the generated DeclaredModel table's strict codec reads and
+// writes (schema section 6, the schema JSON text form). The legacy form is the
+// JSON object the writer carries today, which reads into the same value.
+type declaredModelDoc struct {
+	Provider, Model string
+}
+
+// declaredModelOf is a loaded table image as the doc.
+func declaredModelOf(r *swarmwire.DeclaredModel) declaredModelDoc {
+	return declaredModelDoc{exitText(&r.Provider), exitText(&r.Model)}
+}
+
+func (d declaredModelDoc) json() []byte {
+	m := map[string]any{"provider": d.Provider, "model": d.Model}
+	b, _ := json.MarshalIndent(m, "", "  ")
+	return b
+}
+
+func declaredModelBuild(d declaredModelDoc) (*swarmwire.DeclaredModel, func()) {
+	var b swarmwire.DeclaredModelBuilder
+	if !b.Init() {
+		return nil, func() {}
+	}
+	var r swarmwire.TableReport
+	if !swarmwire.DeclaredModelFromJson(&b, d.json(), &r) || !b.Lock() {
+		return nil, b.Shutdown
+	}
+	return b.AsConst(), b.Shutdown
+}
+
+// declaredModelReader is the declared model record's strict reader (owner's
+// rules S1 and S2): it reads the table wire, the padded standard base64 of
+// that wire, the schema JSON text and the legacy JSON the writer carries
+// today, refuses a damaged image by name and counts each read under its form.
+func declaredModelReader() *schemaread.Reader[declaredModelDoc] {
+	var zero declaredModelDoc
+	c := &schemaread.Codec[declaredModelDoc]{
+		Name: "DECLARED_MODEL", Help: "nova-swarm -h",
+		LoadWire: func(v *declaredModelDoc, wire []byte) schemaread.Report {
+			*v = zero
+			n := swarmwire.DeclaredModelLoadMeasure(wire)
+			if n < 0 {
+				return exitStrict(swarmwire.TableReport{Malformed: true}, false)
+			}
+			var r swarmwire.TableReport
+			root := swarmwire.DeclaredModelLoad(exitRegion(n), wire, &r)
+			if root == nil {
+				return exitStrict(r, false)
+			}
+			*v = declaredModelOf(root)
+			return exitStrict(r, true)
+		},
+		LoadJSON: func(v *declaredModelDoc, text []byte) schemaread.Report {
+			*v = zero
+			var b swarmwire.DeclaredModelBuilder
+			if !b.Init() {
+				return exitStrict(swarmwire.TableReport{}, false)
+			}
+			defer b.Shutdown()
+			var r swarmwire.TableReport
+			if !swarmwire.DeclaredModelFromJson(&b, text, &r) || !b.Lock() {
+				return exitStrict(r, false)
+			}
+			*v = declaredModelOf(b.AsConst())
+			return exitStrict(r, true)
+		},
+		Legacy: func(in []byte) bool { return len(in) > 0 && in[0] == '{' },
+		LoadLegacy: func(v *declaredModelDoc, in []byte) schemaread.Report {
+			if err := json.Unmarshal(in, v); err != nil {
+				return schemaread.Report{Malformed: true}
+			}
+			return schemaread.Report{}
+		},
+		// Provider and model are required: DeclareRouteModel declares nothing for an empty
+		// one (schemas/swarm/swarm.schema, Absence: the reader that needs the field refuses
+		// the empty value by name), so an image that loads both as absent is refused.
+		Constraints: func(v *declaredModelDoc, c *schemaread.Checker) {
+			c.Required("provider", v.Provider != "")
+			c.Required("model", v.Model != "")
+			c.Text("provider", v.Provider, math.MaxInt)
+			c.Text("model", v.Model, math.MaxInt)
+		},
+		SaveWire: func(v *declaredModelDoc) []byte {
+			root, done := declaredModelBuild(*v)
+			defer done()
+			if root == nil {
+				return nil
+			}
+			buf := make([]byte, swarmwire.DeclaredModelMeasure(root))
+			if swarmwire.DeclaredModelSave(root, buf) != int64(len(buf)) {
+				return nil
+			}
+			return buf
+		},
+		SaveJSON: func(v *declaredModelDoc) []byte {
+			root, done := declaredModelBuild(*v)
+			defer done()
+			if root == nil {
+				return nil
+			}
+			buf := make([]byte, swarmwire.DeclaredModelToJsonMeasure(root))
+			if swarmwire.DeclaredModelToJson(root, buf) != int64(len(buf)) {
+				return nil
+			}
+			return buf
+		},
+	}
+	return schemaread.NewReader(c)
+}
+
+// ReadDeclaredModel reads the declared model record from body in any form and
+// hands the refusal to the caller by name; a malformed value is never read as
+// absent, empty or zero.
+func ReadDeclaredModel(body []byte) (declaredModelDoc, schemaread.Form, error) {
+	d, res, err := modelReads.Read(body)
+	return d, res.Form, err
 }

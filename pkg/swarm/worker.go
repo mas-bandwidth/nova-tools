@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarmwire"
 )
 
 // THE WORKER DESCRIPTION: which provider, which model, which environment variable the
@@ -126,10 +129,17 @@ func LoadWorker(path string) (Worker, []error) {
 	if err != nil {
 		return w, []error{fmt.Errorf("--worker wants a readable worker description (a JSON file naming provider, model, env_var, key_file or secret, harness, worker_dir, deadline and usage): %s", redactedReason(err))}
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, class, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, input_limit_phrases, launch_grace", path, err)}
+	// THE DESCRIPTION IS READ IN EVERY FORM (owner's rules S2 and S4, readers first): the
+	// table wire, the padded standard base64 of it, the schema JSON text and the legacy
+	// JSON a person writes today, through the one strict read. A damaged description is
+	// refused by name and counted under its form; it never loads as an empty worker.
+	w, _, err = workerReads.Read(raw)
+	if err != nil {
+		reason := err.Error()
+		if detail := workerLegacyDetail(raw); detail != "" {
+			reason += ": " + detail
+		}
+		return Worker{}, []error{fmt.Errorf("%s is not a worker description this tool can read (%s); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, class, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, input_limit_phrases, launch_grace", path, reason)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
@@ -702,4 +712,182 @@ func tailBytes(path string, n int) (string, int64) {
 		return "", 0
 	}
 	return s, size - int64(len(s))
+}
+
+// The worker description's two small sets as the table's uint8 (schemas/swarm/swarm.schema,
+// WorkerRecord usage and worker_class): zero is "none declared", which LoadWorker refuses
+// for usage and reads as paid for class.
+var (
+	workerUsages  = []string{"", UsageOpenCode, UsageNone}
+	workerClasses = []string{"", WorkerClassPaid, WorkerClassPublic}
+)
+
+func workerOrdinal(set []string, s string) (uint8, bool) {
+	for i, v := range set {
+		if v == s {
+			return uint8(i), true
+		}
+	}
+	return 0, false
+}
+
+func workerWord(set []string, i uint8) string {
+	if int(i) < len(set) {
+		return set[i]
+	}
+	return ""
+}
+
+var workerTable = swarmTable[swarmwire.WorkerRecord, swarmwire.WorkerRecordBuilder, *swarmwire.WorkerRecordBuilder]{
+	swarmwire.WorkerRecordLoadMeasure, swarmwire.WorkerRecordLoad, swarmwire.WorkerRecordFromJson,
+	swarmwire.WorkerRecordMeasure, swarmwire.WorkerRecordSave, swarmwire.WorkerRecordToJsonMeasure, swarmwire.WorkerRecordToJson,
+}
+
+// workerOf is a loaded WorkerRecord as the description LoadWorker checks.
+func workerOf(r *swarmwire.WorkerRecord) Worker {
+	return Worker{Name: exitText(&r.Name), Provider: exitText(&r.Provider), Model: exitText(&r.Model), BaseURL: exitText(&r.BaseUrl),
+		EnvVar: exitText(&r.EnvVar), KeyFile: exitText(&r.KeyFile), Secret: exitText(&r.Secret), Usage: workerWord(workerUsages, r.Usage),
+		Class: workerWord(workerClasses, r.WorkerClass), Harness: exitText(&r.Harness), HarnessArgs: swarmList(&r.HarnessArgs),
+		WorkerDir: exitText(&r.WorkerDir), Deadline: exitText(&r.Deadline), Board: exitText(&r.Board), ReadRoots: swarmList(&r.ReadRoots),
+		MaxTurns: int(r.MaxTurns), MaxCacheRead: int(r.MaxCacheRead), InputLimitPhrases: swarmList(&r.InputLimitPhrases),
+		LaunchGrace: exitText(&r.LaunchGrace), KeepData: r.KeepData}
+}
+
+// workerSchemaJSON is the description as the schema JSON text; nil when a set holds a word
+// the table has no ordinal for (the table cannot carry it, so nothing is written).
+func workerSchemaJSON(w *Worker) []byte {
+	usage, ok := workerOrdinal(workerUsages, w.Usage)
+	class, ok2 := workerOrdinal(workerClasses, w.Class)
+	if !ok || !ok2 {
+		return nil
+	}
+	return swarmJSON(map[string]any{"name": w.Name, "provider": w.Provider, "model": w.Model, "base_url": w.BaseURL,
+		"env_var": w.EnvVar, "key_file": w.KeyFile, "secret": w.Secret, "usage": usage, "worker_class": class,
+		"harness": w.Harness, "harness_args": swarmEntries(w.HarnessArgs), "worker_dir": w.WorkerDir, "deadline": w.Deadline,
+		"board": w.Board, "read_roots": swarmEntries(w.ReadRoots), "max_turns": w.MaxTurns, "max_cache_read": w.MaxCacheRead,
+		"input_limit_phrases": swarmEntries(w.InputLimitPhrases), "launch_grace": w.LaunchGrace, "keep_data": w.KeepData})
+}
+
+// workerIsLegacy recognises the description a person writes today: a JSON object that is
+// not the schema JSON text. The schema text alone spells the class `worker_class` and the
+// usage as a number; the legacy decoder refuses both (an unknown field, a wrong type), so
+// sending them to the schema reader takes nothing the legacy form accepts.
+func workerIsLegacy(in []byte) bool {
+	if !jsonLegacy(in) {
+		return false
+	}
+	var keys map[string]json.RawMessage
+	if json.Unmarshal(in, &keys) != nil {
+		return true
+	}
+	if _, schema := keys["worker_class"]; schema {
+		return false
+	}
+	u := bytes.TrimSpace(keys["usage"])
+	return len(u) == 0 || u[0] == '"'
+}
+
+// workerLegacyDecode is the legacy read, strict as it has always been: an unknown field is
+// a refusal, because a misspelled field in a file that names a key's location is a silent
+// default.
+func workerLegacyDecode(w *Worker, in []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(in))
+	dec.DisallowUnknownFields()
+	return dec.Decode(w)
+}
+
+// workerLegacyDetail is the legacy decoder's own words for a refused legacy description,
+// so the refusal still names the misspelled field; empty for any other form.
+func workerLegacyDetail(in []byte) string {
+	if !workerIsLegacy(in) {
+		return ""
+	}
+	var w Worker
+	if err := workerLegacyDecode(&w, in); err != nil {
+		return redactedReason(err)
+	}
+	return ""
+}
+
+// workerReader is the worker description's strict reader (owner's rules S1, S2 and S4):
+// the table wire, its padded standard base64, the schema JSON text and the legacy JSON,
+// each refused by name when damaged and counted under its form. LoadWorker's own checks
+// (required fields, absolute paths, durations, the key's place) run after it on every form.
+func workerReader() *schemaread.Reader[Worker] {
+	return schemaread.NewReader(swarmCodec("WORKER_RECORD", "nova-swarm worker check -h", workerTable, workerOf, workerSchemaJSON,
+		workerIsLegacy,
+		func(w *Worker, in []byte) schemaread.Report {
+			*w = Worker{}
+			if workerLegacyDecode(w, in) != nil {
+				*w = Worker{}
+				return schemaread.Report{Malformed: true}
+			}
+			return schemaread.Report{}
+		},
+		func(w *Worker, c *schemaread.Checker) {
+			for _, f := range [][2]string{{"name", w.Name}, {"provider", w.Provider}, {"model", w.Model}, {"base_url", w.BaseURL},
+				{"env_var", w.EnvVar}, {"key_file", w.KeyFile}, {"secret", w.Secret}, {"harness", w.Harness}, {"worker_dir", w.WorkerDir},
+				{"deadline", w.Deadline}, {"board", w.Board}, {"launch_grace", w.LaunchGrace}} {
+				c.Text(f[0], f[1], math.MaxInt)
+			}
+			for field, list := range map[string][]string{"harness_args": w.HarnessArgs, "read_roots": w.ReadRoots, "input_limit_phrases": w.InputLimitPhrases} {
+				for _, s := range list {
+					c.Text(field, s, math.MaxInt)
+				}
+			}
+		}))
+}
+
+// harnessConfigDoc is the HarnessConfigRecord: what HarnessConfig declares for the
+// provider, read from the worker (schemas/swarm/swarm.schema, HarnessConfigRecord). The
+// harness config file itself is OpenCode's format, external, and stays as it is.
+type harnessConfigDoc struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	EnvVar   string `json:"env_var"`
+	BaseURL  string `json:"base_url,omitempty"`
+}
+
+var harnessTable = swarmTable[swarmwire.HarnessConfigRecord, swarmwire.HarnessConfigRecordBuilder, *swarmwire.HarnessConfigRecordBuilder]{
+	swarmwire.HarnessConfigRecordLoadMeasure, swarmwire.HarnessConfigRecordLoad, swarmwire.HarnessConfigRecordFromJson,
+	swarmwire.HarnessConfigRecordMeasure, swarmwire.HarnessConfigRecordSave, swarmwire.HarnessConfigRecordToJsonMeasure, swarmwire.HarnessConfigRecordToJson,
+}
+
+// harnessConfigReader is the HarnessConfigRecord's strict reader (owner's rules S1 and
+// S2). Its legacy form is the record's JSON object, whose keys are the schema's, so the
+// schema JSON text reads as legacy into the same value. Provider, model and env_var are
+// required: LoadWorker refuses a worker without any of them, so HarnessConfig never writes
+// one empty.
+func harnessConfigReader() *schemaread.Reader[harnessConfigDoc] {
+	return schemaread.NewReader(swarmCodec("HARNESS_CONFIG_RECORD", "nova-swarm worker check -h", harnessTable,
+		func(r *swarmwire.HarnessConfigRecord) harnessConfigDoc {
+			return harnessConfigDoc{exitText(&r.Provider), exitText(&r.Model), exitText(&r.EnvVar), exitText(&r.BaseUrl)}
+		},
+		func(d *harnessConfigDoc) []byte {
+			return swarmJSON(map[string]any{"provider": d.Provider, "model": d.Model, "env_var": d.EnvVar, "base_url": d.BaseURL})
+		},
+		jsonLegacy,
+		func(d *harnessConfigDoc, in []byte) schemaread.Report {
+			*d = harnessConfigDoc{}
+			if json.Unmarshal(in, d) != nil {
+				*d = harnessConfigDoc{}
+				return schemaread.Report{Malformed: true}
+			}
+			return schemaread.Report{}
+		},
+		func(d *harnessConfigDoc, c *schemaread.Checker) {
+			c.Required("provider", d.Provider != "")
+			c.Required("model", d.Model != "")
+			c.Required("env_var", d.EnvVar != "")
+			for _, f := range [][2]string{{"provider", d.Provider}, {"model", d.Model}, {"env_var", d.EnvVar}, {"base_url", d.BaseURL}} {
+				c.Text(f[0], f[1], math.MaxInt)
+			}
+		}))
+}
+
+// ReadHarnessConfigRecord reads the HarnessConfigRecord from body in any form and hands
+// the refusal to the caller by name; a malformed value is never read as absent or empty.
+func ReadHarnessConfigRecord(body []byte) (harnessConfigDoc, schemaread.Form, error) {
+	d, res, err := harnessReads.Read(body)
+	return d, res.Form, err
 }

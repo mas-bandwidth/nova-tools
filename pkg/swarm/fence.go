@@ -3,9 +3,14 @@ package swarm
 import (
 	"encoding/json"
 	"maps"
+	"math"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarmwire"
 )
 
 // THE HARNESS'S OWN FENCE. OpenCode asks before a tool touches a path it calls
@@ -237,4 +242,127 @@ func fencePath(p string) string {
 		return ""
 	}
 	return strings.ReplaceAll(filepath.Clean(p), "\\", "/")
+}
+
+// fenceRuleDoc is one external_directory pattern and its action as the table holds it:
+// 1 allow, 2 deny (schemas/swarm/swarm.schema, FenceRule); 0 is refused by the reader.
+type fenceRuleDoc struct {
+	Pattern string `json:"pattern"`
+	Action  uint8  `json:"action"`
+}
+
+// fenceConfigDoc is the FenceConfig record: FencePermission's input (the job directory and
+// the card's READ: paths) and its result (the external_directory rules and the webfetch
+// action) (schemas/swarm/swarm.schema, FenceConfig). The harness config the permission
+// block is merged into is OpenCode's format, external, and stays as it is.
+type fenceConfigDoc struct {
+	JobDir   string         `json:"job_dir"`
+	Reads    []string       `json:"reads,omitempty"`
+	Rules    []fenceRuleDoc `json:"rules,omitempty"`
+	Webfetch uint8          `json:"webfetch"`
+}
+
+// fenceActions are the harness actions as the table's uint8; `ask` is never written.
+var fenceActions = []string{"", FenceAllow, FenceDeny}
+
+// fenceConfigOf is the FenceConfig record of one job: the rules FencePermission writes,
+// in pattern order so the record is byte-stable for one job.
+func fenceConfigOf(jobDir string, reads []string) fenceConfigDoc {
+	d := fenceConfigDoc{JobDir: jobDir, Reads: reads}
+	perm := FencePermission(jobDir, reads)
+	external, _ := perm[FenceExternalDirectory].(map[string]any)
+	for _, p := range slices.Sorted(maps.Keys(external)) {
+		a, _ := external[p].(string)
+		d.Rules = append(d.Rules, fenceRuleDoc{Pattern: p, Action: uint8(slices.Index(fenceActions, a))})
+	}
+	if w, _ := perm[FenceWebfetch].(string); w != "" {
+		d.Webfetch = uint8(slices.Index(fenceActions, w))
+	}
+	return d
+}
+
+var fenceTable = swarmTable[swarmwire.FenceConfig, swarmwire.FenceConfigBuilder, *swarmwire.FenceConfigBuilder]{
+	swarmwire.FenceConfigLoadMeasure, swarmwire.FenceConfigLoad, swarmwire.FenceConfigFromJson,
+	swarmwire.FenceConfigMeasure, swarmwire.FenceConfigSave, swarmwire.FenceConfigToJsonMeasure, swarmwire.FenceConfigToJson,
+}
+
+// fenceConfigReader is the FenceConfig record's strict reader (owner's rules S1 and S2):
+// the table wire, its padded standard base64, the schema JSON text and the legacy JSON
+// object, whose keys and types are the schema's, so the schema JSON text reads as legacy
+// into the same value. Each damaged form is refused by name and counted. An action or a
+// webfetch past 2 is refused as clamped, and a rule's action 0 (none) is refused: the
+// harness has no third action a non-interactive run can take.
+func fenceConfigReader() *schemaread.Reader[fenceConfigDoc] {
+	return schemaread.NewReader(swarmCodec("FENCE_CONFIG", "nova-swarm run -h", fenceTable,
+		func(r *swarmwire.FenceConfig) fenceConfigDoc {
+			d := fenceConfigDoc{JobDir: exitText(&r.JobDir), Reads: swarmList(&r.Reads), Webfetch: r.Webfetch}
+			for i := int32(0); i < r.Rules.Count; i++ {
+				rule := r.Rules.At(i)
+				d.Rules = append(d.Rules, fenceRuleDoc{exitText(&rule.Pattern), rule.Action})
+			}
+			return d
+		},
+		func(d *fenceConfigDoc) []byte {
+			rules := make([]any, 0, len(d.Rules))
+			for _, r := range d.Rules {
+				m := map[string]any{"action": r.Action}
+				if r.Pattern != "" {
+					m["pattern"] = r.Pattern
+				}
+				rules = append(rules, m)
+			}
+			return swarmJSON(map[string]any{"job_dir": d.JobDir, "reads": swarmEntries(d.Reads), "rules": rules, "webfetch": d.Webfetch})
+		},
+		jsonLegacy,
+		func(d *fenceConfigDoc, in []byte) schemaread.Report {
+			*d = fenceConfigDoc{}
+			var legacy struct {
+				JobDir   string         `json:"job_dir"`
+				Reads    []any          `json:"reads"`
+				Rules    []fenceRuleDoc `json:"rules"`
+				Webfetch uint8          `json:"webfetch"`
+			}
+			if json.Unmarshal(in, &legacy) != nil {
+				return schemaread.Report{Malformed: true}
+			}
+			// A read is a bare text or the schema's {"value": text} Entry.
+			for _, r := range legacy.Reads {
+				switch x := r.(type) {
+				case string:
+					d.Reads = append(d.Reads, x)
+				case map[string]any:
+					s, ok := x["value"].(string)
+					if !ok {
+						*d = fenceConfigDoc{}
+						return schemaread.Report{Malformed: true}
+					}
+					d.Reads = append(d.Reads, s)
+				default:
+					*d = fenceConfigDoc{}
+					return schemaread.Report{Malformed: true}
+				}
+			}
+			d.JobDir, d.Rules, d.Webfetch = legacy.JobDir, legacy.Rules, legacy.Webfetch
+			return schemaread.Report{}
+		},
+		func(d *fenceConfigDoc, c *schemaread.Checker) {
+			c.Required("job_dir", d.JobDir != "")
+			c.Text("job_dir", d.JobDir, math.MaxInt)
+			for _, r := range d.Reads {
+				c.Text("reads", r, math.MaxInt)
+			}
+			for _, r := range d.Rules {
+				c.Text("rules.pattern", r.Pattern, math.MaxInt)
+				c.Required("rules.action", r.Action != 0)
+				c.Bound("rules.action", int64(r.Action), 1, 2)
+			}
+			c.Bound("webfetch", int64(d.Webfetch), 0, 2)
+		}))
+}
+
+// ReadFenceConfig reads the FenceConfig record from body in any form and hands the
+// refusal to the caller by name; a malformed value is never read as absent or empty.
+func ReadFenceConfig(body []byte) (fenceConfigDoc, schemaread.Form, error) {
+	d, res, err := fenceReads.Read(body)
+	return d, res.Form, err
 }
