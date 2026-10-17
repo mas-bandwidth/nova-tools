@@ -263,16 +263,14 @@ func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 // launch, and a reader folds them. A field the provider did not report stays a dash, never a
 // zero, and a tab or a newline in a value is scrubbed so the row is always one row.
 func AppendCardUsage(path string, row UsageRow) error {
-	return appendCardUsage(path, row, 2*time.Second, func(path string, data []byte, mode os.FileMode) error {
+	return appendCardUsage(path, row, func(path string, data []byte, mode os.FileMode) error {
 		return atomicfile.Write(path, data, mode, atomicfile.ExactMode())
 	})
 }
 
 // appendCardUsage serializes replacement and append on one stable lock inode.
-// The caller supplies the bound to wait for the lock; production passes two
-// seconds, and a test passes a bound no load can reach.
-func appendCardUsage(path string, row UsageRow, lockWait time.Duration, replace func(string, []byte, os.FileMode) error) error {
-	unlock, err := takeFileLock(path+".lock", lockWait)
+func appendCardUsage(path string, row UsageRow, replace func(string, []byte, os.FileMode) error) error {
+	unlock, err := takeFileLock(path+".lock", 2*time.Second)
 	if err != nil {
 		return err
 	}
