@@ -57,6 +57,31 @@ func TestVersionSnapshotDiffDualRead(t *testing.T) {
 		}
 	})
 
+	t.Run("one value reads once per form", func(t *testing.T) {
+		t.Parallel()
+		forms := []struct {
+			name string
+			in   []byte
+			form schemaread.Form
+		}{
+			{"binary", bin, schemaread.FormBinary},
+			{"base64", b64, schemaread.FormBase64},
+			{"json", jsn, schemaread.FormJSON},
+			{"legacy", legacy, schemaread.FormLegacy},
+		}
+		for _, fc := range forms {
+			fc := fc
+			t.Run(fc.name, func(t *testing.T) {
+				t.Parallel()
+				rr := newSnapshotReader()
+				_, form, err := rr.Read(fc.in)
+				require.NoError(t, err)
+				assert.Equal(t, fc.form, form)
+				assert.Equal(t, uint64(1), rr.r.Counts().Reads(fc.form))
+			})
+		}
+	})
+
 	t.Run("damage is refused by name and counted per form", func(t *testing.T) {
 		t.Parallel()
 		cases := []struct {
