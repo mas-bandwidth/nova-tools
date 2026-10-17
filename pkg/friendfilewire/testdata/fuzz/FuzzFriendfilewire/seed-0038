@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x0c')
+[]byte("{\n  \"identity\": null,\n  \"redis\": null,\n  \"proof\": null,\n  \"acknowledge\": null\n}\n")
