@@ -96,8 +96,8 @@ func parse(r io.Reader, path string) ([]Decision, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1<<16), 64<<20)
 	for n := 1; sc.Scan(); n++ {
-		var l line
-		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
+		l, _, err := RecordLineReader.Read(sc.Bytes())
+		if err != nil {
 			return nil, fmt.Errorf("%s:%d is not a record line: %w", path, n, err)
 		}
 		count := 0

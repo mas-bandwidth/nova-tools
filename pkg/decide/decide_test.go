@@ -413,9 +413,8 @@ func TestLoadRefusesARecordedProbabilityOutsideZeroAndOne(t *testing.T) {
 			_, err := Load(path)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, path)
-			assert.ErrorContains(t, err, ":1:")
-			assert.ErrorContains(t, err, "question defect")
-			assert.ErrorContains(t, err, "outside [0, 1]")
+			assert.ErrorContains(t, err, ":1 is not a record line")
+			assert.ErrorContains(t, err, "RECORD_LINE REFUSED: clamped (p)")
 		})
 	}
 	inRange := filepath.Join(dir, "in-range.jsonl")
