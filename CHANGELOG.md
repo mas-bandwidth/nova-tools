@@ -1,5 +1,14 @@
 # nova-tools changelog
 
+## v1.5.1 — 2026-10-17
+
+Worker sandboxes sized to the machine, so ordinary parallel builds are no longer killed as runaways.
+
+- `nova-sandbox` bare form takes `--max-procs` and `--max-mem`. With neither it sizes the wall to the machine: 1024 processes on 32 or more CPUs, else 512; 16 GiB on 32 or more CPUs with 64 GiB or more, else 8 GiB; never above half the machine's memory. The old fixed caps were 256 processes and 8 GiB.
+- `nova-swarm` hands every card's child `GOFLAGS=-p=4`, `MAKEFLAGS=-j8` and `CMAKE_BUILD_PARALLEL_LEVEL=8` (GOMAXPROCS untouched); the go shim keeps `-p=4` in a GOFLAGS the card exports without its own `-p`.
+- Card tiers: the lint refuses a card below heavy only when its NEW: names a new `.tla` module. A card that edits existing models, `.cfg` files or the ledgers can run at any tier. `tla-is-heavy-or-above` and `tla-is-frontier` stay as remedy aliases for one release.
+- The concurrent usage-append tests take no wall clock.
+
 ## v1.5.0 — 2026-10-17
 
 Schema-table adoption, read side: the tools now read their records in both the legacy form and the new schema-table form, and count each read by form, so the legacy form can be retired once the counts show no legacy reads.
