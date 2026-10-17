@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x05')
+[]byte("{\n  \"provider\": null,\n  \"tokens\": [],\n  \"rough\": 0,\n  \"sources\": null\n}\n")
