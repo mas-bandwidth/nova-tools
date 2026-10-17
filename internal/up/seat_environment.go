@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
+	wire "github.com/mas-bandwidth/nova-tools/pkg/seatrecwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
@@ -61,11 +62,10 @@ func writeSeatEnvironment(c *tool.Call, getenv func(string) string) *tool.Out {
 		profile.Version = 1
 	}
 	profile.Environment = environment
-	data, err := json.MarshalIndent(profile, "", "  ")
+	data, err := seatEnvironmentTableJSON(profile)
 	if err != nil {
-		return tool.Refuse(fmt.Sprintf("the seat environment could not be encoded (%v); no file was changed", err))
+		return tool.Refuse(err.Error() + "; no file was changed")
 	}
-	data = append(data, '\n')
 	path, err := seatcred.SeatEnvironmentPath(getenv)
 	if err != nil {
 		return tool.Refuse(fmt.Sprintf("HOME must name an absolute directory when XDG_CONFIG_HOME is not absolute (%v)", err))
@@ -81,6 +81,89 @@ func writeSeatEnvironment(c *tool.Call, getenv func(string) string) *tool.Out {
 	}
 	return tool.Done().Note("seat environment written").Fact("fields", 3)
 }
+
+// seatEnvTableModel is the seatrec SeatEnvironment table as its schema JSON
+// text names it: the three endpoints are top-level fields, absent as null,
+// where the legacy record nested them under "environment" (S1, S2).
+type seatEnvTableModel struct {
+	Version          *int64              `json:"version,omitempty"`
+	ForgeIdentity    *string             `json:"forge_identity,omitempty"`
+	NovaSprintRedis  *string             `json:"nova_sprint_redis,omitempty"`
+	NovaSprintServer *string             `json:"nova_sprint_server,omitempty"`
+	NovaBusRedis     *string             `json:"nova_bus_redis,omitempty"`
+	Login            *seatcred.SeatLogin `json:"login,omitempty"`
+}
+
+// seatEnvironmentTableJSON is the profile as the schema JSON text form of the
+// seatrec SeatEnvironment table (S1, S2): built through the generated reader
+// and written with the generated writer, so a reader of any form reads back
+// exactly the record written. A value the table cannot hold is refused by
+// name before a byte is written, never written in the legacy form as a
+// fallback (the legacy write is gone). The file ends in the newline the
+// legacy writer left.
+func seatEnvironmentTableJSON(profile seatcred.SeatEnvironment) ([]byte, error) {
+	model := seatEnvTableModel{Version: ip(int64(profile.Version)), Login: profile.Login}
+	if profile.ForgeIdentity != "" {
+		model.ForgeIdentity = sp(profile.ForgeIdentity)
+	}
+	for _, e := range []struct {
+		key  string
+		slot **string
+	}{{"NOVA_SPRINT_REDIS", &model.NovaSprintRedis}, {"NOVA_SPRINT_SERVER", &model.NovaSprintServer}, {"NOVA_BUS_REDIS", &model.NovaBusRedis}} {
+		if v, ok := profile.Environment[e.key]; ok {
+			*e.slot = sp(v)
+		}
+	}
+	in, err := json.Marshal(model)
+	if err != nil {
+		return nil, fmt.Errorf("the seat environment could not be encoded (%v)", err)
+	}
+	var b wire.SeatEnvironmentBuilder
+	var r wire.TableReport
+	if !b.Init() || !wire.SeatEnvironmentFromJson(&b, in, &r) || !b.Lock() {
+		if reason := r.Reason; reason != "" {
+			return nil, fmt.Errorf("SEAT_ENVIRONMENT REFUSED: %s; run: nova-up -h", reason)
+		}
+		return nil, fmt.Errorf("the seat environment could not be encoded")
+	}
+	v := b.AsConst()
+	if reason := seatEnvironmentWriteBound(v); reason != "" {
+		return nil, fmt.Errorf("SEAT_ENVIRONMENT REFUSED: %s; run: nova-up -h", reason)
+	}
+	n := wire.SeatEnvironmentToJsonMeasure(v)
+	text := make([]byte, n)
+	if wire.SeatEnvironmentToJson(v, text) != n {
+		return nil, fmt.Errorf("the seat environment could not be encoded")
+	}
+	return append(text, '\n'), nil
+}
+
+// seatEnvironmentWriteBound is the table's write-side bounds
+// (pkg/schemaread): version is present and is 1, and a present login names
+// every reference. It returns the named refusal reason, or "" when the table
+// holds the value.
+func seatEnvironmentWriteBound(v *wire.SeatEnvironment) string {
+	if !v.VersionPresent {
+		return "absent_required (version)"
+	}
+	if v.Version != 1 {
+		return "clamped (version)"
+	}
+	if l := wire.SeatLoginAt(&v.Login); l != nil {
+		for _, f := range []struct {
+			name string
+			slot *int64
+		}{{"redis", &l.Redis}, {"user", &l.User}, {"store", &l.Store}, {"as", &l.AsName}, {"key", &l.Key}, {"sops", &l.Sops}, {"secret", &l.Secret}} {
+			if *f.slot == 0 {
+				return "absent_required (login." + f.name + ")"
+			}
+		}
+	}
+	return ""
+}
+
+func sp(s string) *string { return &s }
+func ip(v int64) *int64 { return &v }
 
 func validSeatEndpoint(value string) bool { return seatcred.ValidSeatEndpoint(value) }
 
