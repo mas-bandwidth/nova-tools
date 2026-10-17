@@ -5,6 +5,7 @@
 package cardcontract
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/decidewire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
@@ -129,20 +132,108 @@ func WriteFrame(path string, f Frame) error {
 	return atomicfile.Write(path, append(b, '\n'), 0o644)
 }
 
-// ReadFrame reads the frame at path; a frame with no kind or no card is refused.
+// frameRead is the strict reader of a card frame (the owner's S2, readers
+// first): the table wire of pkg/decidewire's Frame (generated from schemas/
+// decideide), the padded standard base64 of it, and the legacy JSON form
+// WriteFrame writes today. Reads are counted per form.
+var frameRead = schemaread.NewReader(&schemaread.Codec[Frame]{
+	Name:  "FRAME",
+	Help:  "nova-swarm",
+	Forms: []byte{1},
+	Reset: func(f *Frame) { *f = Frame{} },
+	Measure: func(wire []byte) error {
+		if _, err := decidewire.FrameLoadMeasureReason(wire); err != nil {
+			return err
+		}
+		return nil
+	},
+	LoadWire: func(f *Frame, wire []byte) schemaread.Report {
+		return frameWire(f, wire)
+	},
+	Legacy: func(in []byte) bool {
+		t := bytes.TrimLeft(in, " \t\r\n")
+		return len(t) > 0 && t[0] == '{'
+	},
+	LoadLegacy: func(f *Frame, in []byte) schemaread.Report {
+		if err := json.Unmarshal(in, f); err != nil {
+			return schemaread.Report{Malformed: true}
+		}
+		return schemaread.Report{}
+	},
+})
+
+// frameWire decodes the table wire of the Frame table into the card frame.
+func frameWire(f *Frame, wire []byte) schemaread.Report {
+	var b decidewire.FrameBuilder
+	if !b.Init() {
+		return schemaread.Report{Malformed: true}
+	}
+	defer b.Shutdown()
+	var rep decidewire.TableReport
+	ok := decidewire.FrameLoadBuilder(&b, wire, &rep)
+	out := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped), Malformed: rep.Malformed || !ok}
+	if rep.Verdict == decidewire.TableOpenRefused || rep.Verdict == decidewire.TableOpenDamaged {
+		if err := rep.Err(); err != nil {
+			out.Reason = err.Error()
+		}
+	}
+	if out.Reason != "" || out.Malformed || out.KindMismatch > 0 || out.Clamped > 0 {
+		return out
+	}
+	*f = frameOf(b.GetRoot(), &b.Arena)
+	return out
+}
+
+// frameOf is the card frame the Frame table holds, as the member writes it
+// today: the table's fields copied to the frame's own strings, so the builder
+// and its arena are free to shut down.
+func frameOf(r *decidewire.Frame, ar *decidewire.TableArena) Frame {
+	s := func(slot *decidewire.TableRef) string { return string(decidewire.TableStringAt(slot, ar).Data) }
+	var f Frame
+	f.Kind = map[decidewire.FrameKind]string{decidewire.FrameKindWork: "work", decidewire.FrameKindRead: "read"}[r.Kind]
+	f.Card = s(&r.Card)
+	f.Attempt = int(r.Attempt)
+	f.Tier = s(&r.Tier)
+	f.Model = s(&r.Model)
+	f.Repo = s(&r.Repo)
+	f.BaseRef = s(&r.BaseRef)
+	f.StageSha = s(&r.StageSha)
+	f.Branch = s(&r.Branch)
+	f.PrevHead = s(&r.PrevHead)
+	f.PrevFrom = int(r.PrevAttempt)
+	f.Why = s(&r.Why)
+	f.Finding = s(&r.Finding)
+	f.Fix = s(&r.Fix)
+	f.ReviewBase = s(&r.ReviewBase)
+	decidewire.FrameStageEach(&r.Stage, func(p *decidewire.StagePath) bool {
+		f.Stage = append(f.Stage, s(&p.Path))
+		return true
+	}, ar)
+	f.Recipes = s(&r.Recipes)
+	f.DecideBounce = s(&r.DecideBounce)
+	f.DecideReview = s(&r.DecideReview)
+	f.DecideGateFlaky = s(&r.DecideGateFlaky)
+	f.DecideGatePreexisting = s(&r.DecideGatePreexisting)
+	return f
+}
+
+// ReadFrame reads the frame at path, from its table wire, the padded standard
+// base64 of it, or the legacy JSON form WriteFrame writes; a frame with no
+// kind or no card is refused.
 func ReadFrame(path string) (Frame, error) {
 	var f Frame
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return f, err
 	}
-	if err := json.Unmarshal(b, &f); err != nil {
-		return f, fmt.Errorf("the frame %s is not JSON: %w", path, err)
+	v, _, err := frameRead.Read(b)
+	if err != nil {
+		return f, err
 	}
-	if (f.Kind != "work" && f.Kind != "read") || f.Card == "" {
-		return f, fmt.Errorf("the frame %s wants kind work or read and a card, got kind %q card %q", path, f.Kind, f.Card)
+	if (v.Kind != "work" && v.Kind != "read") || v.Card == "" {
+		return f, fmt.Errorf("the frame %s wants kind work or read and a card, got kind %q card %q", path, v.Kind, v.Card)
 	}
-	return f, nil
+	return v, nil
 }
 
 // JobName is the frame's text in the job directory, the first thing the child reads.
