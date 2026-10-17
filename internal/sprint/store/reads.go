@@ -5,11 +5,136 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
+
+// CostTotals are the complete primary totals, reconstructed from the append-only log's
+// cost_total writes. The log preserves dropped and removed primaries, and each stored total
+// includes records past the bounded cost_record list.
+type CostTotals struct {
+	ChargedUSD     string                `json:"charged_usd"`
+	Records        int                   `json:"records"`
+	ChargedRecords int                   `json:"charged_records"`
+	Streams        map[string]CostTotals `json:"streams,omitempty"`
+}
+
+// UnreconciledRecords are records without either a provider-reported or predicted price.
+func (c CostTotals) UnreconciledRecords() int { return max(0, c.Records-c.ChargedRecords) }
+
+// CostTotalsCache folds the epoch log incrementally, including primaries dropped from the
+// work table. The first read loads history once; later dashboard reads use LogSince from
+// the saved cursor. The cache is owned by the long-lived app/store reader, retaining its
+// backend strongly and resetting when that backend or epoch changes.
+type CostTotalsCache struct {
+	mu        sync.Mutex
+	backend   Backend // the root backend is retained across Store.AtEpoch wrappers
+	prefix    string
+	epoch     uint64
+	after     string
+	primaries map[string]primaryCostTotal
+}
+
+func (cache *CostTotalsCache) Read(ctx context.Context, st *Store) (CostTotals, error) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	root := st.root
+	if root == nil {
+		root = st.B
+	}
+	if cache.backend != root || cache.prefix != st.Names.Prefix || cache.epoch != st.PinnedEpoch() {
+		cache.backend, cache.prefix, cache.epoch = root, st.Names.Prefix, st.PinnedEpoch()
+		cache.after = ""
+		cache.primaries = map[string]primaryCostTotal{}
+	}
+	// Bound this read to the tail observed at its start. A busy sprint cannot make
+	// the dashboard chase a continuously growing log forever.
+	tail, _, err := st.B.Tails(ctx)
+	if err != nil {
+		return CostTotals{}, err
+	}
+	if tail == "" || cache.after == tail {
+		return summarizePrimaryCosts(cache.primaries), nil
+	}
+	for {
+		lines, ids, err := st.B.LogSince(ctx, cache.after, logPage)
+		if err != nil {
+			return CostTotals{}, err
+		}
+		stop := false
+		for i, line := range lines {
+			if i >= len(ids) {
+				break
+			}
+			if streamIDAfter(ids[i], tail) {
+				stop = true
+				break
+			}
+			applyPrimaryCostLine(cache.primaries, line)
+			cache.after = ids[i]
+			if ids[i] == tail {
+				stop = true
+				break
+			}
+		}
+		if stop || len(ids) < logPage || len(ids) == 0 {
+			return summarizePrimaryCosts(cache.primaries), nil
+		}
+	}
+}
+
+type primaryCostTotal struct {
+	stream string
+	total  cardcost.Total
+}
+
+func costTotalsFromLines(lines []sprint.Line) CostTotals {
+	primaries := map[string]primaryCostTotal{}
+	for _, line := range lines {
+		applyPrimaryCostLine(primaries, line)
+	}
+	return summarizePrimaryCosts(primaries)
+}
+
+func applyPrimaryCostLine(primaries map[string]primaryCostTotal, line sprint.Line) {
+	if line.Kind != sprint.LineMove || line.Table != sprint.Work || line.Primary == "" {
+		return
+	}
+	raw, ok := line.Set[sprint.FieldCostTotal]
+	if !ok {
+		return
+	}
+	primaries[line.Primary] = primaryCostTotal{stream: line.Stream, total: cardcost.ParseTotal(raw)}
+}
+
+func summarizePrimaryCosts(primaries map[string]primaryCostTotal) CostTotals {
+	out := CostTotals{ChargedUSD: "0", Streams: map[string]CostTotals{}}
+	add := func(dst *CostTotals, total cardcost.Total) {
+		if sum, ok := cardcost.Sum(dst.ChargedUSD, total.Charged); ok {
+			dst.ChargedUSD = sum
+		}
+		dst.Records += total.Records
+		dst.ChargedRecords += total.ChargedOf
+	}
+	for _, primary := range primaries {
+		add(&out, primary.total)
+		stream := primary.stream
+		if stream == "" {
+			stream = "-"
+		}
+		perStream := out.Streams[stream]
+		if perStream.ChargedUSD == "" {
+			perStream.ChargedUSD = "0"
+		}
+		add(&perStream, primary.total)
+		out.Streams[stream] = perStream
+	}
+	return out
+}
 
 // ReadCells reads one row's cards in the named columns of a table: the
 // shape, that row's cells, and a read set of what they hold. The cards come

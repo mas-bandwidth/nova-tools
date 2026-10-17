@@ -38,8 +38,14 @@ var (
 // treeRig is pushRig with the tree brief on the packet.
 func treeRig(t *testing.T, pu Pusher, r Result) *rig {
 	t.Helper()
+	return treeRigWithResolver(t, pu, r, nil)
+}
+
+// treeRigWithResolver installs the resolver before a child can finish asynchronously.
+func treeRigWithResolver(t *testing.T, pu Pusher, r Result, resolve func(string, string) (string, error)) *rig {
+	t.Helper()
 	s, rn, out := newScript(), newRunner(), &bytes.Buffer{}
-	g := &rig{m: New(Config{As: "m", Width: 2}, s, rn, pu, out), s: s, r: rn, out: out}
+	g := &rig{m: New(Config{As: "m", Width: 2, ResolveStep: resolve}, s, rn, pu, out), s: s, r: rn, out: out}
 	p := pk("c1")
 	p.Brief = treeBrief
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
@@ -99,13 +105,12 @@ func TestANineHexStepShaFinishesAtTheFullSha(t *testing.T) {
 	prefix := landSha[:9]
 	body := "step 2: ok " + prefix + " one\nstep 3: broken - red\n"
 	pu := &fakePusher{def: Push{Sha: landSha}}
-	g := treeRig(t, pu, Result{Ran: true, Shaped: true, Verdict: "not-done", Head: child, Report: "step 3 failed", Body: body})
-	g.m.cfg.ResolveStep = func(branch, got string) (string, error) {
+	g := treeRigWithResolver(t, pu, Result{Ran: true, Shaped: true, Verdict: "not-done", Head: child, Report: "step 3 failed", Body: body}, func(branch, got string) (string, error) {
 		if branch == "work/c1" && got == prefix {
 			return landSha, nil
 		}
 		return "", cardtree.UnknownCommit(got, branch)
-	}
+	})
 	_, err := g.tick(t)
 	require.NoError(t, err)
 	assert.Equal(t, []string{landSha}, pu.heads, "the push is asked for the full sha, not the child's head and not the nine hex")
@@ -113,10 +118,9 @@ func TestANineHexStepShaFinishesAtTheFullSha(t *testing.T) {
 		g.s.lines("finish"))
 
 	amb := "bbbbbbbbb"
-	g2 := treeRig(t, &fakePusher{def: Push{Sha: landSha}}, Result{Ran: true, Shaped: true, Verdict: "ok", Head: child, Report: "done", Body: "step 2: ok " + amb + " two\n"})
-	g2.m.cfg.ResolveStep = func(branch, got string) (string, error) {
+	g2 := treeRigWithResolver(t, &fakePusher{def: Push{Sha: landSha}}, Result{Ran: true, Shaped: true, Verdict: "ok", Head: child, Report: "done", Body: "step 2: ok " + amb + " two\n"}, func(branch, got string) (string, error) {
 		return "", cardtree.AmbiguousCommit(got, branch)
-	}
+	})
 	_, err = g2.tick(t)
 	require.NoError(t, err)
 	finish := g2.s.lines("finish")
@@ -126,10 +130,9 @@ func TestANineHexStepShaFinishesAtTheFullSha(t *testing.T) {
 	assert.Contains(t, finish[0], "--failed")
 
 	unk := "ccccccccc"
-	g3 := treeRig(t, &fakePusher{def: Push{Sha: landSha}}, Result{Ran: true, Shaped: true, Verdict: "ok", Head: child, Report: "done", Body: "step 2: ok " + unk + " two\n"})
-	g3.m.cfg.ResolveStep = func(branch, got string) (string, error) {
+	g3 := treeRigWithResolver(t, &fakePusher{def: Push{Sha: landSha}}, Result{Ran: true, Shaped: true, Verdict: "ok", Head: child, Report: "done", Body: "step 2: ok " + unk + " two\n"}, func(branch, got string) (string, error) {
 		return "", cardtree.UnknownCommit(got, branch)
-	}
+	})
 	_, err = g3.tick(t)
 	require.NoError(t, err)
 	finish = g3.s.lines("finish")

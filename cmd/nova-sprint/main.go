@@ -64,6 +64,8 @@ type app struct {
 	etaMu   sync.Mutex
 	etas    []etaSample // the view's estimates of the last etaHold (heldETA)
 	etaKey  etaKey      // the cards to land the held estimates were made over
+	costMu  sync.Mutex
+	costs   *store.CostTotalsCache // incremental exact totals shared by this process's views
 
 	// inventory reads the machines of nova-config and their widths (fleet
 	// sync): tests give it the config's in-memory store.

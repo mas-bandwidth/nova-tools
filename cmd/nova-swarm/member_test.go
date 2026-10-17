@@ -41,6 +41,112 @@ func TestReadResultTakesTheHeadFromRevAndTheReportFromOneLine(t *testing.T) {
 	require.Equal(t, "landed the member loop", report, "readResult = (%q, %q), want (0a1b2c3d, landed the member loop)", head, report)
 }
 
+// TestAnEndedChildRecoversEverySpendRowWhenTheFinalLineIsMissing pins the durable
+// per-attempt receipt as the accounting source when native dies after collect but
+// before its final NATIVE spend= summary reaches the member.
+func TestAnEndedChildRecoversEverySpendRowWhenTheFinalLineIsMissing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(dir, "c1.native.log"), "NATIVE INCOMPLETE label=c1 rc=-1 wall=4.00s harness=opencode budget=unmetered\n")
+	write(t, filepath.Join(job, "usage.tsv"), strings.Join([]string{
+		"job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd",
+		"c1\t1\t2026-10-04T10:00:00Z\t2026-10-04T10:00:01Z\tfailed\t1\topenrouter\tmodel\t10\t2\t-\t-\t-\t0.10",
+		"c1\t2\t2026-10-04T10:00:01Z\t2026-10-04T10:00:03Z\tfailed\t1\topenrouter\tmodel\t20\t4\t-\t-\t-\t0",
+	}, "\n")+"\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "c1.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.Contains(t, r.Usage, "input=30", "both retry rows contribute input tokens")
+	assert.Contains(t, r.Usage, "output=6", "both retry rows contribute output tokens")
+	assert.Contains(t, r.Usage, "model=openrouter/model")
+	assert.Contains(t, r.Usage, "actual_usd=0.1 actual_by=harness", "reported zero on the second row is known, not absent")
+}
+
+// TestAnExplicitZeroSpendSurvivesAInterruptedNativeSummary pins the distinction
+// between an actual zero and a missing cost in the durable receipt fallback.
+func TestAnExplicitZeroSpendSurvivesAInterruptedNativeSummary(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(job, "usage.tsv"), "job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\n"+
+		"c1\t1\t2026-10-04T10:00:00Z\t2026-10-04T10:00:01Z\tfailed\t1\topenrouter\tmodel\t10\t2\t-\t-\t-\t0\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "absent.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.Contains(t, r.Usage, "actual_usd=0 actual_by=harness")
+}
+
+// TestAPartialNativeSpendIsReconciledToTheReceipt protects against an interrupted
+// final line that contains spend= but only some of the durable totals.
+func TestAPartialNativeSpendIsReconciledToTheReceipt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(dir, "c1.native.log"), "NATIVE INCOMPLETE label=c1 rc=-1 wall=4.00s harness=opencode budget=unmetered spend=input:999\n")
+	write(t, filepath.Join(job, "usage.tsv"), strings.Join([]string{
+		"job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd",
+		"c1\t1\t2026-10-04T10:00:00Z\t2026-10-04T10:00:01Z\tfailed\t1\topenrouter\tmodel\t10\t2\t-\t-\t-\t0.10",
+	}, "\n")+"\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "c1.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.Contains(t, r.Usage, "input=10", "the receipt replaces an incomplete spend summary")
+	assert.Contains(t, r.Usage, "output=2")
+	assert.Contains(t, r.Usage, "actual_usd=0.1 actual_by=harness")
+}
+
+func TestUnknownRetryCostDoesNotKeepPartialNativePrice(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(dir, "c1.native.log"), "NATIVE INCOMPLETE label=c1 rc=-1 wall=4.00s harness=opencode budget=unmetered spend=input:30,output:6,cost:0.10,model:openrouter/model\n")
+	write(t, filepath.Join(job, "usage.tsv"), strings.Join([]string{
+		"job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd",
+		"c1\t1\t2026-10-04T10:00:00Z\t2026-10-04T10:00:01Z\tfailed\t1\topenrouter\tmodel\t10\t2\t-\t-\t-\t0.10",
+		"c1\t2\t2026-10-04T10:00:01Z\t2026-10-04T10:00:03Z\tfailed\t1\topenrouter\tmodel\t20\t4\t-\t-\t-\t-",
+	}, "\n")+"\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "c1.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.NotContains(t, r.Usage, "actual_usd=", "one priced retry cannot stand in for an unknown retry")
+	assert.Contains(t, r.Usage, "input=30")
+}
+
+func TestMalformedReceiptSpendIsReportedUnreconciled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(job, "usage.tsv"), "job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\n"+
+		"c1\t1\t2026-10-04T10:00:00Z\t2026-10-04T10:00:01Z\tfailed\t1\topenrouter\tmodel\t10\t2\t-\t-\t-\tnot-money\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "absent.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.Contains(t, r.Usage, "usage_source_error=receipt-unreadable")
+	assert.NotContains(t, r.Usage, "actual_usd=", "malformed spend is not priced")
+}
+
+// TestAUnreadableSpendReceiptStaysUnpricedAndVisible pins the error path: a malformed
+// durable receipt cannot silently turn the launch into a measured zero.
+func TestAUnreadableSpendReceiptStaysUnpricedAndVisible(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(job, "usage.tsv"), "job\tattempt\nshort\trow\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "absent.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.Contains(t, r.Usage, "usage_source_error=receipt-unreadable")
+	assert.Contains(t, r.Report, "usage receipt unreadable")
+	assert.NotContains(t, r.Usage, "actual_usd=0 ", "an unreadable receipt is not zero cost")
+}
+
 // TestReadResultOneLineHeadingIsCaseInsensitive pins the section's name.
 func TestReadResultOneLineHeadingIsCaseInsensitive(t *testing.T) {
 	t.Parallel()

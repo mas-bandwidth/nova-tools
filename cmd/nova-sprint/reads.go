@@ -493,6 +493,9 @@ type whereView struct {
 	// its balance as the run loop's poll last read it, the spend an hour measured, and
 	// whether its routes serve; absent with no route. The text frame does not draw it.
 	Providers []sprint.ProviderRow `json:"providers,omitempty"`
+	// Cost is the complete sum of every primary's cost_total, including removed
+	// primaries and records past each primary's retained consumer list.
+	Cost store.CostTotals `json:"cost"`
 	// Cards and Judgments are where --json --cards's, read for the dashboard's pull routes
 	// (store.Dealt): every work card dealt to a fleet row and not finished, and the open
 	// judgments naming one of their primaries; absent without --cards.
@@ -786,6 +789,15 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	}
 	now := a.now()
 	v := whereView{At: now, Tables: map[string]map[string]map[string]string{}, Streams: clocks, Epoch: st.PinnedEpoch(), Coordinator: coordinator}
+	a.costMu.Lock()
+	if a.costs == nil {
+		a.costs = &store.CostTotalsCache{}
+	}
+	costs := a.costs
+	a.costMu.Unlock()
+	if v.Cost, err = costs.Read(ctx, st); err != nil {
+		return whereView{}, "", err
+	}
 	if moved {
 		v.Seat = &seat
 	}

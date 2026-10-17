@@ -1628,7 +1628,7 @@ func (m *Member) endEndedLocal() {
 				m.post(id, post{res: &r})
 				return
 			}
-			r = treeFinish(p, r)
+			r = treeFinishWith(p, r, m.stepResolve(p))
 			var pu Push
 			switch {
 			case r.Head == "":
