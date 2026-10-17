@@ -37,6 +37,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	// The blank import installs the typed record readers (pkg/config/rowsread
+	// init), so a fixed or base64 image reads in this binary and is not refused
+	// as unknown_form (S4: readers first).
+	_ "github.com/mas-bandwidth/nova-tools/pkg/config/rowsread"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
@@ -67,7 +71,7 @@ const (
 // verb's flags, effect and worked example are in its own -h (verbExtra).
 const usageTop = `nova-config: a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis
 
-how it works: each kind (machine, fleet, friend, sprint, loop, route, tier) is a
+how it works: each kind (machine, fleet, friend, sprint, loop, provider, route, tier) is a
 table of rows in PostgreSQL's schema config, which migrate makes; every write
 adds a history row naming who made it. apply copies the rows into Redis, the
 view the fleet reads; inventory prints that view for Ansible. --file <path>

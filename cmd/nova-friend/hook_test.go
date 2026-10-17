@@ -88,6 +88,44 @@ func TestALaneTakesNothingWhileAPushIsDown(t *testing.T) {
 	assert.NotEmpty(t, r.lines, "every change of the gate's word is on the record")
 }
 
+// A coordinator can also work cards on her own friend row. The daemon joins
+// her existing hook and holds only the optional work lease; it must never
+// replace her bus+sprint role or advance its epoch.
+func TestCoordinatorCardRunnerJoinsExistingHook(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newHookRig(t, hook.Coordinator)
+	r.h.Hook(t, "bob", hook.Coordinator)
+	before := r.h.State(t, "bob")
+	sent := 0
+	take := gated(r.dh, func(context.Context, []string) (string, error) { sent++; return "LANE OK", nil })
+
+	r.dh.step(ctx)
+	got, err := take(ctx, []string{"take"})
+	require.NoError(t, err)
+	assert.Equal(t, "LANE OK", got)
+	assert.Equal(t, hook.Coordinator, r.dh.holder.Role)
+	after := r.h.State(t, "bob")
+	assert.Equal(t, before.Epoch, after.Epoch)
+	assert.Equal(t, hook.Coordinator, after.Role)
+	assert.Equal(t, hook.StateProven, after.State)
+	live, err := r.h.Client.Exists(ctx, hook.LiveKey("bob", hook.Work)).Result()
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, live, "the daemon holds work without changing the coordinator role")
+
+	require.NoError(t, r.h.Store.Unprove(ctx, "bob", hook.Coordinator, hook.Sprint, after.Epoch))
+	r.dh.step(ctx)
+	_, err = take(ctx, []string{"take"})
+	assert.ErrorIs(t, err, ErrUnhooked, "loss of coordinator sprint proof closes card intake")
+	assert.Equal(t, 1, sent)
+
+	r.h.Unhook(t, "bob")
+	r.dh.step(ctx)
+	_, err = take(ctx, []string{"take"})
+	assert.ErrorIs(t, err, ErrUnhooked)
+	assert.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
+}
+
 // TestTheBeatSaysUnhooked pins her beat: while the gate says no her beat is a
 // down beat with the reason unhooked, never an up beat that would show her
 // alive; hooked in and proven, the up beat goes.
@@ -174,19 +212,19 @@ func TestCoordinatorVerbsRefuseUntilHooked(t *testing.T) {
 }
 
 // TestTheDaemonNeverTakesARecordOver pins that a daemon started while its
-// friend is hooked as another role (a coordinator's own daemon) holds nothing
+// friend is hooked as a role other than friend or coordinator holds nothing
 // and takes nothing, and the record stays the other role's.
 func TestTheDaemonNeverTakesARecordOver(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	r := newHookRig(t, hook.Friend)
-	_, _, err := r.h.Store.Arm(ctx, "bob", hook.Coordinator, "session", false)
+	_, _, err := r.h.Store.Arm(ctx, "bob", hook.Comms, "session", false)
 	require.NoError(t, err)
 	r.dh.step(ctx)
 	ok, why := r.dh.ok()
 	assert.False(t, ok)
 	assert.Contains(t, why, "bob is hooked as another role")
-	assert.Equal(t, hook.Coordinator, r.h.State(t, "bob").Role)
+	assert.Equal(t, hook.Comms, r.h.State(t, "bob").Role)
 	assert.Equal(t, int64(1), r.h.State(t, "bob").Epoch, "the record was not taken over")
 }
 

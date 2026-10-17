@@ -122,9 +122,12 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		ctx, cancel := context.WithTimeout(ctx, *timeout)
 		defer cancel()
 		stage := "connecting"
-		// fail is a store failure: the deadline, or the store's own words.
+		// fail is a store failure: the deadline, or the store's own words. A
+		// socket deadline set from ctx can fire a moment before ctx.Err() is
+		// set, so a failure at or past the deadline is the deadline too.
+		deadline, _ := ctx.Deadline()
 		fail := func(err error) int {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || !time.Now().Before(deadline) {
 				return refuseLine(stderr, verb, fmt.Sprintf("timed out after %s waiting for the store at %s while %s; check that Redis answers there; run: %s", *timeout, addr, stage, again("--timeout", (*timeout*3).String())), 2)
 			}
 			return refuse(stderr, verb, err.Error())

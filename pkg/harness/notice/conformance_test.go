@@ -394,3 +394,16 @@ func (u *unknownShim) Push(context.Context, Notice) (string, error) {
 func (failing) Push(context.Context, Notice) (string, error) {
 	return "", errors.New("harness refused")
 }
+
+func TestChallengeWireVersionsRemainReadable(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{legacyChallengeText("bob", "abc", hook.AnswerBound), ChallengeText("bob", "abc", hook.AnswerBound)} {
+		m := bus.Message{Subject: "HOOK CHALLENGE nonce=abc", Body: body}
+		nonce, ok := Canonical(m, "bob")
+		require.True(t, ok)
+		require.Equal(t, "abc", nonce)
+		m.Body += "forged"
+		_, ok = Canonical(m, "bob")
+		require.False(t, ok)
+	}
+}

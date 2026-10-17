@@ -18,10 +18,11 @@ nova-bus on 2026-10-04, when the git bus was removed.
   from the store's time: `TIME`, never the client's clock; its first ten random
   bits are the microsecond, so ids sort by the store's time), `from`, `to`
   (comma list), `cc` (comma list, may be empty), `subject`, `re` (the id it
-  answers, may be empty), `at` (RFC 3339 UTC from `TIME`, to the second) and
-  `body` (UTF-8, at most 1 MiB). A writer that has switched to the native form
-  adds one field more, `envelope`, the typed envelope as its binary wire
-  (below, the native form).
+  answers, may be empty), `card` (the work card id it is about, may be empty),
+  `head` (the 40-character lowercase hex commit SHA it names, may be empty),
+  `at` (RFC 3339 UTC from `TIME`, to the second) and `body` (UTF-8, at most 1
+  MiB). A writer that has switched to the native form adds one field more,
+  `envelope`, the typed envelope as its binary wire (below, the native form).
 - A name is lowercase letters, digits and hyphens, at most 64 bytes, and one of
   nova-config's friend or machine rows as `apply` wrote them into the store
   (the sets `friends` and `machines`).
@@ -41,7 +42,7 @@ nova-bus on 2026-10-04, when the git bus was removed.
 - The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
   `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
   `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds
-  streams, groups and pending lists under these names, and renaming a live key
+  streams, groups and pending entries under these names, and renaming a live key
   is a migration (every reader stopped, every stream copied, every group
   re-made with its pending entries), bought for nothing but a spelling.
 
@@ -52,41 +53,52 @@ The typed bus envelope (`schemas/bus/envelope.schema`, generated into
 `envelope` holds the envelope's binary wire as raw bytes, with no base64 and no
 text decode. A Redis stream field is a byte string, so the bytes `XADD` writes
 are the bytes `XRANGE` and `XREADGROUP` hand back. `pkg/bus/native.go` holds
-the writer (`EnvelopeWire`, `NativeFields`) and the reader (`EnvelopeReader`).
+the writer (`EnvelopeWire`, `NativeFields`, `EnvelopeText`) and the reader
+(`EnvelopeReader`).
 
 - The wire's first byte is its form byte, `1` (`bus.EnvelopeForm`): the table
   wire's first form. A reader refuses a wire led by any other byte as
   `unknown_form`, so a newer form is refused by name, never misread.
 - The field carries the message as its entry holds it: `id`, `from`, `to`,
-  `cc`, `subject`, `re`, `kind`, `at_ms` and, on an ask, `due_ms` (the store's
-  stamps, in milliseconds since the epoch), and `body`. The token is the
-  sender's and is never on an entry, in this field or in the text fields.
-- While writers switch, the field is written beside the legacy text fields,
-  which are unchanged: a reader that has not learned the field reads the entry
-  as it did, the field ignored. `Bus.Native` is the writer switch; off, a send
-  writes the legacy fields alone. Switched, a send also holds the message to
-  the envelope's bounds (a subject of at most 200 bytes, at most 64 names in
-  `to` and in `cc`, UTF-8 with no NUL in every text) and refuses one past them
-  by name (`ENVELOPE REFUSED: <what>; run: nova-bus send -h`) before anything
-  is written; its dry run names the same refusal. The timeout the bus writes
-  for an unanswered ask stays in the legacy fields.
+  `cc`, `subject`, `re`, `card`, `head`, `kind`, `at_ms` and, on an ask,
+  `due_ms` (the store's stamps, in milliseconds since the epoch), and `body`.
+  The token is the sender's and is never on an entry, in this field or in the
+  text fields.
+- `Bus.Builder` constructs and validates every outbound `send` through the
+  generated `buswire.EnvelopeBuilder` (`EnvelopeWire` in `pkg/bus/native.go`,
+  setting `From`, `To`, `Cc`, `Subject`, `Body`, `Kind`, `Re`, `Card`, `Head`,
+  `AtMs`, `DueMs` and `Token`) before anything is written to Redis: a subject
+  of at most 200 bytes, a body of at most 1 MiB, at most 64 names of at most
+  64 bytes in `to` and in `cc`, `re` and `card` of at most 64 bytes, `head` as
+  40 lowercase hex characters, `token` of at most 128 bytes, and UTF-8 with no
+  NUL in every text. A message past any bound is refused by name on stderr at
+  exit 2 (`ENVELOPE REFUSED: <what>; run: nova-bus send -h`) before anything is
+  written; its dry run names the same refusal. While writers switch, the binary
+  `envelope` field is written beside the legacy text fields, which are
+  unchanged: a reader that has not learned the field reads the entry as it did,
+  the field ignored. `Bus.Native` is the writer switch for the stream entry;
+  off, a send writes the legacy fields alone. The timeout the bus writes for an
+  unanswered ask stays in the legacy fields.
 - The cutover is readers first, then writers (the owner's rule S4): every
   reader learns the field, then the writers switch in a short window.
   `EnvelopeReader` counts each read under the form it arrived in (`binary` for
   the field, `legacy` for an entry without it, `base64` and `json` for the text
   forms), and the `legacy` count standing still is the evidence that every
   writer has switched.
-- `EnvelopeReader.ReadEntry` reads an entry: with the field there, the field
-  is the message, read strictly through `pkg/schemaread`. A truncated wire,
-  trailing bytes, an unknown form byte, an empty field, a text form in the
-  field (the bus carries none), a value past a bound and a field a sent message
-  always has gone missing are each refused by name (`ENVELOPE REFUSED: <reason>; run: nova-bus send -h`), never read as a shorter envelope and never
-  patched from the legacy fields beside it. Without the field the entry reads
-  as `Parse` reads it.
-- The text forms are for text transports (the owner's rule S2), never for the
-  bus itself: padded standard base64 of the same wire, form byte first, and
-  the schema JSON text form. `EnvelopeReader.ReadText` reads either, and the
-  wire, and `WriteText` writes them under the same bounds.
+- `EnvelopeReader.ReadEntry` (and `Bus.ReadEntry` on `recv`, `Bus.ReadEntries`
+  on `peek`, `log`, and `wait`) reads an entry:
+  with the field there, the field is the message, read strictly through
+  `pkg/schemaread`. A truncated wire, trailing bytes, an unknown form byte, an
+  empty field, a text form in the field (the bus carries none), a value past a
+  bound and a field a sent message always has gone missing are each refused by
+  name (`ENVELOPE REFUSED: <reason>; run: nova-bus send -h`), never read as a
+  shorter envelope and never patched from the legacy fields beside it. Without
+  the field the entry reads as `Parse` reads it and is counted under `legacy`.
+- The text forms are for text transports and human inspection (the owner's rule
+  S2), never for the bus itself: padded standard base64 of the same wire, form
+  byte first, and the schema JSON text form. `EnvelopeReader.ReadText` reads
+  either, and the wire, `WriteText` writes them under the same bounds, and
+  `EnvelopeText` (`nova-bus show`) renders the name-keyed schema text form.
 
 ## The semantics
 
@@ -125,21 +137,31 @@ A reader waits on its stream with `BLOCK`, never on a clock: a message is pushed
 takes `--json`; `log` takes `--max`.
 
 - `send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> |
-  --stdin) [--re <id>]` prints `SEND OK id=<id> to=<names> cc=<names>
-  at=<time> bytes=<n> sha256=<hex>` (and `login=none` on a store with no
-  users): the count and the digest are the body's as the store holds it, the
-  sender's check that a file arrived whole without asking the receiver. A body's
-  trailing newline is the body's and is kept by send, the store, log and recv. Refuses, naming every problem at once: an unknown name (with the
-  nova-config line that adds one), a bad name, an empty body, a body over 1
-  MiB, an empty subject, a body from both or neither source. The message
-  landed, a sender or recipient with no proven inbox push is one `SEND NOTE
-  push=<none|down|stale> for <name>: ...` line each after the `SEND OK` line,
-  advice and never a refusal (bus-requires-inbox-push-proof, below).
+  --stdin) [--re <id>] [--card <id>] [--head <sha>]` constructs and validates
+  its `buswire.Envelope` through the generated `EnvelopeBuilder` before writing
+  and prints `SEND OK id=<id> to=<names> cc=<names> at=<time> bytes=<n> sha256=<hex>` (and `login=none` on a store with no users): the count and the
+  digest are the body's as the store holds it, the sender's check that a file
+  arrived whole without asking the receiver. A body's trailing newline is the
+  body's and is kept by send, the store, log and recv. Refuses on stderr at
+  exit 2, writing nothing: an unknown name (with the nova-config line that adds
+  one), a bad name, an empty body, a body over 1 MiB, an empty subject or one
+  over 200 bytes, more than 64 names in `to` or `cc`, a `re` or `card` over 64
+  bytes, a `head` that is not 40 lowercase hex characters, a `token` over 128
+  bytes, a NUL or non-UTF-8 byte in any text field, or a body from both or
+  neither source. The message landed, a sender or recipient with no proven
+  inbox push is one `SEND NOTE push=<none|down|stale> for <name>: ...` line
+  each after the `SEND OK` line, advice and never a refusal
+  (bus-requires-inbox-push-proof, below).
   `--token <t> [--token-life <d>] [--token-cleanup <d>]` makes the send safe
   to retry (a-lost-send-response-is-safe-to-retry.w1, below).
 - `recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec
-  <command>]` prints one message (a `RECV OK` line with id, from, to, cc, re, at and subject, a blank
-  line, the body) and exits 0, or `RECV NONE` at exit 1 when nothing waits.
+  <command>]` reads each claimed or new stream entry through `Bus.ReadEntry`
+  (`EnvelopeReader.ReadEntry`), accepting both the native binary `envelope`
+  field (`FormBinary`) and the legacy stream fields (`FormLegacy`), counting
+  each form on the reader, and refusing a damaged native `envelope` field by
+  name. Prints one message (a `RECV OK` line with id, from, to, cc, re, at and
+  subject, a blank line, the body) and exits 0, or `RECV NONE` at exit 1 when
+  nothing waits.
   `--exec` runs the command with that same text on its stdin (the body ending
   in a newline) and acks the message when it exits 0; a non-zero exit leaves it
   pending and is `RECV FAILED` at exit 1. `--max <n>` takes up to n messages in
@@ -207,6 +229,16 @@ takes `--json`; `log` takes `--max`.
   state= id= from= at= subject=` line per message. Writes nothing, makes no
   group.
 - `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
+- `show [--as <me>] (--id <id> | --stdin)` reads one message by `--id <id>` from
+  `bus2:log`, paging through every bounded log window until it finds the ID
+  (through `EnvelopeReader.ReadEntry`, accepting both native and legacy
+  entries), or one envelope from `--stdin` (through
+  `EnvelopeReader.ReadText`, accepting the binary wire, base64 or JSON text
+  form) and prints its name-keyed schema text form on stdout (`EnvelopeText`,
+  with `"schema":"bus/envelope"`, `"version":1` and every non-default field by
+  name: `id`, `from`, `to`, `cc`, `subject`, `body`, `kind`, `re`, `card`,
+  `head`, `at_ms`, `due_ms`), never raw binary bytes. Refuses an unknown `--id`,
+  an empty or oversized `--stdin`, or a damaged wire on stderr at exit 2.
 - `names` prints `NAMES OK count=<n> proven=<n>` and one line per known name:
   `NAMES NAME name= push=<proven|stale|down|none> age=<age|never> harness=<h>`.
 - `version`, `help`, `help <verb>`.
@@ -228,7 +260,7 @@ same on every retry of it (`send --token <t>`, `Message.Token`; letters,
 digits, `.`, `_`, `:` and `-`, at most 128 bytes; the token is the sender's
 and is not on the entry). The send's **fingerprint** is the SHA-256 of its
 arguments as the check normalised them: from, to and cc (sorted, each once),
-subject, re, kind (spelled out) and body, each length-prefixed. The send
+subject, re, card, head, kind (spelled out) and body, each length-prefixed. The send
 writes, in one atomic step (`AddOnce`: a script, which Redis runs alone), the
 token's record at `bus2:sent:<from>:<token>` (`SET ... PX <cleanup>`) with the
 entries on every stream and the receipt marks, unless the record is already
@@ -534,14 +566,27 @@ INFO` on Redis 8 answers):
 | Verb | Commands | Keys |
 | --- | --- | --- |
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
-| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`, then `HGETALL` (the NOTE); with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
-| recv | `SMEMBERS`, `TIME`, `HGETALL` (the NOTE, once per run), `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`; `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>`; `bus2:receipt:<f>` |
+| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HSETNX`, `HDEL`, `EXEC`; with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HSETNX`, `HDEL` | `friends`, `machines` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:answers:<f>` when it answers (re: every reply, ask or not, `HSETNX` the first reply's `at`, in the send's transaction or the script); with `--kind ask`, `bus2:ask:<id>` (the ask's record, a new id, so every name) and `bus2:asks:<f>` (the sender's index); `bus2:sent:<f>:*` with a token |
+| recv | `SMEMBERS`, `TIME`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`, `XCLAIM` (a message the filter skips is handed back at once); `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:to:<f>`; `bus2:receipt:<f>` |
 | wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
-| names | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`, `bus2:push` |
-| the friend daemon's push proof | `SMEMBERS`, `TIME`, `MULTI`, `HSET`, `EXEC` | `friends`, `machines`; `bus2:push` |
+| names | `SMEMBERS`, `TIME` | `friends`, `machines` |
+| asks | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`; `bus2:asks:<f>`; `bus2:ask:<each id>`; `bus2:answers:<each recipient>` (read: the recipients' replies are theirs); with `--liveness`, and for `overdue` (its plan, `--dry-run`, and its reads), `bus2:asks:<every name>` (read) and `bus2:receipt:<every friend>`, `bus2:owed:*` |
+| the expiry (`ExpireAsks`; no friend's login) | the asks' reads above, then the once-script: `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `bus2:asktimeout:<id>`, `bus2:ask:<id>`, the sender's stream, `bus2:log`, `bus2:owed:<sender>`: the first is on no friend's line |
+
+The expiry (`Bus.ExpireAsks`, which delivers an ask's timeout) is run by two
+processes and by no friend's login: `nova-bus overdue`, the alarm the
+coordinator's loop runs under the coordinator's login, and `nova-hook serve`,
+once a pass, under the hook server's (`cmd/nova-bus/main.go` overdue,
+`cmd/nova-hook/serve.go`). Its once-key `bus2:asktimeout:<id>` is therefore
+on no friend's line, and a friend who runs `nova-bus overdue` without
+`--dry-run` is refused (`NOPERM`) at the one write of an ask that is due: its
+plan and reads (`--dry-run`) are hers. Likewise `SADD` (`Bus.Enroll`, the
+roster's growth, nova-sprint's `friend sync`) is the enroller's and not a
+friend's. `bus2:push` (the push proof) was deleted from the code (#5801, E2c)
+and is no longer granted.
 
 The wrinkle, said plainly: a sender writes other friends' streams. `send` fans
 the message out from the client, one `XADD` per recipient stream inside the
@@ -556,18 +601,48 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:push ~bus2:sent:<f>:* ~friends ~machines resetchannels
-  +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
-  +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hdel +hget +hgetall
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:sent:<f>:* ~hook:rec:<f> ~bus2:ask:* ~bus2:asks:<f> %R~bus2:asks:* ~bus2:answers:<f> %R~bus2:answers:* %R~friends %R~machines resetchannels
+  +hello +ping +smembers +time +type +xadd +xgroup|create +xreadgroup
+  +xautoclaim +xclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hsetnx +hdel +hget +hgetall
   +eval +evalsha (~bus2:sent:<f>:* +get +set)
 ```
 
+The ask records (the asks above): `bus2:ask:*` is the whole family because an
+ask's id is made by the store's time and so cannot be named before the send
+(`bus2:asks:` and `bus2:asktimeout:` do not match it: the pattern ends at the
+colon). The sender's index and her answers are her own and no one else's:
+`~bus2:asks:<f>` and `~bus2:answers:<f>` are the only read-write patterns on
+them, so `ada` cannot `HSET` or `HSETNX` `bus2:answers:bob` (a forged reply
+to `bob`'s ask) and cannot write another sender's index; the reads of
+others' (`%R~bus2:asks:*`, `%R~bus2:answers:*`) are read-only selectors,
+because `asks` reads the recipients' answers and `--liveness` every name's
+index. `+hsetnx` is a root command, and adds no reach to `+hset`: every key
+the line makes writable to a hash command can already be `HSET`.
+
+`~hook:rec:<f>` is the sender's own hook record: an explicit model send stamps it with `bus_sent_at` in the same script (`activityLua`, tla/HookBeat.tla, BusSend), and `+hget` and `+hset` are root commands already. Like `bus2:answers:<f>` it is her own and no one else's, so she cannot write another name's record. A send with no once-key declares `bus2:sent:<f>:-` as its first key, because Redis checks every declared key against the login and the empty key is on no line.
+
+The roster patterns `%R~friends` and `%R~machines` grant reads only.
+Even a root `+set` cannot overwrite them.
+
 The selector in parentheses is there because a root `+set` would reach every
-key the user has (a friend could `SET friends x` and wipe the roster, or
-`SET bus2:log x` and destroy the log), and the token's record is the only key
-a send ever gets or sets: Redis 7 checks each command a script runs, so the
+writable key the user has (`SET bus2:log x` destroys the log), and the token's
+record is the only key a send ever gets or sets: Redis 7 checks each command a script runs, so the
 script's `GET` and `SET` pass on the selector, on the sender's own records
 only, while `EVAL`'s declared keys pass on the root.
+
+The line is a checked artifact, not a hand-kept copy of the code:
+`TestTheFriendACLCoversEveryBusKeyFamily` (`pkg/bus/acl_test.go`) reads
+`pkg/bus`'s Go and Lua source (`go/parser`, no store, no clock), derives the key
+families (every `bus2:` constant and every constant passed as a key) and
+the commands (every go-redis call by its command name, every `redis.call` in a
+script, the `Do` arguments, and `pkg/redisconn`'s `HELLO` and `PING`), and
+fails when a family or command has no grant or a named server-only reason, and
+when the line grants a key pattern or a command nothing uses. The unit
+check preserves independent selectors and read/write permissions. It pins the
+current layout: bus commands on the root, with `GET` and `SET` on the token
+selector; it does not accept arbitrary rearrangements of the ACL. The functional
+tier applies the same line to a real Redis user
+(`TestRedisFriendACLSetsOnlyItsOwnTokenRecords`).
 
 If the fan-out moved into the store (a Redis function running `XADD` for the
 caller, which Redis runs under the caller's own ACL, so it buys nothing; or a

@@ -97,17 +97,17 @@ const (
 	// bound outlives the whole bound of the next (a session answering every
 	// challenge inside its bound is never unproven between them).
 	ProofTTL = ChallengeEvery + 2*AnswerBound
-	// BeatEvery is the heartbeat's default interval: nova-hook serve challenges
-	// every hooked name whose role carries the bus push once an interval, and
-	// the answer is due within the same interval (tla/HookBeat.tla).
+	// BeatEvery is the server's pass interval, not its challenge cadence
+	// (tla/HookBeat.tla, Pass).
 	BeatEvery = time.Minute
-	// DownAfter is the heartbeat's default silence before a name goes down:
-	// nova-hook serve unhooks a name only once its last answer (or its
-	// hooking in, whichever is later) is older than DownAfter by the store's TIME
-	// and the challenge of the last pass still stands unanswered; challenges
-	// still go out every interval (2026-10-14: a harness that cannot
-	// answer mid-turn needs more than two one-minute intervals). The readers'
-	// up (Served.Down) uses the same window (tla/HookBeat.tla, DownAfter).
+	// BusyQuietAfter applies to a friend with ready or working sprint cards.
+	BusyQuietAfter = 5 * time.Minute
+	// QuietAfter applies to an idle friend or comms name.
+	QuietAfter = 10 * time.Minute
+	// CoordinatorEvery is the coordinator's quiet window.
+	CoordinatorEvery = 30 * time.Minute
+	// DownAfter is silence required in addition to an outstanding challenge
+	// past AnswerBound before the server unhooks a name (tla/HookBeat.tla).
 	DownAfter = 5 * time.Minute
 )
 
@@ -136,6 +136,15 @@ func ProofKey(name string, p Push) string { return prefix + "proof:" + name + ":
 // ChallengeKey is name's outstanding challenge: a hash of epoch, sum, pushes, with a TTL.
 func ChallengeKey(name string) string { return prefix + "chal:" + name }
 
+// DeliveryKey holds the private pending challenge payload until bus delivery
+// is confirmed (tla/HookBeat.tla, delivery obligation).
+func DeliveryKey(name string) string { return prefix + "delivery:" + name }
+
+// DeliveryOnce is the bus once-key of this challenge, stable across retries.
+func DeliveryOnce(name string, epoch int64, nonce string) string {
+	return fmt.Sprintf("%s:%d:%s", DeliveryKey(name), epoch, Sum(nonce))
+}
+
 // The record's states and a push's (docs/SPEC-HOOK.md, the states).
 const (
 	StateNone     = "none"     // no record: never hooked in
@@ -150,21 +159,58 @@ const (
 	PushProven = "proven" // a live lease and a proof
 )
 
-// stamp is the value of a lease or a proof: the record's epoch it was written
+// Stamp is the value of a lease or a proof: the record's epoch it was written
 // under, the store's time in ms, and who wrote it.
-type stamp struct {
-	Epoch int64  `json:"epoch"`
-	At    int64  `json:"at"`
-	By    string `json:"by"`
+type Stamp struct {
+	Epoch int64
+	AtMS  int64
+	By    string
 }
 
-// parseStamp is the stamp raw holds, ok false when it holds none.
-func parseStamp(raw string) (stamp, bool) {
-	var s stamp
-	if raw == "" || json.Unmarshal([]byte(raw), &s) != nil {
-		return stamp{}, false // ignored: a value that is no stamp proves nothing
+// StampReader reads the raw value of a lease or a proof key. It answers a
+// stamp, or an error naming why the value is no stamp; a value that is no
+// stamp proves nothing, so JudgeWith counts it for nothing and says why in
+// PushStatus.Refused. The reader is the seam where the typed stamp is read:
+// hook/seatstamp reads the typed wire, its base64 and JSON text, and the
+// legacy JSON the record's scripts write, each counted by form. This package
+// imports no generated table (pkg/hookwire's own tests import this package),
+// so the typed reader is handed in, never imported.
+type StampReader interface {
+	ReadStamp(raw string) (Stamp, error)
+}
+
+// JSONStamps is the reader of the JSON the record's scripts write today,
+// the one JudgeWith uses when no reader is handed in: lenient, and it names a value
+// that is no JSON stamp.
+type JSONStamps struct{}
+
+// ReadStamp is the stamp raw holds as JSON, an error when it holds none.
+func (JSONStamps) ReadStamp(raw string) (Stamp, error) {
+	var s struct {
+		Epoch int64  `json:"epoch"`
+		At    int64  `json:"at"`
+		By    string `json:"by"`
 	}
-	return s, true
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		return Stamp{}, errors.New("STAMP REFUSED: malformed; run: nova-hook status -h")
+	}
+	return Stamp{Epoch: s.Epoch, AtMS: s.At, By: s.By}, nil
+}
+
+// stampsOr is r, or the JSON reader when r is nil.
+func stampsOr(r StampReader) StampReader {
+	if r == nil {
+		return JSONStamps{}
+	}
+	return r
+}
+
+// readStamp is the stamp raw holds, empty for none (no key: not a refusal).
+func readStamp(rd StampReader, raw string) (Stamp, error) {
+	if raw == "" {
+		return Stamp{}, nil
+	}
+	return rd.ReadStamp(raw)
 }
 
 // PushRead is one push's keys as one read found them: the lease and the proof
@@ -179,21 +225,26 @@ type PushStatus struct {
 	Push      Push
 	State     string // PushDown, PushArmed, PushProven
 	By        string // the lease's holder, "" when down
+	Refused   string // why a lease or proof value was refused as no stamp, "" when none was
 	LiveLeft  time.Duration
 	ProofLeft time.Duration
 }
 
 // Status is one identity's record, judged at the store's now.
 type Status struct {
-	Name     string
-	Role     Role
-	State    string // StateNone .. StateProven
-	Epoch    int64
-	Armed    time.Time // when the record was last hooked, zero when never
-	Unhooked time.Time // when it was unhooked, zero when it is not
-	Reason   string    // why it was unhooked, when the heartbeat did it ("no answer in 5m0s (5 challenges missed)")
-	BeatAt   time.Time // when the heartbeat server last challenged it, zero when never
-	AnswerAt time.Time // when the session last answered a challenge, zero when never
+	Name         string
+	Role         Role
+	State        string // StateNone .. StateProven
+	Epoch        int64
+	Armed        time.Time     // when the record was last hooked, zero when never
+	Unhooked     time.Time     // when it was unhooked, zero when it is not
+	Reason       string        // why it was unhooked, when the heartbeat did it ("no answer in 5m0s (5 challenges missed)")
+	BeatAt       time.Time     // when the heartbeat server last challenged it, zero when never
+	ActivityAt   time.Time     // latest explicit model bus send, at store TIME
+	PendingSent  bool          // the bus committed this challenge, not merely prepared it
+	PendingUntil time.Time     // outstanding server challenge deadline, even after its key expires
+	QuietAfter   time.Duration // policy selected from the authoritative sprint row at the last pass
+	AnswerAt     time.Time     // when the session last answered a challenge, zero when never
 	// Down is why the record reads down at this read whatever its state says
 	// (Served.Down: no server, a stale one, or no answer), "" when the evidence
 	// stands. No reader trusts the last written state then, and the gate refuses.
@@ -202,11 +253,14 @@ type Status struct {
 	Pushes []PushStatus
 }
 
-// Judge is the status a record and its pushes' reads say: the state machine,
+// JudgeWith is the status a record and its pushes reads say: the state machine,
 // a pure function (tla/Hook.tla, GateOK). rec is the record hash (empty: no
 // record); reads holds one PushRead per push of Pushes, in that order. A lease
-// or proof whose epoch is not the record's counts for nothing.
-func Judge(name string, rec map[string]string, reads []PushRead) Status {
+// or proof whose epoch is not the record counts for nothing. Each lease and
+// proof is read through r (nil: JSONStamps); a value r refuses counts for
+// nothing and its refusal is kept on the push.
+func JudgeWith(r StampReader, name string, rec map[string]string, reads []PushRead) Status {
+	rd := stampsOr(r)
 	st := Status{Name: name, State: StateNone}
 	if len(rec) == 0 {
 		return st
@@ -216,6 +270,11 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 	st.Armed = msTime(rec["armed"])
 	st.BeatAt = msTime(rec["beat_at"])
 	st.AnswerAt = msTime(rec["answered_at"])
+	st.ActivityAt = msTime(rec["bus_sent_at"])
+	st.PendingUntil = msTime(rec["pending_until"])
+	st.PendingSent = rec["pending_sent"] == "1"
+	quiet, _ := strconv.ParseInt(rec["quiet_after"], 10, 64) // ignored: an old record uses the role default
+	st.QuietAfter = time.Duration(quiet) * time.Millisecond
 	st.Misses, _ = strconv.Atoi(rec["misses"]) // ignored: no count reads as none missed
 	st.Reason = rec["reason"]
 	if rec["state"] != "hooked" {
@@ -234,10 +293,18 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 		ps := PushStatus{Push: p, State: PushDown}
 		if i < len(reads) {
 			r := reads[i]
-			if l, ok := parseStamp(r.Live); ok && l.Epoch == st.Epoch {
+			l, lerr := readStamp(rd, r.Live)
+			if lerr != nil {
+				ps.Refused = lerr.Error()
+			}
+			if lerr == nil && r.Live != "" && l.Epoch == st.Epoch {
 				ps.State, ps.By, ps.LiveLeft = PushArmed, l.By, r.LiveLeft
 				live++
-				if pr, ok := parseStamp(r.Proof); ok && pr.Epoch == st.Epoch {
+				pr, perr := readStamp(rd, r.Proof)
+				if perr != nil {
+					ps.Refused = perr.Error()
+				}
+				if perr == nil && r.Proof != "" && pr.Epoch == st.Epoch {
 					ps.State, ps.ProofLeft = PushProven, r.ProofLeft
 					proven++
 				}
@@ -256,6 +323,30 @@ func Judge(name string, rec map[string]string, reads []PushRead) Status {
 		st.State = StateExpired
 	}
 	return st
+}
+
+// LastActivity is actual model activity or the initial arm, never a holder's
+// lease renewal (tla/HookBeat.tla, lastActivity).
+func (st Status) LastActivity() time.Time {
+	at := st.AnswerAt
+	if st.ActivityAt.After(at) {
+		at = st.ActivityAt
+	}
+	if st.Armed.After(at) {
+		at = st.Armed
+	}
+	return at
+}
+
+// QuietWindow is the policy selected by the last pass, or the role's default.
+func (st Status) QuietWindow() time.Duration {
+	if st.QuietAfter > 0 {
+		return st.QuietAfter
+	}
+	if st.Role == Coordinator {
+		return CoordinatorEvery
+	}
+	return QuietAfter
 }
 
 // msTime is the instant a record field of ms since the epoch names, zero when none.
@@ -349,7 +440,11 @@ func (st Status) because() string {
 func (st Status) pushWords() string {
 	var out []string
 	for _, p := range st.Pushes {
-		out = append(out, string(p.Push)+"="+p.State)
+		w := string(p.Push) + "=" + p.State
+		if p.Refused != "" {
+			w += " [" + p.Refused + "]" // a stamp refused by name is said, never read as no stamp
+		}
+		out = append(out, w)
 	}
 	return strings.Join(out, " ")
 }

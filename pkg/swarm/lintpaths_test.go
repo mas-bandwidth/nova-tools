@@ -59,7 +59,7 @@ func briefTwin(t *testing.T) (dir, sha string) {
 // header lines of over replacing its own (a value "\x00" drops the line) and task its
 // THE TASK paragraph when not "".
 func twinBrief(repo string, over map[string]string, task string) []byte {
-	order := []string{"REPO", "BASE", "KIND", "START", "PATHS", "NEW", "SHARED", "TEST", "WHO"}
+	order := []string{"REPO", "BASE", "KIND", "START", "PATHS", "NEW", "SHARED", "TEST", "GATE-NEEDS", "WHO"}
 	h := map[string]string{
 		"REPO":   repo,
 		"BASE":   "sprint/s1",
@@ -167,7 +167,10 @@ func TestAddLintRefusesABriefWhosePathsMissTheFilesItNames(t *testing.T) {
 		{token: "tla-is-heavy-or-above", name: "a model at tier pro",
 			over: map[string]string{"PATHS": "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt,tla/Model.tla"},
 			fix:  "RESULT: c sha=0123456789ab tier: heavy",
-			pass: map[string]string{"1": "RESULT: c sha=0123456789ab tier: heavy", "PATHS": "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt,tla/Model.tla"}},
+			pass: map[string]string{"1": "RESULT: c sha=0123456789ab tier: heavy", "GATE-NEEDS": "linux, tla", "PATHS": "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt,tla/Model.tla"},
+			// model-gate-named (nova-sprint 705fa0b1) also holds a brief that reaches tla/, so the
+			// corrected brief names its model gate step and GATE-NEEDS: tla.
+			passTask: "Fix internal/x/x.go so it says what README.md says.\n\nSTEP 0. Run the model: go run ./tools/tlacheck groups --root . --stale."},
 		{token: "who-serves-tier", name: "a friend who does not serve the tier",
 			over: map[string]string{"WHO": "friend bo"},
 			pass: map[string]string{"WHO": "friend amy"}},

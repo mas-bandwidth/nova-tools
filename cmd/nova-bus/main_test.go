@@ -42,11 +42,12 @@ type rig struct {
 	hooks func(ctx context.Context, st bus.Store, names ...string) ([]hook.Status, time.Time, error)
 	// oneShot are the one-shot friends the applied rows name (nova-config friend
 	// --session one-shot); none by default.
-	oneShot []string
+	oneShot   []string
+	envelopes *bus.EnvelopeReader
 }
 
 func newRig(names ...string) *rig {
-	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}, clock: start, now: start}
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}, clock: start, now: start, envelopes: bus.NewEnvelopeReader()}
 }
 
 // advance moves the store's clock by d so the idle time of the messages grows.
@@ -141,6 +142,7 @@ func (r *rig) world() world {
 			}
 			return line, c, nil
 		},
+		envelopes: r.envelopes,
 	}
 }
 
@@ -525,4 +527,48 @@ func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) 
 
 	// Help send should contain the full precedence
 	assert.Contains(t, sendHelp, precedence, "help send should name the full Redis address precedence")
+}
+
+// TestExplicitSendAttributesOnlyModelWork pins HookBeat's BusSend boundary:
+// every explicit CLI kind and subject counts; library/daemon sends opt out.
+func TestExplicitSendAttributesOnlyModelWork(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, kind, subject, re string
+		want                    bool
+	}{
+		{"report", bus.KindReport, "work progress", "", true},
+		{"request", bus.KindRequest, "review requested", "", true},
+		{"ask", bus.KindAsk, "review decision", "", true},
+		{"blocker", bus.KindBlocker, "blocked on input", "", true},
+		{"ack", bus.KindAck, "received the review", "", true},
+		{"reply", bus.KindStatus, "review complete", "01ARZ3NDEKTSV4RRFFQ69G5FAV", true},
+		{"status", bus.KindStatus, "status", "", true},
+		{"judgment", bus.KindJudgment, "decision", "", true},
+		{"pong", bus.KindAck, "pong", "", true},
+		{"ping", bus.KindRequest, "ping now", "", true},
+		{"presence", bus.KindReport, "presence up", "", true},
+		{"hook", bus.KindReport, "HOOK CHALLENGE nonce=fixture", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig("ada", "bob")
+			ctx := context.Background()
+			key := hook.RecordKey("ada")
+			require.NoError(t, r.store.AddAll(ctx, nil, nil, bus.Mark{Key: key, Field: "state", Value: "hooked"}))
+			argv := []string{"send", "--as", "ada", "--to", "bob", "--kind", tc.kind, "--subject", tc.subject, "--body", "message body"}
+			if tc.kind == bus.KindAsk {
+				argv = append(argv, "--deadline", "10m")
+			}
+			if tc.re != "" {
+				argv = append(argv, "--re", tc.re)
+			}
+			res := r.cli().Run(argv...)
+			require.Zero(t, res.Code, res.Stdout+res.Stderr)
+			marks, err := r.store.Marks(ctx, key)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, marks[0]["bus_sent_at"] != "")
+			assert.Empty(t, marks[0]["answered_at"], "a message is never a nonce proof")
+		})
+	}
 }

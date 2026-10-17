@@ -232,7 +232,10 @@ func providerEnd(headless, dataHome string, offset int64, since time.Time, rc in
 		return swarm.HeadlessFailure(headless, capture)
 	}
 	if rc < 0 {
-		return swarm.ProviderCause{}, false // killed: the deadline's end, whatever the log says
+		// killed: the deadline's end, whatever the log says, EXCEPT the provider's refusal
+		// for credit, which a run killed by the idle watch or the deadline can hold as well
+		// as one that exited (killedCreditEnd)
+		return killedCreditEnd(dataHome, offset, since, capture)
 	}
 	session, recorded := sessionProviderError(dataHome, since)
 	if recorded && session.Class == swarm.CauseCredit {
@@ -260,6 +263,30 @@ func providerEnd(headless, dataHome string, offset int64, since time.Time, rc in
 		return session, true
 	}
 	return found, true
+}
+
+// killedCreditEnd is the provider's refusal for credit in the record of a run that was
+// KILLED (the idle watch's reap or the deadline, rc < 0), ok false when the record holds
+// none. A killed run is not a provider failure by its death, and no other cause is read
+// from it; but a harness that was refused for credit may sit silent until it is reaped
+// (an openrouter route out of funds, 2026-10-15: opencode printed nothing for 300s), and
+// calling that a harness fault counts a fault on a card whose route is simply out of
+// funds. So the session's record, the harness's printed output and its log are read for
+// the one class, swarm.CauseCredit, exactly as for a run that exited: the sprint then
+// rests the route and redeals the card elsewhere (nova-tools#5199).
+func killedCreditEnd(dataHome string, offset int64, since time.Time, capture []byte) (swarm.ProviderCause, bool) {
+	if session, recorded := sessionProviderError(dataHome, since); recorded && session.Class == swarm.CauseCredit {
+		return session, true
+	}
+	for _, line := range []string{printedHarnessError(capture), providerLogError(dataHome, offset)} {
+		if line == "" {
+			continue
+		}
+		if cause := swarm.CauseFromText(line); cause.Class == swarm.CauseCredit {
+			return cause, true
+		}
+	}
+	return swarm.ProviderCause{}, false
 }
 
 // providerLine is the NATIVE line of a provider failure:

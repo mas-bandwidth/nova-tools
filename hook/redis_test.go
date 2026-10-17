@@ -376,6 +376,8 @@ func TestBootstrapPreservesHeartbeatOwnership(t *testing.T) {
 			e, _, err := r.s.Arm(ctx, "ada", hook.Comms, "test", false)
 			require.NoError(t, err)
 			require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, e, "hook"))
+			r.pass(hook.QuietAfter + time.Minute)
+			require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, e, "holder"))
 			b := r.beat(t, "server", nonces())["ada"]
 			require.Equal(t, hook.BeatChallenged, b.Did)
 			switch state {
@@ -447,6 +449,8 @@ func TestPlanPassIsThePassWithItsWritesOff(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)                   // the rig stops giving ada evidence: she is silent
+	r.pass(hook.QuietAfter + time.Minute) // a challenge is due only past the name's silence (tla/HookBeat.tla, NoChallengeWhileTalking)
 	ctx := context.Background()
 	before := r.mr.Dump()
 	plan, err := r.s.PlanPass(ctx, []string{"ada"}, hook.BeatEvery, hook.DownAfter, "srv")

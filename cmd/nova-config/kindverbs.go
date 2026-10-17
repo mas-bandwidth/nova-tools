@@ -168,6 +168,9 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if strings.ContainsAny(reasonText, "\n\r") {
 		problems = append(problems, "--reason: want one line")
 	}
+	if err := config.ValidateChangeMeta(actor, reasonText); err != nil {
+		problems = append(problems, err.Error())
+	}
 	var row config.Row
 	var changes map[string]string
 	if add {
@@ -430,6 +433,9 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	reasonText := strings.TrimSpace(*reason)
 	if strings.ContainsAny(reasonText, "\n\r") {
 		problems = append(problems, "--reason: want one line")
+	}
+	if err := config.ValidateChangeMeta(actor, reasonText); err != nil {
+		problems = append(problems, err.Error())
 	}
 	if len(problems) > 0 {
 		return refuse(stderr, verb, strings.Join(problems, "; "))

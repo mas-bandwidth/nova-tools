@@ -42,6 +42,30 @@
       tags: [toolchains]
   tags: [toolchains, never]
 
+# eslint alone (npm-installed, pinned by nova_eslint_version): touches no other toolchain.
+- name: the pinned eslint on every fleet host
+  hosts: all
+  gather_facts: true
+  gather_subset: [min]
+  tasks:
+    - name: eslint under the login's SDK prefix
+      ansible.builtin.include_role:
+        name: toolchains
+        tasks_from: eslint
+  tags: [eslint, never]
+
+# google-java-format alone (the all-deps jar, pinned by nova_gjf_version and nova_gjf_sha256): touches no other toolchain.
+- name: the pinned google-java-format on every fleet host
+  hosts: all
+  gather_facts: true
+  gather_subset: [min]
+  tasks:
+    - name: google-java-format under the login's SDK prefix
+      ansible.builtin.include_role:
+        name: toolchains
+        tasks_from: gjf
+  tags: [gjf, never]
+
 - name: the platform of every machine
   hosts: all
   gather_facts: true

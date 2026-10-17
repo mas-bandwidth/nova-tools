@@ -547,6 +547,9 @@ func sqlState(err error) string {
 }
 
 func (p *PG) Insert(ctx context.Context, kind string, row Row, actor string) (int64, error) {
+	if err := ValidateChangeMeta(actor, ReasonFrom(ctx)); err != nil {
+		return 0, err
+	}
 	k, err := kindOf(kind)
 	if err != nil {
 		return 0, err
@@ -586,6 +589,9 @@ func (p *PG) Insert(ctx context.Context, kind string, row Row, actor string) (in
 }
 
 func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]string, actor string) (Row, int64, error) {
+	if err := ValidateChangeMeta(actor, ReasonFrom(ctx)); err != nil {
+		return Row{}, 0, err
+	}
 	k, err := kindOf(kind)
 	if err != nil {
 		return Row{}, 0, err
@@ -641,6 +647,9 @@ func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]s
 }
 
 func (p *PG) Delete(ctx context.Context, kind, name string, actor string) (int64, error) {
+	if err := ValidateChangeMeta(actor, ReasonFrom(ctx)); err != nil {
+		return 0, err
+	}
 	k, err := kindOf(kind)
 	if err != nil {
 		return 0, err
@@ -693,13 +702,15 @@ func (p *PG) History(ctx context.Context, kind, name string) ([]Change, error) {
 		if err := rows.Scan(&c.ID, &c.Kind, &c.Name, &c.Op, &before, &after, &c.Actor, &at); err != nil {
 			return nil, fmt.Errorf("postgres: history %s %s: %w", kind, name, err)
 		}
+		// each side is read in every form and refused by name (records.go, S2)
+		var err error
 		if before.Valid {
-			if err := json.Unmarshal([]byte(before.String), &c.Before); err != nil {
+			if c.Before, err = records.ReadSide([]byte(before.String)); err != nil {
 				return nil, fmt.Errorf("postgres: history %d before: %w", c.ID, err)
 			}
 		}
 		if after.Valid {
-			if err := json.Unmarshal([]byte(after.String), &c.After); err != nil {
+			if c.After, err = records.ReadSide([]byte(after.String)); err != nil {
 				return nil, fmt.Errorf("postgres: history %d after: %w", c.ID, err)
 			}
 		}

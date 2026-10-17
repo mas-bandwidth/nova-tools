@@ -175,6 +175,13 @@ type Result struct {
 	// reported with the finish onto the attempt's record.
 	End   string
 	Usage string
+	// EndCause names why End is EndIdleReap when native could tell: the NATIVE line's
+	// `cause=` beside `reason=idle-reap` (swarm.IdleCauseNeverStarted, a harness that
+	// never started work). Judge says it after the end, so a finish never reads as the
+	// bare `idle-reap: no RESULT.md shape`, which the sprint counts as the card's own
+	// harness fault. "" for a card that worked and then went still, and for every
+	// other end.
+	EndCause string
 	// Provider is why End is EndProvider, as native read it from the harness's own log
 	// or transcript: the cause, `provider: class=<c> status=<n|-> msg=<words>`
 	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, THE REASON PREFIXES).
@@ -330,6 +337,10 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// deals the card again on another route (cardhdr.EndNoResult). A run its budget or
 		// its deadline ended is the card's to be judged (below: the end is said first)
 		return FinishFailed, EndNoResult + ": no RESULT.md shape"
+	case !r.Shaped && r.End == EndIdleReap && r.EndCause != "":
+		// the idle watch ended a run whose harness never started work: the cause is
+		// the finish's reason, never only that the child left no shape
+		return FinishFailed, r.EndCause + ": no RESULT.md shape"
 	case !r.Shaped:
 		return FinishFailed, "no RESULT.md shape"
 	case r.Step != "":
@@ -469,6 +480,11 @@ type Config struct {
 	// a beat that carries 0 for want of a reading of the machine also says so; nil means the
 	// flag is never sent and the beat carries a plain --load 0.
 	LoadUnmeasured func() bool
+	// Facts are this machine's gate facts as the member measures them at start (its OS, its
+	// ISA, landlock, the TLA jar, its toolchains; nova-sprint FieldFacts): every beat carries
+	// them as fleet beat --facts, and the sprint writes them onto the member's control card,
+	// where the deal holds a card's GATE-NEEDS against them. nil sends none.
+	Facts []string
 	// Status marks this member's own status file with a word ("beat-refused" while a beat
 	// the server refused stands, "" once a beat is taken), so doctor and the dashboard row
 	// can show it (nova-sprint reads the status); nil writes nothing.
@@ -566,7 +582,7 @@ type Member struct {
 	// at: a queue read before the store moved it still lists it working at that
 	// generation, and it is never recovered at it (the store deals it again at the next).
 	handedBack map[string]int
-	// finishRefused is each card whose pushed generation's finish the store refused, by
+	// finishRefused is each card whose generation's finish the store refused (pushed or not), by
 	// card id: its generation, the finish's arguments exactly as sent, the refusal's text,
 	// how many times in a row that same text came back and when to send it again. The
 	// member sends that finish again, never the run, and recoverWorking never runs the card
@@ -603,6 +619,10 @@ type Member struct {
 	// --load-unmeasured (Config.LoadUnmeasured, probed once at New), so a beat that carries 0
 	// for want of a reading also says so.
 	loadUnmeasuredFlag bool
+	// factsOffUntil is set when a sprint from before v1.4.3 refused a beat's --facts: the
+	// beat goes again at once without them, and they are sent again from this time (Beat),
+	// so a member never reads down for a word its sprint does not know yet.
+	factsOffUntil time.Time
 	// lastBeatRefusal is when the member last logged a beat the server refused (exit 2),
 	// so a refusal is logged at most once a minute (Beat)
 	lastBeatRefusal time.Time
@@ -1009,11 +1029,23 @@ func (m *Member) Beat() error {
 		}
 		args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
 	}
+	plain := args
+	withFacts := !m.cfg.Reader && len(m.cfg.Facts) > 0 && !m.clock().Before(m.factsOffUntil)
+	if withFacts {
+		args = append(slices.Clone(args), "--facts", strings.Join(m.cfg.Facts, ","))
+	}
 	run := m.sprint.Run
 	if m.cfg.Reader {
 		run = func(args ...string) (int, []byte) { return queueOf(m.sprint.Run, args) }
 	}
 	code, out := run(args...)
+	if withFacts && code == 2 && bytes.Contains(out, []byte("--facts")) {
+		// a sprint from before v1.4.3 does not know the word: the beat goes again without
+		// it, and the facts are offered again after FactsRetry
+		m.factsOffUntil = m.clock().Add(FactsRetry)
+		args = plain
+		code, out = run(args...)
+	}
 	if code == 0 && !m.cfg.Reader && m.cfg.Meter != nil {
 		m.beaten = total
 	}
@@ -1028,6 +1060,10 @@ func (m *Member) Beat() error {
 	}
 	return nil
 }
+
+// FactsRetry is how long a member whose sprint refused a beat's --facts beats without them
+// before it offers them again (Beat, Member.factsOffUntil).
+const FactsRetry = 10 * time.Minute
 
 // sayBeatRefused logs a beat the server refused (exit 2) with the exact argv the member
 // sent it, at most once a minute (Beat; docs/SPEC-SPRINT.md, the fleet, the beat): the
@@ -1614,12 +1650,16 @@ func (m *Member) applyReport(id string, l launch, ro *reportOut) int {
 			m.running[id] = l
 			return 0
 		}
-		// the refusal's own words are said; a refused finish of a generation that pushed is
-		// remembered, so the same finish is sent again and the card is never run again
-		// (launch.push: a finish is reported again, never pushed again)
+		// the refusal's own words are said; a refused finish is remembered, pushed or not,
+		// so the same finish is sent again on its backoff and the card is never run again
+		// at that generation (launch.push: a finish is reported again, never pushed again),
+		// and after FinishRefusedMax of the same refusal the card is handed back once. A
+		// refused finish with nothing pushed was forgotten, and recoverWorking ran the card
+		// again on the next pass: a refusal that is the same every time (receipt-contract,
+		// hetzner1 2026-10-15) ran one card 78 times in 22 minutes.
 		text := oneLine(strings.TrimSpace(string(ro.out)))
 		fmt.Fprintf(m.out, "NOTE %s %s refused: %s\n", ro.verb, id, text)
-		if !ro.reads && ro.pushedHead != "" {
+		if !ro.reads {
 			m.rememberFinish(id, l.gen, ro.pushedHead, ro.args, text, ro.now)
 		}
 	}
@@ -1810,7 +1850,7 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 			if _, gen, _ := m.claim(c); gen == rf.gen {
 				// a pushed generation whose finish the store refused is never run again: its
 				// finish is sent again (retryFinishes; launch.push: never pushed again)
-				fmt.Fprintf(m.out, "recover %s held: generation %d pushed %s; its finish is sent again, never the run\n", id, rf.gen, rf.head)
+				fmt.Fprintf(m.out, "recover %s held: generation %d %s; its finish is sent again, never the run\n", id, rf.gen, pushedWords(rf.head))
 				continue
 			}
 			delete(m.finishRefused, id)
@@ -2054,7 +2094,7 @@ const FinishRefusedMax = 3
 // finishRefusedRetryMax is the longest a refused finish waits between two sends.
 const finishRefusedRetryMax = 8 * time.Minute
 
-// refusedFinish is a work card's pushed generation whose finish a store refused, kept so the
+// refusedFinish is a work card's generation (pushed or not) whose finish a store refused, kept so the
 // member sends the same finish again and never runs the card at that generation (a finish is
 // reported again, never pushed again: launch.push). args is the finish's arguments exactly as
 // sent (the same --head, --branch, --report, usage and --epoch), text the refusal's words,
@@ -2221,8 +2261,17 @@ func (m *Member) stopReturn(id string, gen int, epoch uint64, pid int, now time.
 	return true
 }
 
-// rememberFinish holds a pushed generation's refused finish so the member sends the same
-// finish again and never runs the card at that generation (launch.push: a finish is reported
+// pushedWords is what a remembered finish's generation pushed, as its notes say it:
+// "pushed <sha>", or "pushed nothing".
+func pushedWords(head string) string {
+	if head == "" {
+		return "pushed nothing"
+	}
+	return "pushed " + head
+}
+
+// rememberFinish holds a generation's refused finish, pushed or not, so the member sends the
+// same finish again and never runs the card at that generation (launch.push: a finish is reported
 // again, never pushed again; docs/SPEC-CARD-CONTRACT.md, the member's finish). A refusal whose
 // text is the same as the last counts up; a different one starts the count again at 1.
 func (m *Member) rememberFinish(id string, gen int, head string, args []string, text string, now time.Time) {
@@ -2236,8 +2285,9 @@ func (m *Member) rememberFinish(id string, gen int, head string, args []string, 
 }
 
 // retryFinishes sends each remembered refused finish that is due again, byte for byte the same
-// arguments, once a pass where the reports are made. Exit 0 drops the memory; exit 2 changes
-// nothing and it is due again next pass; any other exit is another refusal: the same text adds
+// arguments, once a pass where the reports are made. Exit 0 drops the memory; no answer (exit 2
+// classed sprintwire.Unknown) changes nothing and it is due again next pass; any other exit,
+// a refusal answered with exit 2 included, is another refusal: the same text adds
 // to the count (handing the card back at FinishRefusedMax), a different text starts it again at
 // 1 (member.go, the launch.push rule; docs/SPEC-CARD-CONTRACT.md, the member's finish).
 func (m *Member) retryFinishes(now time.Time) (acted int) {
@@ -2246,7 +2296,7 @@ func (m *Member) retryFinishes(now time.Time) (acted int) {
 		if now.Before(rf.due) {
 			continue
 		}
-		code, out := m.run(rf.args...)
+		code, out, answer := m.runAnswer(rf.args...)
 		switch {
 		case code == 0:
 			// the store took it: the generation's finish is reported and the memory goes. The
@@ -2254,10 +2304,14 @@ func (m *Member) retryFinishes(now time.Time) (acted int) {
 			// recorded handed back and never recovered at it.
 			delete(m.finishRefused, id)
 			m.handedBack[id] = rf.gen
-			fmt.Fprintf(m.out, "NOTE finish %s taken on retry: generation %d pushed %s\n", id, rf.gen, rf.head)
+			fmt.Fprintf(m.out, "NOTE finish %s taken on retry: generation %d %s\n", id, rf.gen, pushedWords(rf.head))
 			acted++
-		case code == 2:
-			// the store did not answer: nothing changes and it is due again next pass
+		case code == 2 && answer == sprintwire.Unknown:
+			// the store did not answer: nothing changes and it is due again next pass. A
+			// refusal the store answered with exit 2 (refuse(): the receipt contract, the
+			// epoch, the server's own) is a refusal, below, never no answer, exactly as
+			// applyReport reads it: read as no answer, a refusal that is the same every
+			// time was sent again every pass and never handed back.
 		default:
 			text := oneLine(strings.TrimSpace(string(out)))
 			fmt.Fprintf(m.out, "NOTE finish %s refused: %s\n", id, text)

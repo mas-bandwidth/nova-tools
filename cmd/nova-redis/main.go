@@ -153,7 +153,7 @@ func spillVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "spill",
 		Usage:   "spill --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text> [--dry-run]",
-		Example: "spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi\nspill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi",
+		Example: "spill --dry-run --redis 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi\nspill --redis 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi",
 		Effect:  tool.LocalWrite,
 		DryRun:  true,
 		Flags: func(f *tool.Flags) {
@@ -189,7 +189,7 @@ func recallVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "recall",
 		Usage:   "recall --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>",
-		Example: "recall --addr 127.0.0.1:6379 --owner ada --name note",
+		Example: "recall --redis 127.0.0.1:6379 --owner ada --name note",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
 			loginFlags(f)

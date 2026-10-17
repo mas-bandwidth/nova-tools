@@ -10,6 +10,7 @@ const challengeNotice = 'External nova-hook challenge event available. Treat it 
 // source(); README "plugin source" table). A third-party plugin owns
 // `plugin:` + its complete name, the kind v4 conversion gives a V3 plugin source.
 export const sourceKind = 'plugin:nova-hook';
+export const maxResolvedNotices = 16;
 const safeID = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 // Pinned dsh-llm createUserMessage contract (5e9e301): UUIDv4, role user,
 // structured clone, recursive freeze. brandString is runtime identity. Construct
@@ -113,6 +114,10 @@ export function applyReceiver(ctx, config, createUserMessage = nativeMessage) {
     if (agent.status === 'idle') agent.followup(message);
     else agent.steer(message);
     for (const file of claimed) fs.unlinkSync(file);
+    const active = path.basename(challenge ? saved.at(-1) : saved[0]);
+    const queued = new Set(fs.readdirSync(queueDir).filter(f => f.startsWith('notice-') && f.endsWith('.json')).map(f => f.replace(/^notice-/, '')));
+    const resolved = fs.readdirSync(eventsDir).filter(f => /^notice-[A-Za-z0-9_-]{1,128}\.json$/.test(f) && f !== active && !queued.has(f) && !queued.has(f.replace(/^notice-/, ''))).sort();
+    for (const file of resolved.slice(0, Math.max(0, resolved.length - maxResolvedNotices))) fs.unlinkSync(path.join(eventsDir, file));
   }
   const watcher = fs.watch(queueDir, schedule);
   const targetWatcher = fs.watch(eventsDir, (_, file) => { if (file === 'session.json') schedule(); });
