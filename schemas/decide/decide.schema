@@ -1,26 +1,25 @@
-// decide.schema: the decide area's records, as FIXED tables. The Go is
-// generated into pkg/decidewire (go generate ./pkg/decidewire).
+// decide.schema: the decide area's records. The Go is generated into
+// pkg/decidewire (go generate ./pkg/decidewire).
 //
-// Two classes (S1). A FIXED table is a struct: small, bounded, tool-owned, a
-// stable layout whose reader is always the same version or newer (Usage,
-// Outcome, Act, Decided, the import log line, the raw token counters and
-// records, Frame). A VARIABLE table is a document held by pointer, sized by
-// its content and open-ended (Decision, its answers and inputs, RecordLine,
-// RawUsage): its readers may meet a newer writer and it has a JSON text form.
-// Both read the same way through pkg/schemaread, in three forms: binary wire,
-// padded standard base64 of it, and the JSON text. A unit that declares a
-// variable table gets no separate fixed-form wire for its fixed tables at this
-// pin (the compiler emits form 3 only when every table in the unit is fixed),
-// so the fixed tables keep their class and ride form 1. Each table replaces the Go struct named at it and
-// keeps every field the struct serialises today, with the meaning it has today.
-// Every bound is the bound the code enforces today, with the rule named at it;
-// where the code enforces none, the comment says so and the bound is the
-// declared size of the table (a fixed table holds its capacity, so an unbounded
-// text has no spelling here).
+// Two classes (S1). A FIXED table is a struct: small, bounded, a stable layout
+// whose reader is always the same version or newer. A VARIABLE table is a
+// document held by pointer, sized by its content and open-ended, with a JSON
+// text form. Every table reads the same way through pkg/schemaread, in three
+// forms: binary wire, padded standard base64 of it, and the JSON text.
 //
-// Absence and zero differ only where the struct says so (the raw token
-// counters, which are optional); every other field reads as zero when empty,
-// as the struct's omitempty fields do.
+// A bound is declared only where the Go code enforces one. The PR body lists,
+// for every field, the schema bound and the code's (file:line, or none). A text
+// the code does not bound is an unbounded string (*string), a list it does not
+// bound is an unbounded list ([]T); a table holding either is variable. Only
+// Usage (no bound at all) and RawTokens (every count non-negative, raw.go)
+// stay fixed.
+//
+// A unit that declares a variable table gets no separate fixed-form wire for
+// its fixed tables at this pin (the compiler emits form 3 only when every table
+// in the unit is fixed), so the fixed tables keep their class and ride form 1.
+//
+// Field names avoid the table's own name (C# forbids it): decision_name is the
+// struct's Decision field of Decision, step the Act field of Act.
 package decidewire
 
 // ---- the decision (pkg/decide/decide.go) ----
@@ -29,108 +28,99 @@ package decidewire
 enum AnswerType { Choice, Noul }
 
 // Usage: pkg/decide Usage, what one ask spent; zero is unreported. The code
-// enforces no range; a count of tokens is a count, so the table declares it
-// non-negative and as large as an int32 holds.
+// bounds neither count (decide.go Usage), so none is declared.
 fixed table Usage
 {
-    input_tokens  int32 | min = 0, max = 2147483647
-    output_tokens int32 | min = 0, max = 2147483647
+    input_tokens  int64
+    output_tokens int64
 }
 
-// OptionP: one entry of an Answer's P map, an option and its probability.
-// pkg/decide Schema.Check and record.go recordedProbabilities refuse a
-// probability outside [0, 1] or not a number. A float64 has no declared range
-// in v1 (the compressed float is float32), so the reader holds [0, 1] and
-// refuses NaN; the table declares the type only.
+// OptionP: one entry of an Answer's P map, an option and its probability. The
+// probability must lie in [0, 1] and not be NaN (decide.go Check, record.go
+// recordedProbabilities); a float64 has no declared range in v1, so the reader
+// holds it.
 table OptionP
 {
-    option string(48)
+    option *string
     p      float64
 }
 
-// Answer: pkg/decide Answer, a VARIABLE table (a document). P is an open-ended
-// list: a choice names any number of options, at least two (decide.go
-// ParseSchema), and Schema.Check puts no ceiling on them. Confidence and Method are the choice answered with no
-// probabilities (SPEC-NOVA-DECIDE section 3); Check holds neither to [0, 1].
+// Answer: pkg/decide Answer. P is an open-ended list: a choice names any number
+// of options, at least two (decide.go ParseSchema), and Check sets no ceiling.
+// Confidence and Method are the choice answered with no probabilities
+// (SPEC-NOVA-DECIDE section 3); Check holds neither to [0, 1].
 table Answer
 {
     kind       AnswerType
-    value      string(48)
+    value      *string
     p          []OptionP
     confidence float64
-    method     string(24)
+    method     *string
 }
 
 // NamedAnswer: one entry of a Decision's Answers map, the question's name and
-// its answer. Schema.Check refuses an answer to a question not asked, and a
-// question with none.
+// its answer.
 table NamedAnswer
 {
-    question string(32)
+    question *string
     answer   Answer
 }
 
-// Input: one entry of a Decision's Inputs map, an input's name and its text
-// (a hash, a path, or the member's reason line).
+// Input: one entry of a Decision's Inputs map, an input's name and its text.
 table Input
 {
-    key   string(32)
-    value string(1024)
+    key   *string
+    value *string
 }
 
 // Decided: pkg/decide Decided, the decision as it rides on a card, one line
-// `<option> p=<p> op=<op>`. ParseDecided refuses p outside [0, 1].
-fixed table Decided
+// `<option> p=<p> op=<op>`. ParseDecided refuses p outside [0, 1] and any
+// field holding whitespace (attempt.go ParseDecided).
+table Decided
 {
-    value string(64)
+    value *string
     p     float64
-    op    string(256)
+    op    *string
 }
 
 // ---- the record lines (pkg/decide/record.go) ----
 
-// Decision: pkg/decide Decision as the record writes it on a decision line.
-// decision_name is the struct's Decision field (the schema's name), spelled so
-// a member does not share its table's name (C# forbids it). The folded-in Outcome and Acts are never written on this line, so they are
-// not fields here (record.go: "never written on this line"). The attempt
-// decision (attempt.go ParseAttempt) is this table with decision "attempt".
-// state is the exact text asked over, held as a blob at its own size: the code
-// bounds it only by the record reader's 64 MiB line (record.go parse), so the
-// table declares no smaller bound. inputs and answers are open-ended lists
-// (the code fixes neither count: judgment.go writes ten inputs, brief.go asks
-// nine questions).
+// Decision: pkg/decide Decision as the record writes it on a decision line. The
+// folded-in Outcome and Acts are never written on this line, so they are not
+// fields here. The attempt decision (attempt.go ParseAttempt) is this table
+// with decision_name "attempt". state is the exact text asked over, held at
+// its own size; inputs and answers are open-ended lists.
 table Decision
 {
-    id            string(256)
-    decision_name string(64)
-    schema        string(64)
-    backend       string(64)
-    at            string(32)
+    id            *string
+    decision_name *string
+    schema        *string
+    backend       *string
+    at            *string
     inputs        []Input
     state         *string
     answers       []NamedAnswer
     usage         Usage
 }
 
-// Outcome: pkg/decide Outcome, what turned out to be true about a decision.
-// It is attached once (record.go Attach).
-fixed table Outcome
+// Outcome: pkg/decide Outcome, what turned out to be true about a decision. It
+// is attached once (record.go Attach).
+table Outcome
 {
-    id    string(256)
-    label string(64)
-    note  string(1024)
-    at    string(32)
+    id    *string
+    label *string
+    note  *string
+    at    *string
 }
 
-// Act: pkg/decide Act, one step of applying a decision: step (the struct's Act
-// field, spelled so it does not share its table's name) is applying,
+// Act: pkg/decide Act, one step of applying a decision: step is applying,
 // applied or refused; op is the operation id the verbs carry.
-fixed table Act
+table Act
 {
-    id   string(256)
-    step string(16)
-    op   string(256)
-    at   string(32)
+    id   *string
+    step *string
+    op   *string
+    at   *string
 }
 
 enum LineKind { Decision, Outcome, Act }
@@ -142,26 +132,25 @@ table RecordLine
 {
     kind        LineKind
     as_decision *Decision
-    as_outcome  ?Outcome
-    as_act      ?Act
+    as_outcome  *Outcome
+    as_act      *Act
 }
 
 // ---- the import (pkg/decide/import.go) ----
 
-// JudgmentId: one judgment id an export line answers (an array of string(N)
-// has no spelling in v1, so the element is a table of its own).
-fixed table JudgmentId
+// JudgmentId: one judgment id an export line answers.
+table JudgmentId
 {
-    id string(128)
+    id *string
 }
 
 // ImportLogLine: the part of a nova-sprint log --json export line the import
-// reads (import.go judgmentItems): the verb and the judgment ids it answers.
-// The code bounds neither; the table holds 8 ids of 128 bytes.
-fixed table ImportLogLine
+// reads (import.go judgmentItems): the verb and every judgment id it answers
+// (the code takes every id of the line).
+table ImportLogLine
 {
-    verb    string(64)
-    answers [..8]JudgmentId
+    verb    *string
+    answers []JudgmentId
 }
 
 // ---- the raw card cost (pkg/cardcost/raw.go) ----
@@ -170,7 +159,7 @@ enum Billing { Metered, Plan, Subscription }
 
 // RawTokens: RawRecord.Tokens, the original counters; absence and zero differ
 // (raw.go), so each is optional. The keys are museRawKeys; a count is a
-// non-negative int64 (raw.go validateRawJSON, Validate).
+// non-negative int64 (raw.go:55, validateRawJSON).
 fixed table RawTokens
 {
     input_tokens       ?int64 | min = 0, max = 9223372036854775807
@@ -181,22 +170,23 @@ fixed table RawTokens
     reasoning_tokens   ?int64 | min = 0, max = 9223372036854775807
 }
 
-// RawRecord: cardcost RawRecord. Validate holds harness to muse, execution to
-// fleet, source_schema to muse-jsonl-v1, producer_version non-empty and billing
-// one of the three; the reader refuses any other.
-fixed table RawRecord
+// RawRecord: cardcost RawRecord. Validate (raw.go:51) holds harness to muse,
+// execution to fleet, source_schema to muse-jsonl-v1, producer_version
+// non-empty and billing one of the three; the reader refuses any other.
+table RawRecord
 {
-    harness          string(16)
-    execution        string(16)
-    source_schema    string(32)
-    producer_version string(64)
+    harness          *string
+    execution        *string
+    source_schema    *string
+    producer_version *string
     billing          Billing
     tokens           RawTokens
 }
 
-// RawUsage: cardcost RawUsage. Validate holds version to 1 and at least one
-// record; MaxRawBytes (32768) bounds the JSON envelope, and the smallest valid
-// record is 120 bytes of JSON, so a valid envelope holds at most 270 records.
+// RawUsage: cardcost RawUsage. Validate (raw.go:47) holds version to 1 and at
+// least one record; MaxRawBytes (raw.go:21, 32768) bounds the JSON envelope,
+// and the smallest valid record is 120 bytes of JSON, so a valid envelope holds
+// at most 270 records.
 table RawUsage
 {
     version uint32           | min = 0, max = 4294967295
@@ -208,35 +198,35 @@ table RawUsage
 enum FrameKind { Work, Read }
 
 // StagePath: one recipe file a frame's Stage names, relative to Recipes.
-fixed table StagePath
+table StagePath
 {
-    path string(256)
+    path *string
 }
 
 // Frame: cardcontract Frame, the frame the member hands native as a file.
-// ReadFrame refuses a kind that is not work or read and an empty card. The
-// code bounds no length; the capacities are this table's.
-fixed table Frame
+// ReadFrame (contract.go:142) refuses a kind that is not work or read and an
+// empty card. The code bounds no length, count or number.
+table Frame
 {
     kind                    FrameKind
-    card                    string(256)
-    attempt                 int32           | min = 0, max = 2147483647
-    tier                    string(16)
-    model                   string(128)
-    repo                    string(1024)
-    base_ref                string(256)
-    stage_sha               string(64)
-    branch                  string(256)
-    prev_head               string(64)
-    prev_attempt            int32           | min = 0, max = 2147483647
-    why                     string(4096)
-    finding                 string(4096)
-    fix                     string(4096)
-    review_base             string(256)
-    stage                   [..32]StagePath
-    recipes                 string(1024)
-    decide_bounce           string(16)
-    decide_review           string(16)
-    decide_gate_flaky       string(16)
-    decide_gate_preexisting string(16)
+    card                    *string
+    attempt                 int64
+    tier                    *string
+    model                   *string
+    repo                    *string
+    base_ref                *string
+    stage_sha               *string
+    branch                  *string
+    prev_head               *string
+    prev_attempt            int64
+    why                     *string
+    finding                 *string
+    fix                     *string
+    review_base             *string
+    stage                   []StagePath
+    recipes                 *string
+    decide_bounce           *string
+    decide_review           *string
+    decide_gate_flaky       *string
+    decide_gate_preexisting *string
 }

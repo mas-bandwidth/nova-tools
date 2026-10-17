@@ -2,29 +2,29 @@ schema-tables-baseline 7
 package decidewire
 
 table Act
-    field id id=0x08b72e07b55c3ac0 kind=12 size=256
-    field step id=0xaf0b4e191da20cef kind=12 size=16
-    field op id=0x08b05607b556600a kind=12 size=256
-    field at id=0x089c4e07b545a968 kind=12 size=32
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field step id=0xaf0b4e191da20cef kind=17 type=string
+    field op id=0x08b05607b556600a kind=17 type=string
+    field at id=0x089c4e07b545a968 kind=17 type=string
 
 table Answer
     field kind id=0xef9c96d721673243 kind=7 enum=AnswerType
-    field value id=0x7ce4fd9430e80cea kind=12 size=48
+    field value id=0x7ce4fd9430e80cea kind=17 type=string
     field p id=0xaf63ed4c8602096f kind=14 elem=13 type=OptionP array=unbounded
     field confidence id=0x547d54feea4643b1 kind=11
-    field method id=0x230c05e5fb0433b0 kind=12 size=24
+    field method id=0x230c05e5fb0433b0 kind=17 type=string
 
 table Decided
-    field value id=0x7ce4fd9430e80cea kind=12 size=64
+    field value id=0x7ce4fd9430e80cea kind=17 type=string
     field p id=0xaf63ed4c8602096f kind=11
-    field op id=0x08b05607b556600a kind=12 size=256
+    field op id=0x08b05607b556600a kind=17 type=string
 
 table Decision
-    field id id=0x08b72e07b55c3ac0 kind=12 size=256
-    field decision_name id=0x032e49f100f8dbef kind=12 size=64
-    field schema id=0x758d17ff764667b6 kind=12 size=64
-    field backend id=0x54b55bf4c402eb8f kind=12 size=64
-    field at id=0x089c4e07b545a968 kind=12 size=32
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field decision_name id=0x032e49f100f8dbef kind=17 type=string
+    field schema id=0x758d17ff764667b6 kind=17 type=string
+    field backend id=0x54b55bf4c402eb8f kind=17 type=string
+    field at id=0x089c4e07b545a968 kind=17 type=string
     field inputs id=0x499fc592a46585f8 kind=14 elem=13 type=Input array=unbounded
     field state id=0xee63aaad45b1b116 kind=17 type=string
     field answers id=0xd7316b9dd9f8d444 kind=14 elem=13 type=NamedAnswer array=unbounded
@@ -32,57 +32,57 @@ table Decision
 
 table Frame
     field kind id=0xef9c96d721673243 kind=7 enum=FrameKind
-    field card id=0xb5614e90e87b455f kind=12 size=256
-    field attempt id=0x63e618bd2b303dee kind=4 min=0 max=2147483647
-    field tier id=0x1e6f84ef2eb65989 kind=12 size=16
-    field model id=0x9de543933e6e703a kind=12 size=128
-    field repo id=0x4cac581fbfac663d kind=12 size=1024
-    field base_ref id=0xd46f4a3ebed65022 kind=12 size=256
-    field stage_sha id=0xb33a2f3256e250fc kind=12 size=64
-    field branch id=0x919ec0f651278ba5 kind=12 size=256
-    field prev_head id=0xd6320ebd358f520b kind=12 size=64
-    field prev_attempt id=0x230c65ac8defd086 kind=4 min=0 max=2147483647
-    field why id=0x5ec5ea1948914a79 kind=12 size=4096
-    field finding id=0x35ceaba76a4aabe6 kind=12 size=4096
-    field fix id=0xdc9e7e18fec93bb8 kind=12 size=4096
-    field review_base id=0xc1c0fb9c397f45d7 kind=12 size=256
-    field stage id=0xee9dbaad45e3448d kind=14 elem=13 type=StagePath array=bounded bound=32
-    field recipes id=0x338684c18cd2eeb4 kind=12 size=1024
-    field decide_bounce id=0x364f8f1334dc227a kind=12 size=16
-    field decide_review id=0xb17ac487d29d6e42 kind=12 size=16
-    field decide_gate_flaky id=0x51b5e2696d2d0b97 kind=12 size=16
-    field decide_gate_preexisting id=0x2b7d15b2bf924552 kind=12 size=16
+    field card id=0xb5614e90e87b455f kind=17 type=string
+    field attempt id=0x63e618bd2b303dee kind=5
+    field tier id=0x1e6f84ef2eb65989 kind=17 type=string
+    field model id=0x9de543933e6e703a kind=17 type=string
+    field repo id=0x4cac581fbfac663d kind=17 type=string
+    field base_ref id=0xd46f4a3ebed65022 kind=17 type=string
+    field stage_sha id=0xb33a2f3256e250fc kind=17 type=string
+    field branch id=0x919ec0f651278ba5 kind=17 type=string
+    field prev_head id=0xd6320ebd358f520b kind=17 type=string
+    field prev_attempt id=0x230c65ac8defd086 kind=5
+    field why id=0x5ec5ea1948914a79 kind=17 type=string
+    field finding id=0x35ceaba76a4aabe6 kind=17 type=string
+    field fix id=0xdc9e7e18fec93bb8 kind=17 type=string
+    field review_base id=0xc1c0fb9c397f45d7 kind=17 type=string
+    field stage id=0xee9dbaad45e3448d kind=14 elem=13 type=StagePath array=unbounded
+    field recipes id=0x338684c18cd2eeb4 kind=17 type=string
+    field decide_bounce id=0x364f8f1334dc227a kind=17 type=string
+    field decide_review id=0xb17ac487d29d6e42 kind=17 type=string
+    field decide_gate_flaky id=0x51b5e2696d2d0b97 kind=17 type=string
+    field decide_gate_preexisting id=0x2b7d15b2bf924552 kind=17 type=string
 
 table ImportLogLine
-    field verb id=0x673ebb0102773a20 kind=12 size=64
-    field answers id=0xd7316b9dd9f8d444 kind=14 elem=13 type=JudgmentId array=bounded bound=8
+    field verb id=0x673ebb0102773a20 kind=17 type=string
+    field answers id=0xd7316b9dd9f8d444 kind=14 elem=13 type=JudgmentId array=unbounded
 
 table Input
-    field key id=0x3dc94a19365b10ec kind=12 size=32
-    field value id=0x7ce4fd9430e80cea kind=12 size=1024
+    field key id=0x3dc94a19365b10ec kind=17 type=string
+    field value id=0x7ce4fd9430e80cea kind=17 type=string
 
 table JudgmentId
-    field id id=0x08b72e07b55c3ac0 kind=12 size=128
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
 
 table NamedAnswer
-    field question id=0x9c2ca99b4d2722c5 kind=12 size=32
+    field question id=0x9c2ca99b4d2722c5 kind=17 type=string
     field answer id=0x67cf8608037190df kind=13 type=Answer
 
 table OptionP
-    field option id=0x03c119c726692754 kind=12 size=48
+    field option id=0x03c119c726692754 kind=17 type=string
     field p id=0xaf63ed4c8602096f kind=11
 
 table Outcome
-    field id id=0x08b72e07b55c3ac0 kind=12 size=256
-    field label id=0x39f7fcec8fcb623d kind=12 size=64
-    field note id=0x3bf8fbbad1587cdd kind=12 size=1024
-    field at id=0x089c4e07b545a968 kind=12 size=32
+    field id id=0x08b72e07b55c3ac0 kind=17 type=string
+    field label id=0x39f7fcec8fcb623d kind=17 type=string
+    field note id=0x3bf8fbbad1587cdd kind=17 type=string
+    field at id=0x089c4e07b545a968 kind=17 type=string
 
 table RawRecord
-    field harness id=0x211fcbbafe5331ab kind=12 size=16
-    field execution id=0x40c5f8104d76cc15 kind=12 size=16
-    field source_schema id=0x0d3c21d222f73316 kind=12 size=32
-    field producer_version id=0x05b096403aeadb34 kind=12 size=64
+    field harness id=0x211fcbbafe5331ab kind=17 type=string
+    field execution id=0x40c5f8104d76cc15 kind=17 type=string
+    field source_schema id=0x0d3c21d222f73316 kind=17 type=string
+    field producer_version id=0x05b096403aeadb34 kind=17 type=string
     field billing id=0x4005570295afd25c kind=7 enum=Billing
     field tokens id=0x93fab8f021712b13 kind=13 type=RawTokens
 
@@ -101,15 +101,15 @@ table RawUsage
 table RecordLine
     field kind id=0xef9c96d721673243 kind=7 enum=LineKind
     field as_decision id=0xeed7b073beff6dac kind=17 type=Decision
-    field as_outcome id=0x6eefa86635f24b32 kind=13 type=Outcome optional=true
-    field as_act id=0xaa8d7a514275e6a2 kind=13 type=Act optional=true
+    field as_outcome id=0x6eefa86635f24b32 kind=17 type=Outcome
+    field as_act id=0xaa8d7a514275e6a2 kind=17 type=Act
 
 table StagePath
-    field path id=0x03c52d0debd70676 kind=12 size=256
+    field path id=0x03c52d0debd70676 kind=17 type=string
 
 table Usage
-    field input_tokens id=0xb5158be5a9bbd92e kind=4 min=0 max=2147483647
-    field output_tokens id=0x72e601d58ddec77f kind=4 min=0 max=2147483647
+    field input_tokens id=0xb5158be5a9bbd92e kind=5
+    field output_tokens id=0x72e601d58ddec77f kind=5
 
 enum AnswerType
     variant Choice id=0xb0aadaa04e658ad6

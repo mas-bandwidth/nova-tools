@@ -24,16 +24,132 @@ import (
 	"unsafe"
 )
 
-// JudgmentIdRow — a block row, or a record one nests by value. `Row` is a CLAIMED
-// suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
-type JudgmentIdRow struct {
-	Id       [129]byte // string(128): max length, used length beside it
-	_        [3]byte   // generated padding
-	IdLength int32
+// ActRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type ActRow struct {
+	Id   int64 // *: signed self-relative delta, zero is null (§6.3)
+	Step int64 // *: signed self-relative delta, zero is null (§6.3)
+	Op   int64 // *: signed self-relative delta, zero is null (§6.3)
+	At   int64 // *: signed self-relative delta, zero is null (§6.3)
 }
 
-// RawTokensRow — a block row, or a record one nests by value. `Row` is a CLAIMED
-// suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
+// AnswerRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type AnswerRow struct {
+	Kind       AnswerType
+	_          [7]byte // generated padding
+	Value      int64   // *: signed self-relative delta, zero is null (§6.3)
+	P          TableList[OptionPRow]
+	Confidence float64
+	Method     int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// DecidedRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type DecidedRow struct {
+	Value int64 // *: signed self-relative delta, zero is null (§6.3)
+	P     float64
+	Op    int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// DecisionRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type DecisionRow struct {
+	Id           int64 // *: signed self-relative delta, zero is null (§6.3)
+	DecisionName int64 // *: signed self-relative delta, zero is null (§6.3)
+	Schema       int64 // *: signed self-relative delta, zero is null (§6.3)
+	Backend      int64 // *: signed self-relative delta, zero is null (§6.3)
+	At           int64 // *: signed self-relative delta, zero is null (§6.3)
+	Inputs       TableList[InputRow]
+	State        int64 // *: signed self-relative delta, zero is null (§6.3)
+	Answers      TableList[NamedAnswerRow]
+	Usage        UsageRow
+}
+
+// FrameRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type FrameRow struct {
+	Kind                  FrameKind
+	_                     [7]byte // generated padding
+	Card                  int64   // *: signed self-relative delta, zero is null (§6.3)
+	Attempt               int64
+	Tier                  int64 // *: signed self-relative delta, zero is null (§6.3)
+	Model                 int64 // *: signed self-relative delta, zero is null (§6.3)
+	Repo                  int64 // *: signed self-relative delta, zero is null (§6.3)
+	BaseRef               int64 // *: signed self-relative delta, zero is null (§6.3)
+	StageSha              int64 // *: signed self-relative delta, zero is null (§6.3)
+	Branch                int64 // *: signed self-relative delta, zero is null (§6.3)
+	PrevHead              int64 // *: signed self-relative delta, zero is null (§6.3)
+	PrevAttempt           int64
+	Why                   int64 // *: signed self-relative delta, zero is null (§6.3)
+	Finding               int64 // *: signed self-relative delta, zero is null (§6.3)
+	Fix                   int64 // *: signed self-relative delta, zero is null (§6.3)
+	ReviewBase            int64 // *: signed self-relative delta, zero is null (§6.3)
+	Stage                 TableList[StagePathRow]
+	Recipes               int64 // *: signed self-relative delta, zero is null (§6.3)
+	DecideBounce          int64 // *: signed self-relative delta, zero is null (§6.3)
+	DecideReview          int64 // *: signed self-relative delta, zero is null (§6.3)
+	DecideGateFlaky       int64 // *: signed self-relative delta, zero is null (§6.3)
+	DecideGatePreexisting int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// ImportLogLineRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type ImportLogLineRow struct {
+	Verb    int64 // *: signed self-relative delta, zero is null (§6.3)
+	Answers TableList[JudgmentIdRow]
+}
+
+// InputRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type InputRow struct {
+	Key   int64 // *: signed self-relative delta, zero is null (§6.3)
+	Value int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// JudgmentIdRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type JudgmentIdRow struct {
+	Id int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// NamedAnswerRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type NamedAnswerRow struct {
+	Question int64 // *: signed self-relative delta, zero is null (§6.3)
+	Answer   AnswerRow
+}
+
+// OptionPRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type OptionPRow struct {
+	Option int64 // *: signed self-relative delta, zero is null (§6.3)
+	P      float64
+}
+
+// OutcomeRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type OutcomeRow struct {
+	Id    int64 // *: signed self-relative delta, zero is null (§6.3)
+	Label int64 // *: signed self-relative delta, zero is null (§6.3)
+	Note  int64 // *: signed self-relative delta, zero is null (§6.3)
+	At    int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// RawRecordRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type RawRecordRow struct {
+	Harness         int64 // *: signed self-relative delta, zero is null (§6.3)
+	Execution       int64 // *: signed self-relative delta, zero is null (§6.3)
+	SourceSchema    int64 // *: signed self-relative delta, zero is null (§6.3)
+	ProducerVersion int64 // *: signed self-relative delta, zero is null (§6.3)
+	Billing         Billing
+	_               [7]byte // generated padding
+	Tokens          RawTokensRow
+}
+
+// RawTokensRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
 type RawTokensRow struct {
 	InputTokens             int64
 	InputTokensPresent      bool    // ?: one byte, in Go's model as in C++
@@ -55,218 +171,6 @@ type RawTokensRow struct {
 	_                       [7]byte // generated padding
 }
 
-// StagePathRow — a block row, or a record one nests by value. `Row` is a CLAIMED
-// suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
-type StagePathRow struct {
-	Path       [257]byte // string(256): max length, used length beside it
-	_          [3]byte   // generated padding
-	PathLength int32
-}
-
-// ActRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type ActRow struct {
-	Id         [257]byte // string(256): buffer, used length beside it
-	_          [3]byte   // generated padding
-	IdLength   int32
-	Step       [17]byte // string(16): buffer, used length beside it
-	_          [3]byte  // generated padding
-	StepLength int32
-	Op         [257]byte // string(256): buffer, used length beside it
-	_          [3]byte   // generated padding
-	OpLength   int32
-	At         [33]byte // string(32): buffer, used length beside it
-	_          [3]byte  // generated padding
-	AtLength   int32
-}
-
-// AnswerRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type AnswerRow struct {
-	Kind         AnswerType
-	Value        [49]byte // string(48): buffer, used length beside it
-	_            [2]byte  // generated padding
-	ValueLength  int32
-	P            TableList[OptionPRow]
-	Confidence   float64
-	Method       [25]byte // string(24): buffer, used length beside it
-	_            [3]byte  // generated padding
-	MethodLength int32
-}
-
-// DecidedRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type DecidedRow struct {
-	Value       [65]byte // string(64): buffer, used length beside it
-	_           [3]byte  // generated padding
-	ValueLength int32
-	P           float64
-	Op          [257]byte // string(256): buffer, used length beside it
-	_           [3]byte   // generated padding
-	OpLength    int32
-}
-
-// DecisionRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type DecisionRow struct {
-	Id                 [257]byte // string(256): buffer, used length beside it
-	_                  [3]byte   // generated padding
-	IdLength           int32
-	DecisionName       [65]byte // string(64): buffer, used length beside it
-	_                  [3]byte  // generated padding
-	DecisionNameLength int32
-	Schema             [65]byte // string(64): buffer, used length beside it
-	_                  [3]byte  // generated padding
-	SchemaLength       int32
-	Backend            [65]byte // string(64): buffer, used length beside it
-	_                  [3]byte  // generated padding
-	BackendLength      int32
-	At                 [33]byte // string(32): buffer, used length beside it
-	_                  [3]byte  // generated padding
-	AtLength           int32
-	Inputs             TableList[InputRow]
-	State              int64 // *: signed self-relative delta, zero is null (§6.3)
-	Answers            TableList[NamedAnswerRow]
-	Usage              UsageRow
-}
-
-// FrameRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type FrameRow struct {
-	Kind                        FrameKind
-	Card                        [257]byte // string(256): buffer, used length beside it
-	_                           [2]byte   // generated padding
-	CardLength                  int32
-	Attempt                     int32
-	Tier                        [17]byte // string(16): buffer, used length beside it
-	_                           [3]byte  // generated padding
-	TierLength                  int32
-	Model                       [129]byte // string(128): buffer, used length beside it
-	_                           [3]byte   // generated padding
-	ModelLength                 int32
-	Repo                        [1025]byte // string(1024): buffer, used length beside it
-	_                           [3]byte    // generated padding
-	RepoLength                  int32
-	BaseRef                     [257]byte // string(256): buffer, used length beside it
-	_                           [3]byte   // generated padding
-	BaseRefLength               int32
-	StageSha                    [65]byte // string(64): buffer, used length beside it
-	_                           [3]byte  // generated padding
-	StageShaLength              int32
-	Branch                      [257]byte // string(256): buffer, used length beside it
-	_                           [3]byte   // generated padding
-	BranchLength                int32
-	PrevHead                    [65]byte // string(64): buffer, used length beside it
-	_                           [3]byte  // generated padding
-	PrevHeadLength              int32
-	PrevAttempt                 int32
-	Why                         [4097]byte // string(4096): buffer, used length beside it
-	_                           [3]byte    // generated padding
-	WhyLength                   int32
-	Finding                     [4097]byte // string(4096): buffer, used length beside it
-	_                           [3]byte    // generated padding
-	FindingLength               int32
-	Fix                         [4097]byte // string(4096): buffer, used length beside it
-	_                           [3]byte    // generated padding
-	FixLength                   int32
-	ReviewBase                  [257]byte // string(256): buffer, used length beside it
-	_                           [3]byte   // generated padding
-	ReviewBaseLength            int32
-	Stage                       [32]StagePathRow
-	StageCount                  int32
-	Recipes                     [1025]byte // string(1024): buffer, used length beside it
-	_                           [3]byte    // generated padding
-	RecipesLength               int32
-	DecideBounce                [17]byte // string(16): buffer, used length beside it
-	_                           [3]byte  // generated padding
-	DecideBounceLength          int32
-	DecideReview                [17]byte // string(16): buffer, used length beside it
-	_                           [3]byte  // generated padding
-	DecideReviewLength          int32
-	DecideGateFlaky             [17]byte // string(16): buffer, used length beside it
-	_                           [3]byte  // generated padding
-	DecideGateFlakyLength       int32
-	DecideGatePreexisting       [17]byte // string(16): buffer, used length beside it
-	_                           [3]byte  // generated padding
-	DecideGatePreexistingLength int32
-}
-
-// ImportLogLineRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type ImportLogLineRow struct {
-	Verb         [65]byte // string(64): buffer, used length beside it
-	_            [3]byte  // generated padding
-	VerbLength   int32
-	Answers      [8]JudgmentIdRow
-	AnswersCount int32
-}
-
-// InputRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type InputRow struct {
-	Key         [33]byte // string(32): buffer, used length beside it
-	_           [3]byte  // generated padding
-	KeyLength   int32
-	Value       [1025]byte // string(1024): buffer, used length beside it
-	_           [3]byte    // generated padding
-	ValueLength int32
-}
-
-// NamedAnswerRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type NamedAnswerRow struct {
-	Question       [33]byte // string(32): buffer, used length beside it
-	_              [3]byte  // generated padding
-	QuestionLength int32
-	Answer         AnswerRow
-}
-
-// OptionPRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type OptionPRow struct {
-	Option       [49]byte // string(48): buffer, used length beside it
-	_            [3]byte  // generated padding
-	OptionLength int32
-	P            float64
-}
-
-// OutcomeRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type OutcomeRow struct {
-	Id          [257]byte // string(256): buffer, used length beside it
-	_           [3]byte   // generated padding
-	IdLength    int32
-	Label       [65]byte // string(64): buffer, used length beside it
-	_           [3]byte  // generated padding
-	LabelLength int32
-	Note        [1025]byte // string(1024): buffer, used length beside it
-	_           [3]byte    // generated padding
-	NoteLength  int32
-	At          [33]byte // string(32): buffer, used length beside it
-	_           [3]byte  // generated padding
-	AtLength    int32
-}
-
-// RawRecordRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
-// §11), so no declaration in the unit can take it.
-type RawRecordRow struct {
-	Harness               [17]byte // string(16): buffer, used length beside it
-	_                     [3]byte  // generated padding
-	HarnessLength         int32
-	Execution             [17]byte // string(16): buffer, used length beside it
-	_                     [3]byte  // generated padding
-	ExecutionLength       int32
-	SourceSchema          [33]byte // string(32): buffer, used length beside it
-	_                     [3]byte  // generated padding
-	SourceSchemaLength    int32
-	ProducerVersion       [65]byte // string(64): buffer, used length beside it
-	_                     [3]byte  // generated padding
-	ProducerVersionLength int32
-	Billing               Billing
-	_                     [7]byte // generated padding
-	Tokens                RawTokensRow
-}
-
 // RawUsageRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type RawUsageRow struct {
@@ -280,28 +184,30 @@ type RawUsageRow struct {
 // RecordLineRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type RecordLineRow struct {
-	Kind             LineKind
-	_                [7]byte // generated padding
-	AsDecision       int64   // *Decision: signed self-relative delta, zero is null (§6.3)
-	AsOutcome        OutcomeRow
-	AsOutcomePresent bool    // ?Outcome: one byte, in Go's model as in C++
-	_                [3]byte // generated padding
-	AsAct            ActRow
-	AsActPresent     bool    // ?Act: one byte, in Go's model as in C++
-	_                [3]byte // generated padding
+	Kind       LineKind
+	_          [7]byte // generated padding
+	AsDecision int64   // *Decision: signed self-relative delta, zero is null (§6.3)
+	AsOutcome  int64   // *Outcome: signed self-relative delta, zero is null (§6.3)
+	AsAct      int64   // *Act: signed self-relative delta, zero is null (§6.3)
+}
+
+// StagePathRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type StagePathRow struct {
+	Path int64 // *: signed self-relative delta, zero is null (§6.3)
 }
 
 // UsageRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type UsageRow struct {
-	InputTokens  int32
-	OutputTokens int32
+	InputTokens  int64
+	OutputTokens int64
 }
 
 // BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
 // one digest a block carries and BlockOpen compares, and the fact §3.3's
 // announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0x2a016ed04b522378
+const BuildVersion uint64 = 0x94bad44d9e33750e
 
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema

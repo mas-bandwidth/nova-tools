@@ -3,26 +3,31 @@ package decidewire
 // TestDecideRecordsGolden is the golden test of the decide definitions
 // (schemas/decide): every table the area declares round-trips as binary wire,
 // as padded standard base64 of that wire and as the JSON text form, each read
-// strictly through pkg/schemaread (S1, S2). The small records (Usage, Outcome,
-// Act, Decided, Frame and the raw cost records) are FIXED tables, read and
-// written by value; the documents (Decision, Answer and their lists,
-// RecordLine, RawUsage) are VARIABLE tables, held in an arena. A value past
-// each declared bound, and a damaged image of each form, is refused by name and
-// never clamped; the reader counts each read on the form it arrived in; and the
-// unit's protocol id, the hash of its wire shape, is pinned.
+// strictly through pkg/schemaread (S1, S2). Usage and RawTokens, whose every
+// bound the code states, are FIXED tables read and written by value; every
+// other table holds text or a list the code does not bound, so it is a VARIABLE
+// table held in an arena, with unbounded text (*string) and unbounded lists.
+// A value past each bound the code enforces, and a damaged image of each form,
+// is refused by name and never clamped; a text, a list or an id line far past
+// any size a fixed table could hold round-trips whole; the reader counts each
+// read on the form it arrived in; and the unit's protocol id, the hash of its
+// wire shape, is pinned.
 //
 // The facade here is the strict read and write over the generated functions.
-// The generated fixed writer refuses a length past its capacity but checks no
-// range, and the generated reader clamps and counts: the facade refuses every
-// clamp and states each rule the Go struct enforces today once, for the reader
-// and the writer (UNION.md section 4.6). The rules and their sources are the
-// comments of schemas/decide/decide.schema.
+// The generated writer checks no range and the generated reader clamps and
+// counts: the facade refuses every clamp and states each rule the Go code
+// enforces today once, for the reader and the writer (UNION.md section 4.6).
+// The rules and their sources are the comments of schemas/decide/decide.schema.
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -33,39 +38,42 @@ import (
 
 const decideHelp = "nova-tools decide -h"
 
-// chk states the facade's rules over a schemaread.Checker.
-type chk struct{ c *schemaread.Checker }
-
-// textOf is a counted string field's text; a length past the buffer is read
-// whole so the bound check sees it.
-func textOf(buf []byte, n int32) string {
-	if n < 0 {
-		return ""
-	}
-	if int(n) > len(buf) {
-		return string(buf) + strings.Repeat("?", int(n)-len(buf))
-	}
-	return string(buf[:n])
+// chk states the facade's rules over a schemaread.Checker. ar is the arena a
+// read of the table's text and lists passes: before the arena is locked a
+// reference is an arena offset; after it, in the packed region, a reference is
+// relative to its own slot and no arena is passed.
+type chk struct {
+	c  *schemaread.Checker
+	ar []*TableArena
 }
 
-// str holds a counted string to its declared capacity (the bound), UTF-8 and
-// no NUL (S2: refused by name).
-func (k chk) str(field string, buf []byte, n int32) {
-	max := len(buf) - 1 // the generated buffer is one byte longer than the bound
-	k.c.Bound(field, int64(n), 0, int64(max))
-	k.c.Text(field, textOf(buf, n), max)
+func arenaOf(a *TableArena) []*TableArena {
+	if a.Locked {
+		return nil
+	}
+	return []*TableArena{a}
 }
 
-// req refuses an empty counted string where the struct's reader refuses it.
-func (k chk) req(field string, n int32) { k.c.Required(field, n > 0) }
+// maxText is the largest text the area holds: the record reader's 64 MiB line
+// (record.go:97) is the only size any of the code states.
+const maxText = 64 << 20
 
-// count holds a counted array to its declared bound.
-func (k chk) count(field string, n int32, max int) { k.c.Bound(field, int64(n), 0, int64(max)) }
+// s is the text a string slot holds.
+func (k chk) s(slot *TableRef) string { return string(TableStringAt(slot, k.ar...).Data) }
+
+// text holds a text to UTF-8 with no NUL (S2: refused by name).
+func (k chk) text(field string, slot *TableRef) { k.c.Text(field, k.s(slot), maxText) }
+
+// must is text the code refuses when empty.
+func (k chk) must(field string, slot *TableRef) {
+	k.text(field, slot)
+	k.c.Required(field, k.s(slot) != "")
+}
 
 // span holds a value to [lo, hi].
 func (k chk) span(field string, v, lo, hi int64) { k.c.Bound(field, v, lo, hi) }
 
-// prob holds a probability to [0, 1]: pkg/decide Schema.Check and
+// prob holds a probability to [0, 1]: decide.go:163 Check and record.go:169
 // recordedProbabilities refuse a probability outside it or not a number. The
 // Checker has no float bound, so an out-of-range value is a clamp and NaN is
 // malformed.
@@ -81,74 +89,129 @@ func (k chk) prob(field string, p float64) {
 	k.c.Bound(field, in, 1, 1)
 }
 
-// is refuses a field that is not the one value the code accepts (raw.go
-// Validate).
-func (k chk) is(field, got, want string) {
-	if got != want {
+// is refuses a text that is not the one value the code accepts (raw.go:51).
+func (k chk) is(field string, slot *TableRef, want string) {
+	k.text(field, slot)
+	if k.s(slot) != want {
 		k.c.Text(field, "\x00", 1)
 	}
 }
 
-// bare refuses a text holding whitespace: ParseDecided splits on it.
-func (k chk) bare(field, s string) {
-	if strings.ContainsAny(s, " \t\r\n") {
+// bare refuses a text holding whitespace: ParseDecided splits on it
+// (attempt.go:170).
+func (k chk) bare(field string, slot *TableRef) {
+	if strings.ContainsAny(k.s(slot), " \t\r\n") {
 		k.c.Text(field, "\x00", 1)
 	}
 }
-
-func s(buf []byte, n int32) string { return textOf(buf, n) }
-
-func put(dst []byte, n *int32, text string) { *n = int32(copy(dst, text)) }
 
 // ---- the rules, one function a table ----
 
-func usageRules(v *Usage, k chk) {
-	k.span("input_tokens", int64(v.InputTokens), 0, math.MaxInt32)
-	k.span("output_tokens", int64(v.OutputTokens), 0, math.MaxInt32)
+func usageRules(v *Usage, k chk) {}
+
+func optionPRules(v *OptionP, k chk) {
+	k.must("option", &v.Option)
+	k.prob("p", v.P)
+}
+
+// answerRules: the answer's kind is choice or noul, its options an open-ended
+// list (decide.go:114 wants two, Check sets no ceiling), each probability in
+// [0, 1] (decide.go:163).
+func answerRules(v *Answer, k chk) {
+	k.span("kind", int64(v.Kind), 1, 2)
+	k.must("value", &v.Value)
+	AnswerPEach(&v.P, func(o *OptionP) bool { optionPRules(o, k); return true }, k.ar...)
+	k.text("method", &v.Method)
+}
+
+func namedAnswerRules(v *NamedAnswer, k chk) {
+	k.must("question", &v.Question)
+	answerRules(&v.Answer, k)
+}
+
+func inputRules(v *Input, k chk) {
+	k.must("key", &v.Key)
+	k.text("value", &v.Value)
 }
 
 func decidedRules(v *Decided, k chk) {
-	k.str("value", v.Value[:], v.ValueLength)
-	k.req("value", v.ValueLength)
-	k.bare("value", s(v.Value[:], v.ValueLength))
+	k.must("value", &v.Value)
+	k.bare("value", &v.Value)
 	k.prob("p", v.P)
-	k.str("op", v.Op[:], v.OpLength)
-	k.req("op", v.OpLength)
-	k.bare("op", s(v.Op[:], v.OpLength))
+	k.must("op", &v.Op)
+	k.bare("op", &v.Op)
+}
+
+func decisionRules(v *Decision, k chk) {
+	k.must("id", &v.Id)
+	k.must("decision_name", &v.DecisionName)
+	k.text("schema", &v.Schema)
+	k.text("backend", &v.Backend)
+	k.text("at", &v.At)
+	DecisionInputsEach(&v.Inputs, func(in *Input) bool { inputRules(in, k); return true }, k.ar...)
+	k.text("state", &v.State)
+	DecisionAnswersEach(&v.Answers, func(n *NamedAnswer) bool { namedAnswerRules(n, k); return true }, k.ar...)
+	usageRules(&v.Usage, k)
 }
 
 func outcomeRules(v *Outcome, k chk) {
-	k.str("id", v.Id[:], v.IdLength)
-	k.req("id", v.IdLength)
-	k.str("label", v.Label[:], v.LabelLength)
-	k.req("label", v.LabelLength)
-	k.str("note", v.Note[:], v.NoteLength)
-	k.str("at", v.At[:], v.AtLength)
+	k.must("id", &v.Id)
+	k.must("label", &v.Label)
+	k.text("note", &v.Note)
+	k.text("at", &v.At)
 }
 
 func actRules(v *Act, k chk) {
-	k.str("id", v.Id[:], v.IdLength)
-	k.req("id", v.IdLength)
-	k.str("step", v.Step[:], v.StepLength)
-	k.req("step", v.StepLength)
-	k.str("op", v.Op[:], v.OpLength)
-	k.str("at", v.At[:], v.AtLength)
+	k.must("id", &v.Id)
+	k.must("step", &v.Step)
+	k.text("op", &v.Op)
+	k.text("at", &v.At)
 }
 
-func judgmentIdRules(v *JudgmentId, k chk) {
-	k.str("id", v.Id[:], v.IdLength)
-	k.req("id", v.IdLength)
+func (l LineKind) name() string {
+	switch l {
+	case LineKindDecision:
+		return "decision"
+	case LineKindOutcome:
+		return "outcome"
+	case LineKindAct:
+		return "act"
+	}
+	return "none"
 }
 
-func importLogLineRules(v *ImportLogLine, k chk) {
-	k.str("verb", v.Verb[:], v.VerbLength)
-	k.count("answers", v.AnswersCount, len(v.Answers))
-	for i := 0; i < int(v.AnswersCount) && i < len(v.Answers); i++ {
-		judgmentIdRules(&v.Answers[i], k)
+// recordLineRules: a line is one record (record.go:70 parse), the one kind names.
+func recordLineRules(v *RecordLine, k chk) {
+	k.span("kind", int64(v.Kind), 1, 3)
+	d, o, a := DecisionAt(&v.AsDecision, k.ar...), OutcomeAt(&v.AsOutcome, k.ar...), ActAt(&v.AsAct, k.ar...)
+	present := map[LineKind]bool{LineKindDecision: d != nil, LineKindOutcome: o != nil, LineKindAct: a != nil}
+	k.c.Required("as_"+v.Kind.name(), present[v.Kind])
+	for kind, p := range present {
+		if p && kind != v.Kind {
+			k.c.Text("as_"+kind.name(), "\x00", 1)
+		}
+	}
+	if d != nil {
+		decisionRules(d, k)
+	}
+	if o != nil {
+		outcomeRules(o, k)
+	}
+	if a != nil {
+		actRules(a, k)
 	}
 }
 
-// rawTokensRules: a count is a non-negative int64 (raw.go Validate).
+func judgmentIdRules(v *JudgmentId, k chk) { k.must("id", &v.Id) }
+
+// importLogLineRules: the code takes every id of an export line
+// (import.go:161-176), so the list has no count bound.
+func importLogLineRules(v *ImportLogLine, k chk) {
+	k.text("verb", &v.Verb)
+	ImportLogLineAnswersEach(&v.Answers, func(j *JudgmentId) bool { judgmentIdRules(j, k); return true }, k.ar...)
+}
+
+// rawTokensRules: a count is a non-negative int64 (raw.go:55).
 func rawTokensRules(v *RawTokens, k chk) {
 	for _, c := range []struct {
 		field   string
@@ -165,383 +228,46 @@ func rawTokensRules(v *RawTokens, k chk) {
 	}
 }
 
-// rawRecordRules are raw.go Validate's provenance rules.
+// rawRecordRules are raw.go:51's provenance rules.
 func rawRecordRules(v *RawRecord, k chk) {
-	k.str("harness", v.Harness[:], v.HarnessLength)
-	k.is("harness", s(v.Harness[:], v.HarnessLength), "muse")
-	k.str("execution", v.Execution[:], v.ExecutionLength)
-	k.is("execution", s(v.Execution[:], v.ExecutionLength), "fleet")
-	k.str("source_schema", v.SourceSchema[:], v.SourceSchemaLength)
-	k.is("source_schema", s(v.SourceSchema[:], v.SourceSchemaLength), "muse-jsonl-v1")
-	k.str("producer_version", v.ProducerVersion[:], v.ProducerVersionLength)
-	k.req("producer_version", v.ProducerVersionLength)
+	k.is("harness", &v.Harness, "muse")
+	k.is("execution", &v.Execution, "fleet")
+	k.is("source_schema", &v.SourceSchema, "muse-jsonl-v1")
+	k.must("producer_version", &v.ProducerVersion)
 	k.span("billing", int64(v.Billing), 1, 3)
 	rawTokensRules(&v.Tokens, k)
 }
 
-func stagePathRules(v *StagePath, k chk) {
-	k.str("path", v.Path[:], v.PathLength)
-	k.req("path", v.PathLength)
-}
-
-// frameRules: ReadFrame refuses a kind that is not work or read and an empty
-// card (contract.go).
-func frameRules(v *Frame, k chk) {
-	k.span("kind", int64(v.Kind), 1, 2)
-	k.str("card", v.Card[:], v.CardLength)
-	k.req("card", v.CardLength)
-	k.span("attempt", int64(v.Attempt), 0, math.MaxInt32)
-	k.str("tier", v.Tier[:], v.TierLength)
-	k.str("model", v.Model[:], v.ModelLength)
-	k.str("repo", v.Repo[:], v.RepoLength)
-	k.str("base_ref", v.BaseRef[:], v.BaseRefLength)
-	k.str("stage_sha", v.StageSha[:], v.StageShaLength)
-	k.str("branch", v.Branch[:], v.BranchLength)
-	k.str("prev_head", v.PrevHead[:], v.PrevHeadLength)
-	k.span("prev_attempt", int64(v.PrevAttempt), 0, math.MaxInt32)
-	k.str("why", v.Why[:], v.WhyLength)
-	k.str("finding", v.Finding[:], v.FindingLength)
-	k.str("fix", v.Fix[:], v.FixLength)
-	k.str("review_base", v.ReviewBase[:], v.ReviewBaseLength)
-	k.count("stage", v.StageCount, len(v.Stage))
-	for i := 0; i < int(v.StageCount) && i < len(v.Stage); i++ {
-		stagePathRules(&v.Stage[i], k)
-	}
-	k.str("recipes", v.Recipes[:], v.RecipesLength)
-	k.str("decide_bounce", v.DecideBounce[:], v.DecideBounceLength)
-	k.str("decide_review", v.DecideReview[:], v.DecideReviewLength)
-	k.str("decide_gate_flaky", v.DecideGateFlaky[:], v.DecideGateFlakyLength)
-	k.str("decide_gate_preexisting", v.DecideGatePreexisting[:], v.DecideGatePreexistingLength)
-}
-
-// ---- samples: a value of each table that holds every rule ----
-
-func sampleUsage() Usage { return Usage{InputTokens: 1200, OutputTokens: 85} }
-
-func sampleDecided() Decided {
-	var v Decided
-	put(v.Value[:], &v.ValueLength, "done")
-	v.P = 0.931
-	put(v.Op[:], &v.OpLength, "a13-defs-decide@1.0123456789ab")
-	return v
-}
-
-func sampleOutcome() Outcome {
-	var v Outcome
-	put(v.Id[:], &v.IdLength, "a13-defs-decide@1.0123456789ab")
-	put(v.Label[:], &v.LabelLength, "landed")
-	put(v.Note[:], &v.NoteLength, "/work/VERDICT.md")
-	put(v.At[:], &v.AtLength, "2026-10-17T04:09:00Z")
-	return v
-}
-
-func sampleAct() Act {
-	var v Act
-	put(v.Id[:], &v.IdLength, "a13-defs-decide@1.0123456789ab")
-	put(v.Step[:], &v.StepLength, "applying")
-	put(v.Op[:], &v.OpLength, "answer-0042")
-	put(v.At[:], &v.AtLength, "2026-10-17T04:09:30Z")
-	return v
-}
-
-func sampleJudgmentId() JudgmentId {
-	var v JudgmentId
-	put(v.Id[:], &v.IdLength, "judgment-0007")
-	return v
-}
-
-func sampleImportLogLine() ImportLogLine {
-	var v ImportLogLine
-	put(v.Verb[:], &v.VerbLength, "rework")
-	v.Answers[0] = sampleJudgmentId()
-	v.AnswersCount = 1
-	return v
-}
-
-func sampleRawTokens() RawTokens {
-	// Absence and zero differ: output is present at zero, cached is absent.
-	return RawTokens{InputTokens: 4096, InputTokensPresent: true, OutputTokens: 0, OutputTokensPresent: true, ReasoningTokens: 17, ReasoningTokensPresent: true}
-}
-
-func sampleRawRecord() RawRecord {
-	var v RawRecord
-	put(v.Harness[:], &v.HarnessLength, "muse")
-	put(v.Execution[:], &v.ExecutionLength, "fleet")
-	put(v.SourceSchema[:], &v.SourceSchemaLength, "muse-jsonl-v1")
-	put(v.ProducerVersion[:], &v.ProducerVersionLength, "1.4.2")
-	v.Billing = BillingPlan
-	v.Tokens = sampleRawTokens()
-	return v
-}
-
-func sampleStagePath() StagePath {
-	var v StagePath
-	put(v.Path[:], &v.PathLength, "schema/recipe.md")
-	return v
-}
-
-func sampleFrame() Frame {
-	var v Frame
-	v.Kind = FrameKindWork
-	put(v.Card[:], &v.CardLength, "a13-defs-decide")
-	v.Attempt = 1
-	put(v.Tier[:], &v.TierLength, "pro")
-	put(v.Model[:], &v.ModelLength, "anthropic/claude-opus")
-	put(v.Repo[:], &v.RepoLength, "/work/nova-tools")
-	put(v.BaseRef[:], &v.BaseRefLength, "sprint/v15-schema-tables")
-	put(v.StageSha[:], &v.StageShaLength, "d03635a82bde0000000000000000000000000000")
-	put(v.Branch[:], &v.BranchLength, "sprint/a13-defs-decide.w1.g1.e21")
-	v.Stage[0] = sampleStagePath()
-	v.StageCount = 1
-	put(v.Recipes[:], &v.RecipesLength, "/work/recipes")
-	put(v.DecideBounce[:], &v.DecideBounceLength, "0.9")
-	return v
-}
-
-func TestDecideRecordsGolden(t *testing.T) {
-	t.Parallel()
-
-	// The small records are FIXED tables: structs read and written by value.
-	// In a unit that also declares variable tables the compiler gives them the
-	// fixed class (by-value storage, cook, block form) on the variable form's
-	// wire, so they read and write in the same three forms.
-	t.Run("Usage", func(t *testing.T) {
-		t.Parallel()
-		exerciseVar(t, plainFns("Usage", UsageLoad, UsageFromJson, UsageMeasure, UsageSave, UsageToJsonMeasure, UsageToJson, func(r *Usage, k chk) { usageRules(r, k) }),
-			func(_ *plain[Usage], r *Usage) { *r = sampleUsage() }, plainBounds([]pbound[Usage]{
-				{"input tokens below zero", "input_tokens", "clamped", func(v *Usage) { v.InputTokens = -1 }},
-				{"output tokens below zero", "output_tokens", "clamped", func(v *Usage) { v.OutputTokens = -1 }},
-			}))
-	})
-	t.Run("Decided", func(t *testing.T) {
-		t.Parallel()
-		exerciseVar(t, plainFns("Decided", DecidedLoad, DecidedFromJson, DecidedMeasure, DecidedSave, DecidedToJsonMeasure, DecidedToJson, func(r *Decided, k chk) { decidedRules(r, k) }),
-			func(_ *plain[Decided], r *Decided) { *r = sampleDecided() }, plainBounds([]pbound[Decided]{
-				{"probability above one", "p", "clamped", func(v *Decided) { v.P = 1.5 }},
-				{"op past 256 bytes", "op", "clamped", func(v *Decided) { v.OpLength = 257 }},
-				{"value with a space", "value", "malformed", func(v *Decided) { v.Value[1] = ' ' }},
-				{"op empty", "op", "absent_required", func(v *Decided) { v.OpLength = 0 }},
-			}))
-	})
-	t.Run("Outcome", func(t *testing.T) {
-		t.Parallel()
-		exerciseVar(t, plainFns("Outcome", OutcomeLoad, OutcomeFromJson, OutcomeMeasure, OutcomeSave, OutcomeToJsonMeasure, OutcomeToJson, func(r *Outcome, k chk) { outcomeRules(r, k) }),
-			func(_ *plain[Outcome], r *Outcome) { *r = sampleOutcome() }, plainBounds([]pbound[Outcome]{
-				{"label past 64 bytes", "label", "clamped", func(v *Outcome) { v.LabelLength = 65 }},
-				{"note past 1024 bytes", "note", "clamped", func(v *Outcome) { v.NoteLength = 1025 }},
-				{"label empty", "label", "absent_required", func(v *Outcome) { v.LabelLength = 0 }},
-				{"id empty", "id", "absent_required", func(v *Outcome) { v.IdLength = 0 }},
-			}))
-	})
-	t.Run("Act", func(t *testing.T) {
-		t.Parallel()
-		exerciseVar(t, plainFns("Act", ActLoad, ActFromJson, ActMeasure, ActSave, ActToJsonMeasure, ActToJson, func(r *Act, k chk) { actRules(r, k) }),
-			func(_ *plain[Act], r *Act) { *r = sampleAct() }, plainBounds([]pbound[Act]{
-				{"step past 16 bytes", "step", "clamped", func(v *Act) { v.StepLength = 17 }},
-				{"step empty", "step", "absent_required", func(v *Act) { v.StepLength = 0 }},
-				{"op past 256 bytes", "op", "clamped", func(v *Act) { v.OpLength = 257 }},
-			}))
-	})
-	t.Run("JudgmentId", func(t *testing.T) {
-		t.Parallel()
-		exerciseVar(t, plainFns("JudgmentId", JudgmentIdLoad, JudgmentIdFromJson, JudgmentIdMeasure, JudgmentIdSave, JudgmentIdToJsonMeasure, JudgmentIdToJson, func(r *JudgmentId, k chk) { judgmentIdRules(r, k) }),
-			func(_ *plain[JudgmentId], r *JudgmentId) { *r = sampleJudgmentId() }, plainBounds([]pbound[JudgmentId]{
-				{"id past 128 bytes", "id", "clamped", func(v *JudgmentId) { v.IdLength = 129 }},
-				{"id empty", "id", "absent_required", func(v *JudgmentId) { v.IdLength = 0 }},
-			}))
-	})
-	t.Run("ImportLogLine", func(t *testing.T) {
-		t.Parallel()
-		exerciseVar(t, plainFns("ImportLogLine", ImportLogLineLoad, ImportLogLineFromJson, ImportLogLineMeasure, ImportLogLineSave, ImportLogLineToJsonMeasure, ImportLogLineToJson, func(r *ImportLogLine, k chk) { importLogLineRules(r, k) }),
-			func(_ *plain[ImportLogLine], r *ImportLogLine) { *r = sampleImportLogLine() }, plainBounds([]pbound[ImportLogLine]{
-				{"verb past 64 bytes", "verb", "clamped", func(v *ImportLogLine) { v.VerbLength = 65 }},
-				{"nine answers", "answers", "clamped", func(v *ImportLogLine) { v.AnswersCount = 9 }},
-				{"an answer id empty", "id", "absent_required", func(v *ImportLogLine) { v.Answers[0].IdLength = 0 }},
-			}))
-	})
-	t.Run("RawTokens", func(t *testing.T) {
-		t.Parallel()
-		tokens := plainFns("RawTokens", RawTokensLoad, RawTokensFromJson, RawTokensMeasure, RawTokensSave, RawTokensToJsonMeasure, RawTokensToJson, func(r *RawTokens, k chk) { rawTokensRules(r, k) })
-		exerciseVar(t, tokens, func(_ *plain[RawTokens], r *RawTokens) { *r = sampleRawTokens() }, plainBounds([]pbound[RawTokens]{
-			{"input below zero", "input_tokens", "clamped", func(v *RawTokens) { v.InputTokens = -1 }},
-			{"cached below zero", "cached_tokens", "clamped", func(v *RawTokens) { v.CachedTokens, v.CachedTokensPresent = -7, true }},
-			{"reasoning below zero", "reasoning_tokens", "clamped", func(v *RawTokens) { v.ReasoningTokens = math.MinInt64 }},
-		}))
-		// Absence and zero differ (raw.go): the image keeps which is which.
-		r := schemaread.NewReader(tokens.codec())
-		for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
-			none, zero := tokens.fresh(), tokens.fresh()
-			zero.v.OutputTokensPresent = true
-			for want, v := range map[bool]*plain[RawTokens]{false: none, true: zero} {
-				image, err := r.Write(&v, form)
-				require.NoError(t, err)
-				got, _, err := r.Read(image)
-				require.NoError(t, err)
-				assert.Equal(t, want, got.v.OutputTokensPresent, form.String())
-				assert.Zero(t, got.v.OutputTokens)
-			}
-		}
-	})
-	t.Run("RawRecord", func(t *testing.T) {
-		t.Parallel()
-		exerciseVar(t, plainFns("RawRecord", RawRecordLoad, RawRecordFromJson, RawRecordMeasure, RawRecordSave, RawRecordToJsonMeasure, RawRecordToJson, func(r *RawRecord, k chk) { rawRecordRules(r, k) }),
-			func(_ *plain[RawRecord], r *RawRecord) { *r = sampleRawRecord() }, plainBounds([]pbound[RawRecord]{
-				{"harness not muse", "harness", "malformed", func(v *RawRecord) { put(v.Harness[:], &v.HarnessLength, "codex") }},
-				{"execution not fleet", "execution", "malformed", func(v *RawRecord) { put(v.Execution[:], &v.ExecutionLength, "local") }},
-				{"source schema not muse-jsonl-v1", "source_schema", "malformed", func(v *RawRecord) { put(v.SourceSchema[:], &v.SourceSchemaLength, "muse-jsonl-v2") }},
-				{"producer version empty", "producer_version", "absent_required", func(v *RawRecord) { v.ProducerVersionLength = 0 }},
-				{"producer version past 64", "producer_version", "clamped", func(v *RawRecord) { v.ProducerVersionLength = 65 }},
-				{"billing none", "billing", "clamped", func(v *RawRecord) { v.Billing = BillingNone }},
-				{"a negative counter", "input_tokens", "clamped", func(v *RawRecord) { v.Tokens.InputTokens = -1 }},
-			}))
-	})
-	t.Run("StagePath", func(t *testing.T) {
-		t.Parallel()
-		exerciseVar(t, plainFns("StagePath", StagePathLoad, StagePathFromJson, StagePathMeasure, StagePathSave, StagePathToJsonMeasure, StagePathToJson, func(r *StagePath, k chk) { stagePathRules(r, k) }),
-			func(_ *plain[StagePath], r *StagePath) { *r = sampleStagePath() }, plainBounds([]pbound[StagePath]{
-				{"path past 256 bytes", "path", "clamped", func(v *StagePath) { v.PathLength = 257 }},
-				{"path empty", "path", "absent_required", func(v *StagePath) { v.PathLength = 0 }},
-			}))
-	})
-	t.Run("Frame", func(t *testing.T) {
-		t.Parallel()
-		exerciseVar(t, plainFns("Frame", FrameLoad, FrameFromJson, FrameMeasure, FrameSave, FrameToJsonMeasure, FrameToJson, func(r *Frame, k chk) { frameRules(r, k) }),
-			func(_ *plain[Frame], r *Frame) { *r = sampleFrame() }, plainBounds([]pbound[Frame]{
-				{"kind none", "kind", "clamped", func(v *Frame) { v.Kind = FrameKindNone }},
-				{"card empty", "card", "absent_required", func(v *Frame) { v.CardLength = 0 }},
-				{"card past 256 bytes", "card", "clamped", func(v *Frame) { v.CardLength = 257 }},
-				{"attempt below zero", "attempt", "clamped", func(v *Frame) { v.Attempt = -1 }},
-				{"prev attempt below zero", "prev_attempt", "clamped", func(v *Frame) { v.PrevAttempt = -1 }},
-				{"repo past 1024 bytes", "repo", "clamped", func(v *Frame) { v.RepoLength = 1025 }},
-				{"why past 4096 bytes", "why", "clamped", func(v *Frame) { v.WhyLength = 4097 }},
-				{"33 staged recipes", "stage", "clamped", func(v *Frame) { v.StageCount = 33 }},
-				{"a staged path empty", "path", "absent_required", func(v *Frame) { v.Stage[0].PathLength = 0 }},
-				{"a gate bar past 16 bytes", "decide_gate_flaky", "clamped", func(v *Frame) { v.DecideGateFlakyLength = 17 }},
-			}))
-	})
-
-	variableTables(t)
-
-	t.Run("the wire shape is pinned", func(t *testing.T) {
-		t.Parallel()
-		// The protocol id is the hash of the unit's wire shape (schema.lock holds
-		// the fixed layouts): a changed table is a changed id, and this line
-		// changes with it.
-		assert.EqualValues(t, uint64(0x43d04f03b7c3856d), ProtocolId)
-	})
-
-}
-
-// ---- the variable tables: the documents ----
-
-func optionPRules(v *OptionP, k chk) {
-	k.str("option", v.Option[:], v.OptionLength)
-	k.req("option", v.OptionLength)
-	k.prob("p", v.P)
-}
-
-// arenaOf is the arena a read of a table's lists passes: before the arena is
-// locked a reference is an arena offset; after it, in the packed region, a
-// reference is relative to its own slot and no arena is passed.
-func arenaOf(a *TableArena) []*TableArena {
-	if a.Locked {
-		return nil
-	}
-	return []*TableArena{a}
-}
-
-// answerRules: the answer's kind is choice or noul, its options an open-ended
-// list (decide.go ParseSchema wants two and Check sets no ceiling), each
-// probability in [0, 1] (decide.go Check).
-func answerRules(a *TableArena, v *Answer, k chk) {
-	k.span("kind", int64(v.Kind), 1, 2)
-	k.str("value", v.Value[:], v.ValueLength)
-	k.req("value", v.ValueLength)
-	AnswerPEach(&v.P, func(o *OptionP) bool { optionPRules(o, k); return true }, arenaOf(a)...)
-	k.str("method", v.Method[:], v.MethodLength)
-}
-
-func namedAnswerRules(a *TableArena, v *NamedAnswer, k chk) {
-	k.str("question", v.Question[:], v.QuestionLength)
-	k.req("question", v.QuestionLength)
-	answerRules(a, &v.Answer, k)
-}
-
-func inputRules(v *Input, k chk) {
-	k.str("key", v.Key[:], v.KeyLength)
-	k.req("key", v.KeyLength)
-	k.str("value", v.Value[:], v.ValueLength)
-}
-
-// decisionRules: the lists are open-ended (the code fixes neither count), the
-// state is held at its own size up to the record reader's 64 MiB line.
-func decisionRules(a *TableArena, v *Decision, k chk) {
-	// Before the arena is locked a reference is an arena offset; after it, in
-	// the packed region, a reference is relative to its own slot.
-	var arena []*TableArena
-	if !a.Locked {
-		arena = []*TableArena{a}
-	}
-	k.str("id", v.Id[:], v.IdLength)
-	k.req("id", v.IdLength)
-	k.str("decision_name", v.DecisionName[:], v.DecisionNameLength)
-	k.req("decision_name", v.DecisionNameLength)
-	k.str("schema", v.Schema[:], v.SchemaLength)
-	k.str("backend", v.Backend[:], v.BackendLength)
-	k.str("at", v.At[:], v.AtLength)
-	DecisionInputsEach(&v.Inputs, func(in *Input) bool { inputRules(in, k); return true }, arena...)
-	k.c.Text("state", string(TableStringAt(&v.State, arena...).Data), 64<<20)
-	DecisionAnswersEach(&v.Answers, func(n *NamedAnswer) bool { namedAnswerRules(a, n, k); return true }, arena...)
-	usageRules(&v.Usage, k)
-}
-
-// recordLineRules: a line is one record (record.go parse), the one kind names.
-func recordLineRules(a *TableArena, v *RecordLine, k chk) {
-	k.span("kind", int64(v.Kind), 1, 3)
-	var arena []*TableArena
-	if !a.Locked {
-		arena = []*TableArena{a}
-	}
-	d := DecisionAt(&v.AsDecision, arena...)
-	present := map[LineKind]bool{LineKindDecision: d != nil, LineKindOutcome: v.AsOutcomePresent, LineKindAct: v.AsActPresent}
-	k.c.Required("as_"+strings.ToLower(v.Kind.name()), present[v.Kind])
-	for kind, p := range present {
-		if p && kind != v.Kind {
-			k.c.Text("as_"+strings.ToLower(kind.name()), "\x00", 1)
-		}
-	}
-	if d != nil {
-		decisionRules(a, d, k)
-	}
-	if v.AsOutcomePresent {
-		outcomeRules(&v.AsOutcome, k)
-	}
-	if v.AsActPresent {
-		actRules(&v.AsAct, k)
-	}
-}
-
-func (l LineKind) name() string {
-	switch l {
-	case LineKindDecision:
-		return "decision"
-	case LineKindOutcome:
-		return "outcome"
-	case LineKindAct:
-		return "act"
-	}
-	return "none"
-}
-
-// rawUsageRules: version 1 and at least one record, at most 270 (raw.go
-// Validate; MaxRawBytes 32768 over a 120-byte smallest record).
+// rawUsageRules: version 1 and at least one record (raw.go:47), at most 270
+// (MaxRawBytes, raw.go:21, over a 120-byte smallest record).
 func rawUsageRules(v *RawUsage, k chk) {
 	k.span("version", int64(v.Version), 1, 1)
 	k.c.Required("records", v.RecordsCount > 0)
-	k.count("records", v.RecordsCount, len(v.Records))
+	k.span("records", int64(v.RecordsCount), 0, int64(len(v.Records)))
 	for i := 0; i < int(v.RecordsCount) && i < len(v.Records); i++ {
 		rawRecordRules(&v.Records[i], k)
 	}
+}
+
+func stagePathRules(v *StagePath, k chk) { k.must("path", &v.Path) }
+
+// frameRules: ReadFrame (contract.go:142) refuses a kind that is not work or
+// read and an empty card; it bounds no length, count or number.
+func frameRules(v *Frame, k chk) {
+	k.span("kind", int64(v.Kind), 1, 2)
+	k.must("card", &v.Card)
+	for _, f := range []struct {
+		field string
+		slot  *TableRef
+	}{
+		{"tier", &v.Tier}, {"model", &v.Model}, {"repo", &v.Repo}, {"base_ref", &v.BaseRef}, {"stage_sha", &v.StageSha},
+		{"branch", &v.Branch}, {"prev_head", &v.PrevHead}, {"why", &v.Why}, {"finding", &v.Finding}, {"fix", &v.Fix},
+		{"review_base", &v.ReviewBase}, {"recipes", &v.Recipes}, {"decide_bounce", &v.DecideBounce}, {"decide_review", &v.DecideReview},
+		{"decide_gate_flaky", &v.DecideGateFlaky}, {"decide_gate_preexisting", &v.DecideGatePreexisting},
+	} {
+		k.text(f.field, f.slot)
+	}
+	FrameStageEach(&v.Stage, func(p *StagePath) bool { stagePathRules(p, k); return true }, k.ar...)
 }
 
 // varFns are the generated functions of one VARIABLE table and the rules its
@@ -615,7 +341,13 @@ func (f varFns[R, B, PB]) codec() *schemaread.Codec[PB] {
 		LoadJSON: func(v *PB, text []byte) schemaread.Report {
 			return f.viaBuilder(v, func(b PB, rep *TableReport) bool { return f.fromJSON(b, text, rep) })
 		},
-		Constraints: func(v *PB, c *schemaread.Checker) { f.rules(*v, f.root(*v), chk{c}) },
+		Constraints: func(v *PB, c *schemaread.Checker) {
+			var ar []*TableArena
+			if f.arena != nil {
+				ar = arenaOf(f.arena(*v))
+			}
+			f.rules(*v, f.root(*v), chk{c, ar})
+		},
 		SaveWire: func(v *PB) []byte {
 			root := f.locked(*v)
 			n := f.measure(root)
@@ -761,86 +493,218 @@ func exerciseVar[R any, B any, PB interface {
 	})
 }
 
-// ---- samples of the variable tables ----
+// ---- samples ----
 
-func fillOptionP(r *OptionP, option string, p float64) {
-	put(r.Option[:len(r.Option)-1], &r.OptionLength, option)
+// setS stores text in a string slot of the worker's arena.
+func setS(w *TableWorker, slot *TableRef, text string) {
+	if text != "" {
+		TableStringEmplace(w, slot, []byte(text))
+	}
+}
+
+func fillOptionP(w *TableWorker, r *OptionP, option string, p float64) {
+	setS(w, &r.Option, option)
 	r.P = p
 }
 
 // fillAnswer fills a choice with options options.
 func fillAnswer(w *TableWorker, r *Answer, options int) {
 	r.Kind = AnswerTypeChoice
-	put(r.Value[:len(r.Value)-1], &r.ValueLength, "opt-0")
+	setS(w, &r.Value, "opt-0")
 	for i := 0; i < options; i++ {
-		fillOptionP(AnswerPAdd(w, &r.P), fmt.Sprintf("opt-%d", i), 1/float64(options))
+		fillOptionP(w, AnswerPAdd(w, &r.P), fmt.Sprintf("opt-%d", i), 1/float64(options))
 	}
 	r.Confidence = 0.5
-	put(r.Method[:len(r.Method)-1], &r.MethodLength, "coordinator")
+	setS(w, &r.Method, "coordinator")
 }
 
 func fillNamedAnswer(w *TableWorker, r *NamedAnswer, options int) {
-	put(r.Question[:len(r.Question)-1], &r.QuestionLength, "class")
+	setS(w, &r.Question, "class")
 	fillAnswer(w, &r.Answer, options)
 }
 
-func fillInput(r *Input, i int) {
-	put(r.Key[:len(r.Key)-1], &r.KeyLength, fmt.Sprintf("key-%d", i))
-	put(r.Value[:len(r.Value)-1], &r.ValueLength, "gate green; pushed the head")
+func fillInput(w *TableWorker, r *Input, i int) {
+	setS(w, &r.Key, fmt.Sprintf("key-%d", i))
+	setS(w, &r.Value, "gate green; pushed the head")
+}
+
+func sampleUsage() Usage { return Usage{InputTokens: 1200, OutputTokens: 85} }
+
+func fillDecided(w *TableWorker, r *Decided) {
+	setS(w, &r.Value, "done")
+	r.P = 0.931
+	setS(w, &r.Op, "a13-defs-decide@1.0123456789ab")
 }
 
 // fillDecision fills a decision with inputs inputs, answers answers of options
 // options each, and a state of stateBytes bytes.
 func fillDecision(w *TableWorker, r *Decision, inputs, answers, options, stateBytes int) {
-	put(r.Id[:len(r.Id)-1], &r.IdLength, "a13-defs-decide@1.0123456789ab")
-	put(r.DecisionName[:len(r.DecisionName)-1], &r.DecisionNameLength, "attempt")
-	put(r.Schema[:len(r.Schema)-1], &r.SchemaLength, "0123456789abcdef")
-	put(r.Backend[:len(r.Backend)-1], &r.BackendLength, "jev")
-	put(r.At[:len(r.At)-1], &r.AtLength, "2026-10-17T04:07:16Z")
+	setS(w, &r.Id, "a13-defs-decide@1.0123456789ab")
+	setS(w, &r.DecisionName, "attempt")
+	setS(w, &r.Schema, "0123456789abcdef")
+	setS(w, &r.Backend, "jev")
+	setS(w, &r.At, "2026-10-17T04:07:16Z")
 	for i := 0; i < inputs; i++ {
-		fillInput(DecisionInputsAdd(w, &r.Inputs), i)
+		fillInput(w, DecisionInputsAdd(w, &r.Inputs), i)
 	}
-	TableStringEmplace(w, &r.State, bytes.Repeat([]byte("state "), stateBytes/6+1)[:stateBytes])
+	setS(w, &r.State, string(bytes.Repeat([]byte("state "), stateBytes/6+1)[:stateBytes]))
 	for i := 0; i < answers; i++ {
 		fillNamedAnswer(w, DecisionAnswersAdd(w, &r.Answers), options)
 	}
 	r.Usage = sampleUsage()
 }
 
-func fillRawUsage(r *RawUsage, records int) {
+func fillOutcome(w *TableWorker, r *Outcome) {
+	setS(w, &r.Id, "a13-defs-decide@1.0123456789ab")
+	setS(w, &r.Label, "landed")
+	setS(w, &r.Note, "/work/VERDICT.md")
+	setS(w, &r.At, "2026-10-17T04:09:00Z")
+}
+
+func fillAct(w *TableWorker, r *Act) {
+	setS(w, &r.Id, "a13-defs-decide@1.0123456789ab")
+	setS(w, &r.Step, "applying")
+	setS(w, &r.Op, "answer-0042")
+	setS(w, &r.At, "2026-10-17T04:09:30Z")
+}
+
+// fillImportLogLine fills an export line answering ids judgments.
+func fillImportLogLine(w *TableWorker, r *ImportLogLine, ids int) {
+	setS(w, &r.Verb, "rework")
+	for i := 0; i < ids; i++ {
+		setS(w, &ImportLogLineAnswersAdd(w, &r.Answers).Id, fmt.Sprintf("judgment-%04d", i))
+	}
+}
+
+func sampleRawTokens() RawTokens {
+	// Absence and zero differ: output is present at zero, cached is absent.
+	return RawTokens{InputTokens: 4096, InputTokensPresent: true, OutputTokens: 0, OutputTokensPresent: true, ReasoningTokens: 17, ReasoningTokensPresent: true}
+}
+
+func fillRawRecord(w *TableWorker, r *RawRecord) {
+	setS(w, &r.Harness, "muse")
+	setS(w, &r.Execution, "fleet")
+	setS(w, &r.SourceSchema, "muse-jsonl-v1")
+	setS(w, &r.ProducerVersion, "1.4.2")
+	r.Billing = BillingPlan
+	r.Tokens = sampleRawTokens()
+}
+
+func fillRawUsage(w *TableWorker, r *RawUsage, records int) {
 	r.Version = 1
 	for i := 0; i < records; i++ {
-		r.Records[i] = sampleRawRecord()
+		fillRawRecord(w, &r.Records[i])
 	}
 	r.RecordsCount = int32(records)
 }
 
-func variableTables(t *testing.T) {
-	optionP := varFns[OptionP, OptionPBuilder, *OptionPBuilder]{"OptionP", OptionPLoadBuilder, OptionPFromJson, OptionPLoadMeasureReason, OptionPMeasure, OptionPSave, OptionPToJsonMeasure, OptionPToJson, nil,
-		func(_ *OptionPBuilder, r *OptionP, k chk) { optionPRules(r, k) }}
-	answer := varFns[Answer, AnswerBuilder, *AnswerBuilder]{"Answer", AnswerLoadBuilder, AnswerFromJson, AnswerLoadMeasureReason, AnswerMeasure, AnswerSave, AnswerToJsonMeasure, AnswerToJson, nil,
-		func(b *AnswerBuilder, r *Answer, k chk) { answerRules(&b.Arena, r, k) }}
-	named := varFns[NamedAnswer, NamedAnswerBuilder, *NamedAnswerBuilder]{"NamedAnswer", NamedAnswerLoadBuilder, NamedAnswerFromJson, NamedAnswerLoadMeasureReason, NamedAnswerMeasure, NamedAnswerSave, NamedAnswerToJsonMeasure, NamedAnswerToJson, nil,
-		func(b *NamedAnswerBuilder, r *NamedAnswer, k chk) { namedAnswerRules(&b.Arena, r, k) }}
-	input := varFns[Input, InputBuilder, *InputBuilder]{"Input", InputLoadBuilder, InputFromJson, InputLoadMeasureReason, InputMeasure, InputSave, InputToJsonMeasure, InputToJson, nil,
-		func(_ *InputBuilder, r *Input, k chk) { inputRules(r, k) }}
-	decision := varFns[Decision, DecisionBuilder, *DecisionBuilder]{"Decision", DecisionLoadBuilder, DecisionFromJson, DecisionLoadMeasureReason, DecisionMeasure, DecisionSave, DecisionToJsonMeasure, DecisionToJson,
-		func(b *DecisionBuilder) *TableArena { return &b.Arena },
-		func(b *DecisionBuilder, r *Decision, k chk) { decisionRules(&b.Arena, r, k) }}
-	line := varFns[RecordLine, RecordLineBuilder, *RecordLineBuilder]{"RecordLine", RecordLineLoadBuilder, RecordLineFromJson, RecordLineLoadMeasureReason, RecordLineMeasure, RecordLineSave, RecordLineToJsonMeasure, RecordLineToJson,
-		func(b *RecordLineBuilder) *TableArena { return &b.Arena },
-		func(b *RecordLineBuilder, r *RecordLine, k chk) { recordLineRules(&b.Arena, r, k) }}
-	raw := varFns[RawUsage, RawUsageBuilder, *RawUsageBuilder]{"RawUsage", RawUsageLoadBuilder, RawUsageFromJson, RawUsageLoadMeasureReason, RawUsageMeasure, RawUsageSave, RawUsageToJsonMeasure, RawUsageToJson, nil, func(_ *RawUsageBuilder, r *RawUsage, k chk) { rawUsageRules(r, k) }}
+// fillFrame fills a frame with stage staged recipes and a why of whyBytes.
+func fillFrame(w *TableWorker, r *Frame, stage, whyBytes int) {
+	r.Kind = FrameKindWork
+	setS(w, &r.Card, "a13-defs-decide")
+	r.Attempt = 1
+	setS(w, &r.Tier, "pro")
+	setS(w, &r.Model, "anthropic/claude-opus")
+	setS(w, &r.Repo, "/work/nova-tools")
+	setS(w, &r.BaseRef, "sprint/v15-schema-tables")
+	setS(w, &r.StageSha, "d03635a82bde0000000000000000000000000000")
+	setS(w, &r.Branch, "sprint/a13-defs-decide.w1.g1.e21")
+	setS(w, &r.Why, string(bytes.Repeat([]byte("why "), whyBytes/4+1)[:whyBytes]))
+	for i := 0; i < stage; i++ {
+		setS(w, &FrameStageAdd(w, &r.Stage).Path, fmt.Sprintf("schema/recipe-%d.md", i))
+	}
+	setS(w, &r.Recipes, "/work/recipes")
+	setS(w, &r.DecideBounce, "0.9")
+}
+
+func TestDecideRecordsGolden(t *testing.T) {
+	t.Parallel()
+	optionP := varFns[OptionP, OptionPBuilder, *OptionPBuilder]{name: "OptionP", load: OptionPLoadBuilder, fromJSON: OptionPFromJson, measureReason: OptionPLoadMeasureReason, measure: OptionPMeasure, save: OptionPSave,
+		jsonMeasure: OptionPToJsonMeasure, toJSON: OptionPToJson, arena: func(b *OptionPBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *OptionPBuilder, r *OptionP, k chk) { optionPRules(r, k) }}
+	answer := varFns[Answer, AnswerBuilder, *AnswerBuilder]{name: "Answer", load: AnswerLoadBuilder, fromJSON: AnswerFromJson, measureReason: AnswerLoadMeasureReason, measure: AnswerMeasure, save: AnswerSave,
+		jsonMeasure: AnswerToJsonMeasure, toJSON: AnswerToJson, arena: func(b *AnswerBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *AnswerBuilder, r *Answer, k chk) { answerRules(r, k) }}
+	named := varFns[NamedAnswer, NamedAnswerBuilder, *NamedAnswerBuilder]{name: "NamedAnswer", load: NamedAnswerLoadBuilder, fromJSON: NamedAnswerFromJson, measureReason: NamedAnswerLoadMeasureReason, measure: NamedAnswerMeasure, save: NamedAnswerSave,
+		jsonMeasure: NamedAnswerToJsonMeasure, toJSON: NamedAnswerToJson, arena: func(b *NamedAnswerBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *NamedAnswerBuilder, r *NamedAnswer, k chk) { namedAnswerRules(r, k) }}
+	input := varFns[Input, InputBuilder, *InputBuilder]{name: "Input", load: InputLoadBuilder, fromJSON: InputFromJson, measureReason: InputLoadMeasureReason, measure: InputMeasure, save: InputSave,
+		jsonMeasure: InputToJsonMeasure, toJSON: InputToJson, arena: func(b *InputBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *InputBuilder, r *Input, k chk) { inputRules(r, k) }}
+	decided := varFns[Decided, DecidedBuilder, *DecidedBuilder]{name: "Decided", load: DecidedLoadBuilder, fromJSON: DecidedFromJson, measureReason: DecidedLoadMeasureReason, measure: DecidedMeasure, save: DecidedSave,
+		jsonMeasure: DecidedToJsonMeasure, toJSON: DecidedToJson, arena: func(b *DecidedBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *DecidedBuilder, r *Decided, k chk) { decidedRules(r, k) }}
+	decision := varFns[Decision, DecisionBuilder, *DecisionBuilder]{name: "Decision", load: DecisionLoadBuilder, fromJSON: DecisionFromJson, measureReason: DecisionLoadMeasureReason, measure: DecisionMeasure, save: DecisionSave,
+		jsonMeasure: DecisionToJsonMeasure, toJSON: DecisionToJson, arena: func(b *DecisionBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *DecisionBuilder, r *Decision, k chk) { decisionRules(r, k) }}
+	outcome := varFns[Outcome, OutcomeBuilder, *OutcomeBuilder]{name: "Outcome", load: OutcomeLoadBuilder, fromJSON: OutcomeFromJson, measureReason: OutcomeLoadMeasureReason, measure: OutcomeMeasure, save: OutcomeSave,
+		jsonMeasure: OutcomeToJsonMeasure, toJSON: OutcomeToJson, arena: func(b *OutcomeBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *OutcomeBuilder, r *Outcome, k chk) { outcomeRules(r, k) }}
+	act := varFns[Act, ActBuilder, *ActBuilder]{name: "Act", load: ActLoadBuilder, fromJSON: ActFromJson, measureReason: ActLoadMeasureReason, measure: ActMeasure, save: ActSave,
+		jsonMeasure: ActToJsonMeasure, toJSON: ActToJson, arena: func(b *ActBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *ActBuilder, r *Act, k chk) { actRules(r, k) }}
+	line := varFns[RecordLine, RecordLineBuilder, *RecordLineBuilder]{name: "RecordLine", load: RecordLineLoadBuilder, fromJSON: RecordLineFromJson, measureReason: RecordLineLoadMeasureReason, measure: RecordLineMeasure, save: RecordLineSave,
+		jsonMeasure: RecordLineToJsonMeasure, toJSON: RecordLineToJson, arena: func(b *RecordLineBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *RecordLineBuilder, r *RecordLine, k chk) { recordLineRules(r, k) }}
+	judgment := varFns[JudgmentId, JudgmentIdBuilder, *JudgmentIdBuilder]{name: "JudgmentId", load: JudgmentIdLoadBuilder, fromJSON: JudgmentIdFromJson, measureReason: JudgmentIdLoadMeasureReason, measure: JudgmentIdMeasure, save: JudgmentIdSave,
+		jsonMeasure: JudgmentIdToJsonMeasure, toJSON: JudgmentIdToJson, arena: func(b *JudgmentIdBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *JudgmentIdBuilder, r *JudgmentId, k chk) { judgmentIdRules(r, k) }}
+	importLine := varFns[ImportLogLine, ImportLogLineBuilder, *ImportLogLineBuilder]{name: "ImportLogLine", load: ImportLogLineLoadBuilder, fromJSON: ImportLogLineFromJson, measureReason: ImportLogLineLoadMeasureReason, measure: ImportLogLineMeasure, save: ImportLogLineSave,
+		jsonMeasure: ImportLogLineToJsonMeasure, toJSON: ImportLogLineToJson, arena: func(b *ImportLogLineBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *ImportLogLineBuilder, r *ImportLogLine, k chk) { importLogLineRules(r, k) }}
+	rawRecord := varFns[RawRecord, RawRecordBuilder, *RawRecordBuilder]{name: "RawRecord", load: RawRecordLoadBuilder, fromJSON: RawRecordFromJson, measureReason: RawRecordLoadMeasureReason, measure: RawRecordMeasure, save: RawRecordSave,
+		jsonMeasure: RawRecordToJsonMeasure, toJSON: RawRecordToJson, arena: func(b *RawRecordBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *RawRecordBuilder, r *RawRecord, k chk) { rawRecordRules(r, k) }}
+	raw := varFns[RawUsage, RawUsageBuilder, *RawUsageBuilder]{name: "RawUsage", load: RawUsageLoadBuilder, fromJSON: RawUsageFromJson, measureReason: RawUsageLoadMeasureReason, measure: RawUsageMeasure, save: RawUsageSave,
+		jsonMeasure: RawUsageToJsonMeasure, toJSON: RawUsageToJson, arena: func(b *RawUsageBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *RawUsageBuilder, r *RawUsage, k chk) { rawUsageRules(r, k) }}
+	stagePath := varFns[StagePath, StagePathBuilder, *StagePathBuilder]{name: "StagePath", load: StagePathLoadBuilder, fromJSON: StagePathFromJson, measureReason: StagePathLoadMeasureReason, measure: StagePathMeasure, save: StagePathSave,
+		jsonMeasure: StagePathToJsonMeasure, toJSON: StagePathToJson, arena: func(b *StagePathBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *StagePathBuilder, r *StagePath, k chk) { stagePathRules(r, k) }}
+	frame := varFns[Frame, FrameBuilder, *FrameBuilder]{name: "Frame", load: FrameLoadBuilder, fromJSON: FrameFromJson, measureReason: FrameLoadMeasureReason, measure: FrameMeasure, save: FrameSave,
+		jsonMeasure: FrameToJsonMeasure, toJSON: FrameToJson, arena: func(b *FrameBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *FrameBuilder, r *Frame, k chk) { frameRules(r, k) }}
+
+	t.Run("Usage", func(t *testing.T) {
+		t.Parallel()
+		// No bound at all: the code states none (decide.go Usage), so none is tested.
+		exerciseVar(t, plainFns("Usage", UsageLoad, UsageFromJson, UsageMeasure, UsageSave, UsageToJsonMeasure, UsageToJson, func(r *Usage, k chk) { usageRules(r, k) }),
+			func(_ *plain[Usage], r *Usage) { *r = Usage{InputTokens: -3, OutputTokens: math.MaxInt64} }, nil)
+	})
+	t.Run("RawTokens", func(t *testing.T) {
+		t.Parallel()
+		tokens := plainFns("RawTokens", RawTokensLoad, RawTokensFromJson, RawTokensMeasure, RawTokensSave, RawTokensToJsonMeasure, RawTokensToJson, func(r *RawTokens, k chk) { rawTokensRules(r, k) })
+		exerciseVar(t, tokens, func(_ *plain[RawTokens], r *RawTokens) { *r = sampleRawTokens() }, plainBounds([]pbound[RawTokens]{
+			{"input below zero", "input_tokens", "clamped", func(v *RawTokens) { v.InputTokens = -1 }},
+			{"cached below zero", "cached_tokens", "clamped", func(v *RawTokens) { v.CachedTokens, v.CachedTokensPresent = -7, true }},
+			{"reasoning below zero", "reasoning_tokens", "clamped", func(v *RawTokens) { v.ReasoningTokens = math.MinInt64 }},
+		}))
+		// Absence and zero differ (raw.go): the image keeps which is which.
+		r := schemaread.NewReader(tokens.codec())
+		for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
+			none, zero := tokens.fresh(), tokens.fresh()
+			zero.v.OutputTokensPresent = true
+			for want, v := range map[bool]*plain[RawTokens]{false: none, true: zero} {
+				image, err := r.Write(&v, form)
+				require.NoError(t, err)
+				got, _, err := r.Read(image)
+				require.NoError(t, err)
+				assert.Equal(t, want, got.v.OutputTokensPresent, form.String())
+				assert.Zero(t, got.v.OutputTokens)
+			}
+		}
+	})
+
+	allForms := []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON}
 
 	t.Run("OptionP", func(t *testing.T) {
 		t.Parallel()
-		exerciseVar(t, optionP, func(_ *OptionPBuilder, r *OptionP) { fillOptionP(r, "done", 0.875) }, []vbound[OptionP, *OptionPBuilder]{
-			{"option past 48 bytes", "option", "clamped", func(_ *OptionPBuilder, r *OptionP) { r.OptionLength = 49 }},
-			{"option empty", "option", "absent_required", func(_ *OptionPBuilder, r *OptionP) { r.OptionLength = 0 }},
+		exerciseVar(t, optionP, func(b *OptionPBuilder, r *OptionP) { fillOptionP(&b.Main, r, "done", 0.875) }, []vbound[OptionP, *OptionPBuilder]{
+			{"option empty", "option", "absent_required", func(_ *OptionPBuilder, r *OptionP) { r.Option = 0 }},
 			{"probability above one", "p", "clamped", func(_ *OptionPBuilder, r *OptionP) { r.P = 1.0000001 }},
 			{"probability below zero", "p", "clamped", func(_ *OptionPBuilder, r *OptionP) { r.P = -0.1 }},
 			{"probability not a number", "p", "malformed", func(_ *OptionPBuilder, r *OptionP) { r.P = math.NaN() }},
-			{"option not UTF-8", "option", "malformed", func(_ *OptionPBuilder, r *OptionP) { r.Option[0] = 0xff }},
+			{"option not UTF-8", "option", "malformed", func(b *OptionPBuilder, r *OptionP) { TableStringAt(&r.Option, &b.Arena).Data[0] = 0xff }},
 		})
 	})
 	t.Run("Answer", func(t *testing.T) {
@@ -848,8 +712,8 @@ func variableTables(t *testing.T) {
 		exerciseVar(t, answer, func(b *AnswerBuilder, r *Answer) { fillAnswer(&b.Main, r, 3) }, []vbound[Answer, *AnswerBuilder]{
 			{"kind none", "kind", "clamped", func(_ *AnswerBuilder, r *Answer) { r.Kind = AnswerTypeNone }},
 			{"an option above one", "p", "clamped", func(b *AnswerBuilder, r *Answer) { r.P.At(1, &b.Arena).P = 2 }},
-			{"value empty", "value", "absent_required", func(_ *AnswerBuilder, r *Answer) { r.ValueLength = 0 }},
-			{"method past 24 bytes", "method", "clamped", func(_ *AnswerBuilder, r *Answer) { r.MethodLength = 25 }},
+			{"value empty", "value", "absent_required", func(_ *AnswerBuilder, r *Answer) { r.Value = 0 }},
+			{"method not UTF-8", "method", "malformed", func(b *AnswerBuilder, r *Answer) { TableStringAt(&r.Method, &b.Arena).Data[0] = 0xff }},
 		})
 		// A choice names any number of options (decide.go sets no ceiling):
 		// two, fifteen and forty round-trip in every form, each option intact.
@@ -857,7 +721,7 @@ func variableTables(t *testing.T) {
 		for _, options := range []int{2, 15, 40} {
 			w := answer.fresh()
 			fillAnswer(&w.Main, w.GetRoot(), options)
-			for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
+			for _, form := range allForms {
 				image, err := r.Write(&w, form)
 				require.NoError(t, err, "%d options as %s", options, form)
 				got, _, err := r.Read(image)
@@ -866,7 +730,7 @@ func variableTables(t *testing.T) {
 				require.EqualValues(t, options, root.P.Count)
 				for i := 0; i < options; i++ {
 					o := root.P.At(int32(i), &got.Arena)
-					assert.Equal(t, fmt.Sprintf("opt-%d", i), string(o.Option[:o.OptionLength]))
+					assert.Equal(t, fmt.Sprintf("opt-%d", i), string(TableStringAt(&o.Option, &got.Arena).Data))
 					assert.Equal(t, 1/float64(options), o.P)
 				}
 			}
@@ -875,52 +739,76 @@ func variableTables(t *testing.T) {
 	t.Run("NamedAnswer", func(t *testing.T) {
 		t.Parallel()
 		exerciseVar(t, named, func(b *NamedAnswerBuilder, r *NamedAnswer) { fillNamedAnswer(&b.Main, r, 2) }, []vbound[NamedAnswer, *NamedAnswerBuilder]{
-			{"question past 32 bytes", "question", "clamped", func(_ *NamedAnswerBuilder, r *NamedAnswer) { r.QuestionLength = 33 }},
-			{"question empty", "question", "absent_required", func(_ *NamedAnswerBuilder, r *NamedAnswer) { r.QuestionLength = 0 }},
+			{"question empty", "question", "absent_required", func(_ *NamedAnswerBuilder, r *NamedAnswer) { r.Question = 0 }},
 			{"the answer's kind none", "kind", "clamped", func(_ *NamedAnswerBuilder, r *NamedAnswer) { r.Answer.Kind = AnswerTypeNone }},
 		})
 	})
 	t.Run("Input", func(t *testing.T) {
 		t.Parallel()
-		exerciseVar(t, input, func(_ *InputBuilder, r *Input) { fillInput(r, 0) }, []vbound[Input, *InputBuilder]{
-			{"key past 32 bytes", "key", "clamped", func(_ *InputBuilder, r *Input) { r.KeyLength = 33 }},
-			{"value past 1024 bytes", "value", "clamped", func(_ *InputBuilder, r *Input) { r.ValueLength = 1025 }},
-			{"key empty", "key", "absent_required", func(_ *InputBuilder, r *Input) { r.KeyLength = 0 }},
+		exerciseVar(t, input, func(b *InputBuilder, r *Input) { fillInput(&b.Main, r, 0) }, []vbound[Input, *InputBuilder]{
+			{"key empty", "key", "absent_required", func(_ *InputBuilder, r *Input) { r.Key = 0 }},
+			{"value not UTF-8", "value", "malformed", func(b *InputBuilder, r *Input) { TableStringAt(&r.Value, &b.Arena).Data[0] = 0xff }},
+		})
+	})
+	t.Run("Decided", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, decided, func(b *DecidedBuilder, r *Decided) { fillDecided(&b.Main, r) }, []vbound[Decided, *DecidedBuilder]{
+			{"probability above one", "p", "clamped", func(_ *DecidedBuilder, r *Decided) { r.P = 1.5 }},
+			{"value with a space", "value", "malformed", func(b *DecidedBuilder, r *Decided) { TableStringAt(&r.Value, &b.Arena).Data[1] = ' ' }},
+			{"op empty", "op", "absent_required", func(_ *DecidedBuilder, r *Decided) { r.Op = 0 }},
+			{"value empty", "value", "absent_required", func(_ *DecidedBuilder, r *Decided) { r.Value = 0 }},
 		})
 	})
 	t.Run("Decision", func(t *testing.T) {
 		t.Parallel()
 		exerciseVar(t, decision, func(b *DecisionBuilder, r *Decision) { fillDecision(&b.Main, r, 3, 1, 2, 200) }, []vbound[Decision, *DecisionBuilder]{
-			{"id past 256 bytes", "id", "clamped", func(_ *DecisionBuilder, r *Decision) { r.IdLength = 257 }},
-			{"id empty", "id", "absent_required", func(_ *DecisionBuilder, r *Decision) { r.IdLength = 0 }},
-			{"decision name empty", "decision_name", "absent_required", func(_ *DecisionBuilder, r *Decision) { r.DecisionNameLength = 0 }},
+			{"id empty", "id", "absent_required", func(_ *DecisionBuilder, r *Decision) { r.Id = 0 }},
+			{"decision name empty", "decision_name", "absent_required", func(_ *DecisionBuilder, r *Decision) { r.DecisionName = 0 }},
 			{"state not UTF-8", "state", "malformed", func(b *DecisionBuilder, r *Decision) { TableStringAt(&r.State, &b.Arena).Data[0] = 0xff }},
-			{"an input value past 1024", "value", "clamped", func(b *DecisionBuilder, r *Decision) { r.Inputs.At(0, &b.Arena).ValueLength = 1025 }},
-			{"an answer above one", "p", "clamped", func(b *DecisionBuilder, r *Decision) { r.Answers.At(0, &b.Arena).Answer.P.At(0, &b.Arena).P = 1.01 }},
-			{"usage below zero", "output_tokens", "clamped", func(_ *DecisionBuilder, r *Decision) { r.Usage.OutputTokens = -5 }},
+			{"an input key empty", "key", "absent_required", func(b *DecisionBuilder, r *Decision) { r.Inputs.At(0, &b.Arena).Key = 0 }},
+			{"an answer above one", "p", "clamped", func(b *DecisionBuilder, r *Decision) {
+				r.Answers.At(0, &b.Arena).Answer.P.At(0, &b.Arena).P = 1.01
+			}},
 		})
-		// The widest record the code writes: ten inputs (judgment.go
-		// AnswerDecision), nine questions of fourteen options (brief.go), and
-		// the largest state a card carries, in all three forms.
+		// The widest record the code writes and beyond: ten inputs
+		// (judgment.go:328), nine questions of fourteen options (brief.go), a
+		// 100-input record, and a state of 1 MiB, in all three forms.
 		r := schemaread.NewReader(decision.codec())
-		w := decision.fresh()
-		fillDecision(&w.Main, w.GetRoot(), 10, 9, 14, 2*16<<10+1024)
-		want, err := r.Write(&w, schemaread.FormBinary)
-		require.NoError(t, err)
-		for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
-			image, err := r.Write(&w, form)
-			require.NoError(t, err, form.String())
-			got, _, err := r.Read(image)
-			require.NoError(t, err, form.String())
-			root := decision.root(got)
-			assert.EqualValues(t, 10, root.Inputs.Count)
-			assert.EqualValues(t, 9, root.Answers.Count)
-			assert.EqualValues(t, 14, root.Answers.At(8, &got.Arena).Answer.P.Count)
-			assert.Len(t, TableStringAt(&root.State, &got.Arena).Data, 2*16<<10+1024)
-			again, err := r.Write(&got, schemaread.FormBinary)
+		for _, c := range []struct{ inputs, answers, options, state int }{{10, 9, 14, 2*16<<10 + 1024}, {100, 12, 40, 1 << 20}} {
+			w := decision.fresh()
+			fillDecision(&w.Main, w.GetRoot(), c.inputs, c.answers, c.options, c.state)
+			want, err := r.Write(&w, schemaread.FormBinary)
 			require.NoError(t, err)
-			assert.Equal(t, want, again, form.String())
+			for _, form := range allForms {
+				image, err := r.Write(&w, form)
+				require.NoError(t, err, form.String())
+				got, _, err := r.Read(image)
+				require.NoError(t, err, form.String())
+				root := decision.root(got)
+				assert.EqualValues(t, c.inputs, root.Inputs.Count)
+				assert.EqualValues(t, c.answers, root.Answers.Count)
+				assert.EqualValues(t, c.options, root.Answers.At(int32(c.answers-1), &got.Arena).Answer.P.Count)
+				assert.Len(t, TableStringAt(&root.State, &got.Arena).Data, c.state)
+				again, err := r.Write(&got, schemaread.FormBinary)
+				require.NoError(t, err)
+				assert.Equal(t, want, again, form.String())
+			}
 		}
+	})
+	t.Run("Outcome", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, outcome, func(b *OutcomeBuilder, r *Outcome) { fillOutcome(&b.Main, r) }, []vbound[Outcome, *OutcomeBuilder]{
+			{"label empty", "label", "absent_required", func(_ *OutcomeBuilder, r *Outcome) { r.Label = 0 }},
+			{"id empty", "id", "absent_required", func(_ *OutcomeBuilder, r *Outcome) { r.Id = 0 }},
+			{"note not UTF-8", "note", "malformed", func(b *OutcomeBuilder, r *Outcome) { TableStringAt(&r.Note, &b.Arena).Data[0] = 0xff }},
+		})
+	})
+	t.Run("Act", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, act, func(b *ActBuilder, r *Act) { fillAct(&b.Main, r) }, []vbound[Act, *ActBuilder]{
+			{"step empty", "step", "absent_required", func(_ *ActBuilder, r *Act) { r.Step = 0 }},
+			{"id empty", "id", "absent_required", func(_ *ActBuilder, r *Act) { r.Id = 0 }},
+		})
 	})
 	t.Run("RecordLine", func(t *testing.T) {
 		t.Parallel()
@@ -931,19 +819,27 @@ func variableTables(t *testing.T) {
 		exerciseVar(t, line, decisionLine, []vbound[RecordLine, *RecordLineBuilder]{
 			{"kind none", "kind", "clamped", func(_ *RecordLineBuilder, r *RecordLine) { r.Kind = LineKindNone }},
 			{"the named record absent", "as_decision", "absent_required", func(_ *RecordLineBuilder, r *RecordLine) { r.AsDecision = 0 }},
-			{"an outcome beside the decision", "as_outcome", "malformed", func(_ *RecordLineBuilder, r *RecordLine) { r.AsOutcome, r.AsOutcomePresent = sampleOutcome(), true }},
-			{"an act beside the decision", "as_act", "malformed", func(_ *RecordLineBuilder, r *RecordLine) { r.AsAct, r.AsActPresent = sampleAct(), true }},
-			{"the decision's id past 256", "id", "clamped", func(b *RecordLineBuilder, r *RecordLine) { DecisionAt(&r.AsDecision, &b.Arena).IdLength = 300 }},
+			{"an outcome beside the decision", "as_outcome", "malformed", func(b *RecordLineBuilder, r *RecordLine) {
+				fillOutcome(&b.Main, OutcomeEmplace(&b.Main, &r.AsOutcome))
+			}},
+			{"an act beside the decision", "as_act", "malformed", func(b *RecordLineBuilder, r *RecordLine) { fillAct(&b.Main, ActEmplace(&b.Main, &r.AsAct)) }},
+			{"the decision's id empty", "id", "absent_required", func(b *RecordLineBuilder, r *RecordLine) { DecisionAt(&r.AsDecision, &b.Arena).Id = 0 }},
 		})
 		// The other two kinds are lines of their own.
 		rd := schemaread.NewReader(line.codec())
-		for _, fill := range []func(*RecordLine){
-			func(r *RecordLine) { r.Kind, r.AsOutcome, r.AsOutcomePresent = LineKindOutcome, sampleOutcome(), true },
-			func(r *RecordLine) { r.Kind, r.AsAct, r.AsActPresent = LineKindAct, sampleAct(), true },
+		for _, fill := range []func(*RecordLineBuilder, *RecordLine){
+			func(b *RecordLineBuilder, r *RecordLine) {
+				r.Kind = LineKindOutcome
+				fillOutcome(&b.Main, OutcomeEmplace(&b.Main, &r.AsOutcome))
+			},
+			func(b *RecordLineBuilder, r *RecordLine) {
+				r.Kind = LineKindAct
+				fillAct(&b.Main, ActEmplace(&b.Main, &r.AsAct))
+			},
 		} {
 			w := line.fresh()
-			fill(w.GetRoot())
-			for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
+			fill(w, w.GetRoot())
+			for _, form := range allForms {
 				image, err := rd.Write(&w, form)
 				require.NoError(t, err)
 				got, _, err := rd.Read(image)
@@ -952,27 +848,113 @@ func variableTables(t *testing.T) {
 			}
 		}
 	})
+	t.Run("JudgmentId", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, judgment, func(b *JudgmentIdBuilder, r *JudgmentId) { setS(&b.Main, &r.Id, "judgment-0007") }, []vbound[JudgmentId, *JudgmentIdBuilder]{
+			{"id empty", "id", "absent_required", func(_ *JudgmentIdBuilder, r *JudgmentId) { r.Id = 0 }},
+		})
+	})
+	t.Run("ImportLogLine", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, importLine, func(b *ImportLogLineBuilder, r *ImportLogLine) { fillImportLogLine(&b.Main, r, 1) }, []vbound[ImportLogLine, *ImportLogLineBuilder]{
+			{"verb not UTF-8", "verb", "malformed", func(b *ImportLogLineBuilder, r *ImportLogLine) { TableStringAt(&r.Verb, &b.Arena).Data[0] = 0xff }},
+			{"an answer id empty", "id", "absent_required", func(b *ImportLogLineBuilder, r *ImportLogLine) { r.Answers.At(0, &b.Arena).Id = 0 }},
+		})
+		// The import takes every id of an export line (import.go:161-176): no
+		// ids, one, nine and a hundred all round-trip in every form.
+		rd := schemaread.NewReader(importLine.codec())
+		for _, ids := range []int{0, 1, 9, 100} {
+			w := importLine.fresh()
+			fillImportLogLine(&w.Main, w.GetRoot(), ids)
+			for _, form := range allForms {
+				image, err := rd.Write(&w, form)
+				require.NoError(t, err, "%d ids as %s", ids, form)
+				got, _, err := rd.Read(image)
+				require.NoError(t, err, "%d ids as %s", ids, form)
+				root := importLine.root(got)
+				require.EqualValues(t, ids, root.Answers.Count)
+				for i := 0; i < ids; i++ {
+					id := root.Answers.At(int32(i), &got.Arena)
+					assert.Equal(t, fmt.Sprintf("judgment-%04d", i), string(TableStringAt(&id.Id, &got.Arena).Data))
+				}
+			}
+		}
+	})
+	t.Run("RawRecord", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, rawRecord, func(b *RawRecordBuilder, r *RawRecord) { fillRawRecord(&b.Main, r) }, []vbound[RawRecord, *RawRecordBuilder]{
+			{"harness not muse", "harness", "malformed", func(b *RawRecordBuilder, r *RawRecord) { setS(&b.Main, &r.Harness, "codex") }},
+			{"execution not fleet", "execution", "malformed", func(b *RawRecordBuilder, r *RawRecord) { setS(&b.Main, &r.Execution, "local") }},
+			{"source schema not muse-jsonl-v1", "source_schema", "malformed", func(b *RawRecordBuilder, r *RawRecord) { setS(&b.Main, &r.SourceSchema, "muse-jsonl-v2") }},
+			{"producer version empty", "producer_version", "absent_required", func(_ *RawRecordBuilder, r *RawRecord) { r.ProducerVersion = 0 }},
+			{"billing none", "billing", "clamped", func(_ *RawRecordBuilder, r *RawRecord) { r.Billing = BillingNone }},
+			{"a negative counter", "input_tokens", "clamped", func(_ *RawRecordBuilder, r *RawRecord) { r.Tokens.InputTokens = -1 }},
+		})
+	})
 	t.Run("RawUsage", func(t *testing.T) {
 		t.Parallel()
-		exerciseVar(t, raw, func(_ *RawUsageBuilder, r *RawUsage) { fillRawUsage(r, 2) }, []vbound[RawUsage, *RawUsageBuilder]{
+		exerciseVar(t, raw, func(b *RawUsageBuilder, r *RawUsage) { fillRawUsage(&b.Main, r, 2) }, []vbound[RawUsage, *RawUsageBuilder]{
 			{"version two", "version", "clamped", func(_ *RawUsageBuilder, r *RawUsage) { r.Version = 2 }},
 			{"version zero", "version", "clamped", func(_ *RawUsageBuilder, r *RawUsage) { r.Version = 0 }},
 			{"no records", "records", "absent_required", func(_ *RawUsageBuilder, r *RawUsage) { r.RecordsCount = 0 }},
 			{"271 records", "records", "clamped", func(_ *RawUsageBuilder, r *RawUsage) { r.RecordsCount = 271 }},
-			{"a record's harness not muse", "harness", "malformed", func(_ *RawUsageBuilder, r *RawUsage) {
-				put(r.Records[1].Harness[:], &r.Records[1].HarnessLength, "x")
-			}},
+			{"a record's harness not muse", "harness", "malformed", func(b *RawUsageBuilder, r *RawUsage) { setS(&b.Main, &r.Records[1].Harness, "x") }},
 		})
 		// The most records the envelope's byte cap allows.
 		rd := schemaread.NewReader(raw.codec())
 		w := raw.fresh()
-		fillRawUsage(w.GetRoot(), 270)
-		for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
+		fillRawUsage(&w.Main, w.GetRoot(), 270)
+		for _, form := range allForms {
 			image, err := rd.Write(&w, form)
 			require.NoError(t, err)
 			got, _, err := rd.Read(image)
 			require.NoError(t, err)
 			assert.EqualValues(t, 270, raw.root(got).RecordsCount)
+		}
+	})
+	t.Run("StagePath", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, stagePath, func(b *StagePathBuilder, r *StagePath) { setS(&b.Main, &r.Path, "schema/recipe.md") }, []vbound[StagePath, *StagePathBuilder]{
+			{"path empty", "path", "absent_required", func(_ *StagePathBuilder, r *StagePath) { r.Path = 0 }},
+		})
+	})
+	t.Run("Frame", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, frame, func(b *FrameBuilder, r *Frame) { fillFrame(&b.Main, r, 1, 40) }, []vbound[Frame, *FrameBuilder]{
+			{"kind none", "kind", "clamped", func(_ *FrameBuilder, r *Frame) { r.Kind = FrameKindNone }},
+			{"card empty", "card", "absent_required", func(_ *FrameBuilder, r *Frame) { r.Card = 0 }},
+			{"why not UTF-8", "why", "malformed", func(b *FrameBuilder, r *Frame) { TableStringAt(&r.Why, &b.Arena).Data[0] = 0xff }},
+			{"a staged path empty", "path", "absent_required", func(b *FrameBuilder, r *Frame) { r.Stage.At(0, &b.Arena).Path = 0 }},
+		})
+		// The code bounds no length, count or number (contract.go:24-142): a
+		// 200 KB why, 100 staged recipes and a negative attempt all round-trip.
+		rd := schemaread.NewReader(frame.codec())
+		w := frame.fresh()
+		fillFrame(&w.Main, w.GetRoot(), 100, 200<<10)
+		w.GetRoot().Attempt, w.GetRoot().PrevAttempt = -2, 1<<40
+		for _, form := range allForms {
+			image, err := rd.Write(&w, form)
+			require.NoError(t, err, form.String())
+			got, _, err := rd.Read(image)
+			require.NoError(t, err, form.String())
+			root := frame.root(got)
+			assert.EqualValues(t, 100, root.Stage.Count)
+			assert.Len(t, TableStringAt(&root.Why, &got.Arena).Data, 200<<10)
+			assert.EqualValues(t, -2, root.Attempt)
+			assert.EqualValues(t, int64(1)<<40, root.PrevAttempt)
+		}
+	})
+
+	t.Run("the committed shape is pinned", func(t *testing.T) {
+		t.Parallel()
+		// tables.baseline holds every table's shape and schema.lock the fixed
+		// layouts: a changed table changes their hashes, and these lines change
+		// with it, so a shape change is never made without this test knowing.
+		for file, want := range map[string]string{"tables.baseline": "42dd57dbd57407a33ce51aa7a64acecc951fcad16e5c1ed0e8f4ab8a5a071a3b", "schema.lock": "43d79da38b3bcd806ae25159d28acb6b90571e085490541906fd840e43e73274"} {
+			raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "decide", file))
+			require.NoError(t, err)
+			sum := sha256.Sum256(raw)
+			assert.Equal(t, want, hex.EncodeToString(sum[:]), file)
 		}
 	})
 }
