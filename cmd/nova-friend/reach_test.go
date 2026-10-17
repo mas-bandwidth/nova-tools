@@ -88,7 +88,7 @@ func reachTmux(t *testing.T, store bus.Store, pongWhen string) (friend.Exec, *re
 		if pongWhen != "" && name == "tmux" && len(args) > 0 && args[0] == "send-keys" && strings.Contains(strings.Join(args, " "), pongWhen) {
 			nonce := nonceOf(strings.Join(args, " "))
 			_, err := (&bus.Bus{Store: store}).Send(context.Background(), bus.Message{
-				From: "bob", To: []string{"ada"}, Subject: friend.PongSubject, Body: friend.PongLine(nonce, 0, 0, 0) + "\n",
+				From: "bob", To: []string{"ada"}, Subject: friend.PongSubject, Body: reachTablePong(t, "bob", nonce) + "\n",
 			})
 			require.NoError(t, err)
 		}
@@ -190,7 +190,7 @@ func TestReachProofPastTheLogCap(t *testing.T) {
 		base(ctx, d)
 		sleeps++
 		if sleeps == 1 {
-			reachSend(t, r.store, friend.PongSubject, friend.PongLine("n1", 0, 0, 0)+"\n")
+			reachSend(t, r.store, friend.PongSubject, reachTablePong(t, "bob", "n1")+"\n")
 		}
 	}
 	w.exec = func(context.Context, string, string, []string, string) (string, int, error) {
@@ -368,6 +368,10 @@ func TestReachTmuxDeliveryStopsAtTheStepBudget(t *testing.T) {
 // padded standard base64 of the wire, what a switched writer sends.
 func reachTablePong(t *testing.T, friendName, nonce string) string {
 	t.Helper()
+	return tablePongBody(friendName, nonce)
+}
+
+func tablePongBody(friendName, nonce string) string {
 	var v pongwire.Pong
 	pongwire.PongReset(&v)
 	v.FriendNameLength = int32(copy(v.FriendName[:], friendName))
@@ -375,9 +379,8 @@ func reachTablePong(t *testing.T, friendName, nonce string) string {
 	v.QueuePresent, v.WorkingPresent, v.WidthPresent = true, true, true
 	v.SentMs, v.SentMsPresent = 1000000, true
 	n := pongwire.PongMeasure(&v)
-	require.Positive(t, n)
 	wire := make([]byte, n)
-	require.Equal(t, n, pongwire.PongSave(&v, wire))
+	pongwire.PongSave(&v, wire)
 	return base64.StdEncoding.EncodeToString(wire)
 }
 
@@ -389,23 +392,23 @@ func TestReachProofRequiresFreshFriendEvidence(t *testing.T) {
 		fresh                                    bool
 	}{
 		{"old message", "bob", "hello", "I was here", "", "", false},
-		{"wrong nonce", "bob", friend.PongSubject, friend.PongLine("wrong", 0, 0, 0), "", "", true},
+		{"wrong nonce", "bob", friend.PongSubject, reachTablePong(t, "bob", "wrong"), "", "", true},
 		{"malformed pong", "bob", friend.PongSubject, "not a pong", "", "PONG REFUSED: malformed" + refusedHelp, true},
-		{"a pong without its numbers", "bob", friend.PongSubject, "pong n1", "", "PONG REFUSED: absent_required (queue)" + refusedHelp, true},
-		{"a clamped pong", "bob", friend.PongSubject, friend.PongLine("n1", 100001, 0, 0), "", "PONG REFUSED: clamped (queue)" + refusedHelp, true},
+		{"a legacy pong without its numbers", "bob", friend.PongSubject, "pong n1", "", "PONG REFUSED: legacy" + refusedHelp, true},
+		{"a clamped legacy pong", "bob", friend.PongSubject, friend.PongLine("n1", 100001, 0, 0), "", "PONG REFUSED: legacy" + refusedHelp, true},
 		{"other sender", "ada", "hello", "I am here", "", "", true},
 		{"message", "bob", "hello", "I am here", "message", "", true},
-		{"matching pong", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0), "pong", "", true},
-		{"matching pong with its framing newline", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\n", "pong", "", true},
-		{"a pong with extra trailing spaces", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "  \n", "", "PONG REFUSED: malformed" + refusedHelp, true},
-		{"a pong with a leading space", "bob", friend.PongSubject, " " + friend.PongLine("n1", 0, 0, 0), "", "PONG REFUSED: malformed" + refusedHelp, true},
-		{"a pong with a second newline", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\n\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
-		{"a pong with an extra trailing space", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + " \n", "", "PONG REFUSED: malformed" + refusedHelp, true},
-		{"a pong with a trailing space and no framing", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + " ", "", "PONG REFUSED: malformed" + refusedHelp, true},
-		{"a pong with a trailing tab", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\t\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
-		{"a pong with a leading tab", "bob", friend.PongSubject, "\t" + friend.PongLine("n1", 0, 0, 0) + "\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
-		{"a pong with a carriage return", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\r\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
-		{"a pong line with whitespace damage under another subject", "bob", "hello", " " + friend.PongLine("n1", 0, 0, 0) + "\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"matching pong", "bob", friend.PongSubject, reachTablePong(t, "bob", "n1"), "pong", "", true},
+		{"matching pong with its framing newline", "bob", friend.PongSubject, reachTablePong(t, "bob", "n1") + "\n", "pong", "", true},
+		{"a legacy pong with extra trailing spaces", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "  \n", "", "PONG REFUSED: legacy" + refusedHelp, true},
+		{"a legacy pong with a leading space", "bob", friend.PongSubject, " " + friend.PongLine("n1", 0, 0, 0), "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"a legacy pong with a second newline", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\n\n", "", "PONG REFUSED: legacy" + refusedHelp, true},
+		{"a legacy pong with an extra trailing space", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + " \n", "", "PONG REFUSED: legacy" + refusedHelp, true},
+		{"a legacy pong with a trailing space and no framing", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + " ", "", "PONG REFUSED: legacy" + refusedHelp, true},
+		{"a legacy pong with a trailing tab", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\t\n", "", "PONG REFUSED: legacy" + refusedHelp, true},
+		{"a legacy pong with a leading tab", "bob", friend.PongSubject, "\t" + friend.PongLine("n1", 0, 0, 0) + "\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
+		{"a legacy pong with a carriage return", "bob", friend.PongSubject, friend.PongLine("n1", 0, 0, 0) + "\r\n", "", "PONG REFUSED: legacy" + refusedHelp, true},
+		{"a legacy pong line with whitespace damage under another subject", "bob", "hello", " " + friend.PongLine("n1", 0, 0, 0) + "\n", "", "PONG REFUSED: malformed" + refusedHelp, true},
 		{"matching table pong", "bob", friend.PongSubject, reachTablePong(t, "bob", "n1"), "pong", "", true},
 		{"table pong for another nonce", "bob", friend.PongSubject, reachTablePong(t, "bob", "wrong"), "", "", true},
 	} {
@@ -446,15 +449,13 @@ func TestReachPongNotesNameEveryRefusalAndCountTheForms(t *testing.T) {
 	assert.Empty(t, o.Notes, "a ladder that read no pong adds no note")
 
 	at := time.Unix(1000, 0).UTC()
-	_, _, err := pongs.Message(bus.Message{From: "bob", Subject: friend.PongSubject, Body: friend.PongLine("n1", 0, 0, 0) + "\n", At: at})
+	_, _, err := pongs.Message(bus.Message{From: "bob", Subject: friend.PongSubject, Body: reachTablePong(t, "bob", "n1"), At: at})
 	require.NoError(t, err)
-	_, _, err = pongs.Message(bus.Message{From: "bob", Subject: friend.PongSubject, Body: reachTablePong(t, "bob", "n1"), At: at})
-	require.NoError(t, err)
-	_, _, refused := pongs.Message(bus.Message{From: "bob", Subject: friend.PongSubject, Body: "pong n1", At: at})
+	_, _, refused := pongs.Message(bus.Message{From: "bob", Subject: friend.PongSubject, Body: friend.PongLine("n1", 0, 0, 0), At: at})
 	require.Error(t, refused)
 	o = reachPongNotes(&tool.Out{}, pongs, []string{refused.Error()})
 	assert.Equal(t, []string{
-		"PONG REFUSED: absent_required (queue); run: nova-friend pong -h",
-		"PONG READS base64=1 binary=0 json=0 legacy=2 refused_absent_required=1 unknown_fields=0",
+		"PONG REFUSED: legacy; run: nova-friend pong -h",
+		"PONG READS base64=1 binary=0 json=0 legacy=1 refused_legacy=1 unknown_fields=0",
 	}, o.Notes)
 }

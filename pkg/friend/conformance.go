@@ -90,9 +90,10 @@ func (c *Conformance) Run(ctx context.Context) CheckResult {
 	case exit != 0:
 		return fail(StageDeliver, fmt.Sprintf("%s's deliver command exited %d", c.Harness, exit))
 	}
-	// The pong is read as every pong is (PongReader.Message): either form,
-	// only the writer's one framing newline dropped, a malformed pong refused
-	// by name and never taken as the answer.
+	// The pong is read as every pong is (PongReader.Message): the table form,
+	// only the writer's one framing newline dropped, a malformed pong (or a
+	// value in the retired legacy form) refused by name and never taken as
+	// the answer.
 	pongs := NewPongReader()
 	var refused error
 	for {

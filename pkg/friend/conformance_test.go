@@ -61,7 +61,7 @@ func (s *fakeSession) act(text string) {
 	if s.lost {
 		return
 	}
-	_, err := (&bus.Bus{Store: s.store}).Send(context.Background(), bus.Message{From: as, To: []string{to}, Subject: PongSubject, Body: PongLine(nonce, 0, 0, 0) + "\n"})
+	_, err := (&bus.Bus{Store: s.store}).Send(context.Background(), bus.Message{From: as, To: []string{to}, Subject: PongSubject, Body: pongB64(rawWire(s.t, tablePong(as, nonce, 0, 0, 0, pongAt.UnixMilli()))) + "\n"})
 	require.NoError(s.t, err)
 }
 

@@ -15,20 +15,20 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
-// PongLine is a session's pong as it travels on the bus: pong <nonce>
-// queue=<n> working=<n> width=<n>. A session sends it to answer a reach step
-// or a delivery check (nova-friend pong); liveness is the nova-hook record's
-// alone, never a pong. It is the legacy line an old writer sends: the pong
-// writer has switched to the table form (PongReader.WriteTable, C30), and
-// PongLine stays for the readers' legacy form and its tests.
+// PongLine is the retired legacy pong line: pong <nonce> queue=<n>
+// working=<n> width=<n>. A session answered a reach step or a delivery check
+// with it (nova-friend pong); liveness is the nova-hook record's alone, never
+// a pong. The writer writes the table form (PongReader.WriteTable, C30), so
+// the reader refuses this form by name; PongLine stays as the old-writer
+// fixture its tests build.
 func PongLine(nonce string, queue, working, width int) string {
 	return fmt.Sprintf("pong %s queue=%d working=%d width=%d", nonce, queue, working, width)
 }
 
 // ParsePong reads a pong line the way readers before the dual read do; ok is
-// false when the text is no pong. It reads a malformed pong as no pong, so a
-// production read goes through PongReader, which refuses it by name; this is
-// kept as the old reader a writer switch must keep working.
+// false when the text is no pong. It is not a production reader: PongReader
+// refuses the retired legacy form by name, so this stays only as the old
+// reader fixture the cutover tests compare against.
 func ParsePong(text string) (nonce string, queue, working, width int, ok bool) {
 	n, err := fmt.Sscanf(text, "pong %s queue=%d working=%d width=%d", &nonce, &queue, &working, &width)
 	if err != nil || n < 1 {
@@ -44,8 +44,12 @@ func ParsePong(text string) (nonce string, queue, working, width int, ok bool) {
 // PongHelp is the command a pong refusal points at: the writer's.
 const PongHelp = "nova-friend pong -h"
 
-// pongPrefix opens every legacy pong line.
+// pongPrefix opens every legacy pong line. The form is retired: a value that
+// opens with it is refused by name and never decoded.
 const pongPrefix = "pong "
+
+// pongLegacyReason is the refusal a value in the retired legacy form names.
+const pongLegacyReason = "legacy"
 
 // Pong is one pong as read, whichever form it arrived in: the answering
 // friend, the nonce it answers, its counts, and the time it was sent. A
@@ -294,24 +298,17 @@ func RegisterPongWire[T, B, R, F, W, A any, PB pongBuilderPtr[T, B, A], PR pongR
 	}
 }
 
-// PongReader is the friend machine's pong reader: the legacy line PongLine
-// writes, or the table pong (pkg/pongwire, schemas/pong) as the binary wire,
-// padded standard base64 of the wire, or the JSON text, each read strictly
-// through pkg/schemaread. A malformed, clamped or incomplete pong of either
-// form is refused by name (PONG REFUSED: <reason>; run: nova-friend pong -h)
-// and is never read as no pong. Each read is counted once under its form,
-// the evidence a cutover reads before writers switch. It is safe for
-// concurrent use.
+// PongReader is the friend machine's pong reader: the table pong
+// (pkg/pongwire, schemas/pong) as the binary wire, padded standard base64 of
+// the wire, or the JSON text, each read strictly through pkg/schemaread. The
+// legacy line is retired: a value in it is refused by name as a legacy form
+// and never decoded. A malformed, clamped or incomplete pong is refused by
+// name (PONG REFUSED: <reason>; run: nova-friend pong -h) and is never read
+// as no pong. Each read is counted once under its form, the evidence a
+// cutover reads before writers switch. It is safe for concurrent use.
 type PongReader struct {
-	mu  sync.Mutex
-	env pongEnvelope // the message around the read in progress, mu held
-	r   *schemaread.Reader[pongTable]
-}
-
-// pongEnvelope is what the bus message around a legacy line carries.
-type pongEnvelope struct {
-	from   string
-	sentMs int64
+	mu sync.Mutex
+	r  *schemaread.Reader[pongTable]
 }
 
 // NewPongReader returns a pong reader with its counters at zero.
@@ -328,7 +325,7 @@ func NewPongReader() *PongReader {
 		LoadWire:    hooks.loadWire,
 		LoadJSON:    hooks.loadJSON,
 		Legacy:      func(in []byte) bool { return bytes.HasPrefix(in, []byte(pongPrefix)) },
-		LoadLegacy:  func(v *pongTable, in []byte) schemaread.Report { return pongLoadLegacy(v, string(in), p.env) },
+		LoadLegacy:  func(*pongTable, []byte) schemaread.Report { return schemaread.Report{Reason: pongLegacyReason} },
 		Constraints: pongConstraints,
 		SaveWire:    hooks.saveWire,
 		SaveJSON:    hooks.saveJSON,
@@ -364,18 +361,13 @@ func (p *PongReader) Message(m bus.Message) (Pong, schemaread.Form, error) {
 	return p.Read(m.From, m.At, []byte(strings.TrimSuffix(m.Body, "\n")))
 }
 
-// Read reads body as a pong in whichever form it arrived. from and at are
-// the bus message's sender and time, which a legacy line takes as its friend
-// and send time. A refusal is a *schemaread.Refusal and the pong is the zero
-// value.
+// Read reads body as a pong in whichever table form it arrived. from and at
+// are the bus message's sender and time, kept for the reader's signature; a
+// table pong carries its own friend and send time. A refusal is a
+// *schemaread.Refusal and the pong is the zero value.
 func (p *PongReader) Read(from string, at time.Time, body []byte) (Pong, schemaread.Form, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.env = pongEnvelope{from: from}
-	if !at.IsZero() {
-		p.env.sentMs = at.UnixMilli()
-	}
-	defer func() { p.env = pongEnvelope{} }()
 	v, res, err := p.r.Read(body)
 	if err != nil {
 		return Pong{}, res.Form, err
@@ -430,54 +422,6 @@ func pongOf(v *pongTable) Pong {
 		Width:   int(v.Width),
 		Sent:    time.UnixMilli(v.SentMs).UTC(),
 	}
-}
-
-// pongLoadLegacy reads the legacy line strictly: `pong <nonce>` and then
-// queue=, working= and width= in that order, each a plain decimal, single
-// spaces, nothing after. A count it does not carry is absent and refused by
-// the constraints; any other shape is malformed; a count outside 32 bits is a
-// clamp. The friend and the send time come from the message around the line.
-func pongLoadLegacy(v *pongTable, text string, env pongEnvelope) schemaread.Report {
-	words := strings.Split(text, " ")
-	if len(words) < 2 || len(words) > 5 || words[0] != "pong" || words[1] == "" {
-		return schemaread.Report{Malformed: true}
-	}
-	nonce := words[1]
-	if strings.ContainsFunc(nonce, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
-		return schemaread.Report{Malformed: true}
-	}
-	if len(nonce) > pongNonceMax || len(env.from) > pongFriendMax {
-		return schemaread.Report{Clamped: 1}
-	}
-	v.NonceLength = int32(copy(v.Nonce[:], nonce))
-	v.FriendNameLength = int32(copy(v.FriendName[:], env.from))
-	counts := []struct {
-		key     string
-		dst     *uint32
-		present *bool
-	}{
-		{"queue=", &v.Queue, &v.QueuePresent},
-		{"working=", &v.Working, &v.WorkingPresent},
-		{"width=", &v.Width, &v.WidthPresent},
-	}
-	for i, w := range words[2:] {
-		digits, ok := strings.CutPrefix(w, counts[i].key)
-		if !ok {
-			return schemaread.Report{Malformed: true}
-		}
-		n, err := strconv.ParseInt(digits, 10, 64)
-		if err != nil || strconv.FormatInt(n, 10) != digits {
-			return schemaread.Report{Malformed: true}
-		}
-		if n < 0 || n > math.MaxUint32 {
-			return schemaread.Report{Clamped: 1}
-		}
-		*counts[i].dst, *counts[i].present = uint32(n), true
-	}
-	if env.sentMs != 0 {
-		v.SentMs, v.SentMsPresent = env.sentMs, true
-	}
-	return schemaread.Report{}
 }
 
 // pongConstraints are the pong's rules after a load and before a write: a

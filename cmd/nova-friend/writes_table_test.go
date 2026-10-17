@@ -76,8 +76,7 @@ func TestRefusesNotFallsBack(t *testing.T) {
 // TestWriterSwitchOldReadersStillRead pins the readers-first proof (S4): the
 // pong reader every seat already runs (PongReader, which the friend machine
 // and the delivery check use) reads what the switched writer writes, and it
-// still reads the legacy line an old writer sends during the switch, each
-// read counted under its form.
+// refuses a value in the retired legacy form by name.
 func TestWriterSwitchOldReadersStillRead(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob", "cy")
@@ -91,10 +90,10 @@ func TestWriterSwitchOldReadersStillRead(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, schemaread.FormBase64, form)
 	assert.Equal(t, []any{"bob", "n1", 7, 3, 9}, []any{p.Friend, p.Nonce, p.Queue, p.Working, p.Width})
-	old, form, err := pongs.Message(sentPong(t, r, "cy"))
-	require.NoError(t, err)
+	_, form, err = pongs.Message(sentPong(t, r, "cy"))
+	require.Error(t, err)
 	assert.Equal(t, schemaread.FormLegacy, form)
-	assert.Equal(t, []any{"cy", "n2", 1, 0, 2}, []any{old.Friend, old.Nonce, old.Queue, old.Working, old.Width})
+	assert.Equal(t, "PONG REFUSED: legacy; run: "+friend.PongHelp, err.Error())
 	snap := pongs.Counts().Snapshot()
-	assert.Equal(t, []uint64{1, 1}, []uint64{snap["base64"], snap["legacy"]})
+	assert.Equal(t, []uint64{1, 1, 1}, []uint64{snap["base64"], snap["legacy"], snap["refused_legacy"]})
 }

@@ -142,13 +142,6 @@ func TestPongDualRead(t *testing.T) {
 			n, q, w, wd, ok := ParsePong(line)
 			require.True(t, ok, "the old reader reads the old writer")
 			assert.Equal(t, []any{tc.nonce, tc.queue, tc.working, tc.width}, []any{n, q, w, wd})
-			m := bus.Message{From: "bob", To: []string{"ada"}, Subject: PongSubject, Body: line + "\n", At: pongAt}
-			require.True(t, IsPong(m))
-			got, form, err := r.Message(m)
-			require.NoError(t, err, line)
-			assert.Equal(t, schemaread.FormLegacy, form)
-			assert.Equal(t, want, got, "the legacy line reads whole, the friend and the time from the message")
-
 			// after the switch: a table pong in each form reads identically
 			v := tablePong("bob", tc.nonce, uint32(tc.queue), uint32(tc.working), uint32(tc.width), pongAt.UnixMilli())
 			wire := rawWire(t, v)
@@ -178,10 +171,10 @@ func TestPongDualRead(t *testing.T) {
 			}
 		}
 		c := r.Counts()
-		for _, f := range []schemaread.Form{schemaread.FormLegacy, schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
+		for _, f := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
 			assert.Equal(t, uint64(len(cases)), c.Reads(f), "each read is counted once, on its form (%s)", f)
 		}
-		assert.Equal(t, "base64=4 binary=4 json=4 legacy=4 unknown_fields=0", r.CountsLine())
+		assert.Equal(t, "base64=4 binary=4 json=4 legacy=0 unknown_fields=0", r.CountsLine())
 	})
 
 	t.Run("a clamp is refused in every form", func(t *testing.T) {
@@ -198,22 +191,14 @@ func TestPongDualRead(t *testing.T) {
 			{"width over 1024 as the wire", hostile(t, rawWire(t, tablePong("bob", "abc123", 5, 3, 1024, at)), le32(1024), le32(1025)), "clamped"},
 			{"queue over 100000 as base64", []byte(pongB64(hostile(t, rawWire(t, tablePong("bob", "abc123", 100000, 3, 8, at)), le32(100000), le32(100001)))), "clamped"},
 			{"queue over 100000 as JSON", hostile(t, rawJSON(t, tablePong("bob", "abc123", 5, 3, 8, at)), []byte(`"queue": 5,`), []byte(`"queue": 100001,`)), "clamped"},
-			{"queue over 100000 as the legacy line", []byte(PongLine("abc123", 100001, 3, 8)), "clamped (queue)"},
-			{"working over 10000 as the legacy line", []byte(PongLine("abc123", 5, 10001, 8)), "clamped (working)"},
-			{"width over 1024 as the legacy line", []byte(PongLine("abc123", 5, 3, 1025)), "clamped (width)"},
-			{"a negative queue as the legacy line", []byte(PongLine("abc123", -1, 3, 8)), "clamped"},
-			{"a queue past 32 bits as the legacy line", []byte(PongLine("abc123", 1<<32, 3, 8)), "clamped"},
-			{"a nonce over 32 bytes as the legacy line", []byte(PongLine(strings.Repeat("z", 33), 5, 3, 8)), "clamped"},
 		} {
 			got, _, err := r.Read("bob", pongAt, tc.body)
 			assert.Equal(t, tc.reason, pongRefusal(t, got, err, tc.name), tc.name)
 		}
-		assert.Equal(t, uint64(11), r.Counts().Refused(schemaread.ReasonClamped))
+		assert.Equal(t, uint64(5), r.Counts().Refused(schemaread.ReasonClamped))
 
-		// each bound itself is a pong, in either form
+		// each bound itself is a pong
 		_, _, err := r.Read("bob", pongAt, rawWire(t, tablePong("bob", "abc123", 100000, 10000, 1024, at)))
-		require.NoError(t, err)
-		_, _, err = r.Read("bob", pongAt, []byte(PongLine("abc123", 100000, 10000, 1024)))
 		require.NoError(t, err)
 
 		// the reader's writer refuses a clamp before it writes
@@ -264,17 +249,6 @@ func TestPongDualRead(t *testing.T) {
 			{"queue absent from the JSON text", "bob", pongAt, jsonWith("\"queue\": 5,", ""), "absent_required (queue)"},
 			{"empty", "bob", pongAt, nil, "unknown_form"},
 			{"no pong at all", "bob", pongAt, []byte("not a pong"), "malformed"},
-			// the legacy line
-			{"a legacy pong without its numbers", "bob", pongAt, []byte("pong abc123"), "absent_required (queue)"},
-			{"a legacy pong without its width", "bob", pongAt, []byte("pong abc123 queue=5 working=3"), "absent_required (width)"},
-			{"a legacy pong with a bad number", "bob", pongAt, []byte("pong abc123 queue=x working=3 width=8"), "malformed"},
-			{"a legacy pong with a padded number", "bob", pongAt, []byte("pong abc123 queue=05 working=3 width=8"), "malformed"},
-			{"a legacy pong with its keys out of order", "bob", pongAt, []byte("pong abc123 working=3 queue=5 width=8"), "malformed"},
-			{"a legacy pong with trailing junk", "bob", pongAt, []byte(PongLine("abc123", 5, 3, 8) + " junk"), "malformed"},
-			{"a legacy pong with two spaces", "bob", pongAt, []byte("pong  abc123 queue=5 working=3 width=8"), "malformed"},
-			{"a legacy pong with a tab in its nonce", "bob", pongAt, []byte("pong abc\t123 queue=5 working=3 width=8"), "malformed"},
-			{"a legacy pong from no one", "", pongAt, []byte(PongLine("abc123", 5, 3, 8)), "absent_required (friend_name)"},
-			{"a legacy pong with no send time", "bob", time.Time{}, []byte(PongLine("abc123", 5, 3, 8)), "absent_required (sent_ms)"},
 		} {
 			got, _, err := r.Read(tc.from, tc.at, tc.body)
 			assert.Equal(t, tc.reason, pongRefusal(t, got, err, tc.name), tc.name)
@@ -293,22 +267,9 @@ func TestPongDualRead(t *testing.T) {
 		assert.True(t, IsPong(bus.Message{Subject: "PONG", Body: "not a pong"}), "the pong subject makes a pong, matched without case")
 		assert.True(t, IsPong(bus.Message{Subject: "hello", Body: line}), "a legacy pong line is a pong whatever the subject")
 		assert.False(t, IsPong(bus.Message{Subject: "hello", Body: "I am here"}))
+		// the retired legacy line, at the message entry point
 		got, _, err := r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: "pong abc123\n", At: pongAt})
-		assert.Equal(t, "absent_required (queue)", pongRefusal(t, got, err, "message"))
-		// only the one framing newline is dropped: other whitespace is
-		// damage, refused as malformed, never normalised into a good pong
-		okBody := PongLine("abc123", 5, 3, 8)
-		got, _, err = r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: okBody + "\n", At: pongAt})
-		require.NoError(t, err)
-		assert.Equal(t, 5, got.Queue)
-		got, _, err = r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: okBody, At: pongAt})
-		require.NoError(t, err, "a body with no framing newline reads alike")
-		assert.Equal(t, 5, got.Queue)
-		for _, ws := range pongWhitespaceDamage(okBody) {
-			got, _, err = r.Message(bus.Message{From: "bob", Subject: PongSubject, Body: ws.body, At: pongAt})
-			assert.Equal(t, "malformed", pongRefusal(t, got, err, ws.name), ws.name)
-			assert.EqualError(t, err, "PONG REFUSED: malformed; run: "+PongHelp, ws.name)
-		}
+		assert.Equal(t, "legacy", pongRefusal(t, got, err, "message"))
 	})
 
 	// A seeded, deterministic mutation pass over a pong of each form: every
@@ -319,7 +280,7 @@ func TestPongDualRead(t *testing.T) {
 		t.Parallel()
 		r := NewPongReader()
 		good := tablePong("bob", "abc123", 5, 3, 8, pongAt.UnixMilli())
-		seeds := [][]byte{rawWire(t, good), []byte(pongB64(rawWire(t, good))), rawJSON(t, good), []byte(PongLine("abc123", 5, 3, 8))}
+		seeds := [][]byte{rawWire(t, good), []byte(pongB64(rawWire(t, good))), rawJSON(t, good)}
 		known := map[string]bool{
 			schemaread.ReasonMalformed: true, schemaread.ReasonClamped: true, schemaread.ReasonKindMismatch: true,
 			schemaread.ReasonUnknownForm: true, schemaread.ReasonWireDamaged: true, schemaread.ReasonAbsentRequired: true,
@@ -369,20 +330,13 @@ func TestPongDualRead(t *testing.T) {
 	// any other whitespace is refused by name and never passes the check.
 	t.Run("the delivery check reads its pong as the reader does", func(t *testing.T) {
 		t.Parallel()
-		line := PongLine("n1", 0, 0, 0)
-		const refusedWhy = "; a pong from bob was refused: PONG REFUSED: malformed; run: " + PongHelp
+		line := pongB64(rawWire(t, tablePong("bob", "n1", 0, 0, 0, pongAt.UnixMilli())))
 		for _, tc := range []struct{ name, body, why string }{
 			{"the writer's exact framing", line + "\n", ""},
 			{"no framing newline", line, ""},
-			{"a table pong in base64 with its framing", pongB64(rawWire(t, tablePong("bob", "n1", 0, 0, 0, pongAt.UnixMilli()))) + "\n", ""},
 		} {
 			res := runPongCheck(t, tc.body)
 			assert.Empty(t, res.Stage, "%s: %s", tc.name, res.Why)
-		}
-		for _, ws := range pongWhitespaceDamage(line) {
-			res := runPongCheck(t, ws.body)
-			assert.Equal(t, StageAct, res.Stage, ws.name)
-			assert.True(t, strings.HasSuffix(res.Why, refusedWhy), "%s: the refusal is named: %s", ws.name, res.Why)
 		}
 	})
 }

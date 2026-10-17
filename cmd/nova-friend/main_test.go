@@ -158,7 +158,7 @@ func (r *rig) answer(nonce string) {
 	r.answered[nonce] = true
 	r.answeredMu.Unlock()
 	b := &bus.Bus{Store: r.store}
-	_, _ = b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.PongSubject, Body: friend.PongLine(nonce, 0, 0, 0) + "\n"}) // ignored: a pong that is not sent leaves the friend down, which the test reads
+	_, _ = b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.PongSubject, Body: tablePongBody("bob", nonce) + "\n"}) // ignored: a pong that is not sent leaves the friend down, which the test reads
 }
 
 // wasAnswered reports whether bob's session has answered the check nonce.
