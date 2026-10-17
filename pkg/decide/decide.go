@@ -85,10 +85,8 @@ type Backend interface {
 // with no name or no questions, a question of an unknown type, a choice with
 // fewer than two options, a noul carrying options, an empty statement.
 func ParseSchema(raw []byte) (Schema, error) {
-	var s Schema
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&s); err != nil {
+	s, _, err := ParseSchemaReader.Read(raw)
+	if err != nil {
 		return Schema{}, fmt.Errorf("the schema is not JSON of the shape {name, questions: {<name>: {type, instructions, criteria}}}: %w", err)
 	}
 	if problems := s.Problems(); len(problems) > 0 {
