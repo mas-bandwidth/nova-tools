@@ -7,6 +7,9 @@ package seatcred
 // therefore enforces this exact schema before decoding. pkg/readregular follows
 // symlinks and includes the path in errors, while this reader refuses them and
 // keeps its diagnostics value-free, so it uses os.Lstat/open/SameFile directly.
+// pkg/schemaread is the one strict read of the table forms (the seatrec
+// SeatEnvironment table of pkg/seatrecwire); the legacy JSON object keeps its
+// own walk, held as one of those forms (S2, C13).
 
 import (
 	"bytes"
@@ -14,12 +17,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"unsafe"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
+	wire "github.com/mas-bandwidth/nova-tools/pkg/seatrecwire"
 )
 
 const (
@@ -63,7 +72,75 @@ func SeatEnvironmentPath(getenv func(string) string) (string, error) {
 
 // LoadSeatEnvironment reads and validates one private v1 seat record. Errors
 // name no input values or file contents (docs/SPEC-UP.md, "The seat environment").
+// Every form reads through the package's one SeatEnvironmentReader, counted
+// per form (S2, C13).
 func LoadSeatEnvironment(path string) (SeatEnvironment, error) {
+	return seatEnvironmentReader.Load(path)
+}
+
+// seatEnvironmentReader is the one seat environment reader of the package; its
+// Counts are the per-form read counts (S2, C13).
+var seatEnvironmentReader = NewSeatEnvironmentReader()
+
+// SeatEnvironmentReader reads the seat environment in every form (the owner's
+// S2, the reader-first order C13): the binary image of the seatrec
+// SeatEnvironment table, the padded standard base64 of that image, the schema
+// JSON text of the table, and the legacy JSON object every writer writes
+// today. Each form reads to one equal SeatEnvironment, is held to every rule
+// the legacy record is held to, and a damaged value is the named refusal
+// (pkg/schemaread), never an absent, empty or zero record. One read at a
+// time: the legacy cause is the read's own state.
+type SeatEnvironmentReader struct {
+	// Counts are the per-form read counts and the refusal tallies.
+	Counts *schemaread.Counts
+
+	r     *schemaread.Reader[seatDoc]
+	mu    sync.Mutex
+	cause error
+}
+
+// The refusal prefix and the command a refusal points at.
+const (
+	seatEnvironmentRecord = "SEAT_ENVIRONMENT"
+	seatEnvironmentHelp   = "nova-up -h"
+	// seatUnknownField refuses an unknown field in every form: the v1 record
+	// is closed (environmentKeyAllowed), so a field no reader names is damage,
+	// never a newer writer's addition read past.
+	seatUnknownField = "unknown_field"
+)
+
+// seatDoc is one read: the table value and the region that holds it for the
+// table forms, and the record every form reads to.
+type seatDoc struct {
+	v      *wire.SeatEnvironment
+	region []byte
+	rec    SeatEnvironment
+}
+
+// NewSeatEnvironmentReader is a seat environment reader with empty counters.
+func NewSeatEnvironmentReader() *SeatEnvironmentReader {
+	s := &SeatEnvironmentReader{}
+	s.r = schemaread.NewReader(&schemaread.Codec[seatDoc]{
+		Name:  seatEnvironmentRecord,
+		Help:  seatEnvironmentHelp,
+		Reset: func(d *seatDoc) { *d = seatDoc{} },
+		Measure: func(w []byte) error {
+			_, err := wire.SeatEnvironmentLoadMeasureReason(w)
+			return err
+		},
+		LoadWire:    s.loadWire,
+		LoadJSON:    s.loadJSON,
+		Legacy:      seatEnvironmentLegacy,
+		LoadLegacy:  s.loadLegacy,
+		Constraints: seatEnvironmentConstraints,
+	})
+	s.Counts = s.r.Counts()
+	return s
+}
+
+// Load reads one private seat record from path in any form, after the
+// ownership and mode checks of docs/SPEC-UP.md, "The seat environment".
+func (s *SeatEnvironmentReader) Load(path string) (SeatEnvironment, error) {
 	var zero SeatEnvironment
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -89,22 +166,223 @@ func LoadSeatEnvironment(path string) (SeatEnvironment, error) {
 	if err != nil {
 		return zero, errors.New("seat environment is unreadable")
 	}
+	return s.Read(b)
+}
+
+// Read reads one seat record's bytes in any form (S2, C13). A legacy record
+// that fails a rule keeps the error it has always had, which also unwraps to
+// the named refusal; a table form's refusal reads
+// `seat environment is invalid: SEAT_ENVIRONMENT REFUSED: <reason> (<cause>); run: nova-up -h`.
+func (s *SeatEnvironmentReader) Read(b []byte) (SeatEnvironment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cause = nil
+	d, res, err := s.r.Read(b)
+	if err == nil {
+		return d.rec, nil
+	}
+	var refusal *schemaread.Refusal
+	if !errors.As(err, &refusal) {
+		return SeatEnvironment{}, fmt.Errorf("seat environment is invalid: %w", err)
+	}
+	if res.Form == schemaread.FormLegacy && s.cause != nil {
+		return SeatEnvironment{}, &legacyRefusal{cause: s.cause, refusal: refusal}
+	}
+	if s.cause != nil && refusal.Field == "" {
+		named := *refusal
+		named.Field = s.cause.Error()
+		refusal = &named
+	}
+	return SeatEnvironment{}, fmt.Errorf("seat environment is invalid: %w", refusal)
+}
+
+// legacyRefusal is a refused legacy record: its text is the cause the legacy
+// reader has always given (value-free), and it unwraps to that cause and to
+// the named refusal the read was counted under.
+type legacyRefusal struct {
+	cause   error
+	refusal *schemaread.Refusal
+}
+
+func (e *legacyRefusal) Error() string   { return e.cause.Error() }
+func (e *legacyRefusal) Unwrap() []error { return []error{e.cause, e.refusal} }
+
+// seatEnvironmentLegacy is true when the input is the legacy JSON object. The
+// legacy writer (nova-up --seat) and the schema JSON text are both JSON, so
+// the form is decided by the object's shape, never by its whitespace: the
+// schema JSON names the three endpoints as top-level fields (the generated
+// writer writes each, null when absent), where the legacy record nests them
+// under "environment". An object naming none of them is the legacy form; it
+// reads to the same record either way. An object that is not JSON is the
+// legacy form too, so its damage is named by the legacy walk.
+func seatEnvironmentLegacy(in []byte) bool {
+	t := bytes.TrimLeft(in, " \t\r\n")
+	return len(t) > 0 && t[0] == '{' && !seatEnvironmentTableJSON(t)
+}
+
+// seatEnvironmentTableJSON reports whether the object's top level names a
+// field only the schema JSON text has.
+func seatEnvironmentTableJSON(t []byte) bool {
+	d := json.NewDecoder(bytes.NewReader(t))
+	if tok, err := d.Token(); err != nil || tok != json.Delim('{') {
+		return false
+	}
+	for d.More() {
+		key, err := d.Token()
+		if err != nil {
+			return false
+		}
+		switch key {
+		case "nova_sprint_redis", "nova_sprint_server", "nova_bus_redis":
+			return true
+		}
+		var skip json.RawMessage
+		if err := d.Decode(&skip); err != nil {
+			return false
+		}
+	}
+	return false
+}
+
+// loadLegacy reads the legacy record exactly as it has always been read: the
+// key and null walks, a strict decode, version 1, then validate.
+func (s *SeatEnvironmentReader) loadLegacy(d *seatDoc, b []byte) schemaread.Report {
 	if err := validateEnvironmentKeys(b); err != nil {
-		return zero, fmt.Errorf("seat environment is invalid: %w", err)
+		return s.refuse(fmt.Errorf("seat environment is invalid: %w", err))
 	}
 	if err := validateEnvironmentNulls(b); err != nil {
-		return zero, fmt.Errorf("seat environment is invalid: %w", err)
+		return s.refuse(fmt.Errorf("seat environment is invalid: %w", err))
 	}
 	var record SeatEnvironment
-	d := json.NewDecoder(bytes.NewReader(b))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&record); err != nil || record.Version != 1 {
-		return zero, errors.New("seat environment is not a supported v1 record")
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&record); err != nil || record.Version != 1 {
+		return s.refuse(errors.New("seat environment is not a supported v1 record"))
 	}
 	if err := record.validate(); err != nil {
-		return zero, err
+		return s.refuse(err)
 	}
-	return record, nil
+	d.rec = record
+	return schemaread.Report{}
+}
+
+// refuse keeps the read's cause and names the refusal malformed.
+func (s *SeatEnvironmentReader) refuse(cause error) schemaread.Report {
+	s.cause = cause
+	return schemaread.Report{Reason: schemaread.ReasonMalformed}
+}
+
+// loadWire loads the table's binary image; base64 reaches it decoded.
+func (s *SeatEnvironmentReader) loadWire(d *seatDoc, w []byte) schemaread.Report {
+	n, err := wire.SeatEnvironmentLoadMeasureReason(w)
+	if err != nil || n < 0 {
+		return schemaread.Report{Malformed: true}
+	}
+	var r wire.TableReport
+	d.region = seatRegion(n)
+	if d.v = wire.SeatEnvironmentLoad(d.region, w, &r); d.v == nil {
+		return schemaread.Report{Malformed: true, Reason: r.Reason}
+	}
+	return s.table(d, &r)
+}
+
+// loadJSON loads the table's schema JSON text.
+func (s *SeatEnvironmentReader) loadJSON(d *seatDoc, text []byte) schemaread.Report {
+	var b wire.SeatEnvironmentBuilder
+	var r wire.TableReport
+	if !b.Init() || !wire.SeatEnvironmentFromJson(&b, text, &r) || !b.Lock() {
+		return schemaread.Report{Malformed: true, Reason: r.Reason}
+	}
+	d.v, d.region = b.AsConst(), b.Region()
+	return s.table(d, &r)
+}
+
+// table holds a loaded table value to the legacy record's rules: an unknown
+// field is refused by name (the v1 record is closed), a duplicate JSON key is
+// malformed, and the record it reads to passes validate.
+func (s *SeatEnvironmentReader) table(d *seatDoc, r *wire.TableReport) schemaread.Report {
+	rep := schemaread.Report{
+		Unknown:      int(r.Unknown),
+		KindMismatch: int(r.KindMismatch),
+		Clamped:      int(r.Clamped),
+		Malformed:    r.Malformed || r.Duplicate > 0,
+		Reason:       r.Reason,
+	}
+	if rep.Unknown > 0 && rep.Reason == "" {
+		s.cause = errors.New("unknown key")
+		rep.Reason = seatUnknownField
+	}
+	if rep.Reason != "" || rep.Malformed || rep.KindMismatch > 0 || rep.Clamped > 0 {
+		return rep
+	}
+	d.rec = seatEnvironmentOf(d.v)
+	if err := d.rec.validate(); err != nil {
+		return s.refuse(err)
+	}
+	return rep
+}
+
+// seatEnvironmentConstraints are the table's bounds the compiler cannot
+// declare (the seatrec schema's SeatEnvironment.version): version is present
+// and is 1, refused as absent or clamped; and every text is UTF-8 with no NUL.
+// The legacy form is held by its own walk.
+func seatEnvironmentConstraints(d *seatDoc, c *schemaread.Checker) {
+	if d.v == nil {
+		return
+	}
+	c.Required("version", d.v.VersionPresent)
+	c.Bound("version", int64(d.v.Version), 1, 1)
+	c.Text("forge_identity", d.rec.ForgeIdentity, math.MaxInt)
+	for _, key := range []string{"NOVA_SPRINT_REDIS", "NOVA_SPRINT_SERVER", "NOVA_BUS_REDIS"} {
+		c.Text("environment."+key, d.rec.Environment[key], math.MaxInt)
+	}
+	if l := d.rec.Login; l != nil {
+		for _, f := range []struct{ name, value string }{
+			{"redis", l.Redis}, {"user", l.User}, {"store", l.Store}, {"as", l.As},
+			{"key", l.Key}, {"sops", l.Sops}, {"secret", l.Secret},
+		} {
+			c.Text("login."+f.name, f.value, math.MaxInt)
+		}
+	}
+}
+
+// seatEnvironmentOf is the table value as the record: a present endpoint is a
+// key of Environment (even when empty, so validate refuses it as the legacy
+// reader does), and a present login is a SeatLogin.
+func seatEnvironmentOf(v *wire.SeatEnvironment) SeatEnvironment {
+	rec := SeatEnvironment{Version: int(v.Version), ForgeIdentity: seatText(&v.ForgeIdentity)}
+	for _, e := range []struct {
+		key  string
+		slot *int64
+	}{{"NOVA_SPRINT_REDIS", &v.NovaSprintRedis}, {"NOVA_SPRINT_SERVER", &v.NovaSprintServer}, {"NOVA_BUS_REDIS", &v.NovaBusRedis}} {
+		if *e.slot != 0 {
+			if rec.Environment == nil {
+				rec.Environment = map[string]string{}
+			}
+			rec.Environment[e.key] = seatText(e.slot)
+		}
+	}
+	if l := wire.SeatLoginAt(&v.Login); l != nil {
+		rec.Login = &SeatLogin{Redis: seatText(&l.Redis), User: seatText(&l.User), Store: seatText(&l.Store),
+			As: seatText(&l.AsName), Key: seatText(&l.Key), Sops: seatText(&l.Sops), Secret: seatText(&l.Secret)}
+	}
+	return rec
+}
+
+// seatText is the text of one table string slot; a null slot is "".
+func seatText(slot *int64) string {
+	if *slot == 0 {
+		return ""
+	}
+	v := wire.TableStringAt(slot)
+	return string(v.Data[:v.Length])
+}
+
+// seatRegion is a 64-byte aligned region of n bytes for a table load.
+func seatRegion(n int64) []byte {
+	raw := make([]byte, n+63)
+	off := (-uintptr(unsafe.Pointer(&raw[0]))) & 63
+	return raw[off : off+uintptr(n)]
 }
 
 // validateEnvironmentNulls rejects explicit null values without exposing the
