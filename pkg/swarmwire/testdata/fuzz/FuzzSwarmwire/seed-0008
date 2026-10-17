@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x02')
+[]byte("{\n  \"rc\": 0,\n  \"signal\": null,\n  \"ended\": null,\n  \"survivors\": 0,\n  \"nonce\": null,\n  \"attest\": null,\n  \"end\": null,\n  \"spent\": 0,\n  \"observed\": false,\n  \"partial\": false,\n  \"reason\": null\n}\n")
