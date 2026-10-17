@@ -13,15 +13,21 @@
 package record
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/record/tablejson"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -407,24 +413,235 @@ func (s *RedisLedger) LedgerReport(ctx context.Context, month, by string) ([]Led
 			continue
 		}
 		indexed++
-		for f, raw := range m {
-			var k [3]string
-			if err := json.Unmarshal([]byte(f), &k); err != nil || k[0] == "" || k[1] == "" || k[2] == "" {
-				return nil, 0, 0, fmt.Errorf("%s: field %q is not [card, model, repo]", key, f)
-			}
-			var v ledgerValue
-			if err := json.Unmarshal([]byte(raw), &v); err != nil {
-				return nil, 0, 0, fmt.Errorf("%s: field %s: value does not decode: %w", key, f, err)
-			}
-			e := LedgerEntry{Day: d, Card: k[0], Model: k[1], Repo: k[2], Provider: v.Provider, Rough: v.Rough, Sources: v.Sources}
-			for t, n := range v.Tokens {
-				if n != nil {
-					e.Tokens[t], e.Known[t] = *n, true
-				}
-			}
-			entries = append(entries, e)
+		rows, err := ReadLedgerDay(d, m)
+		if err != nil {
+			return nil, 0, 0, err
 		}
+		entries = append(entries, rows...)
 	}
 	totals, err := GroupLedger(entries, by)
 	return totals, indexed, missing, err
+}
+
+// The ledger's typed reads (v1.5 aspect 13; the owner's S2 and S4, readers
+// first). A hash field is the LedgerKey table and its value the LedgerValue
+// table of schemas/ledger, each read from the table wire, the padded standard
+// base64 of that wire, the schema JSON text or the legacy form the writer
+// writes today ([card, model, repo] and {"provider","tokens","rough",
+// "sources"}). Writers stay legacy. pkg/ledgerwire's golden test imports this
+// package, so the generated tables are wired in by internal/record/ledgerread.
+var (
+	// LedgerKeyWire and LedgerValueWire hold the generated tables an installer
+	// (internal/record/ledgerread) wires in; until then a table image is
+	// refused as unknown_form and the legacy form alone reads.
+	LedgerKeyWire, LedgerValueWire tablejson.Slot
+
+	ledgerKeys   = schemaread.NewReader(tablejson.Codec("LEDGER_KEY", LedgerHelp, &LedgerKeyWire, ledgerKeyIsLegacy, ledgerKeyLoadLegacy, ledgerKeyConstraints))
+	ledgerValues = schemaread.NewReader(tablejson.Codec("LEDGER_VALUE", LedgerHelp, &LedgerValueWire, ledgerValueIsLegacy, ledgerValueLoadLegacy, ledgerValueConstraints))
+)
+
+// LedgerHelp is the command a ledger refusal points at.
+const LedgerHelp = "nova-tokens ledger -h"
+
+// ledgerKeyText is a hash field in the shape of the LedgerKey table's JSON
+// text. A legacy field names no day: the hash's key carries it.
+type ledgerKeyText struct {
+	Day   string `json:"day"`
+	Card  string `json:"card"`
+	Model string `json:"model"`
+	Repo  string `json:"repo"`
+}
+
+// ledgerTokenText is one TokenValue slot; a nil amount is a type no source
+// reported.
+type ledgerTokenText struct {
+	Amount *int64 `json:"amount,omitempty"`
+}
+
+// ledgerValueText is a hash value in the shape of the LedgerValue table's
+// JSON text: the five slots of LedgerTypes in order.
+type ledgerValueText struct {
+	Provider string            `json:"provider"`
+	Tokens   []ledgerTokenText `json:"tokens"`
+	Rough    int64             `json:"rough"`
+	Sources  string            `json:"sources"`
+}
+
+// ledgerKeyIsLegacy: the legacy field is the JSON array [card, model, repo].
+func ledgerKeyIsLegacy(in []byte) bool {
+	t := bytes.TrimSpace(in)
+	return len(t) > 0 && t[0] == '['
+}
+
+// ledgerKeyLoadLegacy reads [card, model, repo]: exactly three strings,
+// anything else malformed, never a row read short.
+func ledgerKeyLoadLegacy(v *ledgerKeyText, in []byte) schemaread.Report {
+	var k []string
+	if err := json.Unmarshal(in, &k); err != nil || len(k) != 3 {
+		return schemaread.Report{Malformed: true}
+	}
+	*v = ledgerKeyText{Card: k[0], Model: k[1], Repo: k[2]}
+	return schemaread.Report{}
+}
+
+// ledgerKeyConstraints: the key names its card, model and repo (ErrLedgerKey),
+// and its day is string(10) (schemas/ledger LedgerKey).
+func ledgerKeyConstraints(v *ledgerKeyText, c *schemaread.Checker) {
+	c.Text("day", v.Day, 10)
+	for _, f := range []struct{ name, s string }{{"card", v.Card}, {"model", v.Model}, {"repo", v.Repo}} {
+		c.Required(f.name, f.s != "")
+		c.Text(f.name, f.s, math.MaxInt)
+	}
+}
+
+// ledgerValueIsLegacy: the legacy value is a JSON object whose tokens are
+// numbers and nulls; the table's JSON text wraps each slot as an object.
+func ledgerValueIsLegacy(in []byte) bool {
+	t := bytes.TrimSpace(in)
+	var probe struct {
+		Tokens []json.RawMessage `json:"tokens"`
+	}
+	if len(t) == 0 || t[0] != '{' || json.Unmarshal(t, &probe) != nil {
+		return false
+	}
+	return !slices.ContainsFunc(probe.Tokens, func(m json.RawMessage) bool { return bytes.HasPrefix(bytes.TrimSpace(m), []byte("{")) })
+}
+
+// ledgerValueLoadLegacy reads the legacy value: the five token slots exactly,
+// each a number or null.
+func ledgerValueLoadLegacy(v *ledgerValueText, in []byte) schemaread.Report {
+	var lv struct {
+		Provider string   `json:"provider"`
+		Tokens   []*int64 `json:"tokens"`
+		Rough    int64    `json:"rough"`
+		Sources  string   `json:"sources"`
+	}
+	if err := json.Unmarshal(in, &lv); err != nil || len(lv.Tokens) != len(LedgerTypes) {
+		return schemaread.Report{Malformed: true}
+	}
+	*v = ledgerValueText{Provider: lv.Provider, Rough: lv.Rough, Sources: lv.Sources, Tokens: make([]ledgerTokenText, len(lv.Tokens))}
+	for i, n := range lv.Tokens {
+		v.Tokens[i].Amount = n
+	}
+	// A key the value does not name is counted as unknown, so ReadLedgerDay
+	// refuses it (ledgerUnknown) rather than read a damaged key's value as
+	// absent.
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(in, &keys); err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	unknown := 0
+	for k := range keys {
+		if !slices.Contains([]string{"provider", "tokens", "rough", "sources"}, k) {
+			unknown++
+		}
+	}
+	return schemaread.Report{Unknown: unknown}
+}
+
+// ledgerValueConstraints: at most the five slots of LedgerTypes
+// (schemas/ledger LedgerValue tokens [..5]), and a rough count an int holds.
+func ledgerValueConstraints(v *ledgerValueText, c *schemaread.Checker) {
+	c.Bound("tokens", int64(len(v.Tokens)), 0, int64(len(LedgerTypes)))
+	c.Bound("rough", v.Rough, math.MinInt, math.MaxInt)
+	c.Text("provider", v.Provider, math.MaxInt)
+	c.Text("sources", v.Sources, math.MaxInt)
+}
+
+// ReadLedgerDay reads one day hash's fields into its rows, in field order. A
+// field or value of any form that does not read is an error naming the key
+// and the refusal (`LEDGER_KEY REFUSED: <reason>; run: nova-tokens ledger -h`),
+// never a skipped row, and a key whose table names another day than the hash
+// is refused. Each read is counted under its record and its form
+// (LedgerReadCounts).
+func ReadLedgerDay(day string, fields map[string]string) ([]LedgerEntry, error) {
+	key := LedgerKey(day)
+	names := make([]string, 0, len(fields))
+	for f := range fields {
+		names = append(names, f)
+	}
+	sort.Strings(names)
+	out := make([]LedgerEntry, 0, len(names))
+	for _, f := range names {
+		k, kr, err := ledgerKeys.Read([]byte(f))
+		if err == nil && kr.Unknown > 0 {
+			err = ledgerUnknown("LEDGER_KEY")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: field %q is not [card, model, repo]: %w", key, f, err)
+		}
+		if k.Day != "" && k.Day != day {
+			return nil, fmt.Errorf("%s: field %q: %s REFUSED: %s (day %s, not the hash's %s); run: %s", key, f, "LEDGER_KEY", schemaread.ReasonMalformed, k.Day, day, LedgerHelp)
+		}
+		v, vr, err := ledgerValues.Read([]byte(fields[f]))
+		if err == nil && vr.Unknown > 0 {
+			err = ledgerUnknown("LEDGER_VALUE")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: field %s: value does not decode: %w", key, f, err)
+		}
+		e := LedgerEntry{Day: day, Card: k.Card, Model: k.Model, Repo: k.Repo, Provider: v.Provider, Rough: int(v.Rough), Sources: v.Sources}
+		for t, n := range v.Tokens {
+			if n.Amount != nil {
+				e.Tokens[t], e.Known[t] = *n.Amount, true
+			}
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// LedgerReadCounts is the ledger's read counters by record (LEDGER_KEY,
+// LEDGER_VALUE): the reads per form and the refusals per reason, the evidence
+// a cutover reads before the writers switch (S4).
+func LedgerReadCounts() map[string]map[string]uint64 {
+	keys, values := ledgerKeys.Counts().Snapshot(), ledgerValues.Counts().Snapshot()
+	keys["refused_"+schemaread.ReasonMalformed] += ledgerUnknownKeys.Load()
+	values["refused_"+schemaread.ReasonMalformed] += ledgerUnknownValues.Load()
+	return map[string]map[string]uint64{"LEDGER_KEY": keys, "LEDGER_VALUE": values}
+}
+
+// ledgerUnknownKeys and ledgerUnknownValues count the ledger fields the strict
+// read accepted with an unknown field, which ReadLedgerDay refuses.
+var ledgerUnknownKeys, ledgerUnknownValues atomic.Uint64
+
+// ledgerUnknown is the named refusal of a ledger key or value that holds a
+// field no reader names. Readers switch before writers, fleet-wide (the
+// owner's S4), so every reader knows every field a ledger writer writes, and
+// an unknown id is damage: tolerated, it would read a damaged provider,
+// tokens, rough or sources key as an absent, zero one, and a ledger day never
+// reads damage as zero. Unknown fields stay tolerated by pkg/schemaread for
+// the records whose older readers may meet newer data (S1).
+func ledgerUnknown(rec string) error {
+	if rec == "LEDGER_KEY" {
+		ledgerUnknownKeys.Add(1)
+	} else {
+		ledgerUnknownValues.Add(1)
+	}
+	return &schemaread.Refusal{Name: rec, Reason: schemaread.ReasonMalformed, Field: "unknown_field", Help: LedgerHelp}
+}
+
+// LedgerFieldText is a row's key and value in a table form (the table wire,
+// its base64 or the schema JSON text), as a writer will write them after the
+// switch; the writers stay legacy until then. It refuses what the reader
+// refuses, before a byte is written.
+func LedgerFieldText(e LedgerEntry, form schemaread.Form) (field, value []byte, err error) {
+	k := ledgerKeyText{Day: e.Day, Card: e.Card, Model: e.Model, Repo: e.Repo}
+	v := ledgerValueText{Provider: e.Provider, Rough: int64(e.Rough), Sources: e.Sources, Tokens: make([]ledgerTokenText, len(e.Tokens))}
+	for i := range e.Tokens {
+		if e.Known[i] {
+			n := e.Tokens[i]
+			v.Tokens[i].Amount = &n
+		}
+	}
+	if field, err = ledgerKeys.Write(&k, form); err != nil {
+		return nil, nil, err
+	}
+	if value, err = ledgerValues.Write(&v, form); err != nil {
+		return nil, nil, err
+	}
+	if len(field) == 0 || len(value) == 0 {
+		return nil, nil, errors.New("the ledger tables are not installed: import internal/record/ledgerread")
+	}
+	return field, value, nil
 }
