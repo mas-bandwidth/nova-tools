@@ -1,6 +1,8 @@
 package fn
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
@@ -11,26 +13,43 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// fakeStore is an in-process stand-in for the Redis commands capacity.lua
-// calls: strings, hashes and sets in maps, a fixed TIME, and XADD that keeps
-// nothing. It runs the file's own Lua under gopher-lua (Lua 5.1, the Redis
-// dialect), so the capacity rules are tested with no server, socket or clock.
+// fakeStore is an in-process stand-in for the Redis commands the library's
+// files call: strings, hashes, sets, sorted sets and streams in maps, a fixed
+// TIME, WRONGTYPE for a key of another type (raised by call, returned by
+// pcall), sha1hex, and cjson (fakeCJSON in table_lua_values_test.go). It runs
+// a file's own Lua under gopher-lua (Lua 5.1, the Redis dialect), so the
+// file's rules are tested with no server, socket or clock.
 type fakeStore struct {
-	strs   map[string]string
-	hashes map[string]map[string]string
-	sets   map[string]map[string]bool
-	funcs  map[string]*lua.LFunction
-	L      *lua.LState
+	strs    map[string]string
+	hashes  map[string]map[string]string
+	sets    map[string]map[string]bool
+	zsets   map[string]map[string]float64
+	streams map[string][][]string // each entry: its id, then its field, value pairs
+	lastID  int
+	decodes []string // every text cjson.decode was given, in order
+	funcs   map[string]*lua.LFunction
+	L       *lua.LState
 }
 
-func newFakeStore(t *testing.T) *fakeStore {
+func newFakeStore(t *testing.T) *fakeStore { return newFakeStoreOf(t, "lua/capacity.lua") }
+
+// newFakeStoreOf loads one lua/ file, wrapped as the assembled library wraps
+// it (the prelude, then the file in its own do-block).
+func newFakeStoreOf(t *testing.T, file string) *fakeStore {
 	t.Helper()
-	s := &fakeStore{strs: map[string]string{}, hashes: map[string]map[string]string{}, sets: map[string]map[string]bool{}, funcs: map[string]*lua.LFunction{}}
+	s := &fakeStore{strs: map[string]string{}, hashes: map[string]map[string]string{}, sets: map[string]map[string]bool{},
+		zsets: map[string]map[string]float64{}, streams: map[string][][]string{}, funcs: map[string]*lua.LFunction{}}
 	L := lua.NewState()
 	t.Cleanup(L.Close)
 	s.L = L
 	r := L.NewTable()
 	L.SetField(r, "call", L.NewFunction(s.call))
+	L.SetField(r, "pcall", L.NewFunction(s.pcall))
+	L.SetField(r, "sha1hex", L.NewFunction(func(L *lua.LState) int {
+		sum := sha1.Sum([]byte(L.CheckString(1)))
+		L.Push(lua.LString(hex.EncodeToString(sum[:])))
+		return 1
+	}))
 	L.SetField(r, "register_function", L.NewFunction(s.register))
 	L.SetField(r, "acl_check_cmd", L.NewFunction(func(L *lua.LState) int { L.Push(lua.LTrue); return 1 }))
 	L.SetField(r, "error_reply", L.NewFunction(func(L *lua.LState) int {
@@ -40,11 +59,79 @@ func newFakeStore(t *testing.T) *fakeStore {
 		return 1
 	}))
 	L.SetGlobal("redis", r)
-	code, err := sources.ReadFile("lua/capacity.lua")
+	L.SetGlobal("cjson", fakeCJSON(L, &s.decodes))
+	code, err := sources.ReadFile(file)
 	require.NoError(t, err)
-	require.NoError(t, L.DoString(Prelude+"do\n"+string(code)+"\nend\n"), "capacity.lua does not load under the fake")
+	require.NoError(t, L.DoString(Prelude+"do\n"+string(code)+"\nend\n"), "%s does not load under the fake", file)
 	return s
 }
+
+// kind is the type of key as TYPE names it.
+func (s *fakeStore) kind(k string) string {
+	if _, ok := s.hashes[k]; ok {
+		return "hash"
+	} else if _, ok := s.sets[k]; ok {
+		return "set"
+	} else if _, ok := s.zsets[k]; ok {
+		return "zset"
+	} else if _, ok := s.streams[k]; ok {
+		return "stream"
+	} else if _, ok := s.strs[k]; ok {
+		return "string"
+	}
+	return "none"
+}
+
+func (s *fakeStore) zset(k string) map[string]float64 {
+	if s.zsets[k] == nil {
+		s.zsets[k] = map[string]float64{}
+	}
+	return s.zsets[k]
+}
+
+// zrange is the sorted set's members in the store's order: by score, then by
+// member.
+func (s *fakeStore) zrange(k string) []string {
+	z := s.zsets[k]
+	names := make([]string, 0, len(z))
+	for m := range z {
+		names = append(names, m)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if z[names[i]] != z[names[j]] {
+			return z[names[i]] < z[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	return names
+}
+
+// score is a sorted-set score as the store prints it.
+func score(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) }
+
+// drop removes a container key the command left empty, as the store does.
+func (s *fakeStore) drop(k string) {
+	if h, ok := s.hashes[k]; ok && len(h) == 0 {
+		delete(s.hashes, k)
+	}
+	if m, ok := s.sets[k]; ok && len(m) == 0 {
+		delete(s.sets, k)
+	}
+	if z, ok := s.zsets[k]; ok && len(z) == 0 {
+		delete(s.zsets, k)
+	}
+}
+
+// commandKind is the key type each typed command wants.
+var commandKind = map[string]string{
+	"HGET": "hash", "HMGET": "hash", "HSET": "hash", "HDEL": "hash", "HEXISTS": "hash", "HGETALL": "hash", "HLEN": "hash", "HSTRLEN": "hash",
+	"SADD": "set", "SREM": "set", "SISMEMBER": "set", "SMEMBERS": "set", "SCARD": "set",
+	"ZADD": "zset", "ZREM": "zset", "ZSCORE": "zset", "ZCARD": "zset", "ZRANGE": "zset",
+	"XADD": "stream", "XINFO": "stream", "GET": "string",
+}
+
+func (s *fakeStore) call(L *lua.LState) int  { return s.run(L, false) }
+func (s *fakeStore) pcall(L *lua.LState) int { return s.run(L, true) }
 
 func (s *fakeStore) hash(k string) map[string]string {
 	if s.hashes[k] == nil {
@@ -69,7 +156,7 @@ func (s *fakeStore) register(L *lua.LState) int {
 	return 0
 }
 
-func (s *fakeStore) call(L *lua.LState) int {
+func (s *fakeStore) run(L *lua.LState, protected bool) int {
 	cmd := strings.ToUpper(L.CheckString(1))
 	arg := func(i int) string { return L.Get(i).String() }
 	n := L.GetTop()
@@ -79,6 +166,24 @@ func (s *fakeStore) call(L *lua.LState) int {
 		}
 		return lua.LString(v)
 	}
+	key := arg(2)
+	if cmd == "XINFO" {
+		key = arg(3)
+	}
+	if want, typed := commandKind[cmd]; typed && n >= 2 {
+		if found := s.kind(key); found != "none" && found != want {
+			const wrongtype = "WRONGTYPE Operation against a key holding the wrong kind of value"
+			if !protected {
+				L.RaiseError("%s", wrongtype)
+				return 0
+			}
+			e := L.NewTable()
+			L.SetField(e, "err", lua.LString(wrongtype))
+			L.Push(e)
+			return 1
+		}
+	}
+	defer s.drop(key)
 	switch cmd {
 	case "TIME":
 		t := L.NewTable()
@@ -86,37 +191,120 @@ func (s *fakeStore) call(L *lua.LState) int {
 		t.Append(lua.LString("0"))
 		L.Push(t)
 	case "XADD":
-		L.Push(lua.LString("1-0"))
+		s.lastID++
+		id := strconv.Itoa(s.lastID) + "-0"
+		entry := []string{id}
+		for i := 4; i <= n; i++ {
+			entry = append(entry, arg(i))
+		}
+		s.streams[arg(2)] = append(s.streams[arg(2)], entry)
+		L.Push(lua.LString(id))
+	case "XINFO":
+		t := L.NewTable()
+		t.Append(lua.LString("length"))
+		t.Append(lua.LNumber(len(s.streams[key])))
+		t.Append(lua.LString("last-generated-id"))
+		t.Append(lua.LString(strconv.Itoa(s.lastID) + "-0"))
+		L.Push(t)
 	case "GET":
 		v, ok := s.strs[arg(2)]
 		L.Push(str(v, ok))
-	case "DEL":
+	case "DEL", "UNLINK":
+		gone := 0
 		for i := 2; i <= n; i++ {
+			if s.kind(arg(i)) != "none" {
+				gone++
+			}
 			delete(s.strs, arg(i))
 			delete(s.hashes, arg(i))
 			delete(s.sets, arg(i))
+			delete(s.zsets, arg(i))
+			delete(s.streams, arg(i))
 		}
-		L.Push(lua.LNumber(1))
+		L.Push(lua.LNumber(gone))
 	case "EXISTS":
-		_, a := s.strs[arg(2)]
-		_, b := s.hashes[arg(2)]
-		_, c := s.sets[arg(2)]
-		if a || b || c {
-			L.Push(lua.LNumber(1))
-		} else {
-			L.Push(lua.LNumber(0))
+		found := 0
+		for i := 2; i <= n; i++ {
+			if s.kind(arg(i)) != "none" {
+				found++
+			}
 		}
+		L.Push(lua.LNumber(found))
 	case "TYPE":
 		t := L.NewTable()
-		kind := "none"
-		if _, ok := s.hashes[arg(2)]; ok {
-			kind = "hash"
-		} else if _, ok := s.sets[arg(2)]; ok {
-			kind = "set"
-		} else if _, ok := s.strs[arg(2)]; ok {
-			kind = "string"
+		L.SetField(t, "ok", lua.LString(s.kind(arg(2))))
+		L.Push(t)
+	case "HGETALL":
+		t := L.NewTable()
+		h := s.hashes[arg(2)]
+		var names []string
+		for f := range h {
+			names = append(names, f)
 		}
-		L.SetField(t, "ok", lua.LString(kind))
+		sort.Strings(names)
+		for _, f := range names {
+			t.Append(lua.LString(f))
+			t.Append(lua.LString(h[f]))
+		}
+		L.Push(t)
+	case "HLEN":
+		L.Push(lua.LNumber(len(s.hashes[arg(2)])))
+	case "HSTRLEN":
+		L.Push(lua.LNumber(len(s.hashes[arg(2)][arg(3)])))
+	case "SCARD":
+		L.Push(lua.LNumber(len(s.sets[arg(2)])))
+	case "SREM":
+		for i := 3; i <= n; i++ {
+			delete(s.set(arg(2)), arg(i))
+		}
+		L.Push(lua.LNumber(1))
+	case "ZADD":
+		z, added := s.zset(arg(2)), 0
+		for i := 3; i+1 <= n; i += 2 {
+			f, err := strconv.ParseFloat(arg(i), 64)
+			if err != nil {
+				L.RaiseError("ERR value is not a valid float")
+				return 0
+			}
+			if _, had := z[arg(i+1)]; !had {
+				added++
+			}
+			z[arg(i+1)] = f
+		}
+		L.Push(lua.LNumber(added))
+	case "ZREM":
+		z, gone := s.zset(arg(2)), 0
+		for i := 3; i <= n; i++ {
+			if _, had := z[arg(i)]; had {
+				gone++
+			}
+			delete(z, arg(i))
+		}
+		L.Push(lua.LNumber(gone))
+	case "ZSCORE":
+		f, ok := s.zsets[arg(2)][arg(3)]
+		L.Push(str(score(f), ok))
+	case "ZCARD":
+		L.Push(lua.LNumber(len(s.zsets[arg(2)])))
+	case "ZRANGE":
+		names := s.zrange(arg(2))
+		lo, _ := strconv.Atoi(arg(3))
+		hi, _ := strconv.Atoi(arg(4))
+		if lo < 0 {
+			lo += len(names)
+		}
+		if hi < 0 {
+			hi += len(names)
+		}
+		lo = max(lo, 0)
+		hi = min(hi, len(names)-1)
+		t := L.NewTable()
+		for i := lo; i <= hi; i++ {
+			t.Append(lua.LString(names[i]))
+			if n >= 5 && strings.EqualFold(arg(5), "WITHSCORES") {
+				t.Append(lua.LString(score(s.zsets[arg(2)][names[i]])))
+			}
+		}
 		L.Push(t)
 	case "HGET":
 		h, ok := s.hashes[arg(2)]
@@ -131,11 +319,14 @@ func (s *fakeStore) call(L *lua.LState) int {
 		}
 		L.Push(t)
 	case "HSET":
-		h := s.hash(arg(2))
+		h, added := s.hash(arg(2)), 0
 		for i := 3; i+1 <= n; i += 2 {
+			if _, had := h[arg(i)]; !had {
+				added++
+			}
 			h[arg(i)] = arg(i + 1)
 		}
-		L.Push(lua.LNumber(1))
+		L.Push(lua.LNumber(added))
 	case "HDEL":
 		h := s.hash(arg(2))
 		for i := 3; i <= n; i++ {
@@ -289,7 +480,7 @@ func TestTheFakeStoreRefusesAnUnknownCommand(t *testing.T) {
 	t.Parallel()
 
 	s := newFakeStore(t)
-	err := s.L.DoString(`redis.call('ZADD', 'k', 1, 'm')`)
+	err := s.L.DoString(`redis.call('LPUSH', 'k', 'm')`)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), fmt.Sprintf("no command %s", "ZADD"))
+	require.Contains(t, err.Error(), fmt.Sprintf("no command %s", "LPUSH"))
 }
