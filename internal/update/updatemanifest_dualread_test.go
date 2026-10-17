@@ -162,6 +162,10 @@ func TestUpdateManifestDualRead(t *testing.T) {
 		{"flipped", Header + "\ngo\ttool\tgo version\tlocal:go version\tgo update caller\n", "line 2: 5 fields"},
 		{"out-of-range kind", Header + "\nx\tgadget\tgo version\tlocal:go version\tnone\tme\n", "unknown kind gadget"},
 		{"local locator", Header + "\ngo\ttool\tgo version\tlocal:go  version\tnone\tme\n", "line 2: latest: argv requires single spaces"},
+		{"empty", "", "line 1: invalid header"},
+		{"blank", " \n", "line 1: invalid header"},
+		{"comment only", "# no header\n", "line 1: invalid header"},
+		{"header spelled with spaces", strings.ReplaceAll(Header, "\t", " ") + "\n", "line 1: invalid header"},
 	} {
 		t.Run("legacy refused "+tc.name, func(t *testing.T) {
 			before := manifestLegacyReads.Load()

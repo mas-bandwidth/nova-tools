@@ -73,7 +73,7 @@ func Load(r io.Reader) ([]Entry, error) {
 	if err != nil {
 		return nil, &ManifestError{Problems: []string{"unreadable manifest (use lines below 1 MiB)"}}
 	}
-	if manifestRead.Detect(data) == schemaread.FormLegacy {
+	if len(data) == 0 || manifestRead.Detect(data) == schemaread.FormLegacy {
 		manifestLegacyReads.Add(1)
 		return loadLegacy(data)
 	}
@@ -230,7 +230,7 @@ func manStr(slot *int64) string {
 	return string(v.Data[:v.Length])
 }
 
-// argvWords holds a list of words to argv (:29): non-empty, single-spaced.
+// argvWords holds a list of words to argv (the argv check): non-empty, single-spaced.
 func argvWords(c *schemaread.Checker, field string, l *wire.TableList[wire.Word], required bool) {
 	if required {
 		c.Required(field, l.Count > 0)
@@ -242,7 +242,7 @@ func argvWords(c *schemaread.Checker, field string, l *wire.TableList[wire.Word]
 }
 
 // manifestEntryOf are the per-entry constraints Load enforces (S1, the six
-// non-empty fields of manifest.go:86-98).
+// non-empty fields loadLegacy requires).
 func manifestEntryOf(c *schemaread.Checker, v *wire.UpdateManifestEntry) {
 	c.Required("name", manStr(&v.Name) != "")
 	c.Required("kind", v.Kind != wire.ManifestKindNone)
@@ -253,8 +253,8 @@ func manifestEntryOf(c *schemaread.Checker, v *wire.UpdateManifestEntry) {
 	c.Required("owner", manStr(&v.Owner) != "")
 }
 
-// manifestConstraints are the table's constraints (manifest.go:95, duplicate
-// name refused).
+// manifestConstraints are the table's constraints (a duplicate name
+// is refused, as loadLegacy refuses it).
 func manifestConstraints(v *wire.UpdateManifest, c *schemaread.Checker) {
 	seen := map[string]bool{}
 	ok := true
@@ -271,14 +271,20 @@ func manifestConstraints(v *wire.UpdateManifest, c *schemaread.Checker) {
 // manifestLegacy recognises the six-column TSV people write by hand. The
 // manifest is the only one of the forms whose text is tab-separated: base64
 // and JSON carry no tabs, and the binary wire leads with a control byte, so a
-// printable text with a tab is the legacy form. A wrong header is still legacy
-// text and still refused as the legacy form.
+// printable text with a tab is the legacy form. Padded base64 carries no
+// inner space either, so printable text with a space, a text that opens with
+// a # comment, and an empty text are the legacy form too: a missing or wrong
+// header is still legacy text and still refused as the legacy form (line 1:
+// invalid header), as Load always refused it.
 func manifestLegacy(in []byte) bool {
-	s := bytes.TrimLeft(in, " \t\r\n")
-	if len(s) == 0 || s[0] == '{' || s[0] < 0x20 || s[0] >= 0x80 {
+	s := bytes.TrimSpace(in)
+	if len(s) == 0 {
+		return true
+	}
+	if s[0] == '{' || s[0] < 0x20 || s[0] >= 0x80 {
 		return false
 	}
-	return bytes.ContainsRune(s, '\t')
+	return s[0] == '#' || bytes.ContainsAny(s, "\t ")
 }
 
 // manifestCodec is the update manifest's Codec for pkg/schemaread: the
@@ -361,7 +367,7 @@ func manifestFromJSON(text []byte, r *wire.TableReport) (*wire.UpdateManifest, [
 }
 
 // entriesFromTable is a loaded UpdateManifest value as the entries Load yields,
-// with the latest-source validation the legacy form runs (manifest.go:156-176).
+// with the latest-source validation the legacy form runs (loadLegacy).
 func entriesFromTable(v *wire.UpdateManifest) ([]Entry, error) {
 	var out []Entry
 	seen := map[string]bool{}
