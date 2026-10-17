@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x07')
+[]byte("{\n  \"name\": null,\n  \"provider\": null,\n  \"model\": null,\n  \"base_url\": null,\n  \"env_var\": null,\n  \"key_file\": null,\n  \"secret\": null,\n  \"usage\": 0,\n  \"worker_class\": 0,\n  \"harness\": null,\n  \"harness_args\": [],\n  \"worker_dir\": null,\n  \"deadline\": null,\n  \"board\": null,\n  \"read_roots\": [],\n  \"max_turns\": 0,\n  \"max_cache_read\": 0,\n  \"input_limit_phrases\": [],\n  \"launch_grace\": null,\n  \"keep_data\": false\n}\n")
