@@ -185,7 +185,7 @@ func TestSeatHookTypedStamp(t *testing.T) {
 			{"a typed stamp with epoch zero", edit(func(v *hookwire.Stamp) { v.Epoch = 0 }), "absent_required (epoch)"},
 			{"a typed stamp with a time before the epoch", edit(func(v *hookwire.Stamp) { v.AtMs = -5 }), "absent_required (at_ms)"},
 			{"a typed stamp with no holder", edit(func(v *hookwire.Stamp) { v.ByLength = 0 }), "absent_required (by)"},
-			{"a NUL in the holder", edit(func(v *hookwire.Stamp) { v.By[2] = 0 }), "malformed"},
+			{"a NUL in the holder", strings.Replace(edit(func(v *hookwire.Stamp) { v.By[2] = 1 }), "no\x01a-friend 4242", "no\x00a-friend 4242", 1), "malformed"},
 			{"the JSON text with the time left out", strings.Replace(goodText, "  \"at_ms\": 1792000000000,\n", "", 1), "absent_required (at_ms)"},
 			{"base64 that is not base64", "!!not base64!!", "unknown_form"},
 			{"base64 with a missing pad", strings.TrimRight(base64.StdEncoding.EncodeToString(goodWire), "="), "malformed"},
