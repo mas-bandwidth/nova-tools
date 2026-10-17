@@ -82,6 +82,7 @@ func fuzzBuilder[B any, PB interface {
 	}}
 }
 
+// END builder
 // fuzzRoots is every generated root, written by roots.sh.
 var fuzzRoots = []fuzzRoot{
 	fuzzBuilder("Ack", func(b *AckBuilder, w []byte, r *TableReport) bool { return AckLoadBuilder(b, w, r) }, func(b *AckBuilder, w []byte, r *TableReport) bool { return AckFromJson(b, w, r) }, func(v *Ack) []byte { return fuzzImage(AckMeasure(v), func(b []byte) int64 { return AckSave(v, b) }) }, func(v *Ack) []byte {
