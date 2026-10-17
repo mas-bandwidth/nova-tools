@@ -1,17 +1,17 @@
 package config
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // FileStore is the Store kept in one local JSON file: the rows and the
@@ -31,7 +31,8 @@ type FileStore struct {
 	exists bool
 }
 
-// fileState is the file's one JSON object.
+// fileState is the file's one record; its legacy form is this JSON object,
+// and records.go reads its typed image too (FileState).
 type fileState struct {
 	Schema  int                       `json:"schema"`
 	Rows    map[string]map[string]Row `json:"rows"`
@@ -60,14 +61,12 @@ func OpenFile(path string) (*FileStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("--file %s: %w", path, err)
 	}
-	var st fileState
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&st); err != nil {
+	// the file is read in every form and refused by name (records.go, S2)
+	st, err := records.ReadFile(raw)
+	if ref := (*schemaread.Refusal)(nil); errors.As(err, &ref) && ref.Reason == reasonTrailing {
+		return nil, fmt.Errorf("--file %s is not a nova-config store file: want one JSON object (%v)", path, err)
+	} else if err != nil {
 		return nil, fmt.Errorf("--file %s is not a nova-config store file (%v); give a new path, and migrate --file <path> makes one", path, err)
-	}
-	if err := dec.Decode(new(any)); err != io.EOF {
-		return nil, fmt.Errorf("--file %s is not a nova-config store file: want one JSON object", path)
 	}
 	all, err := Migrations()
 	if err != nil {

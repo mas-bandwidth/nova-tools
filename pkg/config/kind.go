@@ -1252,10 +1252,16 @@ func marshalArgv(words []string) ([]byte, error) {
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
-// Argv decodes a canonical TypeArgv value ("" is none).
+// Argv decodes a canonical TypeArgv value ("" is none). A value it cannot read
+// is none too, on purpose: canonicalArgv refused it at add, so an unreadable
+// one is a store fault, and the loop verbs that call this report a loop with
+// no command; the refusal is counted under ARGV (records.go), never silent.
 func Argv(canonical string) []string {
-	var words []string
-	if canonical == "" || json.Unmarshal([]byte(canonical), &words) != nil {
+	if canonical == "" {
+		return nil
+	}
+	words, err := records.ReadArgv(canonical)
+	if err != nil {
 		return nil
 	}
 	return words
