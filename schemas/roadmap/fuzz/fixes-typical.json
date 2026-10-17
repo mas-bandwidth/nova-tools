@@ -1,0 +1,43 @@
+{
+  "title": "Fixes",
+  "text": "The point releases.",
+  "releases": [
+    {
+      "id": "v1.2.10",
+      "status": "shipped",
+      "text": "Cut.",
+      "date": "2026-10-11"
+    },
+    {
+      "id": "v1.2.11",
+      "status": "in_progress",
+      "text": "Being cut.",
+      "date": ""
+    }
+  ],
+  "items": [
+    {
+      "id": "fix-one",
+      "release": "v1.2.10",
+      "title": "A fix",
+      "text": null,
+      "origin": "PR #1",
+      "status": "shipped",
+      "kept": []
+    },
+    {
+      "id": "fix-two",
+      "release": "v1.2.11",
+      "title": "Another",
+      "text": "Landed.",
+      "origin": "a card",
+      "status": "done",
+      "kept": [
+        {
+          "key": "item-why",
+          "value": ""
+        }
+      ]
+    }
+  ]
+}

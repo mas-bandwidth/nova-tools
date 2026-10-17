@@ -1,0 +1,13 @@
+# The roadmap area's wire-fuzz corpus (make schemawire-conformance), in the
+# schema conformance harness's manifest format (test/conformance/README.md in
+# the schema repository). Each instance is one record in two forms that agree:
+# the wire file named here and the JSON text beside it, <name>.json. The JSON
+# is what the generated ToJson writes; the wires are what `schema pack` writes
+# from it (the pinned compiler of pkg/roadmapwire/generate.go, run as
+# `go run <pin> pack --root <Root> --out schemas/roadmap/fuzz/<name>.bin <tree>
+# schemas/roadmap/roadmap.schema`, the JSON copied to <tree>/<Root>.json).
+# TestRoadmapTablesGolden holds the generated Save and ToJson to both, byte for
+# byte.
+unit roadmap schemas/roadmap/roadmap.schema
+instance doc-typical roadmap Doc schemas/roadmap/fuzz/doc-typical.bin
+instance fixes-typical roadmap Fixes schemas/roadmap/fuzz/fixes-typical.bin
