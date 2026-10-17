@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -39,9 +40,9 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 		legacy, err := json.Marshal(map[string]any{"decision": d})
 		require.NoError(t, err)
 		over := decisionSample()
-		a := over.Answers["class"]
-		a.P = map[string]float64{"done": 1.5}
-		over.Answers["class"] = a
+		a := over.Answers["A"]
+		a.P = map[string]float64{"A": 1.5}
+		over.Answers["A"] = a
 		overLegacy, err := json.Marshal(map[string]any{"decision": over})
 		require.NoError(t, err)
 		line := dual[decide.RecordLine]{name: "RECORD_LINE", want: want, wire: decisionLineImage(t, d), legacy: legacy,
@@ -73,9 +74,9 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 		legacy, err := json.Marshal(d)
 		require.NoError(t, err)
 		over := decisionSample()
-		a := over.Answers["class"]
-		a.P = map[string]float64{"done": 1.5}
-		over.Answers["class"] = a
+		a := over.Answers["A"]
+		a.P = map[string]float64{"A": 1.5}
+		over.Answers["A"] = a
 		overLegacy, err := json.Marshal(over)
 		require.NoError(t, err)
 		overWire := decisionImage(t, over)
@@ -117,12 +118,12 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 			return out
 		}
 		// criteria under a kind that is not a choice is refused, never a panic
-		_, err := rd.Schema(flipped(schemaImage(t, schemaSample()), 147, 0x80))
+		_, err := rd.Schema(flipped(schemaImage(t, schemaSmallSample()), 147, 0x80))
 		refusal(t, err, "SCHEMA")
-		_, err = decide.ParseSchema(flipped(schemaImage(t, schemaSample()), 147, 0x80))
+		_, err = decide.ParseSchema(flipped(schemaImage(t, schemaSmallSample()), 147, 0x80))
 		require.Error(t, err)
 		// a reference moved to another field's text, a field read as empty
-		d := decisionImage(t, decisionSample())
+		d := decisionImage(t, decisionSmallSample())
 		for _, c := range []struct {
 			at   int
 			mask byte
@@ -154,7 +155,72 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 		assert.Equal(t, "a", got.Decision.ID)
 		assert.Empty(t, got.Decision.Decision)
 	})
+
+	t.Run("legacy with leading white space", func(t *testing.T) {
+		t.Parallel()
+		// json.Unmarshal and json.Decoder skip leading white space, so the
+		// base read a legacy value with a leading space or newline; so does
+		// every reader here, through the package read sites too.
+		schema, err := json.Marshal(schemaSample())
+		require.NoError(t, err)
+		attempt, err := json.Marshal(decisionSample())
+		require.NoError(t, err)
+		recordLine, err := json.Marshal(map[string]any{"decision": decisionSample()})
+		require.NoError(t, err)
+		for _, pre := range whiteSpacePrefixes {
+			s, err := decide.ParseSchema(append([]byte(pre), schema...))
+			require.NoError(t, err, "ParseSchema %q", pre)
+			assert.Equal(t, schemaSample(), s, "ParseSchema %q", pre)
+			// ParseAttempt holds the decision to the attempt schema, which
+			// this sample does not answer: the white-space-led value reads
+			// to the same decision and the same verdict as the bare one.
+			want, wantErr := decide.ParseAttempt(attempt)
+			d, err := decide.ParseAttempt(append([]byte(pre), attempt...))
+			require.Error(t, wantErr)
+			require.Error(t, err, "ParseAttempt %q", pre)
+			assert.Equal(t, wantErr.Error(), err.Error(), "ParseAttempt %q", pre)
+			assert.Equal(t, want, d, "ParseAttempt %q", pre)
+		}
+		path := filepath.Join(t.TempDir(), "decisions.jsonl")
+		require.NoError(t, os.WriteFile(path, append(append([]byte(" "), recordLine...), '\n'), 0o600))
+		ds, err := decide.Load(path)
+		require.NoError(t, err, "Load of a line opening with a space")
+		require.Len(t, ds, 1)
+		assert.Equal(t, decisionSample(), ds[0])
+	})
+
+	t.Run("duplicate keys", func(t *testing.T) {
+		t.Parallel()
+		// A list the Go code holds as a map names each key once; an image that
+		// names one twice is refused by name, never read with an entry lost.
+		rd := decide.NewParser()
+		for _, field := range []string{"inputs", "answers", "p"} {
+			wire := decisionDupImage(t, field)
+			got, err := rd.Attempt(wire)
+			if ref := refusal(t, err, "DECISION"); ref != nil {
+				assert.Equal(t, schemaread.ReasonMalformed, ref.Reason, "duplicate %s", field)
+			}
+			assert.Zero(t, got, "duplicate %s", field)
+			_, err = rd.Attempt([]byte(base64.StdEncoding.EncodeToString(wire)))
+			refusal(t, err, "DECISION")
+			_, err = rd.RecordLine(decisionDupLineImage(t, field))
+			refusal(t, err, "RECORD_LINE")
+		}
+		for _, field := range []string{"criteria", "questions"} {
+			wire := schemaDupImage(t, field)
+			got, err := rd.Schema(wire)
+			if ref := refusal(t, err, "SCHEMA"); ref != nil {
+				assert.Equal(t, schemaread.ReasonMalformed, ref.Reason, "duplicate %s", field)
+			}
+			assert.Zero(t, got, "duplicate %s", field)
+			_, err = decide.ParseSchema([]byte(base64.StdEncoding.EncodeToString(wire)))
+			require.Error(t, err, "duplicate %s", field)
+		}
+	})
 }
+
+// whiteSpacePrefixes are the leading white space a legacy JSON value may carry.
+var whiteSpacePrefixes = []string{" ", "\n", "\r\n", "\t", " \n\t "}
 
 // formInput is one value in one of the forms a reader takes.
 type formInput struct {
@@ -193,6 +259,19 @@ func (d dual[T]) run(t *testing.T) {
 	assert.Equal(t, uint64(1), counts.Reads(schemaread.FormBase64), d.name)
 	assert.Equal(t, uint64(1), counts.Reads(schemaread.FormLegacy), d.name)
 	assert.Zero(t, counts.Reads(schemaread.FormJSON), d.name)
+
+	// The legacy value with leading white space is still the legacy form and
+	// reads equal, as the base's json decode read it.
+	rd = decide.NewParser()
+	for _, pre := range whiteSpacePrefixes {
+		got, err := d.read(rd, append([]byte(pre), d.legacy...))
+		require.NoError(t, err, "%s legacy after %q", d.name, pre)
+		assert.Equal(t, d.want, got, "%s legacy after %q reads equal", d.name, pre)
+	}
+	counts = d.counts(rd)
+	assert.Equal(t, uint64(len(whiteSpacePrefixes)), counts.Reads(schemaread.FormLegacy), "%s white-space-led legacy reads are legacy reads", d.name)
+	assert.Zero(t, counts.Reads(schemaread.FormJSON), d.name)
+	assert.Zero(t, refusals(counts), d.name)
 
 	// A truncated, a flipped-byte and an appended value of every form is
 	// refused by name and counted under the form it arrived in.
@@ -471,7 +550,29 @@ func setS(w *decidewire.TableWorker, slot *int64, text string) {
 	}
 }
 
+// decisionSample holds three keys in each of its maps (inputs, answers, each
+// answer's options) whose names differ by one bit (A, B, C), so the flip probe
+// sees a flip that turns one key into another and asserts no entry is lost.
+// The values are texts of distinct lengths, so a flip in place in a value
+// never reads as another field's text.
 func decisionSample() decide.Decision {
+	p := func() map[string]float64 { return map[string]float64{"A": 0.5, "B": 0.3, "C": 0.2} }
+	return decide.Decision{
+		ID: "a13@1.0123456789ab", Decision: "attempt", Schema: "0123456789abcdef", Backend: "jev",
+		At: "2026-10-17T04:07:16Z", State: "CARD ...",
+		Inputs: map[string]string{"A": "first", "B": "second", "C": "third-one"},
+		Answers: map[string]decide.Answer{
+			"A": {Type: "choice", Value: "done", P: p()},
+			"B": {Type: "choice", Value: "open", P: p()},
+			"C": {Type: "choice", Value: "held", P: p()},
+		},
+		Usage: decide.Usage{InputTokens: 1200, OutputTokens: 85},
+	}
+}
+
+// decisionSmallSample is the decision whose image the named cases flip at
+// fixed byte offsets.
+func decisionSmallSample() decide.Decision {
 	return decide.Decision{
 		ID: "a13@1.0123456789ab", Decision: "attempt", Schema: "0123456789abcdef", Backend: "jev",
 		At: "2026-10-17T04:07:16Z", State: "CARD ...",
@@ -479,6 +580,99 @@ func decisionSample() decide.Decision {
 		Answers: map[string]decide.Answer{"class": {Type: "choice", Value: "done", P: map[string]float64{"done": 0.93}}},
 		Usage:   decide.Usage{InputTokens: 1200, OutputTokens: 85},
 	}
+}
+
+// decisionDupImage is a decision image naming one key twice in field (inputs,
+// answers or p).
+func decisionDupImage(t *testing.T, field string) []byte {
+	t.Helper()
+	var b decidewire.DecisionBuilder
+	require.True(t, b.Init())
+	fillDup(&b.Main, b.GetRoot(), field)
+	return wireSave(t, &b, decidewire.DecisionMeasure, decidewire.DecisionSave)
+}
+
+// decisionDupLineImage is decisionDupImage as a record line.
+func decisionDupLineImage(t *testing.T, field string) []byte {
+	t.Helper()
+	var b decidewire.RecordLineBuilder
+	require.True(t, b.Init())
+	w := b.GetRoot()
+	w.Kind = decidewire.LineKindDecision
+	fillDup(&b.Main, decidewire.DecisionEmplace(&b.Main, &w.AsDecision), field)
+	return wireSave(t, &b, decidewire.RecordLineMeasure, decidewire.RecordLineSave)
+}
+
+func fillDup(w *decidewire.TableWorker, r *decidewire.DecisionRow, field string) {
+	setS(w, &r.Id, "a")
+	inputs := []string{"A", "B"}
+	if field == "inputs" {
+		inputs = []string{"A", "A"}
+	}
+	for i, k := range inputs {
+		in := decidewire.DecisionInputsAdd(w, &r.Inputs)
+		setS(w, &in.Key, k)
+		setS(w, &in.Value, string(rune('a'+i)))
+	}
+	questions := []string{"A", "B"}
+	if field == "answers" {
+		questions = []string{"A", "A"}
+	}
+	options := []string{"A", "B"}
+	if field == "p" {
+		options = []string{"A", "A"}
+	}
+	for _, q := range questions {
+		na := decidewire.DecisionAnswersAdd(w, &r.Answers)
+		setS(w, &na.Question, q)
+		na.Answer.Kind = decidewire.AnswerTypeChoice
+		setS(w, &na.Answer.Value, "A")
+		for _, opt := range options {
+			o := decidewire.AnswerPAdd(w, &na.Answer.P)
+			setS(w, &o.Option, opt)
+			o.P = 0.5
+		}
+	}
+}
+
+// schemaDupImage is a schema image naming one key twice in field (criteria or
+// questions).
+func schemaDupImage(t *testing.T, field string) []byte {
+	t.Helper()
+	var b decidewire.DecideSchemaBuilder
+	require.True(t, b.Init())
+	w := b.GetRoot()
+	setS(&b.Main, &w.Name, "dup")
+	questions := []string{"choice-0", "choice-1"}
+	if field == "questions" {
+		questions = []string{"choice-0", "choice-0"}
+	}
+	options := []string{"A", "B"}
+	if field == "criteria" {
+		options = []string{"A", "A"}
+	}
+	for _, name := range questions {
+		q := decidewire.DecideSchemaQuestionsAdd(&b.Main, &w.Questions)
+		setS(&b.Main, &q.Name, name)
+		q.Question.Kind = decidewire.AnswerTypeChoice
+		for _, opt := range options {
+			c := decidewire.QuestionCriteriaAdd(&b.Main, &q.Question.Criteria)
+			setS(&b.Main, &c.Option, opt)
+			setS(&b.Main, &c.Meaning, "m")
+		}
+		setS(&b.Main, &q.Question.Instructions, "why")
+	}
+	return wireSave(t, &b, decidewire.DecideSchemaMeasure, decidewire.DecideSchemaSave)
+}
+
+// sortedKeys is a map's keys in order, so an image is the same on every run.
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func decisionImage(t *testing.T, d decide.Decision) []byte {
@@ -512,7 +706,23 @@ func exportImage(t *testing.T) []byte {
 	return wireSave(t, &b, decidewire.ImportExportMeasure, decidewire.ImportExportSave)
 }
 
+// schemaSample holds three questions whose names differ by one bit
+// (choice-0, choice-1, choice-3) and three criteria per choice (A, B, C), so
+// the flip probe sees a flip that turns one key into another. The meanings are
+// texts of distinct lengths, so a flip in place in one never reads as another.
 func schemaSample() decide.Schema {
+	crit := func() map[string]string { return map[string]string{"A": "first", "B": "second", "C": "third-one"} }
+	return decide.Schema{Name: "gate-class", Questions: map[string]decide.Question{
+		"choice-0": {Type: "choice", Instructions: "why", Criteria: crit()},
+		"choice-1": {Type: "choice", Instructions: "how", Criteria: crit()},
+		"choice-3": {Type: "choice", Instructions: "who", Criteria: crit()},
+		"noul-0":   {Type: "noul", Instructions: "is it so?"},
+	}}
+}
+
+// schemaSmallSample is the schema whose image the named cases flip at a fixed
+// byte offset (147, the choice's kind).
+func schemaSmallSample() decide.Schema {
 	return decide.Schema{Name: "gate-class", Questions: map[string]decide.Question{
 		"choice-0": {Type: "choice", Instructions: "why", Criteria: map[string]string{"A": "a", "B": "b"}},
 		"noul-0":   {Type: "noul", Instructions: "is it so?"},
@@ -525,16 +735,16 @@ func schemaImage(t *testing.T, s decide.Schema) []byte {
 	require.True(t, b.Init())
 	w := b.GetRoot()
 	setS(&b.Main, &w.Name, s.Name)
-	for _, name := range []string{"choice-0", "noul-0"} {
+	for _, name := range sortedKeys(s.Questions) {
 		q := decidewire.DecideSchemaQuestionsAdd(&b.Main, &w.Questions)
 		setS(&b.Main, &q.Name, name)
 		qq := s.Questions[name]
 		if strings.HasPrefix(name, "choice") {
 			q.Question.Kind = decidewire.AnswerTypeChoice
-			for opt, meaning := range qq.Criteria {
+			for _, opt := range sortedKeys(qq.Criteria) {
 				c := decidewire.QuestionCriteriaAdd(&b.Main, &q.Question.Criteria)
 				setS(&b.Main, &c.Option, opt)
-				setS(&b.Main, &c.Meaning, meaning)
+				setS(&b.Main, &c.Meaning, qq.Criteria[opt])
 			}
 		} else {
 			q.Question.Kind = decidewire.AnswerTypeNoul
@@ -569,20 +779,21 @@ func fillDecision(t *testing.T, w *decidewire.TableWorker, r *decidewire.Decisio
 	setS(w, &r.At, d.At)
 	setS(w, &r.State, d.State)
 	r.Usage = decidewire.UsageRow{InputTokens: int64(d.Usage.InputTokens), OutputTokens: int64(d.Usage.OutputTokens)}
-	for k, v := range d.Inputs {
+	for _, k := range sortedKeys(d.Inputs) {
 		in := decidewire.DecisionInputsAdd(w, &r.Inputs)
 		setS(w, &in.Key, k)
-		setS(w, &in.Value, v)
+		setS(w, &in.Value, d.Inputs[k])
 	}
-	for q, a := range d.Answers {
+	for _, q := range sortedKeys(d.Answers) {
+		a := d.Answers[q]
 		na := decidewire.DecisionAnswersAdd(w, &r.Answers)
 		setS(w, &na.Question, q)
 		na.Answer.Kind = decidewire.AnswerTypeChoice
 		setS(w, &na.Answer.Value, a.Value)
-		for opt, p := range a.P {
+		for _, opt := range sortedKeys(a.P) {
 			o := decidewire.AnswerPAdd(w, &na.Answer.P)
 			setS(w, &o.Option, opt)
-			o.P = p
+			o.P = a.P[opt]
 		}
 	}
 }

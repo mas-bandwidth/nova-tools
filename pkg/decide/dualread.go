@@ -45,10 +45,22 @@ func (d decided[T]) reader() *schemaread.Reader[T] {
 		Reset:       func(v *T) { *v = *new(T) },
 		Measure:     d.measure,
 		LoadWire:    d.read,
-		Legacy:      func(in []byte) bool { return len(in) > 0 && in[0] == '{' },
+		Legacy:      isLegacy,
 		LoadLegacy:  d.legacy,
 		Constraints: d.check,
 	})
+}
+
+// isLegacy says whether in is the legacy JSON text: its first byte after
+// leading space, tab, CR and LF opens an object. The legacy decode (json.Unmarshal,
+// json.Decoder) skips leading white space, so a legacy value the base read
+// accepted with a leading space or newline is still the legacy form (S4: the
+// reader reads what the writers write today). The typed forms never open with
+// white space: the binary wire opens with its form byte and base64 with a
+// base64 character.
+func isLegacy(in []byte) bool {
+	t := bytes.TrimLeft(in, " \t\r\n")
+	return len(t) > 0 && t[0] == '{'
 }
 
 // recordLegacy reads one JSON value into v the way the writer's own decode did.
@@ -124,34 +136,61 @@ func typedDone(rep *decidewire.TableReport, isCanonical func() bool) schemaread.
 	return out
 }
 
-// answerFromTable is an answer as the Go code holds it.
-func answerFromTable(a *decidewire.AnswerRow, ar []*decidewire.TableArena) Answer {
-	out := Answer{Type: typeOf(a.Kind), Value: strAt(a.Value, ar), Confidence: a.Confidence, Method: strAt(a.Method, ar)}
-	out.P = map[string]float64{}
-	decidewire.AnswerPEach(&a.P, func(o *decidewire.OptionPRow) bool {
-		out.P[strAt(o.Option, ar)] = o.P
-		return true
-	}, ar...)
-	return out
+// putOnce writes v under k unless k is already there. A list the Go code
+// holds as a map has one entry per key; an image that names a key twice (a
+// flipped byte that turns one key's text into another's) would read two entries
+// as one, losing one with no error. It is refused instead (S2: damage is
+// refused by name, never read as another shape); canonical cannot see it,
+// because the image itself is intact.
+func putOnce[V any](m map[string]V, k string, v V) bool {
+	if _, dup := m[k]; dup {
+		return false
+	}
+	m[k] = v
+	return true
 }
 
-// decisionFromTable is a decision as the record holds it.
-func decisionFromTable(r *decidewire.DecisionRow, ar []*decidewire.TableArena) Decision {
+// answerFromTable is an answer as the Go code holds it; ok is false when an
+// option is named twice (putOnce).
+func answerFromTable(a *decidewire.AnswerRow, ar []*decidewire.TableArena) (Answer, bool) {
+	out := Answer{Type: typeOf(a.Kind), Value: strAt(a.Value, ar), Confidence: a.Confidence, Method: strAt(a.Method, ar)}
+	out.P = map[string]float64{}
+	ok := true
+	decidewire.AnswerPEach(&a.P, func(o *decidewire.OptionPRow) bool {
+		ok = putOnce(out.P, strAt(o.Option, ar), o.P)
+		return ok
+	}, ar...)
+	return out, ok
+}
+
+// decisionFromTable is a decision as the record holds it; ok is false when an
+// input, a question or an option of an answer is named twice (putOnce).
+func decisionFromTable(r *decidewire.DecisionRow, ar []*decidewire.TableArena) (Decision, bool) {
 	d := Decision{
 		ID: strAt(r.Id, ar), Decision: strAt(r.DecisionName, ar), Schema: strAt(r.Schema, ar),
 		Backend: strAt(r.Backend, ar), At: strAt(r.At, ar), State: strAt(r.State, ar),
 		Usage:  Usage{InputTokens: int(r.Usage.InputTokens), OutputTokens: int(r.Usage.OutputTokens)},
 		Inputs: map[string]string{}, Answers: map[string]Answer{},
 	}
+	ok := true
 	decidewire.DecisionInputsEach(&r.Inputs, func(in *decidewire.InputRow) bool {
-		d.Inputs[strAt(in.Key, ar)] = strAt(in.Value, ar)
-		return true
+		ok = putOnce(d.Inputs, strAt(in.Key, ar), strAt(in.Value, ar))
+		return ok
 	}, ar...)
+	if !ok {
+		return Decision{}, false
+	}
 	decidewire.DecisionAnswersEach(&r.Answers, func(a *decidewire.NamedAnswerRow) bool {
-		d.Answers[strAt(a.Question, ar)] = answerFromTable(&a.Answer, ar)
-		return true
+		var ans Answer
+		if ans, ok = answerFromTable(&a.Answer, ar); ok {
+			ok = putOnce(d.Answers, strAt(a.Question, ar), ans)
+		}
+		return ok
 	}, ar...)
-	return d
+	if !ok {
+		return Decision{}, false
+	}
+	return d, true
 }
 
 func typeOf(k decidewire.AnswerType) string {
@@ -230,7 +269,11 @@ func parseAttemptTyped(v *Decision, wire []byte) schemaread.Report {
 	}
 	root := b.GetRoot()
 	ar := []*decidewire.TableArena{&b.Arena}
-	*v = decisionFromTable(root, ar)
+	d, ok := decisionFromTable(root, ar)
+	if !ok {
+		return schemaread.Report{Reason: schemaread.ReasonMalformed}
+	}
+	*v = d
 	return typedDone(&rep, func() bool {
 		return canonical[decidewire.Decision](&b, wire, decidewire.DecisionMeasure, decidewire.DecisionSave)
 	})
@@ -252,33 +295,47 @@ var ParseAttemptReader = newAttemptReader()
 
 // questionFromTable is a question as the Go code holds it. Criteria belong to
 // a choice only (decide.go Question): an image holding criteria under another
-// kind is refused (ok false, a kind_mismatch the schema reader names), never
-// written into a map the noul does not have.
-func questionFromTable(q *decidewire.QuestionRow, ar []*decidewire.TableArena) (Question, bool) {
+// kind is refused (reason kind_mismatch, which the schema reader names), never
+// written into a map the noul does not have. A criterion option named twice is
+// refused as malformed (putOnce).
+func questionFromTable(q *decidewire.QuestionRow, ar []*decidewire.TableArena) (Question, string) {
 	out := Question{Type: typeOf(q.Kind), Instructions: strAt(q.Instructions, ar)}
 	if q.Kind == decidewire.AnswerTypeChoice {
 		out.Criteria = map[string]string{}
 	}
-	ok := true
+	reason := ""
 	decidewire.QuestionCriteriaEach(&q.Criteria, func(c *decidewire.CriterionRow) bool {
 		if out.Criteria == nil {
-			ok = false
+			reason = schemaread.ReasonKindMismatch
 			return false
 		}
-		out.Criteria[strAt(c.Option, ar)] = strAt(c.Meaning, ar)
+		if !putOnce(out.Criteria, strAt(c.Option, ar), strAt(c.Meaning, ar)) {
+			reason = schemaread.ReasonMalformed
+			return false
+		}
 		return true
 	}, ar...)
-	return out, ok
+	return out, reason
 }
 
-func schemaFromTable(r *decidewire.DecideSchemaRow, ar []*decidewire.TableArena) (Schema, bool) {
+// schemaFromTable is a schema as the Go code holds it; reason names the first
+// refusal of a question (questionFromTable), and a question named twice is
+// refused as malformed (putOnce).
+func schemaFromTable(r *decidewire.DecideSchemaRow, ar []*decidewire.TableArena) (Schema, string) {
 	s := Schema{Name: strAt(r.Name, ar), Questions: map[string]Question{}}
-	ok := true
+	reason := ""
 	decidewire.DecideSchemaQuestionsEach(&r.Questions, func(q *decidewire.NamedQuestionRow) bool {
-		s.Questions[strAt(q.Name, ar)], ok = questionFromTable(&q.Question, ar)
-		return ok
+		var qq Question
+		if qq, reason = questionFromTable(&q.Question, ar); reason != "" {
+			return false
+		}
+		if !putOnce(s.Questions, strAt(q.Name, ar), qq) {
+			reason = schemaread.ReasonMalformed
+			return false
+		}
+		return true
 	}, ar...)
-	return s, ok
+	return s, reason
 }
 
 func parseSchemaTyped(v *Schema, wire []byte) schemaread.Report {
@@ -293,9 +350,9 @@ func parseSchemaTyped(v *Schema, wire []byte) schemaread.Report {
 	}
 	root := b.GetRoot()
 	ar := []*decidewire.TableArena{&b.Arena}
-	s, ok := schemaFromTable(root, ar)
-	if !ok {
-		return schemaread.Report{Reason: schemaread.ReasonKindMismatch}
+	s, reason := schemaFromTable(root, ar)
+	if reason != "" {
+		return schemaread.Report{Reason: reason}
 	}
 	*v = s
 	return typedDone(&rep, func() bool {
@@ -411,7 +468,10 @@ func lineFromTable(r *decidewire.RecordLineRow, ar []*decidewire.TableArena) (li
 		if r.AsDecision == 0 {
 			return line{}, false
 		}
-		d := decisionFromTable((*decidewire.DecisionRow)(at(r.AsDecision)), ar)
+		d, ok := decisionFromTable((*decidewire.DecisionRow)(at(r.AsDecision)), ar)
+		if !ok {
+			return line{}, false
+		}
 		return line{Decision: &d}, true
 	case decidewire.LineKindOutcome:
 		if r.AsOutcome == 0 {
