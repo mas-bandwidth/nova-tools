@@ -491,3 +491,40 @@ func TestWakeCheckIsAnsweredOnlyByTheSession(t *testing.T) {
 		assert.Equal(t, []string{"daemon-pong: daemon-pong n1"}, r.adaGot(t))
 	})
 }
+
+func TestDaemonDropsDuplicateDeliveryOfActedMessage(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	m := r.send(t, "ada", "hello", "are you there?")
+	r.at[2] = func() {
+		// By beat 2 the first turn has finished and acted; redeliver onto bob's stream
+		err := r.store.AddAll(context.Background(), []string{bus.StreamOf("bob")}, map[string]string{
+			"id":      m.ID,
+			"from":    m.From,
+			"to":      strings.Join(m.To, ","),
+			"cc":      strings.Join(m.CC, ","),
+			"re":      m.Re,
+			"at":      m.At.Format(time.RFC3339),
+			"subject": m.Subject,
+			"body":    m.Body,
+		})
+		require.NoError(t, err)
+	}
+	r.run(t, 6)
+
+	assert.Len(t, r.delivered, 1, "duplicate delivery must not be pushed into a turn")
+
+	receipts, err := r.bus.Receipts(context.Background(), "bob", m.ID)
+	require.NoError(t, err)
+	require.Len(t, receipts, 1)
+	assert.Equal(t, bus.ReceiptActed, receipts[0].State)
+
+	var foundDrop bool
+	for _, rec := range r.records {
+		if strings.Contains(rec, "duplicate dropped id="+m.ID) {
+			foundDrop = true
+			break
+		}
+	}
+	assert.True(t, foundDrop, "expected record line 'duplicate dropped id=%s', got records: %v", m.ID, r.records)
+}

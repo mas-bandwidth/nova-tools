@@ -190,6 +190,10 @@ type Store interface {
 	// Marks is the whole hash at each key, in one trip (a pipeline of HGETALL);
 	// a key that is not there is an empty map.
 	Marks(ctx context.Context, keys ...string) ([]map[string]string, error)
+	// SetMarks sets fields of the hash at key (HSET) in one trip.
+	SetMarks(ctx context.Context, key string, fields map[string]string) error
+	// Time is the server's current time (TIME).
+	Time(ctx context.Context) (time.Time, error)
 	// EnsureGroup makes the group on the stream from its start, making the
 	// stream when it is not there (XGROUP CREATE ... 0 MKSTREAM); a group
 	// already there is fine.
@@ -372,6 +376,9 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 			break
 		}
 		if len(FilterKinds(got, kinds)) > 0 {
+			if err := b.MarkReceipts(ctx, as, ReceiptDelivered, got[0].Message().ID); err != nil {
+				return Entry{}, false, err
+			}
 			return got[0], true, release()
 		}
 		skipped = append(skipped, got[0].Entry)
@@ -385,6 +392,9 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 			return Entry{}, false, err
 		}
 		if len(FilterKinds(got, kinds)) > 0 {
+			if err := b.MarkReceipts(ctx, as, ReceiptDelivered, got[0].Message().ID); err != nil {
+				return Entry{}, false, err
+			}
 			return got[0], true, nil
 		}
 		if err := b.Store.Release(ctx, stream, as, got[0].Entry); err != nil {

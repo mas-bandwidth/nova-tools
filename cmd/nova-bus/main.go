@@ -161,7 +161,7 @@ recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, 
 ack --as <me> --id <id> acks by hand after a plain recv; names: nova-config friend and machine rows.
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
-		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed), 2 could not run (a flag, an input, a store that did not answer).",
+		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; overdue: messages short of delivered), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"NONE"},
 		Verbs: []tool.Verb{
 			{
@@ -302,6 +302,32 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 				},
 				Run: w.names,
+			},
+			{
+				Name:   "receipts",
+				Usage:  "receipts [--as <me>] [--id <id>] [--redis <addr>]",
+				Effect: tool.Inspection,
+				Detail: `Prints RECEIPTS OK count=<n>, then one RECEIPTS RECEIPT id=<id> state=<state> age=<duration> line per message receipt.
+--id <id> prints only the receipt for that message.
+example: nova-bus receipts --as bob`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.String("id", "", "only the receipt for this message id")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+				},
+				Run: w.receipts,
+			},
+			{
+				Name:   "overdue",
+				Usage:  "overdue [--older <duration>] [--redis <addr>]",
+				Effect: tool.Inspection,
+				Detail: `Prints OVERDUE OK overdue=0 older=<duration> at exit 0, or OVERDUE FAILED overdue=<n> older=<duration> at exit 1 with one OVERDUE MESSAGE stream=<stream> to=<name> id=<id> from=<name> [kind=<k>] at=<RFC3339> age=<duration> subject=<s> line per overdue message short of delivered past older (default: 10m).
+example: nova-bus overdue --older 10m`,
+				Flags: func(f *tool.Flags) {
+					f.Duration("older", 10*time.Minute, "how long a message may wait short of delivered before it is overdue")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+				},
+				Run: w.overdue,
 			},
 		},
 	}
@@ -693,4 +719,49 @@ func (w world) address(ctx context.Context, c *tool.Call) (string, *tool.Out) {
 		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset and the fleet's bus row is empty; set it once: nova-config fleet set --bus <host:port> --as <you>, then nova-config apply")
 	}
 	return addr, nil
+}
+
+func (w world) receipts(c *tool.Call) *tool.Out {
+	b, login, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := identity(c, login)
+	if refused != nil {
+		return refused
+	}
+	id := c.Str("id")
+	got, err := b.Receipts(context.Background(), as, id)
+	if err != nil {
+		return answer(err)
+	}
+	o := tool.Done().Fact("count", len(got))
+	for _, r := range got {
+		o.Item("receipt", "id", r.ID, "state", r.State, "age", r.Age.Round(time.Second))
+	}
+	return o
+}
+
+func (w world) overdue(c *tool.Call) *tool.Out {
+	b, _, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	older := c.Dur("older")
+	got, err := b.Overdue(context.Background(), older)
+	if err != nil {
+		return answer(err)
+	}
+	var o *tool.Out
+	if len(got) == 0 {
+		o = tool.Done().Fact("overdue", 0).Fact("older", older)
+	} else {
+		o = tool.Fail().Fact("overdue", len(got)).Fact("older", older)
+		for _, m := range got {
+			o.Item("message", slices.Concat([]any{"stream", m.Stream, "to", m.To, "id", m.Message.ID, "from", m.Message.From}, kindItem(m.Message), []any{"at", m.Message.At.Format(time.RFC3339), "age", m.Age.Round(time.Second), "subject", tool.Text(m.Message.Subject)})...)
+		}
+	}
+	return o
 }

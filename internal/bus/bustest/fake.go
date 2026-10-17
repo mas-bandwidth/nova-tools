@@ -154,6 +154,35 @@ func (f *Fake) Marks(_ context.Context, keys ...string) ([]map[string]string, er
 	return out, nil
 }
 
+func (f *Fake) SetMarks(_ context.Context, key string, fields map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return err
+	}
+	if f.hashes == nil {
+		f.hashes = map[string]map[string]string{}
+	}
+	h := f.hashes[key]
+	if h == nil {
+		h = map[string]string{}
+		f.hashes[key] = h
+	}
+	for k, v := range fields {
+		h[k] = v
+	}
+	return nil
+}
+
+func (f *Fake) Time(_ context.Context) (time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return time.Time{}, err
+	}
+	return f.now, nil
+}
+
 func (f *Fake) EnsureGroup(_ context.Context, stream, group string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

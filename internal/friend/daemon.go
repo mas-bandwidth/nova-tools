@@ -233,6 +233,7 @@ type loop struct {
 	brokenAfter  int
 	answered     map[string]bool // entries whose ping the daemon has ponged
 	failed       map[string]int  // entries whose turn failed, and how often
+	actedIDs     map[string]bool // message ids pushed into a turn that ended acted (exit 0)
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
 	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
 	notice       *Push           // the latest word about the coordinator the session is owed
@@ -268,7 +269,7 @@ type loop struct {
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
-		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
+		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, actedIDs: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64)}, mode: ModeBatch}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	if l.silentStop <= 0 {
@@ -571,6 +572,14 @@ func (l *loop) read(now time.Time) bool {
 					break
 				}
 				delete(l.answered, e.Entry)
+			} else if l.actedIDs[msg.ID] {
+				if d.Record != nil {
+					d.Record(fmt.Sprintf("%s duplicate dropped id=%s", now.UTC().Format(time.RFC3339), msg.ID))
+				}
+				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+					err = aerr
+					break
+				}
 			} else if !l.inHand[e.Entry] {
 				l.hand = append(l.hand, e)
 				l.inHand[e.Entry] = true
@@ -627,10 +636,25 @@ func (l *loop) take() (entries []string, msgs []bus.Message) {
 
 // startTurn runs deliver for t in its own goroutine, its context carrying the
 // watch on its output; the result goes to the batch's or the lanes' channel.
+func (l *loop) markRead(t *turn) {
+	if t == nil || len(t.msgs) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(t.msgs))
+	for _, m := range t.msgs {
+		ids = append(ids, m.ID)
+	}
+	_ = l.b.MarkReceipts(l.ctx, l.d.Friend, bus.ReceiptRead, ids...) // ignored: receipt update to the store is best-effort and caught by overdue if failed
+}
+
 func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	tctx, cancel := context.WithCancel(l.ctx)
 	seen := &atomic.Int64{}
-	tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
+	tctx = WithOutputSeen(tctx, func() {
+		if seen.Add(1) == 1 {
+			l.markRead(t)
+		}
+	})
 	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped = now, true, cancel, seen, 0, now, false
 	switch f := deliver.(type) {
 	case func(context.Context) result:
@@ -643,6 +667,10 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 	return func(ctx context.Context) result {
 		exit, err := l.d.Deliver.Deliver(ctx, t.text)
+		var deferred Deferred
+		if !errors.As(err, &deferred) {
+			l.markRead(t)
+		}
 		return result{t, exit, err}
 	}
 }
@@ -721,6 +749,14 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	switch {
 	case ok:
 		l.streak, l.refusal = 0, ""
+		if len(t.msgs) > 0 {
+			ids := make([]string, 0, len(t.msgs))
+			for _, m := range t.msgs {
+				ids = append(ids, m.ID)
+				l.actedIDs[m.ID] = true
+			}
+			_ = l.b.MarkReceipts(l.ctx, d.Friend, bus.ReceiptActed, ids...) // ignored: receipt update to the store is best-effort and caught by overdue if failed
+		}
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()

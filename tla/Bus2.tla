@@ -34,15 +34,18 @@
 \*                     AckOnlyDelivered
 \*   "ackreopens"      a second ack puts the message back on the stream as
 \*                     new (an ack that deletes and re-adds): AckedStaysAcked
+\*   "acttwice"        a take that pushes a redelivered id:
+\*                     NoMessageActedTwice
 
 EXTENDS Naturals, FiniteSets, Sequences
 
 CONSTANTS Recipients, Messages, Consumers, MaxCrashes, Broken
 
-VARIABLES st, holder, log, to, alive, crashes
-vars == <<st, holder, log, to, alive, crashes>>
+VARIABLES st, holder, log, to, alive, crashes, receipt, timesActed
+vars == <<st, holder, log, to, alive, crashes, receipt, timesActed>>
 
 States == {"none", "new", "pending", "acked"}
+ReceiptStates == {"none", "delivered", "read", "acted"}
 NoOne == "-"
 
 TypeOK ==
@@ -51,6 +54,8 @@ TypeOK ==
   /\ to \in [Messages -> SUBSET Recipients]
   /\ alive \subseteq Consumers
   /\ crashes \in 0..MaxCrashes
+  /\ receipt \in [Messages -> [Recipients -> ReceiptStates]]
+  /\ timesActed \in [Messages -> [Recipients -> Nat]]
 
 Sent == {m \in Messages : \E i \in 1..Len(log) : log[i] = m}
 Position(m) == CHOOSE i \in 1..Len(log) : log[i] = m
@@ -75,6 +80,8 @@ Init ==
   /\ to \in [Messages -> (SUBSET Recipients) \ {{}}]
   /\ alive = Consumers
   /\ crashes = 0
+  /\ receipt = [m \in Messages |-> [r \in Recipients |-> "none"]]
+  /\ timesActed = [m \in Messages |-> [r \in Recipients |-> 0]]
 
 \* nova-bus2 send: one entry on every recipient's stream and the log, in
 \* one transaction. The partial witness writes some subset of the streams.
@@ -84,15 +91,17 @@ Send(m) ==
        /\ (Broken = "partial" \/ got = to[m])
        /\ st' = [st EXCEPT ![m] = [r \in Recipients |-> IF r \in got THEN "new" ELSE @[r]]]
   /\ log' = Append(log, m)
-  /\ UNCHANGED <<holder, to, alive, crashes>>
+  /\ UNCHANGED <<holder, to, alive, crashes, receipt, timesActed>>
 
 \* nova-bus2 recv for r by consumer c: the oldest claimable pending
 \* message, else the oldest new one.
 RecvPending(r, c) ==
   /\ c \in alive
   /\ Claimable(r, c) # {}
-  /\ holder' = [holder EXCEPT ![OldestClaimable(r, c)][r] = c]
-  /\ UNCHANGED <<st, log, to, alive, crashes>>
+  /\ LET m == OldestClaimable(r, c) IN
+       /\ holder' = [holder EXCEPT ![m][r] = c]
+       /\ receipt' = [receipt EXCEPT ![m][r] = IF @ = "none" THEN "delivered" ELSE @]
+  /\ UNCHANGED <<st, log, to, alive, crashes, timesActed>>
 
 RecvNew(r, c) ==
   /\ c \in alive
@@ -101,7 +110,8 @@ RecvNew(r, c) ==
   /\ LET m == Oldest(r, "new") IN
        /\ st' = [st EXCEPT ![m][r] = "pending"]
        /\ holder' = [holder EXCEPT ![m][r] = c]
-  /\ UNCHANGED <<log, to, alive, crashes>>
+       /\ receipt' = [receipt EXCEPT ![m][r] = "delivered"]
+  /\ UNCHANGED <<log, to, alive, crashes, timesActed>>
 
 Recv(r, c) == RecvPending(r, c) \/ RecvNew(r, c)
 
@@ -115,6 +125,11 @@ Ack(r, m) ==
        THEN st' = [st EXCEPT ![m][r] = "new"]
        ELSE st' = [st EXCEPT ![m][r] = "acked"]
   /\ holder' = [holder EXCEPT ![m][r] = NoOne]
+  /\ IF timesActed[m][r] = 0
+       THEN /\ timesActed' = [timesActed EXCEPT ![m][r] = 1]
+            /\ receipt' = [receipt EXCEPT ![m][r] = "acted"]
+       ELSE /\ timesActed' = [timesActed EXCEPT ![m][r] = IF Broken = "acttwice" THEN @ + 1 ELSE @]
+            /\ UNCHANGED receipt
   /\ UNCHANGED <<log, to, alive, crashes>>
 
 \* A consumer dies holding what it holds: the store keeps it pending.
@@ -122,12 +137,12 @@ Crash(c) ==
   /\ c \in alive /\ crashes < MaxCrashes
   /\ alive' = alive \ {c}
   /\ crashes' = crashes + 1
-  /\ UNCHANGED <<st, holder, log, to>>
+  /\ UNCHANGED <<st, holder, log, to, receipt, timesActed>>
 
 Restart(c) ==
   /\ c \notin alive
   /\ alive' = alive \cup {c}
-  /\ UNCHANGED <<st, holder, log, to, crashes>>
+  /\ UNCHANGED <<st, holder, log, to, crashes, receipt, timesActed>>
 
 Next ==
   \/ \E m \in Messages : Send(m)
@@ -193,5 +208,24 @@ AckedStaysAcked ==
 EveryMessageIsAcked ==
   \A m \in Messages, r \in Recipients :
     (m \in Sent /\ r \in to[m]) ~> (st[m][r] = "acked")
+
+
+ReceiptRank(s) ==
+  CASE s = "none" -> 0
+    [] s = "delivered" -> 1
+    [] s = "read" -> 2
+    [] s = "acted" -> 3
+
+ReceiptNeverMovesBack ==
+  [][\A m \in Messages, r \in Recipients :
+       ReceiptRank(receipt'[m][r]) >= ReceiptRank(receipt[m][r])]_vars
+
+ActedImpliesDelivered ==
+  \A m \in Messages, r \in Recipients :
+    receipt[m][r] = "acted" => st[m][r] \in {"pending", "acked"}
+
+NoMessageActedTwice ==
+  \A m \in Messages, r \in Recipients :
+    timesActed[m][r] <= 1
 
 =============================================================================

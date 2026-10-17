@@ -413,3 +413,34 @@ func TestRecvTakesABacklogInOrderWithMaxAllAndAck(t *testing.T) {
 		cli.Do(t, c...).Exit(2).Err("RECV REFUSED")
 	}
 }
+
+func TestReceiptsAndOverdue(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+
+	// Initial overdue check: no messages, exits 0
+	cli.Do(t, "overdue").Exit(0).Out("OVERDUE OK overdue=0 older=10m0s")
+
+	// Ada sends message to Bob
+	sendOut := cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "hello", "--body", "world").Stdout
+	msgID := id(t, sendOut)
+
+	// Bob has no receipts yet
+	cli.Do(t, "receipts", "--as", "bob").Exit(0).Out("RECEIPTS OK count=0")
+	cli.Do(t, "receipts", "--as", "bob", "--id", msgID).Exit(0).Out("RECEIPTS OK count=0")
+
+	// Advance time past 10m: message is overdue (short of delivered)
+	r.store.Advance(11 * time.Minute)
+	cli.Do(t, "overdue").Exit(1).Err("OVERDUE FAILED overdue=1 older=10m0s", "stream=bus2:to:bob", "to=bob", "id="+msgID, "from=ada", "subject=\"hello\"")
+
+	// Bob recvs message: receipt becomes delivered
+	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id=" + msgID)
+
+	// Now message is delivered: no longer overdue!
+	cli.Do(t, "overdue").Exit(0).Out("OVERDUE OK overdue=0 older=10m0s")
+
+	// Receipts lists delivered
+	cli.Do(t, "receipts", "--as", "bob").Exit(0).Out("RECEIPTS OK count=1", "RECEIPTS RECEIPT id="+msgID+" state=delivered")
+	cli.Do(t, "receipts", "--as", "bob", "--id", msgID).Exit(0).Out("RECEIPTS OK count=1", "RECEIPTS RECEIPT id="+msgID+" state=delivered")
+}
