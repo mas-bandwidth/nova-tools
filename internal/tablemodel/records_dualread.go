@@ -13,9 +13,16 @@ package tablemodel
 // trace.json), the Action and the committed receipt Event of the capture
 // (capture.go; the Action is what the harness turns into a model step,
 // harness.go ActionTLA), the witness Finding (witnesses.go) and the
-// ReplayEvent (replay.go). The strict read lives in pkg/schemaread; the
-// generated tables supply the codec. Writers stay legacy here; the writer
-// switch is a later card.
+// ReplayEvent (replay.go). The strict read is pkg/schemaread's. Writers stay
+// legacy here; the writer switch is a later card.
+//
+// This package imports no generated table: pkg/tablemodelwire's golden test
+// imports this package, so a tablemodel that imported pkg/tablemodelwire would
+// close an import cycle. The typed half (the table image and the schema JSON,
+// both as the canonical JSON this file converts) is handed in through
+// InstallRecordWire by internal/tablemodel/recordsread, as pkg/config/rowsread
+// hands pkg/config its loads; until it is installed a binary, base64 or schema
+// JSON value is refused as unknown_form, by name, and never read as absent.
 
 import (
 	"bytes"
@@ -24,14 +31,36 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"sync/atomic"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/readregular"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
-	tw "github.com/mas-bandwidth/nova-tools/pkg/tablemodelwire"
 )
 
 // modelHelp is what a refusal points at: the verbs that run the table model.
 const modelHelp = "tlacheck replay -h"
+
+// RecordTable is the typed half of one record's reader: the generated table's
+// functions over the record's canonical schema JSON (the JSON the table's
+// writer writes, which this package reads into and writes from the Go value).
+type RecordTable struct {
+	Measure  func(wire []byte) error                       // the generated LoadMeasureReason: an error's text is the refusal reason
+	Load     func(wire []byte) ([]byte, schemaread.Report) // the image as canonical JSON; nil JSON with the report on a refusal
+	LoadJSON func(text []byte) ([]byte, schemaread.Report) // a schema JSON text as canonical JSON, the same way
+	Save     func(canon []byte) ([]byte, error)            // the image of a canonical JSON; an error when the table cannot hold it as it is
+}
+
+// RecordWire is the typed half of every record reader, one table per record.
+// A table with no Load refuses its typed forms as unknown_form.
+type RecordWire struct {
+	State, Trace, Action, Event, Finding, ReplayEvent RecordTable
+}
+
+var recordWire atomic.Pointer[RecordWire]
+
+// InstallRecordWire hands the record readers their typed half; every reader,
+// existing or new, reads the typed forms from then on.
+func InstallRecordWire(w RecordWire) { recordWire.Store(&w) }
 
 type obj = map[string]any
 
@@ -46,90 +75,42 @@ func sortedKeys[V any](m map[string]V) []string {
 
 var malformedReport = schemaread.Report{Malformed: true}
 
-// tableReport is the generated report reduced to the strict read's.
-func tableReport(rep tw.TableReport, ok bool) schemaread.Report {
-	out := schemaread.Report{Unknown: int(rep.Unknown), KindMismatch: int(rep.KindMismatch), Clamped: int(rep.Clamped), Malformed: rep.Malformed || !ok}
-	if rep.Verdict == tw.TableOpenRefused || rep.Verdict == tw.TableOpenDamaged {
-		if err := rep.Err(); err != nil {
-			out.Reason = err.Error()
-		}
-	}
-	return out
-}
-
-// wireFns are the generated functions of one table, B its builder and M its
-// row.
-type wireFns[B, M any] struct {
-	init        func(*B, ...tw.TableAllocator) bool
-	shutdown    func(*B)
-	lock        func(*B) bool
-	asConst     func(*B) *M
-	load        func(*B, []byte, *tw.TableReport) bool
-	fromJSON    func(*B, []byte, *tw.TableReport) bool
-	jsonMeasure func(*M, ...tw.TableAllocator) int64
-	toJSON      func(*M, []byte, ...tw.TableAllocator) int64
-	measure     func(*M, ...tw.TableWriteContext) int64
-	save        func(*M, []byte, ...tw.TableWriteContext) int64
-	loadMeasure func([]byte) (int64, error)
-}
-
-// recordSpec is one record: its refusal name, its table, its canonical schema
-// JSON both ways, the key that tells its legacy JSON apart from the schema JSON
-// (both open with `{`), and the fields its writer always writes, which a read
-// of any form refuses as absent_required when they are missing.
-type recordSpec[V, B, M any] struct {
+// recordSpec is one record: its refusal name, its table in the typed half, its
+// canonical schema JSON both ways, the test that tells its legacy JSON apart
+// from the schema JSON (both open with `{`), and the fields its writer always
+// writes, which a read of any form refuses as absent_required when missing.
+type recordSpec[V any] struct {
 	name        string
-	fns         wireFns[B, M]
+	table       func(*RecordWire) *RecordTable
 	canon       func(V) obj
 	fromCanon   func(*fields, obj) V
 	legacy      func(map[string]json.RawMessage) bool
 	constraints func(V, *schemaread.Checker)
 }
 
-// empty is the record a table image with no known field reads as.
-func (s recordSpec[V, B, M]) empty() V { return s.fromCanon(&fields{what: s.name}, obj{}) }
-
 // record is the value a record's codec loads.
 type record[V any] struct{ v V }
 
-// build fills a fresh builder and reads the locked image back as the value,
-// through the canonical JSON the table writes.
-func (s recordSpec[V, B, M]) build(fill func(*B, *tw.TableReport) bool) (V, schemaread.Report) {
-	var zero V
-	var rep tw.TableReport
-	b := new(B)
-	if !s.fns.init(b) {
-		return zero, malformedReport
+// typed is the record's table in the installed typed half, nil when none is.
+func (s recordSpec[V]) typed() *RecordTable {
+	w := recordWire.Load()
+	if w == nil {
+		return nil
 	}
-	defer s.fns.shutdown(b)
-	if !fill(b, &rep) || !s.fns.lock(b) {
-		return zero, tableReport(rep, false)
+	t := s.table(w)
+	if t.Load == nil || t.LoadJSON == nil || t.Save == nil {
+		return nil
 	}
-	v, err := s.valueOf(s.fns.asConst(b))
-	if err != nil {
-		return zero, malformedReport
-	}
-	// An image whose every field is unknown is not this record (a damaged
-	// field id, or another record's text): it is refused, never read as the
-	// empty record. Unknown fields beside known ones stay tolerated (S4: a
-	// newer writer's fields).
-	if rep.Unknown > 0 && reflect.DeepEqual(v, s.empty()) {
-		return zero, malformedReport
-	}
-	return v, tableReport(rep, true)
+	return t
 }
 
-func (s recordSpec[V, B, M]) valueOf(m *M) (V, error) {
+// empty is the record a table image with no known field reads as.
+func (s recordSpec[V]) empty() V { return s.fromCanon(&fields{what: s.name}, obj{}) }
+
+// value is the Go value of a canonical JSON.
+func (s recordSpec[V]) value(canon []byte) (V, error) {
 	var zero V
-	n := s.fns.jsonMeasure(m)
-	if n < 0 {
-		return zero, fmt.Errorf("%s: the image has no JSON", s.name)
-	}
-	buf := make([]byte, n)
-	if s.fns.toJSON(m, buf) != n {
-		return zero, fmt.Errorf("%s: the image's JSON is not readable", s.name)
-	}
-	o, err := decodeCanon(buf)
+	o, err := decodeCanon(canon)
 	if err != nil {
 		return zero, err
 	}
@@ -141,36 +122,49 @@ func (s recordSpec[V, B, M]) valueOf(m *M) (V, error) {
 	return v, nil
 }
 
-// wire is v's binary image. A value the table cannot hold as it is (a clamp,
-// a kind mismatch, an unknown field) builds no image.
-func (s recordSpec[V, B, M]) wire(v V) ([]byte, error) {
+// read loads one typed form through load and reads it as the Go value.
+func (s recordSpec[V]) read(load func(*RecordTable) ([]byte, schemaread.Report)) (V, schemaread.Report) {
+	var zero V
+	t := s.typed()
+	if t == nil {
+		return zero, schemaread.Report{Reason: schemaread.ReasonUnknownForm}
+	}
+	canon, rep := load(t)
+	if canon == nil {
+		if !rep.Malformed && rep.Reason == "" {
+			rep.Malformed = true
+		}
+		return zero, rep
+	}
+	v, err := s.value(canon)
+	if err != nil {
+		return zero, malformedReport
+	}
+	// An image whose every field is unknown is not this record (a damaged
+	// field id, or another record's text): it is refused, never read as the
+	// empty record. Unknown fields beside known ones stay tolerated (S4: a
+	// newer writer's fields).
+	if rep.Unknown > 0 && reflect.DeepEqual(v, s.empty()) {
+		return zero, malformedReport
+	}
+	return v, rep
+}
+
+// wire is v's binary image.
+func (s recordSpec[V]) wire(v V) ([]byte, error) {
+	t := s.typed()
+	if t == nil {
+		return nil, fmt.Errorf("%s: no typed table is installed", s.name)
+	}
 	canon, err := json.Marshal(s.canon(v))
 	if err != nil {
 		return nil, err
 	}
-	b := new(B)
-	if !s.fns.init(b) {
-		return nil, fmt.Errorf("%s: cannot start the builder", s.name)
-	}
-	defer s.fns.shutdown(b)
-	var rep tw.TableReport
-	if !s.fns.fromJSON(b, canon, &rep) || !s.fns.lock(b) || rep.Clamped > 0 || rep.KindMismatch > 0 || rep.Unknown > 0 {
-		return nil, fmt.Errorf("%s: a value builds no image", s.name)
-	}
-	root := s.fns.asConst(b)
-	n := s.fns.measure(root)
-	if n < 0 {
-		return nil, fmt.Errorf("%s: the image has no wire", s.name)
-	}
-	buf := make([]byte, n)
-	if s.fns.save(root, buf) != n {
-		return nil, fmt.Errorf("%s: the wire is not writable", s.name)
-	}
-	return buf, nil
+	return t.Save(canon)
 }
 
 // isLegacy is true for the JSON object the record's writer writes today.
-func (s recordSpec[V, B, M]) isLegacy(in []byte) bool {
+func (s recordSpec[V]) isLegacy(in []byte) bool {
 	t := bytes.TrimSpace(in)
 	if len(t) == 0 || t[0] != '{' {
 		return false
@@ -183,7 +177,7 @@ func (s recordSpec[V, B, M]) isLegacy(in []byte) bool {
 }
 
 // codec is the record's strict read (pkg/schemaread).
-func (s recordSpec[V, B, M]) codec() *schemaread.Codec[record[V]] {
+func (s recordSpec[V]) codec() *schemaread.Codec[record[V]] {
 	return &schemaread.Codec[record[V]]{
 		Name: s.name,
 		Help: modelHelp,
@@ -192,30 +186,32 @@ func (s recordSpec[V, B, M]) codec() *schemaread.Codec[record[V]] {
 			r.v = zero
 		},
 		Measure: func(wire []byte) error {
-			_, err := s.fns.loadMeasure(wire)
-			return err
+			if t := s.typed(); t != nil && t.Measure != nil {
+				return t.Measure(wire)
+			}
+			return nil
 		},
 		LoadWire: func(r *record[V], wire []byte) schemaread.Report {
-			v, rep := s.build(func(b *B, tr *tw.TableReport) bool { return s.fns.load(b, wire, tr) })
+			v, rep := s.read(func(t *RecordTable) ([]byte, schemaread.Report) { return t.Load(wire) })
 			r.v = v
 			return rep
 		},
 		LoadJSON: func(r *record[V], text []byte) schemaread.Report {
-			v, rep := s.build(func(b *B, tr *tw.TableReport) bool { return s.fns.fromJSON(b, text, tr) })
+			v, rep := s.read(func(t *RecordTable) ([]byte, schemaread.Report) { return t.LoadJSON(text) })
 			r.v = v
 			return rep
 		},
 		Legacy: s.isLegacy,
-		Constraints: func(r *record[V], c *schemaread.Checker) {
-			if s.constraints != nil {
-				s.constraints(r.v, c)
-			}
-		},
 		LoadLegacy: func(r *record[V], in []byte) schemaread.Report {
 			if err := json.Unmarshal(in, &r.v); err != nil {
 				return malformedReport
 			}
 			return schemaread.Report{}
+		},
+		Constraints: func(r *record[V], c *schemaread.Checker) {
+			if s.constraints != nil {
+				s.constraints(r.v, c)
+			}
 		},
 		SaveWire: func(r *record[V]) []byte {
 			wire, err := s.wire(r.v)
@@ -340,7 +336,8 @@ func (f *fields) list(o obj, k string) []obj {
 	return out
 }
 
-// texts is a list of single-text tables (ModelArg, ModelDetail).
+// texts is a list of single-text tables (ModelArg, ModelDetail), never nil:
+// the writers write an empty list, not null.
 func (f *fields) texts(o obj, k string) []string {
 	out := []string{}
 	for _, e := range f.list(o, k) {
@@ -433,13 +430,9 @@ func (f *fields) state(o obj) State {
 
 // stateSpec is the State record. Its legacy JSON writes seen as an object (a
 // Go map), the schema JSON as a list.
-var stateSpec = recordSpec[State, tw.ModelStateBuilder, tw.ModelState]{
-	name: "STATE",
-	fns: wireFns[tw.ModelStateBuilder, tw.ModelState]{
-		(*tw.ModelStateBuilder).Init, (*tw.ModelStateBuilder).Shutdown, (*tw.ModelStateBuilder).Lock, (*tw.ModelStateBuilder).AsConst,
-		tw.ModelStateLoadBuilder, tw.ModelStateFromJson, tw.ModelStateToJsonMeasure, tw.ModelStateToJson,
-		tw.ModelStateMeasure, tw.ModelStateSave, tw.ModelStateLoadMeasureReason,
-	},
+var stateSpec = recordSpec[State]{
+	name:      "STATE",
+	table:     func(w *RecordWire) *RecordTable { return &w.State },
 	canon:     stateCanon,
 	fromCanon: func(f *fields, o obj) State { return f.state(o) },
 	legacy: func(m map[string]json.RawMessage) bool {
@@ -521,14 +514,11 @@ func (f *fields) trace(o obj) Trace {
 }
 
 // traceSpec is the Trace record, trace.json. Its legacy JSON spells
-// source_sha256, the schema JSON sourceSha256.
-var traceSpec = recordSpec[Trace, tw.ModelTraceBuilder, tw.ModelTrace]{
-	name: "TRACE",
-	fns: wireFns[tw.ModelTraceBuilder, tw.ModelTrace]{
-		(*tw.ModelTraceBuilder).Init, (*tw.ModelTraceBuilder).Shutdown, (*tw.ModelTraceBuilder).Lock, (*tw.ModelTraceBuilder).AsConst,
-		tw.ModelTraceLoadBuilder, tw.ModelTraceFromJson, tw.ModelTraceToJsonMeasure, tw.ModelTraceToJson,
-		tw.ModelTraceMeasure, tw.ModelTraceSave, tw.ModelTraceLoadMeasureReason,
-	},
+// source_sha256, the schema JSON sourceSha256. RunReplay always writes the
+// source hash, and every step's verb, actor and model.
+var traceSpec = recordSpec[Trace]{
+	name:      "TRACE",
+	table:     func(w *RecordWire) *RecordTable { return &w.Trace },
 	canon:     traceCanon,
 	fromCanon: func(f *fields, o obj) Trace { return f.trace(o) },
 	legacy: func(m map[string]json.RawMessage) bool {
@@ -554,13 +544,9 @@ var traceSpec = recordSpec[Trace, tw.ModelTraceBuilder, tw.ModelTrace]{
 
 // actionSpec is the Action record. Its legacy JSON is the Go struct's, whose
 // fields carry no tags (Verb, Args, Actor); the schema JSON spells verb.
-var actionSpec = recordSpec[Action, tw.ModelActionBuilder, tw.ModelAction]{
-	name: "ACTION",
-	fns: wireFns[tw.ModelActionBuilder, tw.ModelAction]{
-		(*tw.ModelActionBuilder).Init, (*tw.ModelActionBuilder).Shutdown, (*tw.ModelActionBuilder).Lock, (*tw.ModelActionBuilder).AsConst,
-		tw.ModelActionLoadBuilder, tw.ModelActionFromJson, tw.ModelActionToJsonMeasure, tw.ModelActionToJson,
-		tw.ModelActionMeasure, tw.ModelActionSave, tw.ModelActionLoadMeasureReason,
-	},
+var actionSpec = recordSpec[Action]{
+	name:  "ACTION",
+	table: func(w *RecordWire) *RecordTable { return &w.Action },
 	canon: func(a Action) obj { return obj{"verb": a.Verb, "args": textsCanon(a.Args), "actor": a.Actor} },
 	fromCanon: func(f *fields, o obj) Action {
 		return Action{Verb: f.text(o, "verb"), Args: f.texts(o, "args"), Actor: f.text(o, "actor")}
@@ -576,14 +562,11 @@ var actionSpec = recordSpec[Action, tw.ModelActionBuilder, tw.ModelAction]{
 }
 
 // eventSpec is the receipt Event record. Its legacy JSON is the map itself,
-// every value text; the schema JSON is a list of key and value fields.
-var eventSpec = recordSpec[Event, tw.ModelEventBuilder, tw.ModelEvent]{
-	name: "EVENT",
-	fns: wireFns[tw.ModelEventBuilder, tw.ModelEvent]{
-		(*tw.ModelEventBuilder).Init, (*tw.ModelEventBuilder).Shutdown, (*tw.ModelEventBuilder).Lock, (*tw.ModelEventBuilder).AsConst,
-		tw.ModelEventLoadBuilder, tw.ModelEventFromJson, tw.ModelEventToJsonMeasure, tw.ModelEventToJson,
-		tw.ModelEventMeasure, tw.ModelEventSave, tw.ModelEventLoadMeasureReason,
-	},
+// every value text; the schema JSON is a list of key and value fields. A
+// receipt always carries its stream id (capture.go receipt).
+var eventSpec = recordSpec[Event]{
+	name:      "EVENT",
+	table:     func(w *RecordWire) *RecordTable { return &w.Event },
 	canon:     eventCanon,
 	fromCanon: func(f *fields, o obj) Event { return f.event(o) },
 	legacy: func(m map[string]json.RawMessage) bool {
@@ -602,13 +585,9 @@ var eventSpec = recordSpec[Event, tw.ModelEventBuilder, tw.ModelEvent]{
 
 // findingSpec is the Finding record. Its legacy JSON is the Go struct's (Name,
 // Result, Text); the schema JSON spells name.
-var findingSpec = recordSpec[Finding, tw.ModelFindingBuilder, tw.ModelFinding]{
-	name: "FINDING",
-	fns: wireFns[tw.ModelFindingBuilder, tw.ModelFinding]{
-		(*tw.ModelFindingBuilder).Init, (*tw.ModelFindingBuilder).Shutdown, (*tw.ModelFindingBuilder).Lock, (*tw.ModelFindingBuilder).AsConst,
-		tw.ModelFindingLoadBuilder, tw.ModelFindingFromJson, tw.ModelFindingToJsonMeasure, tw.ModelFindingToJson,
-		tw.ModelFindingMeasure, tw.ModelFindingSave, tw.ModelFindingLoadMeasureReason,
-	},
+var findingSpec = recordSpec[Finding]{
+	name:  "FINDING",
+	table: func(w *RecordWire) *RecordTable { return &w.Finding },
 	canon: func(x Finding) obj { return obj{"name": x.Name, "result": x.Result, "text": x.Text} },
 	fromCanon: func(f *fields, o obj) Finding {
 		return Finding{Name: f.text(o, "name"), Result: f.text(o, "result"), Text: f.text(o, "text")}
@@ -625,13 +604,9 @@ var findingSpec = recordSpec[Finding, tw.ModelFindingBuilder, tw.ModelFinding]{
 
 // replayEventSpec is the ReplayEvent record. Its legacy JSON is the Go
 // struct's (Step, Verdict, Fields); the schema JSON spells step.
-var replayEventSpec = recordSpec[ReplayEvent, tw.ModelReplayEventBuilder, tw.ModelReplayEvent]{
-	name: "REPLAY_EVENT",
-	fns: wireFns[tw.ModelReplayEventBuilder, tw.ModelReplayEvent]{
-		(*tw.ModelReplayEventBuilder).Init, (*tw.ModelReplayEventBuilder).Shutdown, (*tw.ModelReplayEventBuilder).Lock, (*tw.ModelReplayEventBuilder).AsConst,
-		tw.ModelReplayEventLoadBuilder, tw.ModelReplayEventFromJson, tw.ModelReplayEventToJsonMeasure, tw.ModelReplayEventToJson,
-		tw.ModelReplayEventMeasure, tw.ModelReplayEventSave, tw.ModelReplayEventLoadMeasureReason,
-	},
+var replayEventSpec = recordSpec[ReplayEvent]{
+	name:  "REPLAY_EVENT",
+	table: func(w *RecordWire) *RecordTable { return &w.ReplayEvent },
 	canon: func(e ReplayEvent) obj {
 		return obj{"step": e.Step, "verdict": e.Verdict, "fields": textsCanon(e.Fields)}
 	},
@@ -648,24 +623,15 @@ var replayEventSpec = recordSpec[ReplayEvent, tw.ModelReplayEventBuilder, tw.Mod
 	},
 }
 
-// The codecs, one per record.
-var (
-	stateCodec       = stateSpec.codec()
-	traceCodec       = traceSpec.codec()
-	actionCodec      = actionSpec.codec()
-	eventCodec       = eventSpec.codec()
-	findingCodec     = findingSpec.codec()
-	replayEventCodec = replayEventSpec.codec()
-)
-
 // traceReader reads trace.json; its counters are the Trace record's reads per
 // form (S4: the per-form counter is the cutover's evidence).
-var traceReader = schemaread.NewReader(traceCodec)
+var traceReader = schemaread.NewReader(traceSpec.codec())
 
 // ReadTraceFile is trace.json read strictly: its binary image, the padded
-// standard base64 of that image, its schema JSON and the legacy JSON the
-// capture writes today all read alike, and a damaged file is refused by name
-// (`TRACE REFUSED: <reason>; run: <help>`), never read as an empty trace.
+// standard base64 of that image and its schema JSON (once the typed half is
+// installed) and the legacy JSON the capture writes today all read alike, and
+// a damaged file is refused by name (`TRACE REFUSED: <reason>; run: <help>`),
+// never read as an empty trace.
 func ReadTraceFile(path string) (Trace, error) {
 	raw, err := readregular.Read(path, readregular.DefaultMax)
 	if err != nil {
