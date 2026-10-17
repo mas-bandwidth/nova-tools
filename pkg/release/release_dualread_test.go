@@ -173,6 +173,31 @@ func dualWrite[T any](t *testing.T, r *schemaread.Reader[doc[T]], d doc[T], form
 	return out
 }
 
+// fileRead pins that a record reads alike from a file in a t.TempDir() the
+// test writes, in every form, and that each read is counted under its form
+// (DONE-WHEN: files are read from a t.TempDir() the test writes, and reads
+// are counted per record and per form).
+func fileRead[T any](t *testing.T, dir string, tb table[T], sample []byte) {
+	t.Helper()
+	r := schemaread.NewReader(tb.codec())
+	d, _, err := r.Read(sample)
+	require.NoError(t, err)
+	for _, form := range dualForms() {
+		out := dualWrite(t, r, d, form)
+		p := filepath.Join(dir, tb.name+"."+form.String())
+		require.NoError(t, os.WriteFile(p, out, 0o644))
+		raw, rerr := os.ReadFile(p)
+		require.NoError(t, rerr)
+		got, res, rerr := r.Read(raw)
+		require.NoError(t, rerr)
+		assert.Equal(t, form, res.Form, "%s: file %s", tb.name, form)
+		assert.Equal(t, canon(t, dualWrite(t, r, got, schemaread.FormJSON)), canon(t, sample), "%s: file %s reads equal", tb.name, form)
+	}
+	for _, form := range dualForms() {
+		assert.Positive(t, r.Counts().Reads(form), "%s: reads are counted per form", tb.name)
+	}
+}
+
 func canon(t *testing.T, text []byte) any {
 	t.Helper()
 	dec := json.NewDecoder(bytes.NewReader(text))
@@ -351,6 +376,7 @@ func TestReleaseCycleRecordsDualRead(t *testing.T) {
 	t.Run("journey header", func(t *testing.T) {
 		journeyHeaderTable.roundTrip(t, header)
 		journeyHeaderTable.refuses(t, header)
+		fileRead(t, dir, journeyHeaderTable, header)
 		p := writeFile("header.json", header)
 		raw, err := os.ReadFile(p)
 		require.NoError(t, err)
@@ -363,15 +389,18 @@ func TestReleaseCycleRecordsDualRead(t *testing.T) {
 	t.Run("journey event", func(t *testing.T) {
 		journeyEventTable.roundTrip(t, event)
 		journeyEventTable.refuses(t, event)
+		fileRead(t, dir, journeyEventTable, event)
 	})
 
 	t.Run("cycle build args", func(t *testing.T) {
 		cycleBuildArgsTable.roundTrip(t, buildArgs)
 		cycleBuildArgsTable.refuses(t, buildArgs)
+		fileRead(t, dir, cycleBuildArgsTable, buildArgs)
 	})
 
 	t.Run("spend receipts", func(t *testing.T) {
 		spendReceiptsTable.roundTrip(t, receipts)
 		spendReceiptsTable.refuses(t, receipts)
+		fileRead(t, dir, spendReceiptsTable, receipts)
 	})
 }
