@@ -138,6 +138,7 @@ pkg/sprintwire	0.2	@local	-
 pkg/subproc	0.6	@local	-
 pkg/swarm	5.1	@run37518625834	self-hosted
 internal/tablemodel	0.3	@local	-
+pkg/tablemodelwire	0.5	@local	-
 pkg/testbin	0.0	@run37411066588	self-hosted
 pkg/testgit	0.3	@local	-
 pkg/testguard	0.0	@run37411066588	self-hosted
