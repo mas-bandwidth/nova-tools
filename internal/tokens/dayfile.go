@@ -466,14 +466,17 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 	return d, f
 }
 
-// ReadDayFile reads and parses one day file from disk.
+// ReadDayFile reads and parses one day file from disk, in any form: the legacy
+// file the writers write, or a table form of the seatrec DayFile (S2, C13),
+// counted per form (DayFileReads). A damaged table form is a finding on line 1
+// carrying the named refusal, never a day with no rows.
 func ReadDayFile(path string) (DayFile, []Finding, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return DayFile{}, nil, err
 	}
 	name := strings.TrimSuffix(filepath.Base(path), FileSuffix)
-	d, f := ParseDayFile(name, string(raw))
+	d, f := readDayFile(name, raw)
 	return d, f, nil
 }
 
