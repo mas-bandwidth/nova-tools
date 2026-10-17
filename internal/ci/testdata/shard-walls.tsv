@@ -73,6 +73,7 @@ internal/cireceipt	0.0	@run37411066588	self-hosted
 pkg/codexdesktop	0.004	@b2	-
 pkg/dshdesktop	0.2	@local	-
 pkg/config	0.7	@run37518625834	self-hosted
+pkg/configwire	0.1	@local	-
 internal/converge	0.0	@run37411066588	self-hosted
 pkg/decide	0.3	@run37518625834	self-hosted
 pkg/decidewire	0.5	@local	-

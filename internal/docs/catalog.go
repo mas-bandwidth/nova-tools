@@ -72,6 +72,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/codexdesktop", "bounded native IPC delivery to an existing Codex desktop chat, with fixed external-event notices and inherited thread settings", "go test ./pkg/codexdesktop", "go test ./pkg/codexdesktop"),
 	E("pkg/dshdesktop", "delivers a closed notice into a DeepSeek Harness desktop session through its hook bridge, with fixed notices and coalescing", "go test ./pkg/dshdesktop", "go test ./pkg/dshdesktop"),
 	E("pkg/config", "nova-config library: kind descriptors, the Postgres store and history, apply into Redis, the Ansible inventory of the applied state", "go test ./pkg/config", "go test ./pkg/config"),
+	E("pkg/configwire", "the nova-config area's table wire (the config row and its change, the file twin's header, the machine, loop, host and inventory views, the canonical kind words and the beat records), generated from schemas/config by the pinned schema compiler (generate.go)", "go test ./pkg/configwire", "make schemawire-check"),
 	E("internal/converge", "convergence state and progress math", "go test ./internal/converge", "go test ./internal/converge"),
 	E("pkg/decide", "nova-decide's decision system: schemas (read, attempt, grade), backends (Jev, fixed), the record and calibration", "go test ./pkg/decide", "go test ./pkg/decide"),
 	E("pkg/decidewire", "the decide area's table wire (the decide record lines, attempt decision, answers, raw card cost and card contract frame), generated from schemas/decide by the pinned schema compiler (generate.go)", "go test ./pkg/decidewire", "make schemawire-check"),
