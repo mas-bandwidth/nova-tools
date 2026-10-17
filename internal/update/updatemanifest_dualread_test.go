@@ -64,6 +64,16 @@ func TestUpdateManifestDualRead(t *testing.T) {
 		require.Equal(t, want, got)
 	})
 
+	t.Run("counted per record", func(t *testing.T) {
+		before := manifestRead.Counts().Reads(schemaread.FormBinary)
+		for i := 0; i < 2; i++ {
+			got, err := Load(strings.NewReader(string(bin)))
+			require.NoError(t, err)
+			require.Equal(t, want, got)
+		}
+		require.Equal(t, before+2, manifestRead.Counts().Reads(schemaread.FormBinary), "each record read is counted")
+	})
+
 	for _, tc := range []struct {
 		name string
 		in   []byte
