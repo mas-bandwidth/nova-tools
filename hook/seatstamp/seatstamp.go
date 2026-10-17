@@ -12,7 +12,7 @@
 // It lives beside the hook package and not in it because the hook package
 // imports no generated table: pkg/hookwire's own tests import hook, and a hook
 // that imported hookwire would close an import cycle. A store takes the reader
-// through hook.Store.Stamps, and Judge through hook.JudgeWith.
+// through hook.Store.Stamps, and the judgment through hook.JudgeWith.
 package seatstamp
 
 import (

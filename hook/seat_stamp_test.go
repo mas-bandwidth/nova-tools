@@ -221,7 +221,7 @@ func TestSeatHookTypedStamp(t *testing.T) {
 		assert.Equal(t, uint64(1), r.Counts().Unknown())
 	})
 
-	t.Run("Judge counts a typed lease and proof as it counts a legacy one", func(t *testing.T) {
+	t.Run("JudgeWith counts a typed lease and proof as it counts a legacy one", func(t *testing.T) {
 		t.Parallel()
 		const epoch = 5
 		for _, leaseForm := range allForms {
@@ -243,7 +243,7 @@ func TestSeatHookTypedStamp(t *testing.T) {
 		}
 	})
 
-	t.Run("Judge counts a refused stamp for nothing and says why", func(t *testing.T) {
+	t.Run("JudgeWith counts a refused stamp for nothing and says why", func(t *testing.T) {
 		t.Parallel()
 		const epoch = 5
 		r := seatstamp.New()
@@ -264,10 +264,10 @@ func TestSeatHookTypedStamp(t *testing.T) {
 		t.Parallel()
 		const epoch = 5
 		legacy := legacyStamp(epoch, 1, "x")
-		st := hook.Judge("ada", coordinatorRecord(epoch), coordinatorReads(legacy, legacy))
+		st := hook.JudgeWith(nil, "ada", coordinatorRecord(epoch), coordinatorReads(legacy, legacy))
 		assert.Equal(t, hook.StateProven, st.State)
 		typed := forms(epoch, 1, "x")[schemaread.FormBase64]
-		st = hook.Judge("ada", coordinatorRecord(epoch), coordinatorReads(typed, typed))
+		st = hook.JudgeWith(nil, "ada", coordinatorRecord(epoch), coordinatorReads(typed, typed))
 		assert.Equal(t, hook.StateExpired, st.State, "a store handed no typed reader reads a typed stamp as none")
 		assert.NotEmpty(t, st.Pushes[0].Refused, "and says it was not a stamp")
 	})

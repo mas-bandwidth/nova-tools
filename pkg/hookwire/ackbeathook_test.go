@@ -946,7 +946,7 @@ func TestLayer1AckBeatHook(t *testing.T) {
 		} {
 			line := legacyStamp(tc.epoch, tc.at, tc.by)
 			rec := map[string]string{"role": string(hook.Friend), "state": "hooked", "epoch": strconv.FormatInt(tc.epoch, 10)}
-			old := hook.Judge("ada", rec, []hook.PushRead{{Live: line}})
+			old := hook.JudgeWith(nil, "ada", rec, []hook.PushRead{{Live: line}})
 			require.Len(t, old.Pushes, 1)
 			assert.Equal(t, hook.PushArmed, old.Pushes[0].State, "the old reader reads the old writer: %s", line)
 			assert.Equal(t, tc.by, old.Pushes[0].By)
@@ -962,7 +962,7 @@ func TestLayer1AckBeatHook(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, form, res.Form)
 				assert.Equal(t, legacy, got, "the old form in and the new form in read identically (%s)", form)
-				meets := hook.Judge("ada", rec, []hook.PushRead{{Live: string(out)}})
+				meets := hook.JudgeWith(nil, "ada", rec, []hook.PushRead{{Live: string(out)}})
 				if form == schemaread.FormJSON {
 					assert.Equal(t, old.Pushes[0], meets.Pushes[0], "the old reader reads the JSON text stamp as the legacy one")
 					continue

@@ -169,7 +169,7 @@ type Stamp struct {
 
 // StampReader reads the raw value of a lease or a proof key. It answers a
 // stamp, or an error naming why the value is no stamp; a value that is no
-// stamp proves nothing, so Judge counts it for nothing and says why in
+// stamp proves nothing, so JudgeWith counts it for nothing and says why in
 // PushStatus.Refused. The reader is the seam where the typed stamp is read:
 // hook/seatstamp reads the typed wire, its base64 and JSON text, and the
 // legacy JSON the record's scripts write, each counted by form. This package
@@ -180,7 +180,7 @@ type StampReader interface {
 }
 
 // JSONStamps is the reader of the JSON the record's scripts write today,
-// the one Judge uses when no reader is handed in: lenient, and it names a value
+// the one JudgeWith uses when no reader is handed in: lenient, and it names a value
 // that is no JSON stamp.
 type JSONStamps struct{}
 
@@ -253,16 +253,12 @@ type Status struct {
 	Pushes []PushStatus
 }
 
-// Judge is the status a record and its pushes' reads say: the state machine,
+// JudgeWith is the status a record and its pushes reads say: the state machine,
 // a pure function (tla/Hook.tla, GateOK). rec is the record hash (empty: no
 // record); reads holds one PushRead per push of Pushes, in that order. A lease
-// or proof whose epoch is not the record's counts for nothing.
-func Judge(name string, rec map[string]string, reads []PushRead) Status {
-	return JudgeWith(nil, name, rec, reads)
-}
-
-// JudgeWith is Judge reading each lease and proof through r (nil: JSONStamps).
-// A value r refuses counts for nothing and its refusal is kept on the push.
+// or proof whose epoch is not the record counts for nothing. Each lease and
+// proof is read through r (nil: JSONStamps); a value r refuses counts for
+// nothing and its refusal is kept on the push.
 func JudgeWith(r StampReader, name string, rec map[string]string, reads []PushRead) Status {
 	rd := stampsOr(r)
 	st := Status{Name: name, State: StateNone}

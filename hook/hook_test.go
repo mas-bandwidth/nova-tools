@@ -69,7 +69,7 @@ func TestJudgeIsTheStateMachine(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, c.want, Judge("ada", c.rec, c.reads).State)
+			assert.Equal(t, c.want, JudgeWith(nil, "ada", c.rec, c.reads).State)
 		})
 	}
 }
@@ -88,25 +88,25 @@ func TestTheGatePassesOnlyProven(t *testing.T) {
 		whyHas   string
 		linesHas string
 	}{
-		{"proven passes", Judge("ada", hooked(Coordinator, 1), reads(1, []Push{Bus, Sprint}, []Push{Bus, Sprint})), Want{Name: "ada", Need: []Push{Bus}}, true, "", "", ""},
-		{"friend with bus proven passes with no work push", Judge("bob", hooked(Friend, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "bob", Need: []Push{Bus}}, true, "", "", ""},
-		{"none with no role known looks first and offers comms first", Judge("ada", nil, nil), Want{Name: "ada", Need: []Push{Bus}}, false,
+		{"proven passes", JudgeWith(nil, "ada", hooked(Coordinator, 1), reads(1, []Push{Bus, Sprint}, []Push{Bus, Sprint})), Want{Name: "ada", Need: []Push{Bus}}, true, "", "", ""},
+		{"friend with bus proven passes with no work push", JudgeWith(nil, "bob", hooked(Friend, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "bob", Need: []Push{Bus}}, true, "", "", ""},
+		{"none with no role known looks first and offers comms first", JudgeWith(nil, "ada", nil, nil), Want{Name: "ada", Need: []Push{Bus}}, false,
 			"nova-hook status --as ada", "no hook record", "hook in as comms (on the bus, taking no sprint work): nova-hook hook --as ada --role comms"},
-		{"none with the caller's role names it", Judge("bob", nil, nil), Want{Name: "bob", Need: []Push{Bus}, Role: Friend}, false,
+		{"none with the caller's role names it", JudgeWith(nil, "bob", nil, nil), Want{Name: "bob", Need: []Push{Bus}, Role: Friend}, false,
 			"nova-hook hook --as bob --role friend", "never hooked", "the bus push of a friend is held by: nova-hook hook --as bob --role friend under the session's Monitor"},
-		{"unhooked", Judge("ada", map[string]string{"role": "comms", "state": "unhooked", "epoch": "2", "unhooked": "1791000000000"}, nil), Want{Name: "ada", Need: []Push{Bus}, Role: Comms}, false,
+		{"unhooked", JudgeWith(nil, "ada", map[string]string{"role": "comms", "state": "unhooked", "epoch": "2", "unhooked": "1791000000000"}, nil), Want{Name: "ada", Need: []Push{Bus}, Role: Comms}, false,
 			"nova-hook hook --as ada --role comms", "unhooked at", "unhook: nova-hook unhook --as ada"},
-		{"partial names the push that is down", Judge("ada", hooked(Coordinator, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "ada", Need: []Push{Bus}}, false,
+		{"partial names the push that is down", JudgeWith(nil, "ada", hooked(Coordinator, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "ada", Need: []Push{Bus}}, false,
 			"nova-hook hook --as ada --role coordinator", "bus=proven sprint=down", "the sprint push of a coordinator is held by: the sprint's server (nova-sprint run)"},
-		{"live and unproven", Judge("ada", hooked(Comms, 1), reads(1, []Push{Bus}, nil)), Want{Name: "ada", Need: []Push{Bus}}, false,
+		{"live and unproven", JudgeWith(nil, "ada", hooked(Comms, 1), reads(1, []Push{Bus}, nil)), Want{Name: "ada", Need: []Push{Bus}}, false,
 			"nova-hook hook --as ada --role comms", "live as comms (bus=armed)", "the bus push of a comms is held by: nova-hook hook --as ada --role comms under the session's Monitor"},
-		{"a coordinator's bus is the session's hook", Judge("ada", hooked(Coordinator, 1), reads(1, []Push{Bus, Sprint}, []Push{Sprint})), Want{Name: "ada", Need: []Push{Bus}}, false,
+		{"a coordinator's bus is the session's hook", JudgeWith(nil, "ada", hooked(Coordinator, 1), reads(1, []Push{Bus, Sprint}, []Push{Sprint})), Want{Name: "ada", Need: []Push{Bus}}, false,
 			"nova-hook hook --as ada --role coordinator", "bus=armed sprint=proven", "nova-hook prove --as ada --nonce <nonce>"},
-		{"a role without the push", Judge("m1", hooked(Member, 1), reads(1, []Push{Work}, []Push{Work})), Want{Name: "m1", Need: []Push{Bus}}, false,
+		{"a role without the push", JudgeWith(nil, "m1", hooked(Member, 1), reads(1, []Push{Work}, []Push{Work})), Want{Name: "m1", Need: []Push{Bus}}, false,
 			"nova-hook status --as m1", "carries no bus push", "hook in as friend (a friend working the sprint): nova-hook hook --as m1 --role friend"},
-		{"a role the act is not for", Judge("ada", hooked(Friend, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "ada", Need: []Push{Bus}, Roles: []Role{Coordinator, Comms}, Role: Coordinator}, false,
+		{"a role the act is not for", JudgeWith(nil, "ada", hooked(Friend, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "ada", Need: []Push{Bus}, Roles: []Role{Coordinator, Comms}, Role: Coordinator}, false,
 			"nova-hook hook --as ada --role coordinator", "is hooked in as friend, and this act is only for coordinator or comms", "the sprint's server (nova-sprint run), which holds it for the coordinator while it runs and reaches the bus"},
-		{"a role the act is for passes", Judge("ada", hooked(Comms, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "ada", Need: []Push{Bus}, Roles: []Role{Coordinator, Comms}, Role: Coordinator}, true, "", "", ""},
+		{"a role the act is for passes", JudgeWith(nil, "ada", hooked(Comms, 1), reads(1, []Push{Bus}, []Push{Bus})), Want{Name: "ada", Need: []Push{Bus}, Roles: []Role{Coordinator, Comms}, Role: Coordinator}, true, "", "", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -133,7 +133,7 @@ func TestTheGatePassesOnlyProven(t *testing.T) {
 // the push are offered comms first, then friend, then coordinator.
 func TestABreadcrumbWithNoRoleNeverGuesses(t *testing.T) {
 	t.Parallel()
-	hook, lines := Breadcrumb("ada", "", []Push{Bus}, Judge("ada", nil, nil))
+	hook, lines := Breadcrumb("ada", "", []Push{Bus}, JudgeWith(nil, "ada", nil, nil))
 	assert.Equal(t, "nova-hook status --as ada", hook)
 	assert.Equal(t, []string{
 		"hook in as comms (on the bus, taking no sprint work): nova-hook hook --as ada --role comms",
@@ -141,7 +141,7 @@ func TestABreadcrumbWithNoRoleNeverGuesses(t *testing.T) {
 		"hook in as coordinator (the seat): nova-hook hook --as ada --role coordinator",
 		"unhook: nova-hook unhook --as ada",
 	}, lines)
-	_, lines = Breadcrumb("m1", "", []Push{Work}, Judge("m1", nil, nil))
+	_, lines = Breadcrumb("m1", "", []Push{Work}, JudgeWith(nil, "m1", nil, nil))
 	assert.Contains(t, lines[0], "--role member")
 	assert.Contains(t, lines[1], "--role reader")
 }
@@ -204,9 +204,9 @@ func TestRolesAndPushes(t *testing.T) {
 // times, read in ms of the store's clock.
 func TestStatusWordsAndTimes(t *testing.T) {
 	t.Parallel()
-	st := Judge("ada", hooked(Coordinator, 7), reads(7, []Push{Bus}, nil))
+	st := JudgeWith(nil, "ada", hooked(Coordinator, 7), reads(7, []Push{Bus}, nil))
 	assert.Equal(t, "state=partial role=coordinator epoch=7 bus=armed sprint=down", st.Words())
 	assert.Equal(t, time.UnixMilli(1791000000000).UTC(), st.Armed)
-	assert.Equal(t, "state=none", Judge("ada", nil, nil).Words())
+	assert.Equal(t, "state=none", JudgeWith(nil, "ada", nil, nil).Words())
 	assert.True(t, msTime("x").IsZero())
 }
