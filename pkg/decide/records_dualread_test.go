@@ -84,7 +84,6 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 			read:    func(rd *decide.Parser, in []byte) (decide.Decision, error) { return rd.Attempt(in) },
 			counts:  func(rd *decide.Parser) *schemaread.Counts { return rd.AttemptCounts() }}
 		att.run(t)
-		flipProbe(t, "DECISION", d, att.wire)
 	})
 
 	t.Run("import export", func(t *testing.T) {
@@ -107,6 +106,53 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 			read:   func(rd *decide.Parser, in []byte) (decide.Schema, error) { return rd.Schema(in) },
 			counts: func(rd *decide.Parser) *schemaread.Counts { return rd.SchemaCounts() }}
 		sc.run(t)
+	})
+
+	t.Run("named cases", func(t *testing.T) {
+		t.Parallel()
+		rd := decide.NewParser()
+		flipped := func(wire []byte, at int, mask byte) []byte {
+			out := bytes.Clone(wire)
+			out[at] ^= mask
+			return out
+		}
+		// criteria under a kind that is not a choice is refused, never a panic
+		_, err := rd.Schema(flipped(schemaImage(t, schemaSample()), 147, 0x80))
+		refusal(t, err, "SCHEMA")
+		_, err = decide.ParseSchema(flipped(schemaImage(t, schemaSample()), 147, 0x80))
+		require.Error(t, err)
+		// a reference moved to another field's text, a field read as empty
+		d := decisionImage(t, decisionSample())
+		for _, c := range []struct {
+			at   int
+			mask byte
+		}{{3, 0x01}, {261, 0x80}} {
+			_, err := rd.Attempt(flipped(d, c.at, c.mask))
+			ref := refusal(t, err, "DECISION")
+			if ref != nil {
+				assert.Equal(t, schemaread.ReasonWireDamaged, ref.Reason, "byte %d ^%#02x", c.at, c.mask)
+			}
+		}
+		// an export read with no lines imports nothing: refused by name in every form
+		_, err = rd.ReadExport(flipped(exportImage(t), 69, 0x80))
+		refusal(t, err, "EXPORT")
+		var empty decidewire.ImportExportBuilder
+		require.True(t, empty.Init())
+		emptyWire := wireSave(t, &empty, decidewire.ImportExportMeasure, decidewire.ImportExportSave)
+		for _, in := range [][]byte{emptyWire, []byte(base64.StdEncoding.EncodeToString(emptyWire)), []byte(`{"lines":[]}`), []byte(`{}`)} {
+			_, err := rd.ReadExport(in)
+			ref := refusal(t, err, "EXPORT")
+			if ref != nil {
+				assert.Equal(t, schemaread.ReasonAbsentRequired, ref.Reason)
+				assert.Equal(t, "lines", ref.Field)
+			}
+		}
+		// a legacy decision line with no decision name reads as the base read it
+		got, err := rd.RecordLine([]byte(`{"decision":{"id":"a"}}`))
+		require.NoError(t, err)
+		require.NotNil(t, got.Decision)
+		assert.Equal(t, "a", got.Decision.ID)
+		assert.Empty(t, got.Decision.Decision)
 	})
 }
 
@@ -180,36 +226,177 @@ func (d dual[T]) run(t *testing.T) {
 		var zero T
 		assert.Equal(t, zero, got, "%s: a refused %s hands back nothing", d.name, in.form)
 	}
+
+	flipProbe(t, d.name, d.want, d.wire, d.read)
 }
 
-// flipProbe flips each byte of a record's binary image and reads it. Every
-// flip that the framing, the measure or the bounds can see is refused by name;
-// a flip in a value the wire carries without a checksum (a number in range, an
-// id-table entry that still resolves, text that stays UTF-8) reads as another
-// value, and is counted here rather than mistaken for damage. The report names
-// that limit; the schema compiler's fix is a checksum in the framing.
-func flipProbe(t *testing.T, name string, want decide.Decision, wire []byte) {
+// flipProbe flips each byte of a record's binary image, and of the image
+// inside its base64, under each of three masks (the low bit, the high bit,
+// every bit), and reads it. No flip panics. Every flip that moves the shape of
+// the value (a string read from another field's text, a field or a list read
+// as empty, an entry gained or lost) is refused by name: the reader holds a
+// typed image to the one canonical image of the value it reads. A flip that
+// leaves the shape and changes a number in range, or text in place that stays
+// UTF-8, reads as another value: the wire carries no checksum, so nothing in
+// it can tell those from a value the writer wrote. They are counted and logged,
+// never mistaken for damage (the schema compiler's fix is the framing checksum).
+func flipProbe[T any](t *testing.T, name string, want T, wire []byte, read func(rd *decide.Parser, in []byte) (T, error)) {
 	t.Helper()
-	rd := decide.NewParser()
-	refused, same, changed := 0, 0, 0
-	for i := range wire {
-		got, err := rd.Attempt(flipByte(wire, i))
-		if err != nil {
-			refusal(t, err, name)
-			refused++
-			continue
+	wantJSON := flatJSON(t, want)
+	strs := map[string]bool{}
+	collectStrings(wantJSON, strs)
+	for _, form := range []string{"binary", "base64"} {
+		for _, mask := range []byte{0x01, 0x80, 0xff} {
+			rd := decide.NewParser()
+			var refused, same, number, text, structural, panics int
+			for i := range wire {
+				in := bytes.Clone(wire)
+				in[i] ^= mask
+				if form == "base64" {
+					in = []byte(base64.StdEncoding.EncodeToString(in))
+				}
+				var got T
+				var err error
+				panicked := func() (p bool) {
+					defer func() {
+						r := recover()
+						p = r != nil
+						assert.Nil(t, r, "%s %s byte %d ^%#02x panics", name, form, i, mask)
+					}()
+					got, err = read(rd, in)
+					return false
+				}()
+				switch {
+				case panicked:
+					panics++
+				case err != nil:
+					refusal(t, err, name)
+					refused++
+				case reflect.DeepEqual(got, want):
+					same++
+				default:
+					switch shapeOf(wantJSON, flatJSON(t, got), strs) {
+					case flipNumber:
+						number++
+					case flipText:
+						text++
+					default:
+						structural++
+						t.Errorf("%s %s byte %d ^%#02x is read silently with another shape: %+v", name, form, i, mask, got)
+					}
+				}
+			}
+			t.Logf("%s %s mask %#02x: %d bytes, %d refused, %d unchanged, %d number, %d in-place text, %d structural, %d panics",
+				name, form, mask, len(wire), refused, same, number, text, structural, panics)
+			assert.Equal(t, len(wire), refused+same+number+text+structural+panics, name)
+			assert.Zero(t, panics, "%s %s mask %#02x: no flip panics", name, form, mask)
+			assert.Zero(t, structural, "%s %s mask %#02x: no flip moves the shape silently", name, form, mask)
 		}
-		if reflect.DeepEqual(got, want) {
-			same++
-			continue
-		}
-		changed++
-		assert.NotEmpty(t, got.ID, "%s: a flipped byte at %d was read as an absent id", name, i)
-		assert.NotEmpty(t, got.Decision, "%s: a flipped byte at %d was read as an absent decision", name, i)
 	}
-	t.Logf("%s: %d bytes, %d refused, %d unchanged, %d read as another value", name, len(wire), refused, same, changed)
-	assert.Equal(t, len(wire), refused+same+changed, name)
-	assert.Greater(t, refused, len(wire)/2, "%s: the framing, measure and bounds refuse most single-byte damage", name)
+}
+
+// The classes of a flip read as another value, worst last.
+const (
+	flipSame = iota
+	flipNumber
+	flipText
+	flipStructural
+)
+
+func flatJSON(t *testing.T, v any) any {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	require.NoError(t, err)
+	var out any
+	require.NoError(t, json.Unmarshal(raw, &out))
+	return out
+}
+
+func collectStrings(v any, into map[string]bool) {
+	switch v := v.(type) {
+	case string:
+		into[v] = true
+	case []any:
+		for _, e := range v {
+			collectStrings(e, into)
+		}
+	case map[string]any:
+		for k, e := range v {
+			into[k] = true
+			collectStrings(e, into)
+		}
+	}
+}
+
+// shapeOf classes a read value against the value written: a number changed is
+// number; a string changed in place to text no field held is in-place text;
+// anything else (an entry gained or lost, a string read as empty or as another
+// field's text, a value of another kind) moves the shape.
+func shapeOf(want, got any, strs map[string]bool) int {
+	switch w := want.(type) {
+	case string:
+		g, ok := got.(string)
+		switch {
+		case !ok:
+			return flipStructural
+		case g == w:
+			return flipSame
+		case g == "" || strs[g]:
+			return flipStructural
+		}
+		return flipText
+	case float64:
+		g, ok := got.(float64)
+		switch {
+		case !ok:
+			return flipStructural
+		case g == w:
+			return flipSame
+		}
+		return flipNumber
+	case []any:
+		g, ok := got.([]any)
+		if !ok || len(g) != len(w) {
+			return flipStructural
+		}
+		worst := flipSame
+		for i := range w {
+			worst = max(worst, shapeOf(w[i], g[i], strs))
+		}
+		return worst
+	case map[string]any:
+		g, ok := got.(map[string]any)
+		if !ok || len(g) != len(w) {
+			return flipStructural
+		}
+		worst := flipSame
+		var lostW, lostG []string
+		for k := range w {
+			if _, ok := g[k]; ok {
+				worst = max(worst, shapeOf(w[k], g[k], strs))
+			} else {
+				lostW = append(lostW, k)
+			}
+		}
+		for k := range g {
+			if _, ok := w[k]; !ok {
+				lostG = append(lostG, k)
+			}
+		}
+		switch {
+		case len(lostW) == 0:
+		case len(lostW) == 1 && len(lostG) == 1:
+			// one map key changed in place: the key is text, its value compared
+			worst = max(worst, shapeOf(lostW[0], lostG[0], strs), shapeOf(w[lostW[0]], g[lostG[0]], strs))
+		default:
+			return flipStructural
+		}
+		return worst
+	}
+	if reflect.DeepEqual(want, got) {
+		return flipSame
+	}
+	return flipStructural
 }
 
 // refusals sums every refused_<reason> counter.

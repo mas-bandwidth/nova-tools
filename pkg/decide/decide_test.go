@@ -248,12 +248,12 @@ func TestLoadNamesTheBadLine(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	for _, tc := range []struct{ name, body, says string }{
-		{"not json", "{\"decision\":{\"id\":\"a\",\"decision\":\"read\"}}\nnope\n", ":2 is not a record line"},
+		{"not json", "{\"decision\":{\"id\":\"a\"}}\nnope\n", ":2 is not a record line"},
 		{"neither", "{}\n", ":1 is neither a decision, an outcome nor an act"},
 		{"orphan act", "{\"act\":{\"id\":\"a\",\"act\":\"applying\"}}\n", "an act for a"},
-		{"twice", "{\"decision\":{\"id\":\"a\",\"decision\":\"read\"}}\n{\"decision\":{\"id\":\"a\",\"decision\":\"read\"}}\n", ":2 records decision a a second time"},
+		{"twice", "{\"decision\":{\"id\":\"a\"}}\n{\"decision\":{\"id\":\"a\"}}\n", ":2 records decision a a second time"},
 		{"orphan outcome", "{\"outcome\":{\"id\":\"a\",\"label\":\"ok\"}}\n", "an outcome for a"},
-		{"second outcome", "{\"decision\":{\"id\":\"a\",\"decision\":\"read\"}}\n{\"outcome\":{\"id\":\"a\",\"label\":\"ok\"}}\n{\"outcome\":{\"id\":\"a\",\"label\":\"wrong\"}}\n",
+		{"second outcome", "{\"decision\":{\"id\":\"a\"}}\n{\"outcome\":{\"id\":\"a\",\"label\":\"ok\"}}\n{\"outcome\":{\"id\":\"a\",\"label\":\"wrong\"}}\n",
 			":3 records an outcome for a a second time"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -550,7 +550,7 @@ func TestLoadRefusesALineHoldingMoreThanOneKind(t *testing.T) {
 	// Ordinary records still load.
 	good := filepath.Join(dir, "good.jsonl")
 	require.NoError(t, os.WriteFile(good, []byte(
-		`{"decision":{"id":"a","decision":"read"}}`+"\n"+
+		`{"decision":{"id":"a"}}`+"\n"+
 			`{"outcome":{"id":"a","label":"ok"}}`+"\n"+
 			`{"act":{"id":"a","act":"applying"}}`+"\n"), 0o600))
 	ds, err := Load(good)

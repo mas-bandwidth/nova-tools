@@ -1,6 +1,7 @@
 package decide
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"math"
@@ -16,7 +17,9 @@ import (
 // standard base64 of that image, plus the legacy form each writer writes today.
 // Every read is counted per record and per form (UNION.md C13). The legacy
 // form is read exactly as it always was, so a legacy line that does not parse
-// names itself as it always has; the typed forms are refused by name.
+// names itself as it always has; the typed forms are refused by name, and a
+// typed image is held to the one canonical image of the value it reads
+// (canonical), so damage that moves the shape of the value is refused.
 
 // form is the one byte a variable table's wire opens with (S2).
 const variableForm = 1
@@ -74,6 +77,53 @@ func strAt(slot int64, ar []*decidewire.TableArena) string {
 	return string(v.Data)
 }
 
+// lockable is a generated builder after a load: Lock packs it and AsConst is
+// its root, which the generated writer takes.
+type lockable[R any] interface {
+	Lock() bool
+	AsConst() *R
+}
+
+// canonical says whether wire is the one image the generated writer writes for
+// the value just loaded into b. A writer of this version numbers every node
+// once, in first-use order, each referenced from one field, so a typed image
+// that is not its own re-encoding has a reference moved: a string read from
+// another field's node, a field or a list entry dropped to empty, a node no
+// field holds. That is wire damage, refused by name (S2: damage is refused,
+// never read as another shape). A field id this reader does not know is held
+// the same way: these records are written and read by this repository's own
+// tools, and the cutover is readers first, fleet-wide, then writers (S4), so
+// the reader is never older than the writer and an unknown field id is a
+// damaged id-table entry (it reads a known field as empty), not newer data.
+// The bytes a flip changes in place (a number in range, text that stays UTF-8)
+// re-encode to themselves; only a checksum in the framing can see them.
+func canonical[R any](b lockable[R], wire []byte, measure func(*R, ...decidewire.TableWriteContext) int64, save func(*R, []byte, ...decidewire.TableWriteContext) int64) bool {
+	if !b.Lock() {
+		return false
+	}
+	root := b.AsConst()
+	if root == nil {
+		return false
+	}
+	n := measure(root)
+	if n != int64(len(wire)) {
+		return false
+	}
+	out := make([]byte, n)
+	return save(root, out) == n && bytes.Equal(out, wire)
+}
+
+// typedDone is the report of a typed load whose value is read: a load the
+// generated table accepted is refused as wire_damaged when the image is not
+// the canonical image of what it read (canonical), unknown fields included.
+func typedDone(rep *decidewire.TableReport, isCanonical func() bool) schemaread.Report {
+	out := reportOf(rep, true)
+	if out.Reason == "" && !out.Malformed && out.KindMismatch == 0 && out.Clamped == 0 && !isCanonical() {
+		out.Reason = schemaread.ReasonWireDamaged
+	}
+	return out
+}
+
 // answerFromTable is an answer as the Go code holds it.
 func answerFromTable(a *decidewire.AnswerRow, ar []*decidewire.TableArena) Answer {
 	out := Answer{Type: typeOf(a.Kind), Value: strAt(a.Value, ar), Confidence: a.Confidence, Method: strAt(a.Method, ar)}
@@ -113,18 +163,12 @@ func typeOf(k decidewire.AnswerType) string {
 
 // ---- the bounds the code enforces (S2, the schema's declared bounds) ----
 
-// maxText is the largest text any of these records holds: the record reader's
-// 64 MiB line (record.go parse) is the only size the code states.
-const maxText = 64 << 20
-
-// must is a text the code refuses when empty.
-func must(c *schemaread.Checker, field, text string) {
-	c.Text(field, text, maxText)
-	c.Required(field, text != "")
-}
-
-// text is a text held to UTF-8 with no NUL (S2: refused by name).
-func text(c *schemaread.Checker, field, s string) { c.Text(field, s, maxText) }
+// The constraints are the value rules the reading code enforces, and they hold
+// alike for every form, so one value reads alike from each (S2). The legacy
+// form is read as the code read it before the dual read: a line the base read
+// accepted is accepted (a decision with no decision name, an outcome with no
+// label, an empty text), and what it refused is refused, now by name. Damage
+// to a typed image is the wire's to refuse (canonical), not a constraint's.
 
 // prob holds a probability to [0, 1] (decide.go Check, record.go
 // recordedProbabilities); a NaN is malformed. The checker has no float bound,
@@ -142,96 +186,34 @@ func prob(c *schemaread.Checker, field string, p float64) {
 	c.Bound(field, in, 1, 1)
 }
 
-// answerKind is the ordinal of an answer type; 0 is no type the code names.
-func answerKind(t string) int64 {
-	switch t {
-	case Choice:
-		return 1
-	case Noul:
-		return 2
-	}
-	return 0
-}
-
-// decisionCheck holds a decision to the bounds its code enforces: an id and a
-// decision name, the answer kinds and every probability, an input's key. The
-// schema records declare no length or count bound, so the lists are open.
+// decisionCheck holds a decision to the bounds its code enforces: every
+// probability in [0, 1] (record.go recordedProbabilities, decide.go Check).
+// The schema records declare no length or count bound, so the lists are open.
 func decisionCheck(d *Decision, c *schemaread.Checker) {
-	must(c, "id", d.ID)
-	must(c, "decision_name", d.Decision)
-	text(c, "schema", d.Schema)
-	text(c, "backend", d.Backend)
-	text(c, "at", d.At)
-	for key, value := range d.Inputs {
-		must(c, "input.key", key)
-		text(c, "input.value", value)
-	}
-	text(c, "state", d.State)
-	for question, a := range d.Answers {
-		must(c, "question", question)
-		c.Bound("kind", answerKind(a.Type), 1, 2)
-		must(c, "value", a.Value)
-		for option, p := range a.P {
-			must(c, "option", option)
+	for _, a := range d.Answers {
+		for _, p := range a.P {
 			prob(c, "p", p)
 		}
-		text(c, "method", a.Method)
 	}
 }
 
-func outcomeCheck(o *Outcome, c *schemaread.Checker) {
-	must(c, "id", o.ID)
-	must(c, "label", o.Label)
-	text(c, "note", o.Note)
-	text(c, "at", o.At)
-}
-
-func actCheck(a *Act, c *schemaread.Checker) {
-	must(c, "id", a.ID)
-	must(c, "step", a.Act)
-	text(c, "op", a.Op)
-	text(c, "at", a.At)
-}
-
-// recordLineCheck holds a line to the one record it is (record.go parse): the
-// one kind present is the one read, and it is held to its own bounds.
+// recordLineCheck holds a line to the one record it is (record.go parse). Zero
+// or two kinds is parse's own error, naming the file and line; an outcome and
+// an act carry no bound the code enforces.
 func recordLineCheck(l *line, c *schemaread.Checker) {
-	present := 0
-	if l.Decision != nil {
-		present++
-	}
-	if l.Outcome != nil {
-		present++
-	}
-	if l.Act != nil {
-		present++
-	}
-	if present != 1 {
-		// zero or two kinds is parse's own error (record.go parse), naming the
-		// file and line; the bounds of the one line are checked only when it
-		// is one record.
-		return
-	}
-	if l.Decision != nil {
+	if l.Decision != nil && l.Outcome == nil && l.Act == nil {
 		decisionCheck(l.Decision, c)
 	}
-	if l.Outcome != nil {
-		outcomeCheck(l.Outcome, c)
-	}
-	if l.Act != nil {
-		actCheck(l.Act, c)
-	}
 }
 
-// exportCheck holds an export to the ids its lines answer: the code takes
-// every line and every id, so neither list has a count bound (import.go).
+// exportCheck holds an export to at least one line. judgmentItems reads an
+// export with no lines as answering no judgment and imports nothing, with no
+// error: an empty export is a log read as empty, so it is refused by name
+// (absent_required lines) rather than imported as nothing (S2: never read as
+// absent or empty). The code takes every line and every id, so neither list
+// has a count ceiling (import.go).
 func exportCheck(e *Export, c *schemaread.Checker) {
-	for _, l := range e.Lines {
-		text(c, "verb", l.Verb)
-		for _, id := range l.Answers {
-			must(c, "id", id)
-		}
-	}
+	c.Required("lines", len(e.Lines) > 0)
 }
 
 // ---- the decision (ParseAttempt, the record's decision line) ----
@@ -249,7 +231,9 @@ func parseAttemptTyped(v *Decision, wire []byte) schemaread.Report {
 	root := b.GetRoot()
 	ar := []*decidewire.TableArena{&b.Arena}
 	*v = decisionFromTable(root, ar)
-	return reportOf(&rep, true)
+	return typedDone(&rep, func() bool {
+		return canonical[decidewire.Decision](&b, wire, decidewire.DecisionMeasure, decidewire.DecisionSave)
+	})
 }
 
 // newAttemptReader is the attempt decision's reader; a finish carries the
@@ -266,25 +250,35 @@ var ParseAttemptReader = newAttemptReader()
 
 // ---- the schema (ParseSchema) ----
 
-func questionFromTable(q *decidewire.QuestionRow, ar []*decidewire.TableArena) Question {
+// questionFromTable is a question as the Go code holds it. Criteria belong to
+// a choice only (decide.go Question): an image holding criteria under another
+// kind is refused (ok false, a kind_mismatch the schema reader names), never
+// written into a map the noul does not have.
+func questionFromTable(q *decidewire.QuestionRow, ar []*decidewire.TableArena) (Question, bool) {
 	out := Question{Type: typeOf(q.Kind), Instructions: strAt(q.Instructions, ar)}
 	if q.Kind == decidewire.AnswerTypeChoice {
 		out.Criteria = map[string]string{}
 	}
+	ok := true
 	decidewire.QuestionCriteriaEach(&q.Criteria, func(c *decidewire.CriterionRow) bool {
+		if out.Criteria == nil {
+			ok = false
+			return false
+		}
 		out.Criteria[strAt(c.Option, ar)] = strAt(c.Meaning, ar)
 		return true
 	}, ar...)
-	return out
+	return out, ok
 }
 
-func schemaFromTable(r *decidewire.DecideSchemaRow, ar []*decidewire.TableArena) Schema {
+func schemaFromTable(r *decidewire.DecideSchemaRow, ar []*decidewire.TableArena) (Schema, bool) {
 	s := Schema{Name: strAt(r.Name, ar), Questions: map[string]Question{}}
+	ok := true
 	decidewire.DecideSchemaQuestionsEach(&r.Questions, func(q *decidewire.NamedQuestionRow) bool {
-		s.Questions[strAt(q.Name, ar)] = questionFromTable(&q.Question, ar)
-		return true
+		s.Questions[strAt(q.Name, ar)], ok = questionFromTable(&q.Question, ar)
+		return ok
 	}, ar...)
-	return s
+	return s, ok
 }
 
 func parseSchemaTyped(v *Schema, wire []byte) schemaread.Report {
@@ -299,8 +293,14 @@ func parseSchemaTyped(v *Schema, wire []byte) schemaread.Report {
 	}
 	root := b.GetRoot()
 	ar := []*decidewire.TableArena{&b.Arena}
-	*v = schemaFromTable(root, ar)
-	return reportOf(&rep, true)
+	s, ok := schemaFromTable(root, ar)
+	if !ok {
+		return schemaread.Report{Reason: schemaread.ReasonKindMismatch}
+	}
+	*v = s
+	return typedDone(&rep, func() bool {
+		return canonical[decidewire.DecideSchema](&b, wire, decidewire.DecideSchemaMeasure, decidewire.DecideSchemaSave)
+	})
 }
 
 // newSchemaReader is the schema's reader; the schema's legacy form is the JSON
@@ -368,7 +368,9 @@ func parseExportTyped(v *Export, wire []byte) schemaread.Report {
 	root := b.GetRoot()
 	ar := []*decidewire.TableArena{&b.Arena}
 	*v = exportFromTable(root, ar)
-	return reportOf(&rep, true)
+	return typedDone(&rep, func() bool {
+		return canonical[decidewire.ImportExport](&b, wire, decidewire.ImportExportMeasure, decidewire.ImportExportSave)
+	})
 }
 
 // newExportReader is the import export's reader; the legacy form is the JSON
@@ -444,7 +446,9 @@ func recordLineTyped(v *line, wire []byte) schemaread.Report {
 		return schemaread.Report{Reason: schemaread.ReasonMalformed}
 	}
 	*v = l
-	return reportOf(&rep, true)
+	return typedDone(&rep, func() bool {
+		return canonical[decidewire.RecordLine](&b, wire, decidewire.RecordLineMeasure, decidewire.RecordLineSave)
+	})
 }
 
 // newRecordLineReader is a record line's reader; the legacy form is the one
