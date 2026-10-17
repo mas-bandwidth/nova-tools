@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x00')
+[]byte("{\n  \"id\": null,\n  \"step\": null,\n  \"op\": null,\n  \"at\": null\n}\n")
