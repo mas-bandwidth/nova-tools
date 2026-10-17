@@ -47,6 +47,7 @@ func init() {
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"preflight", "--brief-dir <dir> [--repo-dir <dir>]", "preflight --brief-dir .", (*app).cmdPreflight},
 		{"release check", "[--json] [--streams <glob>] [--check <name>]...", "release check", (*app).cmdReleaseCheck},
+		{"adopt", "[--state <file>] --repo-dir <clone> --base <branch> --server-bin <path> [--daemon <path>...] --bench <host> --bench-src <dir> --bench-out <dir> --out <dir> --release <vX.Y.Z> --machines <file> [--adopt-args <flags>] [--stream <s>] [--judgment-to <file>] [--tick-every <d>] [--missed <n>] [--watch <n>] | --answer <yes|no> --judgment <tip> --reason <text> | --show", "adopt --show", (*app).cmdAdopt},
 		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},

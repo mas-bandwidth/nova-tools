@@ -69,7 +69,7 @@ func TestAdoptVerbAsksOneJudgmentAndActsOnTheAnswer(t *testing.T) {
 	a := newApp(func(string) string { return "" })
 	adoptStepsOf.Store(a, sprint.AdoptSteps(f))
 	t.Cleanup(func() { adoptStepsOf.Delete(a) })
-	// cmdAdopt, not a.run: the verb table does not name adopt (verbs.go).
+	// cmdAdopt directly: the pipeline test supplies every external dependency.
 	run := func(args ...string) (int, string, string) {
 		var out, errs bytes.Buffer
 		code := a.cmdAdopt(append([]string{"--state", state}, args...), &out, &errs)
@@ -104,6 +104,17 @@ func TestAdoptVerbAsksOneJudgmentAndActsOnTheAnswer(t *testing.T) {
 	code, out, _ = run("--show")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, `"stage":"watching"`)
+}
+
+func TestAdoptVerbIsDispatchedManually(t *testing.T) {
+	t.Parallel()
+	a := newApp(func(string) string { return "" })
+	state := filepath.Join(t.TempDir(), "adopt.json")
+	var out, errs bytes.Buffer
+	code := a.run([]string{"adopt", "--show", "--state", state}, &out, &errs)
+	require.Equal(t, 0, code, errs.String())
+	assert.Contains(t, out.String(), "idle")
+	assert.Empty(t, errs.String())
 }
 
 func TestAdoptVerbNamesWhatAPassWants(t *testing.T) {

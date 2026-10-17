@@ -28,14 +28,10 @@ import (
 // moves it as far as it can go. --answer is the coordinator's answer to the
 // one judgment it raises.
 //
-// This file does not register the verb and the tick does not call the pass.
-// verbs.go's init assigns the verb table and runs after this file (adopt.go
-// sorts first), so an append here is replaced. run.go's tick and the store
-// tick call no adoption hook; the tick's end parts are planners, and the
-// shadow tick calls the same functions, so a pass there would write during a
-// read-only plan and hold the tick. verbClasses is not set: a class with no
-// verb fails TestEveryVerbHasAClass.
+// The verb table dispatches a manual pass. The server never runs adoption for
+// a worker or as part of its tick: the pass can build and write to the fleet.
 func init() {
+	verbClasses["adopt"] = classMachine
 	// it builds over ssh, switches binaries on disk and pushes to the fleet:
 	// it runs where it is typed or scheduled, never on the server
 	notServed = append(notServed, "adopt")
