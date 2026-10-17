@@ -7,8 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/decidewire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // The few-shot calibration of the grade (SPEC-NOVA-DECIDE section 11): ten landed cards per
@@ -36,8 +40,12 @@ type Example struct {
 	Label   string `json:"label"`
 }
 
-// ParseExamples reads an examples file, one JSON object per line ({card, heading, paths, kind,
-// label}); every bad line is named in one error.
+// ParseExamples reads an examples file, one value per line in any form ({card, heading, paths,
+// kind, label}); every bad line is named by number in one error. The grade examples file reads
+// through pkg/schemaread and the generated Example table (pkg/decidewire), so its binary image,
+// its padded standard base64, the schema JSON text and the legacy form decode to one equal value,
+// a malformed or clamped value of each form is refused by name, and each read is counted under
+// its form (the owner's rule S2, readers first S4, UNION.md C13).
 func ParseExamples(raw []byte) ([]Example, error) {
 	var out []Example
 	var problems []string
@@ -48,19 +56,12 @@ func ParseExamples(raw []byte) ([]Example, error) {
 		if line == "" {
 			continue
 		}
-		var e Example
-		dec := json.NewDecoder(strings.NewReader(line))
-		dec.DisallowUnknownFields()
-		switch err := dec.Decode(&e); {
-		case err != nil:
+		e, _, err := ParseExamplesReader.Read([]byte(line))
+		if err != nil {
 			problems = append(problems, fmt.Sprintf("line %d: %v", n, err))
-		case e.Card == "" || e.Heading == "":
-			problems = append(problems, fmt.Sprintf("line %d: an example names its card and its heading", n))
-		case !slices.Contains(GradeExampleClasses, e.Label):
-			problems = append(problems, fmt.Sprintf("line %d: label %q is none of %s", n, e.Label, strings.Join(GradeExampleClasses, ", ")))
-		default:
-			out = append(out, e)
+			continue
 		}
+		out = append(out, e)
 	}
 	if err := sc.Err(); err != nil {
 		problems = append(problems, err.Error())
@@ -70,6 +71,96 @@ func ParseExamples(raw []byte) ([]Example, error) {
 	}
 	return out, nil
 }
+
+// exampleLabel is an Example table label as the grade's own classes spell it.
+func exampleLabel(l decidewire.ExampleLabel) string {
+	switch l {
+	case decidewire.ExampleLabelFlash:
+		return GradeFlash
+	case decidewire.ExampleLabelPro:
+		return GradePro
+	case decidewire.ExampleLabelHeavy:
+		return GradeHeavy
+	}
+	return ""
+}
+
+// exampleFromTable is an example row as the grade's code holds it.
+func exampleFromTable(r *decidewire.ExampleRow, ar []*decidewire.TableArena) Example {
+	return Example{
+		Card:    strAt(r.Card, ar),
+		Heading: strAt(r.Heading, ar),
+		Paths:   strAt(r.Paths, ar),
+		Kind:    strAt(r.Kind, ar),
+		Label:   exampleLabel(r.Label),
+	}
+}
+
+func parseExampleTyped(v *Example, wire []byte) schemaread.Report {
+	var b decidewire.ExampleBuilder
+	if !b.Init() {
+		return schemaread.Report{Reason: schemaread.ReasonMalformed}
+	}
+	defer b.Shutdown()
+	var rep decidewire.TableReport
+	if !decidewire.ExampleLoadBuilder(&b, wire, &rep) {
+		return reportOf(&rep, false)
+	}
+	root := b.GetRoot()
+	ar := []*decidewire.TableArena{&b.Arena}
+	*v = exampleFromTable(root, ar)
+	return typedDone(&rep, func() bool {
+		return canonical[decidewire.Example](&b, wire, decidewire.ExampleMeasure, decidewire.ExampleSave)
+	})
+}
+
+// exampleCheck holds an example to the bounds its reading code enforces: a card and a heading
+// are required, and the label is one of the grade's classes (S2: the checks made today apply to
+// every form, so one value reads alike from each).
+func exampleCheck(e *Example, c *schemaread.Checker) {
+	c.Required("card", e.Card != "")
+	c.Required("heading", e.Heading != "")
+	ord := int64(0)
+	switch e.Label {
+	case GradeFlash:
+		ord = 1
+	case GradePro:
+		ord = 2
+	case GradeHeavy:
+		ord = 3
+	}
+	c.Bound("label", ord, 1, 3)
+}
+
+// newExampleReader is the grade examples file's strict reader: the table wire, the padded
+// standard base64 of it, the schema JSON text and the legacy form ParseExamples read today. The
+// legacy form keeps the base read (one object per line, unknown keys refused); the schema JSON
+// text spells the label as the table's enum name, so the legacy read lowers its case, and both
+// read to the same value.
+func newExampleReader() *schemaread.Reader[Example] {
+	return decided[Example]{name: "EXAMPLE", help: "nova-decide grade --examples -h",
+		measure: func(wire []byte) error { _, err := decidewire.ExampleLoadMeasureReason(wire); return err },
+		read: parseExampleTyped,
+		legacy: func(v *Example, in []byte) schemaread.Report {
+			dec := json.NewDecoder(strings.NewReader(string(in)))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(v); err != nil {
+				return schemaread.Report{Reason: err.Error()}
+			}
+			if err := dec.Decode(new(any)); err != io.EOF {
+				return schemaread.Report{Malformed: true}
+			}
+			v.Label = strings.ToLower(v.Label)
+			return schemaread.Report{}
+		},
+		check: exampleCheck}.reader()
+}
+
+// ParseExamplesReader is the grade examples file's package reader.
+var ParseExamplesReader = newExampleReader()
+
+// NewExamplesReader is a grade examples reader with empty counters, for a test to count.
+func NewExamplesReader() *schemaread.Reader[Example] { return newExampleReader() }
 
 // PickExamples chooses per examples of each class from pool, deterministically: held-out cards
 // leave the pool, a card's rank is the SHA-256 of seed and its id (so neither the pool's order
