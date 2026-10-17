@@ -1,23 +1,26 @@
 package tablemodel
 
 // TestTableModelRecordsDualRead is the reader half of the table model's table
-// adoption (the owner's rules S2 and S4, readers first): every record the
-// table model reads back (the State record first, the record trace.json holds
-// at every step) is read alike from its binary image (the table wire), the
-// padded standard base64 of that image, and the legacy form its writer writes
-// today; a damaged value of each form is refused by name (`STATE REFUSED:
-// <reason>; run: <help>`) and never read as absent, empty or zero; and each
-// read is counted under its record and its form.
+// adoption (the owner's rules S2 and S4, readers first): every record of the
+// table model (the State, the Trace of trace.json, the capture's Action and
+// receipt Event, the witness Finding and the ReplayEvent) is read alike from
+// its binary image (the table wire), the padded standard base64 of that image,
+// its schema JSON and the legacy JSON its writer writes today; a damaged value
+// of each form is refused by name (`<RECORD> REFUSED: <reason>; run: <help>`)
+// and never read as absent, empty or zero; a clamped value is refused; and
+// each read is counted under its record and its form.
 //
-// Unit tier: no clock, no socket, no store. The readers run over fixed byte
-// slices; the files a real run writes are read from a t.TempDir() this test
-// writes.
+// Unit tier: no clock, no socket, no store. The readers run over byte slices
+// and over files this test writes into a t.TempDir().
 
 import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
@@ -27,123 +30,230 @@ import (
 
 func TestTableModelRecordsDualRead(t *testing.T) {
 	t.Parallel()
-
-	want := State{
+	refusedFalse, refusedTrue := false, true
+	state := State{
 		Live:   []Phys{{"t1", 1}, {"t2", 2}},
 		Rows:   []RowAt{{Phys{"t1", 1}, "r1"}, {Phys{"t2", 2}, "r2"}},
-		Binds:  []Bind{{Cell{Phys{"t1", 1}, "r1", "c1"}, Cell{Phys{"external", 0}, "external", "external"}}},
-		Data:   []Datum{{Cell{Phys{"t1", 1}, "r1", "c1"}, "m1", 1}, {Cell{Phys{"external", 0}, "external", "external"}, "m2", 2}},
+		Binds:  []Bind{{Cell{Phys{"t1", 1}, "r1", "c1"}, External}},
+		Data:   []Datum{{Cell{Phys{"t1", 1}, "r1", "c1"}, "m1", 1}, {External, "m2", 2}},
 		Place:  []Placement{{"m1", []Location{{Phys{"t1", 1}, Cell{Phys{"t1", 1}, "r1", "c1"}}, {Phys{"t2", 2}, NoPlace}}}},
 		Active: 1,
 		Seen:   map[string]int{"w1": 1, "w2": 1},
 	}
+	receipt := Event{"id": "1-0", "verb": "cell_add", "rev_before": "0", "rev_after": "1", "members": `[{"k":"r1","to":"m1"}]`}
+	trace := Trace{
+		SourceSHA256: "aaaabbbbccccdddd",
+		ModelSHA256:  map[string]string{"TableMachine.tla": "1111", "EpochMemberTable.tla": "2222"},
+		Initial:      state,
+		Steps: []TraceStep{
+			{Verb: "cell_add", Args: []string{"t1", "r1", "c1", "m1", "1"}, Actor: "w1", Refused: &refusedFalse, Receipt: receipt, Model: "EpochCellAdd", State: state},
+			{Verb: "cell_add", Args: []string{"t1", "r1", "c9", "m1", "1"}, Actor: "w2", Refused: &refusedTrue, Model: "EpochCellAddRefused", State: state},
+			{Verb: "read_epoch", Args: []string{"w2"}, Actor: "w2", Model: "ReadEpoch", State: state},
+		},
+	}
 
-	wire, err := stateWire(want)
+	t.Run("STATE", func(t *testing.T) {
+		t.Parallel()
+		checkRecord(t, stateSpec, stateCodec, state)
+	})
+	t.Run("TRACE", func(t *testing.T) {
+		t.Parallel()
+		checkRecord(t, traceSpec, traceCodec, trace)
+	})
+	t.Run("ACTION", func(t *testing.T) {
+		t.Parallel()
+		checkRecord(t, actionSpec, actionCodec, Action{Verb: "row_add", Args: []string{"t1", "r1", `{"binds":{"c2":"table:t1:cell:r1:c1"}}`}, Actor: "w1"})
+	})
+	t.Run("EVENT", func(t *testing.T) {
+		t.Parallel()
+		checkRecord(t, eventSpec, eventCodec, receipt)
+	})
+	t.Run("FINDING", func(t *testing.T) {
+		t.Parallel()
+		checkRecord(t, findingSpec, findingCodec, Finding{Name: "OnePlacePerTable", Result: "confirmed", Text: "OnePlacePerTable fails: add permits m1 in two owned cells"})
+	})
+	t.Run("REPLAY_EVENT", func(t *testing.T) {
+		t.Parallel()
+		checkRecord(t, replayEventSpec, replayEventCodec, ReplayEvent{Step: "capture", Verdict: VerdictPass, Fields: []string{"transitions=3", "trace=/tmp/x/trace.json"}})
+	})
+
+	// A clamped value is refused, never read as the bound it was clamped to:
+	// an integer past int64 in the schema JSON saturates in the table's JSON
+	// reader, and the strict read refuses the clamp. The legacy reader never
+	// clamps: the same value is malformed there. (The Action, Event, Finding
+	// and ReplayEvent declare text only, which tablemodel.schema leaves
+	// unbounded, so no value of theirs can clamp.)
+	t.Run("clamped", func(t *testing.T) {
+		t.Parallel()
+		canon := stateCanon(state)
+		canon["active"] = json.Number("99999999999999999999")
+		clampedJSON, err := json.Marshal(canon)
+		require.NoError(t, err)
+		r := schemaread.NewReader(stateCodec)
+		got, _, err := r.Read(clampedJSON)
+		tassert.Equal(t, schemaread.ReasonClamped, refusal(t, err, "STATE").Reason, "a saturated active epoch: %s", err)
+		tassert.Equal(t, State{}, got.v, "a clamped read hands back nothing")
+		tassert.Equal(t, uint64(1), r.Counts().Refused(schemaread.ReasonClamped), "the clamp is counted")
+		tassert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormJSON), "the clamp is counted under its form")
+
+		tcanon := traceCanon(trace)
+		tcanon["initial"] = canon
+		clampedTrace, err := json.Marshal(tcanon)
+		require.NoError(t, err)
+		_, _, err = schemaread.NewReader(traceCodec).Read(clampedTrace)
+		tassert.Equal(t, schemaread.ReasonClamped, refusal(t, err, "TRACE").Reason, "a saturated epoch inside a trace: %s", err)
+
+		legacy, err := json.Marshal(state)
+		require.NoError(t, err)
+		legacy = bytes.Replace(legacy, []byte(`"active":1`), []byte(`"active":99999999999999999999`), 1)
+		_, _, err = r.Read(legacy)
+		tassert.Equal(t, schemaread.ReasonMalformed, refusal(t, err, "STATE").Reason, "a legacy integer past int: %s", err)
+	})
+
+	// The empty State (no table yet, every list empty as the capture writes
+	// it) reads as itself in every form.
+	t.Run("empty", func(t *testing.T) {
+		t.Parallel()
+		checkForms(t, stateSpec, stateCodec, State{Live: []Phys{}, Rows: []RowAt{}, Binds: []Bind{}, Data: []Datum{}, Place: []Placement{}, Seen: map[string]int{}})
+	})
+
+	// trace.json as a bench wrote it (testdata/replay) reads through the file
+	// reader the replay uses, and its table image, base64 and schema JSON read
+	// back the same trace.
+	t.Run("bench trace", func(t *testing.T) {
+		t.Parallel()
+		raw, err := os.ReadFile(filepath.Join("testdata", "replay", "trace.json"))
+		require.NoError(t, err)
+		var want Trace
+		require.NoError(t, json.Unmarshal(raw, &want))
+		dir := t.TempDir()
+		path := filepath.Join(dir, "trace.json")
+		require.NoError(t, os.WriteFile(path, raw, 0o600))
+		before := traceReader.Counts().Reads(schemaread.FormLegacy)
+		got, err := ReadTraceFile(path)
+		require.NoError(t, err)
+		tassert.True(t, reflect.DeepEqual(want, got), "the bench trace.json reads as the trace it holds")
+		tassert.Equal(t, before+1, traceReader.Counts().Reads(schemaread.FormLegacy), "the file read is counted under the legacy form")
+		require.Len(t, got.Steps, 32)
+		checkForms(t, traceSpec, traceCodec, want)
+
+		// a damaged trace.json is refused by name, never read as an empty trace
+		require.NoError(t, os.WriteFile(path, raw[:len(raw)/2], 0o600))
+		got, err = ReadTraceFile(path)
+		refusal(t, err, "TRACE")
+		tassert.True(t, reflect.DeepEqual(Trace{}, got), "a refused trace.json hands back nothing")
+		require.NoError(t, os.WriteFile(path, nil, 0o600))
+		_, err = ReadTraceFile(path)
+		tassert.Equal(t, schemaread.ReasonUnknownForm, refusal(t, err, "TRACE").Reason, "an empty trace.json")
+	})
+}
+
+// forms is want written in each form a reader accepts: the binary image, the
+// padded standard base64 of it, the schema JSON and the legacy JSON.
+func forms[V, B, M any](t *testing.T, spec recordSpec[V, B, M], codec *schemaread.Codec[record[V]], want V) map[schemaread.Form][]byte {
+	t.Helper()
+	wire, err := spec.wire(want)
 	require.NoError(t, err)
+	r := schemaread.NewReader(codec)
+	text, err := r.Write(&record[V]{want}, schemaread.FormJSON)
+	require.NoError(t, err)
+	b64, err := r.Write(&record[V]{want}, schemaread.FormBase64)
+	require.NoError(t, err)
+	tassert.Equal(t, base64.StdEncoding.EncodeToString(wire), string(b64), "the base64 form is the padded standard base64 of the image")
 	legacy, err := json.Marshal(want)
 	require.NoError(t, err)
-
-	inputs := []struct {
-		form string
-		in   []byte
-	}{
-		{"binary", wire},
-		{"base64", []byte(base64.StdEncoding.EncodeToString(wire))},
-		{"legacy", legacy},
+	return map[schemaread.Form][]byte{
+		schemaread.FormBinary: wire,
+		schemaread.FormBase64: b64,
+		schemaread.FormJSON:   text,
+		schemaread.FormLegacy: legacy,
 	}
+}
 
-	r := newStateReader()
-	for _, in := range inputs {
-		v, _, err := r.Read(in.in)
-		require.NoError(t, err, "%s: %v", in.form, err)
-		tassert.Equal(t, want, v.s, "a State reads alike from its %s", in.form)
+var allForms = []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON, schemaread.FormLegacy}
+
+// checkForms reads want back from each form, from bytes and from a file this
+// test writes, and counts each read once under its form.
+func checkForms[V, B, M any](t *testing.T, spec recordSpec[V, B, M], codec *schemaread.Codec[record[V]], want V) map[schemaread.Form][]byte {
+	t.Helper()
+	in := forms(t, spec, codec, want)
+	dir := t.TempDir()
+	r := schemaread.NewReader(codec)
+	for _, f := range allForms {
+		got, res, err := r.Read(in[f])
+		require.NoError(t, err, "%s from its %s form", spec.name, f)
+		tassert.Equal(t, f, res.Form, "%s: the %s form is detected as itself", spec.name, f)
+		tassert.True(t, reflect.DeepEqual(want, got.v), "%s reads alike from its %s form: got %#v want %#v", spec.name, f, got.v, want)
+
+		path := filepath.Join(dir, spec.name+"."+f.String())
+		require.NoError(t, os.WriteFile(path, in[f], 0o600))
+		raw, err := os.ReadFile(path)
+		require.NoError(t, err)
+		got, _, err = r.Read(raw)
+		require.NoError(t, err, "%s from its %s file", spec.name, f)
+		tassert.True(t, reflect.DeepEqual(want, got.v), "%s reads alike from its %s file", spec.name, f)
 	}
-	tassert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBinary), "each read counted once under its form")
-	tassert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBase64), "each read counted once under its form")
-	tassert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormLegacy), "each read counted once under its form")
+	for _, f := range allForms {
+		tassert.Equal(t, uint64(2), r.Counts().Reads(f), "%s: each read counted once under the %s form", spec.name, f)
+	}
+	return in
+}
 
-	// every damaged value of every form is refused by name, never read as
-	// absent, empty or zero: each prefix of the value and the value with bytes
-	// after its end
-	r = newStateReader()
+// checkRecord is the whole dual read of one record: every form reads alike;
+// every truncated or extended value of each form is refused by name and
+// counted as refused; and a flipped byte is refused or reads as some value,
+// never as the zero record.
+func checkRecord[V, B, M any](t *testing.T, spec recordSpec[V, B, M], codec *schemaread.Codec[record[V]], want V) {
+	t.Helper()
+	in := checkForms(t, spec, codec, want)
+	var zero V
+
+	r := schemaread.NewReader(codec)
 	tries := 0
-	for _, in := range inputs {
-		for _, m := range damaged(in.in) {
-			v, _, err := r.Read(m)
-			require.NotNil(t, refusal(t, err, "STATE"), "%s: a damaged %s (%d bytes) was read as %v", "STATE", in.form, len(m), v.s)
-			var zero State
-			tassert.Equal(t, zero, v.s, "a refused read hands back nothing")
+	for _, f := range allForms {
+		for _, m := range damaged(in[f]) {
+			got, _, err := r.Read(m)
+			require.NotNil(t, refusal(t, err, spec.name), "%s: a damaged %s (%d of %d bytes) was read as %#v", spec.name, f, len(m), len(in[f]), got.v)
+			require.True(t, reflect.DeepEqual(zero, got.v), "%s: a refused read hands back nothing", spec.name)
 			tries++
 		}
 	}
-	refusals := uint64(0)
+	refused := uint64(0)
 	for k, n := range r.Counts().Snapshot() {
 		if bytes.HasPrefix([]byte(k), []byte("refused_")) {
-			refusals += n
+			refused += n
 		}
 	}
-	tassert.Equal(t, uint64(tries), refusals, "every damaged read is counted as refused, by reason")
+	tassert.Equal(t, uint64(tries), refused, "%s: every damaged read is counted as refused, by reason", spec.name)
 
-	// an invalid base64 text is refused by name, counted under the base64 form
-	r = newStateReader()
+	// A flipped byte: the table wire carries no checksum, so a flip inside a
+	// text payload can read as another value; it is never read as the zero or
+	// the empty record, and every refusal is named.
+	flipsRefused, flips := 0, 0
+	for _, f := range allForms {
+		for _, i := range positions(len(in[f])) {
+			m := bytes.Clone(in[f])
+			m[i] ^= 0x20
+			got, _, err := r.Read(m)
+			flips++
+			if err != nil {
+				refusal(t, err, spec.name)
+				flipsRefused++
+				continue
+			}
+			require.False(t, reflect.DeepEqual(zero, got.v) || reflect.DeepEqual(spec.empty(), got.v), "%s: a flipped %s byte %d read as the zero record", spec.name, f, i)
+		}
+	}
+	t.Logf("%s: %d of %d single-byte flips refused by name", spec.name, flipsRefused, flips)
+
+	// No form at all, and a base64 text that is not base64, are refused by
+	// name; the empty value is counted under no form.
+	r = schemaread.NewReader(codec)
+	_, _, err := r.Read(nil)
+	tassert.Equal(t, schemaread.ReasonUnknownForm, refusal(t, err, spec.name).Reason, "%s: an empty value", spec.name)
 	_, _, err = r.Read([]byte("abcd===="))
-	require.NotNil(t, refusal(t, err, "STATE"), "an invalid base64 text was read as a state")
-	require.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBase64))
-
-	// the replay Trace record (trace.json) reads alike from its binary image,
-	// its padded standard base64 and the legacy form, refused by name when
-	// damaged, counted per record and per form.
-	refused := false
-	twant := Trace{
-		SourceSHA256: "aaaabbbbccccdddd",
-		ModelSHA256:  map[string]string{"TableMachine.tla": "1111", "EpochMemberTable.tla": "2222"},
-		Initial:      want,
-		Steps: []TraceStep{
-			{Verb: "put", Args: []string{"t1", "r1"}, Actor: "w1", Refused: &refused,
-				Receipt: Event{"id": "1", "rev_before": "0", "members": `[{"k":"r1","to":"m1"}]`},
-				Model: "Put", State: want},
-			{Verb: "get", Args: []string{"t1", "r1"}, Actor: "w2", Model: "Get", State: want},
-		},
-	}
-	twire, err := traceWire(twant)
-	require.NoError(t, err)
-	tlegacy, err := json.Marshal(twant)
-	require.NoError(t, err)
-	tinputs := []struct {
-		form string
-		in   []byte
-	}{
-		{"binary", twire},
-		{"base64", []byte(base64.StdEncoding.EncodeToString(twire))},
-		{"legacy", tlegacy},
-	}
-	tr := newTraceReader()
-	for _, in := range tinputs {
-		v, _, err := tr.Read(in.in)
-		require.NoError(t, err, "%s: %v", in.form, err)
-		tassert.Equal(t, twant, v.tr, "a Trace reads alike from its %s", in.form)
-	}
-	tassert.Equal(t, uint64(1), tr.Counts().Reads(schemaread.FormBinary), "a trace read counted once under each form")
-	tassert.Equal(t, uint64(1), tr.Counts().Reads(schemaread.FormBase64), "a trace read counted once under each form")
-	tassert.Equal(t, uint64(1), tr.Counts().Reads(schemaread.FormLegacy), "a trace read counted once under each form")
-
-	tr = newTraceReader()
-	ttries := 0
-	for _, in := range tinputs {
-		for _, m := range damaged(in.in) {
-			v, _, err := tr.Read(m)
-			require.NotNil(t, refusal(t, err, "TRACE"), "%s: a damaged %s (%d bytes) was read as %v", "TRACE", in.form, len(m), v.tr)
-			tassert.Equal(t, Trace{}, v.tr, "a refused trace read hands back nothing")
-			ttries++
-		}
-	}
-	trefusals := uint64(0)
-	for k, n := range tr.Counts().Snapshot() {
-		if bytes.HasPrefix([]byte(k), []byte("refused_")) {
-			trefusals += n
-		}
-	}
-	tassert.Equal(t, uint64(ttries), trefusals, "every damaged trace read is counted as refused, by reason")
+	refusal(t, err, spec.name)
+	tassert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBase64), "%s: an invalid base64 text is counted under its form", spec.name)
 }
 
 // refusal is err as the reader's named refusal of record name.
@@ -151,18 +261,34 @@ func refusal(t *testing.T, err error, name string) *schemaread.Refusal {
 	t.Helper()
 	var ref *schemaread.Refusal
 	if !tassert.True(t, errors.As(err, &ref), "%s: want a named refusal, got %v", name, err) {
-		return nil
+		return &schemaread.Refusal{}
 	}
 	tassert.Equal(t, name, ref.Name)
+	tassert.Contains(t, ref.Error(), name+" REFUSED: ")
+	tassert.Contains(t, ref.Error(), "; run: "+modelHelp)
 	return ref
 }
 
-// damaged is in cut at each length and in with bytes after its end.
-func damaged(in []byte) [][]byte {
-	var cuts []int
-	for n := 0; n < len(in); n++ {
-		cuts = append(cuts, n)
+// positions are the offsets a damage test visits in a value of n bytes:
+// every offset of a short value, and about 256 spread across a long one, the
+// first and last 64 always included, so the test stays cheap.
+func positions(n int) []int {
+	stride := 1
+	if n > 256 {
+		stride = n / 128
 	}
+	var out []int
+	for i := 0; i < n; i++ {
+		if i < 64 || i >= n-64 || i%stride == 0 {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// damaged is in cut at each visited length and in with bytes after its end.
+func damaged(in []byte) [][]byte {
+	cuts := positions(len(in))
 	out := make([][]byte, 0, len(cuts)+3)
 	for _, n := range cuts {
 		out = append(out, bytes.Clone(in[:n]))
