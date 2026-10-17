@@ -303,7 +303,12 @@ func fillDecisionRow(w *decidewire.TableWorker, r *decidewire.DecisionRow, d *De
 		a := d.Answers[q]
 		na := decidewire.DecisionAnswersAdd(w, &r.Answers)
 		setText(w, &na.Question, q)
-		na.Answer.Kind = decidewire.AnswerTypeChoice
+		switch a.Type {
+		case Noul:
+			na.Answer.Kind = decidewire.AnswerTypeNoul
+		default:
+			na.Answer.Kind = decidewire.AnswerTypeChoice
+		}
 		setText(w, &na.Answer.Value, a.Value)
 		for _, opt := range sortedKeys(a.P) {
 			o := decidewire.AnswerPAdd(w, &na.Answer.P)
