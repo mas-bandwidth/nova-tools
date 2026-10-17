@@ -187,7 +187,7 @@ type PathBlockProjection struct {
 	Magic        uint64    // generated: identifies a schema block
 	BuildVersion uint64    // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
 	ByteOrder    uint64    // generated: 1 little, 2 big
-	Text         [513]byte // string(512): max length, used length beside it
+	Text         [257]byte // string(256): max length, used length beside it
 	_            [3]byte   // generated padding
 	TextLength   int32
 }
@@ -203,7 +203,7 @@ type HarnessArgBlockProjection struct {
 	Magic        uint64    // generated: identifies a schema block
 	BuildVersion uint64    // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
 	ByteOrder    uint64    // generated: 1 little, 2 big
-	Text         [513]byte // string(512): max length, used length beside it
+	Text         [257]byte // string(256): max length, used length beside it
 	_            [3]byte   // generated padding
 	TextLength   int32
 }
@@ -235,7 +235,7 @@ type FenceRuleBlockProjection struct {
 	Magic         uint64    // generated: identifies a schema block
 	BuildVersion  uint64    // generated: the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20)
 	ByteOrder     uint64    // generated: 1 little, 2 big
-	Pattern       [513]byte // string(512): max length, used length beside it
+	Pattern       [257]byte // string(256): max length, used length beside it
 	_             [3]byte   // generated padding
 	PatternLength int32
 	Action        uint8
@@ -316,7 +316,7 @@ type WorkerRecordBlockProjection struct {
 	Harness           [257]byte // string(256): max length, used length beside it
 	_                 [1]byte   // generated padding
 	HarnessLength     int32
-	HarnessArgs       TableBlockTriple // [..16]HarnessArg, laid out of line
+	HarnessArgs       TableBlockTriple // [..64]HarnessArg, laid out of line
 	WorkerDir         [513]byte        // string(512): max length, used length beside it
 	_                 [3]byte          // generated padding
 	WorkerDirLength   int32
@@ -326,11 +326,11 @@ type WorkerRecordBlockProjection struct {
 	Board             [257]byte // string(256): max length, used length beside it
 	_                 [3]byte   // generated padding
 	BoardLength       int32
-	ReadRoots         TableBlockTriple // [..8]Path, laid out of line
+	ReadRoots         TableBlockTriple // [..32]Path, laid out of line
 	MaxTurns          int32
 	_                 [4]byte // generated padding
 	MaxCacheRead      int64
-	InputLimitPhrases TableBlockTriple // [..16]Phrase, laid out of line
+	InputLimitPhrases TableBlockTriple // [..32]Phrase, laid out of line
 	LaunchGrace       [33]byte         // string(32): max length, used length beside it
 	_                 [3]byte          // generated padding
 	LaunchGraceLength int32
@@ -377,8 +377,8 @@ type FenceConfigBlockProjection struct {
 	JobDir       [513]byte // string(512): max length, used length beside it
 	_            [3]byte   // generated padding
 	JobDirLength int32
-	Reads        TableBlockTriple // [..8]Path, laid out of line
-	Rules        TableBlockTriple // [..34]FenceRule, laid out of line
+	Reads        TableBlockTriple // [..32]Path, laid out of line
+	Rules        TableBlockTriple // [..130]FenceRule, laid out of line
 	Webfetch     uint8
 	_            [7]byte // generated padding
 }
@@ -431,14 +431,14 @@ type MemberCarryBlockProjection struct {
 // model disagrees with the one the compiler derived stops the program where
 // it starts, rather than pointing at a row and reading the wrong bytes.
 func init() {
-	tableBlockLayoutSize("FenceRuleRow", unsafe.Sizeof(FenceRuleRow{}), 524)
+	tableBlockLayoutSize("FenceRuleRow", unsafe.Sizeof(FenceRuleRow{}), 268)
 	tableBlockLayoutSize("FenceRuleRow alignment", unsafe.Alignof(FenceRuleRow{}), 4)
 	tableBlockLayoutOffset("FenceRuleRow.Pattern", unsafe.Offsetof(FenceRuleRow{}.Pattern), 0)
-	tableBlockLayoutOffset("FenceRuleRow.Action", unsafe.Offsetof(FenceRuleRow{}.Action), 520)
-	tableBlockLayoutSize("HarnessArgRow", unsafe.Sizeof(HarnessArgRow{}), 520)
+	tableBlockLayoutOffset("FenceRuleRow.Action", unsafe.Offsetof(FenceRuleRow{}.Action), 264)
+	tableBlockLayoutSize("HarnessArgRow", unsafe.Sizeof(HarnessArgRow{}), 264)
 	tableBlockLayoutSize("HarnessArgRow alignment", unsafe.Alignof(HarnessArgRow{}), 4)
 	tableBlockLayoutOffset("HarnessArgRow.Text", unsafe.Offsetof(HarnessArgRow{}.Text), 0)
-	tableBlockLayoutSize("PathRow", unsafe.Sizeof(PathRow{}), 520)
+	tableBlockLayoutSize("PathRow", unsafe.Sizeof(PathRow{}), 264)
 	tableBlockLayoutSize("PathRow alignment", unsafe.Alignof(PathRow{}), 4)
 	tableBlockLayoutOffset("PathRow.Text", unsafe.Offsetof(PathRow{}.Text), 0)
 	tableBlockLayoutSize("PhraseRow", unsafe.Sizeof(PhraseRow{}), 264)
@@ -476,16 +476,16 @@ func init() {
 	tableBlockLayoutOffset("FenceConfigBlockProjection.Reads", unsafe.Offsetof(FenceConfigBlockProjection{}.Reads), 544)
 	tableBlockLayoutOffset("FenceConfigBlockProjection.Rules", unsafe.Offsetof(FenceConfigBlockProjection{}.Rules), 560)
 	tableBlockLayoutOffset("FenceConfigBlockProjection.Webfetch", unsafe.Offsetof(FenceConfigBlockProjection{}.Webfetch), 576)
-	tableBlockLayoutSize("FenceConfig.Reads stride", unsafe.Sizeof(PathRow{}), 520)
-	tableBlockLayoutSize("FenceConfig.Rules stride", unsafe.Sizeof(FenceRuleRow{}), 524)
-	tableBlockLayoutSize("FenceRuleBlockProjection", unsafe.Sizeof(FenceRuleBlockProjection{}), 552)
+	tableBlockLayoutSize("FenceConfig.Reads stride", unsafe.Sizeof(PathRow{}), 264)
+	tableBlockLayoutSize("FenceConfig.Rules stride", unsafe.Sizeof(FenceRuleRow{}), 268)
+	tableBlockLayoutSize("FenceRuleBlockProjection", unsafe.Sizeof(FenceRuleBlockProjection{}), 296)
 	tableBlockLayoutSize("FenceRuleBlockProjection alignment", unsafe.Alignof(FenceRuleBlockProjection{}), 8)
 	tableBlockLayoutOffset("FenceRuleBlockProjection.Magic", unsafe.Offsetof(FenceRuleBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("FenceRuleBlockProjection.BuildVersion", unsafe.Offsetof(FenceRuleBlockProjection{}.BuildVersion), 8)
 	tableBlockLayoutOffset("FenceRuleBlockProjection.ByteOrder", unsafe.Offsetof(FenceRuleBlockProjection{}.ByteOrder), 16)
 	tableBlockLayoutOffset("FenceRuleBlockProjection.Pattern", unsafe.Offsetof(FenceRuleBlockProjection{}.Pattern), 24)
-	tableBlockLayoutOffset("FenceRuleBlockProjection.Action", unsafe.Offsetof(FenceRuleBlockProjection{}.Action), 544)
-	tableBlockLayoutSize("HarnessArgBlockProjection", unsafe.Sizeof(HarnessArgBlockProjection{}), 544)
+	tableBlockLayoutOffset("FenceRuleBlockProjection.Action", unsafe.Offsetof(FenceRuleBlockProjection{}.Action), 288)
+	tableBlockLayoutSize("HarnessArgBlockProjection", unsafe.Sizeof(HarnessArgBlockProjection{}), 288)
 	tableBlockLayoutSize("HarnessArgBlockProjection alignment", unsafe.Alignof(HarnessArgBlockProjection{}), 8)
 	tableBlockLayoutOffset("HarnessArgBlockProjection.Magic", unsafe.Offsetof(HarnessArgBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("HarnessArgBlockProjection.BuildVersion", unsafe.Offsetof(HarnessArgBlockProjection{}.BuildVersion), 8)
@@ -509,7 +509,7 @@ func init() {
 	tableBlockLayoutOffset("MemberCarryBlockProjection.Attempt", unsafe.Offsetof(MemberCarryBlockProjection{}.Attempt), 160)
 	tableBlockLayoutOffset("MemberCarryBlockProjection.Head", unsafe.Offsetof(MemberCarryBlockProjection{}.Head), 164)
 	tableBlockLayoutOffset("MemberCarryBlockProjection.Branch", unsafe.Offsetof(MemberCarryBlockProjection{}.Branch), 236)
-	tableBlockLayoutSize("PathBlockProjection", unsafe.Sizeof(PathBlockProjection{}), 544)
+	tableBlockLayoutSize("PathBlockProjection", unsafe.Sizeof(PathBlockProjection{}), 288)
 	tableBlockLayoutSize("PathBlockProjection alignment", unsafe.Alignof(PathBlockProjection{}), 8)
 	tableBlockLayoutOffset("PathBlockProjection.Magic", unsafe.Offsetof(PathBlockProjection{}.Magic), 0)
 	tableBlockLayoutOffset("PathBlockProjection.BuildVersion", unsafe.Offsetof(PathBlockProjection{}.BuildVersion), 8)
@@ -546,8 +546,8 @@ func init() {
 	tableBlockLayoutOffset("WorkerRecordBlockProjection.InputLimitPhrases", unsafe.Offsetof(WorkerRecordBlockProjection{}.InputLimitPhrases), 2752)
 	tableBlockLayoutOffset("WorkerRecordBlockProjection.LaunchGrace", unsafe.Offsetof(WorkerRecordBlockProjection{}.LaunchGrace), 2768)
 	tableBlockLayoutOffset("WorkerRecordBlockProjection.KeepData", unsafe.Offsetof(WorkerRecordBlockProjection{}.KeepData), 2808)
-	tableBlockLayoutSize("WorkerRecord.HarnessArgs stride", unsafe.Sizeof(HarnessArgRow{}), 520)
-	tableBlockLayoutSize("WorkerRecord.ReadRoots stride", unsafe.Sizeof(PathRow{}), 520)
+	tableBlockLayoutSize("WorkerRecord.HarnessArgs stride", unsafe.Sizeof(HarnessArgRow{}), 264)
+	tableBlockLayoutSize("WorkerRecord.ReadRoots stride", unsafe.Sizeof(PathRow{}), 264)
 	tableBlockLayoutSize("WorkerRecord.InputLimitPhrases stride", unsafe.Sizeof(PhraseRow{}), 264)
 }
 
@@ -623,28 +623,28 @@ func init() {
 		Fields: []TableBlockFieldInfo{
 			{Name: "job_dir", Offset: 24, Size: 520, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 540, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "reads", Offset: 544, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 544, CountOffset: 552, StrideOffset: 556, Stride: 520,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[12] }},
-			{Name: "rules", Offset: 560, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 560, CountOffset: 568, StrideOffset: 572, Stride: 524,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 34, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[10] }},
+			{Name: "reads", Offset: 544, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 544, CountOffset: 552, StrideOffset: 556, Stride: 264,
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[12] }},
+			{Name: "rules", Offset: 560, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 560, CountOffset: 568, StrideOffset: 572, Stride: 268,
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 130, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[10] }},
 			{Name: "webfetch", Offset: 576, Size: 1, Kind: 6, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[3] = TableBlockInfo{
-		Name: "FenceRule", BuildVersion: BuildVersion, Size: 552, Align: 8, NumFields: 2,
+		Name: "FenceRule", BuildVersion: BuildVersion, Size: 296, Align: 8, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
-			{Name: "pattern", Offset: 24, Size: 520, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 540, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "action", Offset: 544, Size: 1, Kind: 6, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "pattern", Offset: 24, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 284, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "action", Offset: 288, Size: 1, Kind: 6, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[4] = TableBlockInfo{
-		Name: "HarnessArg", BuildVersion: BuildVersion, Size: 544, Align: 8, NumFields: 1,
+		Name: "HarnessArg", BuildVersion: BuildVersion, Size: 288, Align: 8, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
-			{Name: "text", Offset: 24, Size: 520, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 540, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "text", Offset: 24, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 284, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[5] = TableBlockInfo{
@@ -674,10 +674,10 @@ func init() {
 		},
 	}
 	tableBlockRecords[7] = TableBlockInfo{
-		Name: "Path", BuildVersion: BuildVersion, Size: 544, Align: 8, NumFields: 1,
+		Name: "Path", BuildVersion: BuildVersion, Size: 288, Align: 8, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
-			{Name: "text", Offset: 24, Size: 520, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 540, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "text", Offset: 24, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 284, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[8] = TableBlockInfo{
@@ -710,22 +710,22 @@ func init() {
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "harness", Offset: 1618, Size: 262, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 1876, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "harness_args", Offset: 1880, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 1880, CountOffset: 1888, StrideOffset: 1892, Stride: 520,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[11] }},
+			{Name: "harness_args", Offset: 1880, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 1880, CountOffset: 1888, StrideOffset: 1892, Stride: 264,
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 64, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[11] }},
 			{Name: "worker_dir", Offset: 1896, Size: 520, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2412, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "deadline", Offset: 2416, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2452, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "board", Offset: 2456, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2716, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "read_roots", Offset: 2720, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 2720, CountOffset: 2728, StrideOffset: 2732, Stride: 520,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 8, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[12] }},
+			{Name: "read_roots", Offset: 2720, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 2720, CountOffset: 2728, StrideOffset: 2732, Stride: 264,
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[12] }},
 			{Name: "max_turns", Offset: 2736, Size: 4, Kind: 4, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 4, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "max_cache_read", Offset: 2744, Size: 8, Kind: 5, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 8, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "input_limit_phrases", Offset: 2752, Size: 16, Kind: 13, OutOfLine: true, OffsetOfOffset: 2752, CountOffset: 2760, StrideOffset: 2764, Stride: 264,
-				IsArray: true, Counted: true, Optional: false, ArrayBound: 16, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[13] }},
+				IsArray: true, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 0, PresentOffset: 0xffffffff, Element: func() *TableBlockInfo { return &tableBlockRecords[13] }},
 			{Name: "launch_grace", Offset: 2768, Size: 40, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 2804, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: true, Optional: false, ArrayBound: 32, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 			{Name: "keep_data", Offset: 2808, Size: 1, Kind: 1, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
@@ -733,26 +733,26 @@ func init() {
 		},
 	}
 	tableBlockRecords[10] = TableBlockInfo{
-		Name: "FenceRule", BuildVersion: BuildVersion, Size: 524, Align: 4, NumFields: 2,
+		Name: "FenceRule", BuildVersion: BuildVersion, Size: 268, Align: 4, NumFields: 2,
 		Fields: []TableBlockFieldInfo{
-			{Name: "pattern", Offset: 0, Size: 520, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 516, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
-			{Name: "action", Offset: 520, Size: 1, Kind: 6, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
+			{Name: "pattern", Offset: 0, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 260, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "action", Offset: 264, Size: 1, Kind: 6, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 0xffffffff, StrideOffset: 0xffffffff, Stride: 0,
 				IsArray: false, Counted: false, Optional: false, ArrayBound: 0, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[11] = TableBlockInfo{
-		Name: "HarnessArg", BuildVersion: BuildVersion, Size: 520, Align: 4, NumFields: 1,
+		Name: "HarnessArg", BuildVersion: BuildVersion, Size: 264, Align: 4, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
-			{Name: "text", Offset: 0, Size: 520, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 516, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "text", Offset: 0, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 260, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[12] = TableBlockInfo{
-		Name: "Path", BuildVersion: BuildVersion, Size: 520, Align: 4, NumFields: 1,
+		Name: "Path", BuildVersion: BuildVersion, Size: 264, Align: 4, NumFields: 1,
 		Fields: []TableBlockFieldInfo{
-			{Name: "text", Offset: 0, Size: 520, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 516, StrideOffset: 0xffffffff, Stride: 0,
-				IsArray: false, Counted: true, Optional: false, ArrayBound: 512, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
+			{Name: "text", Offset: 0, Size: 264, Kind: 12, OutOfLine: false, OffsetOfOffset: 0xffffffff, CountOffset: 260, StrideOffset: 0xffffffff, Stride: 0,
+				IsArray: false, Counted: true, Optional: false, ArrayBound: 256, ElemSize: 1, PresentOffset: 0xffffffff, Element: nil},
 		},
 	}
 	tableBlockRecords[13] = TableBlockInfo{
@@ -769,7 +769,7 @@ func init() {
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const PathBlockMaxBytes int64 = 576
+const PathBlockMaxBytes int64 = 320
 
 // PathBlock is Path's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -799,10 +799,10 @@ func (block *PathBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 544 {
+	if bytes < 288 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 544)
+	header := unsafe.Slice((*byte)(base), 288)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -816,7 +816,7 @@ func (block *PathBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(544)
+	used := int64(288)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -883,7 +883,7 @@ func PathBlockBegin(b *PathBlock, s *PathBlockStorage, c PathCounts, refusal *Ta
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(544)
+	offset := int64(288)
 	*b = PathBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -892,7 +892,7 @@ func PathBlockBytes(b *PathBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(544)
+	used := int64(288)
 	return (used + 63) &^ int64(63)
 }
 
@@ -909,7 +909,7 @@ func (b *PathBlock) Type() *TableBlockInfo { return &tableBlockRecords[7] }
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const HarnessArgBlockMaxBytes int64 = 576
+const HarnessArgBlockMaxBytes int64 = 320
 
 // HarnessArgBlock is HarnessArg's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -939,10 +939,10 @@ func (block *HarnessArgBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 544 {
+	if bytes < 288 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 544)
+	header := unsafe.Slice((*byte)(base), 288)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -956,7 +956,7 @@ func (block *HarnessArgBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(544)
+	used := int64(288)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -1023,7 +1023,7 @@ func HarnessArgBlockBegin(b *HarnessArgBlock, s *HarnessArgBlockStorage, c Harne
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(544)
+	offset := int64(288)
 	*b = HarnessArgBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -1032,7 +1032,7 @@ func HarnessArgBlockBytes(b *HarnessArgBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(544)
+	used := int64(288)
 	return (used + 63) &^ int64(63)
 }
 
@@ -1189,7 +1189,7 @@ func (b *PhraseBlock) Type() *TableBlockInfo { return &tableBlockRecords[8] }
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const FenceRuleBlockMaxBytes int64 = 576
+const FenceRuleBlockMaxBytes int64 = 320
 
 // FenceRuleBlock is FenceRule's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -1219,10 +1219,10 @@ func (block *FenceRuleBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if base == nil {
 		return TableRefuseUnalignedBase
 	}
-	if bytes < 552 {
+	if bytes < 296 {
 		return TableRefuseTruncated
 	}
-	header := unsafe.Slice((*byte)(base), 552)
+	header := unsafe.Slice((*byte)(base), 296)
 	magic := binary.NativeEndian.Uint64(header)
 	if magic != TableBlockMagic {
 		if magic == 0x5343484d41424c4b {
@@ -1236,7 +1236,7 @@ func (block *FenceRuleBlock) Open(base unsafe.Pointer, bytes int64) error {
 	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
 		return TableRefuseWrongBuildVersion
 	}
-	used := int64(552)
+	used := int64(296)
 	padding := (64 - (used % 64)) % 64
 	if padding > bytes-used {
 		return TableRefuseTruncated
@@ -1303,7 +1303,7 @@ func FenceRuleBlockBegin(b *FenceRuleBlock, s *FenceRuleBlockStorage, c FenceRul
 	p.Magic = TableBlockMagic
 	p.BuildVersion = BuildVersion
 	p.ByteOrder = TableBlockByteOrder
-	offset := int64(552)
+	offset := int64(296)
 	*b = FenceRuleBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }
@@ -1312,7 +1312,7 @@ func FenceRuleBlockBytes(b *FenceRuleBlock) int64 {
 	if b == nil || b.Projection == nil {
 		return 0
 	}
-	used := int64(552)
+	used := int64(296)
 	return (used + 63) &^ int64(63)
 }
 
@@ -1469,7 +1469,7 @@ func (b *ExitRecordBlock) Type() *TableBlockInfo { return &tableBlockRecords[1] 
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const WorkerRecordBlockMaxBytes int64 = 19520
+const WorkerRecordBlockMaxBytes int64 = 36608
 
 // WorkerRecordBlock is WorkerRecord's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -1491,8 +1491,8 @@ type WorkerRecordBlock struct {
 // never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
 // package constants because §11 gives a language whose accessors are members
 // exactly that latitude: a member claims nothing at file scope.
-func (b *WorkerRecordBlock) HarnessArgsStride() int64           { return 520 }
-func (b *WorkerRecordBlock) HarnessArgsMax() int64              { return 16 }
+func (b *WorkerRecordBlock) HarnessArgsStride() int64           { return 264 }
+func (b *WorkerRecordBlock) HarnessArgsMax() int64              { return 64 }
 func (b *WorkerRecordBlock) HarnessArgsProjectionOffset() int64 { return 1880 }
 
 // HarnessArgs is ITERATED, not indexed by hand: the accessor points at each row where
@@ -1516,8 +1516,8 @@ func (b *WorkerRecordBlock) HarnessArgsSpan() []HarnessArgRow {
 // never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
 // package constants because §11 gives a language whose accessors are members
 // exactly that latitude: a member claims nothing at file scope.
-func (b *WorkerRecordBlock) ReadRootsStride() int64           { return 520 }
-func (b *WorkerRecordBlock) ReadRootsMax() int64              { return 8 }
+func (b *WorkerRecordBlock) ReadRootsStride() int64           { return 264 }
+func (b *WorkerRecordBlock) ReadRootsMax() int64              { return 32 }
 func (b *WorkerRecordBlock) ReadRootsProjectionOffset() int64 { return 2720 }
 
 // ReadRoots is ITERATED, not indexed by hand: the accessor points at each row where
@@ -1542,7 +1542,7 @@ func (b *WorkerRecordBlock) ReadRootsSpan() []PathRow {
 // package constants because §11 gives a language whose accessors are members
 // exactly that latitude: a member claims nothing at file scope.
 func (b *WorkerRecordBlock) InputLimitPhrasesStride() int64           { return 264 }
-func (b *WorkerRecordBlock) InputLimitPhrasesMax() int64              { return 16 }
+func (b *WorkerRecordBlock) InputLimitPhrasesMax() int64              { return 32 }
 func (b *WorkerRecordBlock) InputLimitPhrasesProjectionOffset() int64 { return 2752 }
 
 // InputLimitPhrases is ITERATED, not indexed by hand: the accessor points at each row where
@@ -1608,7 +1608,7 @@ func (block *WorkerRecordBlock) Open(base unsafe.Pointer, bytes int64) error {
 		// past the DECLARED MAXIMUM: the producer side refuses this too, because
 		// a consumer that sizes anything by the maximum would overflow on a
 		// count the maximum does not bound
-		if count > 16 {
+		if count > 64 {
 			return TableRefuseBadLayout
 		}
 		if offsetOf < 2816 || offsetOf%64 != 0 {
@@ -1641,7 +1641,7 @@ func (block *WorkerRecordBlock) Open(base unsafe.Pointer, bytes int64) error {
 		// past the DECLARED MAXIMUM: the producer side refuses this too, because
 		// a consumer that sizes anything by the maximum would overflow on a
 		// count the maximum does not bound
-		if count > 8 {
+		if count > 32 {
 			return TableRefuseBadLayout
 		}
 		if offsetOf < 2816 || offsetOf%64 != 0 {
@@ -1674,7 +1674,7 @@ func (block *WorkerRecordBlock) Open(base unsafe.Pointer, bytes int64) error {
 		// past the DECLARED MAXIMUM: the producer side refuses this too, because
 		// a consumer that sizes anything by the maximum would overflow on a
 		// count the maximum does not bound
-		if count > 16 {
+		if count > 32 {
 			return TableRefuseBadLayout
 		}
 		if offsetOf < 2816 || offsetOf%64 != 0 {
@@ -1753,21 +1753,21 @@ func WorkerRecordBlockBegin(b *WorkerRecordBlock, s *WorkerRecordBlockStorage, c
 	if b == nil {
 		return false
 	}
-	if c.HarnessArgs < 0 || c.HarnessArgs > 16 {
+	if c.HarnessArgs < 0 || c.HarnessArgs > 64 {
 		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "harness_args", Count: int64(c.HarnessArgs), Maximum: 16}
+			*refusal = TableBlockRefusal{Array: "harness_args", Count: int64(c.HarnessArgs), Maximum: 64}
 		}
 		return false
 	}
-	if c.ReadRoots < 0 || c.ReadRoots > 8 {
+	if c.ReadRoots < 0 || c.ReadRoots > 32 {
 		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "read_roots", Count: int64(c.ReadRoots), Maximum: 8}
+			*refusal = TableBlockRefusal{Array: "read_roots", Count: int64(c.ReadRoots), Maximum: 32}
 		}
 		return false
 	}
-	if c.InputLimitPhrases < 0 || c.InputLimitPhrases > 16 {
+	if c.InputLimitPhrases < 0 || c.InputLimitPhrases > 32 {
 		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "input_limit_phrases", Count: int64(c.InputLimitPhrases), Maximum: 16}
+			*refusal = TableBlockRefusal{Array: "input_limit_phrases", Count: int64(c.InputLimitPhrases), Maximum: 32}
 		}
 		return false
 	}
@@ -1780,11 +1780,11 @@ func WorkerRecordBlockBegin(b *WorkerRecordBlock, s *WorkerRecordBlockStorage, c
 	p.ByteOrder = TableBlockByteOrder
 	offset := int64(2816)
 	offset = (offset + 63) &^ int64(63)
-	p.HarnessArgs = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.HarnessArgs), Stride: 520}
-	offset += int64(c.HarnessArgs) * 520
+	p.HarnessArgs = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.HarnessArgs), Stride: 264}
+	offset += int64(c.HarnessArgs) * 264
 	offset = (offset + 63) &^ int64(63)
-	p.ReadRoots = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.ReadRoots), Stride: 520}
-	offset += int64(c.ReadRoots) * 520
+	p.ReadRoots = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.ReadRoots), Stride: 264}
+	offset += int64(c.ReadRoots) * 264
 	offset = (offset + 63) &^ int64(63)
 	p.InputLimitPhrases = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.InputLimitPhrases), Stride: 264}
 	offset += int64(c.InputLimitPhrases) * 264
@@ -1962,7 +1962,7 @@ func (b *HarnessConfigRecordBlock) Type() *TableBlockInfo { return &tableBlockRe
 // not allocate a block — the bytes are handed to it — but it caps by this: a
 // playback buffer, a recording, a scratch copy all size from the generated
 // constant rather than from a number a person wrote down beside it.
-const FenceConfigBlockMaxBytes int64 = 22656
+const FenceConfigBlockMaxBytes int64 = 43968
 
 // FenceConfigBlock is FenceConfig's block: a pointer and a length, and then rows in place.
 // Opening one is ONE check and no copy; reading a row is one add (§19.2).
@@ -1984,8 +1984,8 @@ type FenceConfigBlock struct {
 // never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
 // package constants because §11 gives a language whose accessors are members
 // exactly that latitude: a member claims nothing at file scope.
-func (b *FenceConfigBlock) ReadsStride() int64           { return 520 }
-func (b *FenceConfigBlock) ReadsMax() int64              { return 8 }
+func (b *FenceConfigBlock) ReadsStride() int64           { return 264 }
+func (b *FenceConfigBlock) ReadsMax() int64              { return 32 }
 func (b *FenceConfigBlock) ReadsProjectionOffset() int64 { return 544 }
 
 // Reads is ITERATED, not indexed by hand: the accessor points at each row where
@@ -2009,8 +2009,8 @@ func (b *FenceConfigBlock) ReadsSpan() []PathRow {
 // never with these (mas-bandwidth/schema docs/SPEC-TABLES.md §19.2). They are METHODS rather than
 // package constants because §11 gives a language whose accessors are members
 // exactly that latitude: a member claims nothing at file scope.
-func (b *FenceConfigBlock) RulesStride() int64           { return 524 }
-func (b *FenceConfigBlock) RulesMax() int64              { return 34 }
+func (b *FenceConfigBlock) RulesStride() int64           { return 268 }
+func (b *FenceConfigBlock) RulesMax() int64              { return 130 }
 func (b *FenceConfigBlock) RulesProjectionOffset() int64 { return 560 }
 
 // Rules is ITERATED, not indexed by hand: the accessor points at each row where
@@ -2076,7 +2076,7 @@ func (block *FenceConfigBlock) Open(base unsafe.Pointer, bytes int64) error {
 		// past the DECLARED MAXIMUM: the producer side refuses this too, because
 		// a consumer that sizes anything by the maximum would overflow on a
 		// count the maximum does not bound
-		if count > 8 {
+		if count > 32 {
 			return TableRefuseBadLayout
 		}
 		if offsetOf < 584 || offsetOf%64 != 0 {
@@ -2109,7 +2109,7 @@ func (block *FenceConfigBlock) Open(base unsafe.Pointer, bytes int64) error {
 		// past the DECLARED MAXIMUM: the producer side refuses this too, because
 		// a consumer that sizes anything by the maximum would overflow on a
 		// count the maximum does not bound
-		if count > 34 {
+		if count > 130 {
 			return TableRefuseBadLayout
 		}
 		if offsetOf < 584 || offsetOf%64 != 0 {
@@ -2187,15 +2187,15 @@ func FenceConfigBlockBegin(b *FenceConfigBlock, s *FenceConfigBlockStorage, c Fe
 	if b == nil {
 		return false
 	}
-	if c.Reads < 0 || c.Reads > 8 {
+	if c.Reads < 0 || c.Reads > 32 {
 		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "reads", Count: int64(c.Reads), Maximum: 8}
+			*refusal = TableBlockRefusal{Array: "reads", Count: int64(c.Reads), Maximum: 32}
 		}
 		return false
 	}
-	if c.Rules < 0 || c.Rules > 34 {
+	if c.Rules < 0 || c.Rules > 130 {
 		if refusal != nil {
-			*refusal = TableBlockRefusal{Array: "rules", Count: int64(c.Rules), Maximum: 34}
+			*refusal = TableBlockRefusal{Array: "rules", Count: int64(c.Rules), Maximum: 130}
 		}
 		return false
 	}
@@ -2208,11 +2208,11 @@ func FenceConfigBlockBegin(b *FenceConfigBlock, s *FenceConfigBlockStorage, c Fe
 	p.ByteOrder = TableBlockByteOrder
 	offset := int64(584)
 	offset = (offset + 63) &^ int64(63)
-	p.Reads = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Reads), Stride: 520}
-	offset += int64(c.Reads) * 520
+	p.Reads = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Reads), Stride: 264}
+	offset += int64(c.Reads) * 264
 	offset = (offset + 63) &^ int64(63)
-	p.Rules = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Rules), Stride: 524}
-	offset += int64(c.Rules) * 524
+	p.Rules = TableBlockTriple{OffsetOf: uint64(offset), Count: uint32(c.Rules), Stride: 268}
+	offset += int64(c.Rules) * 268
 	*b = FenceConfigBlock{Base: s.base, Projection: p, Bytes: (offset + 63) &^ int64(63)}
 	return true
 }

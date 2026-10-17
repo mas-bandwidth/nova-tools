@@ -151,17 +151,17 @@ func init() {
 	tableCookLayoutOffset("ExitRecordRow.Observed", unsafe.Offsetof(ExitRecordRow{}.Observed), 280)
 	tableCookLayoutOffset("ExitRecordRow.Partial", unsafe.Offsetof(ExitRecordRow{}.Partial), 281)
 	tableCookLayoutOffset("ExitRecordRow.Reason", unsafe.Offsetof(ExitRecordRow{}.Reason), 282)
-	tableCookLayoutSize("FenceConfigRow", unsafe.Sizeof(FenceConfigRow{}), 22508)
+	tableCookLayoutSize("FenceConfigRow", unsafe.Sizeof(FenceConfigRow{}), 43820)
 	tableCookLayoutSize("FenceConfigRow alignment", unsafe.Alignof(FenceConfigRow{}), 4)
 	tableCookLayoutOffset("FenceConfigRow.JobDir", unsafe.Offsetof(FenceConfigRow{}.JobDir), 0)
 	tableCookLayoutOffset("FenceConfigRow.Reads", unsafe.Offsetof(FenceConfigRow{}.Reads), 520)
-	tableCookLayoutOffset("FenceConfigRow.Rules", unsafe.Offsetof(FenceConfigRow{}.Rules), 4684)
-	tableCookLayoutOffset("FenceConfigRow.Webfetch", unsafe.Offsetof(FenceConfigRow{}.Webfetch), 22504)
-	tableCookLayoutSize("FenceRuleRow", unsafe.Sizeof(FenceRuleRow{}), 524)
+	tableCookLayoutOffset("FenceConfigRow.Rules", unsafe.Offsetof(FenceConfigRow{}.Rules), 8972)
+	tableCookLayoutOffset("FenceConfigRow.Webfetch", unsafe.Offsetof(FenceConfigRow{}.Webfetch), 43816)
+	tableCookLayoutSize("FenceRuleRow", unsafe.Sizeof(FenceRuleRow{}), 268)
 	tableCookLayoutSize("FenceRuleRow alignment", unsafe.Alignof(FenceRuleRow{}), 4)
 	tableCookLayoutOffset("FenceRuleRow.Pattern", unsafe.Offsetof(FenceRuleRow{}.Pattern), 0)
-	tableCookLayoutOffset("FenceRuleRow.Action", unsafe.Offsetof(FenceRuleRow{}.Action), 520)
-	tableCookLayoutSize("HarnessArgRow", unsafe.Sizeof(HarnessArgRow{}), 520)
+	tableCookLayoutOffset("FenceRuleRow.Action", unsafe.Offsetof(FenceRuleRow{}.Action), 264)
+	tableCookLayoutSize("HarnessArgRow", unsafe.Sizeof(HarnessArgRow{}), 264)
 	tableCookLayoutSize("HarnessArgRow alignment", unsafe.Alignof(HarnessArgRow{}), 4)
 	tableCookLayoutOffset("HarnessArgRow.Text", unsafe.Offsetof(HarnessArgRow{}.Text), 0)
 	tableCookLayoutSize("HarnessConfigRecordRow", unsafe.Sizeof(HarnessConfigRecordRow{}), 864)
@@ -176,13 +176,13 @@ func init() {
 	tableCookLayoutOffset("MemberCarryRow.Attempt", unsafe.Offsetof(MemberCarryRow{}.Attempt), 136)
 	tableCookLayoutOffset("MemberCarryRow.Head", unsafe.Offsetof(MemberCarryRow{}.Head), 140)
 	tableCookLayoutOffset("MemberCarryRow.Branch", unsafe.Offsetof(MemberCarryRow{}.Branch), 212)
-	tableCookLayoutSize("PathRow", unsafe.Sizeof(PathRow{}), 520)
+	tableCookLayoutSize("PathRow", unsafe.Sizeof(PathRow{}), 264)
 	tableCookLayoutSize("PathRow alignment", unsafe.Alignof(PathRow{}), 4)
 	tableCookLayoutOffset("PathRow.Text", unsafe.Offsetof(PathRow{}.Text), 0)
 	tableCookLayoutSize("PhraseRow", unsafe.Sizeof(PhraseRow{}), 264)
 	tableCookLayoutSize("PhraseRow alignment", unsafe.Alignof(PhraseRow{}), 4)
 	tableCookLayoutOffset("PhraseRow.Text", unsafe.Offsetof(PhraseRow{}.Text), 0)
-	tableCookLayoutSize("WorkerRecordRow", unsafe.Sizeof(WorkerRecordRow{}), 19456)
+	tableCookLayoutSize("WorkerRecordRow", unsafe.Sizeof(WorkerRecordRow{}), 36544)
 	tableCookLayoutSize("WorkerRecordRow alignment", unsafe.Alignof(WorkerRecordRow{}), 8)
 	tableCookLayoutOffset("WorkerRecordRow.Name", unsafe.Offsetof(WorkerRecordRow{}.Name), 0)
 	tableCookLayoutOffset("WorkerRecordRow.Provider", unsafe.Offsetof(WorkerRecordRow{}.Provider), 72)
@@ -195,15 +195,15 @@ func init() {
 	tableCookLayoutOffset("WorkerRecordRow.WorkerClass", unsafe.Offsetof(WorkerRecordRow{}.WorkerClass), 1593)
 	tableCookLayoutOffset("WorkerRecordRow.Harness", unsafe.Offsetof(WorkerRecordRow{}.Harness), 1594)
 	tableCookLayoutOffset("WorkerRecordRow.HarnessArgs", unsafe.Offsetof(WorkerRecordRow{}.HarnessArgs), 1856)
-	tableCookLayoutOffset("WorkerRecordRow.WorkerDir", unsafe.Offsetof(WorkerRecordRow{}.WorkerDir), 10180)
-	tableCookLayoutOffset("WorkerRecordRow.Deadline", unsafe.Offsetof(WorkerRecordRow{}.Deadline), 10700)
-	tableCookLayoutOffset("WorkerRecordRow.Board", unsafe.Offsetof(WorkerRecordRow{}.Board), 10740)
-	tableCookLayoutOffset("WorkerRecordRow.ReadRoots", unsafe.Offsetof(WorkerRecordRow{}.ReadRoots), 11004)
-	tableCookLayoutOffset("WorkerRecordRow.MaxTurns", unsafe.Offsetof(WorkerRecordRow{}.MaxTurns), 15168)
-	tableCookLayoutOffset("WorkerRecordRow.MaxCacheRead", unsafe.Offsetof(WorkerRecordRow{}.MaxCacheRead), 15176)
-	tableCookLayoutOffset("WorkerRecordRow.InputLimitPhrases", unsafe.Offsetof(WorkerRecordRow{}.InputLimitPhrases), 15184)
-	tableCookLayoutOffset("WorkerRecordRow.LaunchGrace", unsafe.Offsetof(WorkerRecordRow{}.LaunchGrace), 19412)
-	tableCookLayoutOffset("WorkerRecordRow.KeepData", unsafe.Offsetof(WorkerRecordRow{}.KeepData), 19452)
+	tableCookLayoutOffset("WorkerRecordRow.WorkerDir", unsafe.Offsetof(WorkerRecordRow{}.WorkerDir), 18756)
+	tableCookLayoutOffset("WorkerRecordRow.Deadline", unsafe.Offsetof(WorkerRecordRow{}.Deadline), 19276)
+	tableCookLayoutOffset("WorkerRecordRow.Board", unsafe.Offsetof(WorkerRecordRow{}.Board), 19316)
+	tableCookLayoutOffset("WorkerRecordRow.ReadRoots", unsafe.Offsetof(WorkerRecordRow{}.ReadRoots), 19580)
+	tableCookLayoutOffset("WorkerRecordRow.MaxTurns", unsafe.Offsetof(WorkerRecordRow{}.MaxTurns), 28032)
+	tableCookLayoutOffset("WorkerRecordRow.MaxCacheRead", unsafe.Offsetof(WorkerRecordRow{}.MaxCacheRead), 28040)
+	tableCookLayoutOffset("WorkerRecordRow.InputLimitPhrases", unsafe.Offsetof(WorkerRecordRow{}.InputLimitPhrases), 28048)
+	tableCookLayoutOffset("WorkerRecordRow.LaunchGrace", unsafe.Offsetof(WorkerRecordRow{}.LaunchGrace), 36500)
+	tableCookLayoutOffset("WorkerRecordRow.KeepData", unsafe.Offsetof(WorkerRecordRow{}.KeepData), 36540)
 }
 
 // tableCookLayoutSize refuses a record this runtime lays out at a different
@@ -265,25 +265,25 @@ func init() {
 		},
 	}
 	tableCookRecords[2] = TableCookInfo{
-		Name: "FenceConfig", Size: 22508, Align: 4, NumFields: 4,
+		Name: "FenceConfig", Size: 43820, Align: 4, NumFields: 4,
 		Fields: []TableCookFieldInfo{
 			{Name: "job_dir", Offset: 0, Size: 520, ElemSize: 520, IsArray: false, ArrayBound: 512, IsPointer: false, CountOffset: 516, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "reads", Offset: 520, Size: 4164, ElemSize: 520, IsArray: true, ArrayBound: 8, IsPointer: false, CountOffset: 4680, PresentOffset: -1, Storage: TableCookStorageRecord},
-			{Name: "rules", Offset: 4684, Size: 17820, ElemSize: 524, IsArray: true, ArrayBound: 34, IsPointer: false, CountOffset: 22500, PresentOffset: -1, Storage: TableCookStorageRecord},
-			{Name: "webfetch", Offset: 22504, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
+			{Name: "reads", Offset: 520, Size: 8452, ElemSize: 264, IsArray: true, ArrayBound: 32, IsPointer: false, CountOffset: 8968, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "rules", Offset: 8972, Size: 34844, ElemSize: 268, IsArray: true, ArrayBound: 130, IsPointer: false, CountOffset: 43812, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "webfetch", Offset: 43816, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
 		},
 	}
 	tableCookRecords[3] = TableCookInfo{
-		Name: "FenceRule", Size: 524, Align: 4, NumFields: 2,
+		Name: "FenceRule", Size: 268, Align: 4, NumFields: 2,
 		Fields: []TableCookFieldInfo{
-			{Name: "pattern", Offset: 0, Size: 520, ElemSize: 520, IsArray: false, ArrayBound: 512, IsPointer: false, CountOffset: 516, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "action", Offset: 520, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
+			{Name: "pattern", Offset: 0, Size: 264, ElemSize: 264, IsArray: false, ArrayBound: 256, IsPointer: false, CountOffset: 260, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "action", Offset: 264, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
 		},
 	}
 	tableCookRecords[4] = TableCookInfo{
-		Name: "HarnessArg", Size: 520, Align: 4, NumFields: 1,
+		Name: "HarnessArg", Size: 264, Align: 4, NumFields: 1,
 		Fields: []TableCookFieldInfo{
-			{Name: "text", Offset: 0, Size: 520, ElemSize: 520, IsArray: false, ArrayBound: 512, IsPointer: false, CountOffset: 516, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "text", Offset: 0, Size: 264, ElemSize: 264, IsArray: false, ArrayBound: 256, IsPointer: false, CountOffset: 260, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
 	tableCookRecords[5] = TableCookInfo{
@@ -305,9 +305,9 @@ func init() {
 		},
 	}
 	tableCookRecords[7] = TableCookInfo{
-		Name: "Path", Size: 520, Align: 4, NumFields: 1,
+		Name: "Path", Size: 264, Align: 4, NumFields: 1,
 		Fields: []TableCookFieldInfo{
-			{Name: "text", Offset: 0, Size: 520, ElemSize: 520, IsArray: false, ArrayBound: 512, IsPointer: false, CountOffset: 516, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "text", Offset: 0, Size: 264, ElemSize: 264, IsArray: false, ArrayBound: 256, IsPointer: false, CountOffset: 260, PresentOffset: -1, Storage: TableCookStorageString},
 		},
 	}
 	tableCookRecords[8] = TableCookInfo{
@@ -317,7 +317,7 @@ func init() {
 		},
 	}
 	tableCookRecords[9] = TableCookInfo{
-		Name: "WorkerRecord", Size: 19456, Align: 8, NumFields: 20,
+		Name: "WorkerRecord", Size: 36544, Align: 8, NumFields: 20,
 		Fields: []TableCookFieldInfo{
 			{Name: "name", Offset: 0, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 68, PresentOffset: -1, Storage: TableCookStorageString},
 			{Name: "provider", Offset: 72, Size: 72, ElemSize: 72, IsArray: false, ArrayBound: 64, IsPointer: false, CountOffset: 140, PresentOffset: -1, Storage: TableCookStorageString},
@@ -329,16 +329,16 @@ func init() {
 			{Name: "usage", Offset: 1592, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
 			{Name: "worker_class", Offset: 1593, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
 			{Name: "harness", Offset: 1594, Size: 262, ElemSize: 262, IsArray: false, ArrayBound: 256, IsPointer: false, CountOffset: 1852, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "harness_args", Offset: 1856, Size: 8324, ElemSize: 520, IsArray: true, ArrayBound: 16, IsPointer: false, CountOffset: 10176, PresentOffset: -1, Storage: TableCookStorageRecord},
-			{Name: "worker_dir", Offset: 10180, Size: 520, ElemSize: 520, IsArray: false, ArrayBound: 512, IsPointer: false, CountOffset: 10696, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "deadline", Offset: 10700, Size: 40, ElemSize: 40, IsArray: false, ArrayBound: 32, IsPointer: false, CountOffset: 10736, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "board", Offset: 10740, Size: 264, ElemSize: 264, IsArray: false, ArrayBound: 256, IsPointer: false, CountOffset: 11000, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "read_roots", Offset: 11004, Size: 4164, ElemSize: 520, IsArray: true, ArrayBound: 8, IsPointer: false, CountOffset: 15164, PresentOffset: -1, Storage: TableCookStorageRecord},
-			{Name: "max_turns", Offset: 15168, Size: 4, ElemSize: 4, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
-			{Name: "max_cache_read", Offset: 15176, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
-			{Name: "input_limit_phrases", Offset: 15184, Size: 4228, ElemSize: 264, IsArray: true, ArrayBound: 16, IsPointer: false, CountOffset: 19408, PresentOffset: -1, Storage: TableCookStorageRecord},
-			{Name: "launch_grace", Offset: 19412, Size: 40, ElemSize: 40, IsArray: false, ArrayBound: 32, IsPointer: false, CountOffset: 19448, PresentOffset: -1, Storage: TableCookStorageString},
-			{Name: "keep_data", Offset: 19452, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
+			{Name: "harness_args", Offset: 1856, Size: 16900, ElemSize: 264, IsArray: true, ArrayBound: 64, IsPointer: false, CountOffset: 18752, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "worker_dir", Offset: 18756, Size: 520, ElemSize: 520, IsArray: false, ArrayBound: 512, IsPointer: false, CountOffset: 19272, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "deadline", Offset: 19276, Size: 40, ElemSize: 40, IsArray: false, ArrayBound: 32, IsPointer: false, CountOffset: 19312, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "board", Offset: 19316, Size: 264, ElemSize: 264, IsArray: false, ArrayBound: 256, IsPointer: false, CountOffset: 19576, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "read_roots", Offset: 19580, Size: 8452, ElemSize: 264, IsArray: true, ArrayBound: 32, IsPointer: false, CountOffset: 28028, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "max_turns", Offset: 28032, Size: 4, ElemSize: 4, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
+			{Name: "max_cache_read", Offset: 28040, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
+			{Name: "input_limit_phrases", Offset: 28048, Size: 8452, ElemSize: 264, IsArray: true, ArrayBound: 32, IsPointer: false, CountOffset: 36496, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "launch_grace", Offset: 36500, Size: 40, ElemSize: 40, IsArray: false, ArrayBound: 32, IsPointer: false, CountOffset: 36536, PresentOffset: -1, Storage: TableCookStorageString},
+			{Name: "keep_data", Offset: 36540, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
 		},
 	}
 	tableCookRecords[2].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[7] }
@@ -369,7 +369,7 @@ type PathCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c PathCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c PathCook) RootSize() int64        { return 520 }
+func (c PathCook) RootSize() int64        { return 264 }
 func (c PathCook) RootAlign() int64       { return 4 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
@@ -416,7 +416,7 @@ func (cook *PathCook) Open(base unsafe.Pointer, length int64) error {
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 520 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 264 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -469,7 +469,7 @@ type HarnessArgCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c HarnessArgCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c HarnessArgCook) RootSize() int64        { return 520 }
+func (c HarnessArgCook) RootSize() int64        { return 264 }
 func (c HarnessArgCook) RootAlign() int64       { return 4 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
@@ -516,7 +516,7 @@ func (cook *HarnessArgCook) Open(base unsafe.Pointer, length int64) error {
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 520 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 264 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -669,7 +669,7 @@ type FenceRuleCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c FenceRuleCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c FenceRuleCook) RootSize() int64        { return 524 }
+func (c FenceRuleCook) RootSize() int64        { return 268 }
 func (c FenceRuleCook) RootAlign() int64       { return 4 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
@@ -716,7 +716,7 @@ func (cook *FenceRuleCook) Open(base unsafe.Pointer, length int64) error {
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 524 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 268 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -869,7 +869,7 @@ type WorkerRecordCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c WorkerRecordCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c WorkerRecordCook) RootSize() int64        { return 19456 }
+func (c WorkerRecordCook) RootSize() int64        { return 36544 }
 func (c WorkerRecordCook) RootAlign() int64       { return 8 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
@@ -916,7 +916,7 @@ func (cook *WorkerRecordCook) Open(base unsafe.Pointer, length int64) error {
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 19456 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 36544 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -1071,7 +1071,7 @@ type FenceConfigCook struct {
 // accessors are members free to spell them that way, and a package constant
 // per table per fact would claim names §11 does not.
 func (c FenceConfigCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
-func (c FenceConfigCook) RootSize() int64        { return 22508 }
+func (c FenceConfigCook) RootSize() int64        { return 43820 }
 func (c FenceConfigCook) RootAlign() int64       { return 4 }
 
 // Root is the root record at the region's base. It is a POINTER and not a
@@ -1118,7 +1118,7 @@ func (cook *FenceConfigCook) Open(base unsafe.Pointer, length int64) error {
 	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
 	dataLength := binary.NativeEndian.Uint64(header[24:])
 	attribution := binary.NativeEndian.Uint64(header[32:])
-	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 22508 {
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 43820 {
 		return TableRefuseTruncated
 	}
 	if uint64(uintptr(base))%alignment != 0 {
@@ -1350,7 +1350,7 @@ func MemberCarryAt(slot *int64) *MemberCarryRow {
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 func (c MemberCarryCook) Type() *TableCookInfo { return &tableCookRecords[6] }
 
-const tableCookBuildVersion uint64 = 0x1aaf9c9990caec15
+const tableCookBuildVersion uint64 = 0x521cbd807ba695c8
 
 // TableByteOrder selects the target order, independently of the writing host.
 type TableByteOrder uint8
@@ -1510,12 +1510,12 @@ func (w *tableCookWriter) reference(slot *int64, at int64) bool { return *slot =
 func (w *tableCookWriter) container(p unsafe.Pointer, f *TableFieldInfo, at int64, live bool) bool {
 	return false
 }
-func PathCookMeasure(value *Path) int64                { return 600 }
+func PathCookMeasure(value *Path) int64                { return 344 }
 func PathCookMeasureReason(value *Path) (int64, error) { return PathCookMeasure(value), nil }
 func PathCookFrom(value *Path, buffer []byte, order TableByteOrder) bool {
 	return tableCookFixed(unsafe.Pointer(value), PathTableType(), buffer, order)
 }
-func HarnessArgCookMeasure(value *HarnessArg) int64 { return 600 }
+func HarnessArgCookMeasure(value *HarnessArg) int64 { return 344 }
 func HarnessArgCookMeasureReason(value *HarnessArg) (int64, error) {
 	return HarnessArgCookMeasure(value), nil
 }
@@ -1527,7 +1527,7 @@ func PhraseCookMeasureReason(value *Phrase) (int64, error) { return PhraseCookMe
 func PhraseCookFrom(value *Phrase, buffer []byte, order TableByteOrder) bool {
 	return tableCookFixed(unsafe.Pointer(value), PhraseTableType(), buffer, order)
 }
-func FenceRuleCookMeasure(value *FenceRule) int64 { return 608 }
+func FenceRuleCookMeasure(value *FenceRule) int64 { return 352 }
 func FenceRuleCookMeasureReason(value *FenceRule) (int64, error) {
 	return FenceRuleCookMeasure(value), nil
 }
@@ -1541,7 +1541,7 @@ func ExitRecordCookMeasureReason(value *ExitRecord) (int64, error) {
 func ExitRecordCookFrom(value *ExitRecord, buffer []byte, order TableByteOrder) bool {
 	return tableCookFixed(unsafe.Pointer(value), ExitRecordTableType(), buffer, order)
 }
-func WorkerRecordCookMeasure(value *WorkerRecord) int64 { return 19536 }
+func WorkerRecordCookMeasure(value *WorkerRecord) int64 { return 36624 }
 func WorkerRecordCookMeasureReason(value *WorkerRecord) (int64, error) {
 	return WorkerRecordCookMeasure(value), nil
 }
@@ -1555,7 +1555,7 @@ func HarnessConfigRecordCookMeasureReason(value *HarnessConfigRecord) (int64, er
 func HarnessConfigRecordCookFrom(value *HarnessConfigRecord, buffer []byte, order TableByteOrder) bool {
 	return tableCookFixed(unsafe.Pointer(value), HarnessConfigRecordTableType(), buffer, order)
 }
-func FenceConfigCookMeasure(value *FenceConfig) int64 { return 22592 }
+func FenceConfigCookMeasure(value *FenceConfig) int64 { return 43904 }
 func FenceConfigCookMeasureReason(value *FenceConfig) (int64, error) {
 	return FenceConfigCookMeasure(value), nil
 }

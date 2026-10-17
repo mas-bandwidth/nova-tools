@@ -36,18 +36,18 @@ package swarmwire
 //                FenceDeny); `ask` is never written: a run with no terminal
 //                auto-rejects it and the model stops
 
-// Path is an absolute path. No code bounds a path's length; 512 is the
+// Path is an absolute path. No code bounds a path's length; 256 is the
 // declared ceiling. A type, because an array of string(N) is not supported:
 // the element is wrapped.
 fixed table Path
 {
-    text string(512)
+    text string(256)
 }
 
 // HarnessArg is one element of a harness invocation (Worker.HarnessArgs).
 fixed table HarnessArg
 {
-    text string(512)
+    text string(256)
 }
 
 // Phrase is one provider sentence (Worker.InputLimitPhrases).
@@ -61,8 +61,8 @@ fixed table Phrase
 fixed table FenceRule
 {
     // pattern: a job or read path with a wildcard suffix (FenceJobPatterns,
-    // FenceReadPatterns). No code bound; 512 is the declared ceiling.
-    pattern string(512)
+    // FenceReadPatterns). No code bound; 256 is the declared ceiling (a fixed record holds at most 65536 bytes).
+    pattern string(256)
     action  uint8       | min = 0, max = 2
 }
 
@@ -127,23 +127,23 @@ fixed table WorkerRecord
     // harness: the harness command, found on PATH.
     harness string(256)
     // harness_args: the invocation; one must place {model}. No code bound on
-    // the count; 16 is the declared ceiling.
-    harness_args [..16]HarnessArg
+    // the count; 64 is the largest the record allows alongside the rest (measured max in real worker descriptions: 5).
+    harness_args [..64]HarnessArg
     // worker_dir: the home copy of the worker's own directory, absolute.
     worker_dir string(512)
     // deadline: a Go duration such as 20m (time.ParseDuration).
     deadline string(32)
     board    string(256)
     // read_roots: absolute directories a job may read. No code bound on the
-    // count; 8 is the declared ceiling.
-    read_roots [..8]Path
+    // count; 32 is the declared ceiling (measured max in real descriptions: 1).
+    read_roots [..32]Path
     // max_turns and max_cache_read: the card budget; zero is unset and a
     // negative value is refused at load (LoadWorker).
     max_turns      int32 | min = 0, max = 2147483647
     max_cache_read int64 | min = 0, max = 9007199254740991
     // input_limit_phrases: the provider's own sentences for a request that did
-    // not fit. No code bound on the count; 16 is the declared ceiling.
-    input_limit_phrases [..16]Phrase
+    // not fit. No code bound on the count; 32 is the declared ceiling (measured max: 3). The code accepts any count; see the PR, Schema improvements wanted.
+    input_limit_phrases [..32]Phrase
     // launch_grace: a positive Go duration; empty is DefaultLaunchGrace.
     launch_grace string(32)
     keep_data    bool
@@ -170,12 +170,12 @@ fixed table FenceConfig
     // job_dir: the job directory, absolute.
     job_dir string(512)
     // reads: the absolute read-only paths a card named on a READ: line. No
-    // code bound on the count; 8 is the declared ceiling.
-    reads [..8]Path
+    // code bound on the count; 32 is the declared ceiling (measured max READ: line today: 12 paths). The code accepts any count; see the PR.
+    reads [..32]Path
     // rules: the patterns FencePermission writes: two for the job
     // (FenceJobPatterns) and up to four for each read (FenceReadPatterns):
-    // 2 + 4 * 8.
-    rules [..34]FenceRule
+    // 2 + 4 * 32.
+    rules [..130]FenceRule
     // webfetch: the network tool is never left to prompt; Deny today.
     webfetch uint8 | min = 0, max = 2
 }

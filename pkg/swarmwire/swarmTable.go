@@ -13,14 +13,14 @@ import "unsafe"
 // Path — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by PathReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type Path struct {
-	Text       [512]byte // string(512): max length, used length beside it
+	Text       [256]byte // string(256): max length, used length beside it
 	TextLength int32
 }
 
 // HarnessArg — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by HarnessArgReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type HarnessArg struct {
-	Text       [512]byte // string(512): max length, used length beside it
+	Text       [256]byte // string(256): max length, used length beside it
 	TextLength int32
 }
 
@@ -34,7 +34,7 @@ type Phrase struct {
 // FenceRule — TABLE-wire storage: exported fields, every buffer inside the value,
 // declared defaults restored by FenceRuleReset (mas-bandwidth/schema docs/SPEC-TABLES.md).
 type FenceRule struct {
-	Pattern       [512]byte // string(512): max length, used length beside it
+	Pattern       [256]byte // string(256): max length, used length beside it
 	PatternLength int32
 	Action        uint8
 }
@@ -82,7 +82,7 @@ type WorkerRecord struct {
 	WorkerClass            uint8
 	Harness                [256]byte // string(256): max length, used length beside it
 	HarnessLength          int32
-	HarnessArgs            [16]HarnessArg // used count beside it; count in [0, 16]
+	HarnessArgs            [64]HarnessArg // used count beside it; count in [0, 64]
 	HarnessArgsCount       int32
 	WorkerDir              [512]byte // string(512): max length, used length beside it
 	WorkerDirLength        int32
@@ -90,11 +90,11 @@ type WorkerRecord struct {
 	DeadlineLength         int32
 	Board                  [256]byte // string(256): max length, used length beside it
 	BoardLength            int32
-	ReadRoots              [8]Path // used count beside it; count in [0, 8]
+	ReadRoots              [32]Path // used count beside it; count in [0, 32]
 	ReadRootsCount         int32
 	MaxTurns               int32
 	MaxCacheRead           int64
-	InputLimitPhrases      [16]Phrase // used count beside it; count in [0, 16]
+	InputLimitPhrases      [32]Phrase // used count beside it; count in [0, 32]
 	InputLimitPhrasesCount int32
 	LaunchGrace            [32]byte // string(32): max length, used length beside it
 	LaunchGraceLength      int32
@@ -119,9 +119,9 @@ type HarnessConfigRecord struct {
 type FenceConfig struct {
 	JobDir       [512]byte // string(512): max length, used length beside it
 	JobDirLength int32
-	Reads        [8]Path // used count beside it; count in [0, 8]
+	Reads        [32]Path // used count beside it; count in [0, 32]
 	ReadsCount   int32
-	Rules        [34]FenceRule // used count beside it; count in [0, 34]
+	Rules        [130]FenceRule // used count beside it; count in [0, 130]
 	RulesCount   int32
 	Webfetch     uint8
 }
@@ -185,14 +185,14 @@ func PathMeasureReason(value *Path) (int64, error) {
 }
 func PathSaveBody(w *TableWriter, value *Path) bool {
 	{
-		if value.TextLength < 0 || value.TextLength > 512 {
+		if value.TextLength < 0 || value.TextLength > 256 {
 			return false
 		}
 		if value.TextLength > 0 {
 			if ref := w.Ids.refAtHit(52, 0xfa04f4ef1995407e); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.TextLength < 0 || value.TextLength > 512 {
+			if value.TextLength < 0 || value.TextLength > 256 {
 				return false
 			}
 			{
@@ -298,8 +298,8 @@ func PathLoadBody(r *TableReader, value *Path) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 512 {
-				keep = tableUtf8Clamp(sub.Buffer, 512)
+			if keep > 256 {
+				keep = tableUtf8Clamp(sub.Buffer, 256)
 				r.Report.Clamped++
 			}
 			clear(value.Text[:])
@@ -436,14 +436,14 @@ func HarnessArgMeasureReason(value *HarnessArg) (int64, error) {
 }
 func HarnessArgSaveBody(w *TableWriter, value *HarnessArg) bool {
 	{
-		if value.TextLength < 0 || value.TextLength > 512 {
+		if value.TextLength < 0 || value.TextLength > 256 {
 			return false
 		}
 		if value.TextLength > 0 {
 			if ref := w.Ids.refAtHit(52, 0xfa04f4ef1995407e); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.TextLength < 0 || value.TextLength > 512 {
+			if value.TextLength < 0 || value.TextLength > 256 {
 				return false
 			}
 			{
@@ -549,8 +549,8 @@ func HarnessArgLoadBody(r *TableReader, value *HarnessArg) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 512 {
-				keep = tableUtf8Clamp(sub.Buffer, 512)
+			if keep > 256 {
+				keep = tableUtf8Clamp(sub.Buffer, 256)
 				r.Report.Clamped++
 			}
 			clear(value.Text[:])
@@ -939,14 +939,14 @@ func FenceRuleMeasureReason(value *FenceRule) (int64, error) {
 }
 func FenceRuleSaveBody(w *TableWriter, value *FenceRule) bool {
 	{
-		if value.PatternLength < 0 || value.PatternLength > 512 {
+		if value.PatternLength < 0 || value.PatternLength > 256 {
 			return false
 		}
 		if value.PatternLength > 0 {
 			if ref := w.Ids.refAtHit(4, 0x0b7a1e4bea695f89); !w.headerPair(ref, 12) {
 				w.headerRest(ref, 12)
 			}
-			if value.PatternLength < 0 || value.PatternLength > 512 {
+			if value.PatternLength < 0 || value.PatternLength > 256 {
 				return false
 			}
 			{
@@ -1063,8 +1063,8 @@ func FenceRuleLoadBody(r *TableReader, value *FenceRule) bool {
 				break
 			}
 			keep := int64(len(sub.Buffer))
-			if keep > 512 {
-				keep = tableUtf8Clamp(sub.Buffer, 512)
+			if keep > 256 {
+				keep = tableUtf8Clamp(sub.Buffer, 256)
 				r.Report.Clamped++
 			}
 			clear(value.Pattern[:])
@@ -2127,7 +2127,7 @@ func WorkerRecordMeasureReason(value *WorkerRecord) (int64, error) {
 	return size, nil
 }
 func WorkerRecordSaveBody(w *TableWriter, value *WorkerRecord) bool {
-	var arrayLengths [16]int64
+	var arrayLengths [64]int64
 	{
 		if value.NameLength < 0 || value.NameLength > 64 {
 			return false
@@ -2551,14 +2551,14 @@ func WorkerRecordSaveBody(w *TableWriter, value *WorkerRecord) bool {
 		}
 	}
 	{
-		if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 16 {
+		if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 64 {
 			return false
 		}
 		if value.HarnessArgsCount > 0 {
 			if ref := w.Ids.refAtHit(47, 0xe15a71de737c1c11); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
-			if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 16 {
+			if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 64 {
 				return false
 			}
 			{
@@ -2755,14 +2755,14 @@ func WorkerRecordSaveBody(w *TableWriter, value *WorkerRecord) bool {
 		}
 	}
 	{
-		if value.ReadRootsCount < 0 || value.ReadRootsCount > 8 {
+		if value.ReadRootsCount < 0 || value.ReadRootsCount > 32 {
 			return false
 		}
 		if value.ReadRootsCount > 0 {
 			if ref := w.Ids.refAtHit(50, 0xf7df2f140b025f4b); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
-			if value.ReadRootsCount < 0 || value.ReadRootsCount > 8 {
+			if value.ReadRootsCount < 0 || value.ReadRootsCount > 32 {
 				return false
 			}
 			{
@@ -2831,14 +2831,14 @@ func WorkerRecordSaveBody(w *TableWriter, value *WorkerRecord) bool {
 		}
 	}
 	{
-		if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 16 {
+		if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 32 {
 			return false
 		}
 		if value.InputLimitPhrasesCount > 0 {
 			if ref := w.Ids.refAtHit(51, 0xf9d5642cca9049fa); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
-			if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 16 {
+			if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 32 {
 				return false
 			}
 			{
@@ -3289,8 +3289,8 @@ func WorkerRecordLoadBody(r *TableReader, value *WorkerRecord) bool {
 						break
 					}
 					keep := count
-					if keep > 16 {
-						keep = 16
+					if keep > 64 {
+						keep = 64
 						r.Report.Clamped++
 					}
 					previous := value.HarnessArgsCount
@@ -3426,8 +3426,8 @@ func WorkerRecordLoadBody(r *TableReader, value *WorkerRecord) bool {
 						break
 					}
 					keep := count
-					if keep > 8 {
-						keep = 8
+					if keep > 32 {
+						keep = 32
 						r.Report.Clamped++
 					}
 					previous := value.ReadRootsCount
@@ -3565,8 +3565,8 @@ func WorkerRecordLoadBody(r *TableReader, value *WorkerRecord) bool {
 						break
 					}
 					keep := count
-					if keep > 16 {
-						keep = 16
+					if keep > 32 {
+						keep = 32
 						r.Report.Clamped++
 					}
 					previous := value.InputLimitPhrasesCount
@@ -4262,7 +4262,7 @@ func FenceConfigMeasureReason(value *FenceConfig) (int64, error) {
 	return size, nil
 }
 func FenceConfigSaveBody(w *TableWriter, value *FenceConfig) bool {
-	var arrayLengths [34]int64
+	var arrayLengths [32]int64
 	{
 		if value.JobDirLength < 0 || value.JobDirLength > 512 {
 			return false
@@ -4314,14 +4314,14 @@ func FenceConfigSaveBody(w *TableWriter, value *FenceConfig) bool {
 		}
 	}
 	{
-		if value.ReadsCount < 0 || value.ReadsCount > 8 {
+		if value.ReadsCount < 0 || value.ReadsCount > 32 {
 			return false
 		}
 		if value.ReadsCount > 0 {
 			if ref := w.Ids.refAtHit(31, 0x8935b4f305f36a82); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
-			if value.ReadsCount < 0 || value.ReadsCount > 8 {
+			if value.ReadsCount < 0 || value.ReadsCount > 32 {
 				return false
 			}
 			{
@@ -4368,14 +4368,14 @@ func FenceConfigSaveBody(w *TableWriter, value *FenceConfig) bool {
 		}
 	}
 	{
-		if value.RulesCount < 0 || value.RulesCount > 34 {
+		if value.RulesCount < 0 || value.RulesCount > 130 {
 			return false
 		}
 		if value.RulesCount > 0 {
 			if ref := w.Ids.refAtHit(25, 0x67124f6a285153c0); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
-			if value.RulesCount < 0 || value.RulesCount > 34 {
+			if value.RulesCount < 0 || value.RulesCount > 130 {
 				return false
 			}
 			{
@@ -4383,15 +4383,24 @@ func FenceConfigSaveBody(w *TableWriter, value *FenceConfig) bool {
 				payload24 := TableWriter{Measuring: true, Ids: w.Ids}
 				pairs := uint64(0)
 				for i := 0; i < int(value.RulesCount); i++ {
-					n := FenceRuleMeasureBody(&value.Rules[i], payload24.Ids)
-					if n < 0 {
-						return false
+					{
+						mark := payload24.Ids.Count
+						n := FenceRuleMeasureBody(&value.Rules[i], payload24.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload24.putLebPair(uint64(n)) {
+							payload24.putLebWide(uint64(n))
+						}
+						if payload24.Measuring {
+							payload24.Advance(n)
+						} else {
+							payload24.Ids.Truncate(mark)
+							if !FenceRuleSaveBody(&payload24, &value.Rules[i]) {
+								return false
+							}
+						}
 					}
-					arrayLengths[i] = n
-					if !payload24.putLebPair(uint64(n)) {
-						payload24.putLebWide(uint64(n))
-					}
-					payload24.Advance(n)
 					pairs++
 				}
 				if payload24.Overflow {
@@ -4410,11 +4419,23 @@ func FenceConfigSaveBody(w *TableWriter, value *FenceConfig) bool {
 						w.putLebWide(pairs)
 					}
 					for i := 0; i < int(value.RulesCount); i++ {
-						if !w.putLebPair(uint64(arrayLengths[i])) {
-							w.putLebWide(uint64(arrayLengths[i]))
-						}
-						if !FenceRuleSaveBody(w, &value.Rules[i]) {
-							return false
+						{
+							mark := w.Ids.Count
+							n := FenceRuleMeasureBody(&value.Rules[i], w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !FenceRuleSaveBody(w, &value.Rules[i]) {
+									return false
+								}
+							}
 						}
 					}
 				}
@@ -4531,8 +4552,8 @@ func FenceConfigLoadBody(r *TableReader, value *FenceConfig) bool {
 						break
 					}
 					keep := count
-					if keep > 8 {
-						keep = 8
+					if keep > 32 {
+						keep = 32
 						r.Report.Clamped++
 					}
 					previous := value.ReadsCount
@@ -4584,8 +4605,8 @@ func FenceConfigLoadBody(r *TableReader, value *FenceConfig) bool {
 						break
 					}
 					keep := count
-					if keep > 34 {
-						keep = 34
+					if keep > 130 {
+						keep = 130
 						r.Report.Clamped++
 					}
 					previous := value.RulesCount
@@ -5531,26 +5552,26 @@ const MemberCarrySaveRetain = "MemberCarry: retention requires a variable root a
 
 func PathFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(Path{}.TextLength)), Size: 512, Aux: dst + uint32(unsafe.Offsetof(Path{}.Text)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // text
+	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(Path{}.TextLength)), Size: 256, Aux: dst + uint32(unsafe.Offsetof(Path{}.Text)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // text
 	n++
 	return n
 }
 
 func PathFixedWriteBody(b []byte, value *Path) {
 	tableFixedPut32(b[0:], uint32(value.TextLength))
-	copy(b[0:][4:], value.Text[:min(uint32(value.TextLength), 512)])
+	copy(b[0:][4:], value.Text[:min(uint32(value.TextLength), 256)])
 }
 
 func HarnessArgFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(HarnessArg{}.TextLength)), Size: 512, Aux: dst + uint32(unsafe.Offsetof(HarnessArg{}.Text)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // text
+	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(HarnessArg{}.TextLength)), Size: 256, Aux: dst + uint32(unsafe.Offsetof(HarnessArg{}.Text)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // text
 	n++
 	return n
 }
 
 func HarnessArgFixedWriteBody(b []byte, value *HarnessArg) {
 	tableFixedPut32(b[0:], uint32(value.TextLength))
-	copy(b[0:][4:], value.Text[:min(uint32(value.TextLength), 512)])
+	copy(b[0:][4:], value.Text[:min(uint32(value.TextLength), 256)])
 }
 
 func PhraseFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
@@ -5567,10 +5588,10 @@ func PhraseFixedWriteBody(b []byte, value *Phrase) {
 
 func FenceRuleFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
 	n := 0
-	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(FenceRule{}.PatternLength)), Size: 512, Aux: dst + uint32(unsafe.Offsetof(FenceRule{}.Pattern)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // pattern
+	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(FenceRule{}.PatternLength)), Size: 256, Aux: dst + uint32(unsafe.Offsetof(FenceRule{}.Pattern)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // pattern
 	n++
 	{
-		es := src + 516
+		es := src + 260
 		ed := dst + uint32(unsafe.Offsetof(FenceRule{}.Action))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
@@ -5580,8 +5601,8 @@ func FenceRuleFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, 
 
 func FenceRuleFixedWriteBody(b []byte, value *FenceRule) {
 	tableFixedPut32(b[0:], uint32(value.PatternLength))
-	copy(b[0:][4:], value.Pattern[:min(uint32(value.PatternLength), 512)])
-	tableFixedPut8(b[516:], uint8(value.Action))
+	copy(b[0:][4:], value.Pattern[:min(uint32(value.PatternLength), 256)])
+	tableFixedPut8(b[260:], uint8(value.Action))
 }
 
 func ExitRecordFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
@@ -5693,49 +5714,49 @@ func WorkerRecordFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLin
 	}
 	out[n] = TableFixedEntry{Src: src + 1566, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.HarnessLength)), Size: 256, Aux: dst + uint32(unsafe.Offsetof(WorkerRecord{}.Harness)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // harness
 	n++
-	out[n] = TableFixedEntry{Src: src + 1826, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.HarnessArgsCount)), Size: 16, Guard: tableFixedNoGuard, Op: tableFixedCount} // harness_args count
+	out[n] = TableFixedEntry{Src: src + 1826, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.HarnessArgsCount)), Size: 64, Guard: tableFixedNoGuard, Op: tableFixedCount} // harness_args count
 	n++
-	for i := uint32(0); i < 16; i++ {
-		es := src + 1830 + i*516
+	for i := uint32(0); i < 64; i++ {
+		es := src + 1830 + i*260
 		ed := dst + uint32(unsafe.Offsetof(WorkerRecord{}.HarnessArgs)) + i*uint32(unsafe.Sizeof(HarnessArg{}))
 		n += HarnessArgFixedLeaves(out[n:], links[n:], es, ed)
 	}
-	out[n] = TableFixedEntry{Src: src + 10086, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.WorkerDirLength)), Size: 512, Aux: dst + uint32(unsafe.Offsetof(WorkerRecord{}.WorkerDir)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // worker_dir
+	out[n] = TableFixedEntry{Src: src + 18470, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.WorkerDirLength)), Size: 512, Aux: dst + uint32(unsafe.Offsetof(WorkerRecord{}.WorkerDir)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // worker_dir
 	n++
-	out[n] = TableFixedEntry{Src: src + 10602, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.DeadlineLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(WorkerRecord{}.Deadline)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // deadline
+	out[n] = TableFixedEntry{Src: src + 18986, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.DeadlineLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(WorkerRecord{}.Deadline)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // deadline
 	n++
-	out[n] = TableFixedEntry{Src: src + 10638, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.BoardLength)), Size: 256, Aux: dst + uint32(unsafe.Offsetof(WorkerRecord{}.Board)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // board
+	out[n] = TableFixedEntry{Src: src + 19022, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.BoardLength)), Size: 256, Aux: dst + uint32(unsafe.Offsetof(WorkerRecord{}.Board)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // board
 	n++
-	out[n] = TableFixedEntry{Src: src + 10898, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.ReadRootsCount)), Size: 8, Guard: tableFixedNoGuard, Op: tableFixedCount} // read_roots count
+	out[n] = TableFixedEntry{Src: src + 19282, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.ReadRootsCount)), Size: 32, Guard: tableFixedNoGuard, Op: tableFixedCount} // read_roots count
 	n++
-	for i := uint32(0); i < 8; i++ {
-		es := src + 10902 + i*516
+	for i := uint32(0); i < 32; i++ {
+		es := src + 19286 + i*260
 		ed := dst + uint32(unsafe.Offsetof(WorkerRecord{}.ReadRoots)) + i*uint32(unsafe.Sizeof(Path{}))
 		n += PathFixedLeaves(out[n:], links[n:], es, ed)
 	}
 	{
-		es := src + 15030
+		es := src + 27606
 		ed := dst + uint32(unsafe.Offsetof(WorkerRecord{}.MaxTurns))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 4, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
 	{
-		es := src + 15034
+		es := src + 27610
 		ed := dst + uint32(unsafe.Offsetof(WorkerRecord{}.MaxCacheRead))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 8, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
 	}
-	out[n] = TableFixedEntry{Src: src + 15042, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.InputLimitPhrasesCount)), Size: 16, Guard: tableFixedNoGuard, Op: tableFixedCount} // input_limit_phrases count
+	out[n] = TableFixedEntry{Src: src + 27618, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.InputLimitPhrasesCount)), Size: 32, Guard: tableFixedNoGuard, Op: tableFixedCount} // input_limit_phrases count
 	n++
-	for i := uint32(0); i < 16; i++ {
-		es := src + 15046 + i*260
+	for i := uint32(0); i < 32; i++ {
+		es := src + 27622 + i*260
 		ed := dst + uint32(unsafe.Offsetof(WorkerRecord{}.InputLimitPhrases)) + i*uint32(unsafe.Sizeof(Phrase{}))
 		n += PhraseFixedLeaves(out[n:], links[n:], es, ed)
 	}
-	out[n] = TableFixedEntry{Src: src + 19206, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.LaunchGraceLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(WorkerRecord{}.LaunchGrace)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // launch_grace
+	out[n] = TableFixedEntry{Src: src + 35942, Dst: dst + uint32(unsafe.Offsetof(WorkerRecord{}.LaunchGraceLength)), Size: 32, Aux: dst + uint32(unsafe.Offsetof(WorkerRecord{}.LaunchGrace)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // launch_grace
 	n++
 	{
-		es := src + 19242
+		es := src + 35978
 		ed := dst + uint32(unsafe.Offsetof(WorkerRecord{}.KeepData))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedBool}
 		n++
@@ -5764,47 +5785,47 @@ func WorkerRecordFixedWriteBody(b []byte, value *WorkerRecord) {
 	copy(b[1566:][4:], value.Harness[:min(uint32(value.HarnessLength), 256)])
 	tableFixedPut32(b[1826:], uint32(value.HarnessArgsCount))
 	{
-		livei := min(max(int64(value.HarnessArgsCount), 0), 16)
+		livei := min(max(int64(value.HarnessArgsCount), 0), 64)
 		for i := int64(0); i < livei; i++ {
-			clear(b[1830:][i*516 : i*516+516])
-			HarnessArgFixedWriteBody(b[1830:][i*516:], &value.HarnessArgs[i])
+			clear(b[1830:][i*260 : i*260+260])
+			HarnessArgFixedWriteBody(b[1830:][i*260:], &value.HarnessArgs[i])
 		}
-		clear(b[1830:][livei*516 : 8256])
+		clear(b[1830:][livei*260 : 16640])
 	}
-	tableFixedPut32(b[10086:], uint32(value.WorkerDirLength))
-	copy(b[10086:][4:], value.WorkerDir[:min(uint32(value.WorkerDirLength), 512)])
-	tableFixedPut32(b[10602:], uint32(value.DeadlineLength))
-	copy(b[10602:][4:], value.Deadline[:min(uint32(value.DeadlineLength), 32)])
-	tableFixedPut32(b[10638:], uint32(value.BoardLength))
-	copy(b[10638:][4:], value.Board[:min(uint32(value.BoardLength), 256)])
-	tableFixedPut32(b[10898:], uint32(value.ReadRootsCount))
+	tableFixedPut32(b[18470:], uint32(value.WorkerDirLength))
+	copy(b[18470:][4:], value.WorkerDir[:min(uint32(value.WorkerDirLength), 512)])
+	tableFixedPut32(b[18986:], uint32(value.DeadlineLength))
+	copy(b[18986:][4:], value.Deadline[:min(uint32(value.DeadlineLength), 32)])
+	tableFixedPut32(b[19022:], uint32(value.BoardLength))
+	copy(b[19022:][4:], value.Board[:min(uint32(value.BoardLength), 256)])
+	tableFixedPut32(b[19282:], uint32(value.ReadRootsCount))
 	{
-		livei := min(max(int64(value.ReadRootsCount), 0), 8)
+		livei := min(max(int64(value.ReadRootsCount), 0), 32)
 		for i := int64(0); i < livei; i++ {
-			clear(b[10902:][i*516 : i*516+516])
-			PathFixedWriteBody(b[10902:][i*516:], &value.ReadRoots[i])
+			clear(b[19286:][i*260 : i*260+260])
+			PathFixedWriteBody(b[19286:][i*260:], &value.ReadRoots[i])
 		}
-		clear(b[10902:][livei*516 : 4128])
+		clear(b[19286:][livei*260 : 8320])
 	}
-	tableFixedPut32(b[15030:], uint32(value.MaxTurns))
-	tableFixedPut64(b[15034:], uint64(value.MaxCacheRead))
-	tableFixedPut32(b[15042:], uint32(value.InputLimitPhrasesCount))
+	tableFixedPut32(b[27606:], uint32(value.MaxTurns))
+	tableFixedPut64(b[27610:], uint64(value.MaxCacheRead))
+	tableFixedPut32(b[27618:], uint32(value.InputLimitPhrasesCount))
 	{
-		livei := min(max(int64(value.InputLimitPhrasesCount), 0), 16)
+		livei := min(max(int64(value.InputLimitPhrasesCount), 0), 32)
 		for i := int64(0); i < livei; i++ {
-			clear(b[15046:][i*260 : i*260+260])
-			PhraseFixedWriteBody(b[15046:][i*260:], &value.InputLimitPhrases[i])
+			clear(b[27622:][i*260 : i*260+260])
+			PhraseFixedWriteBody(b[27622:][i*260:], &value.InputLimitPhrases[i])
 		}
-		clear(b[15046:][livei*260 : 4160])
+		clear(b[27622:][livei*260 : 8320])
 	}
-	tableFixedPut32(b[19206:], uint32(value.LaunchGraceLength))
-	copy(b[19206:][4:], value.LaunchGrace[:min(uint32(value.LaunchGraceLength), 32)])
+	tableFixedPut32(b[35942:], uint32(value.LaunchGraceLength))
+	copy(b[35942:][4:], value.LaunchGrace[:min(uint32(value.LaunchGraceLength), 32)])
 	{
 		p := uint8(0)
 		if value.KeepData {
 			p = 1
 		}
-		tableFixedPut8(b[19242:], p)
+		tableFixedPut8(b[35978:], p)
 	}
 }
 
@@ -5836,22 +5857,22 @@ func FenceConfigFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink
 	n := 0
 	out[n] = TableFixedEntry{Src: src + 0, Dst: dst + uint32(unsafe.Offsetof(FenceConfig{}.JobDirLength)), Size: 512, Aux: dst + uint32(unsafe.Offsetof(FenceConfig{}.JobDir)), Guard: tableFixedNoGuard, Op: tableFixedText, Meta: 1} // job_dir
 	n++
-	out[n] = TableFixedEntry{Src: src + 516, Dst: dst + uint32(unsafe.Offsetof(FenceConfig{}.ReadsCount)), Size: 8, Guard: tableFixedNoGuard, Op: tableFixedCount} // reads count
+	out[n] = TableFixedEntry{Src: src + 516, Dst: dst + uint32(unsafe.Offsetof(FenceConfig{}.ReadsCount)), Size: 32, Guard: tableFixedNoGuard, Op: tableFixedCount} // reads count
 	n++
-	for i := uint32(0); i < 8; i++ {
-		es := src + 520 + i*516
+	for i := uint32(0); i < 32; i++ {
+		es := src + 520 + i*260
 		ed := dst + uint32(unsafe.Offsetof(FenceConfig{}.Reads)) + i*uint32(unsafe.Sizeof(Path{}))
 		n += PathFixedLeaves(out[n:], links[n:], es, ed)
 	}
-	out[n] = TableFixedEntry{Src: src + 4648, Dst: dst + uint32(unsafe.Offsetof(FenceConfig{}.RulesCount)), Size: 34, Guard: tableFixedNoGuard, Op: tableFixedCount} // rules count
+	out[n] = TableFixedEntry{Src: src + 8840, Dst: dst + uint32(unsafe.Offsetof(FenceConfig{}.RulesCount)), Size: 130, Guard: tableFixedNoGuard, Op: tableFixedCount} // rules count
 	n++
-	for i := uint32(0); i < 34; i++ {
-		es := src + 4652 + i*517
+	for i := uint32(0); i < 130; i++ {
+		es := src + 8844 + i*261
 		ed := dst + uint32(unsafe.Offsetof(FenceConfig{}.Rules)) + i*uint32(unsafe.Sizeof(FenceRule{}))
 		n += FenceRuleFixedLeaves(out[n:], links[n:], es, ed)
 	}
 	{
-		es := src + 22230
+		es := src + 42774
 		ed := dst + uint32(unsafe.Offsetof(FenceConfig{}.Webfetch))
 		out[n] = TableFixedEntry{Src: es, Dst: ed, Size: 1, Guard: tableFixedNoGuard, Op: tableFixedCopy}
 		n++
@@ -5864,23 +5885,23 @@ func FenceConfigFixedWriteBody(b []byte, value *FenceConfig) {
 	copy(b[0:][4:], value.JobDir[:min(uint32(value.JobDirLength), 512)])
 	tableFixedPut32(b[516:], uint32(value.ReadsCount))
 	{
-		livei := min(max(int64(value.ReadsCount), 0), 8)
+		livei := min(max(int64(value.ReadsCount), 0), 32)
 		for i := int64(0); i < livei; i++ {
-			clear(b[520:][i*516 : i*516+516])
-			PathFixedWriteBody(b[520:][i*516:], &value.Reads[i])
+			clear(b[520:][i*260 : i*260+260])
+			PathFixedWriteBody(b[520:][i*260:], &value.Reads[i])
 		}
-		clear(b[520:][livei*516 : 4128])
+		clear(b[520:][livei*260 : 8320])
 	}
-	tableFixedPut32(b[4648:], uint32(value.RulesCount))
+	tableFixedPut32(b[8840:], uint32(value.RulesCount))
 	{
-		livei := min(max(int64(value.RulesCount), 0), 34)
+		livei := min(max(int64(value.RulesCount), 0), 130)
 		for i := int64(0); i < livei; i++ {
-			clear(b[4652:][i*517 : i*517+517])
-			FenceRuleFixedWriteBody(b[4652:][i*517:], &value.Rules[i])
+			clear(b[8844:][i*261 : i*261+261])
+			FenceRuleFixedWriteBody(b[8844:][i*261:], &value.Rules[i])
 		}
-		clear(b[4652:][livei*517 : 17578])
+		clear(b[8844:][livei*261 : 33930])
 	}
-	tableFixedPut8(b[22230:], uint8(value.Webfetch))
+	tableFixedPut8(b[42774:], uint8(value.Webfetch))
 }
 
 func DeclaredModelFixedLeaves(out []TableFixedEntry, links [][]TableFixedGuardLink, src, dst uint32) int {
@@ -6046,7 +6067,7 @@ func MemberCarryFixedClampBody(value *MemberCarry, clamped *int32) {
 // Path's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
 func PathFixedCheckBody(value *Path) bool {
 	var z, hi uint64
-	if n := int(value.TextLength); uint(n) > 512 {
+	if n := int(value.TextLength); uint(n) > 256 {
 		return false
 	} else {
 		p := value.Text[:n]
@@ -6087,7 +6108,7 @@ func PathFixedCheckBody(value *Path) bool {
 // tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
 func PathFixedCheckBodyExact(value *Path) bool {
 	_ = value
-	if uint32(value.TextLength) > 512 || !tableFixedUtf8Ok(value.Text[:value.TextLength]) {
+	if uint32(value.TextLength) > 256 || !tableFixedUtf8Ok(value.Text[:value.TextLength]) {
 		return false
 	}
 	return true
@@ -6096,7 +6117,7 @@ func PathFixedCheckBodyExact(value *Path) bool {
 // HarnessArg's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
 func HarnessArgFixedCheckBody(value *HarnessArg) bool {
 	var z, hi uint64
-	if n := int(value.TextLength); uint(n) > 512 {
+	if n := int(value.TextLength); uint(n) > 256 {
 		return false
 	} else {
 		p := value.Text[:n]
@@ -6137,7 +6158,7 @@ func HarnessArgFixedCheckBody(value *HarnessArg) bool {
 // tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
 func HarnessArgFixedCheckBodyExact(value *HarnessArg) bool {
 	_ = value
-	if uint32(value.TextLength) > 512 || !tableFixedUtf8Ok(value.Text[:value.TextLength]) {
+	if uint32(value.TextLength) > 256 || !tableFixedUtf8Ok(value.Text[:value.TextLength]) {
 		return false
 	}
 	return true
@@ -6196,7 +6217,7 @@ func PhraseFixedCheckBodyExact(value *Phrase) bool {
 // FenceRule's write-side contract (mas-bandwidth/schema docs/FIXED-FORM-ALGORITHM.md §3.1): false is TableRefuseInvalidValue.
 func FenceRuleFixedCheckBody(value *FenceRule) bool {
 	var z, hi uint64
-	if n := int(value.PatternLength); uint(n) > 512 {
+	if n := int(value.PatternLength); uint(n) > 256 {
 		return false
 	} else {
 		p := value.Pattern[:n]
@@ -6240,7 +6261,7 @@ func FenceRuleFixedCheckBody(value *FenceRule) bool {
 // tableFixedUtf8Ok: the answer for text with a byte at or past 0x80 (§3.1).
 func FenceRuleFixedCheckBodyExact(value *FenceRule) bool {
 	_ = value
-	if uint32(value.PatternLength) > 512 || !tableFixedUtf8Ok(value.Pattern[:value.PatternLength]) {
+	if uint32(value.PatternLength) > 256 || !tableFixedUtf8Ok(value.Pattern[:value.PatternLength]) {
 		return false
 	}
 	if value.Action > 2 {
@@ -6699,7 +6720,7 @@ func WorkerRecordFixedCheckBody(value *WorkerRecord) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 16 {
+	if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 64 {
 		return false
 	}
 	for i := int64(value.HarnessArgsCount) - 1; i >= 0; i-- {
@@ -6791,7 +6812,7 @@ func WorkerRecordFixedCheckBody(value *WorkerRecord) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if value.ReadRootsCount < 0 || value.ReadRootsCount > 8 {
+	if value.ReadRootsCount < 0 || value.ReadRootsCount > 32 {
 		return false
 	}
 	for i := int64(value.ReadRootsCount) - 1; i >= 0; i-- {
@@ -6805,7 +6826,7 @@ func WorkerRecordFixedCheckBody(value *WorkerRecord) bool {
 	if value.MaxCacheRead < 0 || value.MaxCacheRead > 9007199254740991 {
 		return false
 	}
-	if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 16 {
+	if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 32 {
 		return false
 	}
 	for i := int64(value.InputLimitPhrasesCount) - 1; i >= 0; i-- {
@@ -6884,7 +6905,7 @@ func WorkerRecordFixedCheckBodyExact(value *WorkerRecord) bool {
 	if uint32(value.HarnessLength) > 256 || !tableFixedUtf8Ok(value.Harness[:value.HarnessLength]) {
 		return false
 	}
-	if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 16 {
+	if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 64 {
 		return false
 	}
 	for i := int64(value.HarnessArgsCount) - 1; i >= 0; i-- {
@@ -6901,7 +6922,7 @@ func WorkerRecordFixedCheckBodyExact(value *WorkerRecord) bool {
 	if uint32(value.BoardLength) > 256 || !tableFixedUtf8Ok(value.Board[:value.BoardLength]) {
 		return false
 	}
-	if value.ReadRootsCount < 0 || value.ReadRootsCount > 8 {
+	if value.ReadRootsCount < 0 || value.ReadRootsCount > 32 {
 		return false
 	}
 	for i := int64(value.ReadRootsCount) - 1; i >= 0; i-- {
@@ -6915,7 +6936,7 @@ func WorkerRecordFixedCheckBodyExact(value *WorkerRecord) bool {
 	if value.MaxCacheRead < 0 || value.MaxCacheRead > 9007199254740991 {
 		return false
 	}
-	if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 16 {
+	if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 32 {
 		return false
 	}
 	for i := int64(value.InputLimitPhrasesCount) - 1; i >= 0; i-- {
@@ -7103,7 +7124,7 @@ func FenceConfigFixedCheckBody(value *FenceConfig) bool {
 			z |= (x - 0x0101010101010101) &^ x
 		}
 	}
-	if value.ReadsCount < 0 || value.ReadsCount > 8 {
+	if value.ReadsCount < 0 || value.ReadsCount > 32 {
 		return false
 	}
 	for i := int64(value.ReadsCount) - 1; i >= 0; i-- {
@@ -7111,7 +7132,7 @@ func FenceConfigFixedCheckBody(value *FenceConfig) bool {
 			return false
 		}
 	}
-	if value.RulesCount < 0 || value.RulesCount > 34 {
+	if value.RulesCount < 0 || value.RulesCount > 130 {
 		return false
 	}
 	for i := int64(value.RulesCount) - 1; i >= 0; i-- {
@@ -7138,7 +7159,7 @@ func FenceConfigFixedCheckBodyExact(value *FenceConfig) bool {
 	if uint32(value.JobDirLength) > 512 || !tableFixedUtf8Ok(value.JobDir[:value.JobDirLength]) {
 		return false
 	}
-	if value.ReadsCount < 0 || value.ReadsCount > 8 {
+	if value.ReadsCount < 0 || value.ReadsCount > 32 {
 		return false
 	}
 	for i := int64(value.ReadsCount) - 1; i >= 0; i-- {
@@ -7146,7 +7167,7 @@ func FenceConfigFixedCheckBodyExact(value *FenceConfig) bool {
 			return false
 		}
 	}
-	if value.RulesCount < 0 || value.RulesCount > 34 {
+	if value.RulesCount < 0 || value.RulesCount > 130 {
 		return false
 	}
 	for i := int64(value.RulesCount) - 1; i >= 0; i-- {
@@ -7375,13 +7396,13 @@ func PathFixedClamp(value *Path, report *TableReport) {
 
 // ---- Path, the fixed form ----
 
-const PathFixedBodyBytes = 516
+const PathFixedBodyBytes = 260
 const PathFixedRecordBytes = 8 + PathFixedBodyBytes
-const PathFixedHash = 0xca4203147b3c6a48
+const PathFixedHash = 0xddf46d3342c5b21a
 
 var PathFixedLayout = []byte{
-	0x02, 0x00, 0x00, 0x00, 0x56, 0x7a, 0x47, 0xed, 0x19, 0x2e, 0x53, 0x2e, 0x0d, 0x04, 0x02, 0x00,
-	0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x02,
+	0x02, 0x00, 0x00, 0x00, 0x56, 0x7a, 0x47, 0xed, 0x19, 0x2e, 0x53, 0x2e, 0x0d, 0x04, 0x01, 0x00,
+	0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x01,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
@@ -7394,12 +7415,12 @@ var PathFixedPlan = tableFixedBuildPlan(PathFixedLeaves, 1)
 
 var PathFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0xca4203147b3c6a48,
+		Hash:        0xddf46d3342c5b21a,
 		LayoutBytes: 38,
-		Record:      524,
+		Record:      268,
 		Layout: []byte{
-			0x02, 0x00, 0x00, 0x00, 0x56, 0x7a, 0x47, 0xed, 0x19, 0x2e, 0x53, 0x2e, 0x0d, 0x04, 0x02, 0x00,
-			0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x02,
+			0x02, 0x00, 0x00, 0x00, 0x56, 0x7a, 0x47, 0xed, 0x19, 0x2e, 0x53, 0x2e, 0x0d, 0x04, 0x01, 0x00,
+			0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x01,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
 	},
@@ -7620,13 +7641,13 @@ func HarnessArgFixedClamp(value *HarnessArg, report *TableReport) {
 
 // ---- HarnessArg, the fixed form ----
 
-const HarnessArgFixedBodyBytes = 516
+const HarnessArgFixedBodyBytes = 260
 const HarnessArgFixedRecordBytes = 8 + HarnessArgFixedBodyBytes
-const HarnessArgFixedHash = 0x7f0898515e866c75
+const HarnessArgFixedHash = 0xe966f3dc264fa9ef
 
 var HarnessArgFixedLayout = []byte{
-	0x02, 0x00, 0x00, 0x00, 0x59, 0x68, 0x12, 0x79, 0xf5, 0xc1, 0x61, 0x14, 0x0d, 0x04, 0x02, 0x00,
-	0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x02,
+	0x02, 0x00, 0x00, 0x00, 0x59, 0x68, 0x12, 0x79, 0xf5, 0xc1, 0x61, 0x14, 0x0d, 0x04, 0x01, 0x00,
+	0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x01,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
 
@@ -7639,12 +7660,12 @@ var HarnessArgFixedPlan = tableFixedBuildPlan(HarnessArgFixedLeaves, 1)
 
 var HarnessArgFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x7f0898515e866c75,
+		Hash:        0xe966f3dc264fa9ef,
 		LayoutBytes: 38,
-		Record:      524,
+		Record:      268,
 		Layout: []byte{
-			0x02, 0x00, 0x00, 0x00, 0x59, 0x68, 0x12, 0x79, 0xf5, 0xc1, 0x61, 0x14, 0x0d, 0x04, 0x02, 0x00,
-			0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x02,
+			0x02, 0x00, 0x00, 0x00, 0x59, 0x68, 0x12, 0x79, 0xf5, 0xc1, 0x61, 0x14, 0x0d, 0x04, 0x01, 0x00,
+			0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x01,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
 	},
@@ -8110,13 +8131,13 @@ func FenceRuleFixedClamp(value *FenceRule, report *TableReport) {
 
 // ---- FenceRule, the fixed form ----
 
-const FenceRuleFixedBodyBytes = 517
+const FenceRuleFixedBodyBytes = 261
 const FenceRuleFixedRecordBytes = 8 + FenceRuleFixedBodyBytes
-const FenceRuleFixedHash = 0x5712ddc00e26a976
+const FenceRuleFixedHash = 0x1fe7b439bb8745ac
 
 var FenceRuleFixedLayout = []byte{
-	0x03, 0x00, 0x00, 0x00, 0xb0, 0x57, 0x8d, 0xda, 0xc9, 0x04, 0x95, 0x1a, 0x0d, 0x05, 0x02, 0x00,
-	0x00, 0x02, 0x00, 0x00, 0x00, 0x89, 0x5f, 0x69, 0xea, 0x4b, 0x1e, 0x7a, 0x0b, 0x0c, 0x04, 0x02,
+	0x03, 0x00, 0x00, 0x00, 0xb0, 0x57, 0x8d, 0xda, 0xc9, 0x04, 0x95, 0x1a, 0x0d, 0x05, 0x01, 0x00,
+	0x00, 0x02, 0x00, 0x00, 0x00, 0x89, 0x5f, 0x69, 0xea, 0x4b, 0x1e, 0x7a, 0x0b, 0x0c, 0x04, 0x01,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdf, 0x56, 0x5a, 0x03, 0x0b, 0x64, 0x68, 0x65, 0x06, 0x01,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
@@ -8131,12 +8152,12 @@ var FenceRuleFixedPlan = tableFixedBuildPlan(FenceRuleFixedLeaves, 2)
 
 var FenceRuleFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x5712ddc00e26a976,
+		Hash:        0x1fe7b439bb8745ac,
 		LayoutBytes: 55,
-		Record:      525,
+		Record:      269,
 		Layout: []byte{
-			0x03, 0x00, 0x00, 0x00, 0xb0, 0x57, 0x8d, 0xda, 0xc9, 0x04, 0x95, 0x1a, 0x0d, 0x05, 0x02, 0x00,
-			0x00, 0x02, 0x00, 0x00, 0x00, 0x89, 0x5f, 0x69, 0xea, 0x4b, 0x1e, 0x7a, 0x0b, 0x0c, 0x04, 0x02,
+			0x03, 0x00, 0x00, 0x00, 0xb0, 0x57, 0x8d, 0xda, 0xc9, 0x04, 0x95, 0x1a, 0x0d, 0x05, 0x01, 0x00,
+			0x00, 0x02, 0x00, 0x00, 0x00, 0x89, 0x5f, 0x69, 0xea, 0x4b, 0x1e, 0x7a, 0x0b, 0x0c, 0x04, 0x01,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdf, 0x56, 0x5a, 0x03, 0x0b, 0x64, 0x68, 0x65, 0x06, 0x01,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
@@ -8633,12 +8654,12 @@ func WorkerRecordFixedClamp(value *WorkerRecord, report *TableReport) {
 
 // ---- WorkerRecord, the fixed form ----
 
-const WorkerRecordFixedBodyBytes = 19243
+const WorkerRecordFixedBodyBytes = 35979
 const WorkerRecordFixedRecordBytes = 8 + WorkerRecordFixedBodyBytes
-const WorkerRecordFixedHash = 0x6ef773e3998ea781
+const WorkerRecordFixedHash = 0xdf6994212e3801e9
 
 var WorkerRecordFixedLayout = []byte{
-	0x1b, 0x00, 0x00, 0x00, 0xfe, 0x87, 0x12, 0xbb, 0x12, 0x19, 0x79, 0xfd, 0x0d, 0x2b, 0x4b, 0x00,
+	0x1b, 0x00, 0x00, 0x00, 0xfe, 0x87, 0x12, 0xbb, 0x12, 0x19, 0x79, 0xfd, 0x0d, 0x8b, 0x8c, 0x00,
 	0x00, 0x14, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdc, 0x54, 0xfb, 0x65, 0x8c, 0x4c, 0x2b, 0xd0, 0x0c, 0x44,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3a, 0x70, 0x6e, 0x3e, 0x93, 0x43, 0xe5, 0x9d, 0x0c,
@@ -8650,19 +8671,19 @@ var WorkerRecordFixedLayout = []byte{
 	0x71, 0x02, 0x17, 0x1e, 0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd0, 0x65, 0x3b,
 	0x50, 0x12, 0x91, 0x5b, 0x71, 0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xab, 0x31,
 	0x53, 0xfe, 0xba, 0xcb, 0x1f, 0x21, 0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11,
-	0x1c, 0x7c, 0x73, 0xde, 0x71, 0x5a, 0xe1, 0x0e, 0x44, 0x20, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x04, 0x02, 0x00, 0x00, 0x01, 0x00, 0x00,
-	0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00,
+	0x1c, 0x7c, 0x73, 0xde, 0x71, 0x5a, 0xe1, 0x0e, 0x04, 0x41, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x04, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+	0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0xaf, 0x22, 0x5a, 0x05, 0x25, 0xb6, 0xb3, 0xf6, 0x0c, 0x04, 0x02, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x75, 0xfe, 0xb6, 0x0b, 0xa4, 0xac, 0xbb, 0x4a, 0x0c, 0x24, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x8b, 0x18, 0x83, 0xe0, 0xb2, 0x3b, 0x01, 0xd0, 0x0c, 0x04, 0x01, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x4b, 0x5f, 0x02, 0x0b, 0x14, 0x2f, 0xdf, 0xf7, 0x0e, 0x24, 0x10,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x4b, 0x5f, 0x02, 0x0b, 0x14, 0x2f, 0xdf, 0xf7, 0x0e, 0x84, 0x20,
 	0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x04,
-	0x02, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c,
-	0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x5c, 0x60, 0x74, 0xb2, 0x50, 0x33, 0x6e,
+	0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c,
+	0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x5c, 0x60, 0x74, 0xb2, 0x50, 0x33, 0x6e,
 	0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1d, 0x56, 0x76, 0xdf, 0xed, 0x6a, 0xe1,
 	0x18, 0x05, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfa, 0x49, 0x90, 0xca, 0x2c, 0x64,
-	0xd5, 0xf9, 0x0e, 0x44, 0x10, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0xd5, 0xf9, 0x0e, 0x84, 0x20, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x0d, 0x04, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19,
 	0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x14, 0x5d,
 	0xbb, 0x83, 0x89, 0x35, 0x98, 0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd5, 0xc9,
@@ -8699,15 +8720,15 @@ var WorkerRecordFixedDst = []TableFixedDst{
 	{uint32(unsafe.Offsetof(WorkerRecord{}.KeepData)), 0, 0, 0, 0, 0},                                                            // keep_data
 }
 
-var WorkerRecordFixedPlan = tableFixedBuildPlan(WorkerRecordFixedLeaves, 60)
+var WorkerRecordFixedPlan = tableFixedBuildPlan(WorkerRecordFixedLeaves, 148)
 
 var WorkerRecordFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0x6ef773e3998ea781,
+		Hash:        0xdf6994212e3801e9,
 		LayoutBytes: 463,
-		Record:      19251,
+		Record:      35987,
 		Layout: []byte{
-			0x1b, 0x00, 0x00, 0x00, 0xfe, 0x87, 0x12, 0xbb, 0x12, 0x19, 0x79, 0xfd, 0x0d, 0x2b, 0x4b, 0x00,
+			0x1b, 0x00, 0x00, 0x00, 0xfe, 0x87, 0x12, 0xbb, 0x12, 0x19, 0x79, 0xfd, 0x0d, 0x8b, 0x8c, 0x00,
 			0x00, 0x14, 0x00, 0x00, 0x00, 0x86, 0x1b, 0x63, 0x8e, 0xba, 0xad, 0xbc, 0xc4, 0x0c, 0x44, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdc, 0x54, 0xfb, 0x65, 0x8c, 0x4c, 0x2b, 0xd0, 0x0c, 0x44,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3a, 0x70, 0x6e, 0x3e, 0x93, 0x43, 0xe5, 0x9d, 0x0c,
@@ -8719,19 +8740,19 @@ var WorkerRecordFixedKnown = []TableFixedKnownLayout{
 			0x71, 0x02, 0x17, 0x1e, 0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd0, 0x65, 0x3b,
 			0x50, 0x12, 0x91, 0x5b, 0x71, 0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xab, 0x31,
 			0x53, 0xfe, 0xba, 0xcb, 0x1f, 0x21, 0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11,
-			0x1c, 0x7c, 0x73, 0xde, 0x71, 0x5a, 0xe1, 0x0e, 0x44, 0x20, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x04, 0x02, 0x00, 0x00, 0x01, 0x00, 0x00,
-			0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00,
+			0x1c, 0x7c, 0x73, 0xde, 0x71, 0x5a, 0xe1, 0x0e, 0x04, 0x41, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x04, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+			0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00,
 			0x00, 0x00, 0xaf, 0x22, 0x5a, 0x05, 0x25, 0xb6, 0xb3, 0xf6, 0x0c, 0x04, 0x02, 0x00, 0x00, 0x00,
 			0x00, 0x00, 0x00, 0x75, 0xfe, 0xb6, 0x0b, 0xa4, 0xac, 0xbb, 0x4a, 0x0c, 0x24, 0x00, 0x00, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x8b, 0x18, 0x83, 0xe0, 0xb2, 0x3b, 0x01, 0xd0, 0x0c, 0x04, 0x01, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x4b, 0x5f, 0x02, 0x0b, 0x14, 0x2f, 0xdf, 0xf7, 0x0e, 0x24, 0x10,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x4b, 0x5f, 0x02, 0x0b, 0x14, 0x2f, 0xdf, 0xf7, 0x0e, 0x84, 0x20,
 			0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x04,
-			0x02, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c,
-			0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x5c, 0x60, 0x74, 0xb2, 0x50, 0x33, 0x6e,
+			0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa, 0x0c,
+			0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x5c, 0x60, 0x74, 0xb2, 0x50, 0x33, 0x6e,
 			0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1d, 0x56, 0x76, 0xdf, 0xed, 0x6a, 0xe1,
 			0x18, 0x05, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfa, 0x49, 0x90, 0xca, 0x2c, 0x64,
-			0xd5, 0xf9, 0x0e, 0x44, 0x10, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0xd5, 0xf9, 0x0e, 0x84, 0x20, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 			0x00, 0x00, 0x00, 0x0d, 0x04, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19,
 			0xef, 0xf4, 0x04, 0xfa, 0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x14, 0x5d,
 			0xbb, 0x83, 0x89, 0x35, 0x98, 0x0c, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd5, 0xc9,
@@ -8808,9 +8829,9 @@ func WorkerRecordFixedSave(values []WorkerRecord, buffer []byte) int64 {
 	for k := range values {
 		tableFixedPut64(at, WorkerRecordFixedHash)
 		clear(at[8:1834])
-		clear(at[10094:10906])
-		clear(at[15038:15050])
-		clear(at[19214:19251])
+		clear(at[18478:19290])
+		clear(at[27614:27626])
+		clear(at[35950:35987])
 		WorkerRecordFixedWriteBody(at[8:], &values[k])
 		at = at[WorkerRecordFixedRecordBytes:]
 	}
@@ -9212,20 +9233,20 @@ func FenceConfigFixedClamp(value *FenceConfig, report *TableReport) {
 
 // ---- FenceConfig, the fixed form ----
 
-const FenceConfigFixedBodyBytes = 22231
+const FenceConfigFixedBodyBytes = 42775
 const FenceConfigFixedRecordBytes = 8 + FenceConfigFixedBodyBytes
-const FenceConfigFixedHash = 0xdd4f13f4a373e54e
+const FenceConfigFixedHash = 0x1108686b7da414af
 
 var FenceConfigFixedLayout = []byte{
-	0x0a, 0x00, 0x00, 0x00, 0x90, 0xe8, 0x91, 0x17, 0x2e, 0x54, 0xd0, 0x06, 0x0d, 0xd7, 0x56, 0x00,
+	0x0a, 0x00, 0x00, 0x00, 0x90, 0xe8, 0x91, 0x17, 0x2e, 0x54, 0xd0, 0x06, 0x0d, 0x17, 0xa7, 0x00,
 	0x00, 0x04, 0x00, 0x00, 0x00, 0xa8, 0xf8, 0x80, 0xf4, 0x6a, 0x20, 0x0f, 0x03, 0x0c, 0x04, 0x02,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x82, 0x6a, 0xf3, 0x05, 0xf3, 0xb4, 0x35, 0x89, 0x0e, 0x24,
-	0x10, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
-	0x04, 0x02, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa,
-	0x0c, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x53, 0x51, 0x28, 0x6a, 0x4f, 0x12,
-	0x67, 0x0e, 0xae, 0x44, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x0d, 0x05, 0x02, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x89, 0x5f, 0x69, 0xea, 0x4b,
-	0x1e, 0x7a, 0x0b, 0x0c, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdf, 0x56, 0x5a, 0x03,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x82, 0x6a, 0xf3, 0x05, 0xf3, 0xb4, 0x35, 0x89, 0x0e, 0x84,
+	0x20, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
+	0x04, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa,
+	0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x53, 0x51, 0x28, 0x6a, 0x4f, 0x12,
+	0x67, 0x0e, 0x8e, 0x84, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x0d, 0x05, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x89, 0x5f, 0x69, 0xea, 0x4b,
+	0x1e, 0x7a, 0x0b, 0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdf, 0x56, 0x5a, 0x03,
 	0x0b, 0x64, 0x68, 0x65, 0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xef, 0xd3, 0x04,
 	0x3e, 0xa9, 0x8f, 0x84, 0x58, 0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 }
@@ -9243,23 +9264,23 @@ var FenceConfigFixedDst = []TableFixedDst{
 	{uint32(unsafe.Offsetof(FenceConfig{}.Webfetch)), 0, 0, 0, 0, 0},                                               // webfetch
 }
 
-var FenceConfigFixedPlan = tableFixedBuildPlan(FenceConfigFixedLeaves, 80)
+var FenceConfigFixedPlan = tableFixedBuildPlan(FenceConfigFixedLeaves, 296)
 
 var FenceConfigFixedKnown = []TableFixedKnownLayout{
 	{
-		Hash:        0xdd4f13f4a373e54e,
+		Hash:        0x1108686b7da414af,
 		LayoutBytes: 174,
-		Record:      22239,
+		Record:      42783,
 		Layout: []byte{
-			0x0a, 0x00, 0x00, 0x00, 0x90, 0xe8, 0x91, 0x17, 0x2e, 0x54, 0xd0, 0x06, 0x0d, 0xd7, 0x56, 0x00,
+			0x0a, 0x00, 0x00, 0x00, 0x90, 0xe8, 0x91, 0x17, 0x2e, 0x54, 0xd0, 0x06, 0x0d, 0x17, 0xa7, 0x00,
 			0x00, 0x04, 0x00, 0x00, 0x00, 0xa8, 0xf8, 0x80, 0xf4, 0x6a, 0x20, 0x0f, 0x03, 0x0c, 0x04, 0x02,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x82, 0x6a, 0xf3, 0x05, 0xf3, 0xb4, 0x35, 0x89, 0x0e, 0x24,
-			0x10, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
-			0x04, 0x02, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa,
-			0x0c, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x53, 0x51, 0x28, 0x6a, 0x4f, 0x12,
-			0x67, 0x0e, 0xae, 0x44, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x0d, 0x05, 0x02, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x89, 0x5f, 0x69, 0xea, 0x4b,
-			0x1e, 0x7a, 0x0b, 0x0c, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdf, 0x56, 0x5a, 0x03,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x82, 0x6a, 0xf3, 0x05, 0xf3, 0xb4, 0x35, 0x89, 0x0e, 0x84,
+			0x20, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d,
+			0x04, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7e, 0x40, 0x95, 0x19, 0xef, 0xf4, 0x04, 0xfa,
+			0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x53, 0x51, 0x28, 0x6a, 0x4f, 0x12,
+			0x67, 0x0e, 0x8e, 0x84, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x0d, 0x05, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x89, 0x5f, 0x69, 0xea, 0x4b,
+			0x1e, 0x7a, 0x0b, 0x0c, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdf, 0x56, 0x5a, 0x03,
 			0x0b, 0x64, 0x68, 0x65, 0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xef, 0xd3, 0x04,
 			0x3e, 0xa9, 0x8f, 0x84, 0x58, 0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		},
@@ -9334,7 +9355,7 @@ func FenceConfigFixedSave(values []FenceConfig, buffer []byte) int64 {
 	for k := range values {
 		tableFixedPut64(at, FenceConfigFixedHash)
 		clear(at[8:524])
-		clear(at[22238:22239])
+		clear(at[42782:42783])
 		FenceConfigFixedWriteBody(at[8:], &values[k])
 		at = at[FenceConfigFixedRecordBytes:]
 	}
@@ -9973,8 +9994,8 @@ func MemberCarryFixedLoad(values []MemberCarry, data []byte, plan []TableFixedEn
 // PathTableFields is Path's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var PathTableFields = []TableFieldInfo{
 	{Name: "text", Json: "text", TypeName: "string", DeclaredTypeName: "string", Id: 0xfa04f4ef1995407e, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 512, Offset: uint32(unsafe.Offsetof(Path{}.Text)), ElemSize: uint32(unsafe.Sizeof(Path{}.Text)), CountOffset: uint32(unsafe.Offsetof(Path{}.TextLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 516, CookPresentOffset: 4294967295,
+		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(Path{}.Text)), ElemSize: uint32(unsafe.Sizeof(Path{}.Text)), CountOffset: uint32(unsafe.Offsetof(Path{}.TextLength)), PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 1, CookCountOffset: 260, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -9989,7 +10010,7 @@ var PathTableFields = []TableFieldInfo{
 var PathTableInfo TableTypeInfo
 
 func init() {
-	PathTableInfo = TableTypeInfo{Name: "Path", Size: uint32(unsafe.Sizeof(Path{})), NumFields: 1, Fields: PathTableFields, Reset: func(storage unsafe.Pointer) { PathReset((*Path)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x2e532e19ed477a56, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return PathSaveBody(w, (*Path)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return PathLoadBody(&r, (*Path)(p)) }, CookSize: 520, CookAlign: 4}
+	PathTableInfo = TableTypeInfo{Name: "Path", Size: uint32(unsafe.Sizeof(Path{})), NumFields: 1, Fields: PathTableFields, Reset: func(storage unsafe.Pointer) { PathReset((*Path)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x2e532e19ed477a56, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return PathSaveBody(w, (*Path)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return PathLoadBody(&r, (*Path)(p)) }, CookSize: 264, CookAlign: 4}
 }
 
 // PathTableType returns Path's reflection descriptor.
@@ -9998,8 +10019,8 @@ func PathTableType() *TableTypeInfo { return &PathTableInfo }
 // HarnessArgTableFields is HarnessArg's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var HarnessArgTableFields = []TableFieldInfo{
 	{Name: "text", Json: "text", TypeName: "string", DeclaredTypeName: "string", Id: 0xfa04f4ef1995407e, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 512, Offset: uint32(unsafe.Offsetof(HarnessArg{}.Text)), ElemSize: uint32(unsafe.Sizeof(HarnessArg{}.Text)), CountOffset: uint32(unsafe.Offsetof(HarnessArg{}.TextLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 516, CookPresentOffset: 4294967295,
+		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(HarnessArg{}.Text)), ElemSize: uint32(unsafe.Sizeof(HarnessArg{}.Text)), CountOffset: uint32(unsafe.Offsetof(HarnessArg{}.TextLength)), PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 1, CookCountOffset: 260, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10014,7 +10035,7 @@ var HarnessArgTableFields = []TableFieldInfo{
 var HarnessArgTableInfo TableTypeInfo
 
 func init() {
-	HarnessArgTableInfo = TableTypeInfo{Name: "HarnessArg", Size: uint32(unsafe.Sizeof(HarnessArg{})), NumFields: 1, Fields: HarnessArgTableFields, Reset: func(storage unsafe.Pointer) { HarnessArgReset((*HarnessArg)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x1461c1f579126859, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return HarnessArgSaveBody(w, (*HarnessArg)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return HarnessArgLoadBody(&r, (*HarnessArg)(p)) }, CookSize: 520, CookAlign: 4}
+	HarnessArgTableInfo = TableTypeInfo{Name: "HarnessArg", Size: uint32(unsafe.Sizeof(HarnessArg{})), NumFields: 1, Fields: HarnessArgTableFields, Reset: func(storage unsafe.Pointer) { HarnessArgReset((*HarnessArg)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x1461c1f579126859, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return HarnessArgSaveBody(w, (*HarnessArg)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return HarnessArgLoadBody(&r, (*HarnessArg)(p)) }, CookSize: 264, CookAlign: 4}
 }
 
 // HarnessArgTableType returns HarnessArg's reflection descriptor.
@@ -10048,8 +10069,8 @@ func PhraseTableType() *TableTypeInfo { return &PhraseTableInfo }
 // FenceRuleTableFields is FenceRule's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var FenceRuleTableFields = []TableFieldInfo{
 	{Name: "pattern", Json: "pattern", TypeName: "string", DeclaredTypeName: "string", Id: 0xb7a1e4bea695f89, Kind: 12, IsArray: false, Counted: true, Optional: false,
-		ArrayBound: 512, Offset: uint32(unsafe.Offsetof(FenceRule{}.Pattern)), ElemSize: uint32(unsafe.Sizeof(FenceRule{}.Pattern)), CountOffset: uint32(unsafe.Offsetof(FenceRule{}.PatternLength)), PresentOffset: 0xffffffff,
-		CookOffset: 0, CookElemSize: 1, CookCountOffset: 516, CookPresentOffset: 4294967295,
+		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(FenceRule{}.Pattern)), ElemSize: uint32(unsafe.Sizeof(FenceRule{}.Pattern)), CountOffset: uint32(unsafe.Offsetof(FenceRule{}.PatternLength)), PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 1, CookCountOffset: 260, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10060,7 +10081,7 @@ var FenceRuleTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "action", Json: "action", TypeName: "uint8", DeclaredTypeName: "uint8", Id: 0x6568640b035a56df, Kind: 6, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(FenceRule{}.Action)), ElemSize: uint32(unsafe.Sizeof(FenceRule{}.Action)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 520, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 264, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 2.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10075,7 +10096,7 @@ var FenceRuleTableFields = []TableFieldInfo{
 var FenceRuleTableInfo TableTypeInfo
 
 func init() {
-	FenceRuleTableInfo = TableTypeInfo{Name: "FenceRule", Size: uint32(unsafe.Sizeof(FenceRule{})), NumFields: 2, Fields: FenceRuleTableFields, Reset: func(storage unsafe.Pointer) { FenceRuleReset((*FenceRule)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x1a9504c9da8d57b0, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return FenceRuleSaveBody(w, (*FenceRule)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return FenceRuleLoadBody(&r, (*FenceRule)(p)) }, CookSize: 524, CookAlign: 4}
+	FenceRuleTableInfo = TableTypeInfo{Name: "FenceRule", Size: uint32(unsafe.Sizeof(FenceRule{})), NumFields: 2, Fields: FenceRuleTableFields, Reset: func(storage unsafe.Pointer) { FenceRuleReset((*FenceRule)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x1a9504c9da8d57b0, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return FenceRuleSaveBody(w, (*FenceRule)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return FenceRuleLoadBody(&r, (*FenceRule)(p)) }, CookSize: 268, CookAlign: 4}
 }
 
 // FenceRuleTableType returns FenceRule's reflection descriptor.
@@ -10329,8 +10350,8 @@ var WorkerRecordTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "harness_args", Json: "harness_args", TypeName: "HarnessArg", DeclaredTypeName: "HarnessArg", Id: 0xe15a71de737c1c11, Kind: 13, IsArray: true, Counted: true, Optional: false,
-		ArrayBound: 16, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.HarnessArgs)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.HarnessArgs[0])), CountOffset: uint32(unsafe.Offsetof(WorkerRecord{}.HarnessArgsCount)), PresentOffset: 0xffffffff,
-		CookOffset: 1856, CookElemSize: 520, CookCountOffset: 10176, CookPresentOffset: 4294967295,
+		ArrayBound: 64, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.HarnessArgs)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.HarnessArgs[0])), CountOffset: uint32(unsafe.Offsetof(WorkerRecord{}.HarnessArgsCount)), PresentOffset: 0xffffffff,
+		CookOffset: 1856, CookElemSize: 264, CookCountOffset: 18752, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10341,7 +10362,7 @@ var WorkerRecordTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "worker_dir", Json: "worker_dir", TypeName: "string", DeclaredTypeName: "string", Id: 0xf6b3b625055a22af, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 512, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.WorkerDir)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.WorkerDir)), CountOffset: uint32(unsafe.Offsetof(WorkerRecord{}.WorkerDirLength)), PresentOffset: 0xffffffff,
-		CookOffset: 10180, CookElemSize: 1, CookCountOffset: 10696, CookPresentOffset: 4294967295,
+		CookOffset: 18756, CookElemSize: 1, CookCountOffset: 19272, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10352,7 +10373,7 @@ var WorkerRecordTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "deadline", Json: "deadline", TypeName: "string", DeclaredTypeName: "string", Id: 0x4abbaca40bb6fe75, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.Deadline)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.Deadline)), CountOffset: uint32(unsafe.Offsetof(WorkerRecord{}.DeadlineLength)), PresentOffset: 0xffffffff,
-		CookOffset: 10700, CookElemSize: 1, CookCountOffset: 10736, CookPresentOffset: 4294967295,
+		CookOffset: 19276, CookElemSize: 1, CookCountOffset: 19312, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10363,7 +10384,7 @@ var WorkerRecordTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "board", Json: "board", TypeName: "string", DeclaredTypeName: "string", Id: 0xd0013bb2e083188b, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 256, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.Board)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.Board)), CountOffset: uint32(unsafe.Offsetof(WorkerRecord{}.BoardLength)), PresentOffset: 0xffffffff,
-		CookOffset: 10740, CookElemSize: 1, CookCountOffset: 11000, CookPresentOffset: 4294967295,
+		CookOffset: 19316, CookElemSize: 1, CookCountOffset: 19576, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10373,8 +10394,8 @@ var WorkerRecordTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "read_roots", Json: "read_roots", TypeName: "Path", DeclaredTypeName: "Path", Id: 0xf7df2f140b025f4b, Kind: 13, IsArray: true, Counted: true, Optional: false,
-		ArrayBound: 8, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.ReadRoots)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.ReadRoots[0])), CountOffset: uint32(unsafe.Offsetof(WorkerRecord{}.ReadRootsCount)), PresentOffset: 0xffffffff,
-		CookOffset: 11004, CookElemSize: 520, CookCountOffset: 15164, CookPresentOffset: 4294967295,
+		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.ReadRoots)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.ReadRoots[0])), CountOffset: uint32(unsafe.Offsetof(WorkerRecord{}.ReadRootsCount)), PresentOffset: 0xffffffff,
+		CookOffset: 19580, CookElemSize: 264, CookCountOffset: 28028, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10385,7 +10406,7 @@ var WorkerRecordTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "max_turns", Json: "max_turns", TypeName: "int32", DeclaredTypeName: "int32", Id: 0x6e3350b274605c16, Kind: 4, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.MaxTurns)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.MaxTurns)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 15168, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 28032, CookElemSize: 4, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 2.147483647e+09, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10396,7 +10417,7 @@ var WorkerRecordTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "max_cache_read", Json: "max_cache_read", TypeName: "int64", DeclaredTypeName: "int64", Id: 0x18e16aeddf76561d, Kind: 5, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.MaxCacheRead)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.MaxCacheRead)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 15176, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 28040, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 9.007199254740991e+15, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10406,8 +10427,8 @@ var WorkerRecordTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "input_limit_phrases", Json: "input_limit_phrases", TypeName: "Phrase", DeclaredTypeName: "Phrase", Id: 0xf9d5642cca9049fa, Kind: 13, IsArray: true, Counted: true, Optional: false,
-		ArrayBound: 16, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.InputLimitPhrases)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.InputLimitPhrases[0])), CountOffset: uint32(unsafe.Offsetof(WorkerRecord{}.InputLimitPhrasesCount)), PresentOffset: 0xffffffff,
-		CookOffset: 15184, CookElemSize: 264, CookCountOffset: 19408, CookPresentOffset: 4294967295,
+		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.InputLimitPhrases)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.InputLimitPhrases[0])), CountOffset: uint32(unsafe.Offsetof(WorkerRecord{}.InputLimitPhrasesCount)), PresentOffset: 0xffffffff,
+		CookOffset: 28048, CookElemSize: 264, CookCountOffset: 36496, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10418,7 +10439,7 @@ var WorkerRecordTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "launch_grace", Json: "launch_grace", TypeName: "string", DeclaredTypeName: "string", Id: 0x98358983bb5d1401, Kind: 12, IsArray: false, Counted: true, Optional: false,
 		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.LaunchGrace)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.LaunchGrace)), CountOffset: uint32(unsafe.Offsetof(WorkerRecord{}.LaunchGraceLength)), PresentOffset: 0xffffffff,
-		CookOffset: 19412, CookElemSize: 1, CookCountOffset: 19448, CookPresentOffset: 4294967295,
+		CookOffset: 36500, CookElemSize: 1, CookCountOffset: 36536, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10429,7 +10450,7 @@ var WorkerRecordTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "keep_data", Json: "keep_data", TypeName: "bool", DeclaredTypeName: "bool", Id: 0x393f74e7cef3c9d5, Kind: 1, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(WorkerRecord{}.KeepData)), ElemSize: uint32(unsafe.Sizeof(WorkerRecord{}.KeepData)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 19452, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 36540, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10444,7 +10465,7 @@ var WorkerRecordTableFields = []TableFieldInfo{
 var WorkerRecordTableInfo TableTypeInfo
 
 func init() {
-	WorkerRecordTableInfo = TableTypeInfo{Name: "WorkerRecord", Size: uint32(unsafe.Sizeof(WorkerRecord{})), NumFields: 20, Fields: WorkerRecordTableFields, Reset: func(storage unsafe.Pointer) { WorkerRecordReset((*WorkerRecord)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xfd791912bb1287fe, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return WorkerRecordSaveBody(w, (*WorkerRecord)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return WorkerRecordLoadBody(&r, (*WorkerRecord)(p)) }, CookSize: 19456, CookAlign: 8}
+	WorkerRecordTableInfo = TableTypeInfo{Name: "WorkerRecord", Size: uint32(unsafe.Sizeof(WorkerRecord{})), NumFields: 20, Fields: WorkerRecordTableFields, Reset: func(storage unsafe.Pointer) { WorkerRecordReset((*WorkerRecord)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xfd791912bb1287fe, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return WorkerRecordSaveBody(w, (*WorkerRecord)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return WorkerRecordLoadBody(&r, (*WorkerRecord)(p)) }, CookSize: 36544, CookAlign: 8}
 }
 
 // WorkerRecordTableType returns WorkerRecord's reflection descriptor.
@@ -10526,8 +10547,8 @@ var FenceConfigTableFields = []TableFieldInfo{
 		Guard: "", Table: nil,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "reads", Json: "reads", TypeName: "Path", DeclaredTypeName: "Path", Id: 0x8935b4f305f36a82, Kind: 13, IsArray: true, Counted: true, Optional: false,
-		ArrayBound: 8, Offset: uint32(unsafe.Offsetof(FenceConfig{}.Reads)), ElemSize: uint32(unsafe.Sizeof(FenceConfig{}.Reads[0])), CountOffset: uint32(unsafe.Offsetof(FenceConfig{}.ReadsCount)), PresentOffset: 0xffffffff,
-		CookOffset: 520, CookElemSize: 520, CookCountOffset: 4680, CookPresentOffset: 4294967295,
+		ArrayBound: 32, Offset: uint32(unsafe.Offsetof(FenceConfig{}.Reads)), ElemSize: uint32(unsafe.Sizeof(FenceConfig{}.Reads[0])), CountOffset: uint32(unsafe.Offsetof(FenceConfig{}.ReadsCount)), PresentOffset: 0xffffffff,
+		CookOffset: 520, CookElemSize: 264, CookCountOffset: 8968, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10537,8 +10558,8 @@ var FenceConfigTableFields = []TableFieldInfo{
 		Guard: "", Table: PathTableType,
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "rules", Json: "rules", TypeName: "FenceRule", DeclaredTypeName: "FenceRule", Id: 0x67124f6a285153c0, Kind: 13, IsArray: true, Counted: true, Optional: false,
-		ArrayBound: 34, Offset: uint32(unsafe.Offsetof(FenceConfig{}.Rules)), ElemSize: uint32(unsafe.Sizeof(FenceConfig{}.Rules[0])), CountOffset: uint32(unsafe.Offsetof(FenceConfig{}.RulesCount)), PresentOffset: 0xffffffff,
-		CookOffset: 4684, CookElemSize: 524, CookCountOffset: 22500, CookPresentOffset: 4294967295,
+		ArrayBound: 130, Offset: uint32(unsafe.Offsetof(FenceConfig{}.Rules)), ElemSize: uint32(unsafe.Sizeof(FenceConfig{}.Rules[0])), CountOffset: uint32(unsafe.Offsetof(FenceConfig{}.RulesCount)), PresentOffset: 0xffffffff,
+		CookOffset: 8972, CookElemSize: 268, CookCountOffset: 43812, CookPresentOffset: 4294967295,
 		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10549,7 +10570,7 @@ var FenceConfigTableFields = []TableFieldInfo{
 		Doc: TableDocNone, NumTags: 0, Tags: nil},
 	{Name: "webfetch", Json: "webfetch", TypeName: "uint8", DeclaredTypeName: "uint8", Id: 0x58848fa93e04d3ef, Kind: 6, IsArray: false, Counted: false, Optional: false,
 		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(FenceConfig{}.Webfetch)), ElemSize: uint32(unsafe.Sizeof(FenceConfig{}.Webfetch)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
-		CookOffset: 22504, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		CookOffset: 43816, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
 		HasRange: true, RangeMin: 0.0, RangeMax: 2.0, EnumMax: -1,
 		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
 		EnumName:    nil,
@@ -10564,7 +10585,7 @@ var FenceConfigTableFields = []TableFieldInfo{
 var FenceConfigTableInfo TableTypeInfo
 
 func init() {
-	FenceConfigTableInfo = TableTypeInfo{Name: "FenceConfig", Size: uint32(unsafe.Sizeof(FenceConfig{})), NumFields: 4, Fields: FenceConfigTableFields, Reset: func(storage unsafe.Pointer) { FenceConfigReset((*FenceConfig)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x06d0542e1791e890, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return FenceConfigSaveBody(w, (*FenceConfig)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return FenceConfigLoadBody(&r, (*FenceConfig)(p)) }, CookSize: 22508, CookAlign: 4}
+	FenceConfigTableInfo = TableTypeInfo{Name: "FenceConfig", Size: uint32(unsafe.Sizeof(FenceConfig{})), NumFields: 4, Fields: FenceConfigTableFields, Reset: func(storage unsafe.Pointer) { FenceConfigReset((*FenceConfig)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x06d0542e1791e890, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return FenceConfigSaveBody(w, (*FenceConfig)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return FenceConfigLoadBody(&r, (*FenceConfig)(p)) }, CookSize: 43820, CookAlign: 4}
 }
 
 // FenceConfigTableType returns FenceConfig's reflection descriptor.

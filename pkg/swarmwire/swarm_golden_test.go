@@ -84,8 +84,8 @@ func goName(s string) string {
 	return b.String()
 }
 
-func isString(f TableFieldInfo) bool   { return f.TypeName == "string" && !f.IsArray }
-func isCounted(f TableFieldInfo) bool  { return f.IsArray && f.Counted }
+func isString(f TableFieldInfo) bool  { return f.TypeName == "string" && !f.IsArray }
+func isCounted(f TableFieldInfo) bool { return f.IsArray && f.Counted }
 func elemType(f TableFieldInfo) string { return f.TypeName }
 func isInt(f TableFieldInfo) bool {
 	return f.HasRange && (strings.HasPrefix(f.TypeName, "int") || strings.HasPrefix(f.TypeName, "uint"))
@@ -510,6 +510,29 @@ func TestSwarmRecordsGolden(t *testing.T) {
 		require.NoError(t, err, "rc -1 (no exit) is in bounds")
 		_, _, err = r.Read(hostile(t, low, le32(-1), le32(-2)))
 		assert.Equal(t, "clamped", refusal(t, "ExitRecord", err), "rc under -1")
+	})
+
+	// The list bounds are not smaller than what the code accepts today:
+	// LoadWorker (pkg/swarm/worker.go) and FencePermission (fence.go) take
+	// every entry they are given, so a description of 17 harness args or a
+	// card naming 9 READ: paths (2 job patterns and 4 per read) is a record,
+	// and the real data (5 args, 12 reads) sits well inside.
+	t.Run("the list bounds hold what the code accepts", func(t *testing.T) {
+		t.Parallel()
+		bound := func(fields []TableFieldInfo, name string) int {
+			for _, f := range fields {
+				if f.Name == name {
+					return int(f.ArrayBound)
+				}
+			}
+			t.Fatalf("no field %s", name)
+			return 0
+		}
+		assert.GreaterOrEqual(t, bound(WorkerRecordTableFields, "harness_args"), 17)
+		assert.GreaterOrEqual(t, bound(WorkerRecordTableFields, "read_roots"), 9)
+		assert.GreaterOrEqual(t, bound(WorkerRecordTableFields, "input_limit_phrases"), 17)
+		assert.GreaterOrEqual(t, bound(FenceConfigTableFields, "reads"), 12)
+		assert.GreaterOrEqual(t, bound(FenceConfigTableFields, "rules"), 2+4*bound(FenceConfigTableFields, "reads"))
 	})
 
 	t.Run("the exit record", func(t *testing.T) {

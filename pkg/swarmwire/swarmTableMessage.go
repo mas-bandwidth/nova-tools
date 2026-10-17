@@ -17,15 +17,15 @@ import (
 
 func PathSaveMessageBody(w *TableMessageWriter, value *Path) bool {
 	{
-		if value.TextLength < 0 || value.TextLength > 512 {
+		if value.TextLength < 0 || value.TextLength > 256 {
 			return false
 		}
 		if value.TextLength > 0 {
 			w.Put(20, TableMessageRefBitsHere)
-			if value.TextLength < 0 || value.TextLength > 512 {
+			if value.TextLength < 0 || value.TextLength > 256 {
 				return false
 			}
-			w.Put(uint64(value.TextLength), 10)
+			w.Put(uint64(value.TextLength), 9)
 			w.Raw(value.Text[:value.TextLength])
 		}
 	}
@@ -126,7 +126,7 @@ func PathLoadMessageBody(r *TableMessageReader, value *Path) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(512)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(256)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -169,15 +169,15 @@ func PathLoadMessages(values []Path, vocabulary *TableVocabulary, data []byte, r
 }
 func HarnessArgSaveMessageBody(w *TableMessageWriter, value *HarnessArg) bool {
 	{
-		if value.TextLength < 0 || value.TextLength > 512 {
+		if value.TextLength < 0 || value.TextLength > 256 {
 			return false
 		}
 		if value.TextLength > 0 {
 			w.Put(20, TableMessageRefBitsHere)
-			if value.TextLength < 0 || value.TextLength > 512 {
+			if value.TextLength < 0 || value.TextLength > 256 {
 				return false
 			}
-			w.Put(uint64(value.TextLength), 10)
+			w.Put(uint64(value.TextLength), 9)
 			w.Raw(value.Text[:value.TextLength])
 		}
 	}
@@ -278,7 +278,7 @@ func HarnessArgLoadMessageBody(r *TableMessageReader, value *HarnessArg) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(512)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(256)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -325,7 +325,7 @@ func PhraseSaveMessageBody(w *TableMessageWriter, value *Phrase) bool {
 			return false
 		}
 		if value.TextLength > 0 {
-			w.Put(27, TableMessageRefBitsHere)
+			w.Put(20, TableMessageRefBitsHere)
 			if value.TextLength < 0 || value.TextLength > 256 {
 				return false
 			}
@@ -473,15 +473,15 @@ func PhraseLoadMessages(values []Phrase, vocabulary *TableVocabulary, data []byt
 }
 func FenceRuleSaveMessageBody(w *TableMessageWriter, value *FenceRule) bool {
 	{
-		if value.PatternLength < 0 || value.PatternLength > 512 {
+		if value.PatternLength < 0 || value.PatternLength > 256 {
 			return false
 		}
 		if value.PatternLength > 0 {
 			w.Put(18, TableMessageRefBitsHere)
-			if value.PatternLength < 0 || value.PatternLength > 512 {
+			if value.PatternLength < 0 || value.PatternLength > 256 {
 				return false
 			}
-			w.Put(uint64(value.PatternLength), 10)
+			w.Put(uint64(value.PatternLength), 9)
 			w.Raw(value.Pattern[:value.PatternLength])
 		}
 	}
@@ -588,7 +588,7 @@ func FenceRuleLoadMessageBody(r *TableMessageReader, value *FenceRule) bool {
 						r.Report.Malformed = true
 						return false
 					}
-					kept := tableUtf8Clamp(text, min(int64(n), int64(512)))
+					kept := tableUtf8Clamp(text, min(int64(n), int64(256)))
 					if kept < int64(n) {
 						r.Report.Clamped++
 					}
@@ -1337,7 +1337,7 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 			return false
 		}
 		if value.NameLength > 0 {
-			w.Put(28, TableMessageRefBitsHere)
+			w.Put(27, TableMessageRefBitsHere)
 			if value.NameLength < 0 || value.NameLength > 64 {
 				return false
 			}
@@ -1402,7 +1402,7 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 			return false
 		}
 		if value.KeyFileLength > 0 {
-			w.Put(29, TableMessageRefBitsHere)
+			w.Put(28, TableMessageRefBitsHere)
 			if value.KeyFileLength < 0 || value.KeyFileLength > 512 {
 				return false
 			}
@@ -1415,7 +1415,7 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 			return false
 		}
 		if value.SecretLength > 0 {
-			w.Put(30, TableMessageRefBitsHere)
+			w.Put(29, TableMessageRefBitsHere)
 			if value.SecretLength < 0 || value.SecretLength > 128 {
 				return false
 			}
@@ -1425,13 +1425,13 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 	}
 	{
 		if value.Usage != 0 {
-			w.Put(31, TableMessageRefBitsHere)
+			w.Put(30, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 6, Packing: 1, Bits: 2, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.Usage), uint64(0))
 		}
 	}
 	{
 		if value.WorkerClass != 0 {
-			w.Put(32, TableMessageRefBitsHere)
+			w.Put(31, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 6, Packing: 1, Bits: 2, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.WorkerClass), uint64(0))
 		}
 	}
@@ -1440,7 +1440,7 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 			return false
 		}
 		if value.HarnessLength > 0 {
-			w.Put(33, TableMessageRefBitsHere)
+			w.Put(32, TableMessageRefBitsHere)
 			if value.HarnessLength < 0 || value.HarnessLength > 256 {
 				return false
 			}
@@ -1449,15 +1449,15 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 		}
 	}
 	{
-		if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 16 {
+		if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 64 {
 			return false
 		}
 		if value.HarnessArgsCount > 0 {
-			w.Put(34, TableMessageRefBitsHere)
-			if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 16 {
+			w.Put(33, TableMessageRefBitsHere)
+			if value.HarnessArgsCount < 0 || value.HarnessArgsCount > 64 {
 				return false
 			}
-			w.Put(uint64(value.HarnessArgsCount)-0, 5)
+			w.Put(uint64(value.HarnessArgsCount)-0, 7)
 			for i := 0; i < int(value.HarnessArgsCount); i++ {
 				if !HarnessArgSaveMessageBody(w, &value.HarnessArgs[i]) {
 					return false
@@ -1470,7 +1470,7 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 			return false
 		}
 		if value.WorkerDirLength > 0 {
-			w.Put(35, TableMessageRefBitsHere)
+			w.Put(34, TableMessageRefBitsHere)
 			if value.WorkerDirLength < 0 || value.WorkerDirLength > 512 {
 				return false
 			}
@@ -1483,7 +1483,7 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 			return false
 		}
 		if value.DeadlineLength > 0 {
-			w.Put(36, TableMessageRefBitsHere)
+			w.Put(35, TableMessageRefBitsHere)
 			if value.DeadlineLength < 0 || value.DeadlineLength > 32 {
 				return false
 			}
@@ -1496,7 +1496,7 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 			return false
 		}
 		if value.BoardLength > 0 {
-			w.Put(37, TableMessageRefBitsHere)
+			w.Put(36, TableMessageRefBitsHere)
 			if value.BoardLength < 0 || value.BoardLength > 256 {
 				return false
 			}
@@ -1505,15 +1505,15 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 		}
 	}
 	{
-		if value.ReadRootsCount < 0 || value.ReadRootsCount > 8 {
+		if value.ReadRootsCount < 0 || value.ReadRootsCount > 32 {
 			return false
 		}
 		if value.ReadRootsCount > 0 {
-			w.Put(38, TableMessageRefBitsHere)
-			if value.ReadRootsCount < 0 || value.ReadRootsCount > 8 {
+			w.Put(37, TableMessageRefBitsHere)
+			if value.ReadRootsCount < 0 || value.ReadRootsCount > 32 {
 				return false
 			}
-			w.Put(uint64(value.ReadRootsCount)-0, 4)
+			w.Put(uint64(value.ReadRootsCount)-0, 6)
 			for i := 0; i < int(value.ReadRootsCount); i++ {
 				if !PathSaveMessageBody(w, &value.ReadRoots[i]) {
 					return false
@@ -1523,26 +1523,26 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 	}
 	{
 		if value.MaxTurns != 0 {
-			w.Put(39, TableMessageRefBitsHere)
+			w.Put(38, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 4, Packing: 1, Bits: 31, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.MaxTurns), uint64(0))
 		}
 	}
 	{
 		if value.MaxCacheRead != 0 {
-			w.Put(40, TableMessageRefBitsHere)
+			w.Put(39, TableMessageRefBitsHere)
 			tableMessageWriteScalar(&w.TableBitWriter, &w.Clamped, TableMessageShape{Kind: 5, Packing: 1, Bits: 53, Base: [2]uint64{0x0, 0x0}, Min: 0, Max: 0, QMin: math.Float32frombits(0x0), QDelta: math.Float32frombits(0x0), QCount: 0}, uint64(value.MaxCacheRead), uint64(0))
 		}
 	}
 	{
-		if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 16 {
+		if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 32 {
 			return false
 		}
 		if value.InputLimitPhrasesCount > 0 {
-			w.Put(41, TableMessageRefBitsHere)
-			if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 16 {
+			w.Put(40, TableMessageRefBitsHere)
+			if value.InputLimitPhrasesCount < 0 || value.InputLimitPhrasesCount > 32 {
 				return false
 			}
-			w.Put(uint64(value.InputLimitPhrasesCount)-0, 5)
+			w.Put(uint64(value.InputLimitPhrasesCount)-0, 6)
 			for i := 0; i < int(value.InputLimitPhrasesCount); i++ {
 				if !PhraseSaveMessageBody(w, &value.InputLimitPhrases[i]) {
 					return false
@@ -1555,7 +1555,7 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 			return false
 		}
 		if value.LaunchGraceLength > 0 {
-			w.Put(42, TableMessageRefBitsHere)
+			w.Put(41, TableMessageRefBitsHere)
 			if value.LaunchGraceLength < 0 || value.LaunchGraceLength > 32 {
 				return false
 			}
@@ -1565,7 +1565,7 @@ func WorkerRecordSaveMessageBody(w *TableMessageWriter, value *WorkerRecord) boo
 	}
 	{
 		if value.KeepData != false {
-			w.Put(43, TableMessageRefBitsHere)
+			w.Put(42, TableMessageRefBitsHere)
 			if value.KeepData {
 				w.Put(1, 1)
 			} else {
@@ -2095,7 +2095,7 @@ func WorkerRecordLoadMessageBody(r *TableMessageReader, value *WorkerRecord) boo
 					}
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
-					keep := min(n, uint64(16))
+					keep := min(n, uint64(64))
 					if keep < n {
 						r.Report.Clamped++
 					}
@@ -2280,7 +2280,7 @@ func WorkerRecordLoadMessageBody(r *TableMessageReader, value *WorkerRecord) boo
 					}
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
-					keep := min(n, uint64(8))
+					keep := min(n, uint64(32))
 					if keep < n {
 						r.Report.Clamped++
 					}
@@ -2420,7 +2420,7 @@ func WorkerRecordLoadMessageBody(r *TableMessageReader, value *WorkerRecord) boo
 					}
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
-					keep := min(n, uint64(16))
+					keep := min(n, uint64(32))
 					if keep < n {
 						r.Report.Clamped++
 					}
@@ -2887,15 +2887,15 @@ func FenceConfigSaveMessageBody(w *TableMessageWriter, value *FenceConfig) bool 
 		}
 	}
 	{
-		if value.ReadsCount < 0 || value.ReadsCount > 8 {
+		if value.ReadsCount < 0 || value.ReadsCount > 32 {
 			return false
 		}
 		if value.ReadsCount > 0 {
 			w.Put(15, TableMessageRefBitsHere)
-			if value.ReadsCount < 0 || value.ReadsCount > 8 {
+			if value.ReadsCount < 0 || value.ReadsCount > 32 {
 				return false
 			}
-			w.Put(uint64(value.ReadsCount)-0, 4)
+			w.Put(uint64(value.ReadsCount)-0, 6)
 			for i := 0; i < int(value.ReadsCount); i++ {
 				if !PathSaveMessageBody(w, &value.Reads[i]) {
 					return false
@@ -2904,15 +2904,15 @@ func FenceConfigSaveMessageBody(w *TableMessageWriter, value *FenceConfig) bool 
 		}
 	}
 	{
-		if value.RulesCount < 0 || value.RulesCount > 34 {
+		if value.RulesCount < 0 || value.RulesCount > 130 {
 			return false
 		}
 		if value.RulesCount > 0 {
 			w.Put(16, TableMessageRefBitsHere)
-			if value.RulesCount < 0 || value.RulesCount > 34 {
+			if value.RulesCount < 0 || value.RulesCount > 130 {
 				return false
 			}
-			w.Put(uint64(value.RulesCount)-0, 6)
+			w.Put(uint64(value.RulesCount)-0, 8)
 			for i := 0; i < int(value.RulesCount); i++ {
 				if !FenceRuleSaveMessageBody(w, &value.Rules[i]) {
 					return false
@@ -3063,7 +3063,7 @@ func FenceConfigLoadMessageBody(r *TableMessageReader, value *FenceConfig) bool 
 					}
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
-					keep := min(n, uint64(8))
+					keep := min(n, uint64(32))
 					if keep < n {
 						r.Report.Clamped++
 					}
@@ -3119,7 +3119,7 @@ func FenceConfigLoadMessageBody(r *TableMessageReader, value *FenceConfig) bool 
 					}
 					element := TableMessageEntry{Shape: entry.Element}
 					_ = element
-					keep := min(n, uint64(34))
+					keep := min(n, uint64(130))
 					if keep < n {
 						r.Report.Clamped++
 					}

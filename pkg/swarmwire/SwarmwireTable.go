@@ -24,7 +24,7 @@ import (
 // FenceRuleRow — a block row, or a record one nests by value. `Row` is a CLAIMED
 // suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
 type FenceRuleRow struct {
-	Pattern       [513]byte // string(512): max length, used length beside it
+	Pattern       [257]byte // string(256): max length, used length beside it
 	_             [3]byte   // generated padding
 	PatternLength int32
 	Action        uint8
@@ -34,7 +34,7 @@ type FenceRuleRow struct {
 // HarnessArgRow — a block row, or a record one nests by value. `Row` is a CLAIMED
 // suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
 type HarnessArgRow struct {
-	Text       [513]byte // string(512): max length, used length beside it
+	Text       [257]byte // string(256): max length, used length beside it
 	_          [3]byte   // generated padding
 	TextLength int32
 }
@@ -42,7 +42,7 @@ type HarnessArgRow struct {
 // PathRow — a block row, or a record one nests by value. `Row` is a CLAIMED
 // suffix (mas-bandwidth/schema docs/SPEC-TABLES.md §11), so no declaration in the unit can take it.
 type PathRow struct {
-	Text       [513]byte // string(512): max length, used length beside it
+	Text       [257]byte // string(256): max length, used length beside it
 	_          [3]byte   // generated padding
 	TextLength int32
 }
@@ -100,9 +100,9 @@ type FenceConfigRow struct {
 	JobDir       [513]byte // string(512): buffer, used length beside it
 	_            [3]byte   // generated padding
 	JobDirLength int32
-	Reads        [8]PathRow
+	Reads        [32]PathRow
 	ReadsCount   int32
-	Rules        [34]FenceRuleRow
+	Rules        [130]FenceRuleRow
 	RulesCount   int32
 	Webfetch     uint8
 	_            [3]byte // generated padding
@@ -169,7 +169,7 @@ type WorkerRecordRow struct {
 	Harness                [257]byte // string(256): buffer, used length beside it
 	_                      [1]byte   // generated padding
 	HarnessLength          int32
-	HarnessArgs            [16]HarnessArgRow
+	HarnessArgs            [64]HarnessArgRow
 	HarnessArgsCount       int32
 	WorkerDir              [513]byte // string(512): buffer, used length beside it
 	_                      [3]byte   // generated padding
@@ -180,12 +180,12 @@ type WorkerRecordRow struct {
 	Board                  [257]byte // string(256): buffer, used length beside it
 	_                      [3]byte   // generated padding
 	BoardLength            int32
-	ReadRoots              [8]PathRow
+	ReadRoots              [32]PathRow
 	ReadRootsCount         int32
 	MaxTurns               int32
 	_                      [4]byte // generated padding
 	MaxCacheRead           int64
-	InputLimitPhrases      [16]PhraseRow
+	InputLimitPhrases      [32]PhraseRow
 	InputLimitPhrasesCount int32
 	LaunchGrace            [33]byte // string(32): buffer, used length beside it
 	_                      [3]byte  // generated padding
@@ -197,7 +197,7 @@ type WorkerRecordRow struct {
 // BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
 // one digest a block carries and BlockOpen compares, and the fact §3.3's
 // announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0x1aaf9c9990caec15
+const BuildVersion uint64 = 0x521cbd807ba695c8
 
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema

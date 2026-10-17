@@ -20,16 +20,16 @@ table ExitRecord
 
 table FenceConfig
     field job_dir id=0x030f206af480f8a8 kind=12 size=512
-    field reads id=0x8935b4f305f36a82 kind=14 elem=13 type=Path array=bounded bound=8
-    field rules id=0x67124f6a285153c0 kind=14 elem=13 type=FenceRule array=bounded bound=34
+    field reads id=0x8935b4f305f36a82 kind=14 elem=13 type=Path array=bounded bound=32
+    field rules id=0x67124f6a285153c0 kind=14 elem=13 type=FenceRule array=bounded bound=130
     field webfetch id=0x58848fa93e04d3ef kind=6 min=0 max=2
 
 table FenceRule
-    field pattern id=0x0b7a1e4bea695f89 kind=12 size=512
+    field pattern id=0x0b7a1e4bea695f89 kind=12 size=256
     field action id=0x6568640b035a56df kind=6 min=0 max=2
 
 table HarnessArg
-    field text id=0xfa04f4ef1995407e kind=12 size=512
+    field text id=0xfa04f4ef1995407e kind=12 size=256
 
 table HarnessConfigRecord
     field provider id=0xd02b4c8c65fb54dc kind=12 size=64
@@ -44,7 +44,7 @@ table MemberCarry
     field branch id=0x919ec0f651278ba5 kind=12 size=256
 
 table Path
-    field text id=0xfa04f4ef1995407e kind=12 size=512
+    field text id=0xfa04f4ef1995407e kind=12 size=256
 
 table Phrase
     field text id=0xfa04f4ef1995407e kind=12 size=256
@@ -60,14 +60,14 @@ table WorkerRecord
     field usage id=0x1e1702714db75ac8 kind=6 min=0 max=2
     field worker_class id=0x715b9112503b65d0 kind=6 min=0 max=2
     field harness id=0x211fcbbafe5331ab kind=12 size=256
-    field harness_args id=0xe15a71de737c1c11 kind=14 elem=13 type=HarnessArg array=bounded bound=16
+    field harness_args id=0xe15a71de737c1c11 kind=14 elem=13 type=HarnessArg array=bounded bound=64
     field worker_dir id=0xf6b3b625055a22af kind=12 size=512
     field deadline id=0x4abbaca40bb6fe75 kind=12 size=32
     field board id=0xd0013bb2e083188b kind=12 size=256
-    field read_roots id=0xf7df2f140b025f4b kind=14 elem=13 type=Path array=bounded bound=8
+    field read_roots id=0xf7df2f140b025f4b kind=14 elem=13 type=Path array=bounded bound=32
     field max_turns id=0x6e3350b274605c16 kind=4 min=0 max=2147483647
     field max_cache_read id=0x18e16aeddf76561d kind=5 min=0 max=9007199254740991
-    field input_limit_phrases id=0xf9d5642cca9049fa kind=14 elem=13 type=Phrase array=bounded bound=16
+    field input_limit_phrases id=0xf9d5642cca9049fa kind=14 elem=13 type=Phrase array=bounded bound=32
     field launch_grace id=0x98358983bb5d1401 kind=12 size=32
     field keep_data id=0x393f74e7cef3c9d5 kind=1
 
