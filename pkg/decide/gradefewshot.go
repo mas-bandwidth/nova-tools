@@ -135,8 +135,9 @@ func exampleCheck(e *Example, c *schemaread.Checker) {
 // newExampleReader is the grade examples file's strict reader: the table wire, the padded
 // standard base64 of it, the schema JSON text and the legacy form ParseExamples read today. The
 // legacy form keeps the base read (one object per line, unknown keys refused); the schema JSON
-// text spells the label as the table's enum name, so the legacy read lowers its case, and both
-// read to the same value.
+// text spells the label as the table's enum name, so the legacy read maps those exact names
+// (Flash, Pro, Heavy) to the grade's spellings and leaves every other spelling for exampleCheck
+// to refuse, and both read to the same value.
 func newExampleReader() *schemaread.Reader[Example] {
 	return decided[Example]{name: "EXAMPLE", help: "nova-decide grade --examples -h",
 		measure: func(wire []byte) error { _, err := decidewire.ExampleLoadMeasureReason(wire); return err },
@@ -150,7 +151,14 @@ func newExampleReader() *schemaread.Reader[Example] {
 			if err := dec.Decode(new(any)); err != io.EOF {
 				return schemaread.Report{Malformed: true}
 			}
-			v.Label = strings.ToLower(v.Label)
+			switch v.Label {
+			case "Flash":
+				v.Label = GradeFlash
+			case "Pro":
+				v.Label = GradePro
+			case "Heavy":
+				v.Label = GradeHeavy
+			}
 			return schemaread.Report{}
 		},
 		check: exampleCheck}.reader()

@@ -92,7 +92,7 @@ func TestGradeExamplesDualRead(t *testing.T) {
 	for _, in := range []struct {
 		form string
 		in   []byte
-	}{{"binary", clamped}, {"base64", []byte(base64.StdEncoding.EncodeToString(clamped))}, {"legacy", []byte(`{"card":"c","heading":"h","label":"bogus"}`)}} {
+	}{{"binary", clamped}, {"base64", []byte(base64.StdEncoding.EncodeToString(clamped))}, {"legacy", []byte(`{"card":"c","heading":"h","label":"bogus"}`)}, {"legacy-pro", []byte(`{"card":"c","heading":"h","label":"PRO"}`)}} {
 		got, _, err := rd.Read(in.in)
 		ref := refusal(t, err, "EXAMPLE")
 		if ref != nil {
