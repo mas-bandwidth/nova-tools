@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x01')
+[]byte("{\n  \"tool\": null,\n  \"verb\": null,\n  \"by\": null,\n  \"at\": null,\n  \"ok\": false,\n  \"notes\": null,\n  \"closes\": null\n}\n")
