@@ -25,6 +25,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/readregular"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
+	"github.com/mas-bandwidth/nova-tools/pkg/tablemodelwire"
 )
 
 // Trend is which way a stream moved, in the stream's own direction of travel.
@@ -251,8 +253,129 @@ type State struct {
 	Streams map[string]StreamState `json:"streams"`
 }
 
+// The state reader and the bounds of schemas/tablemodel's ConvergeState that
+// this package names nowhere else. Every read of the state goes through
+// pkg/schemaread and the generated table, so the table wire, its padded
+// standard base64 and the legacy JSON the writer still writes all decode to
+// one equal value, damage is refused by name (`CONVERGE_STATE REFUSED:
+// <reason>; run: nova-check -h`) and each read is counted under its form (the
+// owner's rules S2 and S4, readers first).
+const (
+	maxStreamName = 64      // ConvergeStreamEntry.name
+	maxStampBytes = 64      // ConvergeStreamEntry.at: an RFC 3339 instant
+	maxWidening   = 1 << 24 // ConvergeStreamEntry.widening
+	maxStreams    = 4096    // ConvergeState.streams
+)
+
+// stateReader is the process's one state reader, counting every read per form
+// and per reason: the cutover's evidence.
+var stateReader = schemaread.NewReader(stateCodec())
+
+// stateCodec is the ConvergeState generated table as pkg/schemaread takes it.
+// The legacy form is the JSON the writer writes today; the schema JSON text
+// form is not read here, because a legacy state is itself JSON and the two
+// shapes would be indistinguishable (the reader accepts either and counts the
+// legacy read).
+func stateCodec() *schemaread.Codec[State] {
+	return &schemaread.Codec[State]{
+		Name:  "CONVERGE_STATE",
+		Help:  "nova-check -h",
+		Reset: func(s *State) { *s = State{Streams: map[string]StreamState{}} },
+		Measure: func(wire []byte) error {
+			_, err := tablemodelwire.ConvergeStateLoadMeasureReason(wire)
+			return err
+		},
+		LoadWire: func(v *State, wire []byte) schemaread.Report {
+			return stateOpen(tablemodelwire.ConvergeStateLoadBuilder, wire, v)
+		},
+		Legacy:      func(in []byte) bool { return len(in) > 0 && in[0] == '{' },
+		LoadLegacy:  stateLoadLegacy,
+		Constraints: stateConstraints,
+	}
+}
+
+// stateReport reduces a generated TableReport to what the strict read decides
+// on: a repeated group key is damage, never a silent last-one-wins.
+func stateReport(r *tablemodelwire.TableReport) schemaread.Report {
+	return schemaread.Report{
+		Unknown:      int(r.Unknown),
+		KindMismatch: int(r.KindMismatch),
+		Clamped:      int(r.Clamped),
+		Malformed:    r.Malformed || r.Duplicate > 0,
+		Reason:       r.Reason,
+	}
+}
+
+// stateOpen loads in (the table wire or the JSON text form) into a builder and
+// hands the locked value to stateFrom, which copies it out.
+func stateOpen(load func(*tablemodelwire.ConvergeStateBuilder, []byte, *tablemodelwire.TableReport) bool, in []byte, v *State) schemaread.Report {
+	var b tablemodelwire.ConvergeStateBuilder
+	if !b.Init() {
+		return schemaread.Report{Malformed: true}
+	}
+	defer b.Shutdown()
+	var r tablemodelwire.TableReport
+	if !load(&b, in, &r) || !b.Lock() {
+		return schemaread.Report{Malformed: true, Reason: r.Reason}
+	}
+	st, ok := stateFrom(b.AsConst())
+	if !ok {
+		return schemaread.Report{Malformed: true}
+	}
+	*v = st
+	return stateReport(&r)
+}
+
+// stateFrom is the ConvergeState table as the verb reads it: one entry per
+// stream, keyed by its name. A stream without a name is not a record.
+func stateFrom(w *tablemodelwire.ConvergeState) (State, bool) {
+	st := State{Streams: map[string]StreamState{}}
+	ok := true
+	tablemodelwire.ConvergeStateStreamsEach(&w.Streams, func(e *tablemodelwire.ConvergeStreamEntryRow) bool {
+		name := string(tablemodelwire.TableStringAt(&e.Name).Data)
+		if name == "" {
+			ok = false
+			return false
+		}
+		st.Streams[name] = StreamState{
+			Now:      e.Now,
+			At:       string(tablemodelwire.TableStringAt(&e.At).Data),
+			Widening: int(e.Widening),
+		}
+		return true
+	})
+	return st, ok
+}
+
+// stateLoadLegacy reads the legacy state JSON exactly as this verb always has.
+func stateLoadLegacy(v *State, in []byte) schemaread.Report {
+	var st State
+	if err := json.Unmarshal(in, &st); err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	if st.Streams == nil {
+		st.Streams = map[string]StreamState{}
+	}
+	*v = st
+	return schemaread.Report{}
+}
+
+// stateConstraints are the ConvergeState bounds the reader refuses past: a
+// stream whose name or instant is over-length or not text is clamped or
+// malformed, and a negative or absurd widening streak is clamped.
+func stateConstraints(st *State, c *schemaread.Checker) {
+	c.Bound("streams", int64(len(st.Streams)), 0, maxStreams)
+	for name, s := range st.Streams {
+		c.Text("stream.name", name, maxStreamName)
+		c.Text("at", s.At, maxStampBytes)
+		c.Bound("widening_ticks", int64(s.Widening), 0, maxWidening)
+	}
+}
+
 // LoadState reads the state file. A file that is not there is an empty state
 // and not an error: the first tick of a new stream has nothing to remember.
+// The state is read through the generated table in each form the writer may
+// leave, and a damaged value is refused by name, never read as absent.
 func LoadState(path string) (State, error) {
 	st := State{Streams: map[string]StreamState{}}
 	if strings.TrimSpace(path) == "" {
@@ -268,11 +391,9 @@ func LoadState(path string) (State, error) {
 	if len(strings.TrimSpace(string(raw))) == 0 {
 		return st, nil
 	}
-	if err := json.Unmarshal(raw, &st); err != nil {
+	st, _, err = stateReader.Read(raw)
+	if err != nil {
 		return State{Streams: map[string]StreamState{}}, fmt.Errorf("%s is not a convergence state file: %w", path, err)
-	}
-	if st.Streams == nil {
-		st.Streams = map[string]StreamState{}
 	}
 	return st, nil
 }
