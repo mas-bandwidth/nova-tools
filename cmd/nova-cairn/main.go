@@ -20,6 +20,10 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cairn"
+	// The blank import installs the ledger and cairn log tables
+	// (internal/record/ledgerread), so a table image or its base64 reads in
+	// the binary instead of being refused as unknown_form (S4, readers first).
+	_ "github.com/mas-bandwidth/nova-tools/internal/record/ledgerread"
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
