@@ -55,7 +55,8 @@ directory, prove the wall with probe, then run a command that writes inside it.
 usage:
   nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny]
                [--net-listen] [--net-allow <host:port>] [--cwd <dir>]
-               [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+               [--tmp <dir>] [--name <container>] [--acl tool|caller]
+               [--max-procs <n>] [--max-mem <size>] -- <command> <args...>
   nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
                [-- <command> <args...>]
@@ -110,6 +111,12 @@ usage:
                   one caller builds one argv for three platforms.
   --acl <t|c>     who adds the windows ACEs. Accepted and ignored on darwin,
                   with one NOTE line, for the same reason as --name.
+  --max-procs <n> the most processes the command's tree may hold. Past it the
+                  tree is frozen and killed, SANDBOX RUNAWAY, exit 137. Default:
+                  sized to the machine, 1024 with 32 or more CPUs, 512 otherwise.
+  --max-mem <s>   the most resident memory the tree may hold, e.g. 16g. Default:
+                  16g with 32 or more CPUs and 64g of memory, 8g otherwise, and
+                  never more than half the machine's memory.
   --secret <path> probe only: the file a probe proves it cannot read. A path is
                   not a secret; the file's contents are never read. A probe may run
                   WITHOUT one -- a caller whose key is delivered by nova-secrets
@@ -309,9 +316,12 @@ type flags struct {
 	netDeny, netListen, json    bool
 	max                         int
 	maxSet                      bool
-	argv                        []string
-	sawDashDash                 bool
-	bad                         []sandbox.Refusal
+	// maxProcs and maxMem are the bare form's caps on the tree, as given; empty is the
+	// machine's sized caps (sandbox.MachineCaps, docs/SPEC-SANDBOX.md "wall-caps-processes.w1").
+	maxProcs, maxMem string
+	argv             []string
+	sawDashDash      bool
+	bad              []sandbox.Refusal
 }
 
 func parse(args []string) flags { return parseVerb("", args) }
@@ -378,6 +388,10 @@ func parseVerb(verb string, args []string) flags {
 		case "--net-allow":
 			v, i = want(i, "--net-allow")
 			f.netAllow = append(f.netAllow, v)
+		case "--max-procs":
+			f.maxProcs, i = want(i, "--max-procs")
+		case "--max-mem":
+			f.maxMem, i = want(i, "--max-mem")
 		case "--max":
 			v, i = want(i, "--max")
 			n := 0
@@ -402,7 +416,7 @@ func parseVerb(verb string, args []string) flags {
 // bareFlags is every flag parseVerb's table takes, in its order: what an
 // unknown flag on the bare form is answered with.
 var bareFlags = []string{"--read", "--read-noexec", "--write", "--cwd", "--tmp", "--name", "--acl", "--secret", "--gpu",
-	"--net-deny", "--net-listen", "--json", "--net-allow", "--max"}
+	"--net-deny", "--net-listen", "--json", "--net-allow", "--max", "--max-procs", "--max-mem"}
 
 // bareFlagText is unknownArg's `unknown flag --x; run: ...` with the flags
 // the bare form takes and the nearest of them between the two.
@@ -489,13 +503,15 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 	// bare form.
 	f.bad = append(f.bad, notForThisVerb("the bare form", "nova-sandbox help",
 		map[string]bool{"--secret": f.secret != "", "--max": f.maxSet, "--json": f.json}, ownerOf)...)
+	maxProcs, maxMem, capBad := bareCaps(f.maxProcs, f.maxMem)
+	f.bad = append(f.bad, capBad...)
 	if len(f.bad) > 0 {
 		return refuseAll(stderr, f.bad)
 	}
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, ReadsNoExec: f.readsNoExec, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
 		NetDeny: f.netDeny, NetListen: f.netListen, NetAllow: f.netAllow, Argv: f.argv, Home: homeOf(env),
-		GPU: f.gpu,
+		GPU: f.gpu, MaxProcs: maxProcs, MaxMem: maxMem,
 	})
 	if len(bad) > 0 {
 		homeRemedy(bad, f.writes, args)
@@ -556,12 +572,36 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 	return code
 }
 
+// bareCaps is the bare form's caps: --max-procs and --max-mem as given, and the machine's
+// sized caps for either one not given (sandbox.MachineCaps). A value that is not a
+// positive count or quantity is a refusal naming the flag and its form.
+func bareCaps(procs, mem string) (int, int64, []sandbox.Refusal) {
+	sizedProcs, sizedMem := sandbox.MachineCaps()
+	var bad []sandbox.Refusal
+	n, m := sizedProcs, sizedMem
+	if procs != "" {
+		v, err := strconv.Atoi(procs)
+		if err != nil || v <= 0 {
+			bad = append(bad, sandbox.Refusal{Reason: "bad_max_procs", Text: "--max-procs wants a positive whole number of processes: --max-procs 512"})
+		}
+		n = v
+	}
+	if mem != "" {
+		v, ok := parseBytes(mem)
+		if !ok || v <= 0 {
+			bad = append(bad, sandbox.Refusal{Reason: "bad_max_mem", Text: "--max-mem wants a positive quantity, a number with an optional k, m, g or t: --max-mem 8g"})
+		}
+		m = v
+	}
+	return n, m, bad
+}
+
 // notForThisVerb turns "this flag is another verb's" into one refusal per flag, named and
 // in a fixed order so that two problems print the same way twice. help is the command
 // that lists this verb's own flags.
 func notForThisVerb(verb, help string, given map[string]bool, owner map[string]string) []sandbox.Refusal {
 	var out []sandbox.Refusal
-	for _, flag := range []string{"--secret", "--max", "--acl", "--name", "--cwd", "--tmp", "--net-allow", "--json"} {
+	for _, flag := range []string{"--secret", "--max", "--acl", "--name", "--cwd", "--tmp", "--net-allow", "--json", "--max-procs", "--max-mem"} {
 		if !given[flag] {
 			continue
 		}
@@ -576,6 +616,7 @@ var ownerOf = map[string]string{
 	"--secret": "probe", "--max": "probe", "--acl": "the bare form", "--json": "check, policy and probe",
 	"--name": "the bare form and policy", "--cwd": "the bare form and policy", "--tmp": "the bare form and policy",
 	"--net-allow": "the bare form and policy",
+	"--max-procs": "the bare form and run", "--max-mem": "the bare form and run",
 }
 
 func asRefusal(err error, out *sandbox.Refusal) bool {
@@ -624,6 +665,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// of a wall other than the one asked about answers the wrong question
 	f.bad = append(f.bad, notForThisVerb("probe", "nova-sandbox probe -h", map[string]bool{
 		"--acl": f.acl != "", "--name": f.name != "", "--cwd": f.cwd != "", "--tmp": f.tmp != "", "--net-allow": len(f.netAllow) > 0,
+		"--max-procs": f.maxProcs != "", "--max-mem": f.maxMem != "",
 	}, ownerOf)...)
 	// EVERY independent problem in ONE run. A friend, dogfooding v0.12.0 (nova-tools #104):
 	// a bare `probe` named the missing --secret, and named the missing --write only on
@@ -1146,8 +1188,9 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 	// Another verb's flag is accepted, as a caller that builds one argv for policy and
 	// probe has always had it, and said aloud: it changes nothing in the policy printed.
-	given := map[string]bool{"--secret": f.secret != "", "--max": f.maxSet, "--acl": f.acl != ""}
-	for _, flag := range []string{"--secret", "--max", "--acl"} {
+	given := map[string]bool{"--secret": f.secret != "", "--max": f.maxSet, "--acl": f.acl != "",
+		"--max-procs": f.maxProcs != "", "--max-mem": f.maxMem != ""}
+	for _, flag := range []string{"--secret", "--max", "--acl", "--max-procs", "--max-mem"} {
 		if given[flag] {
 			v.note(flag + " is " + ownerOf[flag] + "'s flag and is ignored here: the policy printed is the same without it")
 		}

@@ -247,7 +247,9 @@ func pathWithDirsFirst(env []string, dirs ...string) []string {
 // GOFLAGS=-mod=readonly ...`, which replaces whatever GOFLAGS the child was handed. So a
 // `go` wrapper sits in <slot>/shim beside the shell wrappers, first on the child's PATH, and
 // adds -trimpath to GOFLAGS before it execs the bench's go; a GOFLAGS that already names
-// -trimpath (either way) is left as it is. It changes no other flag and no other name.
+// -trimpath (either way) is left as it is. It adds -p=4 the same way, for the reason
+// nativeBuildParallelism gives, unless GOFLAGS already names -p. It changes no other flag
+// and no other name.
 // Written only with the shared caches on, and only on POSIX benches, like the shells'.
 
 // nativeGoShimName is the wrapper's name in <slot>/shim.
@@ -262,6 +264,12 @@ func goShimScript(real string) string {
 case " ${GOFLAGS-} " in
 *" -trimpath"* | *" --trimpath"*) ;;
 *) GOFLAGS="${GOFLAGS:+$GOFLAGS }-trimpath"; export GOFLAGS ;;
+esac
+# and at most four go programs at once unless the card names -p itself (nativeBuildParallelism):
+# the wall kills a tree past its process cap, and an unbounded go test ./... reached it.
+case " ${GOFLAGS-} " in
+*" -p="* | *" --p="*) ;;
+*) GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=4"; export GOFLAGS ;;
 esac
 exec '` + real + `' "$@"
 `

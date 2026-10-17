@@ -472,7 +472,7 @@ were written.
 ## The verbs
 
 ```
-nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--net-allow <host:port>]... [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--net-allow <host:port>]... [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] [--max-procs <n>] [--max-mem <size>] -- <command> <args...>
 nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>] [--json]
 nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--net-allow <host:port>]... [--cwd <dir>] [--json] [-- <command> <args...>]
 nova-sandbox check   [--json]
@@ -527,7 +527,14 @@ The binary is `nova-sandbox`.
 
 The wall bounds the process count and the resident memory of the tree it runs, so one
 runaway command cannot take the machine (289 test processes ran unbounded under one
-`go test`). Defaults: **256 processes** and **8 GiB**.
+`go test`). The `run` verb's defaults are **256 processes** and **8 GiB**. The bare form's
+are **sized to the machine** (`sandbox.MachineCaps`, `pkg/sandbox/caps.go`): 1024 processes
+with 32 or more logical CPUs and 512 otherwise; 16 GiB with 32 or more CPUs and 64 GiB of
+memory or more and 8 GiB otherwise; and never more than half the machine's memory where it
+can be read (`/proc/meminfo` MemTotal, darwin's `hw.memsize`). The fixed 256 and 8 GiB
+killed ordinary parallel builds on the fleet's members (2026-10-17: about 90 worker
+children in a day, `runaway: 287` to `697 processes (cap 256)`, and `8611000320 bytes of
+memory (cap 8589934592)`); the caps still bound a runaway (`TestSizedCapsFollowTheMachine`).
 
 - **The tree is counted by parent pid, never made a group.** Rule 12 stands: the bare
   form creates no process group of its own, whatever its stdin, and the tree stays in the
@@ -574,9 +581,14 @@ runaway command cannot take the machine (289 test processes ran unbounded under 
   plus twice the cap, so a bomb is stopped between two counts, and the tool's own limit is
   put back at once. `RLIMIT_AS` is not used: it is per process and refuses ordinary
   programs that reserve a large virtual range. The memory cap is the resident sum above.
-- **Flags.** `run` takes `--max-procs <n>` and `--max-mem <size>` (accepted everywhere,
-  enforced where the tool can count); the bare form carries the defaults. The flags on the
-  bare form are owed in `cmd/nova-sandbox/main.go`, which this card does not edit.
+- **Flags.** `run` and the bare form take `--max-procs <n>` and `--max-mem <size>`
+  (accepted everywhere, enforced where the tool can count); a bare form given neither
+  carries the machine's sized caps, and one given one carries the sized cap for the other.
+  A value that is not a positive count or quantity is refused before anything runs
+  (`bad_max_procs`, `bad_max_mem`; `TestBareCapsAreTheFlagsOrTheMachines`,
+  `TestTheBareFormRefusesABadCapBeforeItRuns`). `probe` refuses them, being a proof of the
+  wall and not of a tree's caps, and `policy` notes them as ignored. The fork-bomb tests
+  name `--max-procs 256`, so they test the mechanism at one cap on every machine.
 - **Checked by** `TestWallCapsAForkBomb` (a shell loop that forks until refused, itself
   capped at 1,000, run by the tool in a group of the test's making, ends `runaway: <n>
   processes` with `n` over 256 and no live process of that group),

@@ -107,7 +107,9 @@ func (j job) wallBomb(t *testing.T, script string) (int, string, int, bool) {
 	t.Cleanup(bombs.Unlock)
 	ctx, cancel := context.WithTimeout(context.Background(), capWait())
 	defer cancel()
-	cmd := exec.CommandContext(ctx, tool, "--read", j.read, "--write", j.write, "--", "/bin/sh", "-c", script)
+	// The cap is named: the machine's sized default (sandbox.MachineCaps) is 512 or 1024,
+	// which TestWallCapsATreeWhoseLeaderExits's 300 processes would stay under.
+	cmd := exec.CommandContext(ctx, tool, "--read", j.read, "--write", j.write, "--max-procs", strconv.Itoa(sandbox.DefaultMaxProcs), "--", "/bin/sh", "-c", script)
 	cmd.Env = j.env()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var errb bytes.Buffer
@@ -148,7 +150,7 @@ func assertCapped(t *testing.T, code int, errOut string, pgid int, timedOut bool
 }
 
 // TestWallCapsAForkBomb: a shell loop that forks until refused, itself capped at 1,000,
-// runs under the wall; the wall kills its tree past the default cap of 256, and no
+// runs under the wall; the wall kills its tree past the named cap of 256, and no
 // process of the tree is left in the caller's group. Where RLIMIT_NPROC refuses a fork first, the shell exits
 // and leaves its children, and that is the wall's to end as well.
 func TestWallCapsAForkBomb(t *testing.T) {

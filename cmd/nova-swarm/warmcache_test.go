@@ -63,9 +63,9 @@ func TestEveryCardOfAMachineBuildsInOneWarmCache(t *testing.T) {
 	}
 }
 
-// TestTheGoShimBuildsTrimpath: the wrapper adds -trimpath to whatever GOFLAGS the card
-// exported, leaves a GOFLAGS that names it either way alone, and hands every argument to
-// the bench's go unchanged.
+// TestTheGoShimBuildsTrimpath: the wrapper adds -trimpath and -p=4 to whatever GOFLAGS the
+// card exported, leaves a GOFLAGS that names either already alone for that one, and hands
+// every argument to the bench's go unchanged.
 func TestTheGoShimBuildsTrimpath(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -77,10 +77,12 @@ func TestTheGoShimBuildsTrimpath(t *testing.T) {
 	shim := t.TempDir()
 	require.NoError(t, writeNativeGoShim(shim, goBin))
 	for _, tc := range []struct{ name, goflags, want string }{
-		{"unset", "", "GOFLAGS=[-trimpath] args=[vet ./...]"},
-		{"the card's export", "-mod=readonly", "GOFLAGS=[-mod=readonly -trimpath] args=[vet ./...]"},
-		{"already trimmed", "-trimpath -mod=readonly", "GOFLAGS=[-trimpath -mod=readonly] args=[vet ./...]"},
-		{"refused by the card", "-mod=readonly -trimpath=false", "GOFLAGS=[-mod=readonly -trimpath=false] args=[vet ./...]"},
+		{"unset", "", "GOFLAGS=[-trimpath -p=4] args=[vet ./...]"},
+		{"the card's export", "-mod=readonly", "GOFLAGS=[-mod=readonly -trimpath -p=4] args=[vet ./...]"},
+		{"already trimmed", "-trimpath -mod=readonly", "GOFLAGS=[-trimpath -mod=readonly -p=4] args=[vet ./...]"},
+		{"refused by the card", "-mod=readonly -trimpath=false", "GOFLAGS=[-mod=readonly -trimpath=false -p=4] args=[vet ./...]"},
+		{"the child's own default", "-p=4", "GOFLAGS=[-p=4 -trimpath] args=[vet ./...]"},
+		{"the card names its own -p", "-mod=readonly -p=16", "GOFLAGS=[-mod=readonly -p=16 -trimpath] args=[vet ./...]"},
 	} {
 		cmd := exec.Command(filepath.Join(shim, "go"), "vet", "./...")
 		cmd.Env = []string{"PATH=/usr/bin:/bin"}
