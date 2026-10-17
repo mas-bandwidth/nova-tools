@@ -2,7 +2,7 @@ package decide
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +12,8 @@ import (
 	"slices"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/decidewire"
 )
 
 // The record (SPEC-NOVA-DECIDE section 4) is one JSON-lines file the caller
@@ -256,7 +258,7 @@ func locked(path string, plan func([]Decision) ([]line, error)) (err error) {
 	}
 	var out []byte
 	for _, l := range add {
-		raw, err := json.Marshal(l)
+		raw, err := lineBase64(l)
 		if err != nil {
 			return err
 		}
@@ -264,4 +266,111 @@ func locked(path string, plan func([]Decision) ([]line, error)) (err error) {
 	}
 	_, err = f.Write(out)
 	return err
+}
+
+// recordLineWriter is the record line's writer-side bound: the same rules the
+// dual reader enforces, applied before the table form's bytes are written, so
+// a value the table cannot hold is refused by name and nothing is written (S2,
+// S4).
+var recordLineWriter = newRecordLineReader()
+
+// lineBase64 is one record line in the table's form: the padded standard base64
+// of the RecordLine table's binary image (S2: text transports carry the padded
+// standard base64 of the binary wire). The legacy JSON write is gone; a value
+// the table cannot hold returns the named refusal before a byte is written,
+// never the legacy form as a fallback.
+func lineBase64(l line) ([]byte, error) {
+	if err := recordLineWriter.Check(&l); err != nil {
+		return nil, err
+	}
+	wire, err := lineWire(l)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(base64.StdEncoding.EncodeToString(wire)), nil
+}
+
+// lineWire is the RecordLine table's binary image of one record line. The
+// builder mirrors the generated table the dual reader reads (pkg/decidewire),
+// so what is written reads back equal (S2).
+func lineWire(l line) ([]byte, error) {
+	var b decidewire.RecordLineBuilder
+	if !b.Init() {
+		return nil, errors.New("RECORD_LINE: failed to allocate the record line table")
+	}
+	defer b.Shutdown()
+	root := b.GetRoot()
+	switch {
+	case l.Decision != nil:
+		root.Kind = decidewire.LineKindDecision
+		fillDecisionTable(&b.Main, decidewire.DecisionEmplace(&b.Main, &root.AsDecision), *l.Decision)
+	case l.Outcome != nil:
+		root.Kind = decidewire.LineKindOutcome
+		o := decidewire.OutcomeEmplace(&b.Main, &root.AsOutcome)
+		setString(&b.Main, &o.Id, l.Outcome.ID)
+		setString(&b.Main, &o.Label, l.Outcome.Label)
+		setString(&b.Main, &o.Note, l.Outcome.Note)
+		setString(&b.Main, &o.At, l.Outcome.At)
+	case l.Act != nil:
+		root.Kind = decidewire.LineKindAct
+		a := decidewire.ActEmplace(&b.Main, &root.AsAct)
+		setString(&b.Main, &a.Id, l.Act.ID)
+		setString(&b.Main, &a.Step, l.Act.Act)
+		setString(&b.Main, &a.Op, l.Act.Op)
+		setString(&b.Main, &a.At, l.Act.At)
+	default:
+		return nil, errors.New("RECORD_LINE: a line is one record")
+	}
+	if !b.Lock() {
+		return nil, errors.New("RECORD_LINE: failed to pack the record line table")
+	}
+	r := b.AsConst()
+	n := decidewire.RecordLineMeasure(r)
+	out := make([]byte, n)
+	if n != decidewire.RecordLineSave(r, out) {
+		return nil, errors.New("RECORD_LINE: failed to save the record line table")
+	}
+	return out, nil
+}
+
+// setString places text in the table unless it is empty; an empty text stays
+// null, the zero value the reader reads as "" (the table's canonical image).
+func setString(w *decidewire.TableWorker, slot *int64, text string) {
+	if text != "" {
+		decidewire.TableStringEmplace(w, slot, []byte(text))
+	}
+}
+
+// fillDecisionTable fills one DecisionRow from a Decision as the record writes
+// it on a decision line (S2: the generated table the dual reader reads).
+func fillDecisionTable(w *decidewire.TableWorker, r *decidewire.DecisionRow, d Decision) {
+	setString(w, &r.Id, d.ID)
+	setString(w, &r.DecisionName, d.Decision)
+	setString(w, &r.Schema, d.Schema)
+	setString(w, &r.Backend, d.Backend)
+	setString(w, &r.At, d.At)
+	r.Usage = decidewire.UsageRow{InputTokens: int64(d.Usage.InputTokens), OutputTokens: int64(d.Usage.OutputTokens)}
+	for k, v := range d.Inputs {
+		in := decidewire.DecisionInputsAdd(w, &r.Inputs)
+		setString(w, &in.Key, k)
+		setString(w, &in.Value, v)
+	}
+	setString(w, &r.State, d.State)
+	for q, a := range d.Answers {
+		na := decidewire.DecisionAnswersAdd(w, &r.Answers)
+		setString(w, &na.Question, q)
+		if a.Type == Noul {
+			na.Answer.Kind = decidewire.AnswerTypeNoul
+		} else {
+			na.Answer.Kind = decidewire.AnswerTypeChoice
+		}
+		setString(w, &na.Answer.Value, a.Value)
+		na.Answer.Confidence = a.Confidence
+		setString(w, &na.Answer.Method, a.Method)
+		for opt, p := range a.P {
+			o := decidewire.AnswerPAdd(w, &na.Answer.P)
+			setString(w, &o.Option, opt)
+			o.P = p
+		}
+	}
 }
