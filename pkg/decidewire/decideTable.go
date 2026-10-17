@@ -19,12 +19,35 @@ type Answer = AnswerRow
 type NamedAnswer = NamedAnswerRow
 type Input = InputRow
 type Decided = DecidedRow
+type Criterion = CriterionRow
+type Question = QuestionRow
+type NamedQuestion = NamedQuestionRow
+type DecideSchema = DecideSchemaRow
+type JevRequest = JevRequestRow
+type JevAnswer = JevAnswerRow
+type NamedJevAnswer = NamedJevAnswerRow
+type JevResponse = JevResponseRow
+type FixedAnswer = FixedAnswerRow
+type NamedFixedAnswer = NamedFixedAnswerRow
+type FixedTable = FixedTableRow
+type Example = ExampleRow
+type SetEntry = SetEntryRow
+type LogLine = LogLineRow
+type LogExport = LogExportRow
+type Bars = BarsRow
+type GateBars = GateBarsRow
+type GateLine = GateLineRow
+type Failure = FailureRow
+type Chosen = ChosenRow
+type ClusterCard = ClusterCardRow
+type Cluster = ClusterRow
 type Decision = DecisionRow
 type Outcome = OutcomeRow
 type Act = ActRow
 type RecordLine = RecordLineRow
 type JudgmentId = JudgmentIdRow
 type ImportLogLine = ImportLogLineRow
+type ImportExport = ImportExportRow
 type RawTokens = RawTokensRow
 type RawRecord = RawRecordRow
 type RawUsage = RawUsageRow
@@ -60,6 +83,43 @@ func (value *AnswerType) TableEnumValue(id uint64) bool {
 		return true
 	}
 	*value = AnswerTypeNone
+	return false // an id this build cannot name
+}
+
+// TableEnumId: ExampleLabel on the TABLE wire rides as the 64-bit hash of its VARIANT
+// NAME, so a variant may be added anywhere, removed, or reordered and old
+// data still reads (mas-bandwidth/schema docs/SPEC-TABLES.md §5). None uses reference zero; hash zero remains a valid named id.
+// The bool is false when no variant names this value: no wire identity.
+func (value ExampleLabel) TableEnumId() (uint64, bool) {
+	switch value {
+	case ExampleLabelNone:
+		return 0, true
+	case ExampleLabelFlash:
+		return 0x2e109c0b102f74a9, true
+	case ExampleLabelPro:
+		return 0x8e067719f45b0458, true
+	case ExampleLabelHeavy:
+		return 0x47534eace1cc3220, true
+	}
+	return 0, false // no variant names this value: no wire identity
+}
+
+// TableEnumValue resolves a table-wire variant id to a ExampleLabel, in place.
+// The bool is false for an id this build cannot name; the value is left at
+// None, which is what an unknown variant reads as (mas-bandwidth/schema docs/SPEC-TABLES.md §5).
+func (value *ExampleLabel) TableEnumValue(id uint64) bool {
+	switch id {
+	case 0x2e109c0b102f74a9:
+		*value = ExampleLabelFlash
+		return true
+	case 0x8e067719f45b0458:
+		*value = ExampleLabelPro
+		return true
+	case 0x47534eace1cc3220:
+		*value = ExampleLabelHeavy
+		return true
+	}
+	*value = ExampleLabelNone
 	return false // an id this build cannot name
 }
 
@@ -179,10 +239,10 @@ func UsageReset(value *Usage) {
 func UsageMeasureBody(value *Usage, ids *TableIds) int64 {
 	bytes := int64(1)
 	if value.InputTokens != 0 {
-		bytes += tableLebBytes(ids.refAtHit(64, 0xb5158be5a9bbd92e)) + 1 + 8
+		bytes += tableLebBytes(ids.refAtHit(107, 0xb5158be5a9bbd92e)) + 1 + 8
 	} // input_tokens
 	if value.OutputTokens != 0 {
-		bytes += tableLebBytes(ids.refAtHit(45, 0x72e601d58ddec77f)) + 1 + 8
+		bytes += tableLebBytes(ids.refAtHit(69, 0x72e601d58ddec77f)) + 1 + 8
 	} // output_tokens
 	if ids.Overflow {
 		return -1
@@ -216,7 +276,7 @@ func UsageSaveBody(w *TableWriter, value *Usage) bool {
 func UsageSaveBodyFields(w *TableWriter, value *Usage) bool {
 	{
 		if value.InputTokens != 0 {
-			if ref := w.Ids.refAtHit(64, 0xb5158be5a9bbd92e); !w.headerPair(ref, 5) {
+			if ref := w.Ids.refAtHit(107, 0xb5158be5a9bbd92e); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
 			}
 			w.Put64(uint64(value.InputTokens))
@@ -224,7 +284,7 @@ func UsageSaveBodyFields(w *TableWriter, value *Usage) bool {
 	}
 	{
 		if value.OutputTokens != 0 {
-			if ref := w.Ids.refAtHit(45, 0x72e601d58ddec77f); !w.headerPair(ref, 5) {
+			if ref := w.Ids.refAtHit(69, 0x72e601d58ddec77f); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
 			}
 			w.Put64(uint64(value.OutputTokens))
@@ -437,7 +497,7 @@ func UsageSaveBodyRetain(w *TableRetainWriter, value *Usage) bool {
 func UsageSaveBodyFieldsRetain(w *TableRetainWriter, value *Usage) bool {
 	{
 		if value.InputTokens != 0 {
-			if ref := w.Ids.refAtHit(64, 0xb5158be5a9bbd92e); !w.headerPair(ref, 5) {
+			if ref := w.Ids.refAtHit(107, 0xb5158be5a9bbd92e); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
 			}
 			w.Put64(uint64(value.InputTokens))
@@ -445,7 +505,7 @@ func UsageSaveBodyFieldsRetain(w *TableRetainWriter, value *Usage) bool {
 	}
 	{
 		if value.OutputTokens != 0 {
-			if ref := w.Ids.refAtHit(45, 0x72e601d58ddec77f); !w.headerPair(ref, 5) {
+			if ref := w.Ids.refAtHit(69, 0x72e601d58ddec77f); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
 			}
 			w.Put64(uint64(value.OutputTokens))
@@ -596,7 +656,7 @@ func OptionPSaveBodyFields(w *TableWriter, value *OptionP) bool {
 	}
 	{
 		if value.P != 0.0 {
-			if ref := w.Ids.refAtHit(60, 0xaf63ed4c8602096f); !w.headerPair(ref, 11) {
+			if ref := w.Ids.refAtHit(99, 0xaf63ed4c8602096f); !w.headerPair(ref, 11) {
 				w.headerRest(ref, 11)
 			}
 			w.Put64(math.Float64bits(value.P))
@@ -749,7 +809,7 @@ func OptionPSaveBodyFieldsRetain(w *TableRetainWriter, value *OptionP) bool {
 	}
 	{
 		if value.P != 0.0 {
-			if ref := w.Ids.refAtHit(60, 0xaf63ed4c8602096f); !w.headerPair(ref, 11) {
+			if ref := w.Ids.refAtHit(99, 0xaf63ed4c8602096f); !w.headerPair(ref, 11) {
 				w.headerRest(ref, 11)
 			}
 			w.Put64(math.Float64bits(value.P))
@@ -1000,7 +1060,7 @@ func AnswerSaveBody(w *TableWriter, value *Answer) bool {
 func AnswerSaveBodyFields(w *TableWriter, value *Answer) bool {
 	{
 		if value.Kind != AnswerTypeNone {
-			if ref := w.Ids.refAtHit(85, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -1009,9 +1069,9 @@ func AnswerSaveBodyFields(w *TableWriter, value *Answer) bool {
 					w.putLebWide(0)
 				}
 			case AnswerTypeChoice:
-				w.IdAt(61, 0xb0aadaa04e658ad6)
+				w.IdAt(101, 0xb0aadaa04e658ad6)
 			case AnswerTypeNoul:
-				w.IdAt(39, 0x668a11c6d2cb4a43)
+				w.IdAt(59, 0x668a11c6d2cb4a43)
 			default:
 				return false
 			}
@@ -1019,7 +1079,7 @@ func AnswerSaveBodyFields(w *TableWriter, value *Answer) bool {
 	}
 	{
 		if value.Value != 0 {
-			if ref := w.Ids.refAtHit(48, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(75, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Value == 0 {
@@ -1042,7 +1102,7 @@ func AnswerSaveBodyFields(w *TableWriter, value *Answer) bool {
 			return false
 		}
 		if value.P.Count > 0 {
-			if ref := w.Ids.refAtHit(60, 0xaf63ed4c8602096f); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(99, 0xaf63ed4c8602096f); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.P.Count < 0 {
@@ -1122,7 +1182,7 @@ func AnswerSaveBodyFields(w *TableWriter, value *Answer) bool {
 	}
 	{
 		if value.Confidence != 0.0 {
-			if ref := w.Ids.refAtHit(33, 0x547d54feea4643b1); !w.headerPair(ref, 11) {
+			if ref := w.Ids.refAtHit(49, 0x547d54feea4643b1); !w.headerPair(ref, 11) {
 				w.headerRest(ref, 11)
 			}
 			w.Put64(math.Float64bits(value.Confidence))
@@ -1130,7 +1190,7 @@ func AnswerSaveBodyFields(w *TableWriter, value *Answer) bool {
 	}
 	{
 		if value.Method != 0 {
-			if ref := w.Ids.refAtHit(14, 0x230c05e5fb0433b0); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(21, 0x230c05e5fb0433b0); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Method == 0 {
@@ -1401,7 +1461,7 @@ func AnswerSaveBodyRetain(w *TableRetainWriter, value *Answer) bool {
 func AnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *Answer) bool {
 	{
 		if value.Kind != AnswerTypeNone {
-			if ref := w.Ids.refAtHit(85, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -1410,9 +1470,9 @@ func AnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *Answer) bool {
 					w.putLebWide(0)
 				}
 			case AnswerTypeChoice:
-				w.IdAt(61, 0xb0aadaa04e658ad6)
+				w.IdAt(101, 0xb0aadaa04e658ad6)
 			case AnswerTypeNoul:
-				w.IdAt(39, 0x668a11c6d2cb4a43)
+				w.IdAt(59, 0x668a11c6d2cb4a43)
 			default:
 				return false
 			}
@@ -1420,7 +1480,7 @@ func AnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *Answer) bool {
 	}
 	{
 		if value.Value != 0 {
-			if ref := w.Ids.refAtHit(48, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(75, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Value == 0 {
@@ -1443,7 +1503,7 @@ func AnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *Answer) bool {
 			return false
 		}
 		if value.P.Count > 0 {
-			if ref := w.Ids.refAtHit(60, 0xaf63ed4c8602096f); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(99, 0xaf63ed4c8602096f); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.P.Count < 0 {
@@ -1533,7 +1593,7 @@ func AnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *Answer) bool {
 	}
 	{
 		if value.Confidence != 0.0 {
-			if ref := w.Ids.refAtHit(33, 0x547d54feea4643b1); !w.headerPair(ref, 11) {
+			if ref := w.Ids.refAtHit(49, 0x547d54feea4643b1); !w.headerPair(ref, 11) {
 				w.headerRest(ref, 11)
 			}
 			w.Put64(math.Float64bits(value.Confidence))
@@ -1541,7 +1601,7 @@ func AnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *Answer) bool {
 	}
 	{
 		if value.Method != 0 {
-			if ref := w.Ids.refAtHit(14, 0x230c05e5fb0433b0); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(21, 0x230c05e5fb0433b0); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Method == 0 {
@@ -1953,7 +2013,7 @@ func NamedAnswerSaveBody(w *TableWriter, value *NamedAnswer) bool {
 func NamedAnswerSaveBodyFields(w *TableWriter, value *NamedAnswer) bool {
 	{
 		if value.Question != 0 {
-			if ref := w.Ids.refAtHit(54, 0x9c2ca99b4d2722c5); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(90, 0x9c2ca99b4d2722c5); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Question == 0 {
@@ -1973,7 +2033,7 @@ func NamedAnswerSaveBodyFields(w *TableWriter, value *NamedAnswer) bool {
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(41, 0x67cf8608037190df)
+		ref := w.Ids.refAtHit(62, 0x67cf8608037190df)
 		start := w.Ids.Count
 		n := AnswerMeasureBody(&value.Answer, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -2114,7 +2174,7 @@ func NamedAnswerSaveBodyRetain(w *TableRetainWriter, value *NamedAnswer) bool {
 func NamedAnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *NamedAnswer) bool {
 	{
 		if value.Question != 0 {
-			if ref := w.Ids.refAtHit(54, 0x9c2ca99b4d2722c5); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(90, 0x9c2ca99b4d2722c5); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Question == 0 {
@@ -2134,7 +2194,7 @@ func NamedAnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *NamedAnswer) b
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(41, 0x67cf8608037190df)
+		ref := w.Ids.refAtHit(62, 0x67cf8608037190df)
 		start := w.Ids.Count
 		payload := TableRetainWriter{Measuring: true, Ids: w.Ids}
 		{
@@ -2431,7 +2491,7 @@ func InputSaveBody(w *TableWriter, value *Input) bool {
 func InputSaveBodyFields(w *TableWriter, value *Input) bool {
 	{
 		if value.Key != 0 {
-			if ref := w.Ids.refAtHit(26, 0x3dc94a19365b10ec); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(37, 0x3dc94a19365b10ec); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Key == 0 {
@@ -2451,7 +2511,7 @@ func InputSaveBodyFields(w *TableWriter, value *Input) bool {
 	}
 	{
 		if value.Value != 0 {
-			if ref := w.Ids.refAtHit(48, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(75, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Value == 0 {
@@ -2579,7 +2639,7 @@ func InputSaveBodyRetain(w *TableRetainWriter, value *Input) bool {
 func InputSaveBodyFieldsRetain(w *TableRetainWriter, value *Input) bool {
 	{
 		if value.Key != 0 {
-			if ref := w.Ids.refAtHit(26, 0x3dc94a19365b10ec); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(37, 0x3dc94a19365b10ec); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Key == 0 {
@@ -2599,7 +2659,7 @@ func InputSaveBodyFieldsRetain(w *TableRetainWriter, value *Input) bool {
 	}
 	{
 		if value.Value != 0 {
-			if ref := w.Ids.refAtHit(48, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(75, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Value == 0 {
@@ -2843,7 +2903,7 @@ func DecidedSaveBody(w *TableWriter, value *Decided) bool {
 func DecidedSaveBodyFields(w *TableWriter, value *Decided) bool {
 	{
 		if value.Value != 0 {
-			if ref := w.Ids.refAtHit(48, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(75, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Value == 0 {
@@ -2863,7 +2923,7 @@ func DecidedSaveBodyFields(w *TableWriter, value *Decided) bool {
 	}
 	{
 		if value.P != 0.0 {
-			if ref := w.Ids.refAtHit(60, 0xaf63ed4c8602096f); !w.headerPair(ref, 11) {
+			if ref := w.Ids.refAtHit(99, 0xaf63ed4c8602096f); !w.headerPair(ref, 11) {
 				w.headerRest(ref, 11)
 			}
 			w.Put64(math.Float64bits(value.P))
@@ -3033,7 +3093,7 @@ func DecidedSaveBodyRetain(w *TableRetainWriter, value *Decided) bool {
 func DecidedSaveBodyFieldsRetain(w *TableRetainWriter, value *Decided) bool {
 	{
 		if value.Value != 0 {
-			if ref := w.Ids.refAtHit(48, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(75, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Value == 0 {
@@ -3053,7 +3113,7 @@ func DecidedSaveBodyFieldsRetain(w *TableRetainWriter, value *Decided) bool {
 	}
 	{
 		if value.P != 0.0 {
-			if ref := w.Ids.refAtHit(60, 0xaf63ed4c8602096f); !w.headerPair(ref, 11) {
+			if ref := w.Ids.refAtHit(99, 0xaf63ed4c8602096f); !w.headerPair(ref, 11) {
 				w.headerRest(ref, 11)
 			}
 			w.Put64(math.Float64bits(value.P))
@@ -3313,6 +3373,13675 @@ func (b *DecidedBuilder) Shutdown() {
 	b.root = 0
 }
 
+// CriterionReset restores Criterion's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func CriterionReset(value *Criterion) {
+	value.Option = 0
+	value.Meaning = 0
+}
+
+func CriterionMeasureBody(value *Criterion, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !CriterionSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func CriterionSaveBody(w *TableWriter, value *Criterion) bool {
+	if !CriterionSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func CriterionSaveBodyFields(w *TableWriter, value *Criterion) bool {
+	{
+		if value.Option != 0 {
+			if ref := w.Ids.refAtHit(1, 0x03c119c726692754); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Option == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Option)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Meaning != 0 {
+			if ref := w.Ids.refAtHit(79, 0x853103f906a5b644); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Meaning == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Meaning)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func CriterionLoadBody(r *TableReader, value *Criterion) bool {
+	CriterionReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x03c119c726692754: // option
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Option, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x853103f906a5b644: // meaning
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Meaning, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const CriterionLoadRetainBuilder = "Criterion: retention requires a region round trip through the VARIABLE form"
+const CriterionSaveRetainMessages = "Criterion: retention requires a region round trip through the VARIABLE form"
+
+func CriterionLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *Criterion {
+	return (*Criterion)(tableRegionLoadRetain(region, wire, CriterionTableType(), CriterionTableType().NodeType, 2, report, retain))
+}
+func CriterionMeasureRetain(value *Criterion, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), CriterionTableType(), nil, true, retain, nil, allocator...)
+}
+func CriterionSaveRetain(value *Criterion, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), CriterionTableType(), buffer, false, retain, report, allocator...)
+}
+func CriterionMeasureBodyRetain(value *Criterion, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !CriterionSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func CriterionSaveBodyRetain(w *TableRetainWriter, value *Criterion) bool {
+	if !CriterionSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func CriterionSaveBodyFieldsRetain(w *TableRetainWriter, value *Criterion) bool {
+	{
+		if value.Option != 0 {
+			if ref := w.Ids.refAtHit(1, 0x03c119c726692754); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Option == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Option)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Meaning != 0 {
+			if ref := w.Ids.refAtHit(79, 0x853103f906a5b644); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Meaning == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Meaning)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func CriterionLoadBodyRetain(r *TableRetainReader, value *Criterion) bool {
+	CriterionReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x03c119c726692754: // option
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Option, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x853103f906a5b644: // meaning
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Meaning, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func CriterionLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, CriterionTableType(), CriterionTableType().NodeType, 2)
+	return n
+}
+func CriterionLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, CriterionTableType(), CriterionTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func CriterionLoad(region, wire []byte, report *TableReport) *Criterion {
+	return (*Criterion)(tableRegionLoad(region, wire, CriterionTableType(), CriterionTableType().NodeType, 2, report))
+}
+func CriterionMeasure(value *Criterion, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), CriterionTableType(), nil, true, arena, allocator)
+}
+func CriterionMeasureReason(value *Criterion, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), CriterionTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func CriterionSave(value *Criterion, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), CriterionTableType(), buffer, false, arena, allocator)
+}
+func CriterionLoadBuilder(b *CriterionBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, CriterionTableType(), CriterionTableType().NodeType, 2, report)
+}
+
+// CriterionReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func CriterionReadStrict(wire []byte) (*Criterion, error) {
+	var b CriterionBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := CriterionLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type CriterionBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *CriterionBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(Criterion{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	CriterionReset((*Criterion)(p))
+	return true
+}
+func (b *CriterionBuilder) GetRoot() *Criterion {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*Criterion)(b.Arena.At(b.root))
+}
+func (b *CriterionBuilder) AsConst() *Criterion {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*Criterion)(unsafe.Pointer(&b.region[0]))
+}
+func (b *CriterionBuilder) Region() []byte { return b.region }
+func (b *CriterionBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), CriterionTableType(), &b.Arena)
+}
+func (b *CriterionBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), CriterionTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *CriterionBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), CriterionTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *CriterionBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+
+// QuestionReset restores Question's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func QuestionReset(value *Question) {
+	value.Kind = AnswerTypeNone
+	value.Instructions = 0
+	value.Criteria = TableList[CriterionRow]{}
+}
+
+func QuestionMeasureBody(value *Question, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !QuestionSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func QuestionSaveBody(w *TableWriter, value *Question) bool {
+	if !QuestionSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func QuestionSaveBodyFields(w *TableWriter, value *Question) bool {
+	{
+		if value.Kind != AnswerTypeNone {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+				w.headerRest(ref, 30)
+			}
+			switch value.Kind {
+			case AnswerTypeNone:
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			case AnswerTypeChoice:
+				w.IdAt(101, 0xb0aadaa04e658ad6)
+			case AnswerTypeNoul:
+				w.IdAt(59, 0x668a11c6d2cb4a43)
+			default:
+				return false
+			}
+		}
+	}
+	{
+		if value.Instructions != 0 {
+			if ref := w.Ids.refAtHit(14, 0x10d72192d432fac4); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Instructions == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Instructions)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Criteria.Count < 0 {
+			return false
+		}
+		if value.Criteria.Count > 0 {
+			if ref := w.Ids.refAtHit(121, 0xce9b64eababf7afc); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Criteria.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload9 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Criteria)), int64(unsafe.Sizeof(*new(CriterionRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Criteria.Count; i++ {
+					p := (*CriterionRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload9.Ids.Count
+						n := CriterionMeasureBody(&(*p), payload9.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload9.putLebPair(uint64(n)) {
+							payload9.putLebWide(uint64(n))
+						}
+						if payload9.Measuring {
+							payload9.Advance(n)
+						} else {
+							payload9.Ids.Truncate(mark)
+							if !CriterionSaveBody(&payload9, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload9.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Criteria.Count)) + payload9.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Criteria.Count)) {
+						w.putLebWide(uint64(value.Criteria.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Criteria)), int64(unsafe.Sizeof(*new(CriterionRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Criteria.Count; i++ {
+						p := (*CriterionRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := CriterionMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !CriterionSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func QuestionLoadBody(r *TableReader, value *Question) bool {
+	QuestionReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xef9c96d721673243: // kind
+			if kind != 30 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				variantRef, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				if variantRef == 0 {
+					value.Kind = AnswerTypeNone
+				} else {
+					id, ok := r.Resolve(variantRef)
+					if !ok {
+						r.Report.Malformed = true
+						return false
+					}
+					if !value.Kind.TableEnumValue(id) {
+						r.Report.Unknown++
+					}
+				}
+			}
+		case 0x10d72192d432fac4: // instructions
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Instructions, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xce9b64eababf7afc: // criteria
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Criteria))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(CriterionRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*CriterionRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(CriterionRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						CriterionLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							CriterionReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const QuestionLoadRetainBuilder = "Question: retention requires a region round trip through the VARIABLE form"
+const QuestionSaveRetainMessages = "Question: retention requires a region round trip through the VARIABLE form"
+
+func QuestionLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *Question {
+	return (*Question)(tableRegionLoadRetain(region, wire, QuestionTableType(), QuestionTableType().NodeType, 2, report, retain))
+}
+func QuestionMeasureRetain(value *Question, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), QuestionTableType(), nil, true, retain, nil, allocator...)
+}
+func QuestionSaveRetain(value *Question, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), QuestionTableType(), buffer, false, retain, report, allocator...)
+}
+func QuestionMeasureBodyRetain(value *Question, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !QuestionSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func QuestionSaveBodyRetain(w *TableRetainWriter, value *Question) bool {
+	if !QuestionSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func QuestionSaveBodyFieldsRetain(w *TableRetainWriter, value *Question) bool {
+	{
+		if value.Kind != AnswerTypeNone {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+				w.headerRest(ref, 30)
+			}
+			switch value.Kind {
+			case AnswerTypeNone:
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			case AnswerTypeChoice:
+				w.IdAt(101, 0xb0aadaa04e658ad6)
+			case AnswerTypeNoul:
+				w.IdAt(59, 0x668a11c6d2cb4a43)
+			default:
+				return false
+			}
+		}
+	}
+	{
+		if value.Instructions != 0 {
+			if ref := w.Ids.refAtHit(14, 0x10d72192d432fac4); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Instructions == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Instructions)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Criteria.Count < 0 {
+			return false
+		}
+		if value.Criteria.Count > 0 {
+			if ref := w.Ids.refAtHit(121, 0xce9b64eababf7afc); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Criteria.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Criteria)), int64(unsafe.Sizeof(*new(CriterionRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Criteria.Count; i++ {
+					p := (*CriterionRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(2, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := CriterionMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !CriterionSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Criteria.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Criteria.Count)) {
+						w.putLebWide(uint64(value.Criteria.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Criteria)), int64(unsafe.Sizeof(*new(CriterionRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Criteria.Count; i++ {
+						p := (*CriterionRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(2, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := CriterionMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !CriterionSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func QuestionLoadBodyRetain(r *TableRetainReader, value *Question) bool {
+	QuestionReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xef9c96d721673243: // kind
+			if kind != 30 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				variantRef, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				if variantRef == 0 {
+					value.Kind = AnswerTypeNone
+				} else {
+					id, ok := r.Resolve(variantRef)
+					if !ok {
+						r.Report.Malformed = true
+						return false
+					}
+					if !value.Kind.TableEnumValue(id) {
+						r.Report.Unknown++
+						if r.Retain != nil {
+							r.Report.RetainLost++
+						}
+					}
+				}
+			}
+		case 0x10d72192d432fac4: // instructions
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Instructions, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xce9b64eababf7afc: // criteria
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 2)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Criteria))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(CriterionRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*CriterionRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(CriterionRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(2, uint32(i))
+						CriterionLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							CriterionReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func QuestionLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, QuestionTableType(), QuestionTableType().NodeType, 2)
+	return n
+}
+func QuestionLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, QuestionTableType(), QuestionTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func QuestionLoad(region, wire []byte, report *TableReport) *Question {
+	return (*Question)(tableRegionLoad(region, wire, QuestionTableType(), QuestionTableType().NodeType, 2, report))
+}
+func QuestionMeasure(value *Question, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), QuestionTableType(), nil, true, arena, allocator)
+}
+func QuestionMeasureReason(value *Question, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), QuestionTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func QuestionSave(value *Question, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), QuestionTableType(), buffer, false, arena, allocator)
+}
+func QuestionLoadBuilder(b *QuestionBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, QuestionTableType(), QuestionTableType().NodeType, 2, report)
+}
+
+// QuestionReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func QuestionReadStrict(wire []byte) (*Question, error) {
+	var b QuestionBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := QuestionLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type QuestionBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *QuestionBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(Question{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	QuestionReset((*Question)(p))
+	return true
+}
+func (b *QuestionBuilder) GetRoot() *Question {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*Question)(b.Arena.At(b.root))
+}
+func (b *QuestionBuilder) AsConst() *Question {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*Question)(unsafe.Pointer(&b.region[0]))
+}
+func (b *QuestionBuilder) Region() []byte { return b.region }
+func (b *QuestionBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), QuestionTableType(), &b.Arena)
+}
+func (b *QuestionBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), QuestionTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *QuestionBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), QuestionTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *QuestionBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func QuestionCriteriaAdd(worker *TableWorker, holder *TableList[CriterionRow]) *CriterionRow {
+	p := (*CriterionRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(CriterionRow)))))
+	if p == nil {
+		return nil
+	}
+	CriterionReset(p)
+	return p
+}
+func QuestionCriteriaErase(arena *TableArena, holder *TableList[CriterionRow], element *CriterionRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func QuestionCriteriaEach(holder *TableList[CriterionRow], visit func(*CriterionRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(CriterionRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*CriterionRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// NamedQuestionReset restores NamedQuestion's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func NamedQuestionReset(value *NamedQuestion) {
+	value.Name = 0
+	QuestionReset(&value.Question)
+}
+
+func NamedQuestionMeasureBody(value *NamedQuestion, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !NamedQuestionSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func NamedQuestionSaveBody(w *TableWriter, value *NamedQuestion) bool {
+	if !NamedQuestionSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func NamedQuestionSaveBodyFields(w *TableWriter, value *NamedQuestion) bool {
+	{
+		if value.Name != 0 {
+			if ref := w.Ids.refAtHit(116, 0xc4bcadba8e631b86); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Name == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Name)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		mark := w.Ids.Count
+		ref := w.Ids.refAtHit(90, 0x9c2ca99b4d2722c5)
+		start := w.Ids.Count
+		n := QuestionMeasureBody(&value.Question, w.Ids)
+		if n < 0 || w.Ids.Overflow {
+			return false
+		}
+		if n > 1 {
+			if w.Measuring {
+				w.Advance(tableLebBytes(ref) + 1 + tableLebBytes(uint64(n)) + n)
+			} else {
+				w.Ids.Truncate(start)
+				if !w.headerPair(ref, 13) {
+					w.headerRest(ref, 13)
+				}
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if !QuestionSaveBody(w, &value.Question) {
+					return false
+				}
+			}
+		} else {
+			w.Ids.Truncate(mark)
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func NamedQuestionLoadBody(r *TableReader, value *NamedQuestion) bool {
+	NamedQuestionReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xc4bcadba8e631b86: // name
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Name, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x9c2ca99b4d2722c5: // question
+			if kind != 13 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			QuestionLoadBody(&sub, &value.Question)
+			r.Take(sub)
+			if r.Nodes.Carve.Refused {
+				return false
+			}
+			if sub.Offset != int64(len(sub.Buffer)) {
+				r.Report.Malformed = true
+				QuestionReset(&value.Question)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const NamedQuestionLoadRetainBuilder = "NamedQuestion: retention requires a region round trip through the VARIABLE form"
+const NamedQuestionSaveRetainMessages = "NamedQuestion: retention requires a region round trip through the VARIABLE form"
+
+func NamedQuestionLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *NamedQuestion {
+	return (*NamedQuestion)(tableRegionLoadRetain(region, wire, NamedQuestionTableType(), NamedQuestionTableType().NodeType, 2, report, retain))
+}
+func NamedQuestionMeasureRetain(value *NamedQuestion, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), NamedQuestionTableType(), nil, true, retain, nil, allocator...)
+}
+func NamedQuestionSaveRetain(value *NamedQuestion, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), NamedQuestionTableType(), buffer, false, retain, report, allocator...)
+}
+func NamedQuestionMeasureBodyRetain(value *NamedQuestion, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !NamedQuestionSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func NamedQuestionSaveBodyRetain(w *TableRetainWriter, value *NamedQuestion) bool {
+	if !NamedQuestionSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func NamedQuestionSaveBodyFieldsRetain(w *TableRetainWriter, value *NamedQuestion) bool {
+	{
+		if value.Name != 0 {
+			if ref := w.Ids.refAtHit(116, 0xc4bcadba8e631b86); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Name == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Name)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		mark := w.Ids.Count
+		ref := w.Ids.refAtHit(90, 0x9c2ca99b4d2722c5)
+		start := w.Ids.Count
+		payload := TableRetainWriter{Measuring: true, Ids: w.Ids}
+		{
+			payload1 := payload.Ids.Path
+			payload.Ids.Path = payload1.step(1, uint32(0))
+			{
+				mark := payload.Ids.Count
+				n := QuestionMeasureBodyRetain(&value.Question, payload.Ids)
+				if n < 0 {
+					return false
+				}
+				if !payload.putLebPair(uint64(n)) {
+					payload.putLebWide(uint64(n))
+				}
+				if payload.Measuring {
+					payload.Advance(n)
+				} else {
+					payload.Ids.Truncate(mark)
+					if !QuestionSaveBodyRetain(&payload, &value.Question) {
+						return false
+					}
+				}
+			}
+			payload.Ids.Path = payload1
+		}
+		if payload.Overflow || w.Ids.Overflow {
+			return false
+		}
+		if payload.Offset > 2 {
+			if w.Measuring {
+				w.Advance(tableLebBytes(ref) + 1 + payload.Offset)
+			} else {
+				w.Ids.Truncate(start)
+				if !w.headerPair(ref, 13) {
+					w.headerRest(ref, 13)
+				}
+				{
+					payload2 := w.Ids.Path
+					w.Ids.Path = payload2.step(1, uint32(0))
+					{
+						mark := w.Ids.Count
+						n := QuestionMeasureBodyRetain(&value.Question, w.Ids)
+						if n < 0 {
+							return false
+						}
+						if !w.putLebPair(uint64(n)) {
+							w.putLebWide(uint64(n))
+						}
+						if w.Measuring {
+							w.Advance(n)
+						} else {
+							w.Ids.Truncate(mark)
+							if !QuestionSaveBodyRetain(w, &value.Question) {
+								return false
+							}
+						}
+					}
+					w.Ids.Path = payload2
+				}
+			}
+		} else {
+			w.Ids.Truncate(mark)
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func NamedQuestionLoadBodyRetain(r *TableRetainReader, value *NamedQuestion) bool {
+	NamedQuestionReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xc4bcadba8e631b86: // name
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Name, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x9c2ca99b4d2722c5: // question
+			if kind != 13 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			sub.Path = r.Path.step(1, uint32(0))
+			QuestionLoadBodyRetain(&sub, &value.Question)
+			r.Take(sub)
+			if r.Nodes.Carve.Refused {
+				return false
+			}
+			if sub.Offset != int64(len(sub.Buffer)) {
+				r.Report.Malformed = true
+				QuestionReset(&value.Question)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func NamedQuestionLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, NamedQuestionTableType(), NamedQuestionTableType().NodeType, 2)
+	return n
+}
+func NamedQuestionLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, NamedQuestionTableType(), NamedQuestionTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func NamedQuestionLoad(region, wire []byte, report *TableReport) *NamedQuestion {
+	return (*NamedQuestion)(tableRegionLoad(region, wire, NamedQuestionTableType(), NamedQuestionTableType().NodeType, 2, report))
+}
+func NamedQuestionMeasure(value *NamedQuestion, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), NamedQuestionTableType(), nil, true, arena, allocator)
+}
+func NamedQuestionMeasureReason(value *NamedQuestion, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), NamedQuestionTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func NamedQuestionSave(value *NamedQuestion, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), NamedQuestionTableType(), buffer, false, arena, allocator)
+}
+func NamedQuestionLoadBuilder(b *NamedQuestionBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, NamedQuestionTableType(), NamedQuestionTableType().NodeType, 2, report)
+}
+
+// NamedQuestionReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func NamedQuestionReadStrict(wire []byte) (*NamedQuestion, error) {
+	var b NamedQuestionBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := NamedQuestionLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type NamedQuestionBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *NamedQuestionBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(NamedQuestion{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	NamedQuestionReset((*NamedQuestion)(p))
+	return true
+}
+func (b *NamedQuestionBuilder) GetRoot() *NamedQuestion {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*NamedQuestion)(b.Arena.At(b.root))
+}
+func (b *NamedQuestionBuilder) AsConst() *NamedQuestion {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*NamedQuestion)(unsafe.Pointer(&b.region[0]))
+}
+func (b *NamedQuestionBuilder) Region() []byte { return b.region }
+func (b *NamedQuestionBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), NamedQuestionTableType(), &b.Arena)
+}
+func (b *NamedQuestionBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), NamedQuestionTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *NamedQuestionBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), NamedQuestionTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *NamedQuestionBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+
+// DecideSchemaReset restores DecideSchema's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func DecideSchemaReset(value *DecideSchema) {
+	value.Name = 0
+	value.Questions = TableList[NamedQuestionRow]{}
+}
+
+func DecideSchemaMeasureBody(value *DecideSchema, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !DecideSchemaSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func DecideSchemaSaveBody(w *TableWriter, value *DecideSchema) bool {
+	if !DecideSchemaSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func DecideSchemaSaveBodyFields(w *TableWriter, value *DecideSchema) bool {
+	{
+		if value.Name != 0 {
+			if ref := w.Ids.refAtHit(116, 0xc4bcadba8e631b86); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Name == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Name)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Questions.Count < 0 {
+			return false
+		}
+		if value.Questions.Count > 0 {
+			if ref := w.Ids.refAtHit(82, 0x8706e8e4197ffb42); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Questions.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload12 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Questions)), int64(unsafe.Sizeof(*new(NamedQuestionRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Questions.Count; i++ {
+					p := (*NamedQuestionRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload12.Ids.Count
+						n := NamedQuestionMeasureBody(&(*p), payload12.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload12.putLebPair(uint64(n)) {
+							payload12.putLebWide(uint64(n))
+						}
+						if payload12.Measuring {
+							payload12.Advance(n)
+						} else {
+							payload12.Ids.Truncate(mark)
+							if !NamedQuestionSaveBody(&payload12, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload12.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Questions.Count)) + payload12.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Questions.Count)) {
+						w.putLebWide(uint64(value.Questions.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Questions)), int64(unsafe.Sizeof(*new(NamedQuestionRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Questions.Count; i++ {
+						p := (*NamedQuestionRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := NamedQuestionMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !NamedQuestionSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func DecideSchemaLoadBody(r *TableReader, value *DecideSchema) bool {
+	DecideSchemaReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xc4bcadba8e631b86: // name
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Name, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x8706e8e4197ffb42: // questions
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Questions))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(NamedQuestionRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*NamedQuestionRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(NamedQuestionRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						NamedQuestionLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							NamedQuestionReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const DecideSchemaLoadRetainBuilder = "DecideSchema: retention requires a region round trip through the VARIABLE form"
+const DecideSchemaSaveRetainMessages = "DecideSchema: retention requires a region round trip through the VARIABLE form"
+
+func DecideSchemaLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *DecideSchema {
+	return (*DecideSchema)(tableRegionLoadRetain(region, wire, DecideSchemaTableType(), DecideSchemaTableType().NodeType, 2, report, retain))
+}
+func DecideSchemaMeasureRetain(value *DecideSchema, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), DecideSchemaTableType(), nil, true, retain, nil, allocator...)
+}
+func DecideSchemaSaveRetain(value *DecideSchema, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), DecideSchemaTableType(), buffer, false, retain, report, allocator...)
+}
+func DecideSchemaMeasureBodyRetain(value *DecideSchema, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !DecideSchemaSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func DecideSchemaSaveBodyRetain(w *TableRetainWriter, value *DecideSchema) bool {
+	if !DecideSchemaSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func DecideSchemaSaveBodyFieldsRetain(w *TableRetainWriter, value *DecideSchema) bool {
+	{
+		if value.Name != 0 {
+			if ref := w.Ids.refAtHit(116, 0xc4bcadba8e631b86); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Name == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Name)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Questions.Count < 0 {
+			return false
+		}
+		if value.Questions.Count > 0 {
+			if ref := w.Ids.refAtHit(82, 0x8706e8e4197ffb42); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Questions.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Questions)), int64(unsafe.Sizeof(*new(NamedQuestionRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Questions.Count; i++ {
+					p := (*NamedQuestionRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(1, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := NamedQuestionMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !NamedQuestionSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Questions.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Questions.Count)) {
+						w.putLebWide(uint64(value.Questions.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Questions)), int64(unsafe.Sizeof(*new(NamedQuestionRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Questions.Count; i++ {
+						p := (*NamedQuestionRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(1, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := NamedQuestionMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !NamedQuestionSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func DecideSchemaLoadBodyRetain(r *TableRetainReader, value *DecideSchema) bool {
+	DecideSchemaReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xc4bcadba8e631b86: // name
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Name, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x8706e8e4197ffb42: // questions
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 1)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Questions))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(NamedQuestionRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*NamedQuestionRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(NamedQuestionRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(1, uint32(i))
+						NamedQuestionLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							NamedQuestionReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func DecideSchemaLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, DecideSchemaTableType(), DecideSchemaTableType().NodeType, 2)
+	return n
+}
+func DecideSchemaLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, DecideSchemaTableType(), DecideSchemaTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func DecideSchemaLoad(region, wire []byte, report *TableReport) *DecideSchema {
+	return (*DecideSchema)(tableRegionLoad(region, wire, DecideSchemaTableType(), DecideSchemaTableType().NodeType, 2, report))
+}
+func DecideSchemaMeasure(value *DecideSchema, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), DecideSchemaTableType(), nil, true, arena, allocator)
+}
+func DecideSchemaMeasureReason(value *DecideSchema, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), DecideSchemaTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func DecideSchemaSave(value *DecideSchema, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), DecideSchemaTableType(), buffer, false, arena, allocator)
+}
+func DecideSchemaLoadBuilder(b *DecideSchemaBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, DecideSchemaTableType(), DecideSchemaTableType().NodeType, 2, report)
+}
+
+// DecideSchemaReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func DecideSchemaReadStrict(wire []byte) (*DecideSchema, error) {
+	var b DecideSchemaBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := DecideSchemaLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type DecideSchemaBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *DecideSchemaBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(DecideSchema{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	DecideSchemaReset((*DecideSchema)(p))
+	return true
+}
+func (b *DecideSchemaBuilder) GetRoot() *DecideSchema {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*DecideSchema)(b.Arena.At(b.root))
+}
+func (b *DecideSchemaBuilder) AsConst() *DecideSchema {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*DecideSchema)(unsafe.Pointer(&b.region[0]))
+}
+func (b *DecideSchemaBuilder) Region() []byte { return b.region }
+func (b *DecideSchemaBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), DecideSchemaTableType(), &b.Arena)
+}
+func (b *DecideSchemaBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), DecideSchemaTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *DecideSchemaBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), DecideSchemaTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *DecideSchemaBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func DecideSchemaQuestionsAdd(worker *TableWorker, holder *TableList[NamedQuestionRow]) *NamedQuestionRow {
+	p := (*NamedQuestionRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(NamedQuestionRow)))))
+	if p == nil {
+		return nil
+	}
+	NamedQuestionReset(p)
+	return p
+}
+func DecideSchemaQuestionsErase(arena *TableArena, holder *TableList[NamedQuestionRow], element *NamedQuestionRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func DecideSchemaQuestionsEach(holder *TableList[NamedQuestionRow], visit func(*NamedQuestionRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(NamedQuestionRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*NamedQuestionRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// JevRequestReset restores JevRequest's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func JevRequestReset(value *JevRequest) {
+	value.State = 0
+	value.Model = 0
+	value.Questions = TableList[NamedQuestionRow]{}
+}
+
+func JevRequestMeasureBody(value *JevRequest, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !JevRequestSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func JevRequestSaveBody(w *TableWriter, value *JevRequest) bool {
+	if !JevRequestSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func JevRequestSaveBodyFields(w *TableWriter, value *JevRequest) bool {
+	{
+		if value.State != 0 {
+			if ref := w.Ids.refAtHit(131, 0xee63aaad45b1b116); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.State == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.State)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Model != 0 {
+			if ref := w.Ids.refAtHit(91, 0x9de543933e6e703a); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Model == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Model)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Questions.Count < 0 {
+			return false
+		}
+		if value.Questions.Count > 0 {
+			if ref := w.Ids.refAtHit(82, 0x8706e8e4197ffb42); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Questions.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload15 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Questions)), int64(unsafe.Sizeof(*new(NamedQuestionRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Questions.Count; i++ {
+					p := (*NamedQuestionRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload15.Ids.Count
+						n := NamedQuestionMeasureBody(&(*p), payload15.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload15.putLebPair(uint64(n)) {
+							payload15.putLebWide(uint64(n))
+						}
+						if payload15.Measuring {
+							payload15.Advance(n)
+						} else {
+							payload15.Ids.Truncate(mark)
+							if !NamedQuestionSaveBody(&payload15, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload15.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Questions.Count)) + payload15.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Questions.Count)) {
+						w.putLebWide(uint64(value.Questions.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Questions)), int64(unsafe.Sizeof(*new(NamedQuestionRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Questions.Count; i++ {
+						p := (*NamedQuestionRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := NamedQuestionMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !NamedQuestionSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func JevRequestLoadBody(r *TableReader, value *JevRequest) bool {
+	JevRequestReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xee63aaad45b1b116: // state
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.State, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x9de543933e6e703a: // model
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Model, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x8706e8e4197ffb42: // questions
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Questions))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(NamedQuestionRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*NamedQuestionRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(NamedQuestionRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						NamedQuestionLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							NamedQuestionReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const JevRequestLoadRetainBuilder = "JevRequest: retention requires a region round trip through the VARIABLE form"
+const JevRequestSaveRetainMessages = "JevRequest: retention requires a region round trip through the VARIABLE form"
+
+func JevRequestLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *JevRequest {
+	return (*JevRequest)(tableRegionLoadRetain(region, wire, JevRequestTableType(), JevRequestTableType().NodeType, 2, report, retain))
+}
+func JevRequestMeasureRetain(value *JevRequest, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), JevRequestTableType(), nil, true, retain, nil, allocator...)
+}
+func JevRequestSaveRetain(value *JevRequest, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), JevRequestTableType(), buffer, false, retain, report, allocator...)
+}
+func JevRequestMeasureBodyRetain(value *JevRequest, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !JevRequestSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func JevRequestSaveBodyRetain(w *TableRetainWriter, value *JevRequest) bool {
+	if !JevRequestSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func JevRequestSaveBodyFieldsRetain(w *TableRetainWriter, value *JevRequest) bool {
+	{
+		if value.State != 0 {
+			if ref := w.Ids.refAtHit(131, 0xee63aaad45b1b116); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.State == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.State)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Model != 0 {
+			if ref := w.Ids.refAtHit(91, 0x9de543933e6e703a); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Model == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Model)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Questions.Count < 0 {
+			return false
+		}
+		if value.Questions.Count > 0 {
+			if ref := w.Ids.refAtHit(82, 0x8706e8e4197ffb42); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Questions.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Questions)), int64(unsafe.Sizeof(*new(NamedQuestionRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Questions.Count; i++ {
+					p := (*NamedQuestionRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(2, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := NamedQuestionMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !NamedQuestionSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Questions.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Questions.Count)) {
+						w.putLebWide(uint64(value.Questions.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Questions)), int64(unsafe.Sizeof(*new(NamedQuestionRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Questions.Count; i++ {
+						p := (*NamedQuestionRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(2, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := NamedQuestionMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !NamedQuestionSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func JevRequestLoadBodyRetain(r *TableRetainReader, value *JevRequest) bool {
+	JevRequestReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xee63aaad45b1b116: // state
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.State, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x9de543933e6e703a: // model
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Model, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x8706e8e4197ffb42: // questions
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 2)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Questions))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(NamedQuestionRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*NamedQuestionRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(NamedQuestionRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(2, uint32(i))
+						NamedQuestionLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							NamedQuestionReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func JevRequestLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, JevRequestTableType(), JevRequestTableType().NodeType, 2)
+	return n
+}
+func JevRequestLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, JevRequestTableType(), JevRequestTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func JevRequestLoad(region, wire []byte, report *TableReport) *JevRequest {
+	return (*JevRequest)(tableRegionLoad(region, wire, JevRequestTableType(), JevRequestTableType().NodeType, 2, report))
+}
+func JevRequestMeasure(value *JevRequest, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), JevRequestTableType(), nil, true, arena, allocator)
+}
+func JevRequestMeasureReason(value *JevRequest, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), JevRequestTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func JevRequestSave(value *JevRequest, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), JevRequestTableType(), buffer, false, arena, allocator)
+}
+func JevRequestLoadBuilder(b *JevRequestBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, JevRequestTableType(), JevRequestTableType().NodeType, 2, report)
+}
+
+// JevRequestReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func JevRequestReadStrict(wire []byte) (*JevRequest, error) {
+	var b JevRequestBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := JevRequestLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type JevRequestBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *JevRequestBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(JevRequest{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	JevRequestReset((*JevRequest)(p))
+	return true
+}
+func (b *JevRequestBuilder) GetRoot() *JevRequest {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*JevRequest)(b.Arena.At(b.root))
+}
+func (b *JevRequestBuilder) AsConst() *JevRequest {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*JevRequest)(unsafe.Pointer(&b.region[0]))
+}
+func (b *JevRequestBuilder) Region() []byte { return b.region }
+func (b *JevRequestBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), JevRequestTableType(), &b.Arena)
+}
+func (b *JevRequestBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), JevRequestTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *JevRequestBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), JevRequestTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *JevRequestBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func JevRequestQuestionsAdd(worker *TableWorker, holder *TableList[NamedQuestionRow]) *NamedQuestionRow {
+	p := (*NamedQuestionRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(NamedQuestionRow)))))
+	if p == nil {
+		return nil
+	}
+	NamedQuestionReset(p)
+	return p
+}
+func JevRequestQuestionsErase(arena *TableArena, holder *TableList[NamedQuestionRow], element *NamedQuestionRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func JevRequestQuestionsEach(holder *TableList[NamedQuestionRow], visit func(*NamedQuestionRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(NamedQuestionRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*NamedQuestionRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// JevAnswerReset restores JevAnswer's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func JevAnswerReset(value *JevAnswer) {
+	value.Kind = 0
+	value.Choice = 0
+	value.Probabilities = TableList[OptionPRow]{}
+	value.Confidence = 0.0
+	value.ConfidencePresent = false
+	value.Noul = 0.0
+	value.NoulPresent = false
+}
+
+func JevAnswerMeasureBody(value *JevAnswer, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !JevAnswerSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func JevAnswerSaveBody(w *TableWriter, value *JevAnswer) bool {
+	if !JevAnswerSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func JevAnswerSaveBodyFields(w *TableWriter, value *JevAnswer) bool {
+	{
+		if value.Kind != 0 {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Kind == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Kind)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Choice != 0 {
+			if ref := w.Ids.refAtHit(117, 0xc842078c742a24f6); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Choice == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Choice)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Probabilities.Count < 0 {
+			return false
+		}
+		if value.Probabilities.Count > 0 {
+			if ref := w.Ids.refAtHit(54, 0x5d9078ce94bba6a8); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Probabilities.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload18 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Probabilities)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Probabilities.Count; i++ {
+					p := (*OptionPRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload18.Ids.Count
+						n := OptionPMeasureBody(&(*p), payload18.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload18.putLebPair(uint64(n)) {
+							payload18.putLebWide(uint64(n))
+						}
+						if payload18.Measuring {
+							payload18.Advance(n)
+						} else {
+							payload18.Ids.Truncate(mark)
+							if !OptionPSaveBody(&payload18, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload18.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Probabilities.Count)) + payload18.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Probabilities.Count)) {
+						w.putLebWide(uint64(value.Probabilities.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Probabilities)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Probabilities.Count; i++ {
+						p := (*OptionPRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := OptionPMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !OptionPSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if value.ConfidencePresent {
+		{
+			if true {
+				if ref := w.Ids.refAtHit(49, 0x547d54feea4643b1); !w.headerPair(ref, 11) {
+					w.headerRest(ref, 11)
+				}
+				w.Put64(math.Float64bits(value.Confidence))
+			}
+		}
+	}
+	if value.NoulPresent {
+		{
+			if true {
+				if ref := w.Ids.refAtHit(34, 0x3bfc10bad15ad663); !w.headerPair(ref, 11) {
+					w.headerRest(ref, 11)
+				}
+				w.Put64(math.Float64bits(value.Noul))
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func JevAnswerLoadBody(r *TableReader, value *JevAnswer) bool {
+	JevAnswerReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xef9c96d721673243: // kind
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Kind, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xc842078c742a24f6: // choice
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Choice, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x5d9078ce94bba6a8: // probabilities
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Probabilities))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(OptionPRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*OptionPRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(OptionPRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						OptionPLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							OptionPReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0x547d54feea4643b1: // confidence
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Confidence = v
+					}
+					r.Report.Widened++
+					value.ConfidencePresent = true
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Confidence = v
+			}
+			value.ConfidencePresent = true
+		case 0x3bfc10bad15ad663: // noul
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Noul = v
+					}
+					r.Report.Widened++
+					value.NoulPresent = true
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Noul = v
+			}
+			value.NoulPresent = true
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const JevAnswerLoadRetainBuilder = "JevAnswer: retention requires a region round trip through the VARIABLE form"
+const JevAnswerSaveRetainMessages = "JevAnswer: retention requires a region round trip through the VARIABLE form"
+
+func JevAnswerLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *JevAnswer {
+	return (*JevAnswer)(tableRegionLoadRetain(region, wire, JevAnswerTableType(), JevAnswerTableType().NodeType, 2, report, retain))
+}
+func JevAnswerMeasureRetain(value *JevAnswer, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), JevAnswerTableType(), nil, true, retain, nil, allocator...)
+}
+func JevAnswerSaveRetain(value *JevAnswer, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), JevAnswerTableType(), buffer, false, retain, report, allocator...)
+}
+func JevAnswerMeasureBodyRetain(value *JevAnswer, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !JevAnswerSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func JevAnswerSaveBodyRetain(w *TableRetainWriter, value *JevAnswer) bool {
+	if !JevAnswerSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func JevAnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *JevAnswer) bool {
+	{
+		if value.Kind != 0 {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Kind == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Kind)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Choice != 0 {
+			if ref := w.Ids.refAtHit(117, 0xc842078c742a24f6); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Choice == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Choice)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Probabilities.Count < 0 {
+			return false
+		}
+		if value.Probabilities.Count > 0 {
+			if ref := w.Ids.refAtHit(54, 0x5d9078ce94bba6a8); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Probabilities.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Probabilities)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Probabilities.Count; i++ {
+					p := (*OptionPRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(2, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := OptionPMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !OptionPSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Probabilities.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Probabilities.Count)) {
+						w.putLebWide(uint64(value.Probabilities.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Probabilities)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Probabilities.Count; i++ {
+						p := (*OptionPRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(2, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := OptionPMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !OptionPSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if value.ConfidencePresent {
+		{
+			if true {
+				if ref := w.Ids.refAtHit(49, 0x547d54feea4643b1); !w.headerPair(ref, 11) {
+					w.headerRest(ref, 11)
+				}
+				w.Put64(math.Float64bits(value.Confidence))
+			}
+		}
+	}
+	if value.NoulPresent {
+		{
+			if true {
+				if ref := w.Ids.refAtHit(34, 0x3bfc10bad15ad663); !w.headerPair(ref, 11) {
+					w.headerRest(ref, 11)
+				}
+				w.Put64(math.Float64bits(value.Noul))
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func JevAnswerLoadBodyRetain(r *TableRetainReader, value *JevAnswer) bool {
+	JevAnswerReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xef9c96d721673243: // kind
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Kind, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xc842078c742a24f6: // choice
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Choice, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x5d9078ce94bba6a8: // probabilities
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 2)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Probabilities))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(OptionPRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*OptionPRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(OptionPRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(2, uint32(i))
+						OptionPLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							OptionPReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0x547d54feea4643b1: // confidence
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Confidence = v
+					}
+					r.Report.Widened++
+					value.ConfidencePresent = true
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Confidence = v
+			}
+			value.ConfidencePresent = true
+		case 0x3bfc10bad15ad663: // noul
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Noul = v
+					}
+					r.Report.Widened++
+					value.NoulPresent = true
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Noul = v
+			}
+			value.NoulPresent = true
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func JevAnswerLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, JevAnswerTableType(), JevAnswerTableType().NodeType, 2)
+	return n
+}
+func JevAnswerLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, JevAnswerTableType(), JevAnswerTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func JevAnswerLoad(region, wire []byte, report *TableReport) *JevAnswer {
+	return (*JevAnswer)(tableRegionLoad(region, wire, JevAnswerTableType(), JevAnswerTableType().NodeType, 2, report))
+}
+func JevAnswerMeasure(value *JevAnswer, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), JevAnswerTableType(), nil, true, arena, allocator)
+}
+func JevAnswerMeasureReason(value *JevAnswer, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), JevAnswerTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func JevAnswerSave(value *JevAnswer, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), JevAnswerTableType(), buffer, false, arena, allocator)
+}
+func JevAnswerLoadBuilder(b *JevAnswerBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, JevAnswerTableType(), JevAnswerTableType().NodeType, 2, report)
+}
+
+// JevAnswerReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func JevAnswerReadStrict(wire []byte) (*JevAnswer, error) {
+	var b JevAnswerBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := JevAnswerLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type JevAnswerBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *JevAnswerBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(JevAnswer{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	JevAnswerReset((*JevAnswer)(p))
+	return true
+}
+func (b *JevAnswerBuilder) GetRoot() *JevAnswer {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*JevAnswer)(b.Arena.At(b.root))
+}
+func (b *JevAnswerBuilder) AsConst() *JevAnswer {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*JevAnswer)(unsafe.Pointer(&b.region[0]))
+}
+func (b *JevAnswerBuilder) Region() []byte { return b.region }
+func (b *JevAnswerBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), JevAnswerTableType(), &b.Arena)
+}
+func (b *JevAnswerBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), JevAnswerTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *JevAnswerBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), JevAnswerTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *JevAnswerBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func JevAnswerProbabilitiesAdd(worker *TableWorker, holder *TableList[OptionPRow]) *OptionPRow {
+	p := (*OptionPRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(OptionPRow)))))
+	if p == nil {
+		return nil
+	}
+	OptionPReset(p)
+	return p
+}
+func JevAnswerProbabilitiesErase(arena *TableArena, holder *TableList[OptionPRow], element *OptionPRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func JevAnswerProbabilitiesEach(holder *TableList[OptionPRow], visit func(*OptionPRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(OptionPRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*OptionPRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// NamedJevAnswerReset restores NamedJevAnswer's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func NamedJevAnswerReset(value *NamedJevAnswer) {
+	value.Question = 0
+	JevAnswerReset(&value.Answer)
+}
+
+func NamedJevAnswerMeasureBody(value *NamedJevAnswer, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !NamedJevAnswerSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func NamedJevAnswerSaveBody(w *TableWriter, value *NamedJevAnswer) bool {
+	if !NamedJevAnswerSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func NamedJevAnswerSaveBodyFields(w *TableWriter, value *NamedJevAnswer) bool {
+	{
+		if value.Question != 0 {
+			if ref := w.Ids.refAtHit(90, 0x9c2ca99b4d2722c5); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Question == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Question)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		mark := w.Ids.Count
+		ref := w.Ids.refAtHit(62, 0x67cf8608037190df)
+		start := w.Ids.Count
+		n := JevAnswerMeasureBody(&value.Answer, w.Ids)
+		if n < 0 || w.Ids.Overflow {
+			return false
+		}
+		if n > 1 {
+			if w.Measuring {
+				w.Advance(tableLebBytes(ref) + 1 + tableLebBytes(uint64(n)) + n)
+			} else {
+				w.Ids.Truncate(start)
+				if !w.headerPair(ref, 13) {
+					w.headerRest(ref, 13)
+				}
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if !JevAnswerSaveBody(w, &value.Answer) {
+					return false
+				}
+			}
+		} else {
+			w.Ids.Truncate(mark)
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func NamedJevAnswerLoadBody(r *TableReader, value *NamedJevAnswer) bool {
+	NamedJevAnswerReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x9c2ca99b4d2722c5: // question
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Question, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x67cf8608037190df: // answer
+			if kind != 13 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			JevAnswerLoadBody(&sub, &value.Answer)
+			r.Take(sub)
+			if r.Nodes.Carve.Refused {
+				return false
+			}
+			if sub.Offset != int64(len(sub.Buffer)) {
+				r.Report.Malformed = true
+				JevAnswerReset(&value.Answer)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const NamedJevAnswerLoadRetainBuilder = "NamedJevAnswer: retention requires a region round trip through the VARIABLE form"
+const NamedJevAnswerSaveRetainMessages = "NamedJevAnswer: retention requires a region round trip through the VARIABLE form"
+
+func NamedJevAnswerLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *NamedJevAnswer {
+	return (*NamedJevAnswer)(tableRegionLoadRetain(region, wire, NamedJevAnswerTableType(), NamedJevAnswerTableType().NodeType, 2, report, retain))
+}
+func NamedJevAnswerMeasureRetain(value *NamedJevAnswer, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), NamedJevAnswerTableType(), nil, true, retain, nil, allocator...)
+}
+func NamedJevAnswerSaveRetain(value *NamedJevAnswer, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), NamedJevAnswerTableType(), buffer, false, retain, report, allocator...)
+}
+func NamedJevAnswerMeasureBodyRetain(value *NamedJevAnswer, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !NamedJevAnswerSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func NamedJevAnswerSaveBodyRetain(w *TableRetainWriter, value *NamedJevAnswer) bool {
+	if !NamedJevAnswerSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func NamedJevAnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *NamedJevAnswer) bool {
+	{
+		if value.Question != 0 {
+			if ref := w.Ids.refAtHit(90, 0x9c2ca99b4d2722c5); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Question == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Question)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		mark := w.Ids.Count
+		ref := w.Ids.refAtHit(62, 0x67cf8608037190df)
+		start := w.Ids.Count
+		payload := TableRetainWriter{Measuring: true, Ids: w.Ids}
+		{
+			payload1 := payload.Ids.Path
+			payload.Ids.Path = payload1.step(1, uint32(0))
+			{
+				mark := payload.Ids.Count
+				n := JevAnswerMeasureBodyRetain(&value.Answer, payload.Ids)
+				if n < 0 {
+					return false
+				}
+				if !payload.putLebPair(uint64(n)) {
+					payload.putLebWide(uint64(n))
+				}
+				if payload.Measuring {
+					payload.Advance(n)
+				} else {
+					payload.Ids.Truncate(mark)
+					if !JevAnswerSaveBodyRetain(&payload, &value.Answer) {
+						return false
+					}
+				}
+			}
+			payload.Ids.Path = payload1
+		}
+		if payload.Overflow || w.Ids.Overflow {
+			return false
+		}
+		if payload.Offset > 2 {
+			if w.Measuring {
+				w.Advance(tableLebBytes(ref) + 1 + payload.Offset)
+			} else {
+				w.Ids.Truncate(start)
+				if !w.headerPair(ref, 13) {
+					w.headerRest(ref, 13)
+				}
+				{
+					payload2 := w.Ids.Path
+					w.Ids.Path = payload2.step(1, uint32(0))
+					{
+						mark := w.Ids.Count
+						n := JevAnswerMeasureBodyRetain(&value.Answer, w.Ids)
+						if n < 0 {
+							return false
+						}
+						if !w.putLebPair(uint64(n)) {
+							w.putLebWide(uint64(n))
+						}
+						if w.Measuring {
+							w.Advance(n)
+						} else {
+							w.Ids.Truncate(mark)
+							if !JevAnswerSaveBodyRetain(w, &value.Answer) {
+								return false
+							}
+						}
+					}
+					w.Ids.Path = payload2
+				}
+			}
+		} else {
+			w.Ids.Truncate(mark)
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func NamedJevAnswerLoadBodyRetain(r *TableRetainReader, value *NamedJevAnswer) bool {
+	NamedJevAnswerReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x9c2ca99b4d2722c5: // question
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Question, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x67cf8608037190df: // answer
+			if kind != 13 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			sub.Path = r.Path.step(1, uint32(0))
+			JevAnswerLoadBodyRetain(&sub, &value.Answer)
+			r.Take(sub)
+			if r.Nodes.Carve.Refused {
+				return false
+			}
+			if sub.Offset != int64(len(sub.Buffer)) {
+				r.Report.Malformed = true
+				JevAnswerReset(&value.Answer)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func NamedJevAnswerLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, NamedJevAnswerTableType(), NamedJevAnswerTableType().NodeType, 2)
+	return n
+}
+func NamedJevAnswerLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, NamedJevAnswerTableType(), NamedJevAnswerTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func NamedJevAnswerLoad(region, wire []byte, report *TableReport) *NamedJevAnswer {
+	return (*NamedJevAnswer)(tableRegionLoad(region, wire, NamedJevAnswerTableType(), NamedJevAnswerTableType().NodeType, 2, report))
+}
+func NamedJevAnswerMeasure(value *NamedJevAnswer, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), NamedJevAnswerTableType(), nil, true, arena, allocator)
+}
+func NamedJevAnswerMeasureReason(value *NamedJevAnswer, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), NamedJevAnswerTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func NamedJevAnswerSave(value *NamedJevAnswer, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), NamedJevAnswerTableType(), buffer, false, arena, allocator)
+}
+func NamedJevAnswerLoadBuilder(b *NamedJevAnswerBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, NamedJevAnswerTableType(), NamedJevAnswerTableType().NodeType, 2, report)
+}
+
+// NamedJevAnswerReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func NamedJevAnswerReadStrict(wire []byte) (*NamedJevAnswer, error) {
+	var b NamedJevAnswerBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := NamedJevAnswerLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type NamedJevAnswerBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *NamedJevAnswerBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(NamedJevAnswer{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	NamedJevAnswerReset((*NamedJevAnswer)(p))
+	return true
+}
+func (b *NamedJevAnswerBuilder) GetRoot() *NamedJevAnswer {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*NamedJevAnswer)(b.Arena.At(b.root))
+}
+func (b *NamedJevAnswerBuilder) AsConst() *NamedJevAnswer {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*NamedJevAnswer)(unsafe.Pointer(&b.region[0]))
+}
+func (b *NamedJevAnswerBuilder) Region() []byte { return b.region }
+func (b *NamedJevAnswerBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), NamedJevAnswerTableType(), &b.Arena)
+}
+func (b *NamedJevAnswerBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), NamedJevAnswerTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *NamedJevAnswerBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), NamedJevAnswerTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *NamedJevAnswerBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+
+// JevResponseReset restores JevResponse's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func JevResponseReset(value *JevResponse) {
+	value.Answers = TableList[NamedJevAnswerRow]{}
+	UsageReset(&value.Usage)
+}
+
+func JevResponseMeasureBody(value *JevResponse, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !JevResponseSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func JevResponseSaveBody(w *TableWriter, value *JevResponse) bool {
+	if !JevResponseSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func JevResponseSaveBodyFields(w *TableWriter, value *JevResponse) bool {
+	{
+		if value.Answers.Count < 0 {
+			return false
+		}
+		if value.Answers.Count > 0 {
+			if ref := w.Ids.refAtHit(126, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Answers.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload23 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Answers)), int64(unsafe.Sizeof(*new(NamedJevAnswerRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Answers.Count; i++ {
+					p := (*NamedJevAnswerRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload23.Ids.Count
+						n := NamedJevAnswerMeasureBody(&(*p), payload23.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload23.putLebPair(uint64(n)) {
+							payload23.putLebWide(uint64(n))
+						}
+						if payload23.Measuring {
+							payload23.Advance(n)
+						} else {
+							payload23.Ids.Truncate(mark)
+							if !NamedJevAnswerSaveBody(&payload23, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload23.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Answers.Count)) + payload23.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Answers.Count)) {
+						w.putLebWide(uint64(value.Answers.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Answers)), int64(unsafe.Sizeof(*new(NamedJevAnswerRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Answers.Count; i++ {
+						p := (*NamedJevAnswerRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := NamedJevAnswerMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !NamedJevAnswerSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	{
+		mark := w.Ids.Count
+		ref := w.Ids.refAtHit(18, 0x1e1702714db75ac8)
+		start := w.Ids.Count
+		n := UsageMeasureBody(&value.Usage, w.Ids)
+		if n < 0 || w.Ids.Overflow {
+			return false
+		}
+		if n > 1 {
+			if w.Measuring {
+				w.Advance(tableLebBytes(ref) + 1 + tableLebBytes(uint64(n)) + n)
+			} else {
+				w.Ids.Truncate(start)
+				if !w.headerPair(ref, 13) {
+					w.headerRest(ref, 13)
+				}
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if !UsageSaveBody(w, &value.Usage) {
+					return false
+				}
+			}
+		} else {
+			w.Ids.Truncate(mark)
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func JevResponseLoadBody(r *TableReader, value *JevResponse) bool {
+	JevResponseReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xd7316b9dd9f8d444: // answers
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Answers))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(NamedJevAnswerRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*NamedJevAnswerRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(NamedJevAnswerRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						NamedJevAnswerLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							NamedJevAnswerReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0x1e1702714db75ac8: // usage
+			if kind != 13 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			UsageLoadBody(&sub, &value.Usage)
+			r.Take(sub)
+			if r.Nodes.Carve.Refused {
+				return false
+			}
+			if sub.Offset != int64(len(sub.Buffer)) {
+				r.Report.Malformed = true
+				UsageReset(&value.Usage)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const JevResponseLoadRetainBuilder = "JevResponse: retention requires a region round trip through the VARIABLE form"
+const JevResponseSaveRetainMessages = "JevResponse: retention requires a region round trip through the VARIABLE form"
+
+func JevResponseLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *JevResponse {
+	return (*JevResponse)(tableRegionLoadRetain(region, wire, JevResponseTableType(), JevResponseTableType().NodeType, 2, report, retain))
+}
+func JevResponseMeasureRetain(value *JevResponse, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), JevResponseTableType(), nil, true, retain, nil, allocator...)
+}
+func JevResponseSaveRetain(value *JevResponse, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), JevResponseTableType(), buffer, false, retain, report, allocator...)
+}
+func JevResponseMeasureBodyRetain(value *JevResponse, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !JevResponseSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func JevResponseSaveBodyRetain(w *TableRetainWriter, value *JevResponse) bool {
+	if !JevResponseSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func JevResponseSaveBodyFieldsRetain(w *TableRetainWriter, value *JevResponse) bool {
+	{
+		if value.Answers.Count < 0 {
+			return false
+		}
+		if value.Answers.Count > 0 {
+			if ref := w.Ids.refAtHit(126, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Answers.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Answers)), int64(unsafe.Sizeof(*new(NamedJevAnswerRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Answers.Count; i++ {
+					p := (*NamedJevAnswerRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(0, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := NamedJevAnswerMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !NamedJevAnswerSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Answers.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Answers.Count)) {
+						w.putLebWide(uint64(value.Answers.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Answers)), int64(unsafe.Sizeof(*new(NamedJevAnswerRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Answers.Count; i++ {
+						p := (*NamedJevAnswerRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(0, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := NamedJevAnswerMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !NamedJevAnswerSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	{
+		mark := w.Ids.Count
+		ref := w.Ids.refAtHit(18, 0x1e1702714db75ac8)
+		start := w.Ids.Count
+		payload := TableRetainWriter{Measuring: true, Ids: w.Ids}
+		{
+			payload6 := payload.Ids.Path
+			payload.Ids.Path = payload6.step(1, uint32(0))
+			{
+				mark := payload.Ids.Count
+				n := UsageMeasureBodyRetain(&value.Usage, payload.Ids)
+				if n < 0 {
+					return false
+				}
+				if !payload.putLebPair(uint64(n)) {
+					payload.putLebWide(uint64(n))
+				}
+				if payload.Measuring {
+					payload.Advance(n)
+				} else {
+					payload.Ids.Truncate(mark)
+					if !UsageSaveBodyRetain(&payload, &value.Usage) {
+						return false
+					}
+				}
+			}
+			payload.Ids.Path = payload6
+		}
+		if payload.Overflow || w.Ids.Overflow {
+			return false
+		}
+		if payload.Offset > 2 {
+			if w.Measuring {
+				w.Advance(tableLebBytes(ref) + 1 + payload.Offset)
+			} else {
+				w.Ids.Truncate(start)
+				if !w.headerPair(ref, 13) {
+					w.headerRest(ref, 13)
+				}
+				{
+					payload7 := w.Ids.Path
+					w.Ids.Path = payload7.step(1, uint32(0))
+					{
+						mark := w.Ids.Count
+						n := UsageMeasureBodyRetain(&value.Usage, w.Ids)
+						if n < 0 {
+							return false
+						}
+						if !w.putLebPair(uint64(n)) {
+							w.putLebWide(uint64(n))
+						}
+						if w.Measuring {
+							w.Advance(n)
+						} else {
+							w.Ids.Truncate(mark)
+							if !UsageSaveBodyRetain(w, &value.Usage) {
+								return false
+							}
+						}
+					}
+					w.Ids.Path = payload7
+				}
+			}
+		} else {
+			w.Ids.Truncate(mark)
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func JevResponseLoadBodyRetain(r *TableRetainReader, value *JevResponse) bool {
+	JevResponseReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xd7316b9dd9f8d444: // answers
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 0)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Answers))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(NamedJevAnswerRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*NamedJevAnswerRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(NamedJevAnswerRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(0, uint32(i))
+						NamedJevAnswerLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							NamedJevAnswerReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0x1e1702714db75ac8: // usage
+			if kind != 13 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			sub.Path = r.Path.step(1, uint32(0))
+			UsageLoadBodyRetain(&sub, &value.Usage)
+			r.Take(sub)
+			if r.Nodes.Carve.Refused {
+				return false
+			}
+			if sub.Offset != int64(len(sub.Buffer)) {
+				r.Report.Malformed = true
+				UsageReset(&value.Usage)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func JevResponseLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, JevResponseTableType(), JevResponseTableType().NodeType, 2)
+	return n
+}
+func JevResponseLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, JevResponseTableType(), JevResponseTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func JevResponseLoad(region, wire []byte, report *TableReport) *JevResponse {
+	return (*JevResponse)(tableRegionLoad(region, wire, JevResponseTableType(), JevResponseTableType().NodeType, 2, report))
+}
+func JevResponseMeasure(value *JevResponse, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), JevResponseTableType(), nil, true, arena, allocator)
+}
+func JevResponseMeasureReason(value *JevResponse, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), JevResponseTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func JevResponseSave(value *JevResponse, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), JevResponseTableType(), buffer, false, arena, allocator)
+}
+func JevResponseLoadBuilder(b *JevResponseBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, JevResponseTableType(), JevResponseTableType().NodeType, 2, report)
+}
+
+// JevResponseReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func JevResponseReadStrict(wire []byte) (*JevResponse, error) {
+	var b JevResponseBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := JevResponseLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type JevResponseBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *JevResponseBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(JevResponse{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	JevResponseReset((*JevResponse)(p))
+	return true
+}
+func (b *JevResponseBuilder) GetRoot() *JevResponse {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*JevResponse)(b.Arena.At(b.root))
+}
+func (b *JevResponseBuilder) AsConst() *JevResponse {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*JevResponse)(unsafe.Pointer(&b.region[0]))
+}
+func (b *JevResponseBuilder) Region() []byte { return b.region }
+func (b *JevResponseBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), JevResponseTableType(), &b.Arena)
+}
+func (b *JevResponseBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), JevResponseTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *JevResponseBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), JevResponseTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *JevResponseBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func JevResponseAnswersAdd(worker *TableWorker, holder *TableList[NamedJevAnswerRow]) *NamedJevAnswerRow {
+	p := (*NamedJevAnswerRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(NamedJevAnswerRow)))))
+	if p == nil {
+		return nil
+	}
+	NamedJevAnswerReset(p)
+	return p
+}
+func JevResponseAnswersErase(arena *TableArena, holder *TableList[NamedJevAnswerRow], element *NamedJevAnswerRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func JevResponseAnswersEach(holder *TableList[NamedJevAnswerRow], visit func(*NamedJevAnswerRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(NamedJevAnswerRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*NamedJevAnswerRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// FixedAnswerReset restores FixedAnswer's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func FixedAnswerReset(value *FixedAnswer) {
+	value.Choice = 0
+	value.P = TableList[OptionPRow]{}
+	value.Noul = 0.0
+	value.NoulPresent = false
+}
+
+func FixedAnswerMeasureBody(value *FixedAnswer, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !FixedAnswerSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func FixedAnswerSaveBody(w *TableWriter, value *FixedAnswer) bool {
+	if !FixedAnswerSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func FixedAnswerSaveBodyFields(w *TableWriter, value *FixedAnswer) bool {
+	{
+		if value.Choice != 0 {
+			if ref := w.Ids.refAtHit(117, 0xc842078c742a24f6); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Choice == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Choice)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.P.Count < 0 {
+			return false
+		}
+		if value.P.Count > 0 {
+			if ref := w.Ids.refAtHit(99, 0xaf63ed4c8602096f); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.P.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload26 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.P)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.P.Count; i++ {
+					p := (*OptionPRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload26.Ids.Count
+						n := OptionPMeasureBody(&(*p), payload26.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload26.putLebPair(uint64(n)) {
+							payload26.putLebWide(uint64(n))
+						}
+						if payload26.Measuring {
+							payload26.Advance(n)
+						} else {
+							payload26.Ids.Truncate(mark)
+							if !OptionPSaveBody(&payload26, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload26.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.P.Count)) + payload26.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.P.Count)) {
+						w.putLebWide(uint64(value.P.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.P)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.P.Count; i++ {
+						p := (*OptionPRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := OptionPMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !OptionPSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if value.NoulPresent {
+		{
+			if true {
+				if ref := w.Ids.refAtHit(34, 0x3bfc10bad15ad663); !w.headerPair(ref, 11) {
+					w.headerRest(ref, 11)
+				}
+				w.Put64(math.Float64bits(value.Noul))
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func FixedAnswerLoadBody(r *TableReader, value *FixedAnswer) bool {
+	FixedAnswerReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xc842078c742a24f6: // choice
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Choice, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xaf63ed4c8602096f: // p
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.P))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(OptionPRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*OptionPRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(OptionPRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						OptionPLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							OptionPReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0x3bfc10bad15ad663: // noul
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Noul = v
+					}
+					r.Report.Widened++
+					value.NoulPresent = true
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Noul = v
+			}
+			value.NoulPresent = true
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const FixedAnswerLoadRetainBuilder = "FixedAnswer: retention requires a region round trip through the VARIABLE form"
+const FixedAnswerSaveRetainMessages = "FixedAnswer: retention requires a region round trip through the VARIABLE form"
+
+func FixedAnswerLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *FixedAnswer {
+	return (*FixedAnswer)(tableRegionLoadRetain(region, wire, FixedAnswerTableType(), FixedAnswerTableType().NodeType, 2, report, retain))
+}
+func FixedAnswerMeasureRetain(value *FixedAnswer, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), FixedAnswerTableType(), nil, true, retain, nil, allocator...)
+}
+func FixedAnswerSaveRetain(value *FixedAnswer, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), FixedAnswerTableType(), buffer, false, retain, report, allocator...)
+}
+func FixedAnswerMeasureBodyRetain(value *FixedAnswer, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !FixedAnswerSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func FixedAnswerSaveBodyRetain(w *TableRetainWriter, value *FixedAnswer) bool {
+	if !FixedAnswerSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func FixedAnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *FixedAnswer) bool {
+	{
+		if value.Choice != 0 {
+			if ref := w.Ids.refAtHit(117, 0xc842078c742a24f6); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Choice == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Choice)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.P.Count < 0 {
+			return false
+		}
+		if value.P.Count > 0 {
+			if ref := w.Ids.refAtHit(99, 0xaf63ed4c8602096f); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.P.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.P)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.P.Count; i++ {
+					p := (*OptionPRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(1, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := OptionPMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !OptionPSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.P.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.P.Count)) {
+						w.putLebWide(uint64(value.P.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.P)), int64(unsafe.Sizeof(*new(OptionPRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.P.Count; i++ {
+						p := (*OptionPRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(1, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := OptionPMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !OptionPSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if value.NoulPresent {
+		{
+			if true {
+				if ref := w.Ids.refAtHit(34, 0x3bfc10bad15ad663); !w.headerPair(ref, 11) {
+					w.headerRest(ref, 11)
+				}
+				w.Put64(math.Float64bits(value.Noul))
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func FixedAnswerLoadBodyRetain(r *TableRetainReader, value *FixedAnswer) bool {
+	FixedAnswerReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xc842078c742a24f6: // choice
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Choice, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xaf63ed4c8602096f: // p
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 1)
+				slot := (*tableContainer)(unsafe.Pointer(&value.P))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(OptionPRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*OptionPRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(OptionPRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(1, uint32(i))
+						OptionPLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							OptionPReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0x3bfc10bad15ad663: // noul
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Noul = v
+					}
+					r.Report.Widened++
+					value.NoulPresent = true
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Noul = v
+			}
+			value.NoulPresent = true
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func FixedAnswerLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, FixedAnswerTableType(), FixedAnswerTableType().NodeType, 2)
+	return n
+}
+func FixedAnswerLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, FixedAnswerTableType(), FixedAnswerTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func FixedAnswerLoad(region, wire []byte, report *TableReport) *FixedAnswer {
+	return (*FixedAnswer)(tableRegionLoad(region, wire, FixedAnswerTableType(), FixedAnswerTableType().NodeType, 2, report))
+}
+func FixedAnswerMeasure(value *FixedAnswer, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), FixedAnswerTableType(), nil, true, arena, allocator)
+}
+func FixedAnswerMeasureReason(value *FixedAnswer, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), FixedAnswerTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func FixedAnswerSave(value *FixedAnswer, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), FixedAnswerTableType(), buffer, false, arena, allocator)
+}
+func FixedAnswerLoadBuilder(b *FixedAnswerBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, FixedAnswerTableType(), FixedAnswerTableType().NodeType, 2, report)
+}
+
+// FixedAnswerReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func FixedAnswerReadStrict(wire []byte) (*FixedAnswer, error) {
+	var b FixedAnswerBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := FixedAnswerLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type FixedAnswerBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *FixedAnswerBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(FixedAnswer{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	FixedAnswerReset((*FixedAnswer)(p))
+	return true
+}
+func (b *FixedAnswerBuilder) GetRoot() *FixedAnswer {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*FixedAnswer)(b.Arena.At(b.root))
+}
+func (b *FixedAnswerBuilder) AsConst() *FixedAnswer {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*FixedAnswer)(unsafe.Pointer(&b.region[0]))
+}
+func (b *FixedAnswerBuilder) Region() []byte { return b.region }
+func (b *FixedAnswerBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), FixedAnswerTableType(), &b.Arena)
+}
+func (b *FixedAnswerBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), FixedAnswerTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *FixedAnswerBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), FixedAnswerTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *FixedAnswerBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func FixedAnswerPAdd(worker *TableWorker, holder *TableList[OptionPRow]) *OptionPRow {
+	p := (*OptionPRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(OptionPRow)))))
+	if p == nil {
+		return nil
+	}
+	OptionPReset(p)
+	return p
+}
+func FixedAnswerPErase(arena *TableArena, holder *TableList[OptionPRow], element *OptionPRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func FixedAnswerPEach(holder *TableList[OptionPRow], visit func(*OptionPRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(OptionPRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*OptionPRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// NamedFixedAnswerReset restores NamedFixedAnswer's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func NamedFixedAnswerReset(value *NamedFixedAnswer) {
+	value.Question = 0
+	FixedAnswerReset(&value.Answer)
+}
+
+func NamedFixedAnswerMeasureBody(value *NamedFixedAnswer, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !NamedFixedAnswerSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func NamedFixedAnswerSaveBody(w *TableWriter, value *NamedFixedAnswer) bool {
+	if !NamedFixedAnswerSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func NamedFixedAnswerSaveBodyFields(w *TableWriter, value *NamedFixedAnswer) bool {
+	{
+		if value.Question != 0 {
+			if ref := w.Ids.refAtHit(90, 0x9c2ca99b4d2722c5); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Question == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Question)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		mark := w.Ids.Count
+		ref := w.Ids.refAtHit(62, 0x67cf8608037190df)
+		start := w.Ids.Count
+		n := FixedAnswerMeasureBody(&value.Answer, w.Ids)
+		if n < 0 || w.Ids.Overflow {
+			return false
+		}
+		if n > 1 {
+			if w.Measuring {
+				w.Advance(tableLebBytes(ref) + 1 + tableLebBytes(uint64(n)) + n)
+			} else {
+				w.Ids.Truncate(start)
+				if !w.headerPair(ref, 13) {
+					w.headerRest(ref, 13)
+				}
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if !FixedAnswerSaveBody(w, &value.Answer) {
+					return false
+				}
+			}
+		} else {
+			w.Ids.Truncate(mark)
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func NamedFixedAnswerLoadBody(r *TableReader, value *NamedFixedAnswer) bool {
+	NamedFixedAnswerReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x9c2ca99b4d2722c5: // question
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Question, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x67cf8608037190df: // answer
+			if kind != 13 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			FixedAnswerLoadBody(&sub, &value.Answer)
+			r.Take(sub)
+			if r.Nodes.Carve.Refused {
+				return false
+			}
+			if sub.Offset != int64(len(sub.Buffer)) {
+				r.Report.Malformed = true
+				FixedAnswerReset(&value.Answer)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const NamedFixedAnswerLoadRetainBuilder = "NamedFixedAnswer: retention requires a region round trip through the VARIABLE form"
+const NamedFixedAnswerSaveRetainMessages = "NamedFixedAnswer: retention requires a region round trip through the VARIABLE form"
+
+func NamedFixedAnswerLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *NamedFixedAnswer {
+	return (*NamedFixedAnswer)(tableRegionLoadRetain(region, wire, NamedFixedAnswerTableType(), NamedFixedAnswerTableType().NodeType, 2, report, retain))
+}
+func NamedFixedAnswerMeasureRetain(value *NamedFixedAnswer, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), NamedFixedAnswerTableType(), nil, true, retain, nil, allocator...)
+}
+func NamedFixedAnswerSaveRetain(value *NamedFixedAnswer, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), NamedFixedAnswerTableType(), buffer, false, retain, report, allocator...)
+}
+func NamedFixedAnswerMeasureBodyRetain(value *NamedFixedAnswer, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !NamedFixedAnswerSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func NamedFixedAnswerSaveBodyRetain(w *TableRetainWriter, value *NamedFixedAnswer) bool {
+	if !NamedFixedAnswerSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func NamedFixedAnswerSaveBodyFieldsRetain(w *TableRetainWriter, value *NamedFixedAnswer) bool {
+	{
+		if value.Question != 0 {
+			if ref := w.Ids.refAtHit(90, 0x9c2ca99b4d2722c5); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Question == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Question)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		mark := w.Ids.Count
+		ref := w.Ids.refAtHit(62, 0x67cf8608037190df)
+		start := w.Ids.Count
+		payload := TableRetainWriter{Measuring: true, Ids: w.Ids}
+		{
+			payload1 := payload.Ids.Path
+			payload.Ids.Path = payload1.step(1, uint32(0))
+			{
+				mark := payload.Ids.Count
+				n := FixedAnswerMeasureBodyRetain(&value.Answer, payload.Ids)
+				if n < 0 {
+					return false
+				}
+				if !payload.putLebPair(uint64(n)) {
+					payload.putLebWide(uint64(n))
+				}
+				if payload.Measuring {
+					payload.Advance(n)
+				} else {
+					payload.Ids.Truncate(mark)
+					if !FixedAnswerSaveBodyRetain(&payload, &value.Answer) {
+						return false
+					}
+				}
+			}
+			payload.Ids.Path = payload1
+		}
+		if payload.Overflow || w.Ids.Overflow {
+			return false
+		}
+		if payload.Offset > 2 {
+			if w.Measuring {
+				w.Advance(tableLebBytes(ref) + 1 + payload.Offset)
+			} else {
+				w.Ids.Truncate(start)
+				if !w.headerPair(ref, 13) {
+					w.headerRest(ref, 13)
+				}
+				{
+					payload2 := w.Ids.Path
+					w.Ids.Path = payload2.step(1, uint32(0))
+					{
+						mark := w.Ids.Count
+						n := FixedAnswerMeasureBodyRetain(&value.Answer, w.Ids)
+						if n < 0 {
+							return false
+						}
+						if !w.putLebPair(uint64(n)) {
+							w.putLebWide(uint64(n))
+						}
+						if w.Measuring {
+							w.Advance(n)
+						} else {
+							w.Ids.Truncate(mark)
+							if !FixedAnswerSaveBodyRetain(w, &value.Answer) {
+								return false
+							}
+						}
+					}
+					w.Ids.Path = payload2
+				}
+			}
+		} else {
+			w.Ids.Truncate(mark)
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func NamedFixedAnswerLoadBodyRetain(r *TableRetainReader, value *NamedFixedAnswer) bool {
+	NamedFixedAnswerReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x9c2ca99b4d2722c5: // question
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Question, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x67cf8608037190df: // answer
+			if kind != 13 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			sub.Path = r.Path.step(1, uint32(0))
+			FixedAnswerLoadBodyRetain(&sub, &value.Answer)
+			r.Take(sub)
+			if r.Nodes.Carve.Refused {
+				return false
+			}
+			if sub.Offset != int64(len(sub.Buffer)) {
+				r.Report.Malformed = true
+				FixedAnswerReset(&value.Answer)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func NamedFixedAnswerLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, NamedFixedAnswerTableType(), NamedFixedAnswerTableType().NodeType, 2)
+	return n
+}
+func NamedFixedAnswerLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, NamedFixedAnswerTableType(), NamedFixedAnswerTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func NamedFixedAnswerLoad(region, wire []byte, report *TableReport) *NamedFixedAnswer {
+	return (*NamedFixedAnswer)(tableRegionLoad(region, wire, NamedFixedAnswerTableType(), NamedFixedAnswerTableType().NodeType, 2, report))
+}
+func NamedFixedAnswerMeasure(value *NamedFixedAnswer, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), NamedFixedAnswerTableType(), nil, true, arena, allocator)
+}
+func NamedFixedAnswerMeasureReason(value *NamedFixedAnswer, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), NamedFixedAnswerTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func NamedFixedAnswerSave(value *NamedFixedAnswer, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), NamedFixedAnswerTableType(), buffer, false, arena, allocator)
+}
+func NamedFixedAnswerLoadBuilder(b *NamedFixedAnswerBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, NamedFixedAnswerTableType(), NamedFixedAnswerTableType().NodeType, 2, report)
+}
+
+// NamedFixedAnswerReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func NamedFixedAnswerReadStrict(wire []byte) (*NamedFixedAnswer, error) {
+	var b NamedFixedAnswerBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := NamedFixedAnswerLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type NamedFixedAnswerBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *NamedFixedAnswerBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(NamedFixedAnswer{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	NamedFixedAnswerReset((*NamedFixedAnswer)(p))
+	return true
+}
+func (b *NamedFixedAnswerBuilder) GetRoot() *NamedFixedAnswer {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*NamedFixedAnswer)(b.Arena.At(b.root))
+}
+func (b *NamedFixedAnswerBuilder) AsConst() *NamedFixedAnswer {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*NamedFixedAnswer)(unsafe.Pointer(&b.region[0]))
+}
+func (b *NamedFixedAnswerBuilder) Region() []byte { return b.region }
+func (b *NamedFixedAnswerBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), NamedFixedAnswerTableType(), &b.Arena)
+}
+func (b *NamedFixedAnswerBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), NamedFixedAnswerTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *NamedFixedAnswerBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), NamedFixedAnswerTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *NamedFixedAnswerBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+
+// FixedTableReset restores FixedTable's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func FixedTableReset(value *FixedTable) {
+	value.Answers = TableList[NamedFixedAnswerRow]{}
+}
+
+func FixedTableMeasureBody(value *FixedTable, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !FixedTableSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func FixedTableSaveBody(w *TableWriter, value *FixedTable) bool {
+	if !FixedTableSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func FixedTableSaveBodyFields(w *TableWriter, value *FixedTable) bool {
+	{
+		if value.Answers.Count < 0 {
+			return false
+		}
+		if value.Answers.Count > 0 {
+			if ref := w.Ids.refAtHit(126, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Answers.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload30 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Answers)), int64(unsafe.Sizeof(*new(NamedFixedAnswerRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Answers.Count; i++ {
+					p := (*NamedFixedAnswerRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload30.Ids.Count
+						n := NamedFixedAnswerMeasureBody(&(*p), payload30.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload30.putLebPair(uint64(n)) {
+							payload30.putLebWide(uint64(n))
+						}
+						if payload30.Measuring {
+							payload30.Advance(n)
+						} else {
+							payload30.Ids.Truncate(mark)
+							if !NamedFixedAnswerSaveBody(&payload30, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload30.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Answers.Count)) + payload30.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Answers.Count)) {
+						w.putLebWide(uint64(value.Answers.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Answers)), int64(unsafe.Sizeof(*new(NamedFixedAnswerRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Answers.Count; i++ {
+						p := (*NamedFixedAnswerRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := NamedFixedAnswerMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !NamedFixedAnswerSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func FixedTableLoadBody(r *TableReader, value *FixedTable) bool {
+	FixedTableReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xd7316b9dd9f8d444: // answers
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Answers))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(NamedFixedAnswerRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*NamedFixedAnswerRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(NamedFixedAnswerRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						NamedFixedAnswerLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							NamedFixedAnswerReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const FixedTableLoadRetainBuilder = "FixedTable: retention requires a region round trip through the VARIABLE form"
+const FixedTableSaveRetainMessages = "FixedTable: retention requires a region round trip through the VARIABLE form"
+
+func FixedTableLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *FixedTable {
+	return (*FixedTable)(tableRegionLoadRetain(region, wire, FixedTableTableType(), FixedTableTableType().NodeType, 2, report, retain))
+}
+func FixedTableMeasureRetain(value *FixedTable, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), FixedTableTableType(), nil, true, retain, nil, allocator...)
+}
+func FixedTableSaveRetain(value *FixedTable, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), FixedTableTableType(), buffer, false, retain, report, allocator...)
+}
+func FixedTableMeasureBodyRetain(value *FixedTable, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !FixedTableSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func FixedTableSaveBodyRetain(w *TableRetainWriter, value *FixedTable) bool {
+	if !FixedTableSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func FixedTableSaveBodyFieldsRetain(w *TableRetainWriter, value *FixedTable) bool {
+	{
+		if value.Answers.Count < 0 {
+			return false
+		}
+		if value.Answers.Count > 0 {
+			if ref := w.Ids.refAtHit(126, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Answers.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Answers)), int64(unsafe.Sizeof(*new(NamedFixedAnswerRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Answers.Count; i++ {
+					p := (*NamedFixedAnswerRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(0, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := NamedFixedAnswerMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !NamedFixedAnswerSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Answers.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Answers.Count)) {
+						w.putLebWide(uint64(value.Answers.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Answers)), int64(unsafe.Sizeof(*new(NamedFixedAnswerRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Answers.Count; i++ {
+						p := (*NamedFixedAnswerRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(0, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := NamedFixedAnswerMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !NamedFixedAnswerSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func FixedTableLoadBodyRetain(r *TableRetainReader, value *FixedTable) bool {
+	FixedTableReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xd7316b9dd9f8d444: // answers
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 0)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Answers))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(NamedFixedAnswerRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*NamedFixedAnswerRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(NamedFixedAnswerRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(0, uint32(i))
+						NamedFixedAnswerLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							NamedFixedAnswerReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func FixedTableLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, FixedTableTableType(), FixedTableTableType().NodeType, 2)
+	return n
+}
+func FixedTableLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, FixedTableTableType(), FixedTableTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func FixedTableLoad(region, wire []byte, report *TableReport) *FixedTable {
+	return (*FixedTable)(tableRegionLoad(region, wire, FixedTableTableType(), FixedTableTableType().NodeType, 2, report))
+}
+func FixedTableMeasure(value *FixedTable, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), FixedTableTableType(), nil, true, arena, allocator)
+}
+func FixedTableMeasureReason(value *FixedTable, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), FixedTableTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func FixedTableSave(value *FixedTable, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), FixedTableTableType(), buffer, false, arena, allocator)
+}
+func FixedTableLoadBuilder(b *FixedTableBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, FixedTableTableType(), FixedTableTableType().NodeType, 2, report)
+}
+
+// FixedTableReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func FixedTableReadStrict(wire []byte) (*FixedTable, error) {
+	var b FixedTableBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := FixedTableLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type FixedTableBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *FixedTableBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(FixedTable{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	FixedTableReset((*FixedTable)(p))
+	return true
+}
+func (b *FixedTableBuilder) GetRoot() *FixedTable {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*FixedTable)(b.Arena.At(b.root))
+}
+func (b *FixedTableBuilder) AsConst() *FixedTable {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*FixedTable)(unsafe.Pointer(&b.region[0]))
+}
+func (b *FixedTableBuilder) Region() []byte { return b.region }
+func (b *FixedTableBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), FixedTableTableType(), &b.Arena)
+}
+func (b *FixedTableBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), FixedTableTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *FixedTableBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), FixedTableTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *FixedTableBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func FixedTableAnswersAdd(worker *TableWorker, holder *TableList[NamedFixedAnswerRow]) *NamedFixedAnswerRow {
+	p := (*NamedFixedAnswerRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(NamedFixedAnswerRow)))))
+	if p == nil {
+		return nil
+	}
+	NamedFixedAnswerReset(p)
+	return p
+}
+func FixedTableAnswersErase(arena *TableArena, holder *TableList[NamedFixedAnswerRow], element *NamedFixedAnswerRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func FixedTableAnswersEach(holder *TableList[NamedFixedAnswerRow], visit func(*NamedFixedAnswerRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(NamedFixedAnswerRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*NamedFixedAnswerRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// ExampleReset restores Example's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func ExampleReset(value *Example) {
+	value.Card = 0
+	value.Heading = 0
+	value.Paths = 0
+	value.Kind = 0
+	value.Label = ExampleLabelNone
+}
+
+func ExampleMeasureBody(value *Example, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !ExampleSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func ExampleSaveBody(w *TableWriter, value *Example) bool {
+	if !ExampleSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func ExampleSaveBodyFields(w *TableWriter, value *Example) bool {
+	{
+		if value.Card != 0 {
+			if ref := w.Ids.refAtHit(108, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Card == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Card)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Heading != 0 {
+			if ref := w.Ids.refAtHit(102, 0xb128829190ca0f75); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Heading == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Heading)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Paths != 0 {
+			if ref := w.Ids.refAtHit(38, 0x3f1193a7be5f3a7f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Paths == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Paths)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Kind != 0 {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Kind == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Kind)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Label != ExampleLabelNone {
+			if ref := w.Ids.refAtHit(32, 0x39f7fcec8fcb623d); !w.headerPair(ref, 30) {
+				w.headerRest(ref, 30)
+			}
+			switch value.Label {
+			case ExampleLabelNone:
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			case ExampleLabelFlash:
+				w.IdAt(25, 0x2e109c0b102f74a9)
+			case ExampleLabelPro:
+				w.IdAt(83, 0x8e067719f45b0458)
+			case ExampleLabelHeavy:
+				w.IdAt(42, 0x47534eace1cc3220)
+			default:
+				return false
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func ExampleLoadBody(r *TableReader, value *Example) bool {
+	ExampleReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xb5614e90e87b455f: // card
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Card, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xb128829190ca0f75: // heading
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Heading, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x3f1193a7be5f3a7f: // paths
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Paths, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xef9c96d721673243: // kind
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Kind, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x39f7fcec8fcb623d: // label
+			if kind != 30 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				variantRef, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				if variantRef == 0 {
+					value.Label = ExampleLabelNone
+				} else {
+					id, ok := r.Resolve(variantRef)
+					if !ok {
+						r.Report.Malformed = true
+						return false
+					}
+					if !value.Label.TableEnumValue(id) {
+						r.Report.Unknown++
+					}
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const ExampleLoadRetainBuilder = "Example: retention requires a region round trip through the VARIABLE form"
+const ExampleSaveRetainMessages = "Example: retention requires a region round trip through the VARIABLE form"
+
+func ExampleLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *Example {
+	return (*Example)(tableRegionLoadRetain(region, wire, ExampleTableType(), ExampleTableType().NodeType, 2, report, retain))
+}
+func ExampleMeasureRetain(value *Example, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), ExampleTableType(), nil, true, retain, nil, allocator...)
+}
+func ExampleSaveRetain(value *Example, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), ExampleTableType(), buffer, false, retain, report, allocator...)
+}
+func ExampleMeasureBodyRetain(value *Example, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !ExampleSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func ExampleSaveBodyRetain(w *TableRetainWriter, value *Example) bool {
+	if !ExampleSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func ExampleSaveBodyFieldsRetain(w *TableRetainWriter, value *Example) bool {
+	{
+		if value.Card != 0 {
+			if ref := w.Ids.refAtHit(108, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Card == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Card)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Heading != 0 {
+			if ref := w.Ids.refAtHit(102, 0xb128829190ca0f75); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Heading == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Heading)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Paths != 0 {
+			if ref := w.Ids.refAtHit(38, 0x3f1193a7be5f3a7f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Paths == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Paths)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Kind != 0 {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Kind == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Kind)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Label != ExampleLabelNone {
+			if ref := w.Ids.refAtHit(32, 0x39f7fcec8fcb623d); !w.headerPair(ref, 30) {
+				w.headerRest(ref, 30)
+			}
+			switch value.Label {
+			case ExampleLabelNone:
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			case ExampleLabelFlash:
+				w.IdAt(25, 0x2e109c0b102f74a9)
+			case ExampleLabelPro:
+				w.IdAt(83, 0x8e067719f45b0458)
+			case ExampleLabelHeavy:
+				w.IdAt(42, 0x47534eace1cc3220)
+			default:
+				return false
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func ExampleLoadBodyRetain(r *TableRetainReader, value *Example) bool {
+	ExampleReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xb5614e90e87b455f: // card
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Card, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xb128829190ca0f75: // heading
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Heading, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x3f1193a7be5f3a7f: // paths
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Paths, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xef9c96d721673243: // kind
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Kind, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x39f7fcec8fcb623d: // label
+			if kind != 30 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				variantRef, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				if variantRef == 0 {
+					value.Label = ExampleLabelNone
+				} else {
+					id, ok := r.Resolve(variantRef)
+					if !ok {
+						r.Report.Malformed = true
+						return false
+					}
+					if !value.Label.TableEnumValue(id) {
+						r.Report.Unknown++
+						if r.Retain != nil {
+							r.Report.RetainLost++
+						}
+					}
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func ExampleLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, ExampleTableType(), ExampleTableType().NodeType, 2)
+	return n
+}
+func ExampleLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, ExampleTableType(), ExampleTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func ExampleLoad(region, wire []byte, report *TableReport) *Example {
+	return (*Example)(tableRegionLoad(region, wire, ExampleTableType(), ExampleTableType().NodeType, 2, report))
+}
+func ExampleMeasure(value *Example, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), ExampleTableType(), nil, true, arena, allocator)
+}
+func ExampleMeasureReason(value *Example, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), ExampleTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func ExampleSave(value *Example, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), ExampleTableType(), buffer, false, arena, allocator)
+}
+func ExampleLoadBuilder(b *ExampleBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, ExampleTableType(), ExampleTableType().NodeType, 2, report)
+}
+
+// ExampleReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func ExampleReadStrict(wire []byte) (*Example, error) {
+	var b ExampleBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := ExampleLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type ExampleBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *ExampleBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(Example{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	ExampleReset((*Example)(p))
+	return true
+}
+func (b *ExampleBuilder) GetRoot() *Example {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*Example)(b.Arena.At(b.root))
+}
+func (b *ExampleBuilder) AsConst() *Example {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*Example)(unsafe.Pointer(&b.region[0]))
+}
+func (b *ExampleBuilder) Region() []byte { return b.region }
+func (b *ExampleBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), ExampleTableType(), &b.Arena)
+}
+func (b *ExampleBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), ExampleTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *ExampleBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), ExampleTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *ExampleBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+
+// SetEntryReset restores SetEntry's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func SetEntryReset(value *SetEntry) {
+	value.Key = 0
+	value.Value = 0
+}
+
+func SetEntryMeasureBody(value *SetEntry, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !SetEntrySaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func SetEntrySaveBody(w *TableWriter, value *SetEntry) bool {
+	if !SetEntrySaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func SetEntrySaveBodyFields(w *TableWriter, value *SetEntry) bool {
+	{
+		if value.Key != 0 {
+			if ref := w.Ids.refAtHit(37, 0x3dc94a19365b10ec); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Key == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Key)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Value != 0 {
+			if ref := w.Ids.refAtHit(75, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Value == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Value)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func SetEntryLoadBody(r *TableReader, value *SetEntry) bool {
+	SetEntryReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x3dc94a19365b10ec: // key
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Key, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x7ce4fd9430e80cea: // value
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Value, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const SetEntryLoadRetainBuilder = "SetEntry: retention requires a region round trip through the VARIABLE form"
+const SetEntrySaveRetainMessages = "SetEntry: retention requires a region round trip through the VARIABLE form"
+
+func SetEntryLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *SetEntry {
+	return (*SetEntry)(tableRegionLoadRetain(region, wire, SetEntryTableType(), SetEntryTableType().NodeType, 2, report, retain))
+}
+func SetEntryMeasureRetain(value *SetEntry, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), SetEntryTableType(), nil, true, retain, nil, allocator...)
+}
+func SetEntrySaveRetain(value *SetEntry, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), SetEntryTableType(), buffer, false, retain, report, allocator...)
+}
+func SetEntryMeasureBodyRetain(value *SetEntry, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !SetEntrySaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func SetEntrySaveBodyRetain(w *TableRetainWriter, value *SetEntry) bool {
+	if !SetEntrySaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func SetEntrySaveBodyFieldsRetain(w *TableRetainWriter, value *SetEntry) bool {
+	{
+		if value.Key != 0 {
+			if ref := w.Ids.refAtHit(37, 0x3dc94a19365b10ec); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Key == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Key)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Value != 0 {
+			if ref := w.Ids.refAtHit(75, 0x7ce4fd9430e80cea); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Value == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Value)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func SetEntryLoadBodyRetain(r *TableRetainReader, value *SetEntry) bool {
+	SetEntryReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x3dc94a19365b10ec: // key
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Key, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x7ce4fd9430e80cea: // value
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Value, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func SetEntryLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, SetEntryTableType(), SetEntryTableType().NodeType, 2)
+	return n
+}
+func SetEntryLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, SetEntryTableType(), SetEntryTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func SetEntryLoad(region, wire []byte, report *TableReport) *SetEntry {
+	return (*SetEntry)(tableRegionLoad(region, wire, SetEntryTableType(), SetEntryTableType().NodeType, 2, report))
+}
+func SetEntryMeasure(value *SetEntry, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), SetEntryTableType(), nil, true, arena, allocator)
+}
+func SetEntryMeasureReason(value *SetEntry, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), SetEntryTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func SetEntrySave(value *SetEntry, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), SetEntryTableType(), buffer, false, arena, allocator)
+}
+func SetEntryLoadBuilder(b *SetEntryBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, SetEntryTableType(), SetEntryTableType().NodeType, 2, report)
+}
+
+// SetEntryReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func SetEntryReadStrict(wire []byte) (*SetEntry, error) {
+	var b SetEntryBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := SetEntryLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type SetEntryBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *SetEntryBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(SetEntry{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	SetEntryReset((*SetEntry)(p))
+	return true
+}
+func (b *SetEntryBuilder) GetRoot() *SetEntry {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*SetEntry)(b.Arena.At(b.root))
+}
+func (b *SetEntryBuilder) AsConst() *SetEntry {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*SetEntry)(unsafe.Pointer(&b.region[0]))
+}
+func (b *SetEntryBuilder) Region() []byte { return b.region }
+func (b *SetEntryBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), SetEntryTableType(), &b.Arena)
+}
+func (b *SetEntryBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), SetEntryTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *SetEntryBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), SetEntryTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *SetEntryBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+
+// LogLineReset restores LogLine's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func LogLineReset(value *LogLine) {
+	value.Card = 0
+	value.Primary = 0
+	value.TableName = 0
+	value.To = 0
+	value.Removed = false
+	value.Set = TableList[SetEntryRow]{}
+}
+
+func LogLineMeasureBody(value *LogLine, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !LogLineSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func LogLineSaveBody(w *TableWriter, value *LogLine) bool {
+	if !LogLineSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func LogLineSaveBodyFields(w *TableWriter, value *LogLine) bool {
+	{
+		if value.Card != 0 {
+			if ref := w.Ids.refAtHit(108, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Card == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Card)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Primary != 0 {
+			if ref := w.Ids.refAtHit(112, 0xbf31137ff783e939); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Primary == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Primary)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.TableName != 0 {
+			if ref := w.Ids.refAtHit(63, 0x6bcb6e85b78cf363); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.TableName == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.TableName)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.To != 0 {
+			if ref := w.Ids.refAtHit(8, 0x08c83907b56ac0a4); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.To == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.To)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Removed != false {
+			if ref := w.Ids.refAtHit(12, 0x10154dbd4fbc697b); !w.headerPair(ref, 1) {
+				w.headerRest(ref, 1)
+			}
+			if value.Removed {
+				w.Put8(1)
+			} else {
+				w.Put8(0)
+			}
+		}
+	}
+	{
+		if value.Set.Count < 0 {
+			return false
+		}
+		if value.Set.Count > 0 {
+			if ref := w.Ids.refAtHit(78, 0x823b87195ce20e23); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Set.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload33 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Set)), int64(unsafe.Sizeof(*new(SetEntryRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Set.Count; i++ {
+					p := (*SetEntryRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload33.Ids.Count
+						n := SetEntryMeasureBody(&(*p), payload33.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload33.putLebPair(uint64(n)) {
+							payload33.putLebWide(uint64(n))
+						}
+						if payload33.Measuring {
+							payload33.Advance(n)
+						} else {
+							payload33.Ids.Truncate(mark)
+							if !SetEntrySaveBody(&payload33, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload33.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Set.Count)) + payload33.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Set.Count)) {
+						w.putLebWide(uint64(value.Set.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Set)), int64(unsafe.Sizeof(*new(SetEntryRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Set.Count; i++ {
+						p := (*SetEntryRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := SetEntryMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !SetEntrySaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func LogLineLoadBody(r *TableReader, value *LogLine) bool {
+	LogLineReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xb5614e90e87b455f: // card
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Card, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xbf31137ff783e939: // primary
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Primary, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x6bcb6e85b78cf363: // table_name
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.TableName, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x08c83907b56ac0a4: // to
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.To, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x10154dbd4fbc697b: // removed
+			if kind != 1 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(1) {
+				r.Report.Malformed = true
+				return false
+			}
+			value.Removed = r.Get8() != 0
+		case 0x823b87195ce20e23: // set
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Set))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(SetEntryRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*SetEntryRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(SetEntryRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						SetEntryLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							SetEntryReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const LogLineLoadRetainBuilder = "LogLine: retention requires a region round trip through the VARIABLE form"
+const LogLineSaveRetainMessages = "LogLine: retention requires a region round trip through the VARIABLE form"
+
+func LogLineLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *LogLine {
+	return (*LogLine)(tableRegionLoadRetain(region, wire, LogLineTableType(), LogLineTableType().NodeType, 2, report, retain))
+}
+func LogLineMeasureRetain(value *LogLine, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), LogLineTableType(), nil, true, retain, nil, allocator...)
+}
+func LogLineSaveRetain(value *LogLine, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), LogLineTableType(), buffer, false, retain, report, allocator...)
+}
+func LogLineMeasureBodyRetain(value *LogLine, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !LogLineSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func LogLineSaveBodyRetain(w *TableRetainWriter, value *LogLine) bool {
+	if !LogLineSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func LogLineSaveBodyFieldsRetain(w *TableRetainWriter, value *LogLine) bool {
+	{
+		if value.Card != 0 {
+			if ref := w.Ids.refAtHit(108, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Card == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Card)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Primary != 0 {
+			if ref := w.Ids.refAtHit(112, 0xbf31137ff783e939); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Primary == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Primary)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.TableName != 0 {
+			if ref := w.Ids.refAtHit(63, 0x6bcb6e85b78cf363); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.TableName == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.TableName)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.To != 0 {
+			if ref := w.Ids.refAtHit(8, 0x08c83907b56ac0a4); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.To == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.To)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Removed != false {
+			if ref := w.Ids.refAtHit(12, 0x10154dbd4fbc697b); !w.headerPair(ref, 1) {
+				w.headerRest(ref, 1)
+			}
+			if value.Removed {
+				w.Put8(1)
+			} else {
+				w.Put8(0)
+			}
+		}
+	}
+	{
+		if value.Set.Count < 0 {
+			return false
+		}
+		if value.Set.Count > 0 {
+			if ref := w.Ids.refAtHit(78, 0x823b87195ce20e23); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Set.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Set)), int64(unsafe.Sizeof(*new(SetEntryRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Set.Count; i++ {
+					p := (*SetEntryRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(5, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := SetEntryMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !SetEntrySaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Set.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Set.Count)) {
+						w.putLebWide(uint64(value.Set.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Set)), int64(unsafe.Sizeof(*new(SetEntryRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Set.Count; i++ {
+						p := (*SetEntryRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(5, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := SetEntryMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !SetEntrySaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func LogLineLoadBodyRetain(r *TableRetainReader, value *LogLine) bool {
+	LogLineReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xb5614e90e87b455f: // card
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Card, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xbf31137ff783e939: // primary
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Primary, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x6bcb6e85b78cf363: // table_name
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.TableName, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x08c83907b56ac0a4: // to
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.To, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x10154dbd4fbc697b: // removed
+			if kind != 1 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(1) {
+				r.Report.Malformed = true
+				return false
+			}
+			value.Removed = r.Get8() != 0
+		case 0x823b87195ce20e23: // set
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 5)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Set))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(SetEntryRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*SetEntryRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(SetEntryRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(5, uint32(i))
+						SetEntryLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							SetEntryReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func LogLineLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, LogLineTableType(), LogLineTableType().NodeType, 2)
+	return n
+}
+func LogLineLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, LogLineTableType(), LogLineTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func LogLineLoad(region, wire []byte, report *TableReport) *LogLine {
+	return (*LogLine)(tableRegionLoad(region, wire, LogLineTableType(), LogLineTableType().NodeType, 2, report))
+}
+func LogLineMeasure(value *LogLine, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), LogLineTableType(), nil, true, arena, allocator)
+}
+func LogLineMeasureReason(value *LogLine, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), LogLineTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func LogLineSave(value *LogLine, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), LogLineTableType(), buffer, false, arena, allocator)
+}
+func LogLineLoadBuilder(b *LogLineBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, LogLineTableType(), LogLineTableType().NodeType, 2, report)
+}
+
+// LogLineReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func LogLineReadStrict(wire []byte) (*LogLine, error) {
+	var b LogLineBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := LogLineLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type LogLineBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *LogLineBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(LogLine{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	LogLineReset((*LogLine)(p))
+	return true
+}
+func (b *LogLineBuilder) GetRoot() *LogLine {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*LogLine)(b.Arena.At(b.root))
+}
+func (b *LogLineBuilder) AsConst() *LogLine {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*LogLine)(unsafe.Pointer(&b.region[0]))
+}
+func (b *LogLineBuilder) Region() []byte { return b.region }
+func (b *LogLineBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), LogLineTableType(), &b.Arena)
+}
+func (b *LogLineBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), LogLineTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *LogLineBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), LogLineTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *LogLineBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func LogLineSetAdd(worker *TableWorker, holder *TableList[SetEntryRow]) *SetEntryRow {
+	p := (*SetEntryRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(SetEntryRow)))))
+	if p == nil {
+		return nil
+	}
+	SetEntryReset(p)
+	return p
+}
+func LogLineSetErase(arena *TableArena, holder *TableList[SetEntryRow], element *SetEntryRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func LogLineSetEach(holder *TableList[SetEntryRow], visit func(*SetEntryRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(SetEntryRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*SetEntryRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// LogExportReset restores LogExport's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func LogExportReset(value *LogExport) {
+	value.Lines = TableList[LogLineRow]{}
+}
+
+func LogExportMeasureBody(value *LogExport, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !LogExportSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func LogExportSaveBody(w *TableWriter, value *LogExport) bool {
+	if !LogExportSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func LogExportSaveBodyFields(w *TableWriter, value *LogExport) bool {
+	{
+		if value.Lines.Count < 0 {
+			return false
+		}
+		if value.Lines.Count > 0 {
+			if ref := w.Ids.refAtHit(53, 0x5ce3f9a9f1d5001c); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Lines.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload37 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(LogLineRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Lines.Count; i++ {
+					p := (*LogLineRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload37.Ids.Count
+						n := LogLineMeasureBody(&(*p), payload37.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload37.putLebPair(uint64(n)) {
+							payload37.putLebWide(uint64(n))
+						}
+						if payload37.Measuring {
+							payload37.Advance(n)
+						} else {
+							payload37.Ids.Truncate(mark)
+							if !LogLineSaveBody(&payload37, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload37.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Lines.Count)) + payload37.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Lines.Count)) {
+						w.putLebWide(uint64(value.Lines.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(LogLineRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Lines.Count; i++ {
+						p := (*LogLineRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := LogLineMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !LogLineSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func LogExportLoadBody(r *TableReader, value *LogExport) bool {
+	LogExportReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x5ce3f9a9f1d5001c: // lines
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Lines))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(LogLineRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*LogLineRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(LogLineRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						LogLineLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							LogLineReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const LogExportLoadRetainBuilder = "LogExport: retention requires a region round trip through the VARIABLE form"
+const LogExportSaveRetainMessages = "LogExport: retention requires a region round trip through the VARIABLE form"
+
+func LogExportLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *LogExport {
+	return (*LogExport)(tableRegionLoadRetain(region, wire, LogExportTableType(), LogExportTableType().NodeType, 2, report, retain))
+}
+func LogExportMeasureRetain(value *LogExport, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), LogExportTableType(), nil, true, retain, nil, allocator...)
+}
+func LogExportSaveRetain(value *LogExport, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), LogExportTableType(), buffer, false, retain, report, allocator...)
+}
+func LogExportMeasureBodyRetain(value *LogExport, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !LogExportSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func LogExportSaveBodyRetain(w *TableRetainWriter, value *LogExport) bool {
+	if !LogExportSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func LogExportSaveBodyFieldsRetain(w *TableRetainWriter, value *LogExport) bool {
+	{
+		if value.Lines.Count < 0 {
+			return false
+		}
+		if value.Lines.Count > 0 {
+			if ref := w.Ids.refAtHit(53, 0x5ce3f9a9f1d5001c); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Lines.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(LogLineRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Lines.Count; i++ {
+					p := (*LogLineRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(0, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := LogLineMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !LogLineSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Lines.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Lines.Count)) {
+						w.putLebWide(uint64(value.Lines.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(LogLineRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Lines.Count; i++ {
+						p := (*LogLineRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(0, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := LogLineMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !LogLineSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func LogExportLoadBodyRetain(r *TableRetainReader, value *LogExport) bool {
+	LogExportReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x5ce3f9a9f1d5001c: // lines
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 0)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Lines))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(LogLineRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*LogLineRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(LogLineRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(0, uint32(i))
+						LogLineLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							LogLineReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func LogExportLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, LogExportTableType(), LogExportTableType().NodeType, 2)
+	return n
+}
+func LogExportLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, LogExportTableType(), LogExportTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func LogExportLoad(region, wire []byte, report *TableReport) *LogExport {
+	return (*LogExport)(tableRegionLoad(region, wire, LogExportTableType(), LogExportTableType().NodeType, 2, report))
+}
+func LogExportMeasure(value *LogExport, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), LogExportTableType(), nil, true, arena, allocator)
+}
+func LogExportMeasureReason(value *LogExport, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), LogExportTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func LogExportSave(value *LogExport, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), LogExportTableType(), buffer, false, arena, allocator)
+}
+func LogExportLoadBuilder(b *LogExportBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, LogExportTableType(), LogExportTableType().NodeType, 2, report)
+}
+
+// LogExportReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func LogExportReadStrict(wire []byte) (*LogExport, error) {
+	var b LogExportBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := LogExportLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type LogExportBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *LogExportBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(LogExport{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	LogExportReset((*LogExport)(p))
+	return true
+}
+func (b *LogExportBuilder) GetRoot() *LogExport {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*LogExport)(b.Arena.At(b.root))
+}
+func (b *LogExportBuilder) AsConst() *LogExport {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*LogExport)(unsafe.Pointer(&b.region[0]))
+}
+func (b *LogExportBuilder) Region() []byte { return b.region }
+func (b *LogExportBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), LogExportTableType(), &b.Arena)
+}
+func (b *LogExportBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), LogExportTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *LogExportBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), LogExportTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *LogExportBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func LogExportLinesAdd(worker *TableWorker, holder *TableList[LogLineRow]) *LogLineRow {
+	p := (*LogLineRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(LogLineRow)))))
+	if p == nil {
+		return nil
+	}
+	LogLineReset(p)
+	return p
+}
+func LogExportLinesErase(arena *TableArena, holder *TableList[LogLineRow], element *LogLineRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func LogExportLinesEach(holder *TableList[LogLineRow], visit func(*LogLineRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(LogLineRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*LogLineRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// BarsReset restores Bars's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func BarsReset(value *Bars) {
+	value.Bounce = 0.0
+	value.Review = 0.0
+}
+
+func BarsMeasureBody(value *Bars, ids *TableIds) int64 {
+	bytes := int64(1)
+	if value.Bounce != 0.0 {
+		bytes += tableLebBytes(ids.refAtHit(48, 0x5307024caeff199d)) + 1 + 8
+	} // bounce
+	if value.Review != 0.0 {
+		bytes += tableLebBytes(ids.refAtHit(11, 0x0e9718950b3dd3a1)) + 1 + 8
+	} // review
+	if ids.Overflow {
+		return -1
+	}
+	return bytes
+}
+
+func BarsMeasure(value *Bars) int64 {
+	var ids TableIds
+	body := BarsMeasureBody(value, &ids)
+	if body < 0 || ids.Overflow {
+		return -1
+	}
+	return 1 + body + int64(ids.Count)*8 + 8
+}
+
+func BarsMeasureReason(value *Bars) (int64, error) {
+	size := BarsMeasure(value)
+	if size < 0 {
+		return size, TableRefuseInvalidValue
+	}
+	return size, nil
+}
+func BarsSaveBody(w *TableWriter, value *Bars) bool {
+	if !BarsSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func BarsSaveBodyFields(w *TableWriter, value *Bars) bool {
+	{
+		if value.Bounce != 0.0 {
+			if ref := w.Ids.refAtHit(48, 0x5307024caeff199d); !w.headerPair(ref, 11) {
+				w.headerRest(ref, 11)
+			}
+			w.Put64(math.Float64bits(value.Bounce))
+		}
+	}
+	{
+		if value.Review != 0.0 {
+			if ref := w.Ids.refAtHit(11, 0x0e9718950b3dd3a1); !w.headerPair(ref, 11) {
+				w.headerRest(ref, 11)
+			}
+			w.Put64(math.Float64bits(value.Review))
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func BarsSave(value *Bars, buffer []byte) int64 {
+	var ids TableIds
+	w := TableWriter{Buffer: buffer, Ids: &ids}
+	w.Put8(1)
+	if !BarsSaveBody(&w, value) {
+		return -1
+	}
+	w.Trailer()
+	if w.Overflow || ids.Overflow {
+		return -1
+	}
+	return w.Offset
+}
+
+func BarsLoadBody(r *TableReader, value *Bars) bool {
+	BarsReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x5307024caeff199d: // bounce
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Bounce = v
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Bounce = v
+			}
+		case 0x0e9718950b3dd3a1: // review
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Review = v
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Review = v
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+func BarsLoad(value *Bars, data []byte, report *TableReport) bool {
+	if report == nil {
+		var ignored TableReport
+		report = &ignored
+	}
+	r, verdict := tableOpen(data, report)
+	report.Verdict = verdict
+	report.Reason = ""
+	if verdict == TableOpenRefused {
+		report.Reason = "unsupported wire form"
+		if len(data) > 0 && data[0] == 2 {
+			report.Reason = "message form requires an announced vocabulary and a message reader"
+		}
+	}
+	if verdict != TableOpenOk {
+		BarsReset(value)
+		if verdict == TableOpenDamaged {
+			report.Malformed = true
+		}
+		return false
+	}
+	// The root read answers its own early end after the walk, not before it.
+	// A body that returned at its zero reference left the cursor on the byte
+	// after that reference. Every field leaves the cursor where skip would, so
+	// r.Offset != len(r.Buffer) is the old EndsEarly on the true path.
+	// Nothing is decoded on the damaged path: the value goes back to defaults
+	// and the report goes back to what the caller handed in, so an early end
+	// counts no unknown, no kind mismatch and no clamp — as when the framing
+	// walk refused before the reader had seen one byte.
+	before := *report
+	if !BarsLoadBody(&r, value) {
+		// The reading walk stops on rules the framing walk has no opinion about
+		// — a reserved id in a file body is the one that matters — so a body
+		// that stopped is still asked the framing question from the start of
+		// the body, and a body whose framing ends early is damage whatever else
+		// was wrong with it.
+		probe := r
+		probe.Offset = 0
+		if probe.EndsEarly() {
+			BarsReset(value)
+			*report = before
+			report.Malformed = true
+			report.Verdict = TableOpenDamaged
+			return false
+		}
+		report.Verdict = TableOpenBodyStopped
+		return false
+	}
+	if r.Offset != int64(len(r.Buffer)) {
+		BarsReset(value)
+		*report = before
+		report.Malformed = true
+		report.Verdict = TableOpenDamaged
+		return false
+	}
+	return true
+}
+
+// BarsReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, one typed reason.
+func BarsReadStrict(wire []byte) (*Bars, error) {
+	value := new(Bars)
+	var report TableReport
+	ok := BarsLoad(value, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	return value, nil
+}
+
+const BarsLoadRetainBuilder = "Bars: retention requires a region round trip through the VARIABLE form"
+const BarsSaveRetainMessages = "Bars: retention requires a region round trip through the VARIABLE form"
+const BarsLoadRetainMessages = "Bars: retention requires a region round trip through the VARIABLE form"
+const BarsLoadRetain = "Bars: retention requires a variable root and its region directory"
+const BarsMeasureRetain = "Bars: retention requires a variable root and its region directory"
+const BarsSaveRetain = "Bars: retention requires a variable root and its region directory"
+
+func BarsMeasureBodyRetain(value *Bars, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !BarsSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func BarsSaveBodyRetain(w *TableRetainWriter, value *Bars) bool {
+	if !BarsSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func BarsSaveBodyFieldsRetain(w *TableRetainWriter, value *Bars) bool {
+	{
+		if value.Bounce != 0.0 {
+			if ref := w.Ids.refAtHit(48, 0x5307024caeff199d); !w.headerPair(ref, 11) {
+				w.headerRest(ref, 11)
+			}
+			w.Put64(math.Float64bits(value.Bounce))
+		}
+	}
+	{
+		if value.Review != 0.0 {
+			if ref := w.Ids.refAtHit(11, 0x0e9718950b3dd3a1); !w.headerPair(ref, 11) {
+				w.headerRest(ref, 11)
+			}
+			w.Put64(math.Float64bits(value.Review))
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func BarsLoadBodyRetain(r *TableRetainReader, value *Bars) bool {
+	BarsReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x5307024caeff199d: // bounce
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Bounce = v
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Bounce = v
+			}
+		case 0x0e9718950b3dd3a1: // review
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Review = v
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Review = v
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+// GateBarsReset restores GateBars's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func GateBarsReset(value *GateBars) {
+	value.Flaky = 0.0
+	value.PreExisting = 0.0
+}
+
+func GateBarsMeasureBody(value *GateBars, ids *TableIds) int64 {
+	bytes := int64(1)
+	if value.Flaky != 0.0 {
+		bytes += tableLebBytes(ids.refAtHit(15, 0x177aa3a985d4593e)) + 1 + 8
+	} // flaky
+	if value.PreExisting != 0.0 {
+		bytes += tableLebBytes(ids.refAtHit(28, 0x343fb63c1a0792a6)) + 1 + 8
+	} // pre_existing
+	if ids.Overflow {
+		return -1
+	}
+	return bytes
+}
+
+func GateBarsMeasure(value *GateBars) int64 {
+	var ids TableIds
+	body := GateBarsMeasureBody(value, &ids)
+	if body < 0 || ids.Overflow {
+		return -1
+	}
+	return 1 + body + int64(ids.Count)*8 + 8
+}
+
+func GateBarsMeasureReason(value *GateBars) (int64, error) {
+	size := GateBarsMeasure(value)
+	if size < 0 {
+		return size, TableRefuseInvalidValue
+	}
+	return size, nil
+}
+func GateBarsSaveBody(w *TableWriter, value *GateBars) bool {
+	if !GateBarsSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func GateBarsSaveBodyFields(w *TableWriter, value *GateBars) bool {
+	{
+		if value.Flaky != 0.0 {
+			if ref := w.Ids.refAtHit(15, 0x177aa3a985d4593e); !w.headerPair(ref, 11) {
+				w.headerRest(ref, 11)
+			}
+			w.Put64(math.Float64bits(value.Flaky))
+		}
+	}
+	{
+		if value.PreExisting != 0.0 {
+			if ref := w.Ids.refAtHit(28, 0x343fb63c1a0792a6); !w.headerPair(ref, 11) {
+				w.headerRest(ref, 11)
+			}
+			w.Put64(math.Float64bits(value.PreExisting))
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func GateBarsSave(value *GateBars, buffer []byte) int64 {
+	var ids TableIds
+	w := TableWriter{Buffer: buffer, Ids: &ids}
+	w.Put8(1)
+	if !GateBarsSaveBody(&w, value) {
+		return -1
+	}
+	w.Trailer()
+	if w.Overflow || ids.Overflow {
+		return -1
+	}
+	return w.Offset
+}
+
+func GateBarsLoadBody(r *TableReader, value *GateBars) bool {
+	GateBarsReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x177aa3a985d4593e: // flaky
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Flaky = v
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Flaky = v
+			}
+		case 0x343fb63c1a0792a6: // pre_existing
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.PreExisting = v
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.PreExisting = v
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+func GateBarsLoad(value *GateBars, data []byte, report *TableReport) bool {
+	if report == nil {
+		var ignored TableReport
+		report = &ignored
+	}
+	r, verdict := tableOpen(data, report)
+	report.Verdict = verdict
+	report.Reason = ""
+	if verdict == TableOpenRefused {
+		report.Reason = "unsupported wire form"
+		if len(data) > 0 && data[0] == 2 {
+			report.Reason = "message form requires an announced vocabulary and a message reader"
+		}
+	}
+	if verdict != TableOpenOk {
+		GateBarsReset(value)
+		if verdict == TableOpenDamaged {
+			report.Malformed = true
+		}
+		return false
+	}
+	// The root read answers its own early end after the walk, not before it.
+	// A body that returned at its zero reference left the cursor on the byte
+	// after that reference. Every field leaves the cursor where skip would, so
+	// r.Offset != len(r.Buffer) is the old EndsEarly on the true path.
+	// Nothing is decoded on the damaged path: the value goes back to defaults
+	// and the report goes back to what the caller handed in, so an early end
+	// counts no unknown, no kind mismatch and no clamp — as when the framing
+	// walk refused before the reader had seen one byte.
+	before := *report
+	if !GateBarsLoadBody(&r, value) {
+		// The reading walk stops on rules the framing walk has no opinion about
+		// — a reserved id in a file body is the one that matters — so a body
+		// that stopped is still asked the framing question from the start of
+		// the body, and a body whose framing ends early is damage whatever else
+		// was wrong with it.
+		probe := r
+		probe.Offset = 0
+		if probe.EndsEarly() {
+			GateBarsReset(value)
+			*report = before
+			report.Malformed = true
+			report.Verdict = TableOpenDamaged
+			return false
+		}
+		report.Verdict = TableOpenBodyStopped
+		return false
+	}
+	if r.Offset != int64(len(r.Buffer)) {
+		GateBarsReset(value)
+		*report = before
+		report.Malformed = true
+		report.Verdict = TableOpenDamaged
+		return false
+	}
+	return true
+}
+
+// GateBarsReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, one typed reason.
+func GateBarsReadStrict(wire []byte) (*GateBars, error) {
+	value := new(GateBars)
+	var report TableReport
+	ok := GateBarsLoad(value, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	return value, nil
+}
+
+const GateBarsLoadRetainBuilder = "GateBars: retention requires a region round trip through the VARIABLE form"
+const GateBarsSaveRetainMessages = "GateBars: retention requires a region round trip through the VARIABLE form"
+const GateBarsLoadRetainMessages = "GateBars: retention requires a region round trip through the VARIABLE form"
+const GateBarsLoadRetain = "GateBars: retention requires a variable root and its region directory"
+const GateBarsMeasureRetain = "GateBars: retention requires a variable root and its region directory"
+const GateBarsSaveRetain = "GateBars: retention requires a variable root and its region directory"
+
+func GateBarsMeasureBodyRetain(value *GateBars, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !GateBarsSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func GateBarsSaveBodyRetain(w *TableRetainWriter, value *GateBars) bool {
+	if !GateBarsSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func GateBarsSaveBodyFieldsRetain(w *TableRetainWriter, value *GateBars) bool {
+	{
+		if value.Flaky != 0.0 {
+			if ref := w.Ids.refAtHit(15, 0x177aa3a985d4593e); !w.headerPair(ref, 11) {
+				w.headerRest(ref, 11)
+			}
+			w.Put64(math.Float64bits(value.Flaky))
+		}
+	}
+	{
+		if value.PreExisting != 0.0 {
+			if ref := w.Ids.refAtHit(28, 0x343fb63c1a0792a6); !w.headerPair(ref, 11) {
+				w.headerRest(ref, 11)
+			}
+			w.Put64(math.Float64bits(value.PreExisting))
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func GateBarsLoadBodyRetain(r *TableRetainReader, value *GateBars) bool {
+	GateBarsReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x177aa3a985d4593e: // flaky
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.Flaky = v
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.Flaky = v
+			}
+		case 0x343fb63c1a0792a6: // pre_existing
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.PreExisting = v
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.PreExisting = v
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+// GateLineReset restores GateLine's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func GateLineReset(value *GateLine) {
+	value.Text = 0
+}
+
+func GateLineMeasureBody(value *GateLine, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !GateLineSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func GateLineSaveBody(w *TableWriter, value *GateLine) bool {
+	if !GateLineSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func GateLineSaveBodyFields(w *TableWriter, value *GateLine) bool {
+	{
+		if value.Text != 0 {
+			if ref := w.Ids.refAtHit(140, 0xfa04f4ef1995407e); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Text == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Text)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func GateLineLoadBody(r *TableReader, value *GateLine) bool {
+	GateLineReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xfa04f4ef1995407e: // text
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Text, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const GateLineLoadRetainBuilder = "GateLine: retention requires a region round trip through the VARIABLE form"
+const GateLineSaveRetainMessages = "GateLine: retention requires a region round trip through the VARIABLE form"
+
+func GateLineLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *GateLine {
+	return (*GateLine)(tableRegionLoadRetain(region, wire, GateLineTableType(), GateLineTableType().NodeType, 2, report, retain))
+}
+func GateLineMeasureRetain(value *GateLine, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), GateLineTableType(), nil, true, retain, nil, allocator...)
+}
+func GateLineSaveRetain(value *GateLine, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), GateLineTableType(), buffer, false, retain, report, allocator...)
+}
+func GateLineMeasureBodyRetain(value *GateLine, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !GateLineSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func GateLineSaveBodyRetain(w *TableRetainWriter, value *GateLine) bool {
+	if !GateLineSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func GateLineSaveBodyFieldsRetain(w *TableRetainWriter, value *GateLine) bool {
+	{
+		if value.Text != 0 {
+			if ref := w.Ids.refAtHit(140, 0xfa04f4ef1995407e); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Text == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Text)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func GateLineLoadBodyRetain(r *TableRetainReader, value *GateLine) bool {
+	GateLineReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xfa04f4ef1995407e: // text
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Text, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func GateLineLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, GateLineTableType(), GateLineTableType().NodeType, 2)
+	return n
+}
+func GateLineLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, GateLineTableType(), GateLineTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func GateLineLoad(region, wire []byte, report *TableReport) *GateLine {
+	return (*GateLine)(tableRegionLoad(region, wire, GateLineTableType(), GateLineTableType().NodeType, 2, report))
+}
+func GateLineMeasure(value *GateLine, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), GateLineTableType(), nil, true, arena, allocator)
+}
+func GateLineMeasureReason(value *GateLine, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), GateLineTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func GateLineSave(value *GateLine, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), GateLineTableType(), buffer, false, arena, allocator)
+}
+func GateLineLoadBuilder(b *GateLineBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, GateLineTableType(), GateLineTableType().NodeType, 2, report)
+}
+
+// GateLineReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func GateLineReadStrict(wire []byte) (*GateLine, error) {
+	var b GateLineBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := GateLineLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type GateLineBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *GateLineBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(GateLine{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	GateLineReset((*GateLine)(p))
+	return true
+}
+func (b *GateLineBuilder) GetRoot() *GateLine {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*GateLine)(b.Arena.At(b.root))
+}
+func (b *GateLineBuilder) AsConst() *GateLine {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*GateLine)(unsafe.Pointer(&b.region[0]))
+}
+func (b *GateLineBuilder) Region() []byte { return b.region }
+func (b *GateLineBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), GateLineTableType(), &b.Arena)
+}
+func (b *GateLineBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), GateLineTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *GateLineBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), GateLineTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *GateLineBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+
+// FailureReset restores Failure's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func FailureReset(value *Failure) {
+	value.Pkg = 0
+	value.Test = 0
+	value.Lines = TableList[GateLineRow]{}
+}
+
+func FailureMeasureBody(value *Failure, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !FailureSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func FailureSaveBody(w *TableWriter, value *Failure) bool {
+	if !FailureSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func FailureSaveBodyFields(w *TableWriter, value *Failure) bool {
+	{
+		if value.Pkg != 0 {
+			if ref := w.Ids.refAtHit(73, 0x77a85f195659c591); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Pkg == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Pkg)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Test != 0 {
+			if ref := w.Ids.refAtHit(139, 0xf9e6e6ef197c2b25); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Test == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Test)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Lines.Count < 0 {
+			return false
+		}
+		if value.Lines.Count > 0 {
+			if ref := w.Ids.refAtHit(53, 0x5ce3f9a9f1d5001c); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Lines.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload44 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(GateLineRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Lines.Count; i++ {
+					p := (*GateLineRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload44.Ids.Count
+						n := GateLineMeasureBody(&(*p), payload44.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload44.putLebPair(uint64(n)) {
+							payload44.putLebWide(uint64(n))
+						}
+						if payload44.Measuring {
+							payload44.Advance(n)
+						} else {
+							payload44.Ids.Truncate(mark)
+							if !GateLineSaveBody(&payload44, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload44.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Lines.Count)) + payload44.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Lines.Count)) {
+						w.putLebWide(uint64(value.Lines.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(GateLineRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Lines.Count; i++ {
+						p := (*GateLineRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := GateLineMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !GateLineSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func FailureLoadBody(r *TableReader, value *Failure) bool {
+	FailureReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x77a85f195659c591: // pkg
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Pkg, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xf9e6e6ef197c2b25: // test
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Test, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x5ce3f9a9f1d5001c: // lines
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Lines))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(GateLineRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*GateLineRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(GateLineRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						GateLineLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							GateLineReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const FailureLoadRetainBuilder = "Failure: retention requires a region round trip through the VARIABLE form"
+const FailureSaveRetainMessages = "Failure: retention requires a region round trip through the VARIABLE form"
+
+func FailureLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *Failure {
+	return (*Failure)(tableRegionLoadRetain(region, wire, FailureTableType(), FailureTableType().NodeType, 2, report, retain))
+}
+func FailureMeasureRetain(value *Failure, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), FailureTableType(), nil, true, retain, nil, allocator...)
+}
+func FailureSaveRetain(value *Failure, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), FailureTableType(), buffer, false, retain, report, allocator...)
+}
+func FailureMeasureBodyRetain(value *Failure, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !FailureSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func FailureSaveBodyRetain(w *TableRetainWriter, value *Failure) bool {
+	if !FailureSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func FailureSaveBodyFieldsRetain(w *TableRetainWriter, value *Failure) bool {
+	{
+		if value.Pkg != 0 {
+			if ref := w.Ids.refAtHit(73, 0x77a85f195659c591); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Pkg == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Pkg)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Test != 0 {
+			if ref := w.Ids.refAtHit(139, 0xf9e6e6ef197c2b25); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Test == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Test)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Lines.Count < 0 {
+			return false
+		}
+		if value.Lines.Count > 0 {
+			if ref := w.Ids.refAtHit(53, 0x5ce3f9a9f1d5001c); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Lines.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(GateLineRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Lines.Count; i++ {
+					p := (*GateLineRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(2, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := GateLineMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !GateLineSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Lines.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Lines.Count)) {
+						w.putLebWide(uint64(value.Lines.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(GateLineRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Lines.Count; i++ {
+						p := (*GateLineRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(2, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := GateLineMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !GateLineSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func FailureLoadBodyRetain(r *TableRetainReader, value *Failure) bool {
+	FailureReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x77a85f195659c591: // pkg
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Pkg, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xf9e6e6ef197c2b25: // test
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Test, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x5ce3f9a9f1d5001c: // lines
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 2)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Lines))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(GateLineRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*GateLineRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(GateLineRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(2, uint32(i))
+						GateLineLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							GateLineReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func FailureLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, FailureTableType(), FailureTableType().NodeType, 2)
+	return n
+}
+func FailureLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, FailureTableType(), FailureTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func FailureLoad(region, wire []byte, report *TableReport) *Failure {
+	return (*Failure)(tableRegionLoad(region, wire, FailureTableType(), FailureTableType().NodeType, 2, report))
+}
+func FailureMeasure(value *Failure, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), FailureTableType(), nil, true, arena, allocator)
+}
+func FailureMeasureReason(value *Failure, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), FailureTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func FailureSave(value *Failure, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), FailureTableType(), buffer, false, arena, allocator)
+}
+func FailureLoadBuilder(b *FailureBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, FailureTableType(), FailureTableType().NodeType, 2, report)
+}
+
+// FailureReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func FailureReadStrict(wire []byte) (*Failure, error) {
+	var b FailureBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := FailureLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type FailureBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *FailureBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(Failure{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	FailureReset((*Failure)(p))
+	return true
+}
+func (b *FailureBuilder) GetRoot() *Failure {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*Failure)(b.Arena.At(b.root))
+}
+func (b *FailureBuilder) AsConst() *Failure {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*Failure)(unsafe.Pointer(&b.region[0]))
+}
+func (b *FailureBuilder) Region() []byte { return b.region }
+func (b *FailureBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), FailureTableType(), &b.Arena)
+}
+func (b *FailureBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), FailureTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *FailureBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), FailureTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *FailureBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func FailureLinesAdd(worker *TableWorker, holder *TableList[GateLineRow]) *GateLineRow {
+	p := (*GateLineRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(GateLineRow)))))
+	if p == nil {
+		return nil
+	}
+	GateLineReset(p)
+	return p
+}
+func FailureLinesErase(arena *TableArena, holder *TableList[GateLineRow], element *GateLineRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func FailureLinesEach(holder *TableList[GateLineRow], visit func(*GateLineRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(GateLineRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*GateLineRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// ChosenReset restores Chosen's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func ChosenReset(value *Chosen) {
+	value.Verb = 0
+	value.P = 0.0
+	value.Fix = 0
+	value.Reason = 0
+	value.Act = 0
+	value.Why = 0
+}
+
+func ChosenMeasureBody(value *Chosen, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !ChosenSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func ChosenSaveBody(w *TableWriter, value *Chosen) bool {
+	if !ChosenSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func ChosenSaveBodyFields(w *TableWriter, value *Chosen) bool {
+	{
+		if value.Verb != 0 {
+			if ref := w.Ids.refAtHit(61, 0x673ebb0102773a20); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Verb == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Verb)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.P != 0.0 {
+			if ref := w.Ids.refAtHit(99, 0xaf63ed4c8602096f); !w.headerPair(ref, 11) {
+				w.headerRest(ref, 11)
+			}
+			w.Put64(math.Float64bits(value.P))
+		}
+	}
+	{
+		if value.Fix != 0 {
+			if ref := w.Ids.refAtHit(129, 0xdc9e7e18fec93bb8); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Fix == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Fix)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Reason != 0 {
+			if ref := w.Ids.refAtHit(58, 0x65e8d7f3474f2639); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Reason == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Reason)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Act != 0 {
+			if ref := w.Ids.refAtHit(130, 0xe723b5190545606b); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Act == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Act)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Why != 0 {
+			if ref := w.Ids.refAtHit(56, 0x5ec5ea1948914a79); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Why == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Why)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func ChosenLoadBody(r *TableReader, value *Chosen) bool {
+	ChosenReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x673ebb0102773a20: // verb
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Verb, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xaf63ed4c8602096f: // p
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.P = v
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.P = v
+			}
+		case 0xdc9e7e18fec93bb8: // fix
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Fix, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x65e8d7f3474f2639: // reason
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Reason, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xe723b5190545606b: // act
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Act, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x5ec5ea1948914a79: // why
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Why, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const ChosenLoadRetainBuilder = "Chosen: retention requires a region round trip through the VARIABLE form"
+const ChosenSaveRetainMessages = "Chosen: retention requires a region round trip through the VARIABLE form"
+
+func ChosenLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *Chosen {
+	return (*Chosen)(tableRegionLoadRetain(region, wire, ChosenTableType(), ChosenTableType().NodeType, 2, report, retain))
+}
+func ChosenMeasureRetain(value *Chosen, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), ChosenTableType(), nil, true, retain, nil, allocator...)
+}
+func ChosenSaveRetain(value *Chosen, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), ChosenTableType(), buffer, false, retain, report, allocator...)
+}
+func ChosenMeasureBodyRetain(value *Chosen, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !ChosenSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func ChosenSaveBodyRetain(w *TableRetainWriter, value *Chosen) bool {
+	if !ChosenSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func ChosenSaveBodyFieldsRetain(w *TableRetainWriter, value *Chosen) bool {
+	{
+		if value.Verb != 0 {
+			if ref := w.Ids.refAtHit(61, 0x673ebb0102773a20); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Verb == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Verb)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.P != 0.0 {
+			if ref := w.Ids.refAtHit(99, 0xaf63ed4c8602096f); !w.headerPair(ref, 11) {
+				w.headerRest(ref, 11)
+			}
+			w.Put64(math.Float64bits(value.P))
+		}
+	}
+	{
+		if value.Fix != 0 {
+			if ref := w.Ids.refAtHit(129, 0xdc9e7e18fec93bb8); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Fix == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Fix)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Reason != 0 {
+			if ref := w.Ids.refAtHit(58, 0x65e8d7f3474f2639); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Reason == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Reason)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Act != 0 {
+			if ref := w.Ids.refAtHit(130, 0xe723b5190545606b); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Act == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Act)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Why != 0 {
+			if ref := w.Ids.refAtHit(56, 0x5ec5ea1948914a79); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Why == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Why)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func ChosenLoadBodyRetain(r *TableRetainReader, value *Chosen) bool {
+	ChosenReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x673ebb0102773a20: // verb
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Verb, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xaf63ed4c8602096f: // p
+			if kind != 11 {
+				if tableKindWidens(kind, 11) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						var v float64
+						if kind == 10 {
+							v = math.Float64frombits(tableWidenFloat(r.Get32()))
+						} else {
+							v = math.Float64frombits(r.Get64())
+						}
+						value.P = v
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := math.Float64frombits(r.Get64())
+				value.P = v
+			}
+		case 0xdc9e7e18fec93bb8: // fix
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Fix, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x65e8d7f3474f2639: // reason
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Reason, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xe723b5190545606b: // act
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Act, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0x5ec5ea1948914a79: // why
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Why, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func ChosenLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, ChosenTableType(), ChosenTableType().NodeType, 2)
+	return n
+}
+func ChosenLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, ChosenTableType(), ChosenTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func ChosenLoad(region, wire []byte, report *TableReport) *Chosen {
+	return (*Chosen)(tableRegionLoad(region, wire, ChosenTableType(), ChosenTableType().NodeType, 2, report))
+}
+func ChosenMeasure(value *Chosen, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), ChosenTableType(), nil, true, arena, allocator)
+}
+func ChosenMeasureReason(value *Chosen, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), ChosenTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func ChosenSave(value *Chosen, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), ChosenTableType(), buffer, false, arena, allocator)
+}
+func ChosenLoadBuilder(b *ChosenBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, ChosenTableType(), ChosenTableType().NodeType, 2, report)
+}
+
+// ChosenReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func ChosenReadStrict(wire []byte) (*Chosen, error) {
+	var b ChosenBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := ChosenLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type ChosenBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *ChosenBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(Chosen{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	ChosenReset((*Chosen)(p))
+	return true
+}
+func (b *ChosenBuilder) GetRoot() *Chosen {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*Chosen)(b.Arena.At(b.root))
+}
+func (b *ChosenBuilder) AsConst() *Chosen {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*Chosen)(unsafe.Pointer(&b.region[0]))
+}
+func (b *ChosenBuilder) Region() []byte { return b.region }
+func (b *ChosenBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), ChosenTableType(), &b.Arena)
+}
+func (b *ChosenBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), ChosenTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *ChosenBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), ChosenTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *ChosenBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+
+// ClusterCardReset restores ClusterCard's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func ClusterCardReset(value *ClusterCard) {
+	value.Card = 0
+}
+
+func ClusterCardMeasureBody(value *ClusterCard, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !ClusterCardSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func ClusterCardSaveBody(w *TableWriter, value *ClusterCard) bool {
+	if !ClusterCardSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func ClusterCardSaveBodyFields(w *TableWriter, value *ClusterCard) bool {
+	{
+		if value.Card != 0 {
+			if ref := w.Ids.refAtHit(108, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Card == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Card)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func ClusterCardLoadBody(r *TableReader, value *ClusterCard) bool {
+	ClusterCardReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xb5614e90e87b455f: // card
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Card, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const ClusterCardLoadRetainBuilder = "ClusterCard: retention requires a region round trip through the VARIABLE form"
+const ClusterCardSaveRetainMessages = "ClusterCard: retention requires a region round trip through the VARIABLE form"
+
+func ClusterCardLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *ClusterCard {
+	return (*ClusterCard)(tableRegionLoadRetain(region, wire, ClusterCardTableType(), ClusterCardTableType().NodeType, 2, report, retain))
+}
+func ClusterCardMeasureRetain(value *ClusterCard, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), ClusterCardTableType(), nil, true, retain, nil, allocator...)
+}
+func ClusterCardSaveRetain(value *ClusterCard, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), ClusterCardTableType(), buffer, false, retain, report, allocator...)
+}
+func ClusterCardMeasureBodyRetain(value *ClusterCard, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !ClusterCardSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func ClusterCardSaveBodyRetain(w *TableRetainWriter, value *ClusterCard) bool {
+	if !ClusterCardSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func ClusterCardSaveBodyFieldsRetain(w *TableRetainWriter, value *ClusterCard) bool {
+	{
+		if value.Card != 0 {
+			if ref := w.Ids.refAtHit(108, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.Card == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.Card)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func ClusterCardLoadBodyRetain(r *TableRetainReader, value *ClusterCard) bool {
+	ClusterCardReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0xb5614e90e87b455f: // card
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.Card, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func ClusterCardLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, ClusterCardTableType(), ClusterCardTableType().NodeType, 2)
+	return n
+}
+func ClusterCardLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, ClusterCardTableType(), ClusterCardTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func ClusterCardLoad(region, wire []byte, report *TableReport) *ClusterCard {
+	return (*ClusterCard)(tableRegionLoad(region, wire, ClusterCardTableType(), ClusterCardTableType().NodeType, 2, report))
+}
+func ClusterCardMeasure(value *ClusterCard, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), ClusterCardTableType(), nil, true, arena, allocator)
+}
+func ClusterCardMeasureReason(value *ClusterCard, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), ClusterCardTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func ClusterCardSave(value *ClusterCard, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), ClusterCardTableType(), buffer, false, arena, allocator)
+}
+func ClusterCardLoadBuilder(b *ClusterCardBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, ClusterCardTableType(), ClusterCardTableType().NodeType, 2, report)
+}
+
+// ClusterCardReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func ClusterCardReadStrict(wire []byte) (*ClusterCard, error) {
+	var b ClusterCardBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := ClusterCardLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type ClusterCardBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *ClusterCardBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(ClusterCard{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	ClusterCardReset((*ClusterCard)(p))
+	return true
+}
+func (b *ClusterCardBuilder) GetRoot() *ClusterCard {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*ClusterCard)(b.Arena.At(b.root))
+}
+func (b *ClusterCardBuilder) AsConst() *ClusterCard {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*ClusterCard)(unsafe.Pointer(&b.region[0]))
+}
+func (b *ClusterCardBuilder) Region() []byte { return b.region }
+func (b *ClusterCardBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), ClusterCardTableType(), &b.Arena)
+}
+func (b *ClusterCardBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), ClusterCardTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *ClusterCardBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), ClusterCardTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *ClusterCardBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+
+// ClusterReset restores Cluster's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func ClusterReset(value *Cluster) {
+	value.ClassName = 0
+	value.Count = 0
+	value.Cards = TableList[ClusterCardRow]{}
+}
+
+func ClusterMeasureBody(value *Cluster, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !ClusterSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func ClusterSaveBody(w *TableWriter, value *Cluster) bool {
+	if !ClusterSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func ClusterSaveBodyFields(w *TableWriter, value *Cluster) bool {
+	{
+		if value.ClassName != 0 {
+			if ref := w.Ids.refAtHit(60, 0x66c0c01d224cae83); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.ClassName == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.ClassName)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Count != 0 {
+			if ref := w.Ids.refAtHit(104, 0xb1e5e28e4479a274); !w.headerPair(ref, 5) {
+				w.headerRest(ref, 5)
+			}
+			w.Put64(uint64(value.Count))
+		}
+	}
+	{
+		if value.Cards.Count < 0 {
+			return false
+		}
+		if value.Cards.Count > 0 {
+			if ref := w.Ids.refAtHit(100, 0xaf9dac3b097689c4); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Cards.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload48 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Cards)), int64(unsafe.Sizeof(*new(ClusterCardRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Cards.Count; i++ {
+					p := (*ClusterCardRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload48.Ids.Count
+						n := ClusterCardMeasureBody(&(*p), payload48.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload48.putLebPair(uint64(n)) {
+							payload48.putLebWide(uint64(n))
+						}
+						if payload48.Measuring {
+							payload48.Advance(n)
+						} else {
+							payload48.Ids.Truncate(mark)
+							if !ClusterCardSaveBody(&payload48, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload48.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Cards.Count)) + payload48.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Cards.Count)) {
+						w.putLebWide(uint64(value.Cards.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Cards)), int64(unsafe.Sizeof(*new(ClusterCardRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Cards.Count; i++ {
+						p := (*ClusterCardRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := ClusterCardMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !ClusterCardSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func ClusterLoadBody(r *TableReader, value *Cluster) bool {
+	ClusterReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x66c0c01d224cae83: // class_name
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.ClassName, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xb1e5e28e4479a274: // count
+			if kind != 5 {
+				if tableKindWidens(kind, 5) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						v := r.Signed(kind)
+						value.Count = int64(v)
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := int64(r.Get64())
+				value.Count = int64(v)
+			}
+		case 0xaf9dac3b097689c4: // cards
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Cards))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(ClusterCardRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*ClusterCardRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(ClusterCardRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						ClusterCardLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							ClusterCardReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const ClusterLoadRetainBuilder = "Cluster: retention requires a region round trip through the VARIABLE form"
+const ClusterSaveRetainMessages = "Cluster: retention requires a region round trip through the VARIABLE form"
+
+func ClusterLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *Cluster {
+	return (*Cluster)(tableRegionLoadRetain(region, wire, ClusterTableType(), ClusterTableType().NodeType, 2, report, retain))
+}
+func ClusterMeasureRetain(value *Cluster, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), ClusterTableType(), nil, true, retain, nil, allocator...)
+}
+func ClusterSaveRetain(value *Cluster, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), ClusterTableType(), buffer, false, retain, report, allocator...)
+}
+func ClusterMeasureBodyRetain(value *Cluster, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !ClusterSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func ClusterSaveBodyRetain(w *TableRetainWriter, value *Cluster) bool {
+	if !ClusterSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func ClusterSaveBodyFieldsRetain(w *TableRetainWriter, value *Cluster) bool {
+	{
+		if value.ClassName != 0 {
+			if ref := w.Ids.refAtHit(60, 0x66c0c01d224cae83); !w.headerPair(ref, 17) {
+				w.headerRest(ref, 17)
+			}
+			if value.ClassName == 0 {
+				if !w.putLebPair(0) {
+					w.putLebWide(0)
+				}
+			} else {
+				index, ok := w.Ids.Numbering.Index(&value.ClassName)
+				if !ok {
+					return false
+				}
+				if !w.putLebPair(index) {
+					w.putLebWide(index)
+				}
+			}
+		}
+	}
+	{
+		if value.Count != 0 {
+			if ref := w.Ids.refAtHit(104, 0xb1e5e28e4479a274); !w.headerPair(ref, 5) {
+				w.headerRest(ref, 5)
+			}
+			w.Put64(uint64(value.Count))
+		}
+	}
+	{
+		if value.Cards.Count < 0 {
+			return false
+		}
+		if value.Cards.Count > 0 {
+			if ref := w.Ids.refAtHit(100, 0xaf9dac3b097689c4); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Cards.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Cards)), int64(unsafe.Sizeof(*new(ClusterCardRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Cards.Count; i++ {
+					p := (*ClusterCardRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(2, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := ClusterCardMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !ClusterCardSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Cards.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Cards.Count)) {
+						w.putLebWide(uint64(value.Cards.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Cards)), int64(unsafe.Sizeof(*new(ClusterCardRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Cards.Count; i++ {
+						p := (*ClusterCardRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(2, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := ClusterCardMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !ClusterCardSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func ClusterLoadBodyRetain(r *TableRetainReader, value *Cluster) bool {
+	ClusterReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x66c0c01d224cae83: // class_name
+			if kind != 17 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			{
+				index, ok := r.Leb()
+				if !ok {
+					r.Report.Malformed = true
+					return false
+				}
+				r.Nodes.Resolve(&value.ClassName, index, 0x704be0d8faaffc58, r.Report)
+			}
+		case 0xb1e5e28e4479a274: // count
+			if kind != 5 {
+				if tableKindWidens(kind, 5) {
+					if !r.Has(tableKindBytes(kind)) {
+						r.Report.Malformed = true
+						return false
+					}
+					{
+						v := r.Signed(kind)
+						value.Count = int64(v)
+					}
+					r.Report.Widened++
+					break
+				}
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			if !r.Has(8) {
+				r.Report.Malformed = true
+				return false
+			}
+			{
+				v := int64(r.Get64())
+				value.Count = int64(v)
+			}
+		case 0xaf9dac3b097689c4: // cards
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 2)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Cards))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(ClusterCardRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*ClusterCardRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(ClusterCardRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(2, uint32(i))
+						ClusterCardLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							ClusterCardReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func ClusterLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, ClusterTableType(), ClusterTableType().NodeType, 2)
+	return n
+}
+func ClusterLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, ClusterTableType(), ClusterTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func ClusterLoad(region, wire []byte, report *TableReport) *Cluster {
+	return (*Cluster)(tableRegionLoad(region, wire, ClusterTableType(), ClusterTableType().NodeType, 2, report))
+}
+func ClusterMeasure(value *Cluster, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), ClusterTableType(), nil, true, arena, allocator)
+}
+func ClusterMeasureReason(value *Cluster, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), ClusterTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func ClusterSave(value *Cluster, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), ClusterTableType(), buffer, false, arena, allocator)
+}
+func ClusterLoadBuilder(b *ClusterBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, ClusterTableType(), ClusterTableType().NodeType, 2, report)
+}
+
+// ClusterReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func ClusterReadStrict(wire []byte) (*Cluster, error) {
+	var b ClusterBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := ClusterLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type ClusterBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *ClusterBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(Cluster{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	ClusterReset((*Cluster)(p))
+	return true
+}
+func (b *ClusterBuilder) GetRoot() *Cluster {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*Cluster)(b.Arena.At(b.root))
+}
+func (b *ClusterBuilder) AsConst() *Cluster {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*Cluster)(unsafe.Pointer(&b.region[0]))
+}
+func (b *ClusterBuilder) Region() []byte { return b.region }
+func (b *ClusterBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), ClusterTableType(), &b.Arena)
+}
+func (b *ClusterBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), ClusterTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *ClusterBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), ClusterTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *ClusterBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func ClusterCardsAdd(worker *TableWorker, holder *TableList[ClusterCardRow]) *ClusterCardRow {
+	p := (*ClusterCardRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(ClusterCardRow)))))
+	if p == nil {
+		return nil
+	}
+	ClusterCardReset(p)
+	return p
+}
+func ClusterCardsErase(arena *TableArena, holder *TableList[ClusterCardRow], element *ClusterCardRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func ClusterCardsEach(holder *TableList[ClusterCardRow], visit func(*ClusterCardRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(ClusterCardRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*ClusterCardRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
 // DecisionReset restores Decision's declared defaults in place, reusing the storage
 // the value already holds. The reader calls it before overlaying.
 func DecisionReset(value *Decision) {
@@ -3385,7 +17114,7 @@ func DecisionSaveBodyFields(w *TableWriter, value *Decision) bool {
 	}
 	{
 		if value.Schema != 0 {
-			if ref := w.Ids.refAtHit(47, 0x758d17ff764667b6); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(71, 0x758d17ff764667b6); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Schema == 0 {
@@ -3405,7 +17134,7 @@ func DecisionSaveBodyFields(w *TableWriter, value *Decision) bool {
 	}
 	{
 		if value.Backend != 0 {
-			if ref := w.Ids.refAtHit(34, 0x54b55bf4c402eb8f); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(50, 0x54b55bf4c402eb8f); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Backend == 0 {
@@ -3448,7 +17177,7 @@ func DecisionSaveBodyFields(w *TableWriter, value *Decision) bool {
 			return false
 		}
 		if value.Inputs.Count > 0 {
-			if ref := w.Ids.refAtHit(30, 0x499fc592a46585f8); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(44, 0x499fc592a46585f8); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Inputs.Count < 0 {
@@ -3456,7 +17185,7 @@ func DecisionSaveBodyFields(w *TableWriter, value *Decision) bool {
 			}
 			{
 				mark := w.Ids.Count
-				payload9 := TableWriter{Measuring: true, Ids: w.Ids}
+				payload52 := TableWriter{Measuring: true, Ids: w.Ids}
 				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Inputs)), int64(unsafe.Sizeof(*new(InputRow))), w.Ids.Numbering.arena)
 				for i := int32(0); i < value.Inputs.Count; i++ {
 					p := (*InputRow)(cursor.Next())
@@ -3464,28 +17193,28 @@ func DecisionSaveBodyFields(w *TableWriter, value *Decision) bool {
 						return false
 					}
 					{
-						mark := payload9.Ids.Count
-						n := InputMeasureBody(&(*p), payload9.Ids)
+						mark := payload52.Ids.Count
+						n := InputMeasureBody(&(*p), payload52.Ids)
 						if n < 0 {
 							return false
 						}
-						if !payload9.putLebPair(uint64(n)) {
-							payload9.putLebWide(uint64(n))
+						if !payload52.putLebPair(uint64(n)) {
+							payload52.putLebWide(uint64(n))
 						}
-						if payload9.Measuring {
-							payload9.Advance(n)
+						if payload52.Measuring {
+							payload52.Advance(n)
 						} else {
-							payload9.Ids.Truncate(mark)
-							if !InputSaveBody(&payload9, &(*p)) {
+							payload52.Ids.Truncate(mark)
+							if !InputSaveBody(&payload52, &(*p)) {
 								return false
 							}
 						}
 					}
 				}
-				if payload9.Overflow {
+				if payload52.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(uint64(value.Inputs.Count)) + payload9.Offset
+				n := int64(1) + tableLebBytes(uint64(value.Inputs.Count)) + payload52.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -3528,7 +17257,7 @@ func DecisionSaveBodyFields(w *TableWriter, value *Decision) bool {
 	}
 	{
 		if value.State != 0 {
-			if ref := w.Ids.refAtHit(79, 0xee63aaad45b1b116); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(131, 0xee63aaad45b1b116); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.State == 0 {
@@ -3551,7 +17280,7 @@ func DecisionSaveBodyFields(w *TableWriter, value *Decision) bool {
 			return false
 		}
 		if value.Answers.Count > 0 {
-			if ref := w.Ids.refAtHit(75, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(126, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Answers.Count < 0 {
@@ -3559,7 +17288,7 @@ func DecisionSaveBodyFields(w *TableWriter, value *Decision) bool {
 			}
 			{
 				mark := w.Ids.Count
-				payload12 := TableWriter{Measuring: true, Ids: w.Ids}
+				payload55 := TableWriter{Measuring: true, Ids: w.Ids}
 				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Answers)), int64(unsafe.Sizeof(*new(NamedAnswerRow))), w.Ids.Numbering.arena)
 				for i := int32(0); i < value.Answers.Count; i++ {
 					p := (*NamedAnswerRow)(cursor.Next())
@@ -3567,28 +17296,28 @@ func DecisionSaveBodyFields(w *TableWriter, value *Decision) bool {
 						return false
 					}
 					{
-						mark := payload12.Ids.Count
-						n := NamedAnswerMeasureBody(&(*p), payload12.Ids)
+						mark := payload55.Ids.Count
+						n := NamedAnswerMeasureBody(&(*p), payload55.Ids)
 						if n < 0 {
 							return false
 						}
-						if !payload12.putLebPair(uint64(n)) {
-							payload12.putLebWide(uint64(n))
+						if !payload55.putLebPair(uint64(n)) {
+							payload55.putLebWide(uint64(n))
 						}
-						if payload12.Measuring {
-							payload12.Advance(n)
+						if payload55.Measuring {
+							payload55.Advance(n)
 						} else {
-							payload12.Ids.Truncate(mark)
-							if !NamedAnswerSaveBody(&payload12, &(*p)) {
+							payload55.Ids.Truncate(mark)
+							if !NamedAnswerSaveBody(&payload55, &(*p)) {
 								return false
 							}
 						}
 					}
 				}
-				if payload12.Overflow {
+				if payload55.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(uint64(value.Answers.Count)) + payload12.Offset
+				n := int64(1) + tableLebBytes(uint64(value.Answers.Count)) + payload55.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -3631,7 +17360,7 @@ func DecisionSaveBodyFields(w *TableWriter, value *Decision) bool {
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(11, 0x1e1702714db75ac8)
+		ref := w.Ids.refAtHit(18, 0x1e1702714db75ac8)
 		start := w.Ids.Count
 		n := UsageMeasureBody(&value.Usage, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -4059,7 +17788,7 @@ func DecisionSaveBodyFieldsRetain(w *TableRetainWriter, value *Decision) bool {
 	}
 	{
 		if value.Schema != 0 {
-			if ref := w.Ids.refAtHit(47, 0x758d17ff764667b6); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(71, 0x758d17ff764667b6); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Schema == 0 {
@@ -4079,7 +17808,7 @@ func DecisionSaveBodyFieldsRetain(w *TableRetainWriter, value *Decision) bool {
 	}
 	{
 		if value.Backend != 0 {
-			if ref := w.Ids.refAtHit(34, 0x54b55bf4c402eb8f); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(50, 0x54b55bf4c402eb8f); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Backend == 0 {
@@ -4122,7 +17851,7 @@ func DecisionSaveBodyFieldsRetain(w *TableRetainWriter, value *Decision) bool {
 			return false
 		}
 		if value.Inputs.Count > 0 {
-			if ref := w.Ids.refAtHit(30, 0x499fc592a46585f8); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(44, 0x499fc592a46585f8); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Inputs.Count < 0 {
@@ -4212,7 +17941,7 @@ func DecisionSaveBodyFieldsRetain(w *TableRetainWriter, value *Decision) bool {
 	}
 	{
 		if value.State != 0 {
-			if ref := w.Ids.refAtHit(79, 0xee63aaad45b1b116); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(131, 0xee63aaad45b1b116); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.State == 0 {
@@ -4235,7 +17964,7 @@ func DecisionSaveBodyFieldsRetain(w *TableRetainWriter, value *Decision) bool {
 			return false
 		}
 		if value.Answers.Count > 0 {
-			if ref := w.Ids.refAtHit(75, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(126, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Answers.Count < 0 {
@@ -4325,7 +18054,7 @@ func DecisionSaveBodyFieldsRetain(w *TableRetainWriter, value *Decision) bool {
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(11, 0x1e1702714db75ac8)
+		ref := w.Ids.refAtHit(18, 0x1e1702714db75ac8)
 		start := w.Ids.Count
 		payload := TableRetainWriter{Measuring: true, Ids: w.Ids}
 		{
@@ -4947,7 +18676,7 @@ func OutcomeSaveBodyFields(w *TableWriter, value *Outcome) bool {
 	}
 	{
 		if value.Label != 0 {
-			if ref := w.Ids.refAtHit(23, 0x39f7fcec8fcb623d); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(32, 0x39f7fcec8fcb623d); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Label == 0 {
@@ -4967,7 +18696,7 @@ func OutcomeSaveBodyFields(w *TableWriter, value *Outcome) bool {
 	}
 	{
 		if value.Note != 0 {
-			if ref := w.Ids.refAtHit(24, 0x3bf8fbbad1587cdd); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(33, 0x3bf8fbbad1587cdd); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Note == 0 {
@@ -5169,7 +18898,7 @@ func OutcomeSaveBodyFieldsRetain(w *TableRetainWriter, value *Outcome) bool {
 	}
 	{
 		if value.Label != 0 {
-			if ref := w.Ids.refAtHit(23, 0x39f7fcec8fcb623d); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(32, 0x39f7fcec8fcb623d); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Label == 0 {
@@ -5189,7 +18918,7 @@ func OutcomeSaveBodyFieldsRetain(w *TableRetainWriter, value *Outcome) bool {
 	}
 	{
 		if value.Note != 0 {
-			if ref := w.Ids.refAtHit(24, 0x3bf8fbbad1587cdd); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(33, 0x3bf8fbbad1587cdd); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Note == 0 {
@@ -5518,7 +19247,7 @@ func ActSaveBodyFields(w *TableWriter, value *Act) bool {
 	}
 	{
 		if value.Step != 0 {
-			if ref := w.Ids.refAtHit(59, 0xaf0b4e191da20cef); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(98, 0xaf0b4e191da20cef); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Step == 0 {
@@ -5740,7 +19469,7 @@ func ActSaveBodyFieldsRetain(w *TableRetainWriter, value *Act) bool {
 	}
 	{
 		if value.Step != 0 {
-			if ref := w.Ids.refAtHit(59, 0xaf0b4e191da20cef); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(98, 0xaf0b4e191da20cef); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Step == 0 {
@@ -6069,7 +19798,7 @@ func RecordLineSaveBody(w *TableWriter, value *RecordLine) bool {
 func RecordLineSaveBodyFields(w *TableWriter, value *RecordLine) bool {
 	{
 		if value.Kind != LineKindNone {
-			if ref := w.Ids.refAtHit(85, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -6078,11 +19807,11 @@ func RecordLineSaveBodyFields(w *TableWriter, value *RecordLine) bool {
 					w.putLebWide(0)
 				}
 			case LineKindDecision:
-				w.IdAt(84, 0xef92ffa038c78883)
+				w.IdAt(136, 0xef92ffa038c78883)
 			case LineKindOutcome:
-				w.IdAt(81, 0xeea0f53b4dbb2fb3)
+				w.IdAt(133, 0xeea0f53b4dbb2fb3)
 			case LineKindAct:
-				w.IdAt(86, 0xf9c5d519a01990cb)
+				w.IdAt(138, 0xf9c5d519a01990cb)
 			default:
 				return false
 			}
@@ -6090,7 +19819,7 @@ func RecordLineSaveBodyFields(w *TableWriter, value *RecordLine) bool {
 	}
 	{
 		if value.AsDecision != 0 {
-			if ref := w.Ids.refAtHit(82, 0xeed7b073beff6dac); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(134, 0xeed7b073beff6dac); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.AsDecision == 0 {
@@ -6110,7 +19839,7 @@ func RecordLineSaveBodyFields(w *TableWriter, value *RecordLine) bool {
 	}
 	{
 		if value.AsOutcome != 0 {
-			if ref := w.Ids.refAtHit(43, 0x6eefa86635f24b32); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(67, 0x6eefa86635f24b32); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.AsOutcome == 0 {
@@ -6130,7 +19859,7 @@ func RecordLineSaveBodyFields(w *TableWriter, value *RecordLine) bool {
 	}
 	{
 		if value.AsAct != 0 {
-			if ref := w.Ids.refAtHit(58, 0xaa8d7a514275e6a2); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(96, 0xaa8d7a514275e6a2); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.AsAct == 0 {
@@ -6303,7 +20032,7 @@ func RecordLineSaveBodyRetain(w *TableRetainWriter, value *RecordLine) bool {
 func RecordLineSaveBodyFieldsRetain(w *TableRetainWriter, value *RecordLine) bool {
 	{
 		if value.Kind != LineKindNone {
-			if ref := w.Ids.refAtHit(85, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -6312,11 +20041,11 @@ func RecordLineSaveBodyFieldsRetain(w *TableRetainWriter, value *RecordLine) boo
 					w.putLebWide(0)
 				}
 			case LineKindDecision:
-				w.IdAt(84, 0xef92ffa038c78883)
+				w.IdAt(136, 0xef92ffa038c78883)
 			case LineKindOutcome:
-				w.IdAt(81, 0xeea0f53b4dbb2fb3)
+				w.IdAt(133, 0xeea0f53b4dbb2fb3)
 			case LineKindAct:
-				w.IdAt(86, 0xf9c5d519a01990cb)
+				w.IdAt(138, 0xf9c5d519a01990cb)
 			default:
 				return false
 			}
@@ -6324,7 +20053,7 @@ func RecordLineSaveBodyFieldsRetain(w *TableRetainWriter, value *RecordLine) boo
 	}
 	{
 		if value.AsDecision != 0 {
-			if ref := w.Ids.refAtHit(82, 0xeed7b073beff6dac); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(134, 0xeed7b073beff6dac); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.AsDecision == 0 {
@@ -6344,7 +20073,7 @@ func RecordLineSaveBodyFieldsRetain(w *TableRetainWriter, value *RecordLine) boo
 	}
 	{
 		if value.AsOutcome != 0 {
-			if ref := w.Ids.refAtHit(43, 0x6eefa86635f24b32); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(67, 0x6eefa86635f24b32); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.AsOutcome == 0 {
@@ -6364,7 +20093,7 @@ func RecordLineSaveBodyFieldsRetain(w *TableRetainWriter, value *RecordLine) boo
 	}
 	{
 		if value.AsAct != 0 {
-			if ref := w.Ids.refAtHit(58, 0xaa8d7a514275e6a2); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(96, 0xaa8d7a514275e6a2); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.AsAct == 0 {
@@ -6991,7 +20720,7 @@ func ImportLogLineSaveBody(w *TableWriter, value *ImportLogLine) bool {
 func ImportLogLineSaveBodyFields(w *TableWriter, value *ImportLogLine) bool {
 	{
 		if value.Verb != 0 {
-			if ref := w.Ids.refAtHit(40, 0x673ebb0102773a20); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(61, 0x673ebb0102773a20); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Verb == 0 {
@@ -7014,7 +20743,7 @@ func ImportLogLineSaveBodyFields(w *TableWriter, value *ImportLogLine) bool {
 			return false
 		}
 		if value.Answers.Count > 0 {
-			if ref := w.Ids.refAtHit(75, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(126, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Answers.Count < 0 {
@@ -7022,7 +20751,7 @@ func ImportLogLineSaveBodyFields(w *TableWriter, value *ImportLogLine) bool {
 			}
 			{
 				mark := w.Ids.Count
-				payload15 := TableWriter{Measuring: true, Ids: w.Ids}
+				payload58 := TableWriter{Measuring: true, Ids: w.Ids}
 				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Answers)), int64(unsafe.Sizeof(*new(JudgmentIdRow))), w.Ids.Numbering.arena)
 				for i := int32(0); i < value.Answers.Count; i++ {
 					p := (*JudgmentIdRow)(cursor.Next())
@@ -7030,28 +20759,28 @@ func ImportLogLineSaveBodyFields(w *TableWriter, value *ImportLogLine) bool {
 						return false
 					}
 					{
-						mark := payload15.Ids.Count
-						n := JudgmentIdMeasureBody(&(*p), payload15.Ids)
+						mark := payload58.Ids.Count
+						n := JudgmentIdMeasureBody(&(*p), payload58.Ids)
 						if n < 0 {
 							return false
 						}
-						if !payload15.putLebPair(uint64(n)) {
-							payload15.putLebWide(uint64(n))
+						if !payload58.putLebPair(uint64(n)) {
+							payload58.putLebWide(uint64(n))
 						}
-						if payload15.Measuring {
-							payload15.Advance(n)
+						if payload58.Measuring {
+							payload58.Advance(n)
 						} else {
-							payload15.Ids.Truncate(mark)
-							if !JudgmentIdSaveBody(&payload15, &(*p)) {
+							payload58.Ids.Truncate(mark)
+							if !JudgmentIdSaveBody(&payload58, &(*p)) {
 								return false
 							}
 						}
 					}
 				}
-				if payload15.Overflow {
+				if payload58.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(uint64(value.Answers.Count)) + payload15.Offset
+				n := int64(1) + tableLebBytes(uint64(value.Answers.Count)) + payload58.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -7266,7 +20995,7 @@ func ImportLogLineSaveBodyRetain(w *TableRetainWriter, value *ImportLogLine) boo
 func ImportLogLineSaveBodyFieldsRetain(w *TableRetainWriter, value *ImportLogLine) bool {
 	{
 		if value.Verb != 0 {
-			if ref := w.Ids.refAtHit(40, 0x673ebb0102773a20); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(61, 0x673ebb0102773a20); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Verb == 0 {
@@ -7289,7 +21018,7 @@ func ImportLogLineSaveBodyFieldsRetain(w *TableRetainWriter, value *ImportLogLin
 			return false
 		}
 		if value.Answers.Count > 0 {
-			if ref := w.Ids.refAtHit(75, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(126, 0xd7316b9dd9f8d444); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Answers.Count < 0 {
@@ -7664,6 +21393,629 @@ func ImportLogLineAnswersEach(holder *TableList[JudgmentIdRow], visit func(*Judg
 	return true
 }
 
+// ImportExportReset restores ImportExport's declared defaults in place, reusing the storage
+// the value already holds. The reader calls it before overlaying.
+func ImportExportReset(value *ImportExport) {
+	value.Lines = TableList[ImportLogLineRow]{}
+}
+
+func ImportExportMeasureBody(value *ImportExport, ids *TableIds) int64 {
+	w := TableWriter{Measuring: true, Ids: ids}
+	if !ImportExportSaveBody(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func ImportExportSaveBody(w *TableWriter, value *ImportExport) bool {
+	if !ImportExportSaveBodyFields(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func ImportExportSaveBodyFields(w *TableWriter, value *ImportExport) bool {
+	{
+		if value.Lines.Count < 0 {
+			return false
+		}
+		if value.Lines.Count > 0 {
+			if ref := w.Ids.refAtHit(53, 0x5ce3f9a9f1d5001c); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Lines.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload61 := TableWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(ImportLogLineRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Lines.Count; i++ {
+					p := (*ImportLogLineRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						mark := payload61.Ids.Count
+						n := ImportLogLineMeasureBody(&(*p), payload61.Ids)
+						if n < 0 {
+							return false
+						}
+						if !payload61.putLebPair(uint64(n)) {
+							payload61.putLebWide(uint64(n))
+						}
+						if payload61.Measuring {
+							payload61.Advance(n)
+						} else {
+							payload61.Ids.Truncate(mark)
+							if !ImportLogLineSaveBody(&payload61, &(*p)) {
+								return false
+							}
+						}
+					}
+				}
+				if payload61.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Lines.Count)) + payload61.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Lines.Count)) {
+						w.putLebWide(uint64(value.Lines.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(ImportLogLineRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Lines.Count; i++ {
+						p := (*ImportLogLineRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							mark := w.Ids.Count
+							n := ImportLogLineMeasureBody(&(*p), w.Ids)
+							if n < 0 {
+								return false
+							}
+							if !w.putLebPair(uint64(n)) {
+								w.putLebWide(uint64(n))
+							}
+							if w.Measuring {
+								w.Advance(n)
+							} else {
+								w.Ids.Truncate(mark)
+								if !ImportLogLineSaveBody(w, &(*p)) {
+									return false
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func ImportExportLoadBody(r *TableReader, value *ImportExport) bool {
+	ImportExportReset(value)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x5ce3f9a9f1d5001c: // lines
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				slot := (*tableContainer)(unsafe.Pointer(&value.Lines))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(ImportLogLineRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*ImportLogLineRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(ImportLogLineRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						ImportLogLineLoadBody(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							ImportLogLineReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+
+const ImportExportLoadRetainBuilder = "ImportExport: retention requires a region round trip through the VARIABLE form"
+const ImportExportSaveRetainMessages = "ImportExport: retention requires a region round trip through the VARIABLE form"
+
+func ImportExportLoadRetain(region, wire []byte, retain *TableRetain, report *TableReport) *ImportExport {
+	return (*ImportExport)(tableRegionLoadRetain(region, wire, ImportExportTableType(), ImportExportTableType().NodeType, 2, report, retain))
+}
+func ImportExportMeasureRetain(value *ImportExport, retain *TableRetain, allocator ...TableAllocator) int64 {
+	return tableRegionSaveRetain(unsafe.Pointer(value), ImportExportTableType(), nil, true, retain, nil, allocator...)
+}
+func ImportExportSaveRetain(value *ImportExport, retain *TableRetain, buffer []byte, report *TableReport, allocator ...TableAllocator) int64 {
+	if report == nil {
+		return -1
+	}
+	return tableRegionSaveRetain(unsafe.Pointer(value), ImportExportTableType(), buffer, false, retain, report, allocator...)
+}
+func ImportExportMeasureBodyRetain(value *ImportExport, ids *TableRetainIds) int64 {
+	w := TableRetainWriter{Measuring: true, Ids: ids}
+	if !ImportExportSaveBodyRetain(&w, value) {
+		return -1
+	}
+	return w.Offset
+}
+
+func ImportExportSaveBodyRetain(w *TableRetainWriter, value *ImportExport) bool {
+	if !ImportExportSaveBodyFieldsRetain(w, value) {
+		return false
+	}
+	w.Put8(0)
+	return !w.Overflow && !w.Ids.Overflow
+}
+func ImportExportSaveBodyFieldsRetain(w *TableRetainWriter, value *ImportExport) bool {
+	{
+		if value.Lines.Count < 0 {
+			return false
+		}
+		if value.Lines.Count > 0 {
+			if ref := w.Ids.refAtHit(53, 0x5ce3f9a9f1d5001c); !w.headerPair(ref, 14) {
+				w.headerRest(ref, 14)
+			}
+			if value.Lines.Count < 0 {
+				return false
+			}
+			{
+				mark := w.Ids.Count
+				payload1 := TableRetainWriter{Measuring: true, Ids: w.Ids}
+				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(ImportLogLineRow))), w.Ids.Numbering.arena)
+				for i := int32(0); i < value.Lines.Count; i++ {
+					p := (*ImportLogLineRow)(cursor.Next())
+					if p == nil {
+						return false
+					}
+					{
+						payload3 := payload1.Ids.Path
+						payload1.Ids.Path = payload3.step(0, uint32(i))
+						{
+							mark := payload1.Ids.Count
+							n := ImportLogLineMeasureBodyRetain(&(*p), payload1.Ids)
+							if n < 0 {
+								return false
+							}
+							if !payload1.putLebPair(uint64(n)) {
+								payload1.putLebWide(uint64(n))
+							}
+							if payload1.Measuring {
+								payload1.Advance(n)
+							} else {
+								payload1.Ids.Truncate(mark)
+								if !ImportLogLineSaveBodyRetain(&payload1, &(*p)) {
+									return false
+								}
+							}
+						}
+						payload1.Ids.Path = payload3
+					}
+				}
+				if payload1.Overflow {
+					return false
+				}
+				n := int64(1) + tableLebBytes(uint64(value.Lines.Count)) + payload1.Offset
+				if !w.putLebPair(uint64(n)) {
+					w.putLebWide(uint64(n))
+				}
+				if w.Measuring {
+					w.Advance(n)
+				} else {
+					w.Ids.Truncate(mark)
+					w.Put8(13)
+					if !w.putLebPair(uint64(value.Lines.Count)) {
+						w.putLebWide(uint64(value.Lines.Count))
+					}
+					cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Lines)), int64(unsafe.Sizeof(*new(ImportLogLineRow))), w.Ids.Numbering.arena)
+					for i := int32(0); i < value.Lines.Count; i++ {
+						p := (*ImportLogLineRow)(cursor.Next())
+						if p == nil {
+							return false
+						}
+						{
+							payload5 := w.Ids.Path
+							w.Ids.Path = payload5.step(0, uint32(i))
+							{
+								mark := w.Ids.Count
+								n := ImportLogLineMeasureBodyRetain(&(*p), w.Ids)
+								if n < 0 {
+									return false
+								}
+								if !w.putLebPair(uint64(n)) {
+									w.putLebWide(uint64(n))
+								}
+								if w.Measuring {
+									w.Advance(n)
+								} else {
+									w.Ids.Truncate(mark)
+									if !ImportLogLineSaveBodyRetain(w, &(*p)) {
+										return false
+									}
+								}
+							}
+							w.Ids.Path = payload5
+						}
+					}
+				}
+			}
+		}
+	}
+	if !tableRetainTail(w) {
+		return false
+	}
+	return !w.Overflow && !w.Ids.Overflow
+}
+
+func ImportExportLoadBodyRetain(r *TableRetainReader, value *ImportExport) bool {
+	ImportExportReset(value)
+	r.Retain.discard(r.Path, false, 0)
+	for {
+		ref, ok := r.lebPair()
+		if !ok {
+			ref, ok = r.lebWide()
+		}
+		if !ok {
+			r.Report.Malformed = true
+			return false
+		}
+		if ref == 0 {
+			return true
+		}
+		fieldID, ok := r.Resolve(ref)
+		if !ok || !r.Has(1) {
+			r.Report.Malformed = true
+			return false
+		}
+		kind := r.Get8()
+		if fieldID == 0xfffffffffffffffe || fieldID == 0xfffffffffffffffd || r.Nested && fieldID == 0xffffffffffffffff {
+			r.Report.Malformed = true
+			return false
+		}
+		switch fieldID {
+		case 0x5ce3f9a9f1d5001c: // lines
+			if kind != 14 {
+				r.Report.KindMismatch++
+				if !r.Skip(kind) {
+					r.Report.Malformed = true
+					return false
+				}
+				break
+			}
+			sub, ok := r.Body()
+			if !ok {
+				r.Report.Malformed = true
+				return false
+			}
+			if len(sub.Buffer) >= 2 {
+				header := sub
+				header.Buffer = r.Buffer[r.Offset-int64(len(sub.Buffer)):]
+				elemKind := header.Get8()
+				count, ok := header.Leb()
+				sub.Offset = header.Offset
+				if !ok {
+					r.Report.Malformed = true
+					break
+				}
+				if elemKind != 13 {
+					if !tableKindWidens(elemKind, 13) {
+						r.Report.KindMismatch++
+						break
+					}
+					r.Report.Widened++
+				}
+				r.Retain.discard(r.Path, true, 0)
+				slot := (*tableContainer)(unsafe.Pointer(&value.Lines))
+				if !tableContainerFill(&sub.Nodes.Carve, slot, count, int64(unsafe.Sizeof(*new(ImportLogLineRow))), 8) {
+					if sub.Nodes.Carve.Refused {
+						r.Take(sub)
+						return false
+					}
+					r.Report.Malformed = true
+					break
+				}
+				slot.Count = 0
+				for i := uint64(0); i < count; i++ {
+					p := (*ImportLogLineRow)(tableContainerFillAt(&sub.Nodes.Carve, slot, int32(i), int64(unsafe.Sizeof(*new(ImportLogLineRow)))))
+					if p == nil {
+						r.Report.Malformed = true
+						break
+					}
+					landed := false
+					for once := true; once; once = false {
+						elem, ok := sub.Body()
+						if !ok {
+							r.Report.Malformed = true
+							break
+						}
+						elem.Path = r.Path.step(0, uint32(i))
+						ImportLogLineLoadBodyRetain(&elem, p)
+						sub.Take(elem)
+						if sub.Nodes.Carve.Refused {
+							r.Nodes.Carve = sub.Nodes.Carve
+							return false
+						}
+						if elem.Offset != int64(len(elem.Buffer)) {
+							r.Report.Malformed = true
+							ImportLogLineReset(p)
+						}
+						landed = true
+					}
+					if !landed {
+						if sub.Nodes.Carve.Worker != nil {
+							tableContainerErase(sub.Nodes.Carve.Worker.Arena, slot, unsafe.Pointer(p), int64(unsafe.Sizeof(*p)))
+						}
+						break
+					}
+					if sub.Nodes.Carve.Worker == nil {
+						slot.Count++
+					}
+				}
+				r.Take(sub)
+				if r.Nodes.Carve.Refused {
+					return false
+				}
+			}
+		case 0xffffffffffffffff:
+			if !r.Skip(kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		default:
+			r.Report.Unknown++
+			if !r.capture(fieldID, kind) {
+				r.Report.Malformed = true
+				return false
+			}
+		}
+	}
+}
+func ImportExportLoadMeasure(wire []byte) int64 {
+	n, _, _ := tableRegionMeasure(wire, ImportExportTableType(), ImportExportTableType().NodeType, 2)
+	return n
+}
+func ImportExportLoadMeasureReason(wire []byte) (int64, error) {
+	size, _, _, reason := tableRegionMeasureReason(wire, ImportExportTableType(), ImportExportTableType().NodeType, 2)
+	return size, tableRefuseError(reason)
+}
+func ImportExportLoad(region, wire []byte, report *TableReport) *ImportExport {
+	return (*ImportExport)(tableRegionLoad(region, wire, ImportExportTableType(), ImportExportTableType().NodeType, 2, report))
+}
+func ImportExportMeasure(value *ImportExport, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), ImportExportTableType(), nil, true, arena, allocator)
+}
+func ImportExportMeasureReason(value *ImportExport, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableRegionSaveReason(unsafe.Pointer(value), ImportExportTableType(), nil, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func ImportExportSave(value *ImportExport, buffer []byte, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableRegionSave(unsafe.Pointer(value), ImportExportTableType(), buffer, false, arena, allocator)
+}
+func ImportExportLoadBuilder(b *ImportExportBuilder, wire []byte, report *TableReport) bool {
+	return tableBuilderLoad(unsafe.Pointer(b.GetRoot()), b.root, &b.Main, wire, ImportExportTableType(), ImportExportTableType().NodeType, 2, report)
+}
+
+// ImportExportReadStrict is the STRICT read (mas-bandwidth/schema docs/SPEC-TABLES.md §6.5): one call, its own builder, one typed reason.
+func ImportExportReadStrict(wire []byte) (*ImportExport, error) {
+	var b ImportExportBuilder
+	if !b.Init() {
+		return nil, TableRefuseAllocationFailed
+	}
+	var report TableReport
+	ok := ImportExportLoadBuilder(&b, wire, &report)
+	if err := report.Err(); err != nil || !ok {
+		b.Shutdown()
+		if err == nil {
+			err = TableRefuseWireDamaged
+		}
+		return nil, err
+	}
+	if !b.Lock() {
+		b.Shutdown()
+		return nil, TableRefuseAllocationFailed
+	}
+	return b.AsConst(), nil
+}
+
+type ImportExportBuilder struct {
+	Arena              TableArena
+	Main               TableWorker
+	root               TableRef
+	region, allocation []byte
+}
+
+func (b *ImportExportBuilder) Init(allocator ...TableAllocator) bool {
+	if b.region != nil || !b.Arena.Init(allocator...) {
+		return false
+	}
+	b.Main = TableWorker{Arena: &b.Arena}
+	p, ref := b.Main.Alloc(int64(unsafe.Sizeof(ImportExport{})))
+	b.root = ref
+	if p == nil {
+		b.Arena.Shutdown()
+		b.root = 0
+		return false
+	}
+	ImportExportReset((*ImportExport)(p))
+	return true
+}
+func (b *ImportExportBuilder) GetRoot() *ImportExport {
+	if b.Arena.Locked {
+		return nil
+	}
+	return (*ImportExport)(b.Arena.At(b.root))
+}
+func (b *ImportExportBuilder) AsConst() *ImportExport {
+	if len(b.region) == 0 {
+		return nil
+	}
+	return (*ImportExport)(unsafe.Pointer(&b.region[0]))
+}
+func (b *ImportExportBuilder) Region() []byte { return b.region }
+func (b *ImportExportBuilder) PackMeasure() int64 {
+	if b.Arena.Locked {
+		return int64(len(b.region))
+	}
+	return tableRegionPackMeasure(unsafe.Pointer(b.GetRoot()), ImportExportTableType(), &b.Arena)
+}
+func (b *ImportExportBuilder) PackMeasureReason() (int64, error) {
+	if b.Arena.Locked {
+		return int64(len(b.region)), nil
+	}
+	size, reason := tableRegionPackMeasureReason(unsafe.Pointer(b.GetRoot()), ImportExportTableType(), &b.Arena)
+	return size, tableRefuseError(reason)
+}
+func (b *ImportExportBuilder) Lock() bool {
+	if b.Arena.Locked {
+		return true
+	}
+	region, allocation, ok := tableRegionPack(unsafe.Pointer(b.GetRoot()), ImportExportTableType(), &b.Arena)
+	if !ok {
+		return false
+	}
+	b.region = region
+	b.allocation = allocation
+	b.Arena.Shutdown()
+	b.Arena.Locked = true
+	return true
+}
+func (b *ImportExportBuilder) Shutdown() {
+	b.Arena.Shutdown()
+	b.Arena.Allocator.free(b.allocation)
+	b.region = nil
+	b.allocation = nil
+	b.root = 0
+}
+func ImportExportLinesAdd(worker *TableWorker, holder *TableList[ImportLogLineRow]) *ImportLogLineRow {
+	p := (*ImportLogLineRow)(tableContainerAppend(worker, (*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(ImportLogLineRow)))))
+	if p == nil {
+		return nil
+	}
+	ImportLogLineReset(p)
+	return p
+}
+func ImportExportLinesErase(arena *TableArena, holder *TableList[ImportLogLineRow], element *ImportLogLineRow) bool {
+	return tableContainerErase(arena, (*tableContainer)(unsafe.Pointer(holder)), unsafe.Pointer(element), int64(unsafe.Sizeof(*element)))
+}
+func ImportExportLinesEach(holder *TableList[ImportLogLineRow], visit func(*ImportLogLineRow) bool, arena ...*TableArena) bool {
+	cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(holder)), int64(unsafe.Sizeof(*new(ImportLogLineRow))), tableOptionalArena(arena))
+	for i := int32(0); i < holder.Count; i++ {
+		p := (*ImportLogLineRow)(cursor.Next())
+		if p == nil || !visit(p) {
+			return false
+		}
+	}
+	return true
+}
+
 // RawTokensReset restores RawTokens's declared defaults in place, reusing the storage
 // the value already holds. The reader calls it before overlaying.
 func RawTokensReset(value *RawTokens) {
@@ -7687,31 +22039,31 @@ func RawTokensMeasureBody(value *RawTokens, ids *TableIds) int64 {
 		return -1
 	}
 	if value.InputTokensPresent {
-		bytes += tableLebBytes(ids.refAtHit(64, 0xb5158be5a9bbd92e)) + 1 + 8
+		bytes += tableLebBytes(ids.refAtHit(107, 0xb5158be5a9bbd92e)) + 1 + 8
 	} // input_tokens
 	if (value.OutputTokensPresent) && (value.OutputTokens < 0) {
 		return -1
 	}
 	if value.OutputTokensPresent {
-		bytes += tableLebBytes(ids.refAtHit(45, 0x72e601d58ddec77f)) + 1 + 8
+		bytes += tableLebBytes(ids.refAtHit(69, 0x72e601d58ddec77f)) + 1 + 8
 	} // output_tokens
 	if (value.CachedTokensPresent) && (value.CachedTokens < 0) {
 		return -1
 	}
 	if value.CachedTokensPresent {
-		bytes += tableLebBytes(ids.refAtHit(68, 0xc161e80ef0ed9236)) + 1 + 8
+		bytes += tableLebBytes(ids.refAtHit(113, 0xc161e80ef0ed9236)) + 1 + 8
 	} // cached_tokens
 	if (value.CacheWriteTokensPresent) && (value.CacheWriteTokens < 0) {
 		return -1
 	}
 	if value.CacheWriteTokensPresent {
-		bytes += tableLebBytes(ids.refAtHit(72, 0xd4452d66eea0a56c)) + 1 + 8
+		bytes += tableLebBytes(ids.refAtHit(123, 0xd4452d66eea0a56c)) + 1 + 8
 	} // cache_write_tokens
 	if (value.CacheReadTokensPresent) && (value.CacheReadTokens < 0) {
 		return -1
 	}
 	if value.CacheReadTokensPresent {
-		bytes += tableLebBytes(ids.refAtHit(36, 0x5e9ce08dbd7c5ed1)) + 1 + 8
+		bytes += tableLebBytes(ids.refAtHit(55, 0x5e9ce08dbd7c5ed1)) + 1 + 8
 	} // cache_read_tokens
 	if (value.ReasoningTokensPresent) && (value.ReasoningTokens < 0) {
 		return -1
@@ -7752,7 +22104,7 @@ func RawTokensSaveBodyFields(w *TableWriter, value *RawTokens) bool {
 	if value.InputTokensPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(64, 0xb5158be5a9bbd92e); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(107, 0xb5158be5a9bbd92e); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				if value.InputTokens < 0 {
@@ -7765,7 +22117,7 @@ func RawTokensSaveBodyFields(w *TableWriter, value *RawTokens) bool {
 	if value.OutputTokensPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(45, 0x72e601d58ddec77f); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(69, 0x72e601d58ddec77f); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				if value.OutputTokens < 0 {
@@ -7778,7 +22130,7 @@ func RawTokensSaveBodyFields(w *TableWriter, value *RawTokens) bool {
 	if value.CachedTokensPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(68, 0xc161e80ef0ed9236); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(113, 0xc161e80ef0ed9236); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				if value.CachedTokens < 0 {
@@ -7791,7 +22143,7 @@ func RawTokensSaveBodyFields(w *TableWriter, value *RawTokens) bool {
 	if value.CacheWriteTokensPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(72, 0xd4452d66eea0a56c); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(123, 0xd4452d66eea0a56c); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				if value.CacheWriteTokens < 0 {
@@ -7804,7 +22156,7 @@ func RawTokensSaveBodyFields(w *TableWriter, value *RawTokens) bool {
 	if value.CacheReadTokensPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(36, 0x5e9ce08dbd7c5ed1); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(55, 0x5e9ce08dbd7c5ed1); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				if value.CacheReadTokens < 0 {
@@ -8247,7 +22599,7 @@ func RawTokensSaveBodyFieldsRetain(w *TableRetainWriter, value *RawTokens) bool 
 	if value.InputTokensPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(64, 0xb5158be5a9bbd92e); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(107, 0xb5158be5a9bbd92e); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				if value.InputTokens < 0 {
@@ -8260,7 +22612,7 @@ func RawTokensSaveBodyFieldsRetain(w *TableRetainWriter, value *RawTokens) bool 
 	if value.OutputTokensPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(45, 0x72e601d58ddec77f); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(69, 0x72e601d58ddec77f); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				if value.OutputTokens < 0 {
@@ -8273,7 +22625,7 @@ func RawTokensSaveBodyFieldsRetain(w *TableRetainWriter, value *RawTokens) bool 
 	if value.CachedTokensPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(68, 0xc161e80ef0ed9236); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(113, 0xc161e80ef0ed9236); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				if value.CachedTokens < 0 {
@@ -8286,7 +22638,7 @@ func RawTokensSaveBodyFieldsRetain(w *TableRetainWriter, value *RawTokens) bool 
 	if value.CacheWriteTokensPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(72, 0xd4452d66eea0a56c); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(123, 0xd4452d66eea0a56c); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				if value.CacheWriteTokens < 0 {
@@ -8299,7 +22651,7 @@ func RawTokensSaveBodyFieldsRetain(w *TableRetainWriter, value *RawTokens) bool 
 	if value.CacheReadTokensPresent {
 		{
 			if true {
-				if ref := w.Ids.refAtHit(36, 0x5e9ce08dbd7c5ed1); !w.headerPair(ref, 5) {
+				if ref := w.Ids.refAtHit(55, 0x5e9ce08dbd7c5ed1); !w.headerPair(ref, 5) {
 					w.headerRest(ref, 5)
 				}
 				if value.CacheReadTokens < 0 {
@@ -8663,7 +23015,7 @@ func RawRecordSaveBody(w *TableWriter, value *RawRecord) bool {
 func RawRecordSaveBodyFields(w *TableWriter, value *RawRecord) bool {
 	{
 		if value.Harness != 0 {
-			if ref := w.Ids.refAtHit(13, 0x211fcbbafe5331ab); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(20, 0x211fcbbafe5331ab); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Harness == 0 {
@@ -8683,7 +23035,7 @@ func RawRecordSaveBodyFields(w *TableWriter, value *RawRecord) bool {
 	}
 	{
 		if value.Execution != 0 {
-			if ref := w.Ids.refAtHit(28, 0x40c5f8104d76cc15); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(40, 0x40c5f8104d76cc15); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Execution == 0 {
@@ -8703,7 +23055,7 @@ func RawRecordSaveBodyFields(w *TableWriter, value *RawRecord) bool {
 	}
 	{
 		if value.SourceSchema != 0 {
-			if ref := w.Ids.refAtHit(8, 0x0d3c21d222f73316); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(10, 0x0d3c21d222f73316); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.SourceSchema == 0 {
@@ -8743,7 +23095,7 @@ func RawRecordSaveBodyFields(w *TableWriter, value *RawRecord) bool {
 	}
 	{
 		if value.Billing != BillingNone {
-			if ref := w.Ids.refAtHit(27, 0x4005570295afd25c); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(39, 0x4005570295afd25c); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Billing {
@@ -8752,11 +23104,11 @@ func RawRecordSaveBodyFields(w *TableWriter, value *RawRecord) bool {
 					w.putLebWide(0)
 				}
 			case BillingMetered:
-				w.IdAt(52, 0x94bc2188912d9fb3)
+				w.IdAt(86, 0x94bc2188912d9fb3)
 			case BillingPlan:
-				w.IdAt(70, 0xcd104d19b5a0ef92)
+				w.IdAt(120, 0xcd104d19b5a0ef92)
 			case BillingSubscription:
-				w.IdAt(42, 0x6d7efb5ab40b33b4)
+				w.IdAt(64, 0x6d7efb5ab40b33b4)
 			default:
 				return false
 			}
@@ -8764,7 +23116,7 @@ func RawRecordSaveBodyFields(w *TableWriter, value *RawRecord) bool {
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(51, 0x93fab8f021712b13)
+		ref := w.Ids.refAtHit(85, 0x93fab8f021712b13)
 		start := w.Ids.Count
 		n := RawTokensMeasureBody(&value.Tokens, w.Ids)
 		if n < 0 || w.Ids.Overflow {
@@ -8984,7 +23336,7 @@ func RawRecordSaveBodyRetain(w *TableRetainWriter, value *RawRecord) bool {
 func RawRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *RawRecord) bool {
 	{
 		if value.Harness != 0 {
-			if ref := w.Ids.refAtHit(13, 0x211fcbbafe5331ab); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(20, 0x211fcbbafe5331ab); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Harness == 0 {
@@ -9004,7 +23356,7 @@ func RawRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *RawRecord) bool 
 	}
 	{
 		if value.Execution != 0 {
-			if ref := w.Ids.refAtHit(28, 0x40c5f8104d76cc15); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(40, 0x40c5f8104d76cc15); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Execution == 0 {
@@ -9024,7 +23376,7 @@ func RawRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *RawRecord) bool 
 	}
 	{
 		if value.SourceSchema != 0 {
-			if ref := w.Ids.refAtHit(8, 0x0d3c21d222f73316); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(10, 0x0d3c21d222f73316); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.SourceSchema == 0 {
@@ -9064,7 +23416,7 @@ func RawRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *RawRecord) bool 
 	}
 	{
 		if value.Billing != BillingNone {
-			if ref := w.Ids.refAtHit(27, 0x4005570295afd25c); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(39, 0x4005570295afd25c); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Billing {
@@ -9073,11 +23425,11 @@ func RawRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *RawRecord) bool 
 					w.putLebWide(0)
 				}
 			case BillingMetered:
-				w.IdAt(52, 0x94bc2188912d9fb3)
+				w.IdAt(86, 0x94bc2188912d9fb3)
 			case BillingPlan:
-				w.IdAt(70, 0xcd104d19b5a0ef92)
+				w.IdAt(120, 0xcd104d19b5a0ef92)
 			case BillingSubscription:
-				w.IdAt(42, 0x6d7efb5ab40b33b4)
+				w.IdAt(64, 0x6d7efb5ab40b33b4)
 			default:
 				return false
 			}
@@ -9085,7 +23437,7 @@ func RawRecordSaveBodyFieldsRetain(w *TableRetainWriter, value *RawRecord) bool 
 	}
 	{
 		mark := w.Ids.Count
-		ref := w.Ids.refAtHit(51, 0x93fab8f021712b13)
+		ref := w.Ids.refAtHit(85, 0x93fab8f021712b13)
 		start := w.Ids.Count
 		payload := TableRetainWriter{Measuring: true, Ids: w.Ids}
 		{
@@ -9464,7 +23816,7 @@ func RawUsageSaveBody(w *TableWriter, value *RawUsage) bool {
 func RawUsageSaveBodyFields(w *TableWriter, value *RawUsage) bool {
 	{
 		if value.Version != 0 {
-			if ref := w.Ids.refAtHit(67, 0xbb62c62c9808ea37); !w.headerPair(ref, 8) {
+			if ref := w.Ids.refAtHit(110, 0xbb62c62c9808ea37); !w.headerPair(ref, 8) {
 				w.headerRest(ref, 8)
 			}
 			w.Put32(uint32(value.Version))
@@ -9475,7 +23827,7 @@ func RawUsageSaveBodyFields(w *TableWriter, value *RawUsage) bool {
 			return false
 		}
 		if value.Records.Count > 0 {
-			if ref := w.Ids.refAtHit(56, 0xa281d6f1b14296ed); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(92, 0xa281d6f1b14296ed); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Records.Count < 0 {
@@ -9483,7 +23835,7 @@ func RawUsageSaveBodyFields(w *TableWriter, value *RawUsage) bool {
 			}
 			{
 				mark := w.Ids.Count
-				payload24 := TableWriter{Measuring: true, Ids: w.Ids}
+				payload70 := TableWriter{Measuring: true, Ids: w.Ids}
 				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Records)), int64(unsafe.Sizeof(*new(RawRecordRow))), w.Ids.Numbering.arena)
 				for i := int32(0); i < value.Records.Count; i++ {
 					p := (*RawRecordRow)(cursor.Next())
@@ -9491,28 +23843,28 @@ func RawUsageSaveBodyFields(w *TableWriter, value *RawUsage) bool {
 						return false
 					}
 					{
-						mark := payload24.Ids.Count
-						n := RawRecordMeasureBody(&(*p), payload24.Ids)
+						mark := payload70.Ids.Count
+						n := RawRecordMeasureBody(&(*p), payload70.Ids)
 						if n < 0 {
 							return false
 						}
-						if !payload24.putLebPair(uint64(n)) {
-							payload24.putLebWide(uint64(n))
+						if !payload70.putLebPair(uint64(n)) {
+							payload70.putLebWide(uint64(n))
 						}
-						if payload24.Measuring {
-							payload24.Advance(n)
+						if payload70.Measuring {
+							payload70.Advance(n)
 						} else {
-							payload24.Ids.Truncate(mark)
-							if !RawRecordSaveBody(&payload24, &(*p)) {
+							payload70.Ids.Truncate(mark)
+							if !RawRecordSaveBody(&payload70, &(*p)) {
 								return false
 							}
 						}
 					}
 				}
-				if payload24.Overflow {
+				if payload70.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(uint64(value.Records.Count)) + payload24.Offset
+				n := int64(1) + tableLebBytes(uint64(value.Records.Count)) + payload70.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -9753,7 +24105,7 @@ func RawUsageSaveBodyRetain(w *TableRetainWriter, value *RawUsage) bool {
 func RawUsageSaveBodyFieldsRetain(w *TableRetainWriter, value *RawUsage) bool {
 	{
 		if value.Version != 0 {
-			if ref := w.Ids.refAtHit(67, 0xbb62c62c9808ea37); !w.headerPair(ref, 8) {
+			if ref := w.Ids.refAtHit(110, 0xbb62c62c9808ea37); !w.headerPair(ref, 8) {
 				w.headerRest(ref, 8)
 			}
 			w.Put32(uint32(value.Version))
@@ -9764,7 +24116,7 @@ func RawUsageSaveBodyFieldsRetain(w *TableRetainWriter, value *RawUsage) bool {
 			return false
 		}
 		if value.Records.Count > 0 {
-			if ref := w.Ids.refAtHit(56, 0xa281d6f1b14296ed); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(92, 0xa281d6f1b14296ed); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Records.Count < 0 {
@@ -10545,7 +24897,7 @@ func FrameSaveBody(w *TableWriter, value *Frame) bool {
 func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	{
 		if value.Kind != FrameKindNone {
-			if ref := w.Ids.refAtHit(85, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -10554,9 +24906,9 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 					w.putLebWide(0)
 				}
 			case FrameKindWork:
-				w.IdAt(53, 0x9ae6ef0237d899a0)
+				w.IdAt(89, 0x9ae6ef0237d899a0)
 			case FrameKindRead:
-				w.IdAt(46, 0x740d542bbe696de5)
+				w.IdAt(70, 0x740d542bbe696de5)
 			default:
 				return false
 			}
@@ -10564,7 +24916,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.Card != 0 {
-			if ref := w.Ids.refAtHit(65, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(108, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Card == 0 {
@@ -10584,7 +24936,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.Attempt != 0 {
-			if ref := w.Ids.refAtHit(38, 0x63e618bd2b303dee); !w.headerPair(ref, 5) {
+			if ref := w.Ids.refAtHit(57, 0x63e618bd2b303dee); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
 			}
 			w.Put64(uint64(value.Attempt))
@@ -10592,7 +24944,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.Tier != 0 {
-			if ref := w.Ids.refAtHit(12, 0x1e6f84ef2eb65989); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(19, 0x1e6f84ef2eb65989); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Tier == 0 {
@@ -10612,7 +24964,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.Model != 0 {
-			if ref := w.Ids.refAtHit(55, 0x9de543933e6e703a); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(91, 0x9de543933e6e703a); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Model == 0 {
@@ -10632,7 +24984,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.Repo != 0 {
-			if ref := w.Ids.refAtHit(31, 0x4cac581fbfac663d); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(46, 0x4cac581fbfac663d); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Repo == 0 {
@@ -10652,7 +25004,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.BaseRef != 0 {
-			if ref := w.Ids.refAtHit(73, 0xd46f4a3ebed65022); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(124, 0xd46f4a3ebed65022); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.BaseRef == 0 {
@@ -10672,7 +25024,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.StageSha != 0 {
-			if ref := w.Ids.refAtHit(63, 0xb33a2f3256e250fc); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(105, 0xb33a2f3256e250fc); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.StageSha == 0 {
@@ -10692,7 +25044,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.Branch != 0 {
-			if ref := w.Ids.refAtHit(50, 0x919ec0f651278ba5); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(84, 0x919ec0f651278ba5); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Branch == 0 {
@@ -10712,7 +25064,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.PrevHead != 0 {
-			if ref := w.Ids.refAtHit(74, 0xd6320ebd358f520b); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(125, 0xd6320ebd358f520b); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.PrevHead == 0 {
@@ -10732,7 +25084,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.PrevAttempt != 0 {
-			if ref := w.Ids.refAtHit(15, 0x230c65ac8defd086); !w.headerPair(ref, 5) {
+			if ref := w.Ids.refAtHit(22, 0x230c65ac8defd086); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
 			}
 			w.Put64(uint64(value.PrevAttempt))
@@ -10740,7 +25092,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.Why != 0 {
-			if ref := w.Ids.refAtHit(37, 0x5ec5ea1948914a79); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(56, 0x5ec5ea1948914a79); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Why == 0 {
@@ -10760,7 +25112,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.Finding != 0 {
-			if ref := w.Ids.refAtHit(21, 0x35ceaba76a4aabe6); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(30, 0x35ceaba76a4aabe6); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Finding == 0 {
@@ -10780,7 +25132,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.Fix != 0 {
-			if ref := w.Ids.refAtHit(78, 0xdc9e7e18fec93bb8); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(129, 0xdc9e7e18fec93bb8); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Fix == 0 {
@@ -10800,7 +25152,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.ReviewBase != 0 {
-			if ref := w.Ids.refAtHit(69, 0xc1c0fb9c397f45d7); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(115, 0xc1c0fb9c397f45d7); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.ReviewBase == 0 {
@@ -10823,7 +25175,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 			return false
 		}
 		if value.Stage.Count > 0 {
-			if ref := w.Ids.refAtHit(80, 0xee9dbaad45e3448d); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(132, 0xee9dbaad45e3448d); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Stage.Count < 0 {
@@ -10831,7 +25183,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 			}
 			{
 				mark := w.Ids.Count
-				payload28 := TableWriter{Measuring: true, Ids: w.Ids}
+				payload74 := TableWriter{Measuring: true, Ids: w.Ids}
 				cursor := tableContainerCursorBegin((*tableContainer)(unsafe.Pointer(&value.Stage)), int64(unsafe.Sizeof(*new(StagePathRow))), w.Ids.Numbering.arena)
 				for i := int32(0); i < value.Stage.Count; i++ {
 					p := (*StagePathRow)(cursor.Next())
@@ -10839,28 +25191,28 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 						return false
 					}
 					{
-						mark := payload28.Ids.Count
-						n := StagePathMeasureBody(&(*p), payload28.Ids)
+						mark := payload74.Ids.Count
+						n := StagePathMeasureBody(&(*p), payload74.Ids)
 						if n < 0 {
 							return false
 						}
-						if !payload28.putLebPair(uint64(n)) {
-							payload28.putLebWide(uint64(n))
+						if !payload74.putLebPair(uint64(n)) {
+							payload74.putLebWide(uint64(n))
 						}
-						if payload28.Measuring {
-							payload28.Advance(n)
+						if payload74.Measuring {
+							payload74.Advance(n)
 						} else {
-							payload28.Ids.Truncate(mark)
-							if !StagePathSaveBody(&payload28, &(*p)) {
+							payload74.Ids.Truncate(mark)
+							if !StagePathSaveBody(&payload74, &(*p)) {
 								return false
 							}
 						}
 					}
 				}
-				if payload28.Overflow {
+				if payload74.Overflow {
 					return false
 				}
-				n := int64(1) + tableLebBytes(uint64(value.Stage.Count)) + payload28.Offset
+				n := int64(1) + tableLebBytes(uint64(value.Stage.Count)) + payload74.Offset
 				if !w.putLebPair(uint64(n)) {
 					w.putLebWide(uint64(n))
 				}
@@ -10903,7 +25255,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.Recipes != 0 {
-			if ref := w.Ids.refAtHit(19, 0x338684c18cd2eeb4); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(27, 0x338684c18cd2eeb4); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Recipes == 0 {
@@ -10923,7 +25275,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.DecideBounce != 0 {
-			if ref := w.Ids.refAtHit(22, 0x364f8f1334dc227a); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(31, 0x364f8f1334dc227a); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.DecideBounce == 0 {
@@ -10943,7 +25295,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.DecideReview != 0 {
-			if ref := w.Ids.refAtHit(62, 0xb17ac487d29d6e42); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(103, 0xb17ac487d29d6e42); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.DecideReview == 0 {
@@ -10963,7 +25315,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.DecideGateFlaky != 0 {
-			if ref := w.Ids.refAtHit(32, 0x51b5e2696d2d0b97); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(47, 0x51b5e2696d2d0b97); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.DecideGateFlaky == 0 {
@@ -10983,7 +25335,7 @@ func FrameSaveBodyFields(w *TableWriter, value *Frame) bool {
 	}
 	{
 		if value.DecideGatePreexisting != 0 {
-			if ref := w.Ids.refAtHit(16, 0x2b7d15b2bf924552); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(23, 0x2b7d15b2bf924552); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.DecideGatePreexisting == 0 {
@@ -11533,7 +25885,7 @@ func FrameSaveBodyRetain(w *TableRetainWriter, value *Frame) bool {
 func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	{
 		if value.Kind != FrameKindNone {
-			if ref := w.Ids.refAtHit(85, 0xef9c96d721673243); !w.headerPair(ref, 30) {
+			if ref := w.Ids.refAtHit(137, 0xef9c96d721673243); !w.headerPair(ref, 30) {
 				w.headerRest(ref, 30)
 			}
 			switch value.Kind {
@@ -11542,9 +25894,9 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 					w.putLebWide(0)
 				}
 			case FrameKindWork:
-				w.IdAt(53, 0x9ae6ef0237d899a0)
+				w.IdAt(89, 0x9ae6ef0237d899a0)
 			case FrameKindRead:
-				w.IdAt(46, 0x740d542bbe696de5)
+				w.IdAt(70, 0x740d542bbe696de5)
 			default:
 				return false
 			}
@@ -11552,7 +25904,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.Card != 0 {
-			if ref := w.Ids.refAtHit(65, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(108, 0xb5614e90e87b455f); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Card == 0 {
@@ -11572,7 +25924,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.Attempt != 0 {
-			if ref := w.Ids.refAtHit(38, 0x63e618bd2b303dee); !w.headerPair(ref, 5) {
+			if ref := w.Ids.refAtHit(57, 0x63e618bd2b303dee); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
 			}
 			w.Put64(uint64(value.Attempt))
@@ -11580,7 +25932,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.Tier != 0 {
-			if ref := w.Ids.refAtHit(12, 0x1e6f84ef2eb65989); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(19, 0x1e6f84ef2eb65989); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Tier == 0 {
@@ -11600,7 +25952,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.Model != 0 {
-			if ref := w.Ids.refAtHit(55, 0x9de543933e6e703a); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(91, 0x9de543933e6e703a); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Model == 0 {
@@ -11620,7 +25972,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.Repo != 0 {
-			if ref := w.Ids.refAtHit(31, 0x4cac581fbfac663d); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(46, 0x4cac581fbfac663d); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Repo == 0 {
@@ -11640,7 +25992,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.BaseRef != 0 {
-			if ref := w.Ids.refAtHit(73, 0xd46f4a3ebed65022); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(124, 0xd46f4a3ebed65022); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.BaseRef == 0 {
@@ -11660,7 +26012,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.StageSha != 0 {
-			if ref := w.Ids.refAtHit(63, 0xb33a2f3256e250fc); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(105, 0xb33a2f3256e250fc); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.StageSha == 0 {
@@ -11680,7 +26032,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.Branch != 0 {
-			if ref := w.Ids.refAtHit(50, 0x919ec0f651278ba5); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(84, 0x919ec0f651278ba5); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Branch == 0 {
@@ -11700,7 +26052,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.PrevHead != 0 {
-			if ref := w.Ids.refAtHit(74, 0xd6320ebd358f520b); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(125, 0xd6320ebd358f520b); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.PrevHead == 0 {
@@ -11720,7 +26072,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.PrevAttempt != 0 {
-			if ref := w.Ids.refAtHit(15, 0x230c65ac8defd086); !w.headerPair(ref, 5) {
+			if ref := w.Ids.refAtHit(22, 0x230c65ac8defd086); !w.headerPair(ref, 5) {
 				w.headerRest(ref, 5)
 			}
 			w.Put64(uint64(value.PrevAttempt))
@@ -11728,7 +26080,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.Why != 0 {
-			if ref := w.Ids.refAtHit(37, 0x5ec5ea1948914a79); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(56, 0x5ec5ea1948914a79); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Why == 0 {
@@ -11748,7 +26100,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.Finding != 0 {
-			if ref := w.Ids.refAtHit(21, 0x35ceaba76a4aabe6); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(30, 0x35ceaba76a4aabe6); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Finding == 0 {
@@ -11768,7 +26120,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.Fix != 0 {
-			if ref := w.Ids.refAtHit(78, 0xdc9e7e18fec93bb8); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(129, 0xdc9e7e18fec93bb8); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Fix == 0 {
@@ -11788,7 +26140,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.ReviewBase != 0 {
-			if ref := w.Ids.refAtHit(69, 0xc1c0fb9c397f45d7); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(115, 0xc1c0fb9c397f45d7); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.ReviewBase == 0 {
@@ -11811,7 +26163,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 			return false
 		}
 		if value.Stage.Count > 0 {
-			if ref := w.Ids.refAtHit(80, 0xee9dbaad45e3448d); !w.headerPair(ref, 14) {
+			if ref := w.Ids.refAtHit(132, 0xee9dbaad45e3448d); !w.headerPair(ref, 14) {
 				w.headerRest(ref, 14)
 			}
 			if value.Stage.Count < 0 {
@@ -11901,7 +26253,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.Recipes != 0 {
-			if ref := w.Ids.refAtHit(19, 0x338684c18cd2eeb4); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(27, 0x338684c18cd2eeb4); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.Recipes == 0 {
@@ -11921,7 +26273,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.DecideBounce != 0 {
-			if ref := w.Ids.refAtHit(22, 0x364f8f1334dc227a); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(31, 0x364f8f1334dc227a); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.DecideBounce == 0 {
@@ -11941,7 +26293,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.DecideReview != 0 {
-			if ref := w.Ids.refAtHit(62, 0xb17ac487d29d6e42); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(103, 0xb17ac487d29d6e42); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.DecideReview == 0 {
@@ -11961,7 +26313,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.DecideGateFlaky != 0 {
-			if ref := w.Ids.refAtHit(32, 0x51b5e2696d2d0b97); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(47, 0x51b5e2696d2d0b97); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.DecideGateFlaky == 0 {
@@ -11981,7 +26333,7 @@ func FrameSaveBodyFieldsRetain(w *TableRetainWriter, value *Frame) bool {
 	}
 	{
 		if value.DecideGatePreexisting != 0 {
-			if ref := w.Ids.refAtHit(16, 0x2b7d15b2bf924552); !w.headerPair(ref, 17) {
+			if ref := w.Ids.refAtHit(23, 0x2b7d15b2bf924552); !w.headerPair(ref, 17) {
 				w.headerRest(ref, 17)
 			}
 			if value.DecideGatePreexisting == 0 {
@@ -12934,6 +27286,1094 @@ func init() {
 // DecidedTableType returns Decided's reflection descriptor.
 func DecidedTableType() *TableTypeInfo { return &DecidedTableInfo }
 
+// CriterionTableFields is Criterion's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var CriterionTableFields = []TableFieldInfo{
+	{Name: "option", Json: "option", TypeName: "string", DeclaredTypeName: "string", Id: 0x3c119c726692754, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Criterion{}.Option)), ElemSize: uint32(unsafe.Sizeof(Criterion{}.Option)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "meaning", Json: "meaning", TypeName: "string", DeclaredTypeName: "string", Id: 0x853103f906a5b644, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Criterion{}.Meaning)), ElemSize: uint32(unsafe.Sizeof(Criterion{}.Meaning)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// CriterionTableInfo is Criterion's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var CriterionTableInfo TableTypeInfo
+
+func init() {
+	CriterionTableInfo = TableTypeInfo{Name: "Criterion", Size: uint32(unsafe.Sizeof(Criterion{})), NumFields: 2, Fields: CriterionTableFields, Reset: func(storage unsafe.Pointer) { CriterionReset((*Criterion)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x7af10c84dc36bf20, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return CriterionSaveBody(w, (*Criterion)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return CriterionLoadBody(&r, (*Criterion)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return CriterionSaveBodyRetain(w, (*Criterion)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return CriterionLoadBodyRetain(&r, (*Criterion)(p)) }, CookSize: 16, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// CriterionTableType returns Criterion's reflection descriptor.
+func CriterionTableType() *TableTypeInfo { return &CriterionTableInfo }
+
+// QuestionTableFields is Question's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var QuestionTableFields = []TableFieldInfo{
+	{Name: "kind", Json: "kind", TypeName: "AnswerType", DeclaredTypeName: "AnswerType", Id: 0xef9c96d721673243, Kind: 30, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Question{}.Kind)), ElemSize: uint32(unsafe.Sizeof(Question{}.Kind)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: 2,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    func(v uint64) string { return EnumNameAnswerType(AnswerType(v)) },
+		VariantId:   func(v uint64) uint64 { id, _ := AnswerType(v).TableEnumId(); return id },
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "instructions", Json: "instructions", TypeName: "string", DeclaredTypeName: "string", Id: 0x10d72192d432fac4, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Question{}.Instructions)), ElemSize: uint32(unsafe.Sizeof(Question{}.Instructions)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "criteria", Json: "criteria", TypeName: "Criterion", DeclaredTypeName: "Criterion", Id: 0xce9b64eababf7afc, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(Question{}.Criteria)), ElemSize: uint32(unsafe.Sizeof(*new(CriterionRow))), CountOffset: (uint32(unsafe.Offsetof(Question{}.Criteria))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 16, CookElemSize: 16, CookCountOffset: 24, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: CriterionTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// QuestionTableInfo is Question's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var QuestionTableInfo TableTypeInfo
+
+func init() {
+	QuestionTableInfo = TableTypeInfo{Name: "Question", Size: uint32(unsafe.Sizeof(Question{})), NumFields: 3, Fields: QuestionTableFields, Reset: func(storage unsafe.Pointer) { QuestionReset((*Question)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xb4f593d4c6b311a5, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return QuestionSaveBody(w, (*Question)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return QuestionLoadBody(&r, (*Question)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return QuestionSaveBodyRetain(w, (*Question)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return QuestionLoadBodyRetain(&r, (*Question)(p)) }, CookSize: 32, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// QuestionTableType returns Question's reflection descriptor.
+func QuestionTableType() *TableTypeInfo { return &QuestionTableInfo }
+
+// NamedQuestionTableFields is NamedQuestion's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var NamedQuestionTableFields = []TableFieldInfo{
+	{Name: "name", Json: "name", TypeName: "string", DeclaredTypeName: "string", Id: 0xc4bcadba8e631b86, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(NamedQuestion{}.Name)), ElemSize: uint32(unsafe.Sizeof(NamedQuestion{}.Name)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "question", Json: "question", TypeName: "Question", DeclaredTypeName: "Question", Id: 0x9c2ca99b4d2722c5, Kind: 13, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(NamedQuestion{}.Question)), ElemSize: uint32(unsafe.Sizeof(NamedQuestion{}.Question)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 32, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: QuestionTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// NamedQuestionTableInfo is NamedQuestion's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var NamedQuestionTableInfo TableTypeInfo
+
+func init() {
+	NamedQuestionTableInfo = TableTypeInfo{Name: "NamedQuestion", Size: uint32(unsafe.Sizeof(NamedQuestion{})), NumFields: 2, Fields: NamedQuestionTableFields, Reset: func(storage unsafe.Pointer) { NamedQuestionReset((*NamedQuestion)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x5a54e29cee1c4376, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return NamedQuestionSaveBody(w, (*NamedQuestion)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return NamedQuestionLoadBody(&r, (*NamedQuestion)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool {
+		return NamedQuestionSaveBodyRetain(w, (*NamedQuestion)(p))
+	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
+		return NamedQuestionLoadBodyRetain(&r, (*NamedQuestion)(p))
+	}, CookSize: 40, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// NamedQuestionTableType returns NamedQuestion's reflection descriptor.
+func NamedQuestionTableType() *TableTypeInfo { return &NamedQuestionTableInfo }
+
+// DecideSchemaTableFields is DecideSchema's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var DecideSchemaTableFields = []TableFieldInfo{
+	{Name: "name", Json: "name", TypeName: "string", DeclaredTypeName: "string", Id: 0xc4bcadba8e631b86, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(DecideSchema{}.Name)), ElemSize: uint32(unsafe.Sizeof(DecideSchema{}.Name)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "questions", Json: "questions", TypeName: "NamedQuestion", DeclaredTypeName: "NamedQuestion", Id: 0x8706e8e4197ffb42, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(DecideSchema{}.Questions)), ElemSize: uint32(unsafe.Sizeof(*new(NamedQuestionRow))), CountOffset: (uint32(unsafe.Offsetof(DecideSchema{}.Questions))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 40, CookCountOffset: 16, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: NamedQuestionTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// DecideSchemaTableInfo is DecideSchema's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var DecideSchemaTableInfo TableTypeInfo
+
+func init() {
+	DecideSchemaTableInfo = TableTypeInfo{Name: "DecideSchema", Size: uint32(unsafe.Sizeof(DecideSchema{})), NumFields: 2, Fields: DecideSchemaTableFields, Reset: func(storage unsafe.Pointer) { DecideSchemaReset((*DecideSchema)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x0cb53374693d5482, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return DecideSchemaSaveBody(w, (*DecideSchema)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return DecideSchemaLoadBody(&r, (*DecideSchema)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool {
+		return DecideSchemaSaveBodyRetain(w, (*DecideSchema)(p))
+	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
+		return DecideSchemaLoadBodyRetain(&r, (*DecideSchema)(p))
+	}, CookSize: 24, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// DecideSchemaTableType returns DecideSchema's reflection descriptor.
+func DecideSchemaTableType() *TableTypeInfo { return &DecideSchemaTableInfo }
+
+// JevRequestTableFields is JevRequest's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var JevRequestTableFields = []TableFieldInfo{
+	{Name: "state", Json: "state", TypeName: "string", DeclaredTypeName: "string", Id: 0xee63aaad45b1b116, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(JevRequest{}.State)), ElemSize: uint32(unsafe.Sizeof(JevRequest{}.State)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "model", Json: "model", TypeName: "string", DeclaredTypeName: "string", Id: 0x9de543933e6e703a, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(JevRequest{}.Model)), ElemSize: uint32(unsafe.Sizeof(JevRequest{}.Model)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "questions", Json: "questions", TypeName: "NamedQuestion", DeclaredTypeName: "NamedQuestion", Id: 0x8706e8e4197ffb42, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(JevRequest{}.Questions)), ElemSize: uint32(unsafe.Sizeof(*new(NamedQuestionRow))), CountOffset: (uint32(unsafe.Offsetof(JevRequest{}.Questions))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 16, CookElemSize: 40, CookCountOffset: 24, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: NamedQuestionTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// JevRequestTableInfo is JevRequest's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var JevRequestTableInfo TableTypeInfo
+
+func init() {
+	JevRequestTableInfo = TableTypeInfo{Name: "JevRequest", Size: uint32(unsafe.Sizeof(JevRequest{})), NumFields: 3, Fields: JevRequestTableFields, Reset: func(storage unsafe.Pointer) { JevRequestReset((*JevRequest)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x3bfc96ddff59d077, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return JevRequestSaveBody(w, (*JevRequest)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return JevRequestLoadBody(&r, (*JevRequest)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool {
+		return JevRequestSaveBodyRetain(w, (*JevRequest)(p))
+	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
+		return JevRequestLoadBodyRetain(&r, (*JevRequest)(p))
+	}, CookSize: 32, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// JevRequestTableType returns JevRequest's reflection descriptor.
+func JevRequestTableType() *TableTypeInfo { return &JevRequestTableInfo }
+
+// JevAnswerTableFields is JevAnswer's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var JevAnswerTableFields = []TableFieldInfo{
+	{Name: "kind", Json: "kind", TypeName: "string", DeclaredTypeName: "string", Id: 0xef9c96d721673243, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(JevAnswer{}.Kind)), ElemSize: uint32(unsafe.Sizeof(JevAnswer{}.Kind)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "choice", Json: "choice", TypeName: "string", DeclaredTypeName: "string", Id: 0xc842078c742a24f6, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(JevAnswer{}.Choice)), ElemSize: uint32(unsafe.Sizeof(JevAnswer{}.Choice)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "probabilities", Json: "probabilities", TypeName: "OptionP", DeclaredTypeName: "OptionP", Id: 0x5d9078ce94bba6a8, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(JevAnswer{}.Probabilities)), ElemSize: uint32(unsafe.Sizeof(*new(OptionPRow))), CountOffset: (uint32(unsafe.Offsetof(JevAnswer{}.Probabilities))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 16, CookElemSize: 16, CookCountOffset: 24, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: OptionPTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "confidence", Json: "confidence", TypeName: "float64", DeclaredTypeName: "float64", Id: 0x547d54feea4643b1, Kind: 11, IsArray: false, Counted: false, Optional: true,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(JevAnswer{}.Confidence)), ElemSize: uint32(unsafe.Sizeof(JevAnswer{}.Confidence)), CountOffset: 0xffffffff, PresentOffset: uint32(unsafe.Offsetof(JevAnswer{}.ConfidencePresent)),
+		CookOffset: 32, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 40,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "noul", Json: "noul", TypeName: "float64", DeclaredTypeName: "float64", Id: 0x3bfc10bad15ad663, Kind: 11, IsArray: false, Counted: false, Optional: true,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(JevAnswer{}.Noul)), ElemSize: uint32(unsafe.Sizeof(JevAnswer{}.Noul)), CountOffset: 0xffffffff, PresentOffset: uint32(unsafe.Offsetof(JevAnswer{}.NoulPresent)),
+		CookOffset: 48, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 56,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// JevAnswerTableInfo is JevAnswer's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var JevAnswerTableInfo TableTypeInfo
+
+func init() {
+	JevAnswerTableInfo = TableTypeInfo{Name: "JevAnswer", Size: uint32(unsafe.Sizeof(JevAnswer{})), NumFields: 5, Fields: JevAnswerTableFields, Reset: func(storage unsafe.Pointer) { JevAnswerReset((*JevAnswer)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xaab333761e7c069c, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return JevAnswerSaveBody(w, (*JevAnswer)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return JevAnswerLoadBody(&r, (*JevAnswer)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return JevAnswerSaveBodyRetain(w, (*JevAnswer)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return JevAnswerLoadBodyRetain(&r, (*JevAnswer)(p)) }, CookSize: 64, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// JevAnswerTableType returns JevAnswer's reflection descriptor.
+func JevAnswerTableType() *TableTypeInfo { return &JevAnswerTableInfo }
+
+// NamedJevAnswerTableFields is NamedJevAnswer's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var NamedJevAnswerTableFields = []TableFieldInfo{
+	{Name: "question", Json: "question", TypeName: "string", DeclaredTypeName: "string", Id: 0x9c2ca99b4d2722c5, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(NamedJevAnswer{}.Question)), ElemSize: uint32(unsafe.Sizeof(NamedJevAnswer{}.Question)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "answer", Json: "answer", TypeName: "JevAnswer", DeclaredTypeName: "JevAnswer", Id: 0x67cf8608037190df, Kind: 13, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(NamedJevAnswer{}.Answer)), ElemSize: uint32(unsafe.Sizeof(NamedJevAnswer{}.Answer)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 64, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: JevAnswerTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// NamedJevAnswerTableInfo is NamedJevAnswer's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var NamedJevAnswerTableInfo TableTypeInfo
+
+func init() {
+	NamedJevAnswerTableInfo = TableTypeInfo{Name: "NamedJevAnswer", Size: uint32(unsafe.Sizeof(NamedJevAnswer{})), NumFields: 2, Fields: NamedJevAnswerTableFields, Reset: func(storage unsafe.Pointer) { NamedJevAnswerReset((*NamedJevAnswer)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x6e63e43ea3603c09, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return NamedJevAnswerSaveBody(w, (*NamedJevAnswer)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return NamedJevAnswerLoadBody(&r, (*NamedJevAnswer)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool {
+		return NamedJevAnswerSaveBodyRetain(w, (*NamedJevAnswer)(p))
+	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
+		return NamedJevAnswerLoadBodyRetain(&r, (*NamedJevAnswer)(p))
+	}, CookSize: 72, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// NamedJevAnswerTableType returns NamedJevAnswer's reflection descriptor.
+func NamedJevAnswerTableType() *TableTypeInfo { return &NamedJevAnswerTableInfo }
+
+// JevResponseTableFields is JevResponse's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var JevResponseTableFields = []TableFieldInfo{
+	{Name: "answers", Json: "answers", TypeName: "NamedJevAnswer", DeclaredTypeName: "NamedJevAnswer", Id: 0xd7316b9dd9f8d444, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(JevResponse{}.Answers)), ElemSize: uint32(unsafe.Sizeof(*new(NamedJevAnswerRow))), CountOffset: (uint32(unsafe.Offsetof(JevResponse{}.Answers))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 72, CookCountOffset: 8, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: NamedJevAnswerTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "usage", Json: "usage", TypeName: "Usage", DeclaredTypeName: "Usage", Id: 0x1e1702714db75ac8, Kind: 13, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(JevResponse{}.Usage)), ElemSize: uint32(unsafe.Sizeof(JevResponse{}.Usage)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 16, CookElemSize: 16, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: UsageTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// JevResponseTableInfo is JevResponse's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var JevResponseTableInfo TableTypeInfo
+
+func init() {
+	JevResponseTableInfo = TableTypeInfo{Name: "JevResponse", Size: uint32(unsafe.Sizeof(JevResponse{})), NumFields: 2, Fields: JevResponseTableFields, Reset: func(storage unsafe.Pointer) { JevResponseReset((*JevResponse)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x4c9d732a43fe5d0d, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return JevResponseSaveBody(w, (*JevResponse)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return JevResponseLoadBody(&r, (*JevResponse)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool {
+		return JevResponseSaveBodyRetain(w, (*JevResponse)(p))
+	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
+		return JevResponseLoadBodyRetain(&r, (*JevResponse)(p))
+	}, CookSize: 32, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// JevResponseTableType returns JevResponse's reflection descriptor.
+func JevResponseTableType() *TableTypeInfo { return &JevResponseTableInfo }
+
+// FixedAnswerTableFields is FixedAnswer's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var FixedAnswerTableFields = []TableFieldInfo{
+	{Name: "choice", Json: "choice", TypeName: "string", DeclaredTypeName: "string", Id: 0xc842078c742a24f6, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(FixedAnswer{}.Choice)), ElemSize: uint32(unsafe.Sizeof(FixedAnswer{}.Choice)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "p", Json: "p", TypeName: "OptionP", DeclaredTypeName: "OptionP", Id: 0xaf63ed4c8602096f, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(FixedAnswer{}.P)), ElemSize: uint32(unsafe.Sizeof(*new(OptionPRow))), CountOffset: (uint32(unsafe.Offsetof(FixedAnswer{}.P))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 16, CookCountOffset: 16, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: OptionPTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "noul", Json: "noul", TypeName: "float64", DeclaredTypeName: "float64", Id: 0x3bfc10bad15ad663, Kind: 11, IsArray: false, Counted: false, Optional: true,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(FixedAnswer{}.Noul)), ElemSize: uint32(unsafe.Sizeof(FixedAnswer{}.Noul)), CountOffset: 0xffffffff, PresentOffset: uint32(unsafe.Offsetof(FixedAnswer{}.NoulPresent)),
+		CookOffset: 24, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 32,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// FixedAnswerTableInfo is FixedAnswer's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var FixedAnswerTableInfo TableTypeInfo
+
+func init() {
+	FixedAnswerTableInfo = TableTypeInfo{Name: "FixedAnswer", Size: uint32(unsafe.Sizeof(FixedAnswer{})), NumFields: 3, Fields: FixedAnswerTableFields, Reset: func(storage unsafe.Pointer) { FixedAnswerReset((*FixedAnswer)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x1c55a055706766db, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return FixedAnswerSaveBody(w, (*FixedAnswer)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return FixedAnswerLoadBody(&r, (*FixedAnswer)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool {
+		return FixedAnswerSaveBodyRetain(w, (*FixedAnswer)(p))
+	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
+		return FixedAnswerLoadBodyRetain(&r, (*FixedAnswer)(p))
+	}, CookSize: 40, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// FixedAnswerTableType returns FixedAnswer's reflection descriptor.
+func FixedAnswerTableType() *TableTypeInfo { return &FixedAnswerTableInfo }
+
+// NamedFixedAnswerTableFields is NamedFixedAnswer's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var NamedFixedAnswerTableFields = []TableFieldInfo{
+	{Name: "question", Json: "question", TypeName: "string", DeclaredTypeName: "string", Id: 0x9c2ca99b4d2722c5, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(NamedFixedAnswer{}.Question)), ElemSize: uint32(unsafe.Sizeof(NamedFixedAnswer{}.Question)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "answer", Json: "answer", TypeName: "FixedAnswer", DeclaredTypeName: "FixedAnswer", Id: 0x67cf8608037190df, Kind: 13, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(NamedFixedAnswer{}.Answer)), ElemSize: uint32(unsafe.Sizeof(NamedFixedAnswer{}.Answer)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 40, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: FixedAnswerTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// NamedFixedAnswerTableInfo is NamedFixedAnswer's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var NamedFixedAnswerTableInfo TableTypeInfo
+
+func init() {
+	NamedFixedAnswerTableInfo = TableTypeInfo{Name: "NamedFixedAnswer", Size: uint32(unsafe.Sizeof(NamedFixedAnswer{})), NumFields: 2, Fields: NamedFixedAnswerTableFields, Reset: func(storage unsafe.Pointer) { NamedFixedAnswerReset((*NamedFixedAnswer)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xa9a51bc220137b2a, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool {
+		return NamedFixedAnswerSaveBody(w, (*NamedFixedAnswer)(p))
+	}, LoadBody: func(r TableReader, p unsafe.Pointer) bool {
+		return NamedFixedAnswerLoadBody(&r, (*NamedFixedAnswer)(p))
+	}, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool {
+		return NamedFixedAnswerSaveBodyRetain(w, (*NamedFixedAnswer)(p))
+	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
+		return NamedFixedAnswerLoadBodyRetain(&r, (*NamedFixedAnswer)(p))
+	}, CookSize: 48, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// NamedFixedAnswerTableType returns NamedFixedAnswer's reflection descriptor.
+func NamedFixedAnswerTableType() *TableTypeInfo { return &NamedFixedAnswerTableInfo }
+
+// FixedTableTableFields is FixedTable's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var FixedTableTableFields = []TableFieldInfo{
+	{Name: "answers", Json: "answers", TypeName: "NamedFixedAnswer", DeclaredTypeName: "NamedFixedAnswer", Id: 0xd7316b9dd9f8d444, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(FixedTable{}.Answers)), ElemSize: uint32(unsafe.Sizeof(*new(NamedFixedAnswerRow))), CountOffset: (uint32(unsafe.Offsetof(FixedTable{}.Answers))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 48, CookCountOffset: 8, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: NamedFixedAnswerTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// FixedTableTableInfo is FixedTable's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var FixedTableTableInfo TableTypeInfo
+
+func init() {
+	FixedTableTableInfo = TableTypeInfo{Name: "FixedTable", Size: uint32(unsafe.Sizeof(FixedTable{})), NumFields: 1, Fields: FixedTableTableFields, Reset: func(storage unsafe.Pointer) { FixedTableReset((*FixedTable)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x85df369cdca746b3, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return FixedTableSaveBody(w, (*FixedTable)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return FixedTableLoadBody(&r, (*FixedTable)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool {
+		return FixedTableSaveBodyRetain(w, (*FixedTable)(p))
+	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
+		return FixedTableLoadBodyRetain(&r, (*FixedTable)(p))
+	}, CookSize: 16, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// FixedTableTableType returns FixedTable's reflection descriptor.
+func FixedTableTableType() *TableTypeInfo { return &FixedTableTableInfo }
+
+// ExampleTableFields is Example's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var ExampleTableFields = []TableFieldInfo{
+	{Name: "card", Json: "card", TypeName: "string", DeclaredTypeName: "string", Id: 0xb5614e90e87b455f, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Example{}.Card)), ElemSize: uint32(unsafe.Sizeof(Example{}.Card)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "heading", Json: "heading", TypeName: "string", DeclaredTypeName: "string", Id: 0xb128829190ca0f75, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Example{}.Heading)), ElemSize: uint32(unsafe.Sizeof(Example{}.Heading)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "paths", Json: "paths", TypeName: "string", DeclaredTypeName: "string", Id: 0x3f1193a7be5f3a7f, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Example{}.Paths)), ElemSize: uint32(unsafe.Sizeof(Example{}.Paths)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 16, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "kind", Json: "kind", TypeName: "string", DeclaredTypeName: "string", Id: 0xef9c96d721673243, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Example{}.Kind)), ElemSize: uint32(unsafe.Sizeof(Example{}.Kind)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 24, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "label", Json: "label", TypeName: "ExampleLabel", DeclaredTypeName: "ExampleLabel", Id: 0x39f7fcec8fcb623d, Kind: 30, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Example{}.Label)), ElemSize: uint32(unsafe.Sizeof(Example{}.Label)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 32, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: 3,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    func(v uint64) string { return EnumNameExampleLabel(ExampleLabel(v)) },
+		VariantId:   func(v uint64) uint64 { id, _ := ExampleLabel(v).TableEnumId(); return id },
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// ExampleTableInfo is Example's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var ExampleTableInfo TableTypeInfo
+
+func init() {
+	ExampleTableInfo = TableTypeInfo{Name: "Example", Size: uint32(unsafe.Sizeof(Example{})), NumFields: 5, Fields: ExampleTableFields, Reset: func(storage unsafe.Pointer) { ExampleReset((*Example)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x6de3d6e9660857a1, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ExampleSaveBody(w, (*Example)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ExampleLoadBody(&r, (*Example)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return ExampleSaveBodyRetain(w, (*Example)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return ExampleLoadBodyRetain(&r, (*Example)(p)) }, CookSize: 40, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// ExampleTableType returns Example's reflection descriptor.
+func ExampleTableType() *TableTypeInfo { return &ExampleTableInfo }
+
+// SetEntryTableFields is SetEntry's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var SetEntryTableFields = []TableFieldInfo{
+	{Name: "key", Json: "key", TypeName: "string", DeclaredTypeName: "string", Id: 0x3dc94a19365b10ec, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(SetEntry{}.Key)), ElemSize: uint32(unsafe.Sizeof(SetEntry{}.Key)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "value", Json: "value", TypeName: "string", DeclaredTypeName: "string", Id: 0x7ce4fd9430e80cea, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(SetEntry{}.Value)), ElemSize: uint32(unsafe.Sizeof(SetEntry{}.Value)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// SetEntryTableInfo is SetEntry's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var SetEntryTableInfo TableTypeInfo
+
+func init() {
+	SetEntryTableInfo = TableTypeInfo{Name: "SetEntry", Size: uint32(unsafe.Sizeof(SetEntry{})), NumFields: 2, Fields: SetEntryTableFields, Reset: func(storage unsafe.Pointer) { SetEntryReset((*SetEntry)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x85a7e770938db45d, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return SetEntrySaveBody(w, (*SetEntry)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return SetEntryLoadBody(&r, (*SetEntry)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return SetEntrySaveBodyRetain(w, (*SetEntry)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return SetEntryLoadBodyRetain(&r, (*SetEntry)(p)) }, CookSize: 16, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// SetEntryTableType returns SetEntry's reflection descriptor.
+func SetEntryTableType() *TableTypeInfo { return &SetEntryTableInfo }
+
+// LogLineTableFields is LogLine's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var LogLineTableFields = []TableFieldInfo{
+	{Name: "card", Json: "card", TypeName: "string", DeclaredTypeName: "string", Id: 0xb5614e90e87b455f, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(LogLine{}.Card)), ElemSize: uint32(unsafe.Sizeof(LogLine{}.Card)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "primary", Json: "primary", TypeName: "string", DeclaredTypeName: "string", Id: 0xbf31137ff783e939, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(LogLine{}.Primary)), ElemSize: uint32(unsafe.Sizeof(LogLine{}.Primary)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "table_name", Json: "table_name", TypeName: "string", DeclaredTypeName: "string", Id: 0x6bcb6e85b78cf363, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(LogLine{}.TableName)), ElemSize: uint32(unsafe.Sizeof(LogLine{}.TableName)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 16, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "to", Json: "to", TypeName: "string", DeclaredTypeName: "string", Id: 0x8c83907b56ac0a4, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(LogLine{}.To)), ElemSize: uint32(unsafe.Sizeof(LogLine{}.To)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 24, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "removed", Json: "removed", TypeName: "bool", DeclaredTypeName: "bool", Id: 0x10154dbd4fbc697b, Kind: 1, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(LogLine{}.Removed)), ElemSize: uint32(unsafe.Sizeof(LogLine{}.Removed)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 32, CookElemSize: 1, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "set", Json: "set", TypeName: "SetEntry", DeclaredTypeName: "SetEntry", Id: 0x823b87195ce20e23, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(LogLine{}.Set)), ElemSize: uint32(unsafe.Sizeof(*new(SetEntryRow))), CountOffset: (uint32(unsafe.Offsetof(LogLine{}.Set))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 40, CookElemSize: 16, CookCountOffset: 48, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: SetEntryTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// LogLineTableInfo is LogLine's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var LogLineTableInfo TableTypeInfo
+
+func init() {
+	LogLineTableInfo = TableTypeInfo{Name: "LogLine", Size: uint32(unsafe.Sizeof(LogLine{})), NumFields: 6, Fields: LogLineTableFields, Reset: func(storage unsafe.Pointer) { LogLineReset((*LogLine)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x77a71a561f6ca92b, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return LogLineSaveBody(w, (*LogLine)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return LogLineLoadBody(&r, (*LogLine)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return LogLineSaveBodyRetain(w, (*LogLine)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return LogLineLoadBodyRetain(&r, (*LogLine)(p)) }, CookSize: 56, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// LogLineTableType returns LogLine's reflection descriptor.
+func LogLineTableType() *TableTypeInfo { return &LogLineTableInfo }
+
+// LogExportTableFields is LogExport's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var LogExportTableFields = []TableFieldInfo{
+	{Name: "lines", Json: "lines", TypeName: "LogLine", DeclaredTypeName: "LogLine", Id: 0x5ce3f9a9f1d5001c, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(LogExport{}.Lines)), ElemSize: uint32(unsafe.Sizeof(*new(LogLineRow))), CountOffset: (uint32(unsafe.Offsetof(LogExport{}.Lines))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 56, CookCountOffset: 8, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: LogLineTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// LogExportTableInfo is LogExport's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var LogExportTableInfo TableTypeInfo
+
+func init() {
+	LogExportTableInfo = TableTypeInfo{Name: "LogExport", Size: uint32(unsafe.Sizeof(LogExport{})), NumFields: 1, Fields: LogExportTableFields, Reset: func(storage unsafe.Pointer) { LogExportReset((*LogExport)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x98b5e0ec535227e7, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return LogExportSaveBody(w, (*LogExport)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return LogExportLoadBody(&r, (*LogExport)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return LogExportSaveBodyRetain(w, (*LogExport)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return LogExportLoadBodyRetain(&r, (*LogExport)(p)) }, CookSize: 16, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// LogExportTableType returns LogExport's reflection descriptor.
+func LogExportTableType() *TableTypeInfo { return &LogExportTableInfo }
+
+// BarsTableFields is Bars's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var BarsTableFields = []TableFieldInfo{
+	{Name: "bounce", Json: "bounce", TypeName: "float64", DeclaredTypeName: "float64", Id: 0x5307024caeff199d, Kind: 11, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Bars{}.Bounce)), ElemSize: uint32(unsafe.Sizeof(Bars{}.Bounce)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "review", Json: "review", TypeName: "float64", DeclaredTypeName: "float64", Id: 0xe9718950b3dd3a1, Kind: 11, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Bars{}.Review)), ElemSize: uint32(unsafe.Sizeof(Bars{}.Review)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// BarsTableInfo is Bars's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var BarsTableInfo TableTypeInfo
+
+func init() {
+	BarsTableInfo = TableTypeInfo{Name: "Bars", Size: uint32(unsafe.Sizeof(Bars{})), NumFields: 2, Fields: BarsTableFields, Reset: func(storage unsafe.Pointer) { BarsReset((*Bars)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xc1a0f0a7a8de3c4b, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return BarsSaveBody(w, (*Bars)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return BarsLoadBody(&r, (*Bars)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return BarsSaveBodyRetain(w, (*Bars)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return BarsLoadBodyRetain(&r, (*Bars)(p)) }, CookSize: 16, CookAlign: 8}
+}
+
+// BarsTableType returns Bars's reflection descriptor.
+func BarsTableType() *TableTypeInfo { return &BarsTableInfo }
+
+// GateBarsTableFields is GateBars's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var GateBarsTableFields = []TableFieldInfo{
+	{Name: "flaky", Json: "flaky", TypeName: "float64", DeclaredTypeName: "float64", Id: 0x177aa3a985d4593e, Kind: 11, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(GateBars{}.Flaky)), ElemSize: uint32(unsafe.Sizeof(GateBars{}.Flaky)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "pre_existing", Json: "pre_existing", TypeName: "float64", DeclaredTypeName: "float64", Id: 0x343fb63c1a0792a6, Kind: 11, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(GateBars{}.PreExisting)), ElemSize: uint32(unsafe.Sizeof(GateBars{}.PreExisting)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// GateBarsTableInfo is GateBars's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var GateBarsTableInfo TableTypeInfo
+
+func init() {
+	GateBarsTableInfo = TableTypeInfo{Name: "GateBars", Size: uint32(unsafe.Sizeof(GateBars{})), NumFields: 2, Fields: GateBarsTableFields, Reset: func(storage unsafe.Pointer) { GateBarsReset((*GateBars)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xa5b3558804a9e170, Variable: false, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return GateBarsSaveBody(w, (*GateBars)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return GateBarsLoadBody(&r, (*GateBars)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return GateBarsSaveBodyRetain(w, (*GateBars)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return GateBarsLoadBodyRetain(&r, (*GateBars)(p)) }, CookSize: 16, CookAlign: 8}
+}
+
+// GateBarsTableType returns GateBars's reflection descriptor.
+func GateBarsTableType() *TableTypeInfo { return &GateBarsTableInfo }
+
+// GateLineTableFields is GateLine's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var GateLineTableFields = []TableFieldInfo{
+	{Name: "text", Json: "text", TypeName: "string", DeclaredTypeName: "string", Id: 0xfa04f4ef1995407e, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(GateLine{}.Text)), ElemSize: uint32(unsafe.Sizeof(GateLine{}.Text)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// GateLineTableInfo is GateLine's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var GateLineTableInfo TableTypeInfo
+
+func init() {
+	GateLineTableInfo = TableTypeInfo{Name: "GateLine", Size: uint32(unsafe.Sizeof(GateLine{})), NumFields: 1, Fields: GateLineTableFields, Reset: func(storage unsafe.Pointer) { GateLineReset((*GateLine)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xca4f33fa1f735e60, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return GateLineSaveBody(w, (*GateLine)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return GateLineLoadBody(&r, (*GateLine)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return GateLineSaveBodyRetain(w, (*GateLine)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return GateLineLoadBodyRetain(&r, (*GateLine)(p)) }, CookSize: 8, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// GateLineTableType returns GateLine's reflection descriptor.
+func GateLineTableType() *TableTypeInfo { return &GateLineTableInfo }
+
+// FailureTableFields is Failure's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var FailureTableFields = []TableFieldInfo{
+	{Name: "pkg", Json: "pkg", TypeName: "string", DeclaredTypeName: "string", Id: 0x77a85f195659c591, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Failure{}.Pkg)), ElemSize: uint32(unsafe.Sizeof(Failure{}.Pkg)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "test", Json: "test", TypeName: "string", DeclaredTypeName: "string", Id: 0xf9e6e6ef197c2b25, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Failure{}.Test)), ElemSize: uint32(unsafe.Sizeof(Failure{}.Test)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "lines", Json: "lines", TypeName: "GateLine", DeclaredTypeName: "GateLine", Id: 0x5ce3f9a9f1d5001c, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(Failure{}.Lines)), ElemSize: uint32(unsafe.Sizeof(*new(GateLineRow))), CountOffset: (uint32(unsafe.Offsetof(Failure{}.Lines))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 16, CookElemSize: 8, CookCountOffset: 24, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: GateLineTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// FailureTableInfo is Failure's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var FailureTableInfo TableTypeInfo
+
+func init() {
+	FailureTableInfo = TableTypeInfo{Name: "Failure", Size: uint32(unsafe.Sizeof(Failure{})), NumFields: 3, Fields: FailureTableFields, Reset: func(storage unsafe.Pointer) { FailureReset((*Failure)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x7ec022e0389b29f1, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return FailureSaveBody(w, (*Failure)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return FailureLoadBody(&r, (*Failure)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return FailureSaveBodyRetain(w, (*Failure)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return FailureLoadBodyRetain(&r, (*Failure)(p)) }, CookSize: 32, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// FailureTableType returns Failure's reflection descriptor.
+func FailureTableType() *TableTypeInfo { return &FailureTableInfo }
+
+// ChosenTableFields is Chosen's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var ChosenTableFields = []TableFieldInfo{
+	{Name: "verb", Json: "verb", TypeName: "string", DeclaredTypeName: "string", Id: 0x673ebb0102773a20, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Chosen{}.Verb)), ElemSize: uint32(unsafe.Sizeof(Chosen{}.Verb)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "p", Json: "p", TypeName: "float64", DeclaredTypeName: "float64", Id: 0xaf63ed4c8602096f, Kind: 11, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Chosen{}.P)), ElemSize: uint32(unsafe.Sizeof(Chosen{}.P)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "fix", Json: "fix", TypeName: "string", DeclaredTypeName: "string", Id: 0xdc9e7e18fec93bb8, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Chosen{}.Fix)), ElemSize: uint32(unsafe.Sizeof(Chosen{}.Fix)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 16, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "reason", Json: "reason", TypeName: "string", DeclaredTypeName: "string", Id: 0x65e8d7f3474f2639, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Chosen{}.Reason)), ElemSize: uint32(unsafe.Sizeof(Chosen{}.Reason)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 24, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "act", Json: "act", TypeName: "string", DeclaredTypeName: "string", Id: 0xe723b5190545606b, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Chosen{}.Act)), ElemSize: uint32(unsafe.Sizeof(Chosen{}.Act)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 32, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "why", Json: "why", TypeName: "string", DeclaredTypeName: "string", Id: 0x5ec5ea1948914a79, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Chosen{}.Why)), ElemSize: uint32(unsafe.Sizeof(Chosen{}.Why)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 40, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// ChosenTableInfo is Chosen's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var ChosenTableInfo TableTypeInfo
+
+func init() {
+	ChosenTableInfo = TableTypeInfo{Name: "Chosen", Size: uint32(unsafe.Sizeof(Chosen{})), NumFields: 6, Fields: ChosenTableFields, Reset: func(storage unsafe.Pointer) { ChosenReset((*Chosen)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xccfbb79fccbbb8e3, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ChosenSaveBody(w, (*Chosen)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ChosenLoadBody(&r, (*Chosen)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return ChosenSaveBodyRetain(w, (*Chosen)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return ChosenLoadBodyRetain(&r, (*Chosen)(p)) }, CookSize: 48, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// ChosenTableType returns Chosen's reflection descriptor.
+func ChosenTableType() *TableTypeInfo { return &ChosenTableInfo }
+
+// ClusterCardTableFields is ClusterCard's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var ClusterCardTableFields = []TableFieldInfo{
+	{Name: "card", Json: "card", TypeName: "string", DeclaredTypeName: "string", Id: 0xb5614e90e87b455f, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(ClusterCard{}.Card)), ElemSize: uint32(unsafe.Sizeof(ClusterCard{}.Card)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// ClusterCardTableInfo is ClusterCard's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var ClusterCardTableInfo TableTypeInfo
+
+func init() {
+	ClusterCardTableInfo = TableTypeInfo{Name: "ClusterCard", Size: uint32(unsafe.Sizeof(ClusterCard{})), NumFields: 1, Fields: ClusterCardTableFields, Reset: func(storage unsafe.Pointer) { ClusterCardReset((*ClusterCard)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x48fcacd41ba26ba7, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ClusterCardSaveBody(w, (*ClusterCard)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ClusterCardLoadBody(&r, (*ClusterCard)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool {
+		return ClusterCardSaveBodyRetain(w, (*ClusterCard)(p))
+	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
+		return ClusterCardLoadBodyRetain(&r, (*ClusterCard)(p))
+	}, CookSize: 8, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// ClusterCardTableType returns ClusterCard's reflection descriptor.
+func ClusterCardTableType() *TableTypeInfo { return &ClusterCardTableInfo }
+
+// ClusterTableFields is Cluster's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var ClusterTableFields = []TableFieldInfo{
+	{Name: "class_name", Json: "class_name", TypeName: "string", DeclaredTypeName: "string", Id: 0x66c0c01d224cae83, Kind: 17, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Cluster{}.ClassName)), ElemSize: uint32(unsafe.Sizeof(Cluster{}.ClassName)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: true, TargetId: 0x704be0d8faaffc58,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "count", Json: "count", TypeName: "int64", DeclaredTypeName: "int64", Id: 0xb1e5e28e4479a274, Kind: 5, IsArray: false, Counted: false, Optional: false,
+		ArrayBound: 0, Offset: uint32(unsafe.Offsetof(Cluster{}.Count)), ElemSize: uint32(unsafe.Sizeof(Cluster{}.Count)), CountOffset: 0xffffffff, PresentOffset: 0xffffffff,
+		CookOffset: 8, CookElemSize: 8, CookCountOffset: 4294967295, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: nil,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+	{Name: "cards", Json: "cards", TypeName: "ClusterCard", DeclaredTypeName: "ClusterCard", Id: 0xaf9dac3b097689c4, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(Cluster{}.Cards)), ElemSize: uint32(unsafe.Sizeof(*new(ClusterCardRow))), CountOffset: (uint32(unsafe.Offsetof(Cluster{}.Cards))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 16, CookElemSize: 8, CookCountOffset: 24, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: ClusterCardTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// ClusterTableInfo is Cluster's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var ClusterTableInfo TableTypeInfo
+
+func init() {
+	ClusterTableInfo = TableTypeInfo{Name: "Cluster", Size: uint32(unsafe.Sizeof(Cluster{})), NumFields: 3, Fields: ClusterTableFields, Reset: func(storage unsafe.Pointer) { ClusterReset((*Cluster)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0x9841528f05c205ad, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ClusterSaveBody(w, (*Cluster)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ClusterLoadBody(&r, (*Cluster)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool { return ClusterSaveBodyRetain(w, (*Cluster)(p)) }, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool { return ClusterLoadBodyRetain(&r, (*Cluster)(p)) }, CookSize: 32, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// ClusterTableType returns Cluster's reflection descriptor.
+func ClusterTableType() *TableTypeInfo { return &ClusterTableInfo }
+
 // DecisionTableFields is Decision's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var DecisionTableFields = []TableFieldInfo{
 	{Name: "id", Json: "id", TypeName: "string", DeclaredTypeName: "string", Id: 0x8b72e07b55c3ac0, Kind: 17, IsArray: false, Counted: false, Optional: false,
@@ -13326,6 +28766,40 @@ func init() {
 
 // ImportLogLineTableType returns ImportLogLine's reflection descriptor.
 func ImportLogLineTableType() *TableTypeInfo { return &ImportLogLineTableInfo }
+
+// ImportExportTableFields is ImportExport's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var ImportExportTableFields = []TableFieldInfo{
+	{Name: "lines", Json: "lines", TypeName: "ImportLogLine", DeclaredTypeName: "ImportLogLine", Id: 0x5ce3f9a9f1d5001c, Kind: 13, IsArray: true, Counted: true, Optional: false,
+		ArrayBound: 2147483647, Offset: uint32(unsafe.Offsetof(ImportExport{}.Lines)), ElemSize: uint32(unsafe.Sizeof(*new(ImportLogLineRow))), CountOffset: (uint32(unsafe.Offsetof(ImportExport{}.Lines))) + 8, PresentOffset: 0xffffffff,
+		CookOffset: 0, CookElemSize: 24, CookCountOffset: 8, CookPresentOffset: 4294967295,
+		HasRange: false, RangeMin: 0.0, RangeMax: 0.0, EnumMax: -1,
+		List: true, ElemAlign: 8,
+		FracBits: 0, Pointer: false, TargetId: 0x0000000000000000,
+		EnumName:    nil,
+		VariantId:   nil,
+		KeyTypeName: "", KeyName: nil, KeyId: nil,
+		Arms:  nil,
+		Guard: "", Table: ImportLogLineTableType,
+		Doc: TableDocNone, NumTags: 0, Tags: nil},
+}
+
+// ImportExportTableInfo is ImportExport's reflection descriptor (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+var ImportExportTableInfo TableTypeInfo
+
+func init() {
+	ImportExportTableInfo = TableTypeInfo{Name: "ImportExport", Size: uint32(unsafe.Sizeof(ImportExport{})), NumFields: 1, Fields: ImportExportTableFields, Reset: func(storage unsafe.Pointer) { ImportExportReset((*ImportExport)(storage)) }, Doc: TableDocNone, NumTags: 0, Tags: nil, Id: 0xbdcbe759e3b84d62, Variable: true, SaveBody: func(w *TableWriter, p unsafe.Pointer) bool { return ImportExportSaveBody(w, (*ImportExport)(p)) }, LoadBody: func(r TableReader, p unsafe.Pointer) bool { return ImportExportLoadBody(&r, (*ImportExport)(p)) }, SaveBodyRetain: func(w *TableRetainWriter, p unsafe.Pointer) bool {
+		return ImportExportSaveBodyRetain(w, (*ImportExport)(p))
+	}, LoadBodyRetain: func(r TableRetainReader, p unsafe.Pointer) bool {
+		return ImportExportLoadBodyRetain(&r, (*ImportExport)(p))
+	}, CookSize: 16, CookAlign: 8, NodeType: func(id uint64) *TableTypeInfo {
+		switch id {
+		}
+		return nil
+	}}
+}
+
+// ImportExportTableType returns ImportExport's reflection descriptor.
+func ImportExportTableType() *TableTypeInfo { return &ImportExportTableInfo }
 
 // RawTokensTableFields is RawTokens's per-field reflection data (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
 var RawTokensTableFields = []TableFieldInfo{

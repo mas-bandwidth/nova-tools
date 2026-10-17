@@ -147,6 +147,34 @@ func init() {
 	tableCookLayoutOffset("AnswerRow.P", unsafe.Offsetof(AnswerRow{}.P), 16)
 	tableCookLayoutOffset("AnswerRow.Confidence", unsafe.Offsetof(AnswerRow{}.Confidence), 32)
 	tableCookLayoutOffset("AnswerRow.Method", unsafe.Offsetof(AnswerRow{}.Method), 40)
+	tableCookLayoutSize("BarsRow", unsafe.Sizeof(BarsRow{}), 16)
+	tableCookLayoutSize("BarsRow alignment", unsafe.Alignof(BarsRow{}), 8)
+	tableCookLayoutOffset("BarsRow.Bounce", unsafe.Offsetof(BarsRow{}.Bounce), 0)
+	tableCookLayoutOffset("BarsRow.Review", unsafe.Offsetof(BarsRow{}.Review), 8)
+	tableCookLayoutSize("ChosenRow", unsafe.Sizeof(ChosenRow{}), 48)
+	tableCookLayoutSize("ChosenRow alignment", unsafe.Alignof(ChosenRow{}), 8)
+	tableCookLayoutOffset("ChosenRow.Verb", unsafe.Offsetof(ChosenRow{}.Verb), 0)
+	tableCookLayoutOffset("ChosenRow.P", unsafe.Offsetof(ChosenRow{}.P), 8)
+	tableCookLayoutOffset("ChosenRow.Fix", unsafe.Offsetof(ChosenRow{}.Fix), 16)
+	tableCookLayoutOffset("ChosenRow.Reason", unsafe.Offsetof(ChosenRow{}.Reason), 24)
+	tableCookLayoutOffset("ChosenRow.Act", unsafe.Offsetof(ChosenRow{}.Act), 32)
+	tableCookLayoutOffset("ChosenRow.Why", unsafe.Offsetof(ChosenRow{}.Why), 40)
+	tableCookLayoutSize("ClusterRow", unsafe.Sizeof(ClusterRow{}), 32)
+	tableCookLayoutSize("ClusterRow alignment", unsafe.Alignof(ClusterRow{}), 8)
+	tableCookLayoutOffset("ClusterRow.ClassName", unsafe.Offsetof(ClusterRow{}.ClassName), 0)
+	tableCookLayoutOffset("ClusterRow.Count", unsafe.Offsetof(ClusterRow{}.Count), 8)
+	tableCookLayoutOffset("ClusterRow.Cards", unsafe.Offsetof(ClusterRow{}.Cards), 16)
+	tableCookLayoutSize("ClusterCardRow", unsafe.Sizeof(ClusterCardRow{}), 8)
+	tableCookLayoutSize("ClusterCardRow alignment", unsafe.Alignof(ClusterCardRow{}), 8)
+	tableCookLayoutOffset("ClusterCardRow.Card", unsafe.Offsetof(ClusterCardRow{}.Card), 0)
+	tableCookLayoutSize("CriterionRow", unsafe.Sizeof(CriterionRow{}), 16)
+	tableCookLayoutSize("CriterionRow alignment", unsafe.Alignof(CriterionRow{}), 8)
+	tableCookLayoutOffset("CriterionRow.Option", unsafe.Offsetof(CriterionRow{}.Option), 0)
+	tableCookLayoutOffset("CriterionRow.Meaning", unsafe.Offsetof(CriterionRow{}.Meaning), 8)
+	tableCookLayoutSize("DecideSchemaRow", unsafe.Sizeof(DecideSchemaRow{}), 24)
+	tableCookLayoutSize("DecideSchemaRow alignment", unsafe.Alignof(DecideSchemaRow{}), 8)
+	tableCookLayoutOffset("DecideSchemaRow.Name", unsafe.Offsetof(DecideSchemaRow{}.Name), 0)
+	tableCookLayoutOffset("DecideSchemaRow.Questions", unsafe.Offsetof(DecideSchemaRow{}.Questions), 8)
 	tableCookLayoutSize("DecidedRow", unsafe.Sizeof(DecidedRow{}), 24)
 	tableCookLayoutSize("DecidedRow alignment", unsafe.Alignof(DecidedRow{}), 8)
 	tableCookLayoutOffset("DecidedRow.Value", unsafe.Offsetof(DecidedRow{}.Value), 0)
@@ -163,6 +191,26 @@ func init() {
 	tableCookLayoutOffset("DecisionRow.State", unsafe.Offsetof(DecisionRow{}.State), 56)
 	tableCookLayoutOffset("DecisionRow.Answers", unsafe.Offsetof(DecisionRow{}.Answers), 64)
 	tableCookLayoutOffset("DecisionRow.Usage", unsafe.Offsetof(DecisionRow{}.Usage), 80)
+	tableCookLayoutSize("ExampleRow", unsafe.Sizeof(ExampleRow{}), 40)
+	tableCookLayoutSize("ExampleRow alignment", unsafe.Alignof(ExampleRow{}), 8)
+	tableCookLayoutOffset("ExampleRow.Card", unsafe.Offsetof(ExampleRow{}.Card), 0)
+	tableCookLayoutOffset("ExampleRow.Heading", unsafe.Offsetof(ExampleRow{}.Heading), 8)
+	tableCookLayoutOffset("ExampleRow.Paths", unsafe.Offsetof(ExampleRow{}.Paths), 16)
+	tableCookLayoutOffset("ExampleRow.Kind", unsafe.Offsetof(ExampleRow{}.Kind), 24)
+	tableCookLayoutOffset("ExampleRow.Label", unsafe.Offsetof(ExampleRow{}.Label), 32)
+	tableCookLayoutSize("FailureRow", unsafe.Sizeof(FailureRow{}), 32)
+	tableCookLayoutSize("FailureRow alignment", unsafe.Alignof(FailureRow{}), 8)
+	tableCookLayoutOffset("FailureRow.Pkg", unsafe.Offsetof(FailureRow{}.Pkg), 0)
+	tableCookLayoutOffset("FailureRow.Test", unsafe.Offsetof(FailureRow{}.Test), 8)
+	tableCookLayoutOffset("FailureRow.Lines", unsafe.Offsetof(FailureRow{}.Lines), 16)
+	tableCookLayoutSize("FixedAnswerRow", unsafe.Sizeof(FixedAnswerRow{}), 40)
+	tableCookLayoutSize("FixedAnswerRow alignment", unsafe.Alignof(FixedAnswerRow{}), 8)
+	tableCookLayoutOffset("FixedAnswerRow.Choice", unsafe.Offsetof(FixedAnswerRow{}.Choice), 0)
+	tableCookLayoutOffset("FixedAnswerRow.P", unsafe.Offsetof(FixedAnswerRow{}.P), 8)
+	tableCookLayoutOffset("FixedAnswerRow.Noul", unsafe.Offsetof(FixedAnswerRow{}.Noul), 24)
+	tableCookLayoutSize("FixedTableRow", unsafe.Sizeof(FixedTableRow{}), 16)
+	tableCookLayoutSize("FixedTableRow alignment", unsafe.Alignof(FixedTableRow{}), 8)
+	tableCookLayoutOffset("FixedTableRow.Answers", unsafe.Offsetof(FixedTableRow{}.Answers), 0)
 	tableCookLayoutSize("FrameRow", unsafe.Sizeof(FrameRow{}), 176)
 	tableCookLayoutSize("FrameRow alignment", unsafe.Alignof(FrameRow{}), 8)
 	tableCookLayoutOffset("FrameRow.Kind", unsafe.Offsetof(FrameRow{}.Kind), 0)
@@ -186,6 +234,16 @@ func init() {
 	tableCookLayoutOffset("FrameRow.DecideReview", unsafe.Offsetof(FrameRow{}.DecideReview), 152)
 	tableCookLayoutOffset("FrameRow.DecideGateFlaky", unsafe.Offsetof(FrameRow{}.DecideGateFlaky), 160)
 	tableCookLayoutOffset("FrameRow.DecideGatePreexisting", unsafe.Offsetof(FrameRow{}.DecideGatePreexisting), 168)
+	tableCookLayoutSize("GateBarsRow", unsafe.Sizeof(GateBarsRow{}), 16)
+	tableCookLayoutSize("GateBarsRow alignment", unsafe.Alignof(GateBarsRow{}), 8)
+	tableCookLayoutOffset("GateBarsRow.Flaky", unsafe.Offsetof(GateBarsRow{}.Flaky), 0)
+	tableCookLayoutOffset("GateBarsRow.PreExisting", unsafe.Offsetof(GateBarsRow{}.PreExisting), 8)
+	tableCookLayoutSize("GateLineRow", unsafe.Sizeof(GateLineRow{}), 8)
+	tableCookLayoutSize("GateLineRow alignment", unsafe.Alignof(GateLineRow{}), 8)
+	tableCookLayoutOffset("GateLineRow.Text", unsafe.Offsetof(GateLineRow{}.Text), 0)
+	tableCookLayoutSize("ImportExportRow", unsafe.Sizeof(ImportExportRow{}), 16)
+	tableCookLayoutSize("ImportExportRow alignment", unsafe.Alignof(ImportExportRow{}), 8)
+	tableCookLayoutOffset("ImportExportRow.Lines", unsafe.Offsetof(ImportExportRow{}.Lines), 0)
 	tableCookLayoutSize("ImportLogLineRow", unsafe.Sizeof(ImportLogLineRow{}), 24)
 	tableCookLayoutSize("ImportLogLineRow alignment", unsafe.Alignof(ImportLogLineRow{}), 8)
 	tableCookLayoutOffset("ImportLogLineRow.Verb", unsafe.Offsetof(ImportLogLineRow{}.Verb), 0)
@@ -194,13 +252,52 @@ func init() {
 	tableCookLayoutSize("InputRow alignment", unsafe.Alignof(InputRow{}), 8)
 	tableCookLayoutOffset("InputRow.Key", unsafe.Offsetof(InputRow{}.Key), 0)
 	tableCookLayoutOffset("InputRow.Value", unsafe.Offsetof(InputRow{}.Value), 8)
+	tableCookLayoutSize("JevAnswerRow", unsafe.Sizeof(JevAnswerRow{}), 64)
+	tableCookLayoutSize("JevAnswerRow alignment", unsafe.Alignof(JevAnswerRow{}), 8)
+	tableCookLayoutOffset("JevAnswerRow.Kind", unsafe.Offsetof(JevAnswerRow{}.Kind), 0)
+	tableCookLayoutOffset("JevAnswerRow.Choice", unsafe.Offsetof(JevAnswerRow{}.Choice), 8)
+	tableCookLayoutOffset("JevAnswerRow.Probabilities", unsafe.Offsetof(JevAnswerRow{}.Probabilities), 16)
+	tableCookLayoutOffset("JevAnswerRow.Confidence", unsafe.Offsetof(JevAnswerRow{}.Confidence), 32)
+	tableCookLayoutOffset("JevAnswerRow.Noul", unsafe.Offsetof(JevAnswerRow{}.Noul), 48)
+	tableCookLayoutSize("JevRequestRow", unsafe.Sizeof(JevRequestRow{}), 32)
+	tableCookLayoutSize("JevRequestRow alignment", unsafe.Alignof(JevRequestRow{}), 8)
+	tableCookLayoutOffset("JevRequestRow.State", unsafe.Offsetof(JevRequestRow{}.State), 0)
+	tableCookLayoutOffset("JevRequestRow.Model", unsafe.Offsetof(JevRequestRow{}.Model), 8)
+	tableCookLayoutOffset("JevRequestRow.Questions", unsafe.Offsetof(JevRequestRow{}.Questions), 16)
+	tableCookLayoutSize("JevResponseRow", unsafe.Sizeof(JevResponseRow{}), 32)
+	tableCookLayoutSize("JevResponseRow alignment", unsafe.Alignof(JevResponseRow{}), 8)
+	tableCookLayoutOffset("JevResponseRow.Answers", unsafe.Offsetof(JevResponseRow{}.Answers), 0)
+	tableCookLayoutOffset("JevResponseRow.Usage", unsafe.Offsetof(JevResponseRow{}.Usage), 16)
 	tableCookLayoutSize("JudgmentIdRow", unsafe.Sizeof(JudgmentIdRow{}), 8)
 	tableCookLayoutSize("JudgmentIdRow alignment", unsafe.Alignof(JudgmentIdRow{}), 8)
 	tableCookLayoutOffset("JudgmentIdRow.Id", unsafe.Offsetof(JudgmentIdRow{}.Id), 0)
+	tableCookLayoutSize("LogExportRow", unsafe.Sizeof(LogExportRow{}), 16)
+	tableCookLayoutSize("LogExportRow alignment", unsafe.Alignof(LogExportRow{}), 8)
+	tableCookLayoutOffset("LogExportRow.Lines", unsafe.Offsetof(LogExportRow{}.Lines), 0)
+	tableCookLayoutSize("LogLineRow", unsafe.Sizeof(LogLineRow{}), 56)
+	tableCookLayoutSize("LogLineRow alignment", unsafe.Alignof(LogLineRow{}), 8)
+	tableCookLayoutOffset("LogLineRow.Card", unsafe.Offsetof(LogLineRow{}.Card), 0)
+	tableCookLayoutOffset("LogLineRow.Primary", unsafe.Offsetof(LogLineRow{}.Primary), 8)
+	tableCookLayoutOffset("LogLineRow.TableName", unsafe.Offsetof(LogLineRow{}.TableName), 16)
+	tableCookLayoutOffset("LogLineRow.To", unsafe.Offsetof(LogLineRow{}.To), 24)
+	tableCookLayoutOffset("LogLineRow.Removed", unsafe.Offsetof(LogLineRow{}.Removed), 32)
+	tableCookLayoutOffset("LogLineRow.Set", unsafe.Offsetof(LogLineRow{}.Set), 40)
 	tableCookLayoutSize("NamedAnswerRow", unsafe.Sizeof(NamedAnswerRow{}), 56)
 	tableCookLayoutSize("NamedAnswerRow alignment", unsafe.Alignof(NamedAnswerRow{}), 8)
 	tableCookLayoutOffset("NamedAnswerRow.Question", unsafe.Offsetof(NamedAnswerRow{}.Question), 0)
 	tableCookLayoutOffset("NamedAnswerRow.Answer", unsafe.Offsetof(NamedAnswerRow{}.Answer), 8)
+	tableCookLayoutSize("NamedFixedAnswerRow", unsafe.Sizeof(NamedFixedAnswerRow{}), 48)
+	tableCookLayoutSize("NamedFixedAnswerRow alignment", unsafe.Alignof(NamedFixedAnswerRow{}), 8)
+	tableCookLayoutOffset("NamedFixedAnswerRow.Question", unsafe.Offsetof(NamedFixedAnswerRow{}.Question), 0)
+	tableCookLayoutOffset("NamedFixedAnswerRow.Answer", unsafe.Offsetof(NamedFixedAnswerRow{}.Answer), 8)
+	tableCookLayoutSize("NamedJevAnswerRow", unsafe.Sizeof(NamedJevAnswerRow{}), 72)
+	tableCookLayoutSize("NamedJevAnswerRow alignment", unsafe.Alignof(NamedJevAnswerRow{}), 8)
+	tableCookLayoutOffset("NamedJevAnswerRow.Question", unsafe.Offsetof(NamedJevAnswerRow{}.Question), 0)
+	tableCookLayoutOffset("NamedJevAnswerRow.Answer", unsafe.Offsetof(NamedJevAnswerRow{}.Answer), 8)
+	tableCookLayoutSize("NamedQuestionRow", unsafe.Sizeof(NamedQuestionRow{}), 40)
+	tableCookLayoutSize("NamedQuestionRow alignment", unsafe.Alignof(NamedQuestionRow{}), 8)
+	tableCookLayoutOffset("NamedQuestionRow.Name", unsafe.Offsetof(NamedQuestionRow{}.Name), 0)
+	tableCookLayoutOffset("NamedQuestionRow.Question", unsafe.Offsetof(NamedQuestionRow{}.Question), 8)
 	tableCookLayoutSize("OptionPRow", unsafe.Sizeof(OptionPRow{}), 16)
 	tableCookLayoutSize("OptionPRow alignment", unsafe.Alignof(OptionPRow{}), 8)
 	tableCookLayoutOffset("OptionPRow.Option", unsafe.Offsetof(OptionPRow{}.Option), 0)
@@ -211,6 +308,11 @@ func init() {
 	tableCookLayoutOffset("OutcomeRow.Label", unsafe.Offsetof(OutcomeRow{}.Label), 8)
 	tableCookLayoutOffset("OutcomeRow.Note", unsafe.Offsetof(OutcomeRow{}.Note), 16)
 	tableCookLayoutOffset("OutcomeRow.At", unsafe.Offsetof(OutcomeRow{}.At), 24)
+	tableCookLayoutSize("QuestionRow", unsafe.Sizeof(QuestionRow{}), 32)
+	tableCookLayoutSize("QuestionRow alignment", unsafe.Alignof(QuestionRow{}), 8)
+	tableCookLayoutOffset("QuestionRow.Kind", unsafe.Offsetof(QuestionRow{}.Kind), 0)
+	tableCookLayoutOffset("QuestionRow.Instructions", unsafe.Offsetof(QuestionRow{}.Instructions), 8)
+	tableCookLayoutOffset("QuestionRow.Criteria", unsafe.Offsetof(QuestionRow{}.Criteria), 16)
 	tableCookLayoutSize("RawRecordRow", unsafe.Sizeof(RawRecordRow{}), 136)
 	tableCookLayoutSize("RawRecordRow alignment", unsafe.Alignof(RawRecordRow{}), 8)
 	tableCookLayoutOffset("RawRecordRow.Harness", unsafe.Offsetof(RawRecordRow{}.Harness), 0)
@@ -237,6 +339,10 @@ func init() {
 	tableCookLayoutOffset("RecordLineRow.AsDecision", unsafe.Offsetof(RecordLineRow{}.AsDecision), 8)
 	tableCookLayoutOffset("RecordLineRow.AsOutcome", unsafe.Offsetof(RecordLineRow{}.AsOutcome), 16)
 	tableCookLayoutOffset("RecordLineRow.AsAct", unsafe.Offsetof(RecordLineRow{}.AsAct), 24)
+	tableCookLayoutSize("SetEntryRow", unsafe.Sizeof(SetEntryRow{}), 16)
+	tableCookLayoutSize("SetEntryRow alignment", unsafe.Alignof(SetEntryRow{}), 8)
+	tableCookLayoutOffset("SetEntryRow.Key", unsafe.Offsetof(SetEntryRow{}.Key), 0)
+	tableCookLayoutOffset("SetEntryRow.Value", unsafe.Offsetof(SetEntryRow{}.Value), 8)
 	tableCookLayoutSize("StagePathRow", unsafe.Sizeof(StagePathRow{}), 8)
 	tableCookLayoutSize("StagePathRow alignment", unsafe.Alignof(StagePathRow{}), 8)
 	tableCookLayoutOffset("StagePathRow.Path", unsafe.Offsetof(StagePathRow{}.Path), 0)
@@ -269,7 +375,7 @@ func tableCookLayoutOffset(what string, got, want uintptr) {
 // §11 fact rather than a taste: a name derived from a DECLARATION's own
 // spelling is a name a declaration can collide with, and the checker has no
 // machinery for a prefix-and-name product. One fixed name is one claim.
-var tableCookRecords = make([]TableCookInfo, 17)
+var tableCookRecords = make([]TableCookInfo, 40)
 
 // THE GRAPH IS FILLED HERE rather than in the slice's own initializer, and
 // the reason is a language fact rather than a taste: the DESCRIPTOR GRAPH is
@@ -301,6 +407,52 @@ func init() {
 		},
 	}
 	tableCookRecords[2] = TableCookInfo{
+		Name: "Bars", Size: 16, Align: 8, NumFields: 2,
+		Fields: []TableCookFieldInfo{
+			{Name: "bounce", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageFloat},
+			{Name: "review", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageFloat},
+		},
+	}
+	tableCookRecords[3] = TableCookInfo{
+		Name: "Chosen", Size: 48, Align: 8, NumFields: 6,
+		Fields: []TableCookFieldInfo{
+			{Name: "verb", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "p", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageFloat},
+			{Name: "fix", Offset: 16, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "reason", Offset: 24, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "act", Offset: 32, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "why", Offset: 40, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+		},
+	}
+	tableCookRecords[4] = TableCookInfo{
+		Name: "Cluster", Size: 32, Align: 8, NumFields: 3,
+		Fields: []TableCookFieldInfo{
+			{Name: "class_name", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "count", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
+			{Name: "cards", Offset: 16, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[5] = TableCookInfo{
+		Name: "ClusterCard", Size: 8, Align: 8, NumFields: 1,
+		Fields: []TableCookFieldInfo{
+			{Name: "card", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+		},
+	}
+	tableCookRecords[6] = TableCookInfo{
+		Name: "Criterion", Size: 16, Align: 8, NumFields: 2,
+		Fields: []TableCookFieldInfo{
+			{Name: "option", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "meaning", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+		},
+	}
+	tableCookRecords[7] = TableCookInfo{
+		Name: "DecideSchema", Size: 24, Align: 8, NumFields: 2,
+		Fields: []TableCookFieldInfo{
+			{Name: "name", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "questions", Offset: 8, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[8] = TableCookInfo{
 		Name: "Decided", Size: 24, Align: 8, NumFields: 3,
 		Fields: []TableCookFieldInfo{
 			{Name: "value", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
@@ -308,7 +460,7 @@ func init() {
 			{Name: "op", Offset: 16, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 		},
 	}
-	tableCookRecords[3] = TableCookInfo{
+	tableCookRecords[9] = TableCookInfo{
 		Name: "Decision", Size: 96, Align: 8, NumFields: 9,
 		Fields: []TableCookFieldInfo{
 			{Name: "id", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
@@ -322,7 +474,39 @@ func init() {
 			{Name: "usage", Offset: 80, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
-	tableCookRecords[4] = TableCookInfo{
+	tableCookRecords[10] = TableCookInfo{
+		Name: "Example", Size: 40, Align: 8, NumFields: 5,
+		Fields: []TableCookFieldInfo{
+			{Name: "card", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "heading", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "paths", Offset: 16, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "kind", Offset: 24, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "label", Offset: 32, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
+		},
+	}
+	tableCookRecords[11] = TableCookInfo{
+		Name: "Failure", Size: 32, Align: 8, NumFields: 3,
+		Fields: []TableCookFieldInfo{
+			{Name: "pkg", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "test", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "lines", Offset: 16, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[12] = TableCookInfo{
+		Name: "FixedAnswer", Size: 40, Align: 8, NumFields: 3,
+		Fields: []TableCookFieldInfo{
+			{Name: "choice", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "p", Offset: 8, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "noul", Offset: 24, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 32, Storage: TableCookStorageFloat},
+		},
+	}
+	tableCookRecords[13] = TableCookInfo{
+		Name: "FixedTable", Size: 16, Align: 8, NumFields: 1,
+		Fields: []TableCookFieldInfo{
+			{Name: "answers", Offset: 0, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[14] = TableCookInfo{
 		Name: "Frame", Size: 176, Align: 8, NumFields: 21,
 		Fields: []TableCookFieldInfo{
 			{Name: "kind", Offset: 0, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
@@ -348,41 +532,123 @@ func init() {
 			{Name: "decide_gate_preexisting", Offset: 168, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 		},
 	}
-	tableCookRecords[5] = TableCookInfo{
+	tableCookRecords[15] = TableCookInfo{
+		Name: "GateBars", Size: 16, Align: 8, NumFields: 2,
+		Fields: []TableCookFieldInfo{
+			{Name: "flaky", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageFloat},
+			{Name: "pre_existing", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageFloat},
+		},
+	}
+	tableCookRecords[16] = TableCookInfo{
+		Name: "GateLine", Size: 8, Align: 8, NumFields: 1,
+		Fields: []TableCookFieldInfo{
+			{Name: "text", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+		},
+	}
+	tableCookRecords[17] = TableCookInfo{
+		Name: "ImportExport", Size: 16, Align: 8, NumFields: 1,
+		Fields: []TableCookFieldInfo{
+			{Name: "lines", Offset: 0, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[18] = TableCookInfo{
 		Name: "ImportLogLine", Size: 24, Align: 8, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "verb", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 			{Name: "answers", Offset: 8, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
-	tableCookRecords[6] = TableCookInfo{
+	tableCookRecords[19] = TableCookInfo{
 		Name: "Input", Size: 16, Align: 8, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "key", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 			{Name: "value", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 		},
 	}
-	tableCookRecords[7] = TableCookInfo{
+	tableCookRecords[20] = TableCookInfo{
+		Name: "JevAnswer", Size: 64, Align: 8, NumFields: 5,
+		Fields: []TableCookFieldInfo{
+			{Name: "kind", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "choice", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "probabilities", Offset: 16, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "confidence", Offset: 32, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 40, Storage: TableCookStorageFloat},
+			{Name: "noul", Offset: 48, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 56, Storage: TableCookStorageFloat},
+		},
+	}
+	tableCookRecords[21] = TableCookInfo{
+		Name: "JevRequest", Size: 32, Align: 8, NumFields: 3,
+		Fields: []TableCookFieldInfo{
+			{Name: "state", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "model", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "questions", Offset: 16, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[22] = TableCookInfo{
+		Name: "JevResponse", Size: 32, Align: 8, NumFields: 2,
+		Fields: []TableCookFieldInfo{
+			{Name: "answers", Offset: 0, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+			{Name: "usage", Offset: 16, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[23] = TableCookInfo{
 		Name: "JudgmentId", Size: 8, Align: 8, NumFields: 1,
 		Fields: []TableCookFieldInfo{
 			{Name: "id", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 		},
 	}
-	tableCookRecords[8] = TableCookInfo{
+	tableCookRecords[24] = TableCookInfo{
+		Name: "LogExport", Size: 16, Align: 8, NumFields: 1,
+		Fields: []TableCookFieldInfo{
+			{Name: "lines", Offset: 0, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[25] = TableCookInfo{
+		Name: "LogLine", Size: 56, Align: 8, NumFields: 6,
+		Fields: []TableCookFieldInfo{
+			{Name: "card", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "primary", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "table_name", Offset: 16, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "to", Offset: 24, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "removed", Offset: 32, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageBool},
+			{Name: "set", Offset: 40, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[26] = TableCookInfo{
 		Name: "NamedAnswer", Size: 56, Align: 8, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "question", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 			{Name: "answer", Offset: 8, Size: 48, ElemSize: 48, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
-	tableCookRecords[9] = TableCookInfo{
+	tableCookRecords[27] = TableCookInfo{
+		Name: "NamedFixedAnswer", Size: 48, Align: 8, NumFields: 2,
+		Fields: []TableCookFieldInfo{
+			{Name: "question", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "answer", Offset: 8, Size: 40, ElemSize: 40, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[28] = TableCookInfo{
+		Name: "NamedJevAnswer", Size: 72, Align: 8, NumFields: 2,
+		Fields: []TableCookFieldInfo{
+			{Name: "question", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "answer", Offset: 8, Size: 64, ElemSize: 64, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[29] = TableCookInfo{
+		Name: "NamedQuestion", Size: 40, Align: 8, NumFields: 2,
+		Fields: []TableCookFieldInfo{
+			{Name: "name", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "question", Offset: 8, Size: 32, ElemSize: 32, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[30] = TableCookInfo{
 		Name: "OptionP", Size: 16, Align: 8, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "option", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 			{Name: "p", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageFloat},
 		},
 	}
-	tableCookRecords[10] = TableCookInfo{
+	tableCookRecords[31] = TableCookInfo{
 		Name: "Outcome", Size: 32, Align: 8, NumFields: 4,
 		Fields: []TableCookFieldInfo{
 			{Name: "id", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
@@ -391,7 +657,15 @@ func init() {
 			{Name: "at", Offset: 24, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 		},
 	}
-	tableCookRecords[11] = TableCookInfo{
+	tableCookRecords[32] = TableCookInfo{
+		Name: "Question", Size: 32, Align: 8, NumFields: 3,
+		Fields: []TableCookFieldInfo{
+			{Name: "kind", Offset: 0, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
+			{Name: "instructions", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "criteria", Offset: 16, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
+		},
+	}
+	tableCookRecords[33] = TableCookInfo{
 		Name: "RawRecord", Size: 136, Align: 8, NumFields: 6,
 		Fields: []TableCookFieldInfo{
 			{Name: "harness", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
@@ -402,7 +676,7 @@ func init() {
 			{Name: "tokens", Offset: 40, Size: 96, ElemSize: 96, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
-	tableCookRecords[12] = TableCookInfo{
+	tableCookRecords[34] = TableCookInfo{
 		Name: "RawTokens", Size: 96, Align: 8, NumFields: 6,
 		Fields: []TableCookFieldInfo{
 			{Name: "input_tokens", Offset: 0, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 8, Storage: TableCookStorageSigned},
@@ -413,14 +687,14 @@ func init() {
 			{Name: "reasoning_tokens", Offset: 80, Size: 9, ElemSize: 9, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: 88, Storage: TableCookStorageSigned},
 		},
 	}
-	tableCookRecords[13] = TableCookInfo{
+	tableCookRecords[35] = TableCookInfo{
 		Name: "RawUsage", Size: 24, Align: 8, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "version", Offset: 0, Size: 4, ElemSize: 4, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
 			{Name: "records", Offset: 8, Size: 16, ElemSize: 16, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageRecord},
 		},
 	}
-	tableCookRecords[14] = TableCookInfo{
+	tableCookRecords[36] = TableCookInfo{
 		Name: "RecordLine", Size: 32, Align: 8, NumFields: 4,
 		Fields: []TableCookFieldInfo{
 			{Name: "kind", Offset: 0, Size: 1, ElemSize: 1, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageUnsigned},
@@ -429,31 +703,54 @@ func init() {
 			{Name: "as_act", Offset: 24, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 		},
 	}
-	tableCookRecords[15] = TableCookInfo{
+	tableCookRecords[37] = TableCookInfo{
+		Name: "SetEntry", Size: 16, Align: 8, NumFields: 2,
+		Fields: []TableCookFieldInfo{
+			{Name: "key", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+			{Name: "value", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
+		},
+	}
+	tableCookRecords[38] = TableCookInfo{
 		Name: "StagePath", Size: 8, Align: 8, NumFields: 1,
 		Fields: []TableCookFieldInfo{
 			{Name: "path", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: true, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageReference},
 		},
 	}
-	tableCookRecords[16] = TableCookInfo{
+	tableCookRecords[39] = TableCookInfo{
 		Name: "Usage", Size: 16, Align: 8, NumFields: 2,
 		Fields: []TableCookFieldInfo{
 			{Name: "input_tokens", Offset: 0, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
 			{Name: "output_tokens", Offset: 8, Size: 8, ElemSize: 8, IsArray: false, ArrayBound: 1, IsPointer: false, CountOffset: -1, PresentOffset: -1, Storage: TableCookStorageSigned},
 		},
 	}
-	tableCookRecords[1].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[9] }
-	tableCookRecords[3].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[6] }
-	tableCookRecords[3].Fields[7].Record = func() *TableCookInfo { return &tableCookRecords[8] }
-	tableCookRecords[3].Fields[8].Record = func() *TableCookInfo { return &tableCookRecords[16] }
-	tableCookRecords[4].Fields[15].Record = func() *TableCookInfo { return &tableCookRecords[15] }
-	tableCookRecords[5].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[7] }
-	tableCookRecords[8].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[1] }
-	tableCookRecords[11].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[12] }
-	tableCookRecords[13].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[11] }
-	tableCookRecords[14].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[3] }
-	tableCookRecords[14].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[10] }
-	tableCookRecords[14].Fields[3].Record = func() *TableCookInfo { return &tableCookRecords[0] }
+	tableCookRecords[1].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[30] }
+	tableCookRecords[4].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[5] }
+	tableCookRecords[7].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[29] }
+	tableCookRecords[9].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[19] }
+	tableCookRecords[9].Fields[7].Record = func() *TableCookInfo { return &tableCookRecords[26] }
+	tableCookRecords[9].Fields[8].Record = func() *TableCookInfo { return &tableCookRecords[39] }
+	tableCookRecords[11].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[16] }
+	tableCookRecords[12].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[30] }
+	tableCookRecords[13].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[27] }
+	tableCookRecords[14].Fields[15].Record = func() *TableCookInfo { return &tableCookRecords[38] }
+	tableCookRecords[17].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[18] }
+	tableCookRecords[18].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[23] }
+	tableCookRecords[20].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[30] }
+	tableCookRecords[21].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[29] }
+	tableCookRecords[22].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[28] }
+	tableCookRecords[22].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[39] }
+	tableCookRecords[24].Fields[0].Record = func() *TableCookInfo { return &tableCookRecords[25] }
+	tableCookRecords[25].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[37] }
+	tableCookRecords[26].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[1] }
+	tableCookRecords[27].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[12] }
+	tableCookRecords[28].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[20] }
+	tableCookRecords[29].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[32] }
+	tableCookRecords[32].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[6] }
+	tableCookRecords[33].Fields[5].Record = func() *TableCookInfo { return &tableCookRecords[34] }
+	tableCookRecords[35].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[33] }
+	tableCookRecords[36].Fields[1].Record = func() *TableCookInfo { return &tableCookRecords[9] }
+	tableCookRecords[36].Fields[2].Record = func() *TableCookInfo { return &tableCookRecords[31] }
+	tableCookRecords[36].Fields[3].Record = func() *TableCookInfo { return &tableCookRecords[0] }
 }
 
 // UsageCook is Usage's cook: a pointer and a length, and then the root where it
@@ -557,7 +854,7 @@ func UsageAt(slot *int64, arena ...*TableArena) *UsageRow {
 
 // Type is Usage's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c UsageCook) Type() *TableCookInfo { return &tableCookRecords[16] }
+func (c UsageCook) Type() *TableCookInfo { return &tableCookRecords[39] }
 
 // OptionPCook is OptionP's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -660,7 +957,7 @@ func OptionPAt(slot *int64, arena ...*TableArena) *OptionPRow {
 
 // Type is OptionP's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c OptionPCook) Type() *TableCookInfo { return &tableCookRecords[9] }
+func (c OptionPCook) Type() *TableCookInfo { return &tableCookRecords[30] }
 
 // AnswerCook is Answer's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -866,7 +1163,7 @@ func NamedAnswerAt(slot *int64, arena ...*TableArena) *NamedAnswerRow {
 
 // Type is NamedAnswer's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c NamedAnswerCook) Type() *TableCookInfo { return &tableCookRecords[8] }
+func (c NamedAnswerCook) Type() *TableCookInfo { return &tableCookRecords[26] }
 
 // InputCook is Input's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -969,7 +1266,7 @@ func InputAt(slot *int64, arena ...*TableArena) *InputRow {
 
 // Type is Input's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c InputCook) Type() *TableCookInfo { return &tableCookRecords[6] }
+func (c InputCook) Type() *TableCookInfo { return &tableCookRecords[19] }
 
 // DecidedCook is Decided's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1072,7 +1369,2273 @@ func DecidedAt(slot *int64, arena ...*TableArena) *DecidedRow {
 
 // Type is Decided's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c DecidedCook) Type() *TableCookInfo { return &tableCookRecords[2] }
+func (c DecidedCook) Type() *TableCookInfo { return &tableCookRecords[8] }
+
+// CriterionCook is Criterion's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — CriterionOpen, CriterionAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type CriterionCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c CriterionCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c CriterionCook) RootSize() int64        { return 16 }
+func (c CriterionCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c CriterionCook) Root() *CriterionRow { return (*CriterionRow)(c.Region) }
+
+// CriterionOpen is the bool convenience for the typed Open error on the handle.
+func CriterionOpen(cook *CriterionCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *CriterionCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = CriterionCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 16 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// CriterionAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func CriterionAt(slot *int64, arena ...*TableArena) *CriterionRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*CriterionRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*CriterionRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is Criterion's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c CriterionCook) Type() *TableCookInfo { return &tableCookRecords[6] }
+
+// QuestionCook is Question's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — QuestionOpen, QuestionAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type QuestionCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c QuestionCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c QuestionCook) RootSize() int64        { return 32 }
+func (c QuestionCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c QuestionCook) Root() *QuestionRow { return (*QuestionRow)(c.Region) }
+
+// QuestionOpen is the bool convenience for the typed Open error on the handle.
+func QuestionOpen(cook *QuestionCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *QuestionCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = QuestionCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 32 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// QuestionAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func QuestionAt(slot *int64, arena ...*TableArena) *QuestionRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*QuestionRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*QuestionRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is Question's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c QuestionCook) Type() *TableCookInfo { return &tableCookRecords[32] }
+
+// NamedQuestionCook is NamedQuestion's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — NamedQuestionOpen, NamedQuestionAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type NamedQuestionCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c NamedQuestionCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c NamedQuestionCook) RootSize() int64        { return 40 }
+func (c NamedQuestionCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c NamedQuestionCook) Root() *NamedQuestionRow { return (*NamedQuestionRow)(c.Region) }
+
+// NamedQuestionOpen is the bool convenience for the typed Open error on the handle.
+func NamedQuestionOpen(cook *NamedQuestionCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *NamedQuestionCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = NamedQuestionCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 40 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// NamedQuestionAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func NamedQuestionAt(slot *int64, arena ...*TableArena) *NamedQuestionRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*NamedQuestionRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*NamedQuestionRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is NamedQuestion's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c NamedQuestionCook) Type() *TableCookInfo { return &tableCookRecords[29] }
+
+// DecideSchemaCook is DecideSchema's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — DecideSchemaOpen, DecideSchemaAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type DecideSchemaCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c DecideSchemaCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c DecideSchemaCook) RootSize() int64        { return 24 }
+func (c DecideSchemaCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c DecideSchemaCook) Root() *DecideSchemaRow { return (*DecideSchemaRow)(c.Region) }
+
+// DecideSchemaOpen is the bool convenience for the typed Open error on the handle.
+func DecideSchemaOpen(cook *DecideSchemaCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *DecideSchemaCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = DecideSchemaCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 24 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// DecideSchemaAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func DecideSchemaAt(slot *int64, arena ...*TableArena) *DecideSchemaRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*DecideSchemaRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*DecideSchemaRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is DecideSchema's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c DecideSchemaCook) Type() *TableCookInfo { return &tableCookRecords[7] }
+
+// JevRequestCook is JevRequest's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — JevRequestOpen, JevRequestAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type JevRequestCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c JevRequestCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c JevRequestCook) RootSize() int64        { return 32 }
+func (c JevRequestCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c JevRequestCook) Root() *JevRequestRow { return (*JevRequestRow)(c.Region) }
+
+// JevRequestOpen is the bool convenience for the typed Open error on the handle.
+func JevRequestOpen(cook *JevRequestCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *JevRequestCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = JevRequestCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 32 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// JevRequestAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func JevRequestAt(slot *int64, arena ...*TableArena) *JevRequestRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*JevRequestRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*JevRequestRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is JevRequest's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c JevRequestCook) Type() *TableCookInfo { return &tableCookRecords[21] }
+
+// JevAnswerCook is JevAnswer's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — JevAnswerOpen, JevAnswerAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type JevAnswerCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c JevAnswerCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c JevAnswerCook) RootSize() int64        { return 64 }
+func (c JevAnswerCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c JevAnswerCook) Root() *JevAnswerRow { return (*JevAnswerRow)(c.Region) }
+
+// JevAnswerOpen is the bool convenience for the typed Open error on the handle.
+func JevAnswerOpen(cook *JevAnswerCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *JevAnswerCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = JevAnswerCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 64 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// JevAnswerAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func JevAnswerAt(slot *int64, arena ...*TableArena) *JevAnswerRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*JevAnswerRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*JevAnswerRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is JevAnswer's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c JevAnswerCook) Type() *TableCookInfo { return &tableCookRecords[20] }
+
+// NamedJevAnswerCook is NamedJevAnswer's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — NamedJevAnswerOpen, NamedJevAnswerAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type NamedJevAnswerCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c NamedJevAnswerCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c NamedJevAnswerCook) RootSize() int64        { return 72 }
+func (c NamedJevAnswerCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c NamedJevAnswerCook) Root() *NamedJevAnswerRow { return (*NamedJevAnswerRow)(c.Region) }
+
+// NamedJevAnswerOpen is the bool convenience for the typed Open error on the handle.
+func NamedJevAnswerOpen(cook *NamedJevAnswerCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *NamedJevAnswerCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = NamedJevAnswerCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 72 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// NamedJevAnswerAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func NamedJevAnswerAt(slot *int64, arena ...*TableArena) *NamedJevAnswerRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*NamedJevAnswerRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*NamedJevAnswerRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is NamedJevAnswer's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c NamedJevAnswerCook) Type() *TableCookInfo { return &tableCookRecords[28] }
+
+// JevResponseCook is JevResponse's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — JevResponseOpen, JevResponseAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type JevResponseCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c JevResponseCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c JevResponseCook) RootSize() int64        { return 32 }
+func (c JevResponseCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c JevResponseCook) Root() *JevResponseRow { return (*JevResponseRow)(c.Region) }
+
+// JevResponseOpen is the bool convenience for the typed Open error on the handle.
+func JevResponseOpen(cook *JevResponseCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *JevResponseCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = JevResponseCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 32 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// JevResponseAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func JevResponseAt(slot *int64, arena ...*TableArena) *JevResponseRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*JevResponseRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*JevResponseRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is JevResponse's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c JevResponseCook) Type() *TableCookInfo { return &tableCookRecords[22] }
+
+// FixedAnswerCook is FixedAnswer's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — FixedAnswerOpen, FixedAnswerAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type FixedAnswerCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c FixedAnswerCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c FixedAnswerCook) RootSize() int64        { return 40 }
+func (c FixedAnswerCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c FixedAnswerCook) Root() *FixedAnswerRow { return (*FixedAnswerRow)(c.Region) }
+
+// FixedAnswerOpen is the bool convenience for the typed Open error on the handle.
+func FixedAnswerOpen(cook *FixedAnswerCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *FixedAnswerCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = FixedAnswerCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 40 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// FixedAnswerAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func FixedAnswerAt(slot *int64, arena ...*TableArena) *FixedAnswerRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*FixedAnswerRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*FixedAnswerRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is FixedAnswer's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c FixedAnswerCook) Type() *TableCookInfo { return &tableCookRecords[12] }
+
+// NamedFixedAnswerCook is NamedFixedAnswer's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — NamedFixedAnswerOpen, NamedFixedAnswerAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type NamedFixedAnswerCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c NamedFixedAnswerCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c NamedFixedAnswerCook) RootSize() int64        { return 48 }
+func (c NamedFixedAnswerCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c NamedFixedAnswerCook) Root() *NamedFixedAnswerRow { return (*NamedFixedAnswerRow)(c.Region) }
+
+// NamedFixedAnswerOpen is the bool convenience for the typed Open error on the handle.
+func NamedFixedAnswerOpen(cook *NamedFixedAnswerCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *NamedFixedAnswerCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = NamedFixedAnswerCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 48 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// NamedFixedAnswerAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func NamedFixedAnswerAt(slot *int64, arena ...*TableArena) *NamedFixedAnswerRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*NamedFixedAnswerRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*NamedFixedAnswerRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is NamedFixedAnswer's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c NamedFixedAnswerCook) Type() *TableCookInfo { return &tableCookRecords[27] }
+
+// FixedTableCook is FixedTable's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — FixedTableOpen, FixedTableAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type FixedTableCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c FixedTableCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c FixedTableCook) RootSize() int64        { return 16 }
+func (c FixedTableCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c FixedTableCook) Root() *FixedTableRow { return (*FixedTableRow)(c.Region) }
+
+// FixedTableOpen is the bool convenience for the typed Open error on the handle.
+func FixedTableOpen(cook *FixedTableCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *FixedTableCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = FixedTableCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 16 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// FixedTableAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func FixedTableAt(slot *int64, arena ...*TableArena) *FixedTableRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*FixedTableRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*FixedTableRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is FixedTable's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c FixedTableCook) Type() *TableCookInfo { return &tableCookRecords[13] }
+
+// ExampleCook is Example's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — ExampleOpen, ExampleAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type ExampleCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c ExampleCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c ExampleCook) RootSize() int64        { return 40 }
+func (c ExampleCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c ExampleCook) Root() *ExampleRow { return (*ExampleRow)(c.Region) }
+
+// ExampleOpen is the bool convenience for the typed Open error on the handle.
+func ExampleOpen(cook *ExampleCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *ExampleCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = ExampleCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 40 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// ExampleAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func ExampleAt(slot *int64, arena ...*TableArena) *ExampleRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*ExampleRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*ExampleRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is Example's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c ExampleCook) Type() *TableCookInfo { return &tableCookRecords[10] }
+
+// SetEntryCook is SetEntry's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — SetEntryOpen, SetEntryAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type SetEntryCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c SetEntryCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c SetEntryCook) RootSize() int64        { return 16 }
+func (c SetEntryCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c SetEntryCook) Root() *SetEntryRow { return (*SetEntryRow)(c.Region) }
+
+// SetEntryOpen is the bool convenience for the typed Open error on the handle.
+func SetEntryOpen(cook *SetEntryCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *SetEntryCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = SetEntryCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 16 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// SetEntryAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func SetEntryAt(slot *int64, arena ...*TableArena) *SetEntryRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*SetEntryRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*SetEntryRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is SetEntry's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c SetEntryCook) Type() *TableCookInfo { return &tableCookRecords[37] }
+
+// LogLineCook is LogLine's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — LogLineOpen, LogLineAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type LogLineCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c LogLineCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c LogLineCook) RootSize() int64        { return 56 }
+func (c LogLineCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c LogLineCook) Root() *LogLineRow { return (*LogLineRow)(c.Region) }
+
+// LogLineOpen is the bool convenience for the typed Open error on the handle.
+func LogLineOpen(cook *LogLineCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *LogLineCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = LogLineCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 56 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// LogLineAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func LogLineAt(slot *int64, arena ...*TableArena) *LogLineRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*LogLineRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*LogLineRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is LogLine's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c LogLineCook) Type() *TableCookInfo { return &tableCookRecords[25] }
+
+// LogExportCook is LogExport's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — LogExportOpen, LogExportAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type LogExportCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c LogExportCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c LogExportCook) RootSize() int64        { return 16 }
+func (c LogExportCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c LogExportCook) Root() *LogExportRow { return (*LogExportRow)(c.Region) }
+
+// LogExportOpen is the bool convenience for the typed Open error on the handle.
+func LogExportOpen(cook *LogExportCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *LogExportCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = LogExportCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 16 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// LogExportAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func LogExportAt(slot *int64, arena ...*TableArena) *LogExportRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*LogExportRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*LogExportRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is LogExport's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c LogExportCook) Type() *TableCookInfo { return &tableCookRecords[24] }
+
+// BarsCook is Bars's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — BarsOpen, BarsAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type BarsCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c BarsCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c BarsCook) RootSize() int64        { return 16 }
+func (c BarsCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c BarsCook) Root() *BarsRow { return (*BarsRow)(c.Region) }
+
+// BarsOpen is the bool convenience for the typed Open error on the handle.
+func BarsOpen(cook *BarsCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *BarsCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = BarsCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 16 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// BarsAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func BarsAt(slot *int64, arena ...*TableArena) *BarsRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*BarsRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*BarsRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is Bars's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c BarsCook) Type() *TableCookInfo { return &tableCookRecords[2] }
+
+// GateBarsCook is GateBars's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — GateBarsOpen, GateBarsAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type GateBarsCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c GateBarsCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c GateBarsCook) RootSize() int64        { return 16 }
+func (c GateBarsCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c GateBarsCook) Root() *GateBarsRow { return (*GateBarsRow)(c.Region) }
+
+// GateBarsOpen is the bool convenience for the typed Open error on the handle.
+func GateBarsOpen(cook *GateBarsCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *GateBarsCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = GateBarsCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 16 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// GateBarsAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func GateBarsAt(slot *int64, arena ...*TableArena) *GateBarsRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*GateBarsRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*GateBarsRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is GateBars's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c GateBarsCook) Type() *TableCookInfo { return &tableCookRecords[15] }
+
+// GateLineCook is GateLine's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — GateLineOpen, GateLineAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type GateLineCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c GateLineCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c GateLineCook) RootSize() int64        { return 8 }
+func (c GateLineCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c GateLineCook) Root() *GateLineRow { return (*GateLineRow)(c.Region) }
+
+// GateLineOpen is the bool convenience for the typed Open error on the handle.
+func GateLineOpen(cook *GateLineCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *GateLineCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = GateLineCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 8 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// GateLineAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func GateLineAt(slot *int64, arena ...*TableArena) *GateLineRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*GateLineRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*GateLineRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is GateLine's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c GateLineCook) Type() *TableCookInfo { return &tableCookRecords[16] }
+
+// FailureCook is Failure's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — FailureOpen, FailureAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type FailureCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c FailureCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c FailureCook) RootSize() int64        { return 32 }
+func (c FailureCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c FailureCook) Root() *FailureRow { return (*FailureRow)(c.Region) }
+
+// FailureOpen is the bool convenience for the typed Open error on the handle.
+func FailureOpen(cook *FailureCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *FailureCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = FailureCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 32 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// FailureAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func FailureAt(slot *int64, arena ...*TableArena) *FailureRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*FailureRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*FailureRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is Failure's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c FailureCook) Type() *TableCookInfo { return &tableCookRecords[11] }
+
+// ChosenCook is Chosen's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — ChosenOpen, ChosenAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type ChosenCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c ChosenCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c ChosenCook) RootSize() int64        { return 48 }
+func (c ChosenCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c ChosenCook) Root() *ChosenRow { return (*ChosenRow)(c.Region) }
+
+// ChosenOpen is the bool convenience for the typed Open error on the handle.
+func ChosenOpen(cook *ChosenCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *ChosenCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = ChosenCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 48 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// ChosenAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func ChosenAt(slot *int64, arena ...*TableArena) *ChosenRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*ChosenRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*ChosenRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is Chosen's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c ChosenCook) Type() *TableCookInfo { return &tableCookRecords[3] }
+
+// ClusterCardCook is ClusterCard's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — ClusterCardOpen, ClusterCardAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type ClusterCardCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c ClusterCardCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c ClusterCardCook) RootSize() int64        { return 8 }
+func (c ClusterCardCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c ClusterCardCook) Root() *ClusterCardRow { return (*ClusterCardRow)(c.Region) }
+
+// ClusterCardOpen is the bool convenience for the typed Open error on the handle.
+func ClusterCardOpen(cook *ClusterCardCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *ClusterCardCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = ClusterCardCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 8 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// ClusterCardAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func ClusterCardAt(slot *int64, arena ...*TableArena) *ClusterCardRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*ClusterCardRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*ClusterCardRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is ClusterCard's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c ClusterCardCook) Type() *TableCookInfo { return &tableCookRecords[5] }
+
+// ClusterCook is Cluster's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — ClusterOpen, ClusterAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type ClusterCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c ClusterCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c ClusterCook) RootSize() int64        { return 32 }
+func (c ClusterCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c ClusterCook) Root() *ClusterRow { return (*ClusterRow)(c.Region) }
+
+// ClusterOpen is the bool convenience for the typed Open error on the handle.
+func ClusterOpen(cook *ClusterCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *ClusterCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = ClusterCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 32 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// ClusterAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func ClusterAt(slot *int64, arena ...*TableArena) *ClusterRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*ClusterRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*ClusterRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is Cluster's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c ClusterCook) Type() *TableCookInfo { return &tableCookRecords[4] }
 
 // DecisionCook is Decision's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1175,7 +3738,7 @@ func DecisionAt(slot *int64, arena ...*TableArena) *DecisionRow {
 
 // Type is Decision's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c DecisionCook) Type() *TableCookInfo { return &tableCookRecords[3] }
+func (c DecisionCook) Type() *TableCookInfo { return &tableCookRecords[9] }
 
 // OutcomeCook is Outcome's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1278,7 +3841,7 @@ func OutcomeAt(slot *int64, arena ...*TableArena) *OutcomeRow {
 
 // Type is Outcome's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c OutcomeCook) Type() *TableCookInfo { return &tableCookRecords[10] }
+func (c OutcomeCook) Type() *TableCookInfo { return &tableCookRecords[31] }
 
 // ActCook is Act's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1484,7 +4047,7 @@ func RecordLineAt(slot *int64, arena ...*TableArena) *RecordLineRow {
 
 // Type is RecordLine's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c RecordLineCook) Type() *TableCookInfo { return &tableCookRecords[14] }
+func (c RecordLineCook) Type() *TableCookInfo { return &tableCookRecords[36] }
 
 // JudgmentIdCook is JudgmentId's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1587,7 +4150,7 @@ func JudgmentIdAt(slot *int64, arena ...*TableArena) *JudgmentIdRow {
 
 // Type is JudgmentId's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c JudgmentIdCook) Type() *TableCookInfo { return &tableCookRecords[7] }
+func (c JudgmentIdCook) Type() *TableCookInfo { return &tableCookRecords[23] }
 
 // ImportLogLineCook is ImportLogLine's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1690,7 +4253,110 @@ func ImportLogLineAt(slot *int64, arena ...*TableArena) *ImportLogLineRow {
 
 // Type is ImportLogLine's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c ImportLogLineCook) Type() *TableCookInfo { return &tableCookRecords[5] }
+func (c ImportLogLineCook) Type() *TableCookInfo { return &tableCookRecords[18] }
+
+// ImportExportCook is ImportExport's cook: a pointer and a length, and then the root where it
+// lies. Opening one is a HEADER MATCH and no copy; a reference is one add
+// (mas-bandwidth/schema docs/SPEC-TABLES.md §7).
+//
+// `Cook` is a CLAIMED suffix (§11). C++ spells the same claimed verbs as free
+// functions — ImportExportOpen, ImportExportAt — and so does Go, because Go has free functions;
+// what is a MEMBER here is only what §11 leaves a language free to make one.
+//
+// THE MEMORY IS THE CONSUMER'S. Nothing here allocates, nothing here copies and
+// nothing here pins: the region must stay put and stay aligned for as long as
+// this handle or anything reached through it is used.
+type ImportExportCook struct {
+	Region       unsafe.Pointer // the DATA part's base: the root sits at offset zero
+	RegionLength int64          // data_length, as the header framed it
+}
+
+// §7.1's constants, so a consumer reading this file has the facts and not a
+// description of them. They are METHODS because §11 leaves a language whose
+// accessors are members free to spell them that way, and a package constant
+// per table per fact would claim names §11 does not.
+func (c ImportExportCook) RegionAlignment() int64 { return 8 } // the greatest alignof in the region, floor eight
+func (c ImportExportCook) RootSize() int64        { return 16 }
+func (c ImportExportCook) RootAlign() int64       { return 8 }
+
+// Root is the root record at the region's base. It is a POINTER and not a
+// copy: a cooked graph is walked by adding deltas to slot addresses.
+func (c ImportExportCook) Root() *ImportExportRow { return (*ImportExportRow)(c.Region) }
+
+// ImportExportOpen is the bool convenience for the typed Open error on the handle.
+func ImportExportOpen(cook *ImportExportCook, base unsafe.Pointer, length int64) bool {
+	return cook.Open(base, length) == nil
+}
+
+// Open checks the header in SPEC §7 order, bytewise until base alignment is
+// established. A successful match points at the region and allocates nothing.
+func (cook *ImportExportCook) Open(base unsafe.Pointer, length int64) error {
+	*cook = ImportExportCook{}
+	if base == nil {
+		return TableRefuseUnalignedBase
+	}
+	if length < 64 {
+		return TableRefuseTruncated
+	}
+	header := unsafe.Slice((*byte)(base), 64)
+	magic := binary.NativeEndian.Uint64(header)
+	if magic != TableCookMagic {
+		if magic == 0x5343484d434f4f4b {
+			return TableRefuseForeignOrder
+		}
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[16:]) != TableCookByteOrder {
+		return TableRefuseNotACook
+	}
+	if binary.NativeEndian.Uint64(header[8:]) != BuildVersion {
+		return TableRefuseWrongBuildVersion
+	}
+	if binary.NativeEndian.Uint64(header[48:]) != 0 || binary.NativeEndian.Uint64(header[56:]) != 0 {
+		return TableRefuseReservedNotZero
+	}
+	alignment := binary.NativeEndian.Uint64(header[40:])
+	if alignment < 8 || alignment > 64 || alignment&(alignment-1) != 0 || alignment%8 != 0 {
+		return TableRefuseBadAlignment
+	}
+	bytes := uint64(length)
+	dataOffset := (uint64(64) + alignment - 1) &^ (alignment - 1)
+	dataLength := binary.NativeEndian.Uint64(header[24:])
+	attribution := binary.NativeEndian.Uint64(header[32:])
+	if dataOffset > bytes || dataLength > bytes-dataOffset || attribution != bytes-dataOffset-dataLength || dataLength < 16 {
+		return TableRefuseTruncated
+	}
+	if uint64(uintptr(base))%alignment != 0 {
+		return TableRefuseUnalignedBase
+	}
+	cook.Region = unsafe.Add(base, uintptr(dataOffset))
+	cook.RegionLength = int64(dataLength)
+	return nil
+}
+
+// ImportExportAt dereferences a reference, and it is the same call in a locked region
+// and an opened cook because they are the same encoding (§6.3): the slot is
+// eight bytes, SIGNED, self-relative from the SLOT'S OWN ADDRESS, so a deref
+// needs no base pointer and no bounds test, and NULL IS A DELTA OF ZERO.
+// Nothing about this call is the cook's: it is what a region reference is, and
+// a cook is a region written verbatim.
+//
+// It takes the SLOT and not its value, because a self-relative delta means
+// nothing without the address it is relative to.
+func ImportExportAt(slot *int64, arena ...*TableArena) *ImportExportRow {
+	if len(arena) > 0 && arena[0] != nil {
+		return (*ImportExportRow)(arena[0].At(*slot))
+	}
+	delta := *slot
+	if delta == 0 {
+		return nil
+	}
+	return (*ImportExportRow)(unsafe.Add(unsafe.Pointer(slot), uintptr(delta)))
+}
+
+// Type is ImportExport's cooked-record descriptor, the head of the graph a reflective
+// walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
+func (c ImportExportCook) Type() *TableCookInfo { return &tableCookRecords[17] }
 
 // RawTokensCook is RawTokens's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1793,7 +4459,7 @@ func RawTokensAt(slot *int64, arena ...*TableArena) *RawTokensRow {
 
 // Type is RawTokens's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c RawTokensCook) Type() *TableCookInfo { return &tableCookRecords[12] }
+func (c RawTokensCook) Type() *TableCookInfo { return &tableCookRecords[34] }
 
 // RawRecordCook is RawRecord's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1896,7 +4562,7 @@ func RawRecordAt(slot *int64, arena ...*TableArena) *RawRecordRow {
 
 // Type is RawRecord's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c RawRecordCook) Type() *TableCookInfo { return &tableCookRecords[11] }
+func (c RawRecordCook) Type() *TableCookInfo { return &tableCookRecords[33] }
 
 // RawUsageCook is RawUsage's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -1999,7 +4665,7 @@ func RawUsageAt(slot *int64, arena ...*TableArena) *RawUsageRow {
 
 // Type is RawUsage's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c RawUsageCook) Type() *TableCookInfo { return &tableCookRecords[13] }
+func (c RawUsageCook) Type() *TableCookInfo { return &tableCookRecords[35] }
 
 // StagePathCook is StagePath's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -2102,7 +4768,7 @@ func StagePathAt(slot *int64, arena ...*TableArena) *StagePathRow {
 
 // Type is StagePath's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c StagePathCook) Type() *TableCookInfo { return &tableCookRecords[15] }
+func (c StagePathCook) Type() *TableCookInfo { return &tableCookRecords[38] }
 
 // FrameCook is Frame's cook: a pointer and a length, and then the root where it
 // lies. Opening one is a HEADER MATCH and no copy; a reference is one add
@@ -2205,9 +4871,9 @@ func FrameAt(slot *int64, arena ...*TableArena) *FrameRow {
 
 // Type is Frame's cooked-record descriptor, the head of the graph a reflective
 // walk follows (mas-bandwidth/schema docs/SPEC-TABLES.md §8).
-func (c FrameCook) Type() *TableCookInfo { return &tableCookRecords[4] }
+func (c FrameCook) Type() *TableCookInfo { return &tableCookRecords[14] }
 
-const tableCookBuildVersion uint64 = 0x23d7e97c4116d1b2
+const tableCookBuildVersion uint64 = 0x430e16b8606c9494
 
 // TableByteOrder selects the target order, independently of the writing host.
 type TableByteOrder uint8
@@ -2546,6 +5212,278 @@ func DecidedCookFrom(value *Decided, buffer []byte, order TableByteOrder, contex
 	arena, allocator := tableWriteOptions(context)
 	return tableCookRegion(unsafe.Pointer(value), DecidedTableType(), buffer, order, false, arena, allocator) >= 0
 }
+func CriterionCookMeasure(value *Criterion, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), CriterionTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func CriterionCookMeasureReason(value *Criterion, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), CriterionTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func CriterionCookFrom(value *Criterion, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), CriterionTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func QuestionCookMeasure(value *Question, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), QuestionTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func QuestionCookMeasureReason(value *Question, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), QuestionTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func QuestionCookFrom(value *Question, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), QuestionTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func NamedQuestionCookMeasure(value *NamedQuestion, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), NamedQuestionTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func NamedQuestionCookMeasureReason(value *NamedQuestion, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), NamedQuestionTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func NamedQuestionCookFrom(value *NamedQuestion, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), NamedQuestionTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func DecideSchemaCookMeasure(value *DecideSchema, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), DecideSchemaTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func DecideSchemaCookMeasureReason(value *DecideSchema, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), DecideSchemaTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func DecideSchemaCookFrom(value *DecideSchema, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), DecideSchemaTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func JevRequestCookMeasure(value *JevRequest, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), JevRequestTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func JevRequestCookMeasureReason(value *JevRequest, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), JevRequestTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func JevRequestCookFrom(value *JevRequest, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), JevRequestTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func JevAnswerCookMeasure(value *JevAnswer, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), JevAnswerTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func JevAnswerCookMeasureReason(value *JevAnswer, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), JevAnswerTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func JevAnswerCookFrom(value *JevAnswer, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), JevAnswerTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func NamedJevAnswerCookMeasure(value *NamedJevAnswer, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), NamedJevAnswerTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func NamedJevAnswerCookMeasureReason(value *NamedJevAnswer, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), NamedJevAnswerTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func NamedJevAnswerCookFrom(value *NamedJevAnswer, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), NamedJevAnswerTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func JevResponseCookMeasure(value *JevResponse, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), JevResponseTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func JevResponseCookMeasureReason(value *JevResponse, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), JevResponseTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func JevResponseCookFrom(value *JevResponse, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), JevResponseTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func FixedAnswerCookMeasure(value *FixedAnswer, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), FixedAnswerTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func FixedAnswerCookMeasureReason(value *FixedAnswer, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), FixedAnswerTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func FixedAnswerCookFrom(value *FixedAnswer, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), FixedAnswerTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func NamedFixedAnswerCookMeasure(value *NamedFixedAnswer, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), NamedFixedAnswerTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func NamedFixedAnswerCookMeasureReason(value *NamedFixedAnswer, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), NamedFixedAnswerTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func NamedFixedAnswerCookFrom(value *NamedFixedAnswer, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), NamedFixedAnswerTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func FixedTableCookMeasure(value *FixedTable, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), FixedTableTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func FixedTableCookMeasureReason(value *FixedTable, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), FixedTableTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func FixedTableCookFrom(value *FixedTable, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), FixedTableTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func ExampleCookMeasure(value *Example, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), ExampleTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func ExampleCookMeasureReason(value *Example, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), ExampleTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func ExampleCookFrom(value *Example, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), ExampleTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func SetEntryCookMeasure(value *SetEntry, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), SetEntryTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func SetEntryCookMeasureReason(value *SetEntry, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), SetEntryTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func SetEntryCookFrom(value *SetEntry, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), SetEntryTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func LogLineCookMeasure(value *LogLine, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), LogLineTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func LogLineCookMeasureReason(value *LogLine, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), LogLineTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func LogLineCookFrom(value *LogLine, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), LogLineTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func LogExportCookMeasure(value *LogExport, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), LogExportTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func LogExportCookMeasureReason(value *LogExport, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), LogExportTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func LogExportCookFrom(value *LogExport, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), LogExportTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func BarsCookMeasure(value *Bars) int64                { return 96 }
+func BarsCookMeasureReason(value *Bars) (int64, error) { return BarsCookMeasure(value), nil }
+func BarsCookFrom(value *Bars, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), BarsTableType(), buffer, order)
+}
+func GateBarsCookMeasure(value *GateBars) int64 { return 96 }
+func GateBarsCookMeasureReason(value *GateBars) (int64, error) {
+	return GateBarsCookMeasure(value), nil
+}
+func GateBarsCookFrom(value *GateBars, buffer []byte, order TableByteOrder) bool {
+	return tableCookFixed(unsafe.Pointer(value), GateBarsTableType(), buffer, order)
+}
+func GateLineCookMeasure(value *GateLine, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), GateLineTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func GateLineCookMeasureReason(value *GateLine, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), GateLineTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func GateLineCookFrom(value *GateLine, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), GateLineTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func FailureCookMeasure(value *Failure, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), FailureTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func FailureCookMeasureReason(value *Failure, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), FailureTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func FailureCookFrom(value *Failure, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), FailureTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func ChosenCookMeasure(value *Chosen, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), ChosenTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func ChosenCookMeasureReason(value *Chosen, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), ChosenTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func ChosenCookFrom(value *Chosen, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), ChosenTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func ClusterCardCookMeasure(value *ClusterCard, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), ClusterCardTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func ClusterCardCookMeasureReason(value *ClusterCard, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), ClusterCardTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func ClusterCardCookFrom(value *ClusterCard, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), ClusterCardTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func ClusterCookMeasure(value *Cluster, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), ClusterTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func ClusterCookMeasureReason(value *Cluster, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), ClusterTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func ClusterCookFrom(value *Cluster, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), ClusterTableType(), buffer, order, false, arena, allocator) >= 0
+}
 func DecisionCookMeasure(value *Decision, context ...TableWriteContext) int64 {
 	arena, allocator := tableWriteOptions(context)
 	return tableCookRegion(unsafe.Pointer(value), DecisionTableType(), nil, TableByteOrderLittle, true, arena, allocator)
@@ -2623,6 +5561,19 @@ func ImportLogLineCookMeasureReason(value *ImportLogLine, context ...TableWriteC
 func ImportLogLineCookFrom(value *ImportLogLine, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
 	arena, allocator := tableWriteOptions(context)
 	return tableCookRegion(unsafe.Pointer(value), ImportLogLineTableType(), buffer, order, false, arena, allocator) >= 0
+}
+func ImportExportCookMeasure(value *ImportExport, context ...TableWriteContext) int64 {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), ImportExportTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+}
+func ImportExportCookMeasureReason(value *ImportExport, context ...TableWriteContext) (int64, error) {
+	arena, allocator := tableWriteOptions(context)
+	size, reason := tableCookRegionReason(unsafe.Pointer(value), ImportExportTableType(), nil, TableByteOrderLittle, true, arena, allocator)
+	return size, tableRefuseError(reason)
+}
+func ImportExportCookFrom(value *ImportExport, buffer []byte, order TableByteOrder, context ...TableWriteContext) bool {
+	arena, allocator := tableWriteOptions(context)
+	return tableCookRegion(unsafe.Pointer(value), ImportExportTableType(), buffer, order, false, arena, allocator) >= 0
 }
 func RawTokensCookMeasure(value *RawTokens) int64 { return 176 }
 func RawTokensCookMeasureReason(value *RawTokens) (int64, error) {

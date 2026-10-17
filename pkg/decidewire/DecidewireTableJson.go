@@ -3466,6 +3466,1600 @@ func DecidedLoadText(text string, report *TableReport) (*Decided, error) {
 	return builder.AsConst(), nil
 }
 
+func CriterionFromJson(builder *CriterionBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), CriterionTableType(), &builder.Main, text, report)
+}
+func CriterionToJsonMeasure(value *Criterion, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), CriterionTableType(), nil, allocator...)
+}
+func CriterionToJson(value *Criterion, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), CriterionTableType(), buffer, allocator...)
+}
+
+// CriterionSaveText returns the base64 of Criterion's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context CriterionSave takes.
+func CriterionSaveText(value *Criterion, context ...TableWriteContext) (string, error) {
+	n, err := CriterionMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if CriterionSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// CriterionLoadText reads one Criterion from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as CriterionReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func CriterionLoadText(text string, report *TableReport) (*Criterion, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder CriterionBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := CriterionLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func QuestionFromJson(builder *QuestionBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), QuestionTableType(), &builder.Main, text, report)
+}
+func QuestionToJsonMeasure(value *Question, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), QuestionTableType(), nil, allocator...)
+}
+func QuestionToJson(value *Question, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), QuestionTableType(), buffer, allocator...)
+}
+
+// QuestionSaveText returns the base64 of Question's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context QuestionSave takes.
+func QuestionSaveText(value *Question, context ...TableWriteContext) (string, error) {
+	n, err := QuestionMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if QuestionSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// QuestionLoadText reads one Question from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as QuestionReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func QuestionLoadText(text string, report *TableReport) (*Question, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder QuestionBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := QuestionLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func NamedQuestionFromJson(builder *NamedQuestionBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), NamedQuestionTableType(), &builder.Main, text, report)
+}
+func NamedQuestionToJsonMeasure(value *NamedQuestion, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), NamedQuestionTableType(), nil, allocator...)
+}
+func NamedQuestionToJson(value *NamedQuestion, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), NamedQuestionTableType(), buffer, allocator...)
+}
+
+// NamedQuestionSaveText returns the base64 of NamedQuestion's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context NamedQuestionSave takes.
+func NamedQuestionSaveText(value *NamedQuestion, context ...TableWriteContext) (string, error) {
+	n, err := NamedQuestionMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if NamedQuestionSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// NamedQuestionLoadText reads one NamedQuestion from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as NamedQuestionReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func NamedQuestionLoadText(text string, report *TableReport) (*NamedQuestion, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder NamedQuestionBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := NamedQuestionLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func DecideSchemaFromJson(builder *DecideSchemaBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), DecideSchemaTableType(), &builder.Main, text, report)
+}
+func DecideSchemaToJsonMeasure(value *DecideSchema, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), DecideSchemaTableType(), nil, allocator...)
+}
+func DecideSchemaToJson(value *DecideSchema, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), DecideSchemaTableType(), buffer, allocator...)
+}
+
+// DecideSchemaSaveText returns the base64 of DecideSchema's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context DecideSchemaSave takes.
+func DecideSchemaSaveText(value *DecideSchema, context ...TableWriteContext) (string, error) {
+	n, err := DecideSchemaMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if DecideSchemaSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// DecideSchemaLoadText reads one DecideSchema from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as DecideSchemaReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func DecideSchemaLoadText(text string, report *TableReport) (*DecideSchema, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder DecideSchemaBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := DecideSchemaLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func JevRequestFromJson(builder *JevRequestBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), JevRequestTableType(), &builder.Main, text, report)
+}
+func JevRequestToJsonMeasure(value *JevRequest, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), JevRequestTableType(), nil, allocator...)
+}
+func JevRequestToJson(value *JevRequest, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), JevRequestTableType(), buffer, allocator...)
+}
+
+// JevRequestSaveText returns the base64 of JevRequest's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context JevRequestSave takes.
+func JevRequestSaveText(value *JevRequest, context ...TableWriteContext) (string, error) {
+	n, err := JevRequestMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if JevRequestSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// JevRequestLoadText reads one JevRequest from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as JevRequestReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func JevRequestLoadText(text string, report *TableReport) (*JevRequest, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder JevRequestBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := JevRequestLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func JevAnswerFromJson(builder *JevAnswerBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), JevAnswerTableType(), &builder.Main, text, report)
+}
+func JevAnswerToJsonMeasure(value *JevAnswer, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), JevAnswerTableType(), nil, allocator...)
+}
+func JevAnswerToJson(value *JevAnswer, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), JevAnswerTableType(), buffer, allocator...)
+}
+
+// JevAnswerSaveText returns the base64 of JevAnswer's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context JevAnswerSave takes.
+func JevAnswerSaveText(value *JevAnswer, context ...TableWriteContext) (string, error) {
+	n, err := JevAnswerMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if JevAnswerSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// JevAnswerLoadText reads one JevAnswer from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as JevAnswerReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func JevAnswerLoadText(text string, report *TableReport) (*JevAnswer, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder JevAnswerBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := JevAnswerLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func NamedJevAnswerFromJson(builder *NamedJevAnswerBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), NamedJevAnswerTableType(), &builder.Main, text, report)
+}
+func NamedJevAnswerToJsonMeasure(value *NamedJevAnswer, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), NamedJevAnswerTableType(), nil, allocator...)
+}
+func NamedJevAnswerToJson(value *NamedJevAnswer, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), NamedJevAnswerTableType(), buffer, allocator...)
+}
+
+// NamedJevAnswerSaveText returns the base64 of NamedJevAnswer's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context NamedJevAnswerSave takes.
+func NamedJevAnswerSaveText(value *NamedJevAnswer, context ...TableWriteContext) (string, error) {
+	n, err := NamedJevAnswerMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if NamedJevAnswerSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// NamedJevAnswerLoadText reads one NamedJevAnswer from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as NamedJevAnswerReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func NamedJevAnswerLoadText(text string, report *TableReport) (*NamedJevAnswer, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder NamedJevAnswerBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := NamedJevAnswerLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func JevResponseFromJson(builder *JevResponseBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), JevResponseTableType(), &builder.Main, text, report)
+}
+func JevResponseToJsonMeasure(value *JevResponse, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), JevResponseTableType(), nil, allocator...)
+}
+func JevResponseToJson(value *JevResponse, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), JevResponseTableType(), buffer, allocator...)
+}
+
+// JevResponseSaveText returns the base64 of JevResponse's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context JevResponseSave takes.
+func JevResponseSaveText(value *JevResponse, context ...TableWriteContext) (string, error) {
+	n, err := JevResponseMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if JevResponseSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// JevResponseLoadText reads one JevResponse from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as JevResponseReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func JevResponseLoadText(text string, report *TableReport) (*JevResponse, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder JevResponseBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := JevResponseLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func FixedAnswerFromJson(builder *FixedAnswerBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), FixedAnswerTableType(), &builder.Main, text, report)
+}
+func FixedAnswerToJsonMeasure(value *FixedAnswer, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), FixedAnswerTableType(), nil, allocator...)
+}
+func FixedAnswerToJson(value *FixedAnswer, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), FixedAnswerTableType(), buffer, allocator...)
+}
+
+// FixedAnswerSaveText returns the base64 of FixedAnswer's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context FixedAnswerSave takes.
+func FixedAnswerSaveText(value *FixedAnswer, context ...TableWriteContext) (string, error) {
+	n, err := FixedAnswerMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if FixedAnswerSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// FixedAnswerLoadText reads one FixedAnswer from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as FixedAnswerReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func FixedAnswerLoadText(text string, report *TableReport) (*FixedAnswer, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder FixedAnswerBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := FixedAnswerLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func NamedFixedAnswerFromJson(builder *NamedFixedAnswerBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), NamedFixedAnswerTableType(), &builder.Main, text, report)
+}
+func NamedFixedAnswerToJsonMeasure(value *NamedFixedAnswer, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), NamedFixedAnswerTableType(), nil, allocator...)
+}
+func NamedFixedAnswerToJson(value *NamedFixedAnswer, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), NamedFixedAnswerTableType(), buffer, allocator...)
+}
+
+// NamedFixedAnswerSaveText returns the base64 of NamedFixedAnswer's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context NamedFixedAnswerSave takes.
+func NamedFixedAnswerSaveText(value *NamedFixedAnswer, context ...TableWriteContext) (string, error) {
+	n, err := NamedFixedAnswerMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if NamedFixedAnswerSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// NamedFixedAnswerLoadText reads one NamedFixedAnswer from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as NamedFixedAnswerReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func NamedFixedAnswerLoadText(text string, report *TableReport) (*NamedFixedAnswer, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder NamedFixedAnswerBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := NamedFixedAnswerLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func FixedTableFromJson(builder *FixedTableBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), FixedTableTableType(), &builder.Main, text, report)
+}
+func FixedTableToJsonMeasure(value *FixedTable, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), FixedTableTableType(), nil, allocator...)
+}
+func FixedTableToJson(value *FixedTable, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), FixedTableTableType(), buffer, allocator...)
+}
+
+// FixedTableSaveText returns the base64 of FixedTable's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context FixedTableSave takes.
+func FixedTableSaveText(value *FixedTable, context ...TableWriteContext) (string, error) {
+	n, err := FixedTableMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if FixedTableSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// FixedTableLoadText reads one FixedTable from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as FixedTableReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func FixedTableLoadText(text string, report *TableReport) (*FixedTable, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder FixedTableBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := FixedTableLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func ExampleFromJson(builder *ExampleBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), ExampleTableType(), &builder.Main, text, report)
+}
+func ExampleToJsonMeasure(value *Example, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), ExampleTableType(), nil, allocator...)
+}
+func ExampleToJson(value *Example, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), ExampleTableType(), buffer, allocator...)
+}
+
+// ExampleSaveText returns the base64 of Example's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context ExampleSave takes.
+func ExampleSaveText(value *Example, context ...TableWriteContext) (string, error) {
+	n, err := ExampleMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if ExampleSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// ExampleLoadText reads one Example from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as ExampleReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func ExampleLoadText(text string, report *TableReport) (*Example, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder ExampleBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := ExampleLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func SetEntryFromJson(builder *SetEntryBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), SetEntryTableType(), &builder.Main, text, report)
+}
+func SetEntryToJsonMeasure(value *SetEntry, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), SetEntryTableType(), nil, allocator...)
+}
+func SetEntryToJson(value *SetEntry, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), SetEntryTableType(), buffer, allocator...)
+}
+
+// SetEntrySaveText returns the base64 of SetEntry's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context SetEntrySave takes.
+func SetEntrySaveText(value *SetEntry, context ...TableWriteContext) (string, error) {
+	n, err := SetEntryMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if SetEntrySave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// SetEntryLoadText reads one SetEntry from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as SetEntryReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func SetEntryLoadText(text string, report *TableReport) (*SetEntry, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder SetEntryBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := SetEntryLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func LogLineFromJson(builder *LogLineBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), LogLineTableType(), &builder.Main, text, report)
+}
+func LogLineToJsonMeasure(value *LogLine, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), LogLineTableType(), nil, allocator...)
+}
+func LogLineToJson(value *LogLine, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), LogLineTableType(), buffer, allocator...)
+}
+
+// LogLineSaveText returns the base64 of LogLine's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context LogLineSave takes.
+func LogLineSaveText(value *LogLine, context ...TableWriteContext) (string, error) {
+	n, err := LogLineMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if LogLineSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// LogLineLoadText reads one LogLine from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as LogLineReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func LogLineLoadText(text string, report *TableReport) (*LogLine, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder LogLineBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := LogLineLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func LogExportFromJson(builder *LogExportBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), LogExportTableType(), &builder.Main, text, report)
+}
+func LogExportToJsonMeasure(value *LogExport, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), LogExportTableType(), nil, allocator...)
+}
+func LogExportToJson(value *LogExport, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), LogExportTableType(), buffer, allocator...)
+}
+
+// LogExportSaveText returns the base64 of LogExport's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context LogExportSave takes.
+func LogExportSaveText(value *LogExport, context ...TableWriteContext) (string, error) {
+	n, err := LogExportMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if LogExportSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// LogExportLoadText reads one LogExport from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as LogExportReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func LogExportLoadText(text string, report *TableReport) (*LogExport, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder LogExportBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := LogExportLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+// BarsFromJson fills one Bars from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
+// A nil report is allowed; every tolerance event still decides the same way.
+func BarsFromJson(value *Bars, text []byte, report *TableReport) bool {
+	return tableJsonRead(unsafe.Pointer(value), BarsTableType(), text, report)
+}
+
+// BarsToJsonMeasure is the exact size of Bars's JSON text, writing nothing.
+func BarsToJsonMeasure(value *Bars) int64 {
+	return tableJsonWrite(unsafe.Pointer(value), BarsTableType(), nil)
+}
+
+// BarsToJson writes Bars's JSON text into the caller's slice and returns the
+// bytes written — exactly BarsToJsonMeasure's answer — or -1 when it is short.
+func BarsToJson(value *Bars, buffer []byte) int64 {
+	return tableJsonWrite(unsafe.Pointer(value), BarsTableType(), buffer)
+}
+
+// BarsSaveText returns the base64 of Bars's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque.
+func BarsSaveText(value *Bars) (string, error) {
+	n := BarsMeasure(value)
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if BarsSave(value, buf) < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// BarsLoadText fills one Bars from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8). It is the STRICT read (§6.5) over the decoded wire: it refuses
+// whenever the read's report holds an error (TableReport.Err), whatever the
+// tolerant Load answered, so a recovered value never comes back. It refuses
+// by name: base64_damaged when the body does not decode, unknown_form when
+// the decoded wire's form byte is not one this build carries, wire_damaged
+// for framing damage, and the report's own reason (malformed, clamped,
+// kind_mismatch, ...) otherwise. A nil report is allowed; a supplied one
+// receives THIS read's report, so earlier counts in it never decide.
+func BarsLoadText(text string, report *TableReport) (*Bars, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	if len(wire) == 0 || wire[0] != 1 {
+		return nil, tableRefuseError(TableRefuseUnknownForm)
+	}
+	var v Bars
+	var read TableReport
+	ok := BarsLoad(&v, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if !ok {
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if err := read.Err(); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// GateBarsFromJson fills one GateBars from a JSON text (mas-bandwidth/schema docs/SPEC-TABLES.md §16).
+// A nil report is allowed; every tolerance event still decides the same way.
+func GateBarsFromJson(value *GateBars, text []byte, report *TableReport) bool {
+	return tableJsonRead(unsafe.Pointer(value), GateBarsTableType(), text, report)
+}
+
+// GateBarsToJsonMeasure is the exact size of GateBars's JSON text, writing nothing.
+func GateBarsToJsonMeasure(value *GateBars) int64 {
+	return tableJsonWrite(unsafe.Pointer(value), GateBarsTableType(), nil)
+}
+
+// GateBarsToJson writes GateBars's JSON text into the caller's slice and returns the
+// bytes written — exactly GateBarsToJsonMeasure's answer — or -1 when it is short.
+func GateBarsToJson(value *GateBars, buffer []byte) int64 {
+	return tableJsonWrite(unsafe.Pointer(value), GateBarsTableType(), buffer)
+}
+
+// GateBarsSaveText returns the base64 of GateBars's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque.
+func GateBarsSaveText(value *GateBars) (string, error) {
+	n := GateBarsMeasure(value)
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if GateBarsSave(value, buf) < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// GateBarsLoadText fills one GateBars from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8). It is the STRICT read (§6.5) over the decoded wire: it refuses
+// whenever the read's report holds an error (TableReport.Err), whatever the
+// tolerant Load answered, so a recovered value never comes back. It refuses
+// by name: base64_damaged when the body does not decode, unknown_form when
+// the decoded wire's form byte is not one this build carries, wire_damaged
+// for framing damage, and the report's own reason (malformed, clamped,
+// kind_mismatch, ...) otherwise. A nil report is allowed; a supplied one
+// receives THIS read's report, so earlier counts in it never decide.
+func GateBarsLoadText(text string, report *TableReport) (*GateBars, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	if len(wire) == 0 || wire[0] != 1 {
+		return nil, tableRefuseError(TableRefuseUnknownForm)
+	}
+	var v GateBars
+	var read TableReport
+	ok := GateBarsLoad(&v, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if !ok {
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if err := read.Err(); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func GateLineFromJson(builder *GateLineBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), GateLineTableType(), &builder.Main, text, report)
+}
+func GateLineToJsonMeasure(value *GateLine, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), GateLineTableType(), nil, allocator...)
+}
+func GateLineToJson(value *GateLine, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), GateLineTableType(), buffer, allocator...)
+}
+
+// GateLineSaveText returns the base64 of GateLine's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context GateLineSave takes.
+func GateLineSaveText(value *GateLine, context ...TableWriteContext) (string, error) {
+	n, err := GateLineMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if GateLineSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// GateLineLoadText reads one GateLine from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as GateLineReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func GateLineLoadText(text string, report *TableReport) (*GateLine, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder GateLineBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := GateLineLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func FailureFromJson(builder *FailureBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), FailureTableType(), &builder.Main, text, report)
+}
+func FailureToJsonMeasure(value *Failure, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), FailureTableType(), nil, allocator...)
+}
+func FailureToJson(value *Failure, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), FailureTableType(), buffer, allocator...)
+}
+
+// FailureSaveText returns the base64 of Failure's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context FailureSave takes.
+func FailureSaveText(value *Failure, context ...TableWriteContext) (string, error) {
+	n, err := FailureMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if FailureSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// FailureLoadText reads one Failure from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as FailureReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func FailureLoadText(text string, report *TableReport) (*Failure, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder FailureBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := FailureLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func ChosenFromJson(builder *ChosenBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), ChosenTableType(), &builder.Main, text, report)
+}
+func ChosenToJsonMeasure(value *Chosen, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), ChosenTableType(), nil, allocator...)
+}
+func ChosenToJson(value *Chosen, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), ChosenTableType(), buffer, allocator...)
+}
+
+// ChosenSaveText returns the base64 of Chosen's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context ChosenSave takes.
+func ChosenSaveText(value *Chosen, context ...TableWriteContext) (string, error) {
+	n, err := ChosenMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if ChosenSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// ChosenLoadText reads one Chosen from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as ChosenReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func ChosenLoadText(text string, report *TableReport) (*Chosen, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder ChosenBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := ChosenLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func ClusterCardFromJson(builder *ClusterCardBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), ClusterCardTableType(), &builder.Main, text, report)
+}
+func ClusterCardToJsonMeasure(value *ClusterCard, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), ClusterCardTableType(), nil, allocator...)
+}
+func ClusterCardToJson(value *ClusterCard, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), ClusterCardTableType(), buffer, allocator...)
+}
+
+// ClusterCardSaveText returns the base64 of ClusterCard's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context ClusterCardSave takes.
+func ClusterCardSaveText(value *ClusterCard, context ...TableWriteContext) (string, error) {
+	n, err := ClusterCardMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if ClusterCardSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// ClusterCardLoadText reads one ClusterCard from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as ClusterCardReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func ClusterCardLoadText(text string, report *TableReport) (*ClusterCard, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder ClusterCardBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := ClusterCardLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func ClusterFromJson(builder *ClusterBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), ClusterTableType(), &builder.Main, text, report)
+}
+func ClusterToJsonMeasure(value *Cluster, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), ClusterTableType(), nil, allocator...)
+}
+func ClusterToJson(value *Cluster, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), ClusterTableType(), buffer, allocator...)
+}
+
+// ClusterSaveText returns the base64 of Cluster's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context ClusterSave takes.
+func ClusterSaveText(value *Cluster, context ...TableWriteContext) (string, error) {
+	n, err := ClusterMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if ClusterSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// ClusterLoadText reads one Cluster from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as ClusterReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func ClusterLoadText(text string, report *TableReport) (*Cluster, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder ClusterBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := ClusterLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
 func DecisionFromJson(builder *DecisionBuilder, text []byte, report *TableReport) bool {
 	if builder.Arena.Locked {
 		return false
@@ -3887,6 +5481,79 @@ func ImportLogLineLoadText(text string, report *TableReport) (*ImportLogLine, er
 	}
 	var read TableReport
 	ok := ImportLogLineLoadBuilder(&builder, wire, &read)
+	if report != nil {
+		*report = read
+	}
+	if err := read.Err(); err != nil || !ok {
+		builder.Shutdown()
+		if err != nil {
+			return nil, err
+		}
+		return nil, tableRefuseError(TableRefuseWireDamaged)
+	}
+	if !builder.Lock() {
+		builder.Shutdown()
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	return builder.AsConst(), nil
+}
+
+func ImportExportFromJson(builder *ImportExportBuilder, text []byte, report *TableReport) bool {
+	if builder.Arena.Locked {
+		return false
+	}
+	return tableRegionFromJson(unsafe.Pointer(builder.GetRoot()), ImportExportTableType(), &builder.Main, text, report)
+}
+func ImportExportToJsonMeasure(value *ImportExport, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), ImportExportTableType(), nil, allocator...)
+}
+func ImportExportToJson(value *ImportExport, buffer []byte, allocator ...TableAllocator) int64 {
+	return tableRegionToJson(unsafe.Pointer(value), ImportExportTableType(), buffer, allocator...)
+}
+
+// ImportExportSaveText returns the base64 of ImportExport's binary wire (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8): the whole file, form byte first, so the text keeps the form byte,
+// the framing check and every versioning guarantee and is opaque. It takes
+// the write context ImportExportSave takes.
+func ImportExportSaveText(value *ImportExport, context ...TableWriteContext) (string, error) {
+	n, err := ImportExportMeasureReason(value, context...)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	buf := make([]byte, n)
+	if ImportExportSave(value, buf, context...) != n {
+		return "", tableRefuseError(TableRefuseInvalidValue)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// ImportExportLoadText reads one ImportExport from a base64 wire text (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §16.8) into a builder of its own and returns the locked root, as ImportExportReadStrict
+// does: it is the STRICT read (§6.5) and refuses whenever the read's report
+// holds an error (TableReport.Err), whatever the tolerant LoadBuilder answered,
+// so a recovered value never comes back. It refuses by name: base64_damaged
+// when the body does not decode, unknown_form when the decoded wire's form byte
+// is not one this build carries, wire_damaged for framing damage, and the
+// report's own reason (malformed, clamped, kind_mismatch, ...) otherwise. A nil
+// report is allowed; a supplied one receives THIS read's report, so earlier
+// counts in it never decide.
+func ImportExportLoadText(text string, report *TableReport) (*ImportExport, error) {
+	if report != nil {
+		*report = TableReport{}
+	}
+	wire, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, tableRefuseError(TableRefuseBase64Damaged)
+	}
+	var builder ImportExportBuilder
+	if !builder.Init() {
+		return nil, tableRefuseError(TableRefuseAllocationFailed)
+	}
+	var read TableReport
+	ok := ImportExportLoadBuilder(&builder, wire, &read)
 	if report != nil {
 		*report = read
 	}

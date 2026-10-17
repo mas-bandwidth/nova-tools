@@ -11,8 +11,9 @@
 // for every field, the schema bound and the code's (file:line, or none). A text
 // the code does not bound is an unbounded string (*string), a list it does not
 // bound is an unbounded list ([]T); a table holding either is variable. Only
-// Usage (no bound at all) and RawTokens (every count non-negative, raw.go)
-// stay fixed.
+// Usage (no bound at all), Bars and GateBars (two probabilities held by the
+// readers of firstread.go and gate.go) and RawTokens (every count
+// non-negative, raw.go) stay fixed.
 //
 // A unit that declares a variable table gets no separate fixed-form wire for
 // its fixed tables at this pin (the compiler emits form 3 only when every table
@@ -83,6 +84,214 @@ table Decided
     op    *string
 }
 
+// ---- the schema asked, and the files and wire the decide half reads ----
+
+// Criterion: one entry of a choice question's Criteria map, an option and what
+// it means (decide.go Question).
+table Criterion
+{
+    option  *string
+    meaning *string
+}
+
+// Question: pkg/decide Question, one typed question of a schema. Problems
+// (decide.go:101) holds a question to rules the schema cannot express and the
+// reader states for it: instructions not empty, a choice naming at least two
+// options in criteria, a noul naming none, the type one of the two. The code
+// bounds no length or count, so criteria is an open-ended list. kind is the
+// struct's Type field of type (a keyword of the schema language).
+table Question
+{
+    kind         AnswerType
+    instructions *string
+    criteria     []Criterion
+}
+
+// NamedQuestion: one entry of a Schema's Questions map, the question's name and
+// the question.
+table NamedQuestion
+{
+    name     *string
+    question Question
+}
+
+// DecideSchema: pkg/decide Schema (named so to clear the C# Schema class), the document ParseSchema decodes (decide.go:89) and
+// Hash marshals (decide.go:213). Problems (decide.go:101) wants a name that is not
+// blank and at least one question; both are rules the reader states.
+table DecideSchema
+{
+    name      *string
+    questions []NamedQuestion
+}
+
+// JevRequest: the body jev.go:44 marshals for an ask: the state, the model and
+// the schema's questions.
+table JevRequest
+{
+    state     *string
+    model     *string
+    questions []NamedQuestion
+}
+
+// JevAnswer: one answer of a Jev response (jev.go jevAnswers). kind is the wire's
+// type field and stays text:
+// the code reads an unknown type as an error naming it (jev.go), so the wire
+// holds what was sent. confidence and noul are optional; a missing number is an
+// error in the code, never a 0, so absence and zero differ.
+table JevAnswer
+{
+    kind          *string
+    choice        *string
+    probabilities []OptionP
+    confidence    ?float64
+    noul          ?float64
+}
+
+// NamedJevAnswer: one entry of a Jev response's answers map.
+table NamedJevAnswer
+{
+    question *string
+    answer   JevAnswer
+}
+
+// JevResponse: the response jev.go:66 decodes: the answers and the usage.
+table JevResponse
+{
+    answers []NamedJevAnswer
+    usage   Usage
+}
+
+// FixedAnswer: one row of a Fixed table (backend.go FixedAnswer): a choice's
+// option and its probabilities, or a noul's probability of yes. noul is
+// optional: nil is a choice row.
+table FixedAnswer
+{
+    choice *string
+    p      []OptionP
+    noul   ?float64
+}
+
+// NamedFixedAnswer: one entry of the answers file ParseFixed reads (backend.go:30),
+// the question's name and its row.
+table NamedFixedAnswer
+{
+    question *string
+    answer   FixedAnswer
+}
+
+// FixedTable: the answers file ParseFixed decodes, {<question>: row}.
+table FixedTable
+{
+    answers []NamedFixedAnswer
+}
+
+// ExampleLabel: the label of a grade example, flash, pro or heavy
+// (gradefewshot.go GradeExampleClasses).
+enum ExampleLabel { Flash, Pro, Heavy }
+
+// Example: pkg/decide Example, one line of an examples file ParseExamples reads
+// (gradefewshot.go:48). A line names its card and its heading and a label of
+// the three classes; ParseExamples refuses any other, so the reader does.
+table Example
+{
+    card    *string
+    heading *string
+    paths   *string
+    kind    *string
+    label   ExampleLabel
+}
+
+// SetEntry: one entry of a log line's Set map.
+table SetEntry
+{
+    key   *string
+    value *string
+}
+
+// LogLine: pkg/decide LogLine, the fields of one nova-sprint log --json line the
+// score reads (gradescore.go:19). table_name is the struct's Table field of table.
+table LogLine
+{
+    card       *string
+    primary    *string
+    table_name *string
+    to         *string
+    removed    bool
+    set        []SetEntry
+}
+
+// LogExport: the export object ReadLog decodes (gradescore.go:52), {lines: [...]}.
+table LogExport
+{
+    lines []LogLine
+}
+
+// ---- the gate, first-read, judgment and score structs that carry json tags ----
+
+// Bars: pkg/decide Bars (firstread.go:30), the bounce and review bars on
+// p(defect). ParseBars (firstread.go:37) holds each to [0, 1] and the review bar
+// to at most the bounce bar; a float64 has no declared range in v1, so the
+// reader holds both rules.
+fixed table Bars
+{
+    bounce float64
+    review float64
+}
+
+// GateBars: pkg/decide GateBars (gate.go:286), the flaky and pre-existing bars. A
+// bar is a probability in [0, 1] or Unset (2.0, gate.go); ParseGateBars
+// (gate.go:300) holds the range and the sum rule.
+fixed table GateBars
+{
+    flaky        float64
+    pre_existing float64
+}
+
+// GateLine: one printed line of a Failure.
+table GateLine
+{
+    text *string
+}
+
+// Failure: pkg/decide Failure (gate.go:66), one failing test of a gate's output.
+// capLines (gate.go) trims on parse, never on read, and the struct bounds no
+// length or count, so lines is an open-ended list.
+table Failure
+{
+    pkg   *string
+    test  *string
+    lines []GateLine
+}
+
+// Chosen: pkg/decide Chosen (judgment.go:182), what the decision chose for a card.
+// act is ActApply or ActList (judgment.go); the code reads it as text.
+table Chosen
+{
+    verb   *string
+    p      float64
+    fix    *string
+    reason *string
+    act    *string
+    why    *string
+}
+
+// ClusterCard: one card of a Cluster.
+table ClusterCard
+{
+    card *string
+}
+
+// Cluster: pkg/decide Cluster (score.go:127), one class of the findings, the count
+// of score decisions at or above the bar and their cards in id order. class_name
+// is the struct Class field (class is reserved in C++). The code
+// bounds neither the count nor the cards.
+table Cluster
+{
+    class_name *string
+    count int64
+    cards []ClusterCard
+}
+
 // ---- the record lines (pkg/decide/record.go) ----
 
 // Decision: pkg/decide Decision as the record writes it on a decision line. The
@@ -151,6 +360,14 @@ table ImportLogLine
 {
     verb    *string
     answers []JudgmentId
+}
+
+// ImportExport: the export object judgmentItems unmarshals (import.go:167),
+// {lines: [{verb, answers}]}; ImportLogLine is its inner line. The code takes
+// every line, so the list is open-ended.
+table ImportExport
+{
+    lines []ImportLogLine
 }
 
 // ---- the raw card cost (pkg/cardcost/raw.go) ----

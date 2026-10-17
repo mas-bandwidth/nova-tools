@@ -107,6 +107,31 @@ func (k chk) bare(field string, slot *TableRef) {
 	}
 }
 
+// notBlank is text the code refuses when blank: decide.go:102 and :110 trim before
+// the test.
+func (k chk) notBlank(field string, slot *TableRef) {
+	k.text(field, slot)
+	k.c.Required(field, strings.TrimSpace(k.s(slot)) != "")
+}
+
+// distinct refuses a name that repeats: the code holds these lists as maps
+// (decide.go Questions and Criteria, backend.go Table, FixedAnswer.P), where a
+// key is one entry.
+func (k chk) distinct(field string, seen map[string]bool, name string) {
+	if seen[name] {
+		k.c.Text(field, "\x00", 1)
+	}
+	seen[name] = true
+}
+
+// optionalProb holds a probability that is optional: when present it is the
+// probability of yes (decide.go:163 Check), so it lies in [0, 1].
+func (k chk) optionalProb(field string, present bool, p float64) {
+	if present {
+		k.prob(field, p)
+	}
+}
+
 // ---- the rules, one function a table ----
 
 func usageRules(v *Usage, k chk) {}
@@ -211,6 +236,204 @@ func judgmentIdRules(v *JudgmentId, k chk) { k.must("id", &v.Id) }
 func importLogLineRules(v *ImportLogLine, k chk) {
 	k.text("verb", &v.Verb)
 	ImportLogLineAnswersEach(&v.Answers, func(j *JudgmentId) bool { judgmentIdRules(j, k); return true }, k.ar...)
+}
+
+// criterionRules: Criteria is a map (decide.go Question); Problems states no rule
+// of an option or its meaning.
+func criterionRules(v *Criterion, k chk) {
+	k.text("option", &v.Option)
+	k.text("meaning", &v.Meaning)
+}
+
+// questionRules are decide.go:101 Problems for one question: the type is choice or
+// noul, the instructions are not blank, a choice names at least two options in
+// criteria and a noul none. A criteria list holds each option once, as the map does.
+func questionRules(v *Question, k chk) {
+	k.span("kind", int64(v.Kind), 1, 2)
+	k.notBlank("instructions", &v.Instructions)
+	seen := map[string]bool{}
+	QuestionCriteriaEach(&v.Criteria, func(c *Criterion) bool {
+		criterionRules(c, k)
+		k.distinct("option", seen, string(TableStringAt(&c.Option, k.ar...).Data))
+		return true
+	}, k.ar...)
+	switch v.Kind {
+	case AnswerTypeChoice:
+		k.span("criteria", int64(v.Criteria.Count), 2, math.MaxInt32)
+	case AnswerTypeNoul:
+		k.span("criteria", int64(v.Criteria.Count), 0, 0)
+	}
+}
+
+// namedQuestionRules: the name is the map key; Problems states no rule of it.
+func namedQuestionRules(v *NamedQuestion, k chk) {
+	k.text("name", &v.Name)
+	questionRules(&v.Question, k)
+}
+
+// namedQuestions holds a list of questions as the map of a Schema: each name once.
+func namedQuestions(k chk, each func(visit func(*NamedQuestion) bool) bool) {
+	seen := map[string]bool{}
+	each(func(n *NamedQuestion) bool {
+		namedQuestionRules(n, k)
+		k.distinct("name", seen, string(TableStringAt(&n.Name, k.ar...).Data))
+		return true
+	})
+}
+
+// decideSchemaRules: decide.go:101 Problems wants a name that is not blank and at
+// least one question.
+func decideSchemaRules(v *DecideSchema, k chk) {
+	k.notBlank("name", &v.Name)
+	k.c.Required("questions", v.Questions.Count > 0)
+	namedQuestions(k, func(visit func(*NamedQuestion) bool) bool {
+		return DecideSchemaQuestionsEach(&v.Questions, visit, k.ar...)
+	})
+}
+
+// jevRequestRules: Ask (decide.go:196) refuses an empty state; the questions are a
+// schema's.
+func jevRequestRules(v *JevRequest, k chk) {
+	k.notBlank("state", &v.State)
+	k.text("model", &v.Model)
+	namedQuestions(k, func(visit func(*NamedQuestion) bool) bool {
+		return JevRequestQuestionsEach(&v.Questions, visit, k.ar...)
+	})
+}
+
+// jevAnswerRules: the wire holds what the backend sent. jevAnswers (jev.go:63)
+// reads an unknown type and a missing number as errors of its own, so the table
+// holds both; a probability is held to [0, 1] by Check once read (decide.go:163).
+func jevAnswerRules(v *JevAnswer, k chk) {
+	k.text("kind", &v.Kind)
+	k.text("choice", &v.Choice)
+	JevAnswerProbabilitiesEach(&v.Probabilities, func(o *OptionP) bool { optionPRules(o, k); return true }, k.ar...)
+	k.optionalProb("noul", v.NoulPresent, v.Noul)
+}
+
+func namedJevAnswerRules(v *NamedJevAnswer, k chk) {
+	k.text("question", &v.Question)
+	jevAnswerRules(&v.Answer, k)
+}
+
+func jevResponseRules(v *JevResponse, k chk) {
+	JevResponseAnswersEach(&v.Answers, func(n *NamedJevAnswer) bool { namedJevAnswerRules(n, k); return true }, k.ar...)
+	usageRules(&v.Usage, k)
+}
+
+// fixedAnswerRules: ParseFixed (backend.go:30) bounds nothing of a row; Check holds
+// its probabilities to [0, 1] when it is asked.
+func fixedAnswerRules(v *FixedAnswer, k chk) {
+	k.text("choice", &v.Choice)
+	FixedAnswerPEach(&v.P, func(o *OptionP) bool { optionPRules(o, k); return true }, k.ar...)
+	k.optionalProb("noul", v.NoulPresent, v.Noul)
+}
+
+func namedFixedAnswerRules(v *NamedFixedAnswer, k chk) {
+	k.text("question", &v.Question)
+	fixedAnswerRules(&v.Answer, k)
+}
+
+func fixedTableRules(v *FixedTable, k chk) {
+	FixedTableAnswersEach(&v.Answers, func(n *NamedFixedAnswer) bool { namedFixedAnswerRules(n, k); return true }, k.ar...)
+}
+
+// exampleRules: ParseExamples (gradefewshot.go:62) wants a card, a heading and a
+// label of the three classes.
+func exampleRules(v *Example, k chk) {
+	k.must("card", &v.Card)
+	k.must("heading", &v.Heading)
+	k.text("paths", &v.Paths)
+	k.text("kind", &v.Kind)
+	k.span("label", int64(v.Label), 1, 3)
+}
+
+func setEntryRules(v *SetEntry, k chk) {
+	k.text("key", &v.Key)
+	k.text("value", &v.Value)
+}
+
+// logLineRules: ReadLog (gradescore.go:56) bounds nothing of a line.
+func logLineRules(v *LogLine, k chk) {
+	k.text("card", &v.Card)
+	k.text("primary", &v.Primary)
+	k.text("table_name", &v.TableName)
+	k.text("to", &v.To)
+	LogLineSetEach(&v.Set, func(e *SetEntry) bool { setEntryRules(e, k); return true }, k.ar...)
+}
+
+func logExportRules(v *LogExport, k chk) {
+	LogExportLinesEach(&v.Lines, func(l *LogLine) bool { logLineRules(l, k); return true }, k.ar...)
+}
+
+// importExportRules: the code takes every line of the export (import.go:167).
+func importExportRules(v *ImportExport, k chk) {
+	ImportExportLinesEach(&v.Lines, func(l *ImportLogLine) bool { importLogLineRules(l, k); return true }, k.ar...)
+}
+
+// barsRules: ParseBars (firstread.go:37) holds each bar to a probability in [0, 1]
+// and the review bar to at most the bounce bar.
+func barsRules(v *Bars, k chk) {
+	k.prob("bounce", v.Bounce)
+	k.prob("review", v.Review)
+	if !math.IsNaN(v.Bounce) && !math.IsNaN(v.Review) {
+		k.c.Bound("review", boolBit(v.Review <= v.Bounce), 1, 1)
+	}
+}
+
+// boolBit is 1 for true: the Checker bounds an integer.
+func boolBit(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// gateBarUnset is the gate bar the sprint row leaves empty (gate.go Unset).
+const gateBarUnset = 2.0
+
+// gateBarRules: a bar is a probability in [0, 1] or Unset (gate.go:296 Unset,
+// ParseGateBars gate.go:300); two set bars sum above 1.
+func gateBarRules(field string, v float64, k chk) {
+	if v == gateBarUnset {
+		return
+	}
+	k.prob(field, v)
+}
+
+func gateBarsRules(v *GateBars, k chk) {
+	gateBarRules("flaky", v.Flaky, k)
+	gateBarRules("pre_existing", v.PreExisting, k)
+	if v.Flaky <= 1 && v.PreExisting <= 1 {
+		k.c.Bound("flaky", boolBit(v.Flaky+v.PreExisting > 1), 1, 1)
+	}
+}
+
+func gateLineRules(v *GateLine, k chk) { k.text("text", &v.Text) }
+
+// failureRules: the struct bounds no length or count (gate.go:66); the text is
+// held to UTF-8.
+func failureRules(v *Failure, k chk) {
+	k.text("pkg", &v.Pkg)
+	k.text("test", &v.Test)
+	FailureLinesEach(&v.Lines, func(l *GateLine) bool { gateLineRules(l, k); return true }, k.ar...)
+}
+
+// chosenRules: Choose (judgment.go:194) writes the struct and states no bound.
+func chosenRules(v *Chosen, k chk) {
+	k.text("verb", &v.Verb)
+	k.text("fix", &v.Fix)
+	k.text("reason", &v.Reason)
+	k.text("act", &v.Act)
+	k.text("why", &v.Why)
+}
+
+func clusterCardRules(v *ClusterCard, k chk) { k.text("card", &v.Card) }
+
+// clusterRules: the struct bounds neither the count nor the cards (score.go:127).
+func clusterRules(v *Cluster, k chk) {
+	k.text("class_name", &v.ClassName)
+	ClusterCardsEach(&v.Cards, func(c *ClusterCard) bool { clusterCardRules(c, k); return true }, k.ar...)
 }
 
 // rawTokensRules: a count is a non-negative int64 (raw.go:55).
@@ -494,6 +717,71 @@ func exerciseVar[R any, B any, PB interface {
 	})
 }
 
+// wholeIn fills a table, writes it in every form and reads each back: the image
+// written again is the first image, and check sees the table read from each form.
+func wholeIn[R any, B any, PB interface {
+	*B
+	Init(...TableAllocator) bool
+	GetRoot() *R
+	AsConst() *R
+	Lock() bool
+	Shutdown()
+}](t *testing.T, f varFns[R, B, PB], what string, fill func(PB, *R), check func(*testing.T, PB, *R)) {
+	t.Helper()
+	rd := schemaread.NewReader(f.codec())
+	w := f.fresh()
+	fill(w, w.GetRoot())
+	want, err := rd.Write(&w, schemaread.FormBinary)
+	require.NoError(t, err, what)
+	for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
+		image, err := rd.Write(&w, form)
+		require.NoError(t, err, "%s as %s", what, form)
+		got, _, err := rd.Read(image)
+		require.NoError(t, err, "%s as %s", what, form)
+		check(t, got, f.root(got))
+		again, err := rd.Write(&got, schemaread.FormBinary)
+		require.NoError(t, err, "%s as %s", what, form)
+		assert.Equal(t, want, again, "%s as %s", what, form)
+	}
+}
+
+// eraseCriteria erases the last n criteria of q, whose arena is a, leaving the list
+// as the code would hold it with fewer options.
+func eraseCriteria(a *TableArena, q *Question, n int) {
+	for ; n > 0; n-- {
+		QuestionCriteriaErase(a, &q.Criteria, q.Criteria.At(q.Criteria.Count-1, a))
+	}
+}
+
+// strAt is the text of a slot in the arena a table was read into.
+func strAt(slot *TableRef, a *TableArena) string { return string(TableStringAt(slot, a).Data) }
+
+// optionalFloats checks that a present zero and an absent number differ in every
+// form (jev.go: a missing number is an error, never a 0).
+func optionalFloats[R any, B any, PB interface {
+	*B
+	Init(...TableAllocator) bool
+	GetRoot() *R
+	AsConst() *R
+	Lock() bool
+	Shutdown()
+}](t *testing.T, f varFns[R, B, PB], fill func(PB, *R), set func(*R, bool) *bool) {
+	t.Helper()
+	rd := schemaread.NewReader(f.codec())
+	for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64, schemaread.FormJSON} {
+		for _, present := range []bool{false, true} {
+			w := f.fresh()
+			fill(w, w.GetRoot())
+			set(w.GetRoot(), present)
+			image, err := rd.Write(&w, form)
+			require.NoError(t, err)
+			got, _, err := rd.Read(image)
+			require.NoError(t, err)
+			assert.Equal(t, present, *set(f.root(got), present), "%s through %s", f.name, form)
+		}
+	}
+}
+
 // ---- samples ----
 
 // setS stores text in a string slot of the worker's arena.
@@ -574,6 +862,168 @@ func fillImportLogLine(w *TableWorker, r *ImportLogLine, ids int) {
 	setS(w, &r.Verb, "rework")
 	for i := 0; i < ids; i++ {
 		setS(w, &ImportLogLineAnswersAdd(w, &r.Answers).Id, fmt.Sprintf("judgment-%04d", i))
+	}
+}
+
+// longText is unit repeated to exactly n bytes.
+func longText(unit string, n int) string {
+	return string(bytes.Repeat([]byte(unit), n/len(unit)+1)[:n])
+}
+
+func fillCriterion(w *TableWorker, r *Criterion, i int) {
+	setS(w, &r.Option, fmt.Sprintf("option-%d", i))
+	setS(w, &r.Meaning, "it fails by chance and not by the change: a timing bound, a race")
+}
+
+// fillQuestion fills a question of kind with options criteria and instructions of
+// instrBytes.
+func fillQuestion(w *TableWorker, r *Question, kind AnswerType, options, instrBytes int) {
+	r.Kind = kind
+	setS(w, &r.Instructions, longText("Why the failure failed. ", instrBytes))
+	for i := 0; i < options; i++ {
+		fillCriterion(w, QuestionCriteriaAdd(w, &r.Criteria), i)
+	}
+}
+
+func fillNamedQuestion(w *TableWorker, r *NamedQuestion, name string, kind AnswerType, options, instrBytes int) {
+	setS(w, &r.Name, name)
+	fillQuestion(w, &r.Question, kind, options, instrBytes)
+}
+
+// fillDecideSchema fills a schema of choices choice questions of options criteria
+// each, then one noul, every instruction instrBytes.
+func fillDecideSchema(w *TableWorker, r *DecideSchema, choices, options, instrBytes int) {
+	setS(w, &r.Name, "gate-class")
+	for i := 0; i < choices; i++ {
+		fillNamedQuestion(w, DecideSchemaQuestionsAdd(w, &r.Questions), fmt.Sprintf("choice-%d", i), AnswerTypeChoice, options, instrBytes)
+	}
+	fillNamedQuestion(w, DecideSchemaQuestionsAdd(w, &r.Questions), "noul-0", AnswerTypeNoul, 0, instrBytes)
+}
+
+func fillJevRequest(w *TableWorker, r *JevRequest, choices, options, stateBytes int) {
+	setS(w, &r.State, longText("state ", stateBytes))
+	setS(w, &r.Model, "jev-1")
+	for i := 0; i < choices; i++ {
+		fillNamedQuestion(w, JevRequestQuestionsAdd(w, &r.Questions), fmt.Sprintf("choice-%d", i), AnswerTypeChoice, options, 80)
+	}
+	fillNamedQuestion(w, JevRequestQuestionsAdd(w, &r.Questions), "noul-0", AnswerTypeNoul, 0, 80)
+}
+
+// fillJevAnswer fills a choice answer with probs probabilities, a confidence and a
+// noul both present.
+func fillJevAnswer(w *TableWorker, r *JevAnswer, probs int) {
+	setS(w, &r.Kind, "choice")
+	setS(w, &r.Choice, "opt-0")
+	for i := 0; i < probs; i++ {
+		fillOptionP(w, JevAnswerProbabilitiesAdd(w, &r.Probabilities), fmt.Sprintf("opt-%d", i), 1/float64(probs))
+	}
+	r.Confidence, r.ConfidencePresent = 0.25, true
+	r.Noul, r.NoulPresent = 0.75, true
+}
+
+func fillNamedJevAnswer(w *TableWorker, r *NamedJevAnswer, name string, probs int) {
+	setS(w, &r.Question, name)
+	fillJevAnswer(w, &r.Answer, probs)
+}
+
+func fillJevResponse(w *TableWorker, r *JevResponse, answers, probs int) {
+	for i := 0; i < answers; i++ {
+		fillNamedJevAnswer(w, JevResponseAnswersAdd(w, &r.Answers), fmt.Sprintf("question-%d", i), probs)
+	}
+	r.Usage = sampleUsage()
+}
+
+func fillFixedAnswer(w *TableWorker, r *FixedAnswer, options int) {
+	setS(w, &r.Choice, "opt-0")
+	for i := 0; i < options; i++ {
+		fillOptionP(w, FixedAnswerPAdd(w, &r.P), fmt.Sprintf("opt-%d", i), 1/float64(options))
+	}
+	r.Noul, r.NoulPresent = 0.5, true
+}
+
+func fillNamedFixedAnswer(w *TableWorker, r *NamedFixedAnswer, options int) {
+	setS(w, &r.Question, "class")
+	fillFixedAnswer(w, &r.Answer, options)
+}
+
+func fillFixedTable(w *TableWorker, r *FixedTable, answers, options int) {
+	for i := 0; i < answers; i++ {
+		fillNamedFixedAnswer(w, FixedTableAnswersAdd(w, &r.Answers), options)
+	}
+}
+
+// fillExample fills an example whose paths line is pathsBytes.
+func fillExample(w *TableWorker, r *Example, pathsBytes int) {
+	setS(w, &r.Card, "a13-defs-decide")
+	setS(w, &r.Heading, "A13 the decide definitions")
+	setS(w, &r.Paths, longText("pkg/decide/decide.go ", pathsBytes))
+	setS(w, &r.Kind, "work")
+	r.Label = ExampleLabelPro
+}
+
+func fillSetEntry(w *TableWorker, r *SetEntry, i int, valueBytes int) {
+	setS(w, &r.Key, fmt.Sprintf("cost_record.%d", i))
+	setS(w, &r.Value, longText("attempt=1 tier=pro end=landed ", valueBytes))
+}
+
+// fillLogLine fills a log line with sets set entries of valueBytes each.
+func fillLogLine(w *TableWorker, r *LogLine, sets, valueBytes int) {
+	setS(w, &r.Card, "a13-defs-decide")
+	setS(w, &r.Primary, "a13-defs-decide")
+	setS(w, &r.TableName, "work")
+	setS(w, &r.To, "working")
+	r.Removed = true
+	for i := 0; i < sets; i++ {
+		fillSetEntry(w, LogLineSetAdd(w, &r.Set), i, valueBytes)
+	}
+}
+
+func fillLogExport(w *TableWorker, r *LogExport, lines, sets, valueBytes int) {
+	for i := 0; i < lines; i++ {
+		fillLogLine(w, LogExportLinesAdd(w, &r.Lines), sets, valueBytes)
+	}
+}
+
+// fillImportExport fills an export of lines lines answering ids judgments each, the
+// last line's verb verbBytes long.
+func fillImportExport(w *TableWorker, r *ImportExport, lines, ids, verbBytes int) {
+	for i := 0; i < lines; i++ {
+		l := ImportExportLinesAdd(w, &r.Lines)
+		fillImportLogLine(w, l, ids)
+		if i == lines-1 && verbBytes > 0 {
+			setS(w, &l.Verb, longText("rework ", verbBytes))
+		}
+	}
+}
+
+func fillGateLine(w *TableWorker, r *GateLine, i int, bytes int) {
+	setS(w, &r.Text, longText(fmt.Sprintf("--- FAIL: line %d ", i), bytes))
+}
+
+// fillFailure fills a failing test with lines printed lines of lineBytes each.
+func fillFailure(w *TableWorker, r *Failure, lines, lineBytes int) {
+	setS(w, &r.Pkg, "github.com/mas-bandwidth/nova-tools/pkg/decide")
+	setS(w, &r.Test, "TestGate")
+	for i := 0; i < lines; i++ {
+		fillGateLine(w, FailureLinesAdd(w, &r.Lines), i, lineBytes)
+	}
+}
+
+func fillChosen(w *TableWorker, r *Chosen, whyBytes int) {
+	setS(w, &r.Verb, "rework")
+	r.P = 0.875
+	setS(w, &r.Fix, "narrow")
+	setS(w, &r.Reason, "wrong-lane")
+	setS(w, &r.Act, "list")
+	setS(w, &r.Why, longText("p=0.60 is under the bar 0.70. ", whyBytes))
+}
+
+// fillCluster fills a cluster of cards cards.
+func fillCluster(w *TableWorker, r *Cluster, cards int) {
+	setS(w, &r.ClassName, "env")
+	r.Count = int64(cards)
+	for i := 0; i < cards; i++ {
+		setS(w, &ClusterCardsAdd(w, &r.Cards).Card, fmt.Sprintf("card-%04d", i))
 	}
 }
 
@@ -700,6 +1150,72 @@ func TestDecideRecordsGolden(t *testing.T) {
 	frame := varFns[Frame, FrameBuilder, *FrameBuilder]{name: "Frame", load: FrameLoadBuilder, fromJSON: FrameFromJson, measureReason: FrameLoadMeasureReason, measure: FrameMeasure, save: FrameSave,
 		jsonMeasure: FrameToJsonMeasure, toJSON: FrameToJson, arena: func(b *FrameBuilder) *TableArena { return &b.Arena },
 		rules: func(_ *FrameBuilder, r *Frame, k chk) { frameRules(r, k) }}
+	criterion := varFns[Criterion, CriterionBuilder, *CriterionBuilder]{name: "Criterion", load: CriterionLoadBuilder, fromJSON: CriterionFromJson, measureReason: CriterionLoadMeasureReason, measure: CriterionMeasure, save: CriterionSave,
+		jsonMeasure: CriterionToJsonMeasure, toJSON: CriterionToJson, arena: func(b *CriterionBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *CriterionBuilder, r *Criterion, k chk) { criterionRules(r, k) }}
+	question := varFns[Question, QuestionBuilder, *QuestionBuilder]{name: "Question", load: QuestionLoadBuilder, fromJSON: QuestionFromJson, measureReason: QuestionLoadMeasureReason, measure: QuestionMeasure, save: QuestionSave,
+		jsonMeasure: QuestionToJsonMeasure, toJSON: QuestionToJson, arena: func(b *QuestionBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *QuestionBuilder, r *Question, k chk) { questionRules(r, k) }}
+	namedQuestion := varFns[NamedQuestion, NamedQuestionBuilder, *NamedQuestionBuilder]{name: "NamedQuestion", load: NamedQuestionLoadBuilder, fromJSON: NamedQuestionFromJson, measureReason: NamedQuestionLoadMeasureReason, measure: NamedQuestionMeasure, save: NamedQuestionSave,
+		jsonMeasure: NamedQuestionToJsonMeasure, toJSON: NamedQuestionToJson, arena: func(b *NamedQuestionBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *NamedQuestionBuilder, r *NamedQuestion, k chk) { namedQuestionRules(r, k) }}
+	decideSchema := varFns[DecideSchema, DecideSchemaBuilder, *DecideSchemaBuilder]{name: "DecideSchema", load: DecideSchemaLoadBuilder, fromJSON: DecideSchemaFromJson, measureReason: DecideSchemaLoadMeasureReason, measure: DecideSchemaMeasure, save: DecideSchemaSave,
+		jsonMeasure: DecideSchemaToJsonMeasure, toJSON: DecideSchemaToJson, arena: func(b *DecideSchemaBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *DecideSchemaBuilder, r *DecideSchema, k chk) { decideSchemaRules(r, k) }}
+	jevRequest := varFns[JevRequest, JevRequestBuilder, *JevRequestBuilder]{name: "JevRequest", load: JevRequestLoadBuilder, fromJSON: JevRequestFromJson, measureReason: JevRequestLoadMeasureReason, measure: JevRequestMeasure, save: JevRequestSave,
+		jsonMeasure: JevRequestToJsonMeasure, toJSON: JevRequestToJson, arena: func(b *JevRequestBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *JevRequestBuilder, r *JevRequest, k chk) { jevRequestRules(r, k) }}
+	jevAnswer := varFns[JevAnswer, JevAnswerBuilder, *JevAnswerBuilder]{name: "JevAnswer", load: JevAnswerLoadBuilder, fromJSON: JevAnswerFromJson, measureReason: JevAnswerLoadMeasureReason, measure: JevAnswerMeasure, save: JevAnswerSave,
+		jsonMeasure: JevAnswerToJsonMeasure, toJSON: JevAnswerToJson, arena: func(b *JevAnswerBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *JevAnswerBuilder, r *JevAnswer, k chk) { jevAnswerRules(r, k) }}
+	namedJevAnswer := varFns[NamedJevAnswer, NamedJevAnswerBuilder, *NamedJevAnswerBuilder]{name: "NamedJevAnswer", load: NamedJevAnswerLoadBuilder, fromJSON: NamedJevAnswerFromJson, measureReason: NamedJevAnswerLoadMeasureReason, measure: NamedJevAnswerMeasure, save: NamedJevAnswerSave,
+		jsonMeasure: NamedJevAnswerToJsonMeasure, toJSON: NamedJevAnswerToJson, arena: func(b *NamedJevAnswerBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *NamedJevAnswerBuilder, r *NamedJevAnswer, k chk) { namedJevAnswerRules(r, k) }}
+	jevResponse := varFns[JevResponse, JevResponseBuilder, *JevResponseBuilder]{name: "JevResponse", load: JevResponseLoadBuilder, fromJSON: JevResponseFromJson, measureReason: JevResponseLoadMeasureReason, measure: JevResponseMeasure, save: JevResponseSave,
+		jsonMeasure: JevResponseToJsonMeasure, toJSON: JevResponseToJson, arena: func(b *JevResponseBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *JevResponseBuilder, r *JevResponse, k chk) { jevResponseRules(r, k) }}
+	fixedAnswer := varFns[FixedAnswer, FixedAnswerBuilder, *FixedAnswerBuilder]{name: "FixedAnswer", load: FixedAnswerLoadBuilder, fromJSON: FixedAnswerFromJson, measureReason: FixedAnswerLoadMeasureReason, measure: FixedAnswerMeasure, save: FixedAnswerSave,
+		jsonMeasure: FixedAnswerToJsonMeasure, toJSON: FixedAnswerToJson, arena: func(b *FixedAnswerBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *FixedAnswerBuilder, r *FixedAnswer, k chk) { fixedAnswerRules(r, k) }}
+	namedFixedAnswer := varFns[NamedFixedAnswer, NamedFixedAnswerBuilder, *NamedFixedAnswerBuilder]{name: "NamedFixedAnswer", load: NamedFixedAnswerLoadBuilder, fromJSON: NamedFixedAnswerFromJson, measureReason: NamedFixedAnswerLoadMeasureReason, measure: NamedFixedAnswerMeasure, save: NamedFixedAnswerSave,
+		jsonMeasure: NamedFixedAnswerToJsonMeasure, toJSON: NamedFixedAnswerToJson, arena: func(b *NamedFixedAnswerBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *NamedFixedAnswerBuilder, r *NamedFixedAnswer, k chk) { namedFixedAnswerRules(r, k) }}
+	fixedTable := varFns[FixedTable, FixedTableBuilder, *FixedTableBuilder]{name: "FixedTable", load: FixedTableLoadBuilder, fromJSON: FixedTableFromJson, measureReason: FixedTableLoadMeasureReason, measure: FixedTableMeasure, save: FixedTableSave,
+		jsonMeasure: FixedTableToJsonMeasure, toJSON: FixedTableToJson, arena: func(b *FixedTableBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *FixedTableBuilder, r *FixedTable, k chk) { fixedTableRules(r, k) }}
+	example := varFns[Example, ExampleBuilder, *ExampleBuilder]{name: "Example", load: ExampleLoadBuilder, fromJSON: ExampleFromJson, measureReason: ExampleLoadMeasureReason, measure: ExampleMeasure, save: ExampleSave,
+		jsonMeasure: ExampleToJsonMeasure, toJSON: ExampleToJson, arena: func(b *ExampleBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *ExampleBuilder, r *Example, k chk) { exampleRules(r, k) }}
+	setEntry := varFns[SetEntry, SetEntryBuilder, *SetEntryBuilder]{name: "SetEntry", load: SetEntryLoadBuilder, fromJSON: SetEntryFromJson, measureReason: SetEntryLoadMeasureReason, measure: SetEntryMeasure, save: SetEntrySave,
+		jsonMeasure: SetEntryToJsonMeasure, toJSON: SetEntryToJson, arena: func(b *SetEntryBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *SetEntryBuilder, r *SetEntry, k chk) { setEntryRules(r, k) }}
+	logLine := varFns[LogLine, LogLineBuilder, *LogLineBuilder]{name: "LogLine", load: LogLineLoadBuilder, fromJSON: LogLineFromJson, measureReason: LogLineLoadMeasureReason, measure: LogLineMeasure, save: LogLineSave,
+		jsonMeasure: LogLineToJsonMeasure, toJSON: LogLineToJson, arena: func(b *LogLineBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *LogLineBuilder, r *LogLine, k chk) { logLineRules(r, k) }}
+	logExport := varFns[LogExport, LogExportBuilder, *LogExportBuilder]{name: "LogExport", load: LogExportLoadBuilder, fromJSON: LogExportFromJson, measureReason: LogExportLoadMeasureReason, measure: LogExportMeasure, save: LogExportSave,
+		jsonMeasure: LogExportToJsonMeasure, toJSON: LogExportToJson, arena: func(b *LogExportBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *LogExportBuilder, r *LogExport, k chk) { logExportRules(r, k) }}
+	importExport := varFns[ImportExport, ImportExportBuilder, *ImportExportBuilder]{name: "ImportExport", load: ImportExportLoadBuilder, fromJSON: ImportExportFromJson, measureReason: ImportExportLoadMeasureReason, measure: ImportExportMeasure, save: ImportExportSave,
+		jsonMeasure: ImportExportToJsonMeasure, toJSON: ImportExportToJson, arena: func(b *ImportExportBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *ImportExportBuilder, r *ImportExport, k chk) { importExportRules(r, k) }}
+
+	gateLine := varFns[GateLine, GateLineBuilder, *GateLineBuilder]{name: "GateLine", load: GateLineLoadBuilder, fromJSON: GateLineFromJson, measureReason: GateLineLoadMeasureReason, measure: GateLineMeasure, save: GateLineSave,
+		jsonMeasure: GateLineToJsonMeasure, toJSON: GateLineToJson, arena: func(b *GateLineBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *GateLineBuilder, r *GateLine, k chk) { gateLineRules(r, k) }}
+	failure := varFns[Failure, FailureBuilder, *FailureBuilder]{name: "Failure", load: FailureLoadBuilder, fromJSON: FailureFromJson, measureReason: FailureLoadMeasureReason, measure: FailureMeasure, save: FailureSave,
+		jsonMeasure: FailureToJsonMeasure, toJSON: FailureToJson, arena: func(b *FailureBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *FailureBuilder, r *Failure, k chk) { failureRules(r, k) }}
+	chosen := varFns[Chosen, ChosenBuilder, *ChosenBuilder]{name: "Chosen", load: ChosenLoadBuilder, fromJSON: ChosenFromJson, measureReason: ChosenLoadMeasureReason, measure: ChosenMeasure, save: ChosenSave,
+		jsonMeasure: ChosenToJsonMeasure, toJSON: ChosenToJson, arena: func(b *ChosenBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *ChosenBuilder, r *Chosen, k chk) { chosenRules(r, k) }}
+	clusterCard := varFns[ClusterCard, ClusterCardBuilder, *ClusterCardBuilder]{name: "ClusterCard", load: ClusterCardLoadBuilder, fromJSON: ClusterCardFromJson, measureReason: ClusterCardLoadMeasureReason, measure: ClusterCardMeasure, save: ClusterCardSave,
+		jsonMeasure: ClusterCardToJsonMeasure, toJSON: ClusterCardToJson, arena: func(b *ClusterCardBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *ClusterCardBuilder, r *ClusterCard, k chk) { clusterCardRules(r, k) }}
+	cluster := varFns[Cluster, ClusterBuilder, *ClusterBuilder]{name: "Cluster", load: ClusterLoadBuilder, fromJSON: ClusterFromJson, measureReason: ClusterLoadMeasureReason, measure: ClusterMeasure, save: ClusterSave,
+		jsonMeasure: ClusterToJsonMeasure, toJSON: ClusterToJson, arena: func(b *ClusterBuilder) *TableArena { return &b.Arena },
+		rules: func(_ *ClusterBuilder, r *Cluster, k chk) { clusterRules(r, k) }}
+	bars := plainFns("Bars", BarsLoad, BarsFromJson, BarsMeasure, BarsSave, BarsToJsonMeasure, BarsToJson, func(r *Bars, k chk) { barsRules(r, k) })
+	gateBars := plainFns("GateBars", GateBarsLoad, GateBarsFromJson, GateBarsMeasure, GateBarsSave, GateBarsToJsonMeasure, GateBarsToJson, func(r *GateBars, k chk) { gateBarsRules(r, k) })
 
 	t.Run("Usage", func(t *testing.T) {
 		t.Parallel()
@@ -1010,12 +1526,415 @@ func TestDecideRecordsGolden(t *testing.T) {
 		}
 	})
 
+	t.Run("Criterion", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, criterion, func(b *CriterionBuilder, r *Criterion) { fillCriterion(&b.Main, r, 0) }, []vbound[Criterion, *CriterionBuilder]{
+			{"option not UTF-8", "option", "malformed", func(b *CriterionBuilder, r *Criterion) { TableStringAt(&r.Option, &b.Arena).Data[0] = 0xff }},
+			{"meaning not UTF-8", "meaning", "malformed", func(b *CriterionBuilder, r *Criterion) { TableStringAt(&r.Meaning, &b.Arena).Data[0] = 0xff }},
+		})
+	})
+	t.Run("Question", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, question, func(b *QuestionBuilder, r *Question) { fillQuestion(&b.Main, r, AnswerTypeChoice, 3, 60) }, []vbound[Question, *QuestionBuilder]{
+			{"type none", "kind", "clamped", func(_ *QuestionBuilder, r *Question) { r.Kind = AnswerTypeNone }},
+			{"instructions empty", "instructions", "absent_required", func(_ *QuestionBuilder, r *Question) { r.Instructions = 0 }},
+			{"instructions blank", "instructions", "absent_required", func(b *QuestionBuilder, r *Question) { setS(&b.Main, &r.Instructions, " \t\n") }},
+			{"a choice with one option", "criteria", "clamped", func(b *QuestionBuilder, r *Question) { eraseCriteria(&b.Arena, r, 2) }},
+			{"a choice with none", "criteria", "clamped", func(b *QuestionBuilder, r *Question) { eraseCriteria(&b.Arena, r, 3) }},
+			{"a noul with options", "criteria", "clamped", func(_ *QuestionBuilder, r *Question) { r.Kind = AnswerTypeNoul }},
+			{"an option twice", "option", "malformed", func(b *QuestionBuilder, r *Question) { setS(&b.Main, &r.Criteria.At(1, &b.Arena).Option, "option-0") }},
+			{"instructions not UTF-8", "instructions", "malformed", func(b *QuestionBuilder, r *Question) { TableStringAt(&r.Instructions, &b.Arena).Data[0] = 0xff }},
+		})
+		// A noul names no option, and a choice any number from two (decide.go:101).
+		for _, c := range []struct {
+			kind    AnswerType
+			options int
+		}{{AnswerTypeNoul, 0}, {AnswerTypeChoice, 2}, {AnswerTypeChoice, 200}} {
+			wholeIn(t, question, fmt.Sprintf("kind %d with %d options", c.kind, c.options), func(b *QuestionBuilder, r *Question) {
+				fillQuestion(&b.Main, r, c.kind, c.options, 64<<10)
+			}, func(t *testing.T, got *QuestionBuilder, r *Question) {
+				assert.EqualValues(t, c.options, r.Criteria.Count)
+				assert.Len(t, strAt(&r.Instructions, &got.Arena), 64<<10)
+			})
+		}
+	})
+	t.Run("NamedQuestion", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, namedQuestion, func(b *NamedQuestionBuilder, r *NamedQuestion) {
+			fillNamedQuestion(&b.Main, r, "class", AnswerTypeChoice, 2, 40)
+		}, []vbound[NamedQuestion, *NamedQuestionBuilder]{
+			{"name not UTF-8", "name", "malformed", func(b *NamedQuestionBuilder, r *NamedQuestion) { TableStringAt(&r.Name, &b.Arena).Data[0] = 0xff }},
+			{"the question's type none", "kind", "clamped", func(_ *NamedQuestionBuilder, r *NamedQuestion) { r.Question.Kind = AnswerTypeNone }},
+			{"the question's instructions empty", "instructions", "absent_required", func(_ *NamedQuestionBuilder, r *NamedQuestion) { r.Question.Instructions = 0 }},
+		})
+	})
+	t.Run("DecideSchema", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, decideSchema, func(b *DecideSchemaBuilder, r *DecideSchema) { fillDecideSchema(&b.Main, r, 2, 3, 60) }, []vbound[DecideSchema, *DecideSchemaBuilder]{
+			{"name empty", "name", "absent_required", func(_ *DecideSchemaBuilder, r *DecideSchema) { r.Name = 0 }},
+			{"name blank", "name", "absent_required", func(b *DecideSchemaBuilder, r *DecideSchema) { setS(&b.Main, &r.Name, "  ") }},
+			{"name not UTF-8", "name", "malformed", func(b *DecideSchemaBuilder, r *DecideSchema) { TableStringAt(&r.Name, &b.Arena).Data[0] = 0xff }},
+			{"no questions", "questions", "absent_required", func(_ *DecideSchemaBuilder, r *DecideSchema) { r.Questions.Count = 0 }},
+			{"a question's type none", "kind", "clamped", func(b *DecideSchemaBuilder, r *DecideSchema) {
+				r.Questions.At(0, &b.Arena).Question.Kind = AnswerTypeNone
+			}},
+			{"a question without instructions", "instructions", "absent_required", func(b *DecideSchemaBuilder, r *DecideSchema) {
+				r.Questions.At(1, &b.Arena).Question.Instructions = 0
+			}},
+			{"a choice with one option", "criteria", "clamped", func(b *DecideSchemaBuilder, r *DecideSchema) {
+				eraseCriteria(&b.Arena, &r.Questions.At(0, &b.Arena).Question, 2)
+			}},
+			{"a noul with an option", "criteria", "clamped", func(b *DecideSchemaBuilder, r *DecideSchema) {
+				fillCriterion(&b.Main, QuestionCriteriaAdd(&b.Main, &r.Questions.At(2, &b.Arena).Question.Criteria), 0)
+			}},
+			{"a question name twice", "name", "malformed", func(b *DecideSchemaBuilder, r *DecideSchema) {
+				setS(&b.Main, &r.Questions.At(1, &b.Arena).Name, "choice-0")
+			}},
+		})
+		// A schema of any size: one question, two hundred, two hundred options to
+		// one, and instructions of 1 MiB (the code bounds none: decide.go:101).
+		for _, c := range []struct{ choices, options, instr int }{{1, 2, 40}, {199, 3, 100}, {1, 200, 64 << 10}, {3, 10, 1 << 20}} {
+			wholeIn(t, decideSchema, fmt.Sprintf("%d choices of %d options, instructions %d", c.choices, c.options, c.instr), func(b *DecideSchemaBuilder, r *DecideSchema) {
+				fillDecideSchema(&b.Main, r, c.choices, c.options, c.instr)
+			}, func(t *testing.T, got *DecideSchemaBuilder, r *DecideSchema) {
+				require.EqualValues(t, c.choices+1, r.Questions.Count)
+				first := r.Questions.At(0, &got.Arena)
+				assert.EqualValues(t, c.options, first.Question.Criteria.Count)
+				assert.Len(t, strAt(&first.Question.Instructions, &got.Arena), c.instr)
+				last := r.Questions.At(r.Questions.Count-1, &got.Arena)
+				assert.Equal(t, "noul-0", strAt(&last.Name, &got.Arena))
+				assert.EqualValues(t, 0, last.Question.Criteria.Count)
+			})
+		}
+	})
+	t.Run("JevRequest", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, jevRequest, func(b *JevRequestBuilder, r *JevRequest) { fillJevRequest(&b.Main, r, 2, 3, 80) }, []vbound[JevRequest, *JevRequestBuilder]{
+			{"state empty", "state", "absent_required", func(_ *JevRequestBuilder, r *JevRequest) { r.State = 0 }},
+			{"state blank", "state", "absent_required", func(b *JevRequestBuilder, r *JevRequest) { setS(&b.Main, &r.State, "\n") }},
+			{"model not UTF-8", "model", "malformed", func(b *JevRequestBuilder, r *JevRequest) { TableStringAt(&r.Model, &b.Arena).Data[0] = 0xff }},
+			{"a question's type none", "kind", "clamped", func(b *JevRequestBuilder, r *JevRequest) { r.Questions.At(0, &b.Arena).Question.Kind = AnswerTypeNone }},
+			{"a question name twice", "name", "malformed", func(b *JevRequestBuilder, r *JevRequest) {
+				setS(&b.Main, &r.Questions.At(1, &b.Arena).Name, "choice-0")
+			}},
+		})
+		for _, c := range []struct{ choices, options, state int }{{1, 2, 40}, {199, 3, 1 << 10}, {1, 200, 1 << 20}} {
+			wholeIn(t, jevRequest, fmt.Sprintf("%d choices of %d options, state %d", c.choices, c.options, c.state), func(b *JevRequestBuilder, r *JevRequest) {
+				fillJevRequest(&b.Main, r, c.choices, c.options, c.state)
+			}, func(t *testing.T, got *JevRequestBuilder, r *JevRequest) {
+				require.EqualValues(t, c.choices+1, r.Questions.Count)
+				assert.EqualValues(t, c.options, r.Questions.At(0, &got.Arena).Question.Criteria.Count)
+				assert.Len(t, strAt(&r.State, &got.Arena), c.state)
+			})
+		}
+	})
+	t.Run("JevAnswer", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, jevAnswer, func(b *JevAnswerBuilder, r *JevAnswer) { fillJevAnswer(&b.Main, r, 3) }, []vbound[JevAnswer, *JevAnswerBuilder]{
+			{"type not UTF-8", "kind", "malformed", func(b *JevAnswerBuilder, r *JevAnswer) { TableStringAt(&r.Kind, &b.Arena).Data[0] = 0xff }},
+			{"choice not UTF-8", "choice", "malformed", func(b *JevAnswerBuilder, r *JevAnswer) { TableStringAt(&r.Choice, &b.Arena).Data[0] = 0xff }},
+			{"a probability above one", "p", "clamped", func(b *JevAnswerBuilder, r *JevAnswer) { r.Probabilities.At(1, &b.Arena).P = 2 }},
+			{"a noul above one", "noul", "clamped", func(_ *JevAnswerBuilder, r *JevAnswer) { r.Noul = 1.5 }},
+			{"a noul not a number", "noul", "malformed", func(_ *JevAnswerBuilder, r *JevAnswer) { r.Noul = math.NaN() }},
+		})
+		fill := func(b *JevAnswerBuilder, r *JevAnswer) { fillJevAnswer(&b.Main, r, 2) }
+		optionalFloats(t, jevAnswer, fill, func(r *JevAnswer, present bool) *bool { r.NoulPresent = present; r.Noul = 0; return &r.NoulPresent })
+		optionalFloats(t, jevAnswer, fill, func(r *JevAnswer, present bool) *bool {
+			r.ConfidencePresent = present
+			r.Confidence = 0
+			return &r.ConfidencePresent
+		})
+		for _, probs := range []int{0, 2, 200} {
+			wholeIn(t, jevAnswer, fmt.Sprintf("%d probabilities", probs), func(b *JevAnswerBuilder, r *JevAnswer) { fillJevAnswer(&b.Main, r, probs) },
+				func(t *testing.T, _ *JevAnswerBuilder, r *JevAnswer) {
+					assert.EqualValues(t, probs, r.Probabilities.Count)
+				})
+		}
+	})
+	t.Run("NamedJevAnswer", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, namedJevAnswer, func(b *NamedJevAnswerBuilder, r *NamedJevAnswer) { fillNamedJevAnswer(&b.Main, r, "class", 2) }, []vbound[NamedJevAnswer, *NamedJevAnswerBuilder]{
+			{"question not UTF-8", "question", "malformed", func(b *NamedJevAnswerBuilder, r *NamedJevAnswer) { TableStringAt(&r.Question, &b.Arena).Data[0] = 0xff }},
+			{"the answer's noul above one", "noul", "clamped", func(_ *NamedJevAnswerBuilder, r *NamedJevAnswer) { r.Answer.Noul = 1.5 }},
+		})
+	})
+	t.Run("JevResponse", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, jevResponse, func(b *JevResponseBuilder, r *JevResponse) { fillJevResponse(&b.Main, r, 2, 3) }, []vbound[JevResponse, *JevResponseBuilder]{
+			{"an answer's probability above one", "p", "clamped", func(b *JevResponseBuilder, r *JevResponse) {
+				r.Answers.At(1, &b.Arena).Answer.Probabilities.At(0, &b.Arena).P = 1.2
+			}},
+			{"an answer's question not UTF-8", "question", "malformed", func(b *JevResponseBuilder, r *JevResponse) {
+				TableStringAt(&r.Answers.At(0, &b.Arena).Question, &b.Arena).Data[0] = 0xff
+			}},
+		})
+		// The backend answers any number of questions of any number of options.
+		for _, c := range []struct{ answers, probs int }{{0, 0}, {1, 2}, {200, 3}, {3, 200}} {
+			wholeIn(t, jevResponse, fmt.Sprintf("%d answers of %d probabilities", c.answers, c.probs), func(b *JevResponseBuilder, r *JevResponse) {
+				fillJevResponse(&b.Main, r, c.answers, c.probs)
+			}, func(t *testing.T, got *JevResponseBuilder, r *JevResponse) {
+				require.EqualValues(t, c.answers, r.Answers.Count)
+				assert.Equal(t, sampleUsage(), r.Usage)
+				if c.answers > 0 {
+					assert.EqualValues(t, c.probs, r.Answers.At(r.Answers.Count-1, &got.Arena).Answer.Probabilities.Count)
+				}
+			})
+		}
+	})
+	t.Run("FixedAnswer", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, fixedAnswer, func(b *FixedAnswerBuilder, r *FixedAnswer) { fillFixedAnswer(&b.Main, r, 3) }, []vbound[FixedAnswer, *FixedAnswerBuilder]{
+			{"choice not UTF-8", "choice", "malformed", func(b *FixedAnswerBuilder, r *FixedAnswer) { TableStringAt(&r.Choice, &b.Arena).Data[0] = 0xff }},
+			{"an option empty", "option", "absent_required", func(b *FixedAnswerBuilder, r *FixedAnswer) { r.P.At(0, &b.Arena).Option = 0 }},
+			{"a probability above one", "p", "clamped", func(b *FixedAnswerBuilder, r *FixedAnswer) { r.P.At(2, &b.Arena).P = 1.1 }},
+			{"a noul below zero", "noul", "clamped", func(_ *FixedAnswerBuilder, r *FixedAnswer) { r.Noul = -0.5 }},
+			{"a noul not a number", "noul", "malformed", func(_ *FixedAnswerBuilder, r *FixedAnswer) { r.Noul = math.NaN() }},
+		})
+		optionalFloats(t, fixedAnswer, func(b *FixedAnswerBuilder, r *FixedAnswer) { fillFixedAnswer(&b.Main, r, 2) },
+			func(r *FixedAnswer, present bool) *bool { r.NoulPresent = present; r.Noul = 0; return &r.NoulPresent })
+		for _, options := range []int{0, 2, 200} {
+			wholeIn(t, fixedAnswer, fmt.Sprintf("%d options", options), func(b *FixedAnswerBuilder, r *FixedAnswer) { fillFixedAnswer(&b.Main, r, options) },
+				func(t *testing.T, _ *FixedAnswerBuilder, r *FixedAnswer) { assert.EqualValues(t, options, r.P.Count) })
+		}
+	})
+	t.Run("NamedFixedAnswer", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, namedFixedAnswer, func(b *NamedFixedAnswerBuilder, r *NamedFixedAnswer) { fillNamedFixedAnswer(&b.Main, r, 2) }, []vbound[NamedFixedAnswer, *NamedFixedAnswerBuilder]{
+			{"question not UTF-8", "question", "malformed", func(b *NamedFixedAnswerBuilder, r *NamedFixedAnswer) {
+				TableStringAt(&r.Question, &b.Arena).Data[0] = 0xff
+			}},
+			{"the row's noul above one", "noul", "clamped", func(_ *NamedFixedAnswerBuilder, r *NamedFixedAnswer) { r.Answer.Noul = 2 }},
+		})
+	})
+	t.Run("FixedTable", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, fixedTable, func(b *FixedTableBuilder, r *FixedTable) { fillFixedTable(&b.Main, r, 2, 2) }, []vbound[FixedTable, *FixedTableBuilder]{
+			{"a row's probability above one", "p", "clamped", func(b *FixedTableBuilder, r *FixedTable) { r.Answers.At(1, &b.Arena).Answer.P.At(0, &b.Arena).P = 3 }},
+		})
+		for _, c := range []struct{ answers, options int }{{0, 0}, {1, 2}, {200, 3}, {2, 200}} {
+			wholeIn(t, fixedTable, fmt.Sprintf("%d rows of %d options", c.answers, c.options), func(b *FixedTableBuilder, r *FixedTable) {
+				fillFixedTable(&b.Main, r, c.answers, c.options)
+			}, func(t *testing.T, got *FixedTableBuilder, r *FixedTable) {
+				require.EqualValues(t, c.answers, r.Answers.Count)
+				if c.answers > 0 {
+					assert.EqualValues(t, c.options, r.Answers.At(r.Answers.Count-1, &got.Arena).Answer.P.Count)
+				}
+			})
+		}
+	})
+	t.Run("Example", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, example, func(b *ExampleBuilder, r *Example) { fillExample(&b.Main, r, 60) }, []vbound[Example, *ExampleBuilder]{
+			{"card empty", "card", "absent_required", func(_ *ExampleBuilder, r *Example) { r.Card = 0 }},
+			{"heading empty", "heading", "absent_required", func(_ *ExampleBuilder, r *Example) { r.Heading = 0 }},
+			{"label none", "label", "clamped", func(_ *ExampleBuilder, r *Example) { r.Label = ExampleLabelNone }},
+			{"label past heavy", "label", "clamped", func(_ *ExampleBuilder, r *Example) { r.Label = ExampleLabel(4) }},
+			{"paths not UTF-8", "paths", "malformed", func(b *ExampleBuilder, r *Example) { TableStringAt(&r.Paths, &b.Arena).Data[0] = 0xff }},
+		})
+		for _, label := range []ExampleLabel{ExampleLabelFlash, ExampleLabelPro, ExampleLabelHeavy} {
+			wholeIn(t, example, fmt.Sprintf("label %d", label), func(b *ExampleBuilder, r *Example) {
+				fillExample(&b.Main, r, 1<<20)
+				r.Label = label
+			}, func(t *testing.T, got *ExampleBuilder, r *Example) {
+				assert.Equal(t, label, r.Label)
+				assert.Len(t, strAt(&r.Paths, &got.Arena), 1<<20)
+			})
+		}
+	})
+	t.Run("SetEntry", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, setEntry, func(b *SetEntryBuilder, r *SetEntry) { fillSetEntry(&b.Main, r, 0, 40) }, []vbound[SetEntry, *SetEntryBuilder]{
+			{"key not UTF-8", "key", "malformed", func(b *SetEntryBuilder, r *SetEntry) { TableStringAt(&r.Key, &b.Arena).Data[0] = 0xff }},
+			{"value not UTF-8", "value", "malformed", func(b *SetEntryBuilder, r *SetEntry) { TableStringAt(&r.Value, &b.Arena).Data[0] = 0xff }},
+		})
+	})
+	t.Run("LogLine", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, logLine, func(b *LogLineBuilder, r *LogLine) { fillLogLine(&b.Main, r, 3, 40) }, []vbound[LogLine, *LogLineBuilder]{
+			{"card not UTF-8", "card", "malformed", func(b *LogLineBuilder, r *LogLine) { TableStringAt(&r.Card, &b.Arena).Data[0] = 0xff }},
+			{"table not UTF-8", "table_name", "malformed", func(b *LogLineBuilder, r *LogLine) { TableStringAt(&r.TableName, &b.Arena).Data[0] = 0xff }},
+			{"a set key not UTF-8", "key", "malformed", func(b *LogLineBuilder, r *LogLine) {
+				TableStringAt(&r.Set.At(2, &b.Arena).Key, &b.Arena).Data[0] = 0xff
+			}},
+		})
+		// Primary empty and removed false are lines the code reads (ReadLog skips the
+		// first); a line with no set, 200 and one 1 MiB value all round-trip.
+		for _, c := range []struct{ sets, value int }{{0, 0}, {1, 1 << 20}, {200, 30}} {
+			wholeIn(t, logLine, fmt.Sprintf("%d set entries of %d bytes", c.sets, c.value), func(b *LogLineBuilder, r *LogLine) {
+				fillLogLine(&b.Main, r, c.sets, c.value)
+				r.Primary, r.Removed = 0, false
+			}, func(t *testing.T, got *LogLineBuilder, r *LogLine) {
+				require.EqualValues(t, c.sets, r.Set.Count)
+				assert.False(t, r.Removed)
+				assert.Zero(t, r.Primary)
+				if c.sets > 0 {
+					assert.Len(t, strAt(&r.Set.At(r.Set.Count-1, &got.Arena).Value, &got.Arena), c.value)
+				}
+			})
+		}
+	})
+	t.Run("LogExport", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, logExport, func(b *LogExportBuilder, r *LogExport) { fillLogExport(&b.Main, r, 2, 2, 40) }, []vbound[LogExport, *LogExportBuilder]{
+			{"a line's card not UTF-8", "card", "malformed", func(b *LogExportBuilder, r *LogExport) {
+				TableStringAt(&r.Lines.At(1, &b.Arena).Card, &b.Arena).Data[0] = 0xff
+			}},
+		})
+		for _, c := range []struct{ lines, sets, value int }{{0, 0, 0}, {1, 1, 1 << 20}, {200, 3, 100}, {2, 200, 30}} {
+			wholeIn(t, logExport, fmt.Sprintf("%d lines of %d set entries", c.lines, c.sets), func(b *LogExportBuilder, r *LogExport) {
+				fillLogExport(&b.Main, r, c.lines, c.sets, c.value)
+			}, func(t *testing.T, got *LogExportBuilder, r *LogExport) {
+				require.EqualValues(t, c.lines, r.Lines.Count)
+				if c.lines > 0 {
+					last := r.Lines.At(r.Lines.Count-1, &got.Arena)
+					assert.EqualValues(t, c.sets, last.Set.Count)
+				}
+			})
+		}
+	})
+	t.Run("ImportExport", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, importExport, func(b *ImportExportBuilder, r *ImportExport) { fillImportExport(&b.Main, r, 2, 2, 0) }, []vbound[ImportExport, *ImportExportBuilder]{
+			{"a line's verb not UTF-8", "verb", "malformed", func(b *ImportExportBuilder, r *ImportExport) {
+				TableStringAt(&r.Lines.At(1, &b.Arena).Verb, &b.Arena).Data[0] = 0xff
+			}},
+			{"a line's answer id empty", "id", "absent_required", func(b *ImportExportBuilder, r *ImportExport) { r.Lines.At(0, &b.Arena).Answers.At(1, &b.Arena).Id = 0 }},
+		})
+		// The import takes every line of the export and every id of a line
+		// (import.go:161-176): none, one, two hundred lines, two hundred ids to a
+		// line and a verb of 1 MiB round-trip in every form.
+		for _, c := range []struct{ lines, ids, verb int }{{0, 0, 0}, {1, 1, 0}, {200, 3, 0}, {2, 200, 0}, {1, 1, 1 << 20}} {
+			wholeIn(t, importExport, fmt.Sprintf("%d lines of %d ids", c.lines, c.ids), func(b *ImportExportBuilder, r *ImportExport) {
+				fillImportExport(&b.Main, r, c.lines, c.ids, c.verb)
+			}, func(t *testing.T, got *ImportExportBuilder, r *ImportExport) {
+				require.EqualValues(t, c.lines, r.Lines.Count)
+				if c.lines > 0 {
+					last := r.Lines.At(r.Lines.Count-1, &got.Arena)
+					assert.EqualValues(t, c.ids, last.Answers.Count)
+					if c.verb > 0 {
+						assert.Len(t, strAt(&last.Verb, &got.Arena), c.verb)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("Bars", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, bars, func(_ *plain[Bars], r *Bars) { *r = Bars{Bounce: 0.8, Review: 0.3} }, plainBounds([]pbound[Bars]{
+			{"bounce above one", "bounce", "clamped", func(v *Bars) { v.Bounce = 1.5 }},
+			{"review below zero", "review", "clamped", func(v *Bars) { v.Review = -0.1 }},
+			{"review not a number", "review", "malformed", func(v *Bars) { v.Review = math.NaN() }},
+			{"review above bounce", "review", "clamped", func(v *Bars) { v.Review = 0.9 }},
+		}))
+		for _, c := range []Bars{{0, 0}, {1, 1}, {0.5, 0.5}} {
+			wholeIn(t, bars, fmt.Sprintf("%v", c), func(_ *plain[Bars], r *Bars) { *r = c },
+				func(t *testing.T, _ *plain[Bars], r *Bars) { assert.Equal(t, c, *r) })
+		}
+	})
+	t.Run("GateBars", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, gateBars, func(_ *plain[GateBars], r *GateBars) { *r = GateBars{Flaky: 0.6, PreExisting: 0.6} }, plainBounds([]pbound[GateBars]{
+			{"flaky above one and not Unset", "flaky", "clamped", func(v *GateBars) { v.Flaky = 1.5 }},
+			{"pre-existing below zero", "pre_existing", "clamped", func(v *GateBars) { v.PreExisting = -0.2 }},
+			{"flaky not a number", "flaky", "malformed", func(v *GateBars) { v.Flaky = math.NaN() }},
+			{"two set bars summing to one", "flaky", "clamped", func(v *GateBars) { v.Flaky, v.PreExisting = 0.5, 0.5 }},
+		}))
+		// An Unset bar (2.0, gate.go) is a bar the sprint row leaves empty: allowed
+		// with a set bar of any value and with another Unset.
+		for _, c := range []GateBars{{gateBarUnset, gateBarUnset}, {gateBarUnset, 0.4}, {0.1, gateBarUnset}, {0.9, 0.9}} {
+			wholeIn(t, gateBars, fmt.Sprintf("%v", c), func(_ *plain[GateBars], r *GateBars) { *r = c },
+				func(t *testing.T, _ *plain[GateBars], r *GateBars) { assert.Equal(t, c, *r) })
+		}
+	})
+	t.Run("GateLine", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, gateLine, func(b *GateLineBuilder, r *GateLine) { fillGateLine(&b.Main, r, 0, 40) }, []vbound[GateLine, *GateLineBuilder]{
+			{"text not UTF-8", "text", "malformed", func(b *GateLineBuilder, r *GateLine) { TableStringAt(&r.Text, &b.Arena).Data[0] = 0xff }},
+		})
+	})
+	t.Run("Failure", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, failure, func(b *FailureBuilder, r *Failure) { fillFailure(&b.Main, r, 3, 60) }, []vbound[Failure, *FailureBuilder]{
+			{"package not UTF-8", "pkg", "malformed", func(b *FailureBuilder, r *Failure) { TableStringAt(&r.Pkg, &b.Arena).Data[0] = 0xff }},
+			{"test not UTF-8", "test", "malformed", func(b *FailureBuilder, r *Failure) { TableStringAt(&r.Test, &b.Arena).Data[0] = 0xff }},
+			{"a line not UTF-8", "text", "malformed", func(b *FailureBuilder, r *Failure) {
+				TableStringAt(&r.Lines.At(2, &b.Arena).Text, &b.Arena).Data[0] = 0xff
+			}},
+		})
+		// A build failure has no test and no lines; a failure keeps any number of
+		// lines of any length (gate.go:66 bounds none).
+		for _, c := range []struct{ lines, bytes int }{{0, 0}, {1, 1 << 20}, {200, 80}} {
+			wholeIn(t, failure, fmt.Sprintf("%d lines of %d bytes", c.lines, c.bytes), func(b *FailureBuilder, r *Failure) {
+				fillFailure(&b.Main, r, c.lines, c.bytes)
+				if c.lines == 0 {
+					r.Test = 0
+				}
+			}, func(t *testing.T, got *FailureBuilder, r *Failure) {
+				require.EqualValues(t, c.lines, r.Lines.Count)
+				if c.lines > 0 {
+					assert.Len(t, strAt(&r.Lines.At(r.Lines.Count-1, &got.Arena).Text, &got.Arena), c.bytes)
+				} else {
+					assert.Zero(t, r.Test)
+				}
+			})
+		}
+	})
+	t.Run("Chosen", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, chosen, func(b *ChosenBuilder, r *Chosen) { fillChosen(&b.Main, r, 60) }, []vbound[Chosen, *ChosenBuilder]{
+			{"verb not UTF-8", "verb", "malformed", func(b *ChosenBuilder, r *Chosen) { TableStringAt(&r.Verb, &b.Arena).Data[0] = 0xff }},
+			{"why not UTF-8", "why", "malformed", func(b *ChosenBuilder, r *Chosen) { TableStringAt(&r.Why, &b.Arena).Data[0] = 0xff }},
+		})
+		// An applied choice carries no why, and a drop no fix: absent text and a long
+		// why both round-trip in every form.
+		wholeIn(t, chosen, "an applied choice", func(b *ChosenBuilder, r *Chosen) {
+			setS(&b.Main, &r.Verb, "accept")
+			r.P = 1
+			setS(&b.Main, &r.Act, "apply")
+		}, func(t *testing.T, got *ChosenBuilder, r *Chosen) {
+			assert.Equal(t, "apply", strAt(&r.Act, &got.Arena))
+			assert.Zero(t, r.Fix)
+			assert.Zero(t, r.Why)
+		})
+		wholeIn(t, chosen, "a listed choice with a 1 MiB why", func(b *ChosenBuilder, r *Chosen) { fillChosen(&b.Main, r, 1<<20) },
+			func(t *testing.T, got *ChosenBuilder, r *Chosen) {
+				assert.Len(t, strAt(&r.Why, &got.Arena), 1<<20)
+				assert.Equal(t, 0.875, r.P)
+			})
+	})
+	t.Run("ClusterCard", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, clusterCard, func(b *ClusterCardBuilder, r *ClusterCard) { setS(&b.Main, &r.Card, "card-0001") }, []vbound[ClusterCard, *ClusterCardBuilder]{
+			{"card not UTF-8", "card", "malformed", func(b *ClusterCardBuilder, r *ClusterCard) { TableStringAt(&r.Card, &b.Arena).Data[0] = 0xff }},
+		})
+	})
+	t.Run("Cluster", func(t *testing.T) {
+		t.Parallel()
+		exerciseVar(t, cluster, func(b *ClusterBuilder, r *Cluster) { fillCluster(&b.Main, r, 3) }, []vbound[Cluster, *ClusterBuilder]{
+			{"class not UTF-8", "class_name", "malformed", func(b *ClusterBuilder, r *Cluster) { TableStringAt(&r.ClassName, &b.Arena).Data[0] = 0xff }},
+			{"a card not UTF-8", "card", "malformed", func(b *ClusterBuilder, r *Cluster) {
+				TableStringAt(&r.Cards.At(1, &b.Arena).Card, &b.Arena).Data[0] = 0xff
+			}},
+		})
+		for _, n := range []int{0, 1, 200} {
+			wholeIn(t, cluster, fmt.Sprintf("%d cards", n), func(b *ClusterBuilder, r *Cluster) { fillCluster(&b.Main, r, n) },
+				func(t *testing.T, got *ClusterBuilder, r *Cluster) {
+					require.EqualValues(t, n, r.Cards.Count)
+					assert.EqualValues(t, n, r.Count)
+					if n > 0 {
+						assert.Equal(t, fmt.Sprintf("card-%04d", n-1), strAt(&r.Cards.At(r.Cards.Count-1, &got.Arena).Card, &got.Arena))
+					}
+				})
+		}
+	})
+
 	t.Run("the committed shape is pinned", func(t *testing.T) {
 		t.Parallel()
 		// tables.baseline holds every table's shape and schema.lock the fixed
 		// layouts: a changed table changes their hashes, and these lines change
 		// with it, so a shape change is never made without this test knowing.
-		for file, want := range map[string]string{"tables.baseline": "42dd57dbd57407a33ce51aa7a64acecc951fcad16e5c1ed0e8f4ab8a5a071a3b", "schema.lock": "43d79da38b3bcd806ae25159d28acb6b90571e085490541906fd840e43e73274"} {
+		for file, want := range map[string]string{"tables.baseline": "5fb14fcd2269a95b7d2b2b08da2c82ce56fe3d172a5cd3a0e55d72c263ed7625", "schema.lock": "49f05a6811d1150adb11c93cd41f2e816af07ed2b6a3f00192d8fcc7bfcc9425"} {
 			raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "decide", file))
 			require.NoError(t, err)
 			sum := sha256.Sum256(raw)

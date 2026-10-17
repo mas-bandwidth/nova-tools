@@ -44,6 +44,52 @@ type AnswerRow struct {
 	Method     int64 // *: signed self-relative delta, zero is null (§6.3)
 }
 
+// BarsRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type BarsRow struct {
+	Bounce float64
+	Review float64
+}
+
+// ChosenRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type ChosenRow struct {
+	Verb   int64 // *: signed self-relative delta, zero is null (§6.3)
+	P      float64
+	Fix    int64 // *: signed self-relative delta, zero is null (§6.3)
+	Reason int64 // *: signed self-relative delta, zero is null (§6.3)
+	Act    int64 // *: signed self-relative delta, zero is null (§6.3)
+	Why    int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// ClusterRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type ClusterRow struct {
+	ClassName int64 // *: signed self-relative delta, zero is null (§6.3)
+	Count     int64
+	Cards     TableList[ClusterCardRow]
+}
+
+// ClusterCardRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type ClusterCardRow struct {
+	Card int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// CriterionRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type CriterionRow struct {
+	Option  int64 // *: signed self-relative delta, zero is null (§6.3)
+	Meaning int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// DecideSchemaRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type DecideSchemaRow struct {
+	Name      int64 // *: signed self-relative delta, zero is null (§6.3)
+	Questions TableList[NamedQuestionRow]
+}
+
 // DecidedRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type DecidedRow struct {
@@ -64,6 +110,41 @@ type DecisionRow struct {
 	State        int64 // *: signed self-relative delta, zero is null (§6.3)
 	Answers      TableList[NamedAnswerRow]
 	Usage        UsageRow
+}
+
+// ExampleRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type ExampleRow struct {
+	Card    int64 // *: signed self-relative delta, zero is null (§6.3)
+	Heading int64 // *: signed self-relative delta, zero is null (§6.3)
+	Paths   int64 // *: signed self-relative delta, zero is null (§6.3)
+	Kind    int64 // *: signed self-relative delta, zero is null (§6.3)
+	Label   ExampleLabel
+	_       [7]byte // generated padding
+}
+
+// FailureRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type FailureRow struct {
+	Pkg   int64 // *: signed self-relative delta, zero is null (§6.3)
+	Test  int64 // *: signed self-relative delta, zero is null (§6.3)
+	Lines TableList[GateLineRow]
+}
+
+// FixedAnswerRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type FixedAnswerRow struct {
+	Choice      int64 // *: signed self-relative delta, zero is null (§6.3)
+	P           TableList[OptionPRow]
+	Noul        float64
+	NoulPresent bool    // ?: one byte, in Go's model as in C++
+	_           [7]byte // generated padding
+}
+
+// FixedTableRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type FixedTableRow struct {
+	Answers TableList[NamedFixedAnswerRow]
 }
 
 // FrameRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
@@ -93,6 +174,25 @@ type FrameRow struct {
 	DecideGatePreexisting int64 // *: signed self-relative delta, zero is null (§6.3)
 }
 
+// GateBarsRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type GateBarsRow struct {
+	Flaky       float64
+	PreExisting float64
+}
+
+// GateLineRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type GateLineRow struct {
+	Text int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// ImportExportRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type ImportExportRow struct {
+	Lines TableList[ImportLogLineRow]
+}
+
 // ImportLogLineRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type ImportLogLineRow struct {
@@ -107,10 +207,57 @@ type InputRow struct {
 	Value int64 // *: signed self-relative delta, zero is null (§6.3)
 }
 
+// JevAnswerRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type JevAnswerRow struct {
+	Kind              int64 // *: signed self-relative delta, zero is null (§6.3)
+	Choice            int64 // *: signed self-relative delta, zero is null (§6.3)
+	Probabilities     TableList[OptionPRow]
+	Confidence        float64
+	ConfidencePresent bool    // ?: one byte, in Go's model as in C++
+	_                 [7]byte // generated padding
+	Noul              float64
+	NoulPresent       bool    // ?: one byte, in Go's model as in C++
+	_                 [7]byte // generated padding
+}
+
+// JevRequestRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type JevRequestRow struct {
+	State     int64 // *: signed self-relative delta, zero is null (§6.3)
+	Model     int64 // *: signed self-relative delta, zero is null (§6.3)
+	Questions TableList[NamedQuestionRow]
+}
+
+// JevResponseRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type JevResponseRow struct {
+	Answers TableList[NamedJevAnswerRow]
+	Usage   UsageRow
+}
+
 // JudgmentIdRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type JudgmentIdRow struct {
 	Id int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// LogExportRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type LogExportRow struct {
+	Lines TableList[LogLineRow]
+}
+
+// LogLineRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type LogLineRow struct {
+	Card      int64 // *: signed self-relative delta, zero is null (§6.3)
+	Primary   int64 // *: signed self-relative delta, zero is null (§6.3)
+	TableName int64 // *: signed self-relative delta, zero is null (§6.3)
+	To        int64 // *: signed self-relative delta, zero is null (§6.3)
+	Removed   bool
+	_         [7]byte // generated padding
+	Set       TableList[SetEntryRow]
 }
 
 // NamedAnswerRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
@@ -118,6 +265,27 @@ type JudgmentIdRow struct {
 type NamedAnswerRow struct {
 	Question int64 // *: signed self-relative delta, zero is null (§6.3)
 	Answer   AnswerRow
+}
+
+// NamedFixedAnswerRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type NamedFixedAnswerRow struct {
+	Question int64 // *: signed self-relative delta, zero is null (§6.3)
+	Answer   FixedAnswerRow
+}
+
+// NamedJevAnswerRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type NamedJevAnswerRow struct {
+	Question int64 // *: signed self-relative delta, zero is null (§6.3)
+	Answer   JevAnswerRow
+}
+
+// NamedQuestionRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type NamedQuestionRow struct {
+	Name     int64 // *: signed self-relative delta, zero is null (§6.3)
+	Question QuestionRow
 }
 
 // OptionPRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
@@ -134,6 +302,15 @@ type OutcomeRow struct {
 	Label int64 // *: signed self-relative delta, zero is null (§6.3)
 	Note  int64 // *: signed self-relative delta, zero is null (§6.3)
 	At    int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
+// QuestionRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type QuestionRow struct {
+	Kind         AnswerType
+	_            [7]byte // generated padding
+	Instructions int64   // *: signed self-relative delta, zero is null (§6.3)
+	Criteria     TableList[CriterionRow]
 }
 
 // RawRecordRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
@@ -189,6 +366,13 @@ type RecordLineRow struct {
 	AsAct      int64   // *Act: signed self-relative delta, zero is null (§6.3)
 }
 
+// SetEntryRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
+// §11), so no declaration in the unit can take it.
+type SetEntryRow struct {
+	Key   int64 // *: signed self-relative delta, zero is null (§6.3)
+	Value int64 // *: signed self-relative delta, zero is null (§6.3)
+}
+
 // StagePathRow — a cooked record. `Row` is a CLAIMED suffix (mas-bandwidth/schema docs/SPEC-TABLES.md
 // §11), so no declaration in the unit can take it.
 type StagePathRow struct {
@@ -205,7 +389,7 @@ type UsageRow struct {
 // BuildVersion is the unit's build version (mas-bandwidth/schema docs/SPEC-TABLES.md §20): the
 // one digest a block carries and BlockOpen compares, and the fact §3.3's
 // announcement carries before the first body so a peer's build is knowable.
-const BuildVersion uint64 = 0x23d7e97c4116d1b2
+const BuildVersion uint64 = 0x430e16b8606c9494
 
 // TableReport is the table-wire read report — the permissive contract's
 // ledger. Silence (all zero) means the data matched this reader's schema
@@ -702,8 +886,8 @@ func (r *TableReport) Err() error {
 	return nil
 }
 
-const tableIdCapacity = 88
-const tableIdBuckets = 256
+const tableIdCapacity = 142
+const tableIdBuckets = 512
 
 // TableIds interns the writer's ids in first-use order. Bucket links are
 // one-based so its zero value is ready to use, including for hash zero.
@@ -4906,7 +5090,7 @@ func tableMapIndexFind(index TableMapIndex, h *tableContainer, f *TableFieldInfo
 
 const tableRetainPathDepth = 3
 
-var tableRetainKnown = [...]uint64{0x032e49f100f8dbef, 0x03c119c726692754, 0x03c52d0debd70676, 0x050b4c773e5abe4a, 0x05b096403aeadb34, 0x089c4e07b545a968, 0x08b05607b556600a, 0x08b72e07b55c3ac0, 0x0d3c21d222f73316, 0x10bc424c332be2e0, 0x1ba698490c81726e, 0x1e1702714db75ac8, 0x1e6f84ef2eb65989, 0x211fcbbafe5331ab, 0x230c05e5fb0433b0, 0x230c65ac8defd086, 0x2b7d15b2bf924552, 0x2bbda1b32163c634, 0x2f2ec0474f1c4fe4, 0x338684c18cd2eeb4, 0x345be9d2d7ce0228, 0x35ceaba76a4aabe6, 0x364f8f1334dc227a, 0x39f7fcec8fcb623d, 0x3bf8fbbad1587cdd, 0x3cda499ac7267adf, 0x3dc94a19365b10ec, 0x4005570295afd25c, 0x40c5f8104d76cc15, 0x463ba94e92754cec, 0x499fc592a46585f8, 0x4cac581fbfac663d, 0x51b5e2696d2d0b97, 0x547d54feea4643b1, 0x54b55bf4c402eb8f, 0x56013ec7e549246e, 0x5e9ce08dbd7c5ed1, 0x5ec5ea1948914a79, 0x63e618bd2b303dee, 0x668a11c6d2cb4a43, 0x673ebb0102773a20, 0x67cf8608037190df, 0x6d7efb5ab40b33b4, 0x6eefa86635f24b32, 0x704be0d8faaffc58, 0x72e601d58ddec77f, 0x740d542bbe696de5, 0x758d17ff764667b6, 0x7ce4fd9430e80cea, 0x7df083a114c6c6ec, 0x919ec0f651278ba5, 0x93fab8f021712b13, 0x94bc2188912d9fb3, 0x9ae6ef0237d899a0, 0x9c2ca99b4d2722c5, 0x9de543933e6e703a, 0xa281d6f1b14296ed, 0xa6a92648588602bf, 0xaa8d7a514275e6a2, 0xaf0b4e191da20cef, 0xaf63ed4c8602096f, 0xb0aadaa04e658ad6, 0xb17ac487d29d6e42, 0xb33a2f3256e250fc, 0xb5158be5a9bbd92e, 0xb5614e90e87b455f, 0xba4521ace275d950, 0xbb62c62c9808ea37, 0xc161e80ef0ed9236, 0xc1c0fb9c397f45d7, 0xcd104d19b5a0ef92, 0xd36da8f92435a3af, 0xd4452d66eea0a56c, 0xd46f4a3ebed65022, 0xd6320ebd358f520b, 0xd7316b9dd9f8d444, 0xdb016425a97c9964, 0xdb1595f5c742dfbb, 0xdc9e7e18fec93bb8, 0xee63aaad45b1b116, 0xee9dbaad45e3448d, 0xeea0f53b4dbb2fb3, 0xeed7b073beff6dac, 0xef191ab7b2c9f986, 0xef92ffa038c78883, 0xef9c96d721673243, 0xf9c5d519a01990cb, 0xffffffffffffffff}
+var tableRetainKnown = [...]uint64{0x032e49f100f8dbef, 0x03c119c726692754, 0x03c52d0debd70676, 0x050b4c773e5abe4a, 0x05b096403aeadb34, 0x089c4e07b545a968, 0x08b05607b556600a, 0x08b72e07b55c3ac0, 0x08c83907b56ac0a4, 0x0cb53374693d5482, 0x0d3c21d222f73316, 0x0e9718950b3dd3a1, 0x10154dbd4fbc697b, 0x10bc424c332be2e0, 0x10d72192d432fac4, 0x177aa3a985d4593e, 0x1ba698490c81726e, 0x1c55a055706766db, 0x1e1702714db75ac8, 0x1e6f84ef2eb65989, 0x211fcbbafe5331ab, 0x230c05e5fb0433b0, 0x230c65ac8defd086, 0x2b7d15b2bf924552, 0x2bbda1b32163c634, 0x2e109c0b102f74a9, 0x2f2ec0474f1c4fe4, 0x338684c18cd2eeb4, 0x343fb63c1a0792a6, 0x345be9d2d7ce0228, 0x35ceaba76a4aabe6, 0x364f8f1334dc227a, 0x39f7fcec8fcb623d, 0x3bf8fbbad1587cdd, 0x3bfc10bad15ad663, 0x3bfc96ddff59d077, 0x3cda499ac7267adf, 0x3dc94a19365b10ec, 0x3f1193a7be5f3a7f, 0x4005570295afd25c, 0x40c5f8104d76cc15, 0x463ba94e92754cec, 0x47534eace1cc3220, 0x48fcacd41ba26ba7, 0x499fc592a46585f8, 0x4c9d732a43fe5d0d, 0x4cac581fbfac663d, 0x51b5e2696d2d0b97, 0x5307024caeff199d, 0x547d54feea4643b1, 0x54b55bf4c402eb8f, 0x56013ec7e549246e, 0x5a54e29cee1c4376, 0x5ce3f9a9f1d5001c, 0x5d9078ce94bba6a8, 0x5e9ce08dbd7c5ed1, 0x5ec5ea1948914a79, 0x63e618bd2b303dee, 0x65e8d7f3474f2639, 0x668a11c6d2cb4a43, 0x66c0c01d224cae83, 0x673ebb0102773a20, 0x67cf8608037190df, 0x6bcb6e85b78cf363, 0x6d7efb5ab40b33b4, 0x6de3d6e9660857a1, 0x6e63e43ea3603c09, 0x6eefa86635f24b32, 0x704be0d8faaffc58, 0x72e601d58ddec77f, 0x740d542bbe696de5, 0x758d17ff764667b6, 0x77a71a561f6ca92b, 0x77a85f195659c591, 0x7af10c84dc36bf20, 0x7ce4fd9430e80cea, 0x7df083a114c6c6ec, 0x7ec022e0389b29f1, 0x823b87195ce20e23, 0x853103f906a5b644, 0x85a7e770938db45d, 0x85df369cdca746b3, 0x8706e8e4197ffb42, 0x8e067719f45b0458, 0x919ec0f651278ba5, 0x93fab8f021712b13, 0x94bc2188912d9fb3, 0x9841528f05c205ad, 0x98b5e0ec535227e7, 0x9ae6ef0237d899a0, 0x9c2ca99b4d2722c5, 0x9de543933e6e703a, 0xa281d6f1b14296ed, 0xa5b3558804a9e170, 0xa6a92648588602bf, 0xa9a51bc220137b2a, 0xaa8d7a514275e6a2, 0xaab333761e7c069c, 0xaf0b4e191da20cef, 0xaf63ed4c8602096f, 0xaf9dac3b097689c4, 0xb0aadaa04e658ad6, 0xb128829190ca0f75, 0xb17ac487d29d6e42, 0xb1e5e28e4479a274, 0xb33a2f3256e250fc, 0xb4f593d4c6b311a5, 0xb5158be5a9bbd92e, 0xb5614e90e87b455f, 0xba4521ace275d950, 0xbb62c62c9808ea37, 0xbdcbe759e3b84d62, 0xbf31137ff783e939, 0xc161e80ef0ed9236, 0xc1a0f0a7a8de3c4b, 0xc1c0fb9c397f45d7, 0xc4bcadba8e631b86, 0xc842078c742a24f6, 0xca4f33fa1f735e60, 0xccfbb79fccbbb8e3, 0xcd104d19b5a0ef92, 0xce9b64eababf7afc, 0xd36da8f92435a3af, 0xd4452d66eea0a56c, 0xd46f4a3ebed65022, 0xd6320ebd358f520b, 0xd7316b9dd9f8d444, 0xdb016425a97c9964, 0xdb1595f5c742dfbb, 0xdc9e7e18fec93bb8, 0xe723b5190545606b, 0xee63aaad45b1b116, 0xee9dbaad45e3448d, 0xeea0f53b4dbb2fb3, 0xeed7b073beff6dac, 0xef191ab7b2c9f986, 0xef92ffa038c78883, 0xef9c96d721673243, 0xf9c5d519a01990cb, 0xf9e6e6ef197c2b25, 0xfa04f4ef1995407e, 0xffffffffffffffff}
 
 // TableRetain owns no storage. The caller supplies both bounded buffers; a
 // whole unknown record that does not fit is dropped and counted once.

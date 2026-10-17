@@ -43,6 +43,34 @@ func EnumNameAnswerType(value AnswerType) string {
 	return "???"
 }
 
+// ExampleLabel — None = 0 implicit, variants dense from 1, wire range [0, 3] (SPEC §4.2)
+type ExampleLabel uint8
+
+const (
+	ExampleLabelNone  ExampleLabel = 0
+	ExampleLabelFlash ExampleLabel = 1
+	ExampleLabelPro   ExampleLabel = 2
+	ExampleLabelHeavy ExampleLabel = 3
+	ExampleLabelCount ExampleLabel = 3 // the declared variant count (SPEC §4.2)
+	ExampleLabelMax   ExampleLabel = 3 // the exported extent (SPEC §4.2)
+)
+
+// EnumNameExampleLabel: debug/log/tooling name for any ExampleLabel wire value —
+// out-of-set values (wire-legal up to the declared max) name as "???"
+func EnumNameExampleLabel(value ExampleLabel) string {
+	switch value {
+	case ExampleLabelNone:
+		return "None"
+	case ExampleLabelFlash:
+		return "Flash"
+	case ExampleLabelPro:
+		return "Pro"
+	case ExampleLabelHeavy:
+		return "Heavy"
+	}
+	return "???"
+}
+
 // LineKind — None = 0 implicit, variants dense from 1, wire range [0, 3] (SPEC §4.2)
 type LineKind uint8
 
