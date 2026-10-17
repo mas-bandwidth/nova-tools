@@ -556,7 +556,7 @@ func (p *Parser) RecordLine(in []byte) (RecordLine, error) {
 	if err != nil {
 		return RecordLine{}, err
 	}
-	return RecordLine{Decision: l.Decision, Outcome: l.Outcome, Act: l.Act}, nil
+	return RecordLine(l), nil
 }
 
 // Attempt reads an attempt decision in any form.

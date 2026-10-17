@@ -119,7 +119,7 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 		}
 		// criteria under a kind that is not a choice is refused, never a panic
 		_, err := rd.Schema(flipped(schemaImage(t, schemaSmallSample()), 147, 0x80))
-		refusal(t, err, "SCHEMA")
+		refusal(t, err, "SCHEMA") // ignored: refusal asserts the named refusal itself; the returned value is not needed here
 		_, err = decide.ParseSchema(flipped(schemaImage(t, schemaSmallSample()), 147, 0x80))
 		require.Error(t, err)
 		// a reference moved to another field's text, a field read as empty
@@ -136,7 +136,7 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 		}
 		// an export read with no lines imports nothing: refused by name in every form
 		_, err = rd.ReadExport(flipped(exportImage(t), 69, 0x80))
-		refusal(t, err, "EXPORT")
+		refusal(t, err, "EXPORT") // ignored: refusal asserts the named refusal itself; the returned value is not needed here
 		var empty decidewire.ImportExportBuilder
 		require.True(t, empty.Init())
 		emptyWire := wireSave(t, &empty, decidewire.ImportExportMeasure, decidewire.ImportExportSave)
@@ -202,9 +202,9 @@ func TestDecideRecordLinesDualRead(t *testing.T) {
 			}
 			assert.Zero(t, got, "duplicate %s", field)
 			_, err = rd.Attempt([]byte(base64.StdEncoding.EncodeToString(wire)))
-			refusal(t, err, "DECISION")
+			refusal(t, err, "DECISION") // ignored: refusal asserts the named refusal itself; the returned value is not needed here
 			_, err = rd.RecordLine(decisionDupLineImage(t, field))
-			refusal(t, err, "RECORD_LINE")
+			refusal(t, err, "RECORD_LINE") // ignored: refusal asserts the named refusal itself; the returned value is not needed here
 		}
 		for _, field := range []string{"criteria", "questions"} {
 			wire := schemaDupImage(t, field)
@@ -349,7 +349,7 @@ func flipProbe[T any](t *testing.T, name string, want T, wire []byte, read func(
 				case panicked:
 					panics++
 				case err != nil:
-					refusal(t, err, name)
+					refusal(t, err, name) // ignored: refusal asserts the named refusal itself; the returned value is not needed here
 					refused++
 				case reflect.DeepEqual(got, want):
 					same++
