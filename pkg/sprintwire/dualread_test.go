@@ -46,8 +46,9 @@ func dualReadForms(t *testing.T) map[string][]byte {
 }
 
 // requireRefusedByName holds the refusal shape: `Response REFUSED: <reason>;
-// run: nova-sprint -h`, a typed schemaread.Refusal, and no results at all.
-func requireRefusedByName(t *testing.T, res []Result, err error, msgAndArgs ...any) *schemaread.Refusal {
+// run: nova-sprint -h`, a typed schemaread.Refusal, and no results at all;
+// it returns the refusal reason.
+func requireRefusedByName(t *testing.T, res []Result, err error, msgAndArgs ...any) string {
 	t.Helper()
 	require.Error(t, err, msgAndArgs...)
 	var r *schemaread.Refusal
@@ -56,7 +57,7 @@ func requireRefusedByName(t *testing.T, res []Result, err error, msgAndArgs ...a
 	assert.Contains(t, err.Error(), "; run: nova-sprint -h", msgAndArgs...)
 	assert.NotEmpty(t, r.Reason, msgAndArgs...)
 	assert.Nil(t, res, msgAndArgs...)
-	return r
+	return r.Reason
 }
 
 // TestSprintwireDualRead is the dual-read proof of the sprint answer and the
