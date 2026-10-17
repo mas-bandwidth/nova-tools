@@ -71,6 +71,7 @@ func refused(rep schemaread.Report) bool {
 // legacy and loadLegacy. constraints states the record's bounds once for the
 // reader and the writer.
 func Codec[T any](name, help string, slot *Slot, legacy func([]byte) bool, loadLegacy func(*T, []byte) schemaread.Report, constraints func(*T, *schemaread.Checker)) *schemaread.Codec[T] {
+	bounds := schemaread.NewReader(&schemaread.Codec[T]{Name: name, Help: help, Constraints: constraints})
 	return &schemaread.Codec[T]{
 		Name:  name,
 		Help:  help,
@@ -91,7 +92,22 @@ func Codec[T any](name, help string, slot *Slot, legacy func([]byte) bool, loadL
 			if refused(rep) {
 				return rep
 			}
-			return decode(v, text, rep)
+			rep = decode(v, text, rep)
+			if refused(rep) {
+				return rep
+			}
+			// A table image is the unique image of the value it reads: the
+			// value written back is the same bytes, or the image is damage the
+			// load let through (an element count cut short of its body, a
+			// stray byte past the last field), refused as malformed and never
+			// read short. A value past a bound (an enum id no enum names) is
+			// left to the read's constraints, which name it clamped. These
+			// records are tool-owned and their readers switch first (the
+			// owner's S4), so no newer writer's image meets this reader.
+			if again, err := w.JSONWire(text); (err != nil || !bytes.Equal(again, wire)) && bounds.Check(v) == nil {
+				rep.Malformed = true
+			}
+			return rep
 		},
 		LoadJSON: func(v *T, in []byte) schemaread.Report {
 			w := slot.p.Load()

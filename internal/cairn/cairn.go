@@ -41,6 +41,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -473,22 +474,33 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 			// Corrupt provenance never reads as none (SPEC-CAIRN line 30). A
 			// refused text line is only this session's business if it could
 			// be this session's open; another session's is skipped on purpose,
-			// counted under its refusal reason (LogReadCounts). A refused table
-			// image (the wire or its base64) names no session a reader can
-			// trust, so it is refused for every session.
-			table := res.Form == schemaread.FormBinary || res.Form == schemaread.FormBase64
+			// counted under its refusal reason (LogReadCounts). A refused line
+			// in no text form (the wire, its base64, or bytes no form names,
+			// such as a table image whose first byte is damaged) names no
+			// session a reader can trust, so it is refused for every session.
+			table := res.Form != schemaread.FormLegacy && res.Form != schemaread.FormJSON
 			if table || (strings.Contains(line, string(quotedSession)) && strings.Contains(line, `"open"`)) {
 				return OpenRecord{}, fmt.Errorf("%s:%d may be the open record of session %q and does not read as one (%v); refusing to read its source as none", name, i+1, session, err)
 			}
 			continue
 		}
 		if rec.Event == "open" && rec.Session == session {
+			// An unknown field on the session's open record is damage, not a
+			// newer writer: readers switch before writers, fleet-wide (the
+			// owner's S4), so every reader knows every field a writer writes.
+			// Tolerating it would read a damaged source, stamp or policy key
+			// as an absent one, and corrupt provenance never reads as none
+			// (SPEC-CAIRN line 30). Unknown fields elsewhere stay tolerated and
+			// counted (S1, pkg/schemaread).
+			if res.Unknown > 0 {
+				return OpenRecord{}, fmt.Errorf("%s:%d open record of session %q holds a field no reader names (%w); refusing to read its source as none", name, i+1, session, openRefusal("unknown_field"))
+			}
 			var opened time.Time
 			if rec.Stamp != "" {
 				var perr error
 				opened, perr = time.Parse(time.RFC3339Nano, rec.Stamp)
 				if perr != nil {
-					return OpenRecord{}, fmt.Errorf("%s:%d open record of session %q has an invalid stamp %q", name, i+1, session, rec.Stamp)
+					return OpenRecord{}, fmt.Errorf("%s:%d open record of session %q has an invalid stamp %q (%w)", name, i+1, session, rec.Stamp, openRefusal("stamp"))
 				}
 			}
 			return OpenRecord{Source: rec.Source, Publish: rec.Publish, Opened: opened, Found: true}, nil
@@ -577,7 +589,22 @@ const unbounded = int(^uint(0) >> 1)
 // LogReadCounts is the log reader's counters: the reads per form and the
 // refusals per reason, the evidence a cutover reads before the writer
 // switches (S4).
-func LogReadCounts() map[string]uint64 { return logRecords.Counts().Snapshot() }
+func LogReadCounts() map[string]uint64 {
+	m := logRecords.Counts().Snapshot()
+	m["refused_"+schemaread.ReasonMalformed] += openRefused.Load()
+	return m
+}
+
+// openRefused counts the open records ReadOpen refuses after the strict read
+// accepted the line (an unknown field, an invalid stamp), under malformed.
+var openRefused atomic.Uint64
+
+// openRefusal is the named refusal of a session's open record that the strict
+// read accepted and ReadOpen does not: malformed, naming the field; counted.
+func openRefusal(field string) error {
+	openRefused.Add(1)
+	return &schemaread.Refusal{Name: "CAIRN_LOG_RECORD", Reason: schemaread.ReasonMalformed, Field: field, Help: LogHelp}
+}
 
 // LogLineText is one log record in a table form (the wire, its base64 or the
 // schema JSON text), as appendLog will write it after the switch; it refuses

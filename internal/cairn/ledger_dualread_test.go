@@ -1,7 +1,9 @@
 package cairn_test
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -57,10 +59,9 @@ var tableForms = []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64,
 // refusedByName asserts err is the named refusal of record pointing at help.
 func refusedByName(t *testing.T, err error, record, help, what string) {
 	t.Helper()
-	if assert.Error(t, err, "%s: want a refusal, got a read", what) {
-		assert.Contains(t, err.Error(), record+" REFUSED: ", "%s", what)
-		assert.Contains(t, err.Error(), "; run: "+help, "%s", what)
-	}
+	require.Error(t, err, "%s: want a refusal, got a read", what)
+	assert.Contains(t, err.Error(), record+" REFUSED: ", "%s", what)
+	assert.Contains(t, err.Error(), "; run: "+help, "%s", what)
 }
 
 func ledgerDualRead(t *testing.T) {
@@ -120,19 +121,55 @@ func ledgerDualRead(t *testing.T) {
 		_, err := record.ReadLedgerDay(day, map[string]string{legacyField: image})
 		refusedByName(t, err, "LEDGER_VALUE", record.LedgerHelp, "an unknown form byte")
 	}
+	// Every single-byte flip of every form of the field, and of the value, is
+	// refused by name or reads as a row of the same shape (each field the
+	// fixture holds still held, the same token slots known); never a short
+	// row, an empty field or a zero.
+	for form, img := range images {
+		for side, rec := range []string{"LEDGER_KEY", "LEDGER_VALUE"} {
+			flips(img[side], func(at int, mask byte, mut []byte) {
+				kv := [2]string{string(img[0]), string(img[1])}
+				kv[side] = string(mut)
+				rows, err := record.ReadLedgerDay(day, map[string]string{kv[0]: kv[1]})
+				what := form.String() + " " + rec + " flip at " + itoa(at) + " ^" + itoa(int(mask))
+				if err != nil {
+					refusedByName(t, err, rec, record.LedgerHelp, what)
+					return
+				}
+				if assert.Len(t, rows, 1, "%s", what) {
+					ledgerShaped(t, rows[0], what)
+				}
+			})
+		}
+	}
 	// A seeded run of random images (no clock): each is refused by name or,
-	// when it happens to be a whole record, read; never a panic or a silent row.
+	// when it happens to be a whole record, reads as a row of the same shape;
+	// never a panic or a silent row.
 	rnd := rand.New(rand.NewPCG(1000, 17))
 	for i := range 2000 {
 		img := images[tableForms[i%len(tableForms)]][1]
 		mut := append([]byte(nil), img...)
 		mut[rnd.IntN(len(mut))] ^= byte(1 + rnd.IntN(255))
-		_, err := record.ReadLedgerDay(day, map[string]string{legacyField: string(mut)})
+		rows, err := record.ReadLedgerDay(day, map[string]string{legacyField: string(mut)})
 		if err != nil {
-			var ref *schemaread.Refusal
-			require.ErrorAs(t, err, &ref, "random image %d: an unnamed error", i)
+			refusedByName(t, err, "LEDGER_VALUE", record.LedgerHelp, "random image "+itoa(i))
+			continue
+		}
+		if assert.Len(t, rows, 1, "random image %d", i) {
+			ledgerShaped(t, rows[0], "random image "+itoa(i))
 		}
 	}
+	// A value key no reader names (here a damaged "provider") is refused, never
+	// read as a row with no provider.
+	_, err = record.ReadLedgerDay(day, map[string]string{legacyField: strings.Replace(legacyValue, `"provider"`, `"prnvider"`, 1)})
+	refusedByName(t, err, "LEDGER_VALUE", record.LedgerHelp, "an unknown legacy value key")
+	assert.Contains(t, err.Error(), "malformed (unknown_field)")
+	// So is a key's (here a damaged "day" in the table's JSON text).
+	jf, _, err := record.LedgerFieldText(ledgerRow, schemaread.FormJSON)
+	require.NoError(t, err)
+	_, err = record.ReadLedgerDay(day, map[string]string{strings.Replace(string(jf), `"day"`, `"dax"`, 1): legacyValue})
+	refusedByName(t, err, "LEDGER_KEY", record.LedgerHelp, "an unknown table key field")
+	assert.Contains(t, err.Error(), "malformed (unknown_field)")
 
 	// Clamped: a day past string(10), six token slots past [..5], a legacy key
 	// of four parts, a table key naming another day than its hash.
@@ -152,9 +189,77 @@ func ledgerDualRead(t *testing.T) {
 	require.NoError(t, err)
 	_, err = record.ReadLedgerDay(day, map[string]string{string(ef): legacyValue})
 	refusedByName(t, err, "LEDGER_KEY", record.LedgerHelp, "a key of another day")
+
+	// Clamped in the table forms: the wire's day patched to 11 bytes (past
+	// string(10)), and its token slots patched to six (past [..5]), each in the
+	// binary wire and its base64.
+	wf, wv, err := record.LedgerFieldText(ledgerRow, schemaread.FormBinary)
+	require.NoError(t, err)
+	longDay := patch(t, wf, append([]byte{0x0c, 0x0a}, day...), append([]byte{0x0c, 0x0b}, day+"0"...))
+	sparse := ledgerRow
+	sparse.Known = [5]bool{true, false, false, false, false}
+	_, sv, err := record.LedgerFieldText(sparse, schemaread.FormBinary)
+	require.NoError(t, err)
+	// The tokens body: its length, the slot count, then one known slot and
+	// four empty ones (0x01 0x00 each); a sixth empty slot grows the body by two.
+	sixSlots := patch(t, patch(t, sv, []byte{0x0e, 0x16, 0x0d, 0x05}, []byte{0x0e, 0x18, 0x0d, 0x06}),
+		[]byte{0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x04}, []byte{0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x04})
+	for _, enc := range []struct {
+		name string
+		text func([]byte) string
+	}{{"binary", func(b []byte) string { return string(b) }}, {"base64", base64.StdEncoding.EncodeToString}} {
+		_, err = record.ReadLedgerDay(day, map[string]string{enc.text(longDay): string(wv)})
+		refusedByName(t, err, "LEDGER_KEY", record.LedgerHelp, enc.name+" day past its bound")
+		assert.Contains(t, err.Error(), "clamped", enc.name+" day past its bound")
+		_, err = record.ReadLedgerDay(day, map[string]string{string(wf): enc.text(sixSlots)})
+		refusedByName(t, err, "LEDGER_VALUE", record.LedgerHelp, enc.name+" six token slots")
+		assert.Contains(t, err.Error(), "clamped", enc.name+" six token slots")
+	}
 	assert.Positive(t, counts("LEDGER_KEY", "refused_clamped"), "the clamp is counted")
 	assert.Positive(t, counts("LEDGER_VALUE", "refused_clamped"), "the clamp is counted")
 	assert.Positive(t, counts("LEDGER_VALUE", "refused_malformed"), "the cuts are counted")
+}
+
+// ledgerShaped asserts a row read from a damaged image has the fixture's
+// shape: the hash's day, every text field held, the same token slots known
+// and a rough count; damage never reads as an empty field or a zero.
+func ledgerShaped(t *testing.T, r record.LedgerEntry, what string) {
+	t.Helper()
+	assert.Equal(t, day, r.Day, "%s: the day", what)
+	for name, f := range map[string]string{"card": r.Card, "model": r.Model, "repo": r.Repo, "provider": r.Provider, "sources": r.Sources} {
+		assert.NotEmpty(t, f, "%s: %s read as empty", what, name)
+	}
+	assert.Equal(t, ledgerRow.Known, r.Known, "%s: the known token slots", what)
+	assert.NotZero(t, r.Rough, "%s: rough read as zero", what)
+}
+
+// flips calls each with every single-byte flip of img under four masks.
+func flips(img []byte, each func(at int, mask byte, mut []byte)) {
+	for at := range img {
+		for _, mask := range []byte{0x01, 0x20, 0x80, 0xff} {
+			mut := append([]byte(nil), img...)
+			mut[at] ^= mask
+			each(at, mask, mut)
+		}
+	}
+}
+
+// patch replaces the one occurrence of old in img with new; a fixture that
+// holds old other than once fails, so a regenerated wire fails loudly.
+func patch(t *testing.T, img, old, new []byte) []byte {
+	t.Helper()
+	require.Equal(t, 1, bytes.Count(img, old), "the image holds % x once", old)
+	return bytes.Replace(img, old, new, 1)
+}
+
+// patchID replaces the one occurrence of a generated id (little-endian, as
+// the wire's id table holds it) with another.
+func patchID(t *testing.T, img []byte, old, new uint64) []byte {
+	t.Helper()
+	var o, n [8]byte
+	binary.LittleEndian.PutUint64(o[:], old)
+	binary.LittleEndian.PutUint64(n[:], new)
+	return patch(t, img, o[:], n[:])
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
@@ -228,6 +333,93 @@ func cairnDualRead(t *testing.T) {
 			assert.False(t, got.Found, "%s: never read as an open", what)
 			refusedAfter := counts("refused_malformed") + counts("refused_unknown_form") + counts("refused_wire_damaged") + counts("refused_clamped") + counts("refused_absent_required")
 			assert.Greater(t, refusedAfter, refusedBefore, "%s: the skipped line is counted", what)
+		}
+	}
+
+	// A table image of this session's open whose first byte is damaged to
+	// printable punctuation is in no form a reader knows, and is refused by
+	// name for every session, never skipped as no record.
+	for _, form := range []schemaread.Form{schemaread.FormBinary, schemaread.FormBase64} {
+		for _, lead := range []byte("@!#-") {
+			line := []byte(images[form])
+			line[0] = lead
+			store := writeLog(t, string(line))
+			got, err := cairn.ReadOpen(store, "s1")
+			what := form.String() + " line led by " + string(lead)
+			refusedByName(t, err, "CAIRN_LOG_RECORD", cairn.LogHelp, what)
+			assert.Contains(t, err.Error(), "unknown_form", what)
+			assert.Contains(t, err.Error(), filepath.Join(store, "log.jsonl"), what)
+			assert.False(t, got.Found, what)
+		}
+	}
+
+	// Every single-byte flip of the session's open line, in every form, is
+	// refused by name naming the log, or reads as an open of the same shape
+	// (a source, a policy and a stamp), or reads whole as another record (a
+	// flipped session or event names another session's record, and a table
+	// form carries no check that could tell); a text line is skipped only
+	// under SPEC-CAIRN line 30's rule (it no longer names this session's
+	// open), counted. Never a silent none.
+	refusals := func() uint64 {
+		return counts("refused_malformed") + counts("refused_unknown_form") + counts("refused_wire_damaged") + counts("refused_clamped") + counts("refused_absent_required") + counts("refused_kind_mismatch")
+	}
+	for form, line := range images {
+		text := form == schemaread.FormLegacy || form == schemaread.FormJSON
+		flips([]byte(line), func(at int, mask byte, mut []byte) {
+			store := writeLog(t, string(mut))
+			before := refusals()
+			got, err := cairn.ReadOpen(store, "s1")
+			what := form.String() + " line flip at " + itoa(at) + " ^" + itoa(int(mask))
+			switch {
+			case err != nil:
+				assert.Contains(t, err.Error(), filepath.Join(store, "log.jsonl"), "%s: the refusal names the log", what)
+				refusedByName(t, err, "CAIRN_LOG_RECORD", cairn.LogHelp, what)
+			case got.Found:
+				assert.NotEmpty(t, got.Source, "%s: source read as none", what)
+				assert.NotEmpty(t, got.Publish, "%s: policy read as none", what)
+				assert.False(t, got.Opened.IsZero(), "%s: stamp read as none", what)
+			case text && refusals() > before:
+				assert.False(t, strings.Contains(string(mut), `"s1"`) && strings.Contains(string(mut), `"open"`), "%s: a line naming this session's open is refused", what)
+			default:
+				assert.Equal(t, before, refusals(), "%s: a table image is refused or read whole, never skipped", what)
+			}
+		})
+	}
+	// A damaged key on the session's open (an unknown field) and a damaged
+	// stamp are refused by name, never read as an open with no policy or no
+	// stamp.
+	malformedBefore := counts("refused_malformed")
+	_, err = cairn.ReadOpen(writeLog(t, strings.Replace(legacyLine, `"publish"`, `"pubmish"`, 1)), "s1")
+	refusedByName(t, err, "CAIRN_LOG_RECORD", cairn.LogHelp, "an unknown key on the open")
+	assert.Contains(t, err.Error(), "malformed (unknown_field)")
+	_, err = cairn.ReadOpen(writeLog(t, strings.Replace(legacyLine, stamp, strings.Replace(stamp, ":", ";", 1), 1)), "s1")
+	refusedByName(t, err, "CAIRN_LOG_RECORD", cairn.LogHelp, "a damaged stamp")
+	assert.Contains(t, err.Error(), "invalid stamp")
+	assert.Contains(t, err.Error(), "malformed (stamp)")
+	assert.Equal(t, uint64(2), counts("refused_malformed")-malformedBefore, "both refusals are counted")
+
+	// Clamped in the table forms, each in the binary wire and its base64: a
+	// session patched to 129 bytes (past string(128)), and an event and a
+	// policy whose id no enum names. The ids are the generated ones
+	// (pkg/ledgerwire CairnLogRecordSaveBodyFields: open, manual).
+	const idOpen, idManual, idNone = 0xf84f97b4633670e9, 0x567e8790c5b15043, 0x1111111111111111
+	long128 := strings.Repeat("x", 128)
+	wire128, err := cairn.LogLineText("open", long128, "", stamp, cairn.PublishManual, "session:x", schemaread.FormBinary)
+	require.NoError(t, err)
+	wire, err := cairn.LogLineText("open", "s1", "", stamp, cairn.PublishManual, "session:x", schemaread.FormBinary)
+	require.NoError(t, err)
+	for name, c := range map[string]struct {
+		img     []byte
+		session string
+	}{
+		"session past 128":     {patch(t, wire128, append([]byte{0x0c, 0x80, 0x01}, long128...), append([]byte{0x0c, 0x81, 0x01}, long128+"x"...)), long128},
+		"event no enum names":  {patchID(t, wire, idOpen, idNone), "s1"},
+		"policy no enum names": {patchID(t, wire, idManual, idNone), "s1"},
+	} {
+		for _, line := range []string{string(c.img), base64.StdEncoding.EncodeToString(c.img)} {
+			_, err := cairn.ReadOpen(writeLog(t, line), c.session)
+			refusedByName(t, err, "CAIRN_LOG_RECORD", cairn.LogHelp, name)
+			assert.Contains(t, err.Error(), "clamped", name)
 		}
 	}
 

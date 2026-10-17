@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/record/tablejson"
@@ -522,7 +523,20 @@ func ledgerValueLoadLegacy(v *ledgerValueText, in []byte) schemaread.Report {
 	for i, n := range lv.Tokens {
 		v.Tokens[i].Amount = n
 	}
-	return schemaread.Report{}
+	// A key the value does not name is counted as unknown, so ReadLedgerDay
+	// refuses it (ledgerUnknown) rather than read a damaged key's value as
+	// absent.
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(in, &keys); err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	unknown := 0
+	for k := range keys {
+		if !slices.Contains([]string{"provider", "tokens", "rough", "sources"}, k) {
+			unknown++
+		}
+	}
+	return schemaread.Report{Unknown: unknown}
 }
 
 // ledgerValueConstraints: at most the five slots of LedgerTypes
@@ -549,14 +563,20 @@ func ReadLedgerDay(day string, fields map[string]string) ([]LedgerEntry, error) 
 	sort.Strings(names)
 	out := make([]LedgerEntry, 0, len(names))
 	for _, f := range names {
-		k, _, err := ledgerKeys.Read([]byte(f))
+		k, kr, err := ledgerKeys.Read([]byte(f))
+		if err == nil && kr.Unknown > 0 {
+			err = ledgerUnknown("LEDGER_KEY")
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: field %q is not [card, model, repo]: %w", key, f, err)
 		}
 		if k.Day != "" && k.Day != day {
 			return nil, fmt.Errorf("%s: field %q: %s REFUSED: %s (day %s, not the hash's %s); run: %s", key, f, "LEDGER_KEY", schemaread.ReasonMalformed, k.Day, day, LedgerHelp)
 		}
-		v, _, err := ledgerValues.Read([]byte(fields[f]))
+		v, vr, err := ledgerValues.Read([]byte(fields[f]))
+		if err == nil && vr.Unknown > 0 {
+			err = ledgerUnknown("LEDGER_VALUE")
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: field %s: value does not decode: %w", key, f, err)
 		}
@@ -575,7 +595,30 @@ func ReadLedgerDay(day string, fields map[string]string) ([]LedgerEntry, error) 
 // LEDGER_VALUE): the reads per form and the refusals per reason, the evidence
 // a cutover reads before the writers switch (S4).
 func LedgerReadCounts() map[string]map[string]uint64 {
-	return map[string]map[string]uint64{"LEDGER_KEY": ledgerKeys.Counts().Snapshot(), "LEDGER_VALUE": ledgerValues.Counts().Snapshot()}
+	keys, values := ledgerKeys.Counts().Snapshot(), ledgerValues.Counts().Snapshot()
+	keys["refused_"+schemaread.ReasonMalformed] += ledgerUnknownKeys.Load()
+	values["refused_"+schemaread.ReasonMalformed] += ledgerUnknownValues.Load()
+	return map[string]map[string]uint64{"LEDGER_KEY": keys, "LEDGER_VALUE": values}
+}
+
+// ledgerUnknownKeys and ledgerUnknownValues count the ledger fields the strict
+// read accepted with an unknown field, which ReadLedgerDay refuses.
+var ledgerUnknownKeys, ledgerUnknownValues atomic.Uint64
+
+// ledgerUnknown is the named refusal of a ledger key or value that holds a
+// field no reader names. Readers switch before writers, fleet-wide (the
+// owner's S4), so every reader knows every field a ledger writer writes, and
+// an unknown id is damage: tolerated, it would read a damaged provider,
+// tokens, rough or sources key as an absent, zero one, and a ledger day never
+// reads damage as zero. Unknown fields stay tolerated by pkg/schemaread for
+// the records whose older readers may meet newer data (S1).
+func ledgerUnknown(rec string) error {
+	if rec == "LEDGER_KEY" {
+		ledgerUnknownKeys.Add(1)
+	} else {
+		ledgerUnknownValues.Add(1)
+	}
+	return &schemaread.Refusal{Name: rec, Reason: schemaread.ReasonMalformed, Field: "unknown_field", Help: LedgerHelp}
 }
 
 // LedgerFieldText is a row's key and value in a table form (the table wire,
