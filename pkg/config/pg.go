@@ -702,13 +702,15 @@ func (p *PG) History(ctx context.Context, kind, name string) ([]Change, error) {
 		if err := rows.Scan(&c.ID, &c.Kind, &c.Name, &c.Op, &before, &after, &c.Actor, &at); err != nil {
 			return nil, fmt.Errorf("postgres: history %s %s: %w", kind, name, err)
 		}
+		// each side is read in every form and refused by name (records.go, S2)
+		var err error
 		if before.Valid {
-			if err := json.Unmarshal([]byte(before.String), &c.Before); err != nil {
+			if c.Before, err = records.ReadSide([]byte(before.String)); err != nil {
 				return nil, fmt.Errorf("postgres: history %d before: %w", c.ID, err)
 			}
 		}
 		if after.Valid {
-			if err := json.Unmarshal([]byte(after.String), &c.After); err != nil {
+			if c.After, err = records.ReadSide([]byte(after.String)); err != nil {
 				return nil, fmt.Errorf("postgres: history %d after: %w", c.ID, err)
 			}
 		}
