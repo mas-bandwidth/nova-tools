@@ -74,9 +74,20 @@ const nativeBusyShare = 10
 // its own reading.
 const nativeLogDribble = 4096
 
-// nativeIdlePoll is how often the log's size is re-read: short enough that the end lands near the window rather than a tick past
-// it, and cheap because it is one stat of one file.
-const nativeIdlePoll = 100 * time.Millisecond
+// nativeIdlePoll is how often the log's size is re-read: the end lands within a second of
+// the window, which is a 300 s one. At 100 ms it was 3,000 stats a window per running card,
+// and past the window a listing of the job directory every 100 ms until the child exited
+// (FindCardResult; 2026-10-17).
+const nativeIdlePoll = time.Second
+
+// nativeSnapshotEvery is how often the watch reads the process table for the tree's CPU:
+// batch's coarse poll (activityInterval, at most 5 s), and no oftener than every 15 s where
+// the window is long enough to hold four of those. A snapshot is the whole table (on Linux a
+// /proc listing and a read of every /proc/N/stat), taken per running card; the busy share
+// is of the span between two, so a working tree still clears it.
+func nativeSnapshotEvery(idle time.Duration) time.Duration {
+	return max(activityInterval(idle), min(15*time.Second, idle/4))
+}
 
 // IdleEnd is one card ended by the watch: how long it had been still, the step it had
 // reached, and -- when the card's own output named one it never moved past -- the refusal
@@ -235,7 +246,7 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 				// A silent log is not a silent card. The tree's CPU is read on
 				// the coarse poll batch uses, and the same one-percent-of-the-interval share
 				// separates a working tree from a sleeping one's bookkeeping.
-				if at.Sub(lastSample) >= activityInterval(w.Idle) {
+				if at.Sub(lastSample) >= nativeSnapshotEvery(w.Idle) {
 					span := at.Sub(lastSample)
 					lastSample = at
 					if s := snap(); s != nil && w.Pid > 0 {
