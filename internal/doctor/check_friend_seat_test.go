@@ -55,7 +55,7 @@ func writeFriendUnit(t *testing.T, root, name string, daemonArgs ...string) stri
 }
 
 // The friend-seat check is retired (check_friend_seat.go, 2026-10-17): the friend daemons it
-// read are gone and nova-hook status is the friends' check, so the doctor names no friend-seat.
+// read are gone, so the doctor names no friend-seat.
 func TestDoctorFriendSeatIsRetired(t *testing.T) {
 	t.Parallel()
 	assert.NotContains(t, Default.Names(), "friend-seat")

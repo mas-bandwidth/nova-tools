@@ -47,9 +47,13 @@ import (
 // reads it. On 2026-10-03 the staged commit of a carried rework (the attempt before's head,
 // on a branch the mirror no longer held) was gone by the time the finish counted the
 // child's commits from it, and a correct carry was refused: "does not descend from the
-// staged commit: fatal: Not a valid commit name <staged>". The first fetch of a repository
-// copies its history once (nova-tools, 4,000 commits: 1.9 s and 66 MB), and every fetch
-// after it copies the child's own commits, as before.
+// staged commit: fatal: Not a valid commit name <staged>". The cost: the repository keeps
+// no ref between pushes (each push drops its own), so a fetch has nothing to offer in
+// negotiation and every fetch writes a full new pack of the repository's history, not
+// only the child's commits (nova-tools, 4,000 commits: 1.9 s and 66 MB the first time;
+// about 22 MB a push measured in a bare repository with no refs, 2026-10-17). That is
+// where push.git's 195 packs came from (tidyEvery). The lasting fix is one kept ref per
+// repository, so a fetch negotiates against it; it is not done here.
 type gitPusher struct {
 	root, slots string
 	// gh is the GitHub CLI the member opens a card's pull request with, as itself,
@@ -74,7 +78,10 @@ type gitPusher struct {
 	notes io.Writer
 	// pushing is held shared by every push from the moment it reaches the push repository
 	// to its end, and alone by tidy, so the repack and the prune never run beside a fetch
-	// or a push whose objects no ref names yet (tidyEvery).
+	// or a push whose objects no ref names yet (tidyEvery). The lock is this process's
+	// only: it assumes one member per --root, the one process that uses <root>/push.git.
+	// Nothing refuses two members on one root; if that is ever configured, the remedy is a
+	// file lock on push.git.
 	pushing sync.RWMutex
 	tidyMu  sync.Mutex // tidyAt
 	tidyAt  time.Time  // the last tidy, or the end of the first push this process made
@@ -89,8 +96,9 @@ type gitPusher struct {
 // it keeps is unreachable: nothing ever removed it. On 2026-10-17 one bench's push.git
 // held 4.4 GB in 195 packs and 95 loose objects, and every push's for-each-ref
 // --contains, rev-list and fetch read through them all. A tidy leaves only what a ref
-// left by an interrupted push names; the next fetch copies the history again (nova-tools:
-// 1.9 s and 66 MB), once an hour at most.
+// left by an interrupted push names. It costs the pushes nothing: every fetch writes a
+// full pack already, since no ref is kept to negotiate against (the gitPusher type's
+// comment), so removing the old packs makes no fetch larger.
 const tidyEvery = time.Hour
 
 // pushWaits is the waits before a push that origin rejected on its own side, git's

@@ -171,6 +171,7 @@ func (h *pushHarness) pusher() *gitPusher {
 	g.git = h.git.run
 	g.sleep = func(d time.Duration) { h.waits = append(h.waits, d) }
 	g.gh = "nova-no-such-gh-for-memberpush-behaviour"
+	g.now = func() time.Time { return time.Unix(1000, 0) } // the tidy's clock: no push test reads real time
 	return g
 }
 

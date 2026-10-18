@@ -305,7 +305,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	intr := make(chan os.Signal, 1)
 	signal.Notify(intr, os.Interrupt)
 	defer signal.Stop(intr)
-	// a reader refreshes no mirror, and its cards still borrow the ones the worker seats keep
+	// a reader refreshes no mirror; its cards still borrow ~/nova-bench/mirror, which the bench's
+	// mirror-refresh loop keeps
 	keep := mirrorKeeping(os.Getenv(mirrorsEnv), *reader, *root, rn.goBuildCache(), stdout, stderr)
 	if os.Getenv(mirrorsEnv) != "" {
 		rn.benchHome, _ = os.UserHomeDir()
@@ -1721,8 +1722,10 @@ const mirrorsEnv = "NOVA_SWARM_MIRRORS"
 // mirrorEvery is the least time between two refreshes of a member's mirrors. It was a minute:
 // every seat of a bench fetched every repository from GitHub each minute (two seats share
 // ~/nova-bench/mirror, so twice, about four git spawns a repository), and ran go build and go
-// vet each time a tip moved (2026-10-17 audit). The mirror is a --reference object source, so
-// a stale one costs a card's clone a small delta, never correctness.
+// vet each time a tip moved (2026-10-17 audit). A stale mirror is not only a slower clone: a
+// card that names a BASE branch and no head sha is staged at the mirror's tip of that branch
+// with no fetch (pkg/swarm/stage.go, StageCard), so for up to ten minutes it can start behind a
+// landing.
 const mirrorEvery = 10 * time.Minute
 
 // mirrorDue says a refresh last started at last (zero: never) is due again at now.
@@ -1731,8 +1734,10 @@ func mirrorDue(last, now time.Time) bool { return last.IsZero() || now.Sub(last)
 // mirrorKeeping is the member's warm mirrors (docs/SPEC-SWARM.md, the warm clones and caches
 // card): keep, which a pass calls with the time, starts a refresh of every mirror in the
 // background when none runs and mirrorDue says so (the first call, at start, always).
-// A reader keeps none (nil): it builds nothing from the mirrors' tips, and a worker seat's
-// refresh of the shared ~/nova-bench/mirror serves it.
+// A reader keeps none (nil) and builds nothing from the mirrors' tips, but its cards still
+// need the mirror (StageCard refuses "no bench mirror for <repo>"): what keeps it there and
+// current is the bench's own mirror-refresh loop (the rowan-tools fleet row, every 600 s),
+// not this keeper, which NOVA_SWARM_MIRRORS turns on for a worker seat alone.
 // A card's clone step reaches the mirrors by the path the card names (PointCardAtMirrors),
 // never by an environment word: the harness's environment is rebuilt, and its HOME is the
 // slot's. A refresh that fails is a NOTE and never stops a pass: staging reads the mirror

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,7 +91,8 @@ const (
 type guard struct {
 	roots, caches, modCaches   []string
 	logDir, landDir, mirrorDir string
-	logPrefix                  string // when set, only the logs whose name starts with it (guardLogDir)
+	logPrefix                  string   // when set, only the logs whose name starts with it (guardLogDir)
+	logSkip                    []string // the logs whose name starts with one of these are never rotated (guardLogSkip)
 	cacheMax, modMax, logMax   int64
 	floor, stopFloor           int64
 	logKeep                    int
@@ -301,6 +303,9 @@ func (g *guard) logs() {
 		if !strings.HasPrefix(e.Name(), g.logPrefix) {
 			continue // another program's log in a directory the fleet shares with it
 		}
+		if slices.ContainsFunc(g.logSkip, func(p string) bool { return strings.HasPrefix(e.Name(), p) }) {
+			continue // a log another reader counts lines of (guardLogSkip)
+		}
 		path := filepath.Join(g.logDir, e.Name())
 		fi, err := e.Info()
 		if err != nil || fi.Size() <= g.logMax {
@@ -338,6 +343,19 @@ func guardLogPrefix(home, dir string) string {
 		return "nova-"
 	}
 	return ""
+}
+
+// guardLogSkip is the logs in dir that are never rotated: in the home's Library/Logs, the
+// member and reader loops' (nova-loop-member*, nova-loop-reader*). The tools play's canary
+// (fleet/tools.yml, "canary: the member's log length at the moment the restart begins")
+// counts the member log's lines with wc -l and later reads it from the line after them; a
+// copy-and-truncate between the two leaves that read empty, and the canary would fail an
+// adoption that worked. Those logs grow unrotated on darwin, as before; elsewhere none.
+func guardLogSkip(home, dir string) []string {
+	if guardLogPrefix(home, dir) == "" {
+		return nil
+	}
+	return []string{"nova-loop-member", "nova-loop-reader"}
 }
 
 // rotate copies path to path.1 and empties path in place, after removing path.<keep> and
@@ -915,7 +933,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	g := &guard{
 		cacheMax: int64(*cacheGB) * gib, modMax: int64(*modGB) * gib, logMax: int64(*logMB) << 20, logKeep: *logKeep,
 		floor: int64(*floor) * gib, stopFloor: int64(*stopFloor) * gib, poolIdle: *poolIdle, cloneAge: *cloneAge, now: time.Now(), home: home,
-		logDir: tilde(*logs), logPrefix: guardLogPrefix(home, tilde(*logs)), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
+		logDir: tilde(*logs), logPrefix: guardLogPrefix(home, tilde(*logs)), logSkip: guardLogSkip(home, tilde(*logs)), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
 		dry: *dry, procs: processList, held: heldPaths, free: diskFree, cleanMod: cleanModCache, dirty: landDirty, out: stdout,
 	}
 	if runtime.GOOS != "linux" {

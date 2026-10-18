@@ -185,7 +185,7 @@ func friendDaemonsOrOK(env Env) ([]friendDaemon, *Result) {
 // The friend-seat check is retired (2026-10-17). It held each nova-friend daemon's
 // --coordinator to the sprint seat; the owner retired the friend daemons that night
 // (every process stopped, every launch agent moved out, every binary deleted) and
-// nova-hook is the one friend channel, so a seat's friends are read from their hook
-// records (`nova-hook status`), not from a daemon's plist, and the check would only
-// ever say "no friend daemons here". The helpers above stay: the friend-row,
+// nova-hook is the one friend channel, so the check would only ever say "no friend
+// daemons here". Nothing replaces what it checked: `nova-hook status` reads a friend's
+// liveness (hooked, armed, proven, down), not which seat she answers. The helpers above stay: the friend-row,
 // friend-wall and friend-login checks still enumerate what a machine loads.

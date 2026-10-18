@@ -81,7 +81,8 @@ a Fleet check, so `--local` runs all of them.
 
 **friend-seat** is retired (2026-10-17): it held each nova-friend daemon's
 `--coordinator` to the seat, and the friend daemons were retired that night;
-nova-hook is the one friend channel, and `nova-hook status` is the friends' check.
+nova-hook is the one friend channel. Nothing replaces what it checked: `nova-hook status`
+reads a friend's liveness (hooked, armed, proven, down), not which seat she answers.
 
 **friend-row.** Dependency: each daemon's nova-config row. Runs `nova-config friend show <name> --json`; `fail` when the row's `mode` is not `one-shot`, when
 its `roles` lack `builder` while the daemon runs cards (`--harness` given), or

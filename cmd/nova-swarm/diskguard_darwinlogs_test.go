@@ -26,6 +26,8 @@ func TestDiskGuardDefaultLogDirIsLibraryLogsOnDarwin(t *testing.T) {
 	assert.Equal(t, "nova-", guardLogPrefix(home, filepath.Join(home, "Library", "Logs")))
 	assert.Equal(t, "nova-", guardLogPrefix(home, filepath.Join(home, "Library", "Logs")+"/"), "named with a trailing slash")
 	assert.Empty(t, guardLogPrefix(home, filepath.Join(home, "nova-bench", "loops")))
+	assert.Equal(t, []string{"nova-loop-member", "nova-loop-reader"}, guardLogSkip(home, filepath.Join(home, "Library", "Logs")))
+	assert.Empty(t, guardLogSkip(home, filepath.Join(home, "nova-bench", "loops")), "on Linux the canary reads the journal, so every loop log rotates")
 }
 
 func TestDiskGuardRotatesOnlyTheNovaLogsInLibraryLogs(t *testing.T) {
@@ -35,11 +37,22 @@ func TestDiskGuardRotatesOnlyTheNovaLogsInLibraryLogs(t *testing.T) {
 	friend := filepath.Join(dir, "nova-friend-f1.log")
 	mirror := filepath.Join(dir, "nova-loop-mirror-refresh.log")
 	other := filepath.Join(dir, "SomeOtherApp.log")
-	for _, p := range []string{friend, mirror, other} {
+	member := filepath.Join(dir, "nova-loop-member-m1.log")
+	reader := filepath.Join(dir, "nova-loop-reader-m1.log")
+	for _, p := range []string{friend, mirror, other, member, reader} {
 		dgFile(t, p, 150, dgNow)
 	}
-	g.logDir, g.logPrefix, g.logMax, g.logKeep = dir, guardLogPrefix(g.home, dir), 100, 2
+	g.logDir, g.logPrefix, g.logSkip, g.logMax, g.logKeep = dir, guardLogPrefix(g.home, dir), guardLogSkip(g.home, dir), 100, 2
 	g.logs()
+
+	// the tools play's canary counts the member log's lines and reads on from them: a
+	// rotation between the two would make it read nothing, so the member and reader logs stay
+	for _, p := range []string{member, reader} {
+		fi, err := os.Stat(p)
+		require.NoError(t, err)
+		assert.EqualValues(t, 150, fi.Size(), "%s is read by the canary by line count: never rotated", p)
+		assert.NoFileExists(t, p+".1")
+	}
 
 	for _, p := range []string{friend, mirror} {
 		fi, err := os.Stat(p)
