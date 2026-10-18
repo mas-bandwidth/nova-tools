@@ -97,7 +97,8 @@ func checkArmedPlaybook(t *testing.T, role, command string) {
 				}
 				assert.Equal(t, want, count, "one note per ARMED")
 			}
-			assert.NotContains(t, r.cli().Run("hook", "--as", "ada", "--role", role, "--once").Stdout, "nova-sprint help ")
+			once := r.cli().Run("hook", "--as", "ada", "--role", role, "--once")
+			assert.NotContains(t, once.Stdout+once.Stderr, "nova-sprint help ")
 		})
 	}
 }
