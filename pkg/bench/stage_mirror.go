@@ -32,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -42,6 +43,25 @@ import (
 // home: the directory swarm.MirrorPath names under the bench's home.
 func MirrorDir(name string) string {
 	return "nova-bench/mirror/" + strings.TrimSuffix(name, ".git") + ".git"
+}
+
+// networkRemote says whether r is fetched across the network: a URL whose scheme is not
+// file (ssh://, https://, git://, http://), or the scp form user@host:path or host:path
+// (a colon before the first slash, no leading "/" or "."). Everything else is a path on
+// the lander's machine, which the bench cannot reach.
+func networkRemote(r string) bool {
+	if r == "" || strings.HasPrefix(r, "/") || strings.HasPrefix(r, ".") {
+		return false
+	}
+	if u, err := url.Parse(r); err == nil && u.Scheme != "" {
+		return u.Scheme != "file"
+	}
+	i := strings.IndexByte(r, ':')
+	if i <= 0 {
+		return false
+	}
+	j := strings.IndexByte(r, '/')
+	return j < 0 || i < j
 }
 
 // GateRefPrefix is where the lander's temporary refs live on the remote.
@@ -72,10 +92,10 @@ type MirrorStage struct {
 	// Mirror is the bare mirror on the bench, relative to the login's home or absolute
 	// (MirrorDir).
 	Mirror string
-	// Remote is where the temporary ref is fetched from. A local path (starts with "/")
-	// falls back to the mirror's origin when it names none, a path on the lander's machine
-	// meaning nothing on the bench; a network Remote (a URL, or an scp-style
-	// user@host:path) is used as-is, never the mirror's origin, since the lander pushed the
+	// Remote is where the temporary ref is fetched from. A Remote that is not a network
+	// remote (a URL whose scheme is not file, or an scp-style user@host:path) is a path
+	// on the lander's machine, so the mirror's origin is read instead (else Remote); a
+	// network Remote is used as-is, never the mirror's origin, since the lander pushed the
 	// ref there.
 	Remote string
 	// Ref is the temporary ref the lander pushed (GateRef); Sha the commit it names, the
@@ -126,15 +146,16 @@ func StandaloneLine(dst string) string {
 
 // StageLine is the remote line of the mirror stage into dst: the mirror must exist; the
 // commit is fetched by the temporary ref unless the mirror holds it already, no ref or
-// FETCH_HEAD written. A Remote that is a local path (starts with "/") is fetched from the
-// mirror's origin (else Remote), a path on the lander's machine meaning nothing on the
-// bench; a network Remote (a URL, or an scp-style user@host:path) is itself where the ref
-// is fetched from, never the mirror's origin, since the lander pushed the ref there. Then
-// dst is a clone of the mirror borrowing its objects, checked out detached at the sha.
+// FETCH_HEAD written. A Remote that is not a network remote is a path on the lander's
+// machine, meaning nothing on the bench, so the mirror's origin is fetched from (else
+// Remote); a network Remote (a URL whose scheme is not file, or an scp-style
+// user@host:path) is itself where the ref is fetched from, never the mirror's origin,
+// since the lander pushed the ref there. Then dst is a clone of the mirror borrowing its
+// objects, checked out detached at the sha.
 func StageLine(s MirrorStage, dst string) string {
 	m, d := Quote(s.Mirror), Quote(dst)
 	commit := Quote(s.Sha + "^{commit}")
-	local := strings.HasPrefix(s.Remote, "/")
+	local := !networkRemote(s.Remote)
 	src := ""
 	if local {
 		src = "src=$(git -C " + m + " config --get remote.origin.url) || src=" + Quote(s.Remote) + "; "
