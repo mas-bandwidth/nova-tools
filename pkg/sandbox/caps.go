@@ -12,37 +12,61 @@ import (
 // build or an unbounded `go test ./...`. The caps still bound a runaway; they are sized so
 // a build the machine can carry is not one.
 const (
-	// SizedLargeCPUs is the logical CPU count from which a machine is large: it gets
-	// SizedLargeProcs processes and, with SizedLargeRAM of memory or more, SizedLargeMem.
-	SizedLargeCPUs        = 32
-	SizedLargeProcs       = 1024
-	SizedLargeMem   int64 = 16 << 30
-	SizedLargeRAM   int64 = 64 << 30
-	// SizedProcs is every other machine's process cap.
+	// SizedProcs is the least process cap of any machine.
 	SizedProcs = 512
+	// SizedProcsPerCPU is the process cap per logical CPU, above SizedProcs.
+	SizedProcsPerCPU = 64
+	// SizedMemShare is the share of the machine's memory one tree may hold: ram over it.
+	SizedMemShare = 8
+	// SizedSliceTrees is how many capped trees must fit together under the login slice's
+	// limits (MemoryMax, TasksMax): one tree may hold the slice's limit over it.
+	SizedSliceTrees = 4
 )
 
-// SizedCaps is the process and memory cap for a machine of cpus logical CPUs and ram
-// bytes of physical memory (0 when it could not be read). A large machine (SizedLargeCPUs
-// or more) gets SizedLargeProcs processes, any other SizedProcs. The memory cap is
-// SizedLargeMem on a large machine with SizedLargeRAM or more, DefaultMaxMem otherwise,
-// and never more than half the machine's memory when that is known: one tree may not take
-// the memory the machine's other work runs in.
-func SizedCaps(cpus int, ram int64) (int, int64) {
-	procs, mem := SizedProcs, DefaultMaxMem
-	if cpus >= SizedLargeCPUs {
-		procs = SizedLargeProcs
-		if ram >= SizedLargeRAM {
-			mem = SizedLargeMem
-		}
+// Machine is what the caps are sized from. Zero is unknown for every field: RAM when it
+// could not be read, SliceMem and SliceTasks when no cgroup limit is visible above this
+// process (the login slice's MemoryMax and TasksMax, the tightest of its ancestors).
+type Machine struct {
+	CPUs       int
+	RAM        int64
+	SliceMem   int64
+	SliceTasks int
+}
+
+// SizedCaps is the process and memory cap for a machine. Processes follow the CPUs:
+// SizedProcsPerCPU per CPU and at least SizedProcs, but never more than the slice's
+// TasksMax over SizedSliceTrees (and at least 1). Memory follows the memory, never the CPU count: an
+// eighth of the machine (SizedMemShare), never more than the slice's MemoryMax over
+// SizedSliceTrees, at least DefaultMaxMem (the floor wins over the slice share, so on a
+// small slice four trees at the floor may pass it), and never more than half the machine. With the
+// memory unread the memory cap is DefaultMaxMem.
+//
+// The share is small on purpose. The wall kills only the runaway tree; the slice's OOM
+// killer kills whatever it picks, often a sibling worker. So SizedSliceTrees trees at
+// their caps fit under the slice together where the share is above the floor (hetzner2: 125 GiB, slice 106 GiB, caps
+// 15.6 GiB). The first sizing (v1.5.1) keyed both caps on 32 CPUs, so a 16-thread member
+// with 124 GiB got 512 processes and 8 GiB, and on 2026-10-17 the wall still ended about
+// half the fleet's worker runs (`runaway: 714 processes (cap 512)`, `8714186752 bytes of
+// memory (cap 8589934592)`).
+func SizedCaps(m Machine) (int, int64) {
+	procs := max(SizedProcs, m.CPUs*SizedProcsPerCPU)
+	if m.SliceTasks > 0 {
+		procs = max(1, min(procs, m.SliceTasks/SizedSliceTrees))
 	}
-	if ram > 0 && mem > ram/2 {
-		mem = ram / 2
+	mem := DefaultMaxMem
+	if m.RAM > 0 {
+		share := m.RAM / SizedMemShare
+		if m.SliceMem > 0 {
+			share = min(share, m.SliceMem/SizedSliceTrees)
+		}
+		mem = min(max(DefaultMaxMem, share), m.RAM/2)
 	}
 	return procs, mem
 }
 
-// MachineCaps is SizedCaps for this machine: runtime.NumCPU and its physical memory.
+// MachineCaps is SizedCaps for this machine: runtime.NumCPU, its physical memory and the
+// cgroup limits above this process.
 func MachineCaps() (int, int64) {
-	return SizedCaps(runtime.NumCPU(), machineRAM())
+	sliceMem, sliceTasks := machineSlice()
+	return SizedCaps(Machine{CPUs: runtime.NumCPU(), RAM: machineRAM(), SliceMem: sliceMem, SliceTasks: sliceTasks})
 }

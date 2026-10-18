@@ -107,7 +107,7 @@ func (j job) wallBomb(t *testing.T, script string) (int, string, int, bool) {
 	t.Cleanup(bombs.Unlock)
 	ctx, cancel := context.WithTimeout(context.Background(), capWait())
 	defer cancel()
-	// The cap is named: the machine's sized default (sandbox.MachineCaps) is 512 or 1024,
+	// The cap is named: the machine's sized default (sandbox.MachineCaps) is max(512, 64 x CPUs),
 	// which TestWallCapsATreeWhoseLeaderExits's 300 processes would stay under.
 	cmd := exec.CommandContext(ctx, tool, "--read", j.read, "--write", j.write, "--max-procs", strconv.Itoa(sandbox.DefaultMaxProcs), "--", "/bin/sh", "-c", script)
 	cmd.Env = j.env()

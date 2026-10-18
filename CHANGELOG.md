@@ -1,5 +1,12 @@
 # nova-tools changelog
 
+## v1.5.3 — 2026-10-17
+
+Hotfix: the wall's caps follow the machine's memory, not its CPU count, so ordinary builds on 16-thread members are no longer killed as runaways.
+
+- `nova-sandbox` bare form, with no `--max-procs` or `--max-mem`: 64 processes per logical CPU and at least 512, never more than a quarter of the cgroup TasksMax above it; an eighth of the machine's memory, never more than a quarter of the cgroup MemoryMax above it (the member's login slice), at least 8 GiB and never more than half the machine; 8 GiB where the memory cannot be read. Four trees at their caps fit under the slice together wherever a quarter of the slice is 8 GiB or more (not on 31 GiB members, where the 8 GiB floor wins), so the slice's OOM killer does not take a sibling worker. v1.5.1 keyed both caps on 32 CPUs, so a 16-thread member with 124 GiB got 512 processes and 8 GiB, and on 2026-10-17 the wall still ended about half the worker runs on hetzner1 (178 of 346), hetzner2 (77 of 253) and amd-3 (29 of 82) (`runaway: 714 processes (cap 512)`, `8714186752 bytes of memory (cap 8589934592)`).
+- `TestSizedCapsFollowTheMachine` holds the fleet's measured shapes and slice limits. The `run` verb's fixed caps (256, 8g) are unchanged.
+
 ## v1.5.2 — 2026-10-17
 
 Hotfix: a nova table holds 1024 properties at an epoch, not 64.
