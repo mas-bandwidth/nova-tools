@@ -1,14 +1,19 @@
 package decide
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/decidewire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // Grading the grades (SPEC-NOVA-DECIDE section 11, "Scoring the grades"): the grade
@@ -47,11 +52,20 @@ type costRecord struct {
 // ReadLog reads a `nova-sprint log --json` export ({"lines":[...]}) into each primary's
 // facts: its last placement on the work table, and the last text under each of its
 // cost_record keys (SPEC-NOVA-DECIDE section 11).
+//
+// The export is read in every form (the owner's rules S2 and S4, readers first)
+// through pkg/schemaread and the generated table LogExport (pkg/decidewire): its
+// binary image, the padded standard base64 of that image, the schema JSON text,
+// and the legacy JSON nova-sprint log --json writes today. A damaged value of any
+// form is refused by name (`LOG_EXPORT REFUSED: <reason>; run: <help>`), and every
+// read is counted per form (LogExportCounts).
 func ReadLog(r io.Reader) (map[string]*CardFacts, error) {
-	var doc struct {
-		Lines []LogLine `json:"lines"`
+	in, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("the log is not a nova-sprint log --json export: %w", err)
 	}
-	if err := json.NewDecoder(r).Decode(&doc); err != nil {
+	doc, _, err := logExportReader.Read(in)
+	if err != nil {
 		return nil, fmt.Errorf("the log is not a nova-sprint log --json export: %w", err)
 	}
 	facts := map[string]*CardFacts{}
@@ -85,6 +99,122 @@ func ReadLog(r io.Reader) (map[string]*CardFacts, error) {
 	}
 	return facts, nil
 }
+
+// logExport is the export ReadLog reads, {"lines": [...]}.
+type logExport struct {
+	Lines []LogLine `json:"lines"`
+}
+
+// logExportSchemaMark finds a key only the schema JSON text form of LogExport
+// writes: table_name (the legacy key is table) or a set written as a list of
+// entries (the legacy set is an object). A quote inside a JSON string is always
+// escaped, so a mark whose opening quote follows a backslash is text, not a key.
+var logExportSchemaMark = regexp.MustCompile(`(^|[^\\])"(table_name"\s*:|set"\s*:\s*\[)`)
+
+// logExportIsLegacy decides the two JSON forms by shape (S2): a JSON object with
+// no schema-only key is the legacy export, read as it always was (unknown keys
+// ignored). The test reads the text as far as it goes, so a truncated text keeps
+// the form it was written in.
+func logExportIsLegacy(in []byte) bool {
+	t := bytes.TrimLeft(in, " \t\r\n")
+	return len(t) > 0 && t[0] == '{' && !logExportSchemaMark.Match(t)
+}
+
+// logExportLegacy reads the legacy export as ReadLog always did: one JSON value,
+// keys LogLine does not name ignored, the cost_record text inside set a string.
+func logExportLegacy(v *logExport, in []byte) schemaread.Report {
+	if err := json.NewDecoder(bytes.NewReader(in)).Decode(v); err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	return schemaread.Report{}
+}
+
+// logExportFromTable is the export as ReadLog holds it; ok is false when a line
+// names a set key twice (putOnce: S2, damage is never read as another shape).
+func logExportFromTable(r *decidewire.LogExportRow, ar []*decidewire.TableArena) (logExport, bool) {
+	var out logExport
+	ok := true
+	decidewire.LogExportLinesEach(&r.Lines, func(l *decidewire.LogLineRow) bool {
+		line := LogLine{Card: strAt(l.Card, ar), Primary: strAt(l.Primary, ar), Table: strAt(l.TableName, ar), To: strAt(l.To, ar), Removed: l.Removed}
+		decidewire.LogLineSetEach(&l.Set, func(e *decidewire.SetEntryRow) bool {
+			if line.Set == nil {
+				line.Set = map[string]string{}
+			}
+			ok = putOnce(line.Set, strAt(e.Key, ar), strAt(e.Value, ar))
+			return ok
+		}, ar...)
+		out.Lines = append(out.Lines, line)
+		return ok
+	}, ar...)
+	return out, ok
+}
+
+// logExportBuilt is the value a load left in b; false when a line names a set
+// key twice.
+func logExportBuilt(v *logExport, b *decidewire.LogExportBuilder) bool {
+	e, ok := logExportFromTable(b.GetRoot(), []*decidewire.TableArena{&b.Arena})
+	if ok {
+		*v = e
+	}
+	return ok
+}
+
+// logExportTyped reads the table image; an image that is not the canonical
+// image of the value it reads is wire damage (canonical).
+func logExportTyped(v *logExport, wire []byte) schemaread.Report {
+	var b decidewire.LogExportBuilder
+	if !b.Init() {
+		return schemaread.Report{Reason: schemaread.ReasonMalformed}
+	}
+	defer b.Shutdown()
+	var rep decidewire.TableReport
+	if !decidewire.LogExportLoadBuilder(&b, wire, &rep) {
+		return reportOf(&rep, false)
+	}
+	if !logExportBuilt(v, &b) {
+		return schemaread.Report{Reason: schemaread.ReasonMalformed}
+	}
+	return typedDone(&rep, func() bool {
+		return canonical[decidewire.LogExport](&b, wire, decidewire.LogExportMeasure, decidewire.LogExportSave)
+	})
+}
+
+// logExportJSON reads the schema JSON text form (S2).
+func logExportJSON(v *logExport, text []byte) schemaread.Report {
+	var b decidewire.LogExportBuilder
+	if !b.Init() {
+		return schemaread.Report{Reason: schemaread.ReasonMalformed}
+	}
+	defer b.Shutdown()
+	var rep decidewire.TableReport
+	if !decidewire.LogExportFromJson(&b, text, &rep) {
+		return reportOf(&rep, false)
+	}
+	if !logExportBuilt(v, &b) {
+		return schemaread.Report{Reason: schemaread.ReasonMalformed}
+	}
+	return reportOf(&rep, true)
+}
+
+// logExportReader is the export's one reader; its counters are the per-form
+// evidence of the writer cutover (S4, UNION.md C13). The schema declares no
+// bound on a line and ReadLog bounds none (an empty export reads as no facts,
+// as it always did), so the reader holds no constraint.
+var logExportReader = schemaread.NewReader(&schemaread.Codec[logExport]{
+	Name:       "LOG_EXPORT",
+	Help:       "nova-decide score-grades -h",
+	Forms:      []byte{variableForm},
+	Reset:      func(v *logExport) { *v = logExport{} },
+	Measure:    func(wire []byte) error { _, err := decidewire.LogExportLoadMeasureReason(wire); return err },
+	LoadWire:   logExportTyped,
+	LoadJSON:   logExportJSON,
+	Legacy:     logExportIsLegacy,
+	LoadLegacy: logExportLegacy,
+})
+
+// LogExportCounts is the per-form read counters of the log export ReadLog reads
+// (UNION.md C13): reads by form, unknown fields, refusals by reason.
+func LogExportCounts() *schemaread.Counts { return logExportReader.Counts() }
 
 // parseCost reads a work cost record, `kind=work attempt=1 on_tier=flash end=failed ...`;
 // any other kind has attempt 0.
