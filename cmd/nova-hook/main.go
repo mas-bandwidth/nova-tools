@@ -315,7 +315,7 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); by default the store's time at the first hook, kept in the events directory's .cutover; earlier work must be resent")
 					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "private directory for bounded external event JSON and the native notification queue (default ~/.local/state/nova-hook/<as>-dsh, created 0700)")
 					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "absolute native Cordis include .json path, mounted into the harness desktop profile (default ~/.dsh/<as>-hook/hooks.json)")
-					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "pin one existing harness session (default: the newest live session in the friend's workspace, followed when she starts another); never creates or resumes a session")
+					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "pin one existing harness session (default: the newest live session in the friend's workspace, followed when the friend starts another); never creates or resumes a session")
 					f.String("dsh-since", w.getenv("NOVA_HOOK_DSH_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); by default the store's time at the first hook, kept in the events directory's .cutover; earlier work must be resent")
 					f.String("antigravity-dir", w.getenv("NOVA_HOOK_ANTIGRAVITY_DIR"), "Antigravity workspace directory for --harness antigravity")
 					f.String("antigravity-session", w.getenv("NOVA_HOOK_ANTIGRAVITY_SESSION"), "Antigravity conversation UUID (default: newest root conversation for --antigravity-dir)")

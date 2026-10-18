@@ -117,8 +117,8 @@ func TestAFriendComingUpIsPushedAtOnceWithHerRow(t *testing.T) {
 	require.Len(t, ups, 1, out)
 	assert.Equal(t, "FRIEND UP bob live held width=32 ready=1 working=2 at="+at, ups[0].subject)
 	assert.Equal(t, "status", ups[0].kind, "a status line: nothing answers it")
-	assert.Contains(t, ups[0].body, "Her sprint row is held: allowance out; nova-sprint friend up bob releases it.")
-	assert.Contains(t, ups[0].body, "FRIEND BACK follows her proof")
+	assert.Contains(t, ups[0].body, "The sprint holds bob's row: allowance out; nova-sprint friend up bob releases it.")
+	assert.Contains(t, ups[0].body, "bob is armed; FRIEND BACK follows the proof")
 	// the busy set reads her cards every pass she is hooked; the push adds one read, in the same verb, on the pass she comes up
 	assert.Equal(t, 2, strings.Count(strings.Join(argvs(asked), "\n"), "friend cards bob --json"), "the busy set's read and the push's")
 	assert.Zero(t, r.count(t, "ada", "FRIEND BACK "), "no FRIEND BACK before her proof")
@@ -166,7 +166,7 @@ func TestFriendUpSaysWhenHerRowIsUnheldOrUnread(t *testing.T) {
 			require.Len(t, ups, 1)
 			assert.Equal(t, tc.subject+at, ups[0].subject)
 			assert.Contains(t, ups[0].body, tc.body)
-			assert.NotContains(t, ups[0].body, "is held")
+			assert.NotContains(t, ups[0].body, "The sprint holds")
 		})
 	}
 	t.Run("comms", func(t *testing.T) {

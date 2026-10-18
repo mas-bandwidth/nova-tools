@@ -695,14 +695,14 @@ func upLine(name string, t transition, friend bool, r sprintRow) (string, string
 		}
 		subject += fmt.Sprintf(" %s width=%d ready=%d working=%d", hold, r.width, r.ready, r.working)
 		if r.held {
-			detail = "Her sprint row is held" + cmp.Or(": "+r.reason, "") + "; nova-sprint friend up " + name + " releases it.\n"
+			detail = "The sprint holds " + name + "'s row" + cmp.Or(": "+r.reason, "") + "; nova-sprint friend up " + name + " releases it.\n"
 		}
 	default:
 		subject += " row=unread"
-		detail = "Her sprint row was not read: " + r.why + ".\n"
+		detail = name + "'s sprint row was not read: " + r.why + ".\n"
 	}
 	subject += " at=" + t.at.UTC().Format(time.RFC3339)
-	proof := "She is armed; FRIEND BACK follows her proof.\n"
+	proof := name + " is armed; FRIEND BACK follows the proof.\n"
 	if t.new == hook.StateProven {
 		proof = ""
 	}
