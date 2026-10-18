@@ -18,7 +18,7 @@ Tagged and never released: the tagged tree has no docs/RELEASE-NOTES-1.6.0.md, w
 
 Cut from 719420e54279551a0de83d805a19e90489a24577. 10 pull requests since v1.5.2.
 
-CI waived: Rowan (coordinator, on the owner's point-release go-ahead), 2026-10-18: test-hosted (macos-latest, 5) was never started (hosted runners over the account's spending limit); its steps (ci deal --shards 8 --shard 5, make vet, make test-short over its 24 packages) ran by hand at 719420e54 on a self-hosted darwin-arm64 bench, green
+CI waived: the coordinator (on the owner's point-release go-ahead), 2026-10-18: test-hosted (macos-latest, 5) was never started (hosted runners over the account's spending limit); its steps (ci deal --shards 8 --shard 5, make vet, make test-short over its 24 packages) ran by hand at 719420e54 on a self-hosted darwin-arm64 bench, green
 CI waived checks: ci-ok=failure, test-hosted (macos-latest, 5)=cancelled
 
 Recovery journeys incomplete, gate waived: v1.6.0, the stable tools release the CHANGELOG section describes, with the owner's ask of 2026-10-18 (a push when a friend comes up, with the sprint row); journeys: no build of this revision is installed before the cut; spend: no provider readouts or friend receipts are available to this cut and the range changes no spend recording
