@@ -29,6 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (2)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -1907,3 +1908,27 @@ TestDeadCode excludes pkg/ since the split; a reachability walk with library roo
 Target: v1.5
 
 From: seat decision after the repository split
+
+## Moved out of the sprint on 2026-10-18: v19, target v1.9
+
+The open cards of sprint stream v19, moved out of the sprint when the owner said v19 and v111 live in roadmaps only (2026-10-18), one item per card. Each item keeps the card's whole brief under :kept :brief, with its column, tier, base and needs; none had a pushed head.
+
+### v19-hook-claude-settings-splices-only-its-stop-hook
+
+nova-hook's Claude installer splices only its Stop hook into settings.json and leaves every other byte of the file unchanged. Column waiting, tier pro, base sprint/v19. The whole brief is kept under :kept :brief. No pushed head recorded.
+
+Why it waits: The owner, 2026-10-18: "Please remove v19 and v111 from this sprint. They live in roadmaps only."
+
+Target: v1.9
+
+From: sprint card v19-hook-claude-settings-splices-only-its-stop-hook (stream v19, column waiting, tier pro, base sprint/v19), moved out of the sprint 2026-10-18; card source: the owner, 2026-10-18 (for v1.9): cards from what we learned from Paper Instruments' Feather (paperinstruments.com/feather), lesson 1: an edit verb refuses instead of corrupting: a verb that rewrites a brief or a file changes exactly the region it names, or refuses. Read on nova-tools main 71
+
+### v19-friend-set-reaches-the-store
+
+A nova-config friend set reaches the store within a tick, with no manual apply --kind friend. Column waiting, tier pro, base sprint/v19. The whole brief is kept under :kept :brief. No pushed head recorded.
+
+Why it waits: The owner, 2026-10-18: "Please remove v19 and v111 from this sprint. They live in roadmaps only."
+
+Target: v1.9
+
+From: sprint card v19-friend-set-reaches-the-store (stream v19, column waiting, tier pro, base sprint/v19), moved out of the sprint 2026-10-18; card source: the owner, 2026-10-18 (for v1.9): after `nova-config friend set`, the store kept the friends' stale tiers until a manual `nova-config apply --kind friend` was run; the nova-config-apply loop did not pick the change up. A friend-row config change reaches the store within one tick.
