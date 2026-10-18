@@ -116,7 +116,7 @@ func (s *scriptedGit) run(ctx context.Context, o gitrun.Options, args ...string)
 			return gitrun.Result{Stdout: []byte(s.pushLine + "\n")}, errors.New("exit status 1")
 		}
 		return gitrun.Result{}, nil
-	case "update-ref":
+	case "update-ref", "repack", "prune":
 		return gitrun.Result{}, nil
 	}
 	return gitrun.Result{}, fmt.Errorf("unscripted git %v", args)
