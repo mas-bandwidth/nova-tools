@@ -193,23 +193,26 @@ func ReadJobUsageLiveWithin(dataHome string, limit time.Duration) (ProviderUsage
 	return foldOpenCodeRows(rows)
 }
 
-// LiveUsage is ReadJobUsageLiveWithin for one job, read as the job's database grows: a
-// message the harness has finished is read once and kept, and each read asks only for the
-// messages after the last it saw and the ones it saw unfinished. Every sample re-read and
-// json_extract-ed every message row of the job, so a card's samples cost the square of its
-// messages over its life (2026-10-17).
+// LiveUsage is ReadJobUsageLiveWithin for one job, read as the job's database grows. Every
+// sample re-read and json_extract-ed every message row of the job, so a card's samples cost
+// the square of its messages over its life (2026-10-17). A LiveUsage keeps what it read and
+// asks the store, on each read, only for the messages that may differ from what it keeps:
 //
-// A MESSAGE IS FINISHED when it is not the assistant's, or when the harness stamped its
-// time.completed: OpenCode writes an assistant message's tokens and cost as its steps finish,
-// in place, and completes it last (on one machine's own store, 1 of 22,161 completed
-// assistant messages was written again, 1.0 s after its completion). An unfinished one is read again
-// every read until it is finished or gone, so its figures are never stale; a store with no
-// completion stamps (the tests' fixtures) is read whole each time, as before. A finished
-// message the harness later deleted stays counted: the budget errs high, never low. A store
-// at another path, gone between two reads, another file (a file system may give a new file
-// the inode of the one removed, so this alone is no proof), or smaller than at the last read
-// is read again from its start; a sampler is made per launch, and nothing replaces a job's
-// store under a running harness.
+//   - every message after the highest rowid it has read;
+//   - every message written at or after the newest write it has read, less liveMarkSlack
+//     (COALESCE(time_updated, time_created): OpenCode writes an assistant message's tokens
+//     and cost in place as its steps finish, and on one machine's own store 4 of 22,265
+//     messages were written again more than 500 ms after their completion, the latest
+//     1.01 s after; a rowid reused after a delete is a new write too);
+//   - every message it read unfinished (the assistant's, with no time.completed).
+//
+// Every liveWholeEvery-th read is a whole one, and so is the first: it reads every message,
+// and what it keeps is rebuilt from it, so a deletion or a store replaced under the same
+// name (a file system may give a new file the inode of the one removed, so the identity
+// check below is no proof) is reconciled within liveWholeEvery samples. A store whose table
+// has no time_updated is read whole every time, as before. A store at another path, gone
+// between two reads, another file, or smaller than at the last read is read whole at once.
+// Between whole reads a deleted message stays counted: the budget errs high, never low.
 //
 // The zero LiveUsage reads with sqlite3; one LiveUsage is used by one goroutine (a sampler
 // takes no read while one is unanswered).
@@ -219,23 +222,42 @@ type LiveUsage struct {
 
 	path    string
 	file    os.FileInfo
-	size    int64          // the store's size at the last read
-	seen    int64          // the highest rowid read
-	kept    []liveRow      // the finished messages with tokens, in rowid order
-	pending map[int64]bool // the unfinished messages, read again every read
+	size    int64              // the store's size at the last read
+	reads   int                // reads since the last whole one
+	seen    int64              // the highest rowid read
+	mark    int64              // the newest write read: COALESCE(time_updated, time_created)
+	kept    map[int64][]string // the finished messages with tokens, by rowid
+	pending map[int64]bool     // the unfinished messages, read again every read
+	noTime  bool               // the table has no time_updated: every read is whole
 }
 
-// liveRow is one message's rowid and its messageColumns.
-type liveRow struct {
-	id    int64
-	cells []string
+// liveWholeEvery is how many reads a LiveUsage takes between whole reads, the bound on how
+// long a deletion or a replaced store can leave its count wrong.
+const liveWholeEvery = 10
+
+// liveMarkSlack is how far before the newest write it has read a LiveUsage asks again: a
+// write that commits after a read may carry a time its writer took before that read's
+// newest one.
+const liveMarkSlack = 2000 // milliseconds, the unit of OpenCode's times
+
+// liveColumns are a live read's first four columns: the rowid, whether the message is
+// finished, whether it carries tokens, and when it was last written (0 without a time).
+func liveColumns(timed bool) string {
+	written := `COALESCE(time_updated, time_created)`
+	if !timed {
+		written = `0`
+	}
+	return `SELECT rowid, ` +
+		`(json_extract(data, '$.role') IS NOT 'assistant' OR json_extract(data, '$.time.completed') IS NOT NULL), ` +
+		`(json_extract(data, '$.tokens') IS NOT NULL), ` + written + `, ` +
+		messageColumns + `FROM message`
 }
 
-// liveSQL is the statement of one LiveUsage read: each message after seen, and each pending
-// one, with its rowid, whether it is finished, whether it carries tokens, and then
-// messageColumns.
-func liveSQL(seen int64, pending map[int64]bool) string {
-	where := `rowid > ` + strconv.FormatInt(seen, 10)
+// liveSQL is the statement of one incremental read: each message after seen, each written
+// at or after mark less liveMarkSlack, and each pending one.
+func liveSQL(seen, mark int64, pending map[int64]bool) string {
+	where := ` WHERE rowid > ` + strconv.FormatInt(seen, 10) +
+		` OR COALESCE(time_updated, time_created) >= ` + strconv.FormatInt(mark-liveMarkSlack, 10)
 	if len(pending) > 0 {
 		ids := make([]string, 0, len(pending))
 		for _, id := range slices.Sorted(maps.Keys(pending)) {
@@ -243,11 +265,11 @@ func liveSQL(seen int64, pending map[int64]bool) string {
 		}
 		where += ` OR rowid IN (` + strings.Join(ids, ",") + `)`
 	}
-	return `SELECT rowid, ` +
-		`(json_extract(data, '$.role') IS NOT 'assistant' OR json_extract(data, '$.time.completed') IS NOT NULL), ` +
-		`(json_extract(data, '$.tokens') IS NOT NULL), ` +
-		messageColumns + `FROM message WHERE ` + where + ` ORDER BY rowid`
+	return liveColumns(true) + where + ` ORDER BY rowid`
 }
+
+// liveWholeSQL is the statement of a whole read; timed says the table has time_updated.
+func liveWholeSQL(timed bool) string { return liveColumns(timed) + ` ORDER BY rowid` }
 
 // Read is one live sample of the job's usage under dataHome, bounded by limit: the same
 // answer ReadJobUsageLiveWithin gives, from the messages kept and the ones read now.
@@ -279,48 +301,80 @@ func (u *LiveUsage) Read(dataHome string, limit time.Duration) (ProviderUsage, e
 			return queryOpenCodeSQL(bin, path, sql, limit)
 		}
 	}
-	got, err := query(path, liveSQL(u.seen, u.pending), limit)
+	whole := u.kept == nil || u.noTime || u.reads >= liveWholeEvery
+	sql := liveSQL(u.seen, u.mark, u.pending)
+	if whole {
+		sql = liveWholeSQL(!u.noTime)
+	}
+	got, err := query(path, sql, limit)
+	if err != nil && !u.noTime && strings.Contains(err.Error(), "no such column") {
+		// a store with no time_updated (an older harness): read whole, every time
+		u.noTime, whole = true, true
+		got, err = query(path, liveWholeSQL(false), limit)
+	}
 	if err != nil {
 		return ProviderUsage{}, err
 	}
-	var now []liveRow // this read's unfinished messages with tokens
+	kept := map[int64][]string{}
+	if !whole {
+		kept = maps.Clone(u.kept)
+	}
 	pending := map[int64]bool{}
-	seen := u.seen
-	kept := u.kept
+	seen, mark := u.seen, u.mark
+	if whole {
+		seen, mark = 0, 0
+	}
+	var now []liveRow // this read's unfinished messages with tokens
 	for i, row := range got {
-		if len(row) != 3+2+len(TokenColumns)+1 {
+		if len(row) != 4+2+len(TokenColumns)+1 {
 			return ProviderUsage{}, fmt.Errorf("opencode usage row %d column count is invalid", i+1)
 		}
 		id, err := strconv.ParseInt(strings.TrimSpace(row[0]), 10, 64)
 		if err != nil {
 			return ProviderUsage{}, fmt.Errorf("opencode usage row %d rowid is not an integer", i+1)
 		}
-		seen = max(seen, id)
+		written, err := strconv.ParseInt(strings.TrimSpace(row[3]), 10, 64)
+		if err != nil {
+			written = 0 // a time the store did not keep as an integer: the rowid still bounds the read
+		}
+		seen, mark = max(seen, id), max(mark, written)
 		finished, tokens := strings.TrimSpace(row[1]) == "1", strings.TrimSpace(row[2]) == "1"
-		r := liveRow{id: id, cells: row[3:]}
+		delete(kept, id) // read again: what it says now replaces what was kept
 		switch {
 		case !finished:
 			pending[id] = true
 			if tokens {
-				now = append(now, r)
+				now = append(now, liveRow{id: id, cells: row[4:]})
 			}
 		case tokens:
-			kept = append(kept, r)
+			kept[id] = row[4:]
 		}
 	}
-	slices.SortStableFunc(kept, func(a, b liveRow) int { return cmp.Compare(a.id, b.id) })
-	u.seen, u.kept, u.pending = seen, kept, pending
-	all := make([]liveRow, 0, len(kept)+len(now))
-	all = append(append(all, kept...), now...)
-	slices.SortStableFunc(all, func(a, b liveRow) int { return cmp.Compare(a.id, b.id) })
+	u.seen, u.mark, u.kept, u.pending = seen, mark, kept, pending
+	if whole {
+		u.reads = 1
+	} else {
+		u.reads++
+	}
+	all := now
+	for id, cells := range kept {
+		all = append(all, liveRow{id: id, cells: cells})
+	}
 	if len(all) == 0 {
 		return ProviderUsage{Values: map[string]string{}}, nil
 	}
+	slices.SortFunc(all, func(a, b liveRow) int { return cmp.Compare(a.id, b.id) })
 	rows := make([][]string, len(all))
 	for i, r := range all {
 		rows[i] = r.cells
 	}
 	return foldOpenCodeRows(rows)
+}
+
+// liveRow is one message's rowid and its messageColumns.
+type liveRow struct {
+	id    int64
+	cells []string
 }
 
 // findOpenCodeStore is the first of the standard locations that holds a database, or an

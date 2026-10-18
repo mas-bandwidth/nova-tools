@@ -74,7 +74,8 @@ type liveSampler struct {
 	dataHome string
 	interval time.Duration
 	// now is the clock and read the one read (the sampler's own swarm.LiveUsage, which
-	// reads only the messages it has not kept); nil is each one's own, a test gives its fakes.
+	// reads only what may have changed since its last, and every tenth read whole); nil is
+	// each one's own, a test gives its fakes.
 	now  func() time.Time
 	read func(dataHome string, limit time.Duration) (swarm.ProviderUsage, error)
 	live swarm.LiveUsage

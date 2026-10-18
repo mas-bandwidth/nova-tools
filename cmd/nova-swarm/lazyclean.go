@@ -49,14 +49,18 @@ const keepEpochs = 2
 // its removal takes is not measured here. A round stops partway when a launch is tagged.
 const lazyRound = 32
 
-// The cleaner's pace, with no tagged launch to clean: the next lazy round comes lazyEvery
-// after a round that removed something, lazyQuiet after one that removed nothing, and
-// lazyBacklog after one that removed its bound and left more (old epochs past lazyRound, a
-// cache over its limit or still trimming toward its low-water mark), so a backlog of a few thousand entries is still gone
-// within minutes. A round every 2 s whatever it found listed the slots and the results
-// (1,096 and 309 entries), re-read the pid files of what it still could not remove, and
-// read 4 of the cache's subdirectories, the whole 16 GB, 77k-file cache every 128 s, some
-// 350 to 1,200 stats a second on every seat, forever (a Mac bench, 2026-10-17).
+// The cleaner's pace, with no tagged launch to clean. While a launch of this runner is live
+// (claimed by Start and not yet ended) the next lazy round comes lazyBacklog after the last,
+// and the build cache is read cacheDirsPerRound subdirectories a round, as it always was:
+// a busy seat's cache grows by the gigabyte, and its limit must be seen. While the seat runs
+// nothing the next round comes lazyEvery after a round that removed something, lazyQuiet
+// after one that removed nothing, and lazyBacklog after one that left a backlog: an old-epoch
+// removal with old entries left (past lazyRound, or entries still claimed or recently
+// active), or a cache over its limit or trimming toward its low-water mark. A round every
+// 2 s on an idle seat listed the slots and the results (1,096 and 309 entries), re-read the
+// pid files of what it still could not remove, and read 4 of the cache's subdirectories,
+// the whole 16 GB, 77k-file cache every 128 s, some 350 to 1,200 stats a second on every
+// seat, forever (a Mac bench, 2026-10-17).
 const (
 	lazyEvery   = 30 * time.Second
 	lazyQuiet   = 60 * time.Second
@@ -64,9 +68,9 @@ const (
 )
 
 // The build cache's trim (pkg/gocache): held under the member's --gocache-limit, then
-// down to the low-water mark a fifth under it (gocache.SlackOf). While the last measured
-// size is at or under the low-water mark there is nothing to trim, and the cache is only
-// measured again, whole, once every cacheRemeasure; above it, each round reads
+// down to the low-water mark a fifth under it (gocache.SlackOf). While the seat runs nothing
+// and the last measured size is at or under the low-water mark there is nothing to trim, and
+// the cache is only measured again, whole, once every cacheRemeasure; otherwise each round reads
 // cacheDirsPerRound of the cache's 256 subdirectories (measures, and trims when over), the
 // size a running sum. cacheRemovePerRound is the most entries one round removes.
 const (
@@ -82,6 +86,13 @@ func (r *nativeRunner) Epoch(epoch uint64) { r.epoch.Store(epoch + 1) }
 // urgent says a tagged launch waits for the cleaner: lazy work yields to it.
 func (r *nativeRunner) urgent() bool { return len(r.tagged) > 0 }
 
+// busy says a launch of this runner is live: claimed by Start and not yet ended.
+func (r *nativeRunner) busy() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.live) > 0
+}
+
 // lazy is one round of the cleaner's lazy work, when no tagged launch waits: old epochs'
 // entries, then the build cache. Each says one line when it removed something. It returns
 // how long until the next round (lazyEvery, lazyQuiet, lazyBacklog).
@@ -94,9 +105,10 @@ func (r *nativeRunner) lazy(now time.Time) time.Duration {
 		fmt.Fprintf(r.stderr, "CLEAN old epochs: removed %d entries, %s freed, %d left%s\n", o.removed, oneline.Escape(sizeWord(o.freed)), o.left, oneline.Escape(o.failures()))
 	}
 	removed, backlog := o.removed > 0, o.removed > 0 && o.left > 0
+	busy := r.busy()
 	pace := func() time.Duration {
 		switch {
-		case backlog:
+		case busy || backlog:
 			return lazyBacklog
 		case removed:
 			return lazyEvery
@@ -113,8 +125,9 @@ func (r *nativeRunner) lazy(now time.Time) time.Duration {
 	limit := r.gocacheLimit()
 	low := limit - gocache.SlackOf(limit)
 	dirs := cacheDirsPerRound
-	if r.cacheAt.IsZero() || r.cache.Total() <= low {
-		// nothing to trim at the last measure: measured again, whole, once every cacheRemeasure
+	if !busy && (r.cacheAt.IsZero() || r.cache.Total() <= low) {
+		// an idle seat with nothing to trim at the last measure: measured again, whole, once
+		// every cacheRemeasure
 		if !r.cacheAt.IsZero() && now.Sub(r.cacheAt) < cacheRemeasure {
 			return pace()
 		}

@@ -209,6 +209,27 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 		var lastSample time.Time
 		var cpu uint64
 		var haveCPU bool
+		// treeMoved reads the process table at at and says whether the tree worked since the
+		// last reading: it lost a process, or it spent a tenth of the span (nativeBusyShare).
+		treeMoved := func(at time.Time) bool {
+			span := at.Sub(lastSample)
+			lastSample = at
+			s := snap()
+			if s == nil || w.Pid <= 0 {
+				return false
+			}
+			got, ok := s.TreeCPU(w.Pid)
+			if !ok {
+				return false
+			}
+			grew := haveCPU && got > cpu
+			shrank := haveCPU && got < cpu
+			prev := cpu
+			cpu, haveCPU = got, true
+			// A tree that LOST a process did work: the process was alive, it was charged,
+			// and its departure is not stillness.
+			return shrank || (grew && got-prev >= uint64(span)/nativeBusyShare)
+		}
 		// lastSpend is the accounting the watch last saw, with haveSpend saying one has
 		// been seen: the base a rise is measured from, never a reset on its own.
 		var lastSpend int
@@ -243,26 +264,13 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 					// answer the tree's CPU reading below like any other quiet card.
 					lastSize = size
 				}
-				// A silent log is not a silent card. The tree's CPU is read on
-				// the coarse poll batch uses, and the same one-percent-of-the-interval share
+				// A silent log is not a silent card. The tree's CPU is read every
+				// nativeSnapshotEvery (15 s in the default window), and a tree that spent a
+				// tenth of the span since the last reading (nativeBusyShare) is working, which
 				// separates a working tree from a sleeping one's bookkeeping.
-				if at.Sub(lastSample) >= nativeSnapshotEvery(w.Idle) {
-					span := at.Sub(lastSample)
-					lastSample = at
-					if s := snap(); s != nil && w.Pid > 0 {
-						if got, ok := s.TreeCPU(w.Pid); ok {
-							grew := haveCPU && got > cpu
-							shrank := haveCPU && got < cpu
-							prev := cpu
-							cpu, haveCPU = got, true
-							// A tree that LOST a process did work: the process was alive,
-							// it was charged, and its departure is not stillness.
-							if shrank || (grew && got-prev >= uint64(span)/nativeBusyShare) {
-								lastGrow = at
-								continue
-							}
-						}
-					}
+				if at.Sub(lastSample) >= nativeSnapshotEvery(w.Idle) && treeMoved(at) {
+					lastGrow = at
+					continue
 				}
 				// THE SHELL CAP (docs/roadmap.sexp, swarm-idle-reap-verdict): the harness
 				// caps what a shell tool prints, so a working card's log can stay silent
@@ -285,6 +293,14 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 				// A CARD THAT ALREADY PUBLISHED IS FINISHING, NOT IDLE: its
 				// report is on disk and the end would only race the write.
 				if _, published := FindCardResult(w.Job); published {
+					continue
+				}
+				// ONE FRESH READING BEFORE THE END (after the published check, which a finishing
+				// card answers every poll until it exits): the last may be up to nativeSnapshotEvery
+				// old, and a tree still for most of the window that began working since it
+				// is not idle.
+				if at.After(lastSample) && treeMoved(at) {
+					lastGrow = at
 					continue
 				}
 				end := IdleEnd{Idle: at.Sub(lastGrow), Step: w.Reader.Step()}

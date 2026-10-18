@@ -639,12 +639,6 @@ type Member struct {
 	// beat goes again at once without them, and they are sent again from this time (Beat),
 	// so a member never reads down for a word its sprint does not know yet.
 	factsOffUntil time.Time
-	// factsSent and factsSentAt are the facts the last taken beat carried and when: they are
-	// measured once at start, and the server keeps a beat's facts until another beat names
-	// new ones, so a beat carries them again only when they differ or FactsRetry has passed
-	// (Beat). Every beat carried them, every 3 s, from v1.4.3 to 2026-10-17.
-	factsSent   string
-	factsSentAt time.Time
 	// lastBeatRefusal is when the member last logged a beat the server refused (exit 2),
 	// so a refusal is logged at most once a minute (Beat)
 	lastBeatRefusal time.Time
@@ -780,11 +774,12 @@ type decided struct {
 	err      error
 }
 
-// NewMeter is the member's one-second CPU sampler for its beat's load: the
-// machine's busy percent read in-process (Linux from /proc/stat, darwin from
-// top's CPU usage line over a second; hostload.Local), one sample a second on
-// Linux and one every hostload.MeterEvery on darwin, none while the seat runs
-// nothing (hostload.Sampler.Run, SetIdle, set by Beat). A
+// NewMeter is the member's CPU sampler for its beat's load: the machine's busy
+// percent read in-process (Linux from /proc/stat, darwin from top's CPU usage
+// line over a second; hostload.Local), one sample a second on Linux, and on
+// darwin one second's sample every hostload.MeterEvery and none while the seat
+// runs nothing (hostload.Sampler.Run, SetIdle, set by Beat), the beats between
+// carrying the one-minute load average. A
 // beat always carries --load (docs/SPEC-SPRINT.md, the fleet, the beat), so the
 // sampler is the member's one meter, run apart from the pass.
 func NewMeter() *hostload.Sampler {
@@ -1056,7 +1051,11 @@ func (m *Member) Beat() error {
 		var ok bool
 		if m.cfg.Meter != nil {
 			// a seat running nothing reads no CPU meter (hostload.Sampler.SetIdle: darwin's is a
-			// top a second); the beat then carries the load average
+			// top a second); the beat then carries the one-minute load average. The word is this
+			// member's own live set: a reader on the same machine running reads leaves it idle, so
+			// the beat carries the average while the reader loads the machine. The average still
+			// rises with that load, and the deal reads no load; only the loaded-grace window and
+			// the pegged judgment read it.
 			live := m.live.Load()
 			m.cfg.Meter.SetIdle(live == nil || *live == "-")
 			if pct, total, ok = m.cfg.Meter.Peak(m.beaten); !ok {
@@ -1078,11 +1077,9 @@ func (m *Member) Beat() error {
 		args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
 	}
 	plain := args
-	facts := strings.Join(m.cfg.Facts, ",")
-	withFacts := !m.cfg.Reader && len(m.cfg.Facts) > 0 && !m.clock().Before(m.factsOffUntil) &&
-		(facts != m.factsSent || !m.clock().Before(m.factsSentAt.Add(FactsRetry)))
+	withFacts := !m.cfg.Reader && len(m.cfg.Facts) > 0 && !m.clock().Before(m.factsOffUntil)
 	if withFacts {
-		args = append(slices.Clone(args), "--facts", facts)
+		args = append(slices.Clone(args), "--facts", strings.Join(m.cfg.Facts, ","))
 	}
 	run := m.sprint.Run
 	if m.cfg.Reader {
@@ -1094,11 +1091,7 @@ func (m *Member) Beat() error {
 		// it, and the facts are offered again after FactsRetry
 		m.factsOffUntil = m.clock().Add(FactsRetry)
 		args = plain
-		withFacts = false
 		code, out = run(args...)
-	}
-	if withFacts && code == 0 {
-		m.factsSent, m.factsSentAt = facts, m.clock()
 	}
 	if code == 0 && !m.cfg.Reader && m.cfg.Meter != nil {
 		m.beaten = total
@@ -1122,8 +1115,7 @@ func (m *Member) Beat() error {
 }
 
 // FactsRetry is how long a member whose sprint refused a beat's --facts beats without them
-// before it offers them again (Beat, Member.factsOffUntil), and how long a member whose
-// sprint took them beats without them before it sends them again (Member.factsSentAt).
+// before it offers them again (Beat, Member.factsOffUntil).
 const FactsRetry = 10 * time.Minute
 
 // sayBeatRefused logs a beat the server refused (exit 2) with the exact argv the member

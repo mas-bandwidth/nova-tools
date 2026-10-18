@@ -42,10 +42,3 @@ func TestTheSamplerCountsTurnsAsTheLogGrows(t *testing.T) {
 	assert.Equal(t, stoppedMaxTurns, s.StopWordAtFinal(0, false, ""), "the third turn the log gained fires the card budget")
 	assert.Equal(t, 3, s.turnLog.Count(logPath))
 }
-
-// TestTheDefaultUsageIntervalIsFifteenSeconds: a sqlite3 launch per running card every 5 s
-// across the bench width was the sampler's cost; 15 s is the default now.
-func TestTheDefaultUsageIntervalIsFifteenSeconds(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, 15*time.Second, swarm.DefaultUsageInterval)
-}

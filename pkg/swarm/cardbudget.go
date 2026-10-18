@@ -72,16 +72,22 @@ func countAssistantLines(path string) int {
 // lowercasing every line, so a card's turn count cost the square of its log over its life
 // (2026-10-17). The offset is the end of the last whole line counted; a last line with no
 // newline yet is counted on each read, as a scanner at EOF counts it, and kept for the next.
-// A log that shrank, was gone at the last Count, or is another file than the one counted (a
-// file system may give a new file the old one's inode, so this alone is no proof) is counted
-// again from its start; native's capture is only ever appended to.
+// A log that shrank, was gone at the last Count, or is another file than the one counted is
+// counted again from its start, and so is every log on every logRecountEvery-th Count: a
+// file system may give a new file the old one's inode, so the identity check is no proof,
+// and the recount bounds how long a replaced log can be miscounted. Native's capture is
+// only ever appended to.
 // The zero LogTurns has counted nothing; one LogTurns is used by one goroutine.
 type LogTurns struct {
 	path   string
 	file   os.FileInfo
 	offset int64
 	n      int
+	counts int // Counts since the count last began at the log's start
 }
+
+// logRecountEvery is how many Counts a LogTurns takes between counts from the log's start.
+const logRecountEvery = 10
 
 // logLineMost is the longest unterminated tail LogTurns holds back for its newline; a longer
 // one is counted as a line of its own (the scanner it replaces stopped counting at a line
@@ -102,9 +108,10 @@ func (c *LogTurns) Count(path string) int {
 		*c = LogTurns{}
 		return 0
 	}
-	if c.file == nil || c.path != path || !os.SameFile(c.file, fi) || fi.Size() < c.offset {
+	if c.file == nil || c.path != path || !os.SameFile(c.file, fi) || fi.Size() < c.offset || c.counts >= logRecountEvery {
 		*c = LogTurns{path: path, file: fi}
 	}
+	c.counts++
 	if _, err := f.Seek(c.offset, io.SeekStart); err != nil {
 		return c.n
 	}

@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/gocache"
 )
 
 // The cleaner's pace (2026-10-17): every 2 s on every seat a lazy round listed the slots
@@ -80,4 +82,41 @@ func TestTheCacheFarUnderItsLimitIsMeasuredOnlyEveryTenMinutes(t *testing.T) {
 	}
 	assert.LessOrEqual(t, over.r.cache.Total(), int64(4<<10), "trimmed under its limit")
 	assert.LessOrEqual(t, rounds, 1+256/cacheDirsPerRound, "within one sweep of backlog rounds")
+}
+
+// TestABusySeatKeepsTheOldPaceAndSeesItsCacheGrow (the cold read of PR 5953): a seat running
+// a card grows its cache by the gigabyte, so the slow pace is only an idle seat's. While a
+// launch is live every round comes lazyBacklog after the last and reads cacheDirsPerRound of
+// the cache's subdirectories, so an entry written under a far-from-full cache is measured
+// within one sweep (64 rounds, 128 s), not at the next ten-minute measure; once the seat
+// runs nothing again the slow pace returns.
+func TestABusySeatKeepsTheOldPaceAndSeesItsCacheGrow(t *testing.T) {
+	t.Parallel()
+	p := newPool(t)
+	p.r.cacheLimit = 100 << 10 // low-water mark 80 KiB
+	now := time.Unix(1000, 0)
+	p.r.Epoch(14)
+	dir := p.r.goBuildCache()
+	for i := range 10 {
+		buildEntry(t, dir, "a"+strconv.Itoa(i), 1024, now)
+	}
+	require.Equal(t, lazyQuiet, p.r.lazy(now), "an idle seat: the quiet pace, the cache measured whole")
+	require.Equal(t, int64(10<<10), p.r.cache.Total())
+
+	p.r.started("work.g1.e14") // a card runs on the seat
+	for i := range 4 {
+		buildEntry(t, dir, "busy"+strconv.Itoa(i), 4096, now)
+	}
+	at := now
+	for range gocache.Subdirs / cacheDirsPerRound {
+		at = at.Add(lazyBacklog)
+		require.Equal(t, lazyBacklog, p.r.lazy(at), "a busy seat: every round 2 s after the last")
+	}
+	assert.Less(t, at.Sub(now), cacheRemeasure)
+	assert.Equal(t, int64(26<<10), p.r.cache.Total(), "the busy seat's new entries are measured within one sweep")
+
+	p.r.mu.Lock()
+	delete(p.r.live, "work.g1.e14")
+	p.r.mu.Unlock()
+	assert.Equal(t, lazyQuiet, p.r.lazy(at.Add(lazyBacklog)), "idle again: the quiet pace")
 }

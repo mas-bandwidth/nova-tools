@@ -57,10 +57,12 @@ type Sampler struct {
 }
 
 // MeterEvery is how often Run reads a CPUSecond source (darwin's top, a process that runs
-// for a second): one sample every RingSize seconds, so the ten seconds the fleet's load
-// cell shows the highest of hold one. Read back to back, top cost a Mac seat 0.33 s of CPU
+// for a second): one second's sample every RingSize seconds. That is about one in each ten
+// seconds the fleet's load cell shows the highest of, not one in every such window: the beat
+// goes every 3 s, so two beats that carry a sample can be 13 s apart, and every beat between
+// carries Load1Percent, a free sysctl. Read back to back, top cost a Mac seat 0.33 s of CPU
 // every 1.35 s, about a quarter of a core around the clock and 44 spawns a minute
-// (a Mac bench, 2026-10-17); a beat with no new sample carries Load1Percent, a free sysctl.
+// (a Mac bench, 2026-10-17).
 const MeterEvery = RingSize * time.Second
 
 // SetIdle is the caller's word that nothing runs on this seat (idle) or that something

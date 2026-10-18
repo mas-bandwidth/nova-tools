@@ -149,7 +149,7 @@ func TestNativeSamplesThroughAWriteAheadLog(t *testing.T) {
 	db := filepath.Join(dataHome, "opencode", "opencode.db")
 	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
 	sql := `PRAGMA journal_mode=WAL;
-CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);
+CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER);
 INSERT INTO message (data, time_created) VALUES (json_object('role','assistant','providerID','fake','modelID','fake-model','tokens',json_object('input',1000,'output',500,'cache',json_object('write',0,'read',0),'reasoning',0),'cost',0.1), ` +
 		strconv.FormatInt(time.Now().UnixMilli(), 10) + `);
 `

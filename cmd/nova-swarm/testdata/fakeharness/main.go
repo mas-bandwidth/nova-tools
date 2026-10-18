@@ -758,7 +758,9 @@ func writeUsage(data, arg string) {
 
 // writeUsageDB writes the job's accounting into a REAL sqlite database at the place a real
 // OpenCode keeps it, in the harness's own schema: a `message` table whose `data` column is
-// JSON and whose `time_created` column is MILLISECONDS since the epoch. It is what every
+// JSON, whose `time_created` column is MILLISECONDS since the epoch, and whose
+// `time_updated` column is there and left NULL (the live read asks it of every store,
+// COALESCE'd with time_created: swarm.LiveUsage). It is what every
 // test of the live sampler and of the stop reads, because those read it with `sqlite3
 // -readonly` and fold JSON out of it, and a fixture that faked either would be a fixture
 // testing itself.
@@ -806,7 +808,7 @@ func writeUsageDB(data, arg string) {
 	// The JSON is built with sqlite's own json_object so a NULL stays a NULL inside the
 	// document rather than becoming the string "null", which json_extract would hand the
 	// reader as a value.
-	sql := `CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);
+	sql := `CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER);
 INSERT INTO message (data, time_created) VALUES (json_object(
   'role','assistant','providerID','fake','modelID','fake-model',
   'tokens', json_object('input',` + cell(0) + `,'output',` + cell(1) +
@@ -842,7 +844,7 @@ func writeSession(data, finish string) {
 	path := openCodeDB(data)
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	now := time.Now().UnixMilli()
-	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n" +
+	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER);\n" +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"tool-calls\"}', %d);\n", now+1) +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"%s\"}', %d);\n", finish, now+2)
@@ -860,7 +862,7 @@ func writeSessionErrorOf(data, envelope string) {
 	path := openCodeDB(data)
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	now := time.Now().UnixMilli()
-	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n" +
+	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER);\n" +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('%s', %d);\n", envelope, now+1)
 	runSQLite(path, sql)
@@ -881,7 +883,7 @@ func writeCreditRefusal(data string) {
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	now := time.Now().UnixMilli()
 	envelope := `{"role":"assistant","error":{"name":"APIError","data":{"message":"` + words + `","statusCode":402,"isRetryable":false,"responseBody":"{\"error\":{\"message\":\"` + words + `\",\"code\":402,\"metadata\":{\"limit_source\":\"openrouter_credits\"}}}"}}}`
-	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n" +
+	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER);\n" +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('%s', %d);\n", envelope, now+1)
 	if _, err := exec.LookPath("sqlite3"); err == nil {

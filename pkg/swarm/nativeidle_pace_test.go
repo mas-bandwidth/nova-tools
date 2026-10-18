@@ -37,7 +37,7 @@ func TestTheIdleWatchPollsEachSecondAndSnapshotsEveryFifteen(t *testing.T) {
 	assert.Equal(t, 2500*time.Millisecond, nativeSnapshotEvery(10*time.Second), "a short window keeps batch's poll")
 	assert.Equal(t, 500*time.Millisecond, nativeSnapshotEvery(time.Second))
 
-	run := func(t *testing.T, perSecond uint64, seconds int) (poll time.Duration, snaps int, ended bool) {
+	run := func(t *testing.T, perSecond func(s int) uint64, seconds int) (poll time.Duration, snaps int, ended bool) {
 		t.Helper()
 		job := t.TempDir()
 		log := filepath.Join(job, "harness-output.log")
@@ -65,7 +65,7 @@ func TestTheIdleWatchPollsEachSecondAndSnapshotsEveryFifteen(t *testing.T) {
 		out := WatchIdle(w, stop)
 		for s := 1; s <= seconds; s++ {
 			snap.mu.Lock()
-			snap.cpu += perSecond
+			snap.cpu += perSecond(s)
 			snap.mu.Unlock()
 			select {
 			case ticks <- start.Add(time.Duration(s) * time.Second):
@@ -91,12 +91,25 @@ func TestTheIdleWatchPollsEachSecondAndSnapshotsEveryFifteen(t *testing.T) {
 		return poll, snap.taken, ended
 	}
 
-	poll, snaps, ended := run(t, uint64(time.Second), 400)
+	poll, snaps, ended := run(t, func(int) uint64 { return uint64(time.Second) }, 400)
 	assert.Equal(t, time.Second, poll, "the log is read once a second")
 	assert.False(t, ended, "a tree pinning a core is working over a 15 s span")
 	assert.LessOrEqual(t, snaps, 400/15+2, "one snapshot every 15 s, not every 5 s")
 	assert.GreaterOrEqual(t, snaps, 400/15-1)
 
-	_, _, ended = run(t, uint64(time.Second)*103/10000, 320)
+	eventLoop := func(int) uint64 { return uint64(time.Second) * 103 / 10000 }
+	_, _, ended = run(t, eventLoop, 320)
 	assert.True(t, ended, "a harness spending only its event loop (1.03%% of a core) is ended at the window")
+
+	// THE WINDOW'S END (the cold read of PR 5953): still for 290 s, then a core pinned from
+	// 291 s. The last periodic reading is at 286 s, so without one more before the end the
+	// card would be ended at 300 s while it works; the fresh reading sees the work.
+	late := func(s int) uint64 {
+		if s > 290 {
+			return uint64(time.Second)
+		}
+		return eventLoop(s)
+	}
+	_, _, ended = run(t, late, 400)
+	assert.False(t, ended, "a tree that began working inside the last snapshot span is not idle")
 }

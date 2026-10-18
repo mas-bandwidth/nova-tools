@@ -62,34 +62,6 @@ func TestABeatAnOldSprintRefusesForItsFactsGoesAgainWithout(t *testing.T) {
 	}, old.calls)
 }
 
-// TestABeatSendsItsFactsOnceAndAgainOnlyAfterFactsRetry (2026-10-17): the facts are measured
-// once at start and the server keeps a beat's facts until another names new ones, yet every
-// beat, one each 3 s, carried them. Now the first taken beat carries them, the beats inside
-// FactsRetry do not, and the first beat at FactsRetry carries them again; a beat that failed
-// with them is no sending, so the next beat carries them.
-func TestABeatSendsItsFactsOnceAndAgainOnlyAfterFactsRetry(t *testing.T) {
-	t.Parallel()
-	now := time.Unix(1000, 0)
-	g := newWidthRig(1, Config{As: "m", Meter: hostload.NewSampler(hostload.Source{}), Facts: []string{"darwin", "arm64"}, Now: func() time.Time { return now }})
-	g.s.set("beat", 1, "the store did not answer")
-	require.Error(t, g.m.Beat(), "a failed beat")
-	g.s.set("beat", 0, "")
-	require.NoError(t, g.m.Beat(), "the facts go again: the failed beat sent none")
-	for range 3 {
-		now = now.Add(3 * time.Second)
-		require.NoError(t, g.m.Beat())
-	}
-	now = now.Add(FactsRetry - 9*time.Second - time.Nanosecond)
-	require.NoError(t, g.m.Beat(), "a hair inside FactsRetry: no facts")
-	now = now.Add(time.Nanosecond)
-	require.NoError(t, g.m.Beat(), "at FactsRetry the facts go again")
-	now = now.Add(3 * time.Second)
-	require.NoError(t, g.m.Beat())
-	with := "fleet beat m --stop-returns 0 --load 0.0 --facts darwin,arm64"
-	plain := "fleet beat m --stop-returns 0 --load 0.0"
-	require.Equal(t, []string{with, with, plain, plain, plain, plain, with, plain}, g.s.lines("beat"))
-}
-
 // TestABeatTellsTheMeterWhetherTheSeatRunsAnything (2026-10-17): darwin's meter is a top a
 // second, a quarter of a core of a seat that runs nothing. The beat tells the meter the seat
 // is idle while the last pass's live set is empty (or no pass has left one), and busy while
