@@ -28,7 +28,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
-- [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
+- [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (37)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -1907,3 +1907,11 @@ TestDeadCode excludes pkg/ since the split; a reachability walk with library roo
 Target: v1.5
 
 From: seat decision after the repository split
+
+### PATHS has no cap on the number of globs
+
+hygiene.ValidatePaths stops refusing a PATHS line of more than eight globs: what bounds a card is each glob (a literal segment, repository-relative, no ..), and the PATHS lines the paths-cover-named, paths-cover-testdata and tla-records checks print can pass eight. nova-sprint takes the change with its next nova-tools pin. Target v1.7; sprint card v17-paths-has-no-cap-on-the-number-of-globs (stream v17, tier pro, BASE sprint/v17).
+
+Why it waits: Following the lint's own corrected PATHS line made the next lint refuse the card.
+
+From: the coordinator, 2026-10-18: Rowan's carding pass on nova-card lint
