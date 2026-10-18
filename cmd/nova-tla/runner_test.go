@@ -91,7 +91,7 @@ func TestVersionNamesTheRunner(t *testing.T) {
 	assert.Contains(t, r.stderr, "takes no positional arguments")
 	r = call(t, nil, "help", "runner")
 	assert.Equal(t, 0, r.code, "help runner: %+v", r)
-	for _, want := range []string{"nova-tla help runner: which runner a tree's records are measured with.", "go build -o /tmp/nova-tla ./cmd/nova-tla", "go run " + toolsModule + "/cmd/nova-tla", "runner=<12 hex>", "example:\n  nova-tla version"} {
+	for _, want := range []string{"nova-tla help runner: which runner a tree's records are measured with.", "go build -o /tmp/nova-tla ./cmd/nova-tla", "go run " + toolsModule + "/cmd/nova-tla", "runner=<12 hex>", "example: nova-tla version"} {
 		assert.Contains(t, r.stdout, want)
 	}
 }
