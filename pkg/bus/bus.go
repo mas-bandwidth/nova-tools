@@ -942,8 +942,8 @@ const PruneMargin = time.Minute
 // is older than stream's first entry by PruneMargin: a message trimmed off
 // the stream (Redis.bounds) is owed no receipt and is staged no further, and
 // left there it only makes every whole-hash read of that recipient slower
-// (2026-10-17: bus2:receipt:rowan 35,524 fields, bus2:owed:rowan 22,979, none
-// ever cleared). The pruned fields leave h once the store cleared them. A
+// (2026-10-17: the busiest recipient's receipts 35,524 fields, her owed 22,979,
+// none ever cleared). The pruned fields leave h once the store cleared them. A
 // stream with no entry, a field that is no message id and a store that does
 // not answer leave everything as it is: the read it rides on never fails for it.
 func (b *Bus) prune(ctx context.Context, key, stream string, h map[string]string) {

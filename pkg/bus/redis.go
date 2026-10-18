@@ -44,8 +44,8 @@ type Redis struct {
 
 // The streams' bounds (SPEC-BUS.md, the data): every append trims the stream
 // it writes to about its bound (XADD MAXLEN ~), the shape of nova-config's cap
-// log. Measured on the studio 2026-10-17, nothing was ever trimmed: bus2:log
-// held 83,559 entries (140 MB) and bus2:to:rowan 52,280 (119 MB), at about
+// log. Measured on the fleet's bus 2026-10-17, nothing was ever trimmed: bus2:log
+// held 83,559 entries (140 MB) and the busiest recipient's 52,280 (119 MB), at about
 // 5,600 and 5,350 a day; the bounds keep about five weeks of the log and over
 // a week of the busiest recipient's stream at that rate. A message trimmed off
 // a stream unread is past every reader's ClaimAfter by weeks.

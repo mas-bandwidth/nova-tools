@@ -972,7 +972,7 @@ func (w world) onceResult(s *session, role hook.Role, held []hook.Push, armed, c
 // STATE line on each change the record shows. The record is read at the
 // start, at each renewal, after each batch off the stream (a challenge, an
 // unhook's word) and after the loop's own challenge, never every tick: on the
-// studio, 2026-10-17, the read every tick (15 commands: HGETALL, 6 GET, 6
+// fleet's bus, 2026-10-17, the read every tick (15 commands: HGETALL, 6 GET, 6
 // PTTL, TIME, HGETALL) was 28.3M of the bus Redis's 38.3M commands.
 // A stream that does not answer is said once while it stays the same fault,
 // and the loop waits a tick before it reads again: a store that is down never

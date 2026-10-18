@@ -47,7 +47,7 @@ func hookServiceFile(goos, as string) string {
 // serviceThrottle is the least time, in seconds, between two starts of the
 // client service (launchd's ThrottleInterval, systemd's RestartSec). It was 1,
 // and a client that exits on a refusal of its own configuration restarted
-// once a second for ever (aurora, 2026-10-17: a /tmp muse bundle gone, an 11 MB
+// once a second for ever (2026-10-17: a /tmp muse bundle gone, an 11 MB
 // log). A refused start is no faster to fix for being tried every second.
 const serviceThrottle = 10
 

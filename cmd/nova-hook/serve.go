@@ -149,8 +149,8 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, downAfter, with
 		}
 		// a name the bus roster does not hold (a hook:names entry with no nova-config row)
 		// is never heard: its refused challenge counts as sent, so it misses and unhooks on
-		// the usual count instead of being challenged every pass for ever (friend-stella,
-		// 2026-10-17: 1,443 fault lines, never unhooked)
+		// the usual count instead of being challenged every pass for ever (a stray name on
+		// the fleet's bus, 2026-10-17: 1,443 fault lines, never unhooked)
 		ctx, cancel := call()
 		err := s.hooks.Delivered(ctx, bt)
 		cancel()
@@ -485,9 +485,10 @@ type transition struct {
 // message, and the coordinator's own state is never pushed to her. Each bus
 // message interrupts the coordinator's turn, and she acts only on a friend
 // that came up or went down; the FRIEND DOWN and FRIEND BACK judgments carry
-// the rest. Measured on the studio 2026-10-17: 304 FRIEND STATE pushes in 34
-// hours, none to act on, johnny's live->unhooked->live flap 183 of them and
-// rowan's own proven->partial->proven 60, pushed to rowan herself.
+// the rest. Measured on the fleet's bus 2026-10-17: 304 FRIEND STATE pushes
+// in 34 hours, none to act on, one friend's live->unhooked->live flap (a
+// service's re-arm) 183 of them and the coordinator's own
+// proven->partial->proven 60, pushed to herself.
 func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names []string) {
 	if p.Coord == "" || len(names) == 0 {
 		return
