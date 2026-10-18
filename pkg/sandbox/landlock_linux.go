@@ -206,13 +206,20 @@ func landlockABI() (int, bool) {
 	return int(n), true
 }
 
-// createRuleset opens a ruleset handling everything the ABI defines.
-func createRuleset(abi int, netDeny bool) (int, error) {
-	attr := rulesetAttr{
+// rulesetFor is the ruleset_attr createRuleset hands the kernel: the ABI's file set and
+// scopes, and rule 7's net set (netHandled). It is a pure function so the unit tier can
+// pin the policy without a real TCP connect (v17-wall-net-deny-connect-is-functional).
+func rulesetFor(abi int, netDeny bool) rulesetAttr {
+	return rulesetAttr{
 		HandledAccessFS:  handledFS(abi),
 		HandledAccessNet: netHandled(abi, netDeny),
 		Scoped:           scopedFor(abi),
 	}
+}
+
+// createRuleset opens a ruleset handling everything the ABI defines.
+func createRuleset(abi int, netDeny bool) (int, error) {
+	attr := rulesetFor(abi, netDeny)
 	fd, _, errno := syscall.Syscall(sysLandlockCreateRuleset,
 		uintptr(unsafe.Pointer(&attr)), rulesetAttrSize(abi), 0)
 	if errno != 0 {
