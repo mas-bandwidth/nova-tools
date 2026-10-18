@@ -262,6 +262,33 @@ func TestPullRequestConcurrencyKeysOnTheHead(t *testing.T) {
 		"the concurrency group keys a pull_request on its number; one PR's heads then share a group, so a newer head cancels the older head's run mid-job (ci-cancelled-under-load, #2795)")
 }
 
+// TestTheCIGroupKeysAnIntegrationPushOnItsBranchAndSha pins that an integration
+// branch push keys its concurrency group on the ref AND the sha. Keyed on the
+// sha alone, a push of dev to the commit main is at lands in main's group and
+// cancel-in-progress cancels main's run, so the red gate has no completed run on
+// main to read. Keyed on the ref and the sha, a push to dev never shares a
+// group with main, two pushes of one branch still key on the sha so none evicts
+// another, a pull_request still keys on its head SHA, and every other branch
+// still keys on its ref so a superseded push there is still cancelled.
+func TestTheCIGroupKeysAnIntegrationPushOnItsBranchAndSha(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	var group string
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(line, "  group: ") {
+			group = line
+			break
+		}
+	}
+	require.NotEmpty(t, group, "ci.yml has no concurrency group line")
+	assert.Contains(t, group, "format('{0}-{1}', github.ref, github.sha)",
+		"the concurrency group does not key an integration branch push on its ref AND its sha; keyed on the sha alone, a push of dev to the commit main is at lands in main's group and cancel-in-progress cancels main's run")
+	assert.NotContains(t, group, "&& github.sha)",
+		"the concurrency group keys an integration branch push on the sha alone; a push of dev to the commit main is at then shares main's group and cancels main's run")
+}
+
 // TestRunnersPerMachineIsOneNumber pins row 9: the fair-share step divides by
 // the number of runners the MACHINE says it runs (NOVA_RUNNERS_PER_MACHINE,
 // exported by the runner service), never by a number written into the
