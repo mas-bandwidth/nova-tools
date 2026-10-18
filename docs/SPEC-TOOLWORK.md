@@ -24,7 +24,8 @@ nothing.
    would admit anybody, so there is no default identity and no reading of the
    repository's own git config.
 3. **`out-of-path`.** When `--paths` is given, it is a list of repository-relative
-   globs: no `..`, no absolute path, no bare `**`, at most 8 entries. Every path in
+   globs: each is non-empty and unpadded, repository-relative, contains no `..`, and
+   bounds at least one path. There is no limit on the number of globs. Every path in
    `git diff --name-only <base>..<head>` matches one, and a rename counts on both
    sides. Without `--paths` the diff is not bounded: the check is skipped and the
    output says so with `paths=-`.

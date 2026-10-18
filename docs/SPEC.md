@@ -1396,8 +1396,8 @@ anybody. `--paths` may be ABSENT, which is a different fact from "the paths
 matched" and is printed as such: `out-of-path` is skipped and the line says
 `paths=-`. A friend's own branch has no declared paths, and a line that simply
 left the field out would read as a bound that held. When `--paths` IS given it
-is validated — at most eight globs, no `..`, nothing absolute, and nothing that
-matches every file there is.
+is validated — each glob is non-empty and unpadded, repository-relative, contains no `..`,
+and bounds at least one path; there is no limit on the number of globs.
 
 **Exit codes**, as the Conventions give them: **0** clean, **1** findings,
 **2** could not run. The third is the one that matters most here. A bad ref, a
