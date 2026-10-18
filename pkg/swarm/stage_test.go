@@ -332,3 +332,44 @@ func TestStageCardChecksOutSubmodulesFromTheBenchMirror(t *testing.T) {
 	assert.Equal(t, subURL, run(target, "config", "--local", "--get", "submodule.sim/extern/fixed3d.url"), "the checkout kept the mirror path")
 	assert.Equal(t, subURL, run(filepath.Join(target, "sim", "extern", "fixed3d"), "remote", "get-url", "origin"), "the submodule's origin is the mirror path")
 }
+
+// A submodule URL the card's .gitmodules names as a local path is never cloned by staging
+// (the file protocol is allowed only for a mirror path staging wrote itself: CVE-2022-39253),
+// and a submodule that cannot be checked out is a note on the stage, never a refused stage.
+func TestStageCardRefusesALocalPathSubmoduleWithoutRefusingTheStage(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	run := func(dir string, args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = testgit.Environ()
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	secret := filepath.Join(root, "secret")
+	require.NoError(t, os.MkdirAll(secret, 0o755))
+	run(secret, "init", "-q", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(secret, "key.txt"), []byte("bench-only\n"), 0o644))
+	run(secret, "add", "-A")
+	run(secret, "commit", "-q", "-m", "secret")
+	secretSha := run(secret, "rev-parse", "HEAD")
+
+	sup := filepath.Join(root, "sup")
+	require.NoError(t, os.MkdirAll(sup, 0o755))
+	run(sup, "init", "-q", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(sup, ".gitmodules"),
+		[]byte("[submodule \"leak\"]\n\tpath = leak\n\turl = "+secret+"\n"), 0o644))
+	run(sup, "add", ".gitmodules")
+	run(sup, "update-index", "--add", "--cacheinfo", "160000,"+secretSha+",leak")
+	run(sup, "commit", "-q", "-m", "base")
+	supSha := run(sup, "rev-parse", "HEAD")
+
+	target := filepath.Join(root, "jobs", "card-1", "repo")
+	card := []byte("RESULT: c1 sha=000000000000 tier: pro\nbase-repo: " + sup + "\nbase-sha: " + supSha + "\n\nTHE TASK.\n")
+	res, err := StageCard(StageOptions{Card: card, TargetDir: target, BenchHome: filepath.Join(root, "home"), Timeout: 30 * time.Second})
+	require.NoError(t, err, "a submodule that cannot be checked out refused the stage")
+	require.True(t, res.Staged)
+	assert.NoFileExists(t, filepath.Join(target, "leak", "key.txt"), "staging cloned a local path the card named")
+	assert.NotEmpty(t, res.Submodules, "the stage carries no note of the submodule it could not check out")
+}

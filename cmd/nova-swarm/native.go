@@ -907,6 +907,10 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		return nil, nativeRunResult{}, 2
 	}
 	writeStageOK(os.Stdout, bench, stageRes)
+	if stageRes.Submodules != "" {
+		fmt.Fprintf(os.Stdout, "STAGE SUBMODULES INCOMPLETE bench=%s repo=%s why=%s\n",
+			oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Escape(stageRes.Submodules))
+	}
 	if stageRes.Carry != nil {
 		fmt.Fprintln(os.Stdout, oneline.Escape(stageRes.Carry.Line()))
 	}
