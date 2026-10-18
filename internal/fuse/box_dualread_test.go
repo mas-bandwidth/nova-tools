@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -36,57 +37,85 @@ func TestFuseBoxDualRead(t *testing.T) {
 	wire := boxImage(t)
 	b64 := []byte(base64.StdEncoding.EncodeToString(wire))
 
-	// The three forms read alike, from files the test writes in its TempDir.
-	for name, form := range map[string][]byte{
-		"legacy": []byte(legacy),
-		"binary": wire,
-		"base64": b64,
-	} {
-		path := filepath.Join(dir, name+".box")
-		require.NoError(t, os.WriteFile(path, form, 0o644))
-		got, err := fuse.ReadBox(path)
-		require.NoError(t, err, name)
-		require.Equal(t, want, got, name)
-	}
-
-	r := fuse.NewBoxDualReadReader()
-	inputs := []struct {
-		form string
+	forms := []struct {
+		name string
 		in   []byte
 	}{
 		{"legacy", []byte(legacy)},
 		{"binary", wire},
 		{"base64", b64},
 	}
-	for _, in := range inputs {
-		_, _, err := r.Read(in.in)
-		require.NoError(t, err, "%s read", in.form)
+
+	// The three forms read alike, from files the test writes in its TempDir.
+	for _, f := range forms {
+		path := filepath.Join(dir, f.name+".box")
+		require.NoError(t, os.WriteFile(path, f.in, 0o644))
+		got, err := fuse.ReadBox(path)
+		require.NoError(t, err, f.name)
+		require.Equal(t, want, got, f.name)
+	}
+
+	r := fuse.NewBoxDualReadReader()
+	for _, f := range forms {
+		got, _, err := r.Read(f.in)
+		require.NoError(t, err, "%s read", f.name)
+		require.Equal(t, want, got, f.name)
 	}
 	assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormLegacy))
 	assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBinary))
 	assert.Equal(t, uint64(1), r.Counts().Reads(schemaread.FormBase64))
 
-	// Every damaged value of every form is refused by name and never read as
-	// absent, empty or zero: each prefix, each appended tail, and each flipped
-	// byte. A refused read hands back the zero value and is counted refused.
+	// A seeded fuzz sweep of every form: every truncation, every single-byte
+	// flip, the three appended tails, and a seeded pseudo-random set of the
+	// same classes (so every generated mutation is one of the structural
+	// classes below). The binary and base64 forms carry framing that damage
+	// breaks, so every mutation of them is refused by name, hands back the zero
+	// value, and is counted refused under the reason it names. The legacy JSON
+	// text is permissive: a flip can land on another valid box, so a mutation
+	// of it is only ever refused by name when the strict read refuses it, and
+	// is never read as absent, empty or zero.
+	const fuzzSeed = 1000
+	r = fuse.NewBoxDualReadReader()
 	tries := 0
-	refusals := uint64(0)
-	for _, in := range inputs {
-		variants := append(damaged(in.in), flips(in.in)...)
-		for _, m := range variants {
+	refusedByReason := map[string]uint64{}
+	for _, f := range forms {
+		for _, m := range seededMutations(fuzzSeed, f.in) {
 			got, _, err := r.Read(m)
+			if f.name != "legacy" {
+				ref := refusal(t, err, "FUSE_BOX")
+				require.NotNil(t, ref, "a damaged %s (%d bytes) must be refused", f.name, len(m))
+				assert.Equal(t, fuse.Box{}, got, "a refused binary read hands back the zero value")
+				assert.Contains(t, err.Error(), "run: nova-fuse status -h", "the refusal names its remedy")
+				refusedByReason[ref.Reason]++
+				tries++
+				continue
+			}
 			if err == nil {
-				assert.NotEqual(t, fuse.Box{}, got, "%s: a damaged %s read as empty", in.form, in.form)
+				assert.NotEqual(t, fuse.Box{}, got, "a damaged legacy is never read as empty")
 				continue
 			}
 			ref := refusal(t, err, "FUSE_BOX")
-			require.NotNil(t, ref, "%s: a damaged %s (%d bytes) was read as %v", in.form, in.form, len(m), got)
-			assert.Equal(t, fuse.Box{}, got, "%s: a refused read hands back nothing", in.form)
+			require.NotNil(t, ref, "a damaged legacy was read as %v", got)
+			assert.Equal(t, fuse.Box{}, got, "a refused legacy read hands back the zero value")
+			assert.Contains(t, err.Error(), "run: nova-fuse status -h", "the refusal names its remedy")
+			refusedByReason[ref.Reason]++
 			tries++
-			refusals = countRefused(r, refusals)
+		}
+	}
+	refusals := uint64(0)
+	for k, n := range r.Counts().Snapshot() {
+		if strings.HasPrefix(k, "refused_") {
+			refusals += n
 		}
 	}
 	assert.Equal(t, uint64(tries), refusals, "every damaged read is counted refused, by reason")
+	for reason, n := range refusedByReason {
+		assert.Equal(t, n, r.Counts().Refused(reason), "refused counts by reason %s", reason)
+	}
+	// The FuseBox schema bounds no field (schemas/ledger/ledger.schema:56-79:
+	// the box's strings and quarantine map carry no length or size bound), so
+	// no input in the sweep can be refused as clamped.
+	assert.Equal(t, uint64(0), r.Counts().Refused(schemaread.ReasonClamped), "no bounded field in FuseBox: nothing clamps")
 
 	// A damaged box file stays CANNOT TELL through the read site, never a clear.
 	for name, damagedBytes := range map[string][]byte{
@@ -97,20 +126,42 @@ func TestFuseBoxDualRead(t *testing.T) {
 		require.NoError(t, os.WriteFile(p, damagedBytes, 0o644))
 		_, err := fuse.ReadBox(p)
 		require.Error(t, err, name)
-		assert.Contains(t, err.Error(), "not a readable fuse box", name)
+		assert.Contains(t, err.Error(), "is not a readable fuse box", name)
 	}
 }
 
-// countRefused returns the running total of refused reads (Snapshot is cheap
-// and stable for the small counter set).
-func countRefused(r *schemaread.Reader[fuse.Box], prev uint64) uint64 {
-	total := uint64(0)
-	for k, n := range r.Counts().Snapshot() {
-		if strings.HasPrefix(k, "refused_") {
-			total += n
-		}
+// seededMutations is in's damage classes for the fuzz sweep: every truncation,
+// every single-byte flip, the three appended tails, and a seeded pseudo-random
+// set drawn from the same classes (a flip, a cut, or an appended tail). The
+// seed makes the sweep deterministic for the test run.
+func seededMutations(seed uint64, in []byte) [][]byte {
+	rng := rand.New(rand.NewSource(int64(seed)))
+	out := make([][]byte, 0, 2*len(in)+100)
+	for n := 0; n < len(in); n++ {
+		out = append(out, bytes.Clone(in[:n]))
 	}
-	return total
+	for i := range in {
+		m := bytes.Clone(in)
+		m[i] ^= 0xff
+		out = append(out, m)
+	}
+	tails := []string{"\x00", "x", "AAAA"}
+	for _, tail := range tails {
+		out = append(out, append(bytes.Clone(in), tail...))
+	}
+	for k := 0; k < 64; k++ {
+		m := bytes.Clone(in)
+		switch rng.Intn(3) {
+		case 0:
+			m[rng.Intn(len(m))] ^= 0xff
+		case 1:
+			m = m[:rng.Intn(len(m))]
+		default:
+			m = append(m, tails[rng.Intn(len(tails))]...)
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 var refusalText = regexp.MustCompile(`^[A-Z_]+ REFUSED: [^;]+; run: \S.*$`)
@@ -125,45 +176,6 @@ func refusal(t *testing.T, err error, name string) *schemaread.Refusal {
 	assert.Equal(t, name, ref.Name)
 	assert.Regexp(t, refusalText, err.Error())
 	return ref
-}
-
-// damaged is in cut at each length (every length for a short value, the first
-// and last 256 and a stride between for a long one) and in with bytes after
-// its end.
-func damaged(in []byte) [][]byte {
-	var cuts []int
-	if len(in) <= 768 {
-		for n := 0; n < len(in); n++ {
-			cuts = append(cuts, n)
-		}
-	} else {
-		for n := 0; n < 256; n++ {
-			cuts = append(cuts, n, len(in)-256+n)
-		}
-		for n := 256; n < len(in)-256; n += len(in)/97 + 1 {
-			cuts = append(cuts, n)
-		}
-	}
-	out := make([][]byte, 0, len(cuts)+3)
-	for _, n := range cuts {
-		out = append(out, bytes.Clone(in[:n]))
-	}
-	for _, tail := range []string{"\x00", "x", "AAAA"} {
-		out = append(out, append(bytes.Clone(in), tail...))
-	}
-	return out
-}
-
-// flips is in with each single byte flipped: damage that moves a byte while
-// keeping the length.
-func flips(in []byte) [][]byte {
-	out := make([][]byte, 0, len(in))
-	for i := range in {
-		m := bytes.Clone(in)
-		m[i] ^= 0xff
-		out = append(out, m)
-	}
-	return out
 }
 
 // boxImage is the canonical FuseBox table image of the box the test reads, made
