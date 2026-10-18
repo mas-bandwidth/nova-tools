@@ -201,12 +201,15 @@ func ReadJobUsageLiveWithin(dataHome string, limit time.Duration) (ProviderUsage
 //
 // A MESSAGE IS FINISHED when it is not the assistant's, or when the harness stamped its
 // time.completed: OpenCode writes an assistant message's tokens and cost as its steps finish,
-// in place, and completes it last (on the studio's own store, 1 of 22,161 completed assistant
-// messages was written again, 1.0 s after its completion). An unfinished one is read again
+// in place, and completes it last (on one machine's own store, 1 of 22,161 completed
+// assistant messages was written again, 1.0 s after its completion). An unfinished one is read again
 // every read until it is finished or gone, so its figures are never stale; a store with no
 // completion stamps (the tests' fixtures) is read whole each time, as before. A finished
 // message the harness later deleted stays counted: the budget errs high, never low. A store
-// that is another file than the one read is read again from its start.
+// at another path, gone between two reads, another file (a file system may give a new file
+// the inode of the one removed, so this alone is no proof), or smaller than at the last read
+// is read again from its start; a sampler is made per launch, and nothing replaces a job's
+// store under a running harness.
 //
 // The zero LiveUsage reads with sqlite3; one LiveUsage is used by one goroutine (a sampler
 // takes no read while one is unanswered).
@@ -216,6 +219,7 @@ type LiveUsage struct {
 
 	path    string
 	file    os.FileInfo
+	size    int64          // the store's size at the last read
 	seen    int64          // the highest rowid read
 	kept    []liveRow      // the finished messages with tokens, in rowid order
 	pending map[int64]bool // the unfinished messages, read again every read
@@ -260,9 +264,10 @@ func (u *LiveUsage) Read(dataHome string, limit time.Duration) (ProviderUsage, e
 	if err != nil {
 		return ProviderUsage{}, fmt.Errorf("the usage source %s could not be read: %s", path, redactedReason(err))
 	}
-	if u.file == nil || u.path != path || !os.SameFile(u.file, fi) {
+	if u.file == nil || u.path != path || !os.SameFile(u.file, fi) || fi.Size() < u.size {
 		*u = LiveUsage{query: u.query, path: path, file: fi}
 	}
+	u.size = fi.Size()
 	query := u.query
 	if query == nil {
 		bin, err := (openCodeReader{}).binary()

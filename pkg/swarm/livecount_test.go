@@ -151,7 +151,7 @@ func TestLiveUsageReadsOnlyNewAndUnfinishedMessages(t *testing.T) {
 	home := t.TempDir()
 	db := filepath.Join(home, filepath.FromSlash(OpenCodeDB))
 	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
-	require.NoError(t, os.WriteFile(db, nil, 0o644))
+	require.NoError(t, os.WriteFile(db, []byte("a store of eight"), 0o644))
 	f := &fakeStore{}
 	u := &LiveUsage{query: f.query}
 	read := func(step string) {
@@ -189,11 +189,21 @@ func TestLiveUsageReadsOnlyNewAndUnfinishedMessages(t *testing.T) {
 	assert.Equal(t, "m2", got.Values["model"], "the last message's model, as the whole read's")
 	assert.Equal(t, 4, got.Turns)
 
-	// the store replaced by another file: read again from its start
+	// the store replaced by a smaller file (a file system may hand it the old inode): read
+	// again from its start
 	require.NoError(t, os.Remove(db))
 	require.NoError(t, os.WriteFile(db, []byte("x"), 0o644))
 	f.rows = f.rows[:2]
 	read("another store")
+	assert.Contains(t, f.asked[len(f.asked)-1], "rowid > 0 ORDER BY")
+
+	// a store gone between two reads: an absence, then read from its start when it is back
+	require.NoError(t, os.Remove(db))
+	got, err = u.Read(home, LiveSampleLimit)
+	require.NoError(t, err)
+	assert.False(t, got.Observed, "no store is an absence")
+	require.NoError(t, os.WriteFile(db, []byte("x"), 0o644))
+	read("the store back")
 	assert.Contains(t, f.asked[len(f.asked)-1], "rowid > 0 ORDER BY")
 
 	// the statement asks the store what the fake answers from

@@ -56,7 +56,7 @@ const lazyRound = 32
 // within minutes. A round every 2 s whatever it found listed the slots and the results
 // (1,096 and 309 entries), re-read the pid files of what it still could not remove, and
 // read 4 of the cache's subdirectories, the whole 16 GB, 77k-file cache every 128 s, some
-// 350 to 1,200 stats a second on every seat, forever (mini-m5-1, 2026-10-17).
+// 350 to 1,200 stats a second on every seat, forever (a Mac bench, 2026-10-17).
 const (
 	lazyEvery   = 30 * time.Second
 	lazyQuiet   = 60 * time.Second

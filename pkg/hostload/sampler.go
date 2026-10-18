@@ -60,7 +60,7 @@ type Sampler struct {
 // for a second): one sample every RingSize seconds, so the ten seconds the fleet's load
 // cell shows the highest of hold one. Read back to back, top cost a Mac seat 0.33 s of CPU
 // every 1.35 s, about a quarter of a core around the clock and 44 spawns a minute
-// (mini-m5-1, 2026-10-17); a beat with no new sample carries Load1Percent, a free sysctl.
+// (a Mac bench, 2026-10-17); a beat with no new sample carries Load1Percent, a free sysctl.
 const MeterEvery = RingSize * time.Second
 
 // SetIdle is the caller's word that nothing runs on this seat (idle) or that something

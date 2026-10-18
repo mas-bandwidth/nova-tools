@@ -72,7 +72,9 @@ func countAssistantLines(path string) int {
 // lowercasing every line, so a card's turn count cost the square of its log over its life
 // (2026-10-17). The offset is the end of the last whole line counted; a last line with no
 // newline yet is counted on each read, as a scanner at EOF counts it, and kept for the next.
-// A log that shrank or is another file than the one counted is counted again from its start.
+// A log that shrank, was gone at the last Count, or is another file than the one counted (a
+// file system may give a new file the old one's inode, so this alone is no proof) is counted
+// again from its start; native's capture is only ever appended to.
 // The zero LogTurns has counted nothing; one LogTurns is used by one goroutine.
 type LogTurns struct {
 	path   string
