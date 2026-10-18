@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -31,11 +32,11 @@ import (
 // httptest.NewServer, httptest.NewTLSServer or httptest.NewUnstartedServer, is
 // refused, naming file:line. So is an os/exec Command or CommandContext whose
 // literal program is a networked tool (curl, wget, nc, ncat, netcat, socat,
-// telnet, ssh, scp, redis-cli), or any of whose literal arguments contains
-// "/dev/tcp/" or "/dev/udp/" (a networked program run by exec is a socket just
-// the same). The call is resolved through the file's imports, so an aliased
-// import counts. The scan is syntactic: a program or argument that is not a
-// literal is not judged. The remedies are never refused: a conn comes from
+// telnet, ssh, scp, redis-cli), or any of whose literal arguments -- a literal
+// operand of a + concatenation included -- contains "/dev/tcp/" or
+// "/dev/udp/" (a networked program run by exec is a socket just the same). The
+// call is resolved through the file's imports, so an aliased import counts. The
+// scan is syntactic: a program or argument that is not a literal is not judged. The remedies are never refused: a conn comes from
 // net.Pipe, a handler is proved with httptest.NewRecorder, a client with an
 // in-process RoundTripper; a test whose subject is the real socket moves under
 // //go:build functional.
@@ -89,9 +90,9 @@ type unitSocketSite struct {
 // value, a comment or a string literal is not a socket. net.Pipe and
 // httptest.NewRecorder are the remedies and are never refused. An os/exec
 // Command or CommandContext is refused when its program is a literal networked
-// tool, or when a literal argument contains "/dev/tcp/" or "/dev/udp/". The
-// scan is syntactic: a program or argument that is not a literal is not
-// judged.
+// tool, or when a literal argument -- a literal operand of a + concatenation
+// included -- contains "/dev/tcp/" or "/dev/udp/". The scan is syntactic: a
+// program or argument that is not a literal is not judged.
 func unitSocketsIn(fset *token.FileSet, file *ast.File) []unitSocketSite {
 	local := make(map[string]string, len(unitSocketsRefused))
 	for p := range unitSocketsRefused {
@@ -147,24 +148,50 @@ func unitSocketsIn(fset *token.FileSet, file *ast.File) []unitSocketSite {
 			return true
 		}
 		for _, arg := range call.Args[first+1:] {
-			v, ok := stringLit(arg)
-			if !ok {
-				continue
+			hit := false
+			for _, v := range stringLitParts(arg) {
+				switch {
+				case strings.Contains(v, "/dev/tcp/"):
+					out = append(out, unitSocketSite{Line: fset.Position(call.Pos()).Line, What: what + " /dev/tcp"})
+					hit = true
+				case strings.Contains(v, "/dev/udp/"):
+					out = append(out, unitSocketSite{Line: fset.Position(call.Pos()).Line, What: what + " /dev/udp"})
+					hit = true
+				}
+				if hit {
+					break
+				}
 			}
-			switch {
-			case strings.Contains(v, "/dev/tcp/"):
-				out = append(out, unitSocketSite{Line: fset.Position(call.Pos()).Line, What: what + " /dev/tcp"})
-			case strings.Contains(v, "/dev/udp/"):
-				out = append(out, unitSocketSite{Line: fset.Position(call.Pos()).Line, What: what + " /dev/udp"})
-			default:
-				continue
+			if hit {
+				break
 			}
-			break
 		}
 		return true
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].Line < out[j].Line })
 	return out
+}
+
+// stringLitParts returns the string-literal parts of an expression the way the
+// exec branch judges an argument: a string literal itself, and the literal
+// operands of a + concatenation. A non-literal operand is not judged; the scan
+// is syntactic.
+func stringLitParts(e ast.Expr) []string {
+	switch v := e.(type) {
+	case *ast.BasicLit:
+		if v.Kind == token.STRING {
+			if s, err := strconv.Unquote(v.Value); err == nil {
+				return []string{s}
+			}
+		}
+		return nil
+	case *ast.BinaryExpr:
+		if v.Op != token.ADD {
+			return nil
+		}
+		return append(stringLitParts(v.X), stringLitParts(v.Y)...)
+	}
+	return nil
 }
 
 // unitSocketsInUnitDir reports whether rel is a file under one of the trees the

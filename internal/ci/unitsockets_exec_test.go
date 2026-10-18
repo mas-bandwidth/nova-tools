@@ -32,6 +32,7 @@ func TestShells(t *testing.T) {
 	_ = exec.Command("nc", "-z", "127.0.0.1", "1")
 	_ = exec.Command("redis-cli", "-p", "6390", "ping")
 	_ = exec.Command("git", "status")
+	_ = exec.Command("bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/"+port)
 	_, _ = net.DialTCP("tcp", nil, nil)
 	_, _ = net.DialUDP("udp", nil, nil)
 	_, _ = net.DialUnix("unix", nil, nil)
@@ -51,10 +52,11 @@ func TestShells(t *testing.T) {
 		rel + ":12 exec.CommandContext curl",
 		rel + ":13 exec.Command nc",
 		rel + ":14 exec.Command redis-cli",
-		rel + ":16 net.DialTCP",
-		rel + ":17 net.DialUDP",
-		rel + ":18 net.DialUnix",
-		rel + ":19 net.ListenUDP",
+		rel + ":16 exec.Command bash /dev/tcp",
+		rel + ":17 net.DialTCP",
+		rel + ":18 net.DialUDP",
+		rel + ":19 net.DialUnix",
+		rel + ":20 net.ListenUDP",
 	}
 	assert.Equal(t, want, got, "git status is no socket; every other line is:\n%s", strings.Join(got, "\n"))
 }
