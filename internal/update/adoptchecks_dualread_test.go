@@ -88,6 +88,48 @@ func TestAdoptChecksDualRead(t *testing.T) {
 	assert.Equal(t, want, got, "legacy: reads equal")
 	assert.GreaterOrEqual(t, adoptRead.Counts().Reads(schemaread.FormLegacy), before+1, "legacy: the read is counted")
 
+	// Every hand-written file the TSV reader read before the dual read reads
+	// the same now, under the legacy form: UTF-8 in an owner and in a #
+	// comment, and a header-only file with and without its trailing newline
+	// (the empty checks list, not a refusal). A blank line is refused by name
+	// as it was.
+	hand := []struct {
+		name string
+		in   string
+		want []AdoptCheck
+	}{
+		{"utf-8 owner and comment", AdoptHeader + "\n# adoption checks — written by hand\nhealthy\tnova-bus health\tJosé\n",
+			[]AdoptCheck{{Name: "healthy", Owner: "José", Command: []string{"nova-bus", "health"}}}},
+		{"header only with newline", AdoptHeader + "\n", nil},
+		{"header only without newline", AdoptHeader, nil},
+		{"crlf without final newline", AdoptHeader + "\r\nhealthy\tnova-bus health\tsre",
+			[]AdoptCheck{{Name: "healthy", Owner: "sre", Command: []string{"nova-bus", "health"}}}},
+	}
+	for _, c := range hand {
+		before := adoptRead.Counts().Reads(schemaread.FormLegacy)
+		got, err := LoadAdopt(strings.NewReader(c.in))
+		require.NoError(t, err, c.name)
+		if c.want == nil {
+			assert.Empty(t, got, c.name)
+		} else {
+			assert.Equal(t, c.want, got, c.name)
+		}
+		assert.GreaterOrEqual(t, adoptRead.Counts().Reads(schemaread.FormLegacy), before+1, "%s: read as legacy", c.name)
+	}
+	// The base64 and JSON text forms saved with a trailing newline are not
+	// mistaken for the legacy text.
+	for _, form := range []schemaread.Form{schemaread.FormBase64, schemaread.FormJSON} {
+		got, err := LoadAdopt(strings.NewReader(string(images[form]) + "\n"))
+		require.NoError(t, err, "%s with a newline", form)
+		assert.Equal(t, want, got, "%s with a newline reads equal", form)
+	}
+	_, err = LoadAdopt(strings.NewReader(AdoptHeader + "\n\nhealthy\tnova-bus health\tsre\n"))
+	adoptRefusal(t, err)
+	assert.Contains(t, err.Error(), "line 2: 1 fields, want 3")
+	_, err = LoadAdopt(strings.NewReader(AdoptHeader + "\nhealthy\tnova-bus health\t\xff\n"))
+	adoptRefusal(t, err)
+	assert.Contains(t, err.Error(), "line 2: not UTF-8 text")
+
 	// A truncated or flipped value of each form is refused by name and never
 	// read as absent, empty or zero.
 	all := map[schemaread.Form][]byte{schemaread.FormLegacy: legacy}

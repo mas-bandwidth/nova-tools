@@ -1,6 +1,7 @@
 package update
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
@@ -156,25 +158,38 @@ func loadAdoptJSON(d *adoptDoc, text []byte) schemaread.Report {
 	return adoptReport(&rep)
 }
 
-// adoptLegacyForm recognises today's hand-written checks file: the multi-line
-// printable TSV the file is, with its header and # comment lines, which is not
-// the JSON text form.
+// adoptLegacyForm recognises today's hand-written checks file, with its
+// header and # comment lines, so every file the TSV reader read stays
+// readable (RECIPE step 2: people write these files by hand). Input that
+// opens with the header line is legacy, with or without a newline. Other
+// input is legacy when it is UTF-8 text with no control byte but tab, CR and
+// LF, and is neither the JSON text form (it opens with `{`) nor the padded
+// base64 form (only base64 characters and line breaks): the binary wire
+// leads with its form byte, a control byte, so it is never legacy.
 func adoptLegacyForm(in []byte) bool {
-	hasNewline := false
+	if bytes.HasPrefix(in, []byte(AdoptHeader)) {
+		return true
+	}
+	if !utf8.Valid(in) {
+		return false
+	}
 	for _, b := range in {
-		switch {
-		case b == '\n':
-			hasNewline = true
-		case b == '\r' || b == '\t' || b >= 0x20 && b < 0x7f:
-		default:
+		if b < 0x20 && b != '\t' && b != '\r' && b != '\n' || b == 0x7f {
 			return false
 		}
 	}
-	if !hasNewline {
+	trimmed := bytes.TrimSpace(in)
+	if len(trimmed) == 0 || trimmed[0] == '{' {
 		return false
 	}
-	trimmed := strings.TrimSpace(string(in))
-	return trimmed != "" && !strings.HasPrefix(trimmed, "{")
+	for _, b := range trimmed {
+		base64ish := b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' ||
+			b == '+' || b == '/' || b == '=' || b == '\r' || b == '\n'
+		if !base64ish {
+			return true
+		}
+	}
+	return false
 }
 
 // adoptLegacyRow is one TSV row as the legacy reader parses it, in the
@@ -219,46 +234,55 @@ func loadAdoptLegacy(d *adoptDoc, in []byte) schemaread.Report {
 	return adoptReport(&rep)
 }
 
-// parseAdoptLines splits the legacy TSV into rows, refusing each line exactly
-// as LoadAdopt refused it. The first line must equal the header byte for byte;
-// a `#` first character opens a comment and a blank line is skipped.
+// parseAdoptLines splits the legacy TSV into rows, line by line as LoadAdopt
+// scanned it, refusing each line exactly as LoadAdopt refused it. The first
+// line must equal the header byte for byte; a `#` first character opens a
+// comment. The row list starts empty, not nil, so a header-only file is the
+// empty checks list and not an absent one. The table's text is UTF-8, so a
+// line that is not UTF-8 is refused by name rather than rewritten.
 func parseAdoptLines(in []byte) ([]adoptLegacyRow, string) {
-	lines := strings.Split(string(in), "\n")
+	sc := bufio.NewScanner(bytes.NewReader(in))
+	sc.Buffer(make([]byte, 4096), 1024*1024)
+	if !sc.Scan() || sc.Text() != AdoptHeader {
+		return nil, fmt.Sprintf("line 1: invalid header (put the header back exactly: %s)", tabbed(AdoptHeader))
+	}
 	seen := map[string]bool{}
-	var rows []adoptLegacyRow
-	for i, raw := range lines {
-		text := strings.TrimRight(raw, "\r")
-		if i == 0 {
-			if text != AdoptHeader {
-				return nil, fmt.Sprintf("line 1: invalid header (put the header back exactly: %s)", tabbed(AdoptHeader))
-			}
+	rows := []adoptLegacyRow{}
+	line := 1
+	for sc.Scan() {
+		line++
+		text := sc.Text()
+		if strings.HasPrefix(text, "#") {
 			continue
 		}
-		if strings.HasPrefix(text, "#") || strings.TrimSpace(text) == "" {
-			continue
+		if !utf8.ValidString(text) {
+			return nil, fmt.Sprintf("line %d: not UTF-8 text (save the checks file as UTF-8)", line)
 		}
 		f := strings.Split(text, "\t")
 		if len(f) != 3 {
-			return nil, fmt.Sprintf("line %d: %d fields, want 3 (use the three-column checks header)", i+1, len(f))
+			return nil, fmt.Sprintf("line %d: %d fields, want 3 (use the three-column checks header)", line, len(f))
 		}
 		for _, v := range f {
 			if v == "" {
-				return nil, fmt.Sprintf("line %d: empty field (supply check, command and owner)", i+1)
+				return nil, fmt.Sprintf("line %d: empty field (supply check, command and owner)", line)
 			}
 		}
 		if seen[f[0]] {
-			return nil, fmt.Sprintf("line %d: duplicate check %s (give each check a distinct name)", i+1, f[0])
+			return nil, fmt.Sprintf("line %d: duplicate check %s (give each check a distinct name)", line, f[0])
 		}
 		seen[f[0]] = true
 		args, err := argv(f[1])
 		if err != nil {
-			return nil, fmt.Sprintf("line %d: %v", i+1, err)
+			return nil, fmt.Sprintf("line %d: %v", line, err)
 		}
 		cmd := make([]adoptWordJSON, 0, len(args))
 		for _, a := range args {
 			cmd = append(cmd, adoptWordJSON{Text: a})
 		}
 		rows = append(rows, adoptLegacyRow{Check: f[0], Command: cmd, Owner: f[2]})
+	}
+	if sc.Err() != nil {
+		return nil, fmt.Sprintf("line %d: unreadable checks file (use lines below 1 MiB)", line)
 	}
 	return rows, ""
 }
