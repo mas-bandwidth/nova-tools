@@ -82,6 +82,15 @@
 \* every message from its own name) and "fold" (one message for every name's
 \* head in hand) are the reversed witnesses.
 \*
+\* Only a crossing of proven is pushed (serve.go upOrDown; 2026-10-17, when 304
+\* pushes in 34 hours carried nothing to act on): the state compared is proven
+\* or down, every other state (unhooked, expired, and the code's live and
+\* partial) being down, so a change between two down states is no transition
+\* (NoPushWithinDown); and the coordinator's own state is never pushed to her
+\* (NeverPushedSelf). Broken: "pushall" (every change of the hook state, the
+\* rule before) and "pushself" (her own state pushed to her) are the reversed
+\* witnesses.
+\*
 \* Up is proven (Parts "proven"; hook/redis.go beatLua, Passed.Unhooked and
 \* Passed.Live; the ruling of 2026-10-16: a friend is live only when
 \* really up): what the friends hear as up is a name hooked AND proven in its
@@ -157,6 +166,9 @@ QuietCap == IF Silence THEN CoordinatorEvery + 3 ELSE DownAfter + 2
 \*   "selffilter"  BadSelfFiltered: the coordinator's hook skips a message from its own
 \*                 name, though the heartbeat server sent it (TransitionPushedToCoordinator)
 \*   "fold"        BadFolded: one message for every name's transition in hand (NoFold)
+\*   "pushall"     BadPushAll: every change of the hook state is pushed, unhooked to
+\*                 expired and back included, the rule before 2026-10-17 (NoPushWithinDown)
+\*   "pushself"    BadPushSelf: the coordinator's own state is pushed to her (NeverPushedSelf)
 \*   "othername"   BadProveOtherName: a proof answers another name's challenge
 \*                 (ProofNamesIssuedInWindow)
 \*   "armedback"   BadArmedBack: up is hooked, not proven, so a service's re-arm with
@@ -280,8 +292,11 @@ States == (SUBSET Names) \X (Names \cup {NoCoord})
 \* The state a pass finds a name in, of the hook state h and the answers' ages q
 \* (the code's hook.Status state; live and partial are proven's and expired's
 \* kin here: one push, so the record is live only until its first proof).
-PStates == {"unhooked", "proven", "expired"}
-PS(h, q, n) == IF ~h[n] THEN "unhooked" ELSE IF q[n] <= DownAfter THEN "proven" ELSE "expired"
+PStates == {"unhooked", "proven", "expired", "down"}
+HookState(h, q, n) == IF ~h[n] THEN "unhooked" ELSE IF q[n] <= DownAfter THEN "proven" ELSE "expired"
+\* What a push compares and names: proven or down (serve.go upOrDown); under
+\* "pushall" the hook state itself, the rule before.
+PS(h, q, n) == IF "pushall" \in Broken \/ HookState(h, q, n) = "proven" THEN HookState(h, q, n) ELSE "down"
 \* The state the server has pushed or has in hand to push last for n.
 Last(n) == IF pq[n] = <<>> THEN pushed[n] ELSE pq[n][Len(pq[n])][2]
 PushCap == 2
@@ -424,7 +439,8 @@ Pass(s) ==
           \* the states found are compared with the last pushed (serve.go push)
           /\ LET cur == [n \in Names |-> PS(h2, qtime, n)]
                  grow == IF "push" \in Parts
-                            THEN {n \in Names : cur[n] # Last(n) /\ pgen[n] + Len(pq[n]) < PushCap}
+                            THEN {n \in Names : cur[n] # Last(n) /\ pgen[n] + Len(pq[n]) < PushCap
+                                                 /\ (n # Coord \/ "pushself" \in Broken)}
                             ELSE {}
              IN /\ pq' = [n \in Names |-> IF n \in grow THEN Append(pq[n], <<Last(n), cur[n]>>) ELSE pq[n]]
                 /\ want' = want \cup {<<n, pgen[n] + Len(pq[n])>> : n \in grow}
@@ -955,6 +971,15 @@ AllAlive == \A n \in Names : alive[n]
 
 \* No push is delivered twice, however a send fails or servers race.
 NeverPushedTwice == pdups = 0
+
+\* Every transition in hand crosses proven: a change between two down states
+\* (unhooked and expired here; live and partial in the code) is never pushed
+\* (BadPushAll fails it).
+NoPushWithinDown == \A n \in Names : \A i \in 1..Len(pq[n]) : (pq[n][i][1] = "proven") # (pq[n][i][2] = "proven")
+
+\* The coordinator is never pushed her own state: the server runs as her and
+\* pushes to her (BadPushSelf fails it).
+NeverPushedSelf == \A n \in Names : n = Coord => pq[n] = <<>> /\ pgen[n] = 0
 
 \* No line the coordinator's hook shows names more than one friend: a change is
 \* never folded into another's (BadFolded fails it).

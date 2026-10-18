@@ -29,10 +29,12 @@ func (r *rig) storeNow(t *testing.T) string {
 // hook under ONE name, as in production. Over a fake store, bus and clock, the
 // coordinator's hook runs its real loop and the passes run inside it, one
 // stage at a time, each after the lines of the one before arrived: every
-// transition of every friend (proven to unhooked, back, live, proven, and a
-// lapse to expired and back) reaches the loop as its own HOOK PUSH line naming
+// crossing of proven by every friend (a lapse to expired, a re-arm proven, a
+// hook in, a lapse and a recovery) reaches the loop as its own HOOK PUSH line naming
 // the friend, the old state, the new state and the store's TIME of the pass
-// that saw it; two friends that change in one pass are two lines; a send that
+// that saw it, every state but proven named down; a change between two down
+// states (expired to unhooked, unhooked to live) is no line; two friends that
+// change in one pass are two lines; a send that
 // fails is sent at the next pass and once; and what the coordinator sent itself
 // with nova-bus send is not echoed.
 func TestEveryFriendTransitionIsPushedToTheCoordinator(t *testing.T) {
@@ -60,61 +62,62 @@ func TestEveryFriendTransitionIsPushedToTheCoordinator(t *testing.T) {
 			pass("ada", "bob", "carl")
 			assert.Empty(t, r.stateLines(t))
 			// silent friends are challenged only past their quiet window (tla/HookBeat.tla,
-			// NoChallengeWhileTalking): their leases lapse first, then the unanswered challenge unhooks them
-			var expired, down string
+			// NoChallengeWhileTalking): their leases lapse first (proven to down), then the
+			// unanswered challenge unhooks them, which is down to down and no push
+			var down string
 			for i := 0; i < 25 && down == ""; i++ {
 				at := pass("ada")
-				switch len(r.stateLines(t)) {
-				case 2:
-					if expired == "" {
-						expired = at
-					}
-				case 4:
+				if len(r.stateLines(t)) == 2 {
 					down = at
 				}
 			}
 			require.NotEmpty(t, down, "both silent friends go down")
-			expect("bob", "proven", "expired", expired)
-			expect("carl", "proven", "expired", expired)
-			expect("bob", "expired", "unhooked", down)
-			expect("carl", "expired", "unhooked", down)
+			for i := 0; i < 25 && (r.h.State(t, "bob").State != hook.StateUnhooked || r.h.State(t, "carl").State != hook.StateUnhooked); i++ {
+				pass("ada")
+			}
+			require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
+			require.Equal(t, hook.StateUnhooked, r.h.State(t, "carl").State)
+			assert.Len(t, r.stateLines(t), 2, "expired to unhooked is down to down: no push")
+			expect("bob", "proven", "down", down)
+			expect("carl", "proven", "down", down)
 		},
-		func() { // a send that fails is not sent, and is sent at the next pass, once
+		func() { // a re-arm with no proof is no push; a send that fails is sent at the next pass, once
 			require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
 			_, _, err := r.h.Store.HookAs(ctx, "bob", hook.Comms, "hooktest") // bob is back, not yet proven: live
 			require.NoError(t, err)
 			require.NoError(t, (&hook.Holder{Store: r.h.Store, Name: "bob", Role: hook.Comms, Pushes: hook.PushesOf(hook.Comms), By: "hooktest"}).Start(ctx))
 			require.Equal(t, hook.StateLive, r.h.State(t, "bob").State)
+			pass("ada", "bob") // bob live is down, as unhooked was: no push; its answer proves it for the next pass
+			assert.Len(t, r.stateLines(t), 2, "unhooked to live is down to down: no push")
 			r.failTells.Store(true)
-			pass("ada")
-			assert.Len(t, r.stateLines(t), 4, "the failed send put nothing on the stream")
+			pass("ada", "bob") // bob holds its lease from here on: its hook renews
+			assert.Len(t, r.stateLines(t), 2, "the failed send put nothing on the stream")
 			r.failTells.Store(false)
 			// each pass here is a new server process (serve --once), which holds no transition over: the retry
 			// finds bob's change again against the last pushed mark, and stamps it with its own pass's time
-			at := pass("ada", "bob") // the retry sees bob live; its answer proves it for the next pass
-			expect("bob", "unhooked", "live", at)
+			at := pass("ada", "bob")
+			expect("bob", "down", "proven", at)
 		},
-		func() { // bob proves, carl hooks in: two friends change in one pass
+		func() { // carl hooks in
 			r.h.Hook(t, "carl", hook.Comms)
 			at := pass("ada", "bob")
-			expect("bob", "live", "proven", at)
-			expect("carl", "unhooked", "proven", at)
+			expect("carl", "down", "proven", at)
 		},
-		func() { // a lapse to expired and the recovery are two lines each
+		func() { // a lapse to expired and the recovery are a line each, two friends in one pass two lines
 			r.h.Pass(hook.LeaseTTL + time.Second) // every lease lapses; the coordinator's own is held again
 			r.h.Hook(t, "ada", hook.Coordinator)
 			r.h.Evidence(t, "bob")
 			r.h.Evidence(t, "carl")
 			at := pass("ada")
-			expect("bob", "proven", "expired", at)
-			expect("carl", "proven", "expired", at)
+			expect("bob", "proven", "down", at)
+			expect("carl", "proven", "down", at)
 		},
 		func() {
 			r.h.Hook(t, "bob", hook.Comms)
 			r.h.Hook(t, "carl", hook.Comms)
 			at := pass("ada", "bob", "carl")
-			expect("bob", "expired", "proven", at)
-			expect("carl", "expired", "proven", at)
+			expect("bob", "down", "proven", at)
+			expect("carl", "down", "proven", at)
 		},
 		func() { // the coordinator's own note to itself is not echoed; a message from a friend is
 			_, err := b.Send(ctx, bus.Message{From: "ada", To: []string{"ada"}, Kind: bus.KindStatus, Subject: "note to self", Body: "x"})
