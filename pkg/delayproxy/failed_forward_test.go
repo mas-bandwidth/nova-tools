@@ -89,13 +89,14 @@ func (f *fakeTarget) SetDeadline(time.Time) error      { return nil }
 func (f *fakeTarget) SetReadDeadline(time.Time) error  { return nil }
 func (f *fakeTarget) SetWriteDeadline(time.Time) error { return nil }
 
-// A write is counted and timed only once the target has accepted the whole
-// chunk. forward is driven by hand over a fake target that owns no socket, so a
-// write that fails, a short write and a full write are all the test's choice.
-// The documented Writes and Shortest claim forwarded traffic: a chunk that did
-// not reach the target is not one, and end is called instead. The clock stands
-// still but for its waits, so a held chunk's time is exactly the delay and a
-// chunk that fails after one succeeded cannot lower Shortest.
+// A write is counted and timed before the target sees the chunk, and the count
+// is taken back when the write fails or comes up short. forward is driven by
+// hand over a fake target that owns no socket, so a write that fails, a short
+// write and a full write are all the test's choice. The documented Writes and
+// Shortest claim forwarded traffic: a chunk that did not reach the target is
+// not one, and end is called instead. The clock stands still but for its waits,
+// so a held chunk's time is exactly the delay and a chunk that fails after one
+// succeeded cannot lower Shortest.
 func TestFailedForwardDoesNotCountAsSent(t *testing.T) {
 	t.Parallel()
 
@@ -143,7 +144,7 @@ func TestFailedForwardDoesNotCountAsSent(t *testing.T) {
 			offered:  []string{"abc"},
 		},
 		{
-			name:     "a full chunk is counted once the target accepts it",
+			name:     "a full chunk stays counted once the target accepts it",
 			queue:    []held{chunk("a", epoch), chunk("b", epoch)},
 			steps:    []step{{}, {}},
 			writes:   2,
