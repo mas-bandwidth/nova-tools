@@ -70,6 +70,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	auth := fs.String("auth", "", "the harness's auth `file`, handed to each child's native --auth")
 	config := fs.String("config", "", "the harness's provider config `file`, handed to each child's native --config")
 	workerFile := fs.String("worker", "", "the worker description `file` (JSON), handed to each child's native --worker; the secret it names is handed through too")
+	maxMem := fs.String("max-mem", "", "the wall's memory cap for each child's tree (native --max-mem), a positive `size` such as 16g (default: one eighth of RAM, limited to a quarter of visible slice MemoryMax, with an 8g floor and half-RAM ceiling; the ceiling can make it less than 8g; 8g if RAM is unreadable; this overrides the default); not with --no-wall")
 	noWall := fs.Bool("no-wall", false, "run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes")
 	ghBin := fs.String("gh", "gh", "the gh `path` the member opens a work card's pull request with, outside the wall (default gh)")
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
@@ -181,6 +182,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 			pass = append(pass, w.Secret)
 		}
 	}
+	if *noWall && *maxMem != "" {
+		f.add("--no-wall and --max-mem together: one asks for no containment at all and the other caps the wall's tree; pass at most one")
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -231,7 +235,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity, prompt: *prompt,
+		worker: *workerFile, maxMem: *maxMem, noWall: *noWall, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity, prompt: *prompt,
 		server: *server, as: *as,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
@@ -563,6 +567,7 @@ type nativeRunner struct {
 	deadline, stageWall                            time.Duration
 	tokens, auth, config, worker, identity         string
 	prompt                                         string // the identity prompt file handed to each launch (native --prompt); "" for none
+	maxMem                                         string // the wall's memory cap handed to each launch (native --max-mem); "" for the wall's sized default
 	noWall                                         bool
 	// server and as are the sprint's server and this worker's name: a limited route's
 	// child takes its global rate budget there (--budget-server, nativebudget.go)
@@ -808,6 +813,9 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	}
 	if r.worker != "" {
 		args = append(args, "--worker", r.worker)
+	}
+	if r.maxMem != "" {
+		args = append(args, "--max-mem", r.maxMem)
 	}
 	if r.noWall {
 		args = append(args, "--no-wall")

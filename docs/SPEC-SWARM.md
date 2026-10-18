@@ -33,6 +33,14 @@ its data home are the only writable paths; the slot directory and whatever
 the `gh` configuration are in neither list and the kernel denies them.
 A command that runs outside the wall and dies inside it is missing a `read_roots` entry.
 
+The wall sizes the child tree's memory cap from one eighth of machine RAM, limited to a
+quarter of visible slice `MemoryMax`, with an 8 GiB floor and then a ceiling of half the
+machine RAM. That ceiling can make the cap less than 8 GiB on machines below 16 GiB; the
+default is 8 GiB when machine RAM cannot be read.
+A member that needs a different cap names `--max-mem <size>` on `native` or `member`, which
+overrides that default; absent, nothing is passed and the sized default stands. A value
+the wall would refuse is refused by native before the child starts.
+
 The wall grants the platform toolchain roots where a reader looks for them:
 - Darwin: `~/sdk`, `~/go/pkg/mod`, `/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`, `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`, `/usr/local/share/dotnet`.
 - Linux: `~/sdk`, `~/go/pkg/mod`.

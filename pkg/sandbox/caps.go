@@ -37,9 +37,10 @@ type Machine struct {
 // SizedProcsPerCPU per CPU and at least SizedProcs, but never more than the slice's
 // TasksMax over SizedSliceTrees (and at least 1). Memory follows the memory, never the CPU count: an
 // eighth of the machine (SizedMemShare), never more than the slice's MemoryMax over
-// SizedSliceTrees, at least DefaultMaxMem (the floor wins over the slice share, so on a
-// small slice four trees at the floor may pass it), and never more than half the machine. With the
-// memory unread the memory cap is DefaultMaxMem.
+// SizedSliceTrees, with a DefaultMaxMem floor, then never more than half the machine.
+// The half-machine ceiling can put the result below DefaultMaxMem on machines under
+// 16 GiB. With machine memory unread, the memory cap is DefaultMaxMem. A slice share
+// below the floor can be exceeded on a small slice.
 //
 // The share is small on purpose. The wall kills only the runaway tree; the slice's OOM
 // killer kills whatever it picks, often a sibling worker. So SizedSliceTrees trees at
