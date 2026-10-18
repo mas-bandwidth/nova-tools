@@ -426,7 +426,6 @@ func TestValidatePathsRefusesDotDotAndBareDoubleStar(t *testing.T) {
 		{"/etc/passwd"},
 		{"**"},
 		{"sign/**", "**"},
-		{"a/**", "b/**", "c/**", "d/**", "e/**", "f/**", "g/**", "h/**", "i/**"},
 		{""},
 	} {
 		err := ValidatePaths(bad)

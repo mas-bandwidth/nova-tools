@@ -37,8 +37,9 @@ func TestLintCardRefusesAWindowsDriveLetterPath(t *testing.T) {
 	require.Contains(t, stdout, "C:/foo/bar", "the drift names the glob:\n%s", stdout)
 }
 
-// #1853.2 THE CAP ON PATHS: IS EIGHT (SPEC-TOOLWORK.md:579-580). Nine globs used to
-// lint clean; a bound that names nine files has stopped bounding anything.
+// The cap on the number of globs was removed: what bounds a card is each glob, and a
+// long list of good globs is valid. Nine and twelve globs lint clean; one bad glob in a
+// long list is still refused, and named.
 func TestLintCardRefusesMoreThanEightPathGlobs(t *testing.T) {
 	t.Parallel()
 
@@ -48,16 +49,24 @@ func TestLintCardRefusesMoreThanEightPathGlobs(t *testing.T) {
 		"PATHS: "+nine,
 		"TEST: ./internal/x TestA",
 	)
-	require.Equal(t, 1, exit, "nine PATHS: globs are a drift, exit %d\n%s", exit, stdout)
-	require.Contains(t, stdout, "paths-declared", "the drift is paths-declared:\n%s", stdout)
+	require.Equal(t, 0, exit, "nine PATHS: globs lint clean, exit %d\n%s", exit, stdout)
 
-	eight := "p1/**, p2/**, p3/**, p4/**, p5/**, p6/**, p7/**, p8/**"
-	stdout, exit = lintEscapeCard(t, "eight.card",
+	twelve := "p1/**, p2/**, p3/**, p4/**, p5/**, p6/**, p7/**, p8/**, p9/**, p10/**, p11/**, p12/**"
+	stdout, exit = lintEscapeCard(t, "twelve.card",
 		"KIND: fix-red",
-		"PATHS: "+eight,
+		"PATHS: "+twelve,
 		"TEST: ./internal/x TestA",
 	)
-	require.Equal(t, 0, exit, "eight globs is the cap and is clean, exit %d\n%s", exit, stdout)
+	require.Equal(t, 0, exit, "twelve PATHS: globs lint clean, exit %d\n%s", exit, stdout)
+
+	bad := "p1/**, p2/**, p3/**, p4/**, p5/**, p6/**, p7/**, p8/**, p9/**, ../outside/**, p11/**"
+	stdout, exit = lintEscapeCard(t, "bad.card",
+		"KIND: fix-red",
+		"PATHS: "+bad,
+		"TEST: ./internal/x TestA",
+	)
+	require.Equal(t, 1, exit, "one bad glob in a long list is a drift, exit %d\n%s", exit, stdout)
+	require.Contains(t, stdout, "paths-declared", "the drift is paths-declared:\n%s", stdout)
 }
 
 // #1853.3 A COMMA-ONLY PATHS: LINE DECLARES NOTHING. `PATHS: , , ` is not

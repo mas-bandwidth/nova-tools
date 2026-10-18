@@ -30,13 +30,13 @@ func TestIssue1853(t *testing.T) {
 			drift: "paths-declared",
 		},
 		{
-			name: "nine PATHS globs is over the eight-entry cap",
+			name: "twelve PATHS globs lint clean",
 			header: []string{
 				"KIND: fix-red",
-				"PATHS: a1.go, a2.go, a3.go, a4.go, a5.go, a6.go, a7.go, a8.go, a9.go",
+				"PATHS: a1.go, a2.go, a3.go, a4.go, a5.go, a6.go, a7.go, a8.go, a9.go, a10.go, a11.go, a12.go",
 				"TEST: pkg/swarm TestA",
 			},
-			drift: "paths-declared",
+			clean: true,
 		},
 		{
 			name: "comma-only PATHS line declares nothing",

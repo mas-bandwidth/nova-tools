@@ -68,18 +68,23 @@ func TestAWindowsDriveLetterIsNotARepoRelativeGlob(t *testing.T) {
 	assert.True(t, hasCheck(fs, "test-named"), "the TEST: package runs the same path rule\n%s", dumpFindings(fs))
 }
 
-// #1853.2 THE CAP ON PATHS: IS EIGHT (SPEC-TOOLWORK.md:579-580, pkg/hygiene maxPaths).
-// A card whose bound names nine files has a bound that has stopped bounding anything.
+// The cap on the number of globs was removed: what bounds a card is each glob (a literal
+// segment, repository-relative, no `..`), and a long list of good globs is valid. Nine
+// and twelve globs lint clean; one bad glob in a long list is still refused, and named.
 func TestNineGlobsIsOverThePathsCap(t *testing.T) {
 	t.Parallel()
 
 	nine := "a1.go, a2.go, a3.go, a4.go, a5.go, a6.go, a7.go, a8.go, a9.go"
 	fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+nine, "TEST: ./internal/x TestA"))
-	require.True(t, hasCheck(fs, "paths-declared"), "nine globs is over the cap of eight\n%s", dumpFindings(fs))
-	// Eight is the cap, not the refusal.
-	eight := "a1.go, a2.go, a3.go, a4.go, a5.go, a6.go, a7.go, a8.go"
-	fs = findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+eight, "TEST: ./internal/x TestA"))
-	require.Empty(t, fs, "eight globs is exactly the cap and is clean\n%s", dumpFindings(fs))
+	require.Empty(t, fs, "nine globs lint clean\n%s", dumpFindings(fs))
+
+	twelve := "a1.go, a2.go, a3.go, a4.go, a5.go, a6.go, a7.go, a8.go, a9.go, a10.go, a11.go, a12.go"
+	fs = findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+twelve, "TEST: ./internal/x TestA"))
+	require.Empty(t, fs, "twelve globs lint clean\n%s", dumpFindings(fs))
+
+	bad := "a1.go, a2.go, a3.go, a4.go, a5.go, a6.go, a7.go, a8.go, a9.go, ../outside.go, a11.go"
+	fs = findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+bad, "TEST: ./internal/x TestA"))
+	require.True(t, hasCheck(fs, "paths-declared"), "one bad glob in a long list is still refused\n%s", dumpFindings(fs))
 }
 
 // #1853.3 A COMMA-ONLY PATHS: LINE DECLARES NOTHING. `PATHS: , , ` is not `PATHS: none`
