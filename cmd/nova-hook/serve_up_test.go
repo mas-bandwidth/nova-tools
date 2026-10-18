@@ -119,7 +119,8 @@ func TestAFriendComingUpIsPushedAtOnceWithHerRow(t *testing.T) {
 	assert.Equal(t, "status", ups[0].kind, "a status line: nothing answers it")
 	assert.Contains(t, ups[0].body, "Her sprint row is held: allowance out; nova-sprint friend up bob releases it.")
 	assert.Contains(t, ups[0].body, "FRIEND BACK follows her proof")
-	assert.Equal(t, 1, strings.Count(strings.Join(argvs(asked), "\n"), "friend cards bob --json"), "the row is read once for the push, in the busy set's verb")
+	// the busy set reads her cards every pass she is hooked; the push adds one read, in the same verb, on the pass she comes up
+	assert.Equal(t, 2, strings.Count(strings.Join(argvs(asked), "\n"), "friend cards bob --json"), "the busy set's read and the push's")
 	assert.Zero(t, r.count(t, "ada", "FRIEND BACK "), "no FRIEND BACK before her proof")
 
 	r.h.Hook(t, "bob", hook.Friend) // her proof
