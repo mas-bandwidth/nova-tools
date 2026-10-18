@@ -528,13 +528,19 @@ The binary is `nova-sandbox`.
 The wall bounds the process count and the resident memory of the tree it runs, so one
 runaway command cannot take the machine (289 test processes ran unbounded under one
 `go test`). The `run` verb's defaults are **256 processes** and **8 GiB**. The bare form's
-are **sized to the machine** (`sandbox.MachineCaps`, `pkg/sandbox/caps.go`): 1024 processes
-with 32 or more logical CPUs and 512 otherwise; 16 GiB with 32 or more CPUs and 64 GiB of
-memory or more and 8 GiB otherwise; and never more than half the machine's memory where it
-can be read (`/proc/meminfo` MemTotal, darwin's `hw.memsize`). The fixed 256 and 8 GiB
-killed ordinary parallel builds on the fleet's members (2026-10-17: about 90 worker
-children in a day, `runaway: 287` to `697 processes (cap 256)`, and `8611000320 bytes of
-memory (cap 8589934592)`); the caps still bound a runaway (`TestSizedCapsFollowTheMachine`).
+are **sized to the machine** (`sandbox.MachineCaps`, `pkg/sandbox/caps.go`): 64
+processes per logical CPU and at least 512; a quarter of the machine's memory and at least
+8 GiB, and never more than half of it, where the memory can be read (`/proc/meminfo`
+MemTotal, darwin's `hw.memsize`), else 8 GiB. Memory is sized from memory, never from the
+CPU count. The fixed 256 and 8 GiB killed ordinary parallel builds on the fleet's members
+(2026-10-17: about 90 worker children in a day, `runaway: 287` to `697 processes (cap
+256)`, and `8611000320 bytes of memory (cap 8589934592)`), and so did the first sizing,
+which keyed both caps on 32 CPUs and gave a 16-thread member with 124 GiB only 512
+processes and 8 GiB (2026-10-17: about half the worker runs on hetzner1, hetzner2 and
+amd-3, `runaway: 714 processes (cap 512)`, `8714186752 bytes of memory (cap
+8589934592)`). The caps still bound a runaway (`TestSizedCapsFollowTheMachine`), and each
+member's login slice (`user.slice` MemoryMax, the fleet host-memory play) still bounds all of
+the machine's user work together.
 
 - **The tree is counted by parent pid, never made a group.** Rule 12 stands: the bare
   form creates no process group of its own, whatever its stdin, and the tree stays in the
