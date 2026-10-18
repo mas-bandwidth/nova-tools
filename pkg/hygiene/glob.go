@@ -14,15 +14,14 @@ import (
 // bench that reads this card, whatever the bench's own separator is.
 var driveLetterRE = regexp.MustCompile(`^[A-Za-z]:`)
 
-// maxPaths is the cap on a card's PATHS: line. Eight globs is enough to name a fix's
-// source file, its test, a fixture directory and a few siblings; a card that needs
-// nine is a card whose bound has stopped bounding anything, and the right answer to it
-// is two cards.
-const maxPaths = 8
-
 // ValidatePaths is the PATHS: line's own rule. It is checked at `cut`, before a card is
 // admitted, and again here before the line is used to judge a diff: a bound that is
 // validated only at the point it is written is a bound that any later edit removes.
+//
+// What bounds a card is each glob, not the number of them: the card lint's own
+// corrections (paths-cover-named, paths-cover-testdata and tla-records) print the PATHS
+// line that would cover what a card names, and that line can pass eight, so a cap on the
+// count would make following the lint refuse the next lint, the card.
 //
 // No `..`, because a glob that climbs out of the repository bounds nothing. No absolute
 // path, for the same reason and because a card's paths are repo-relative by definition.
@@ -36,9 +35,6 @@ const maxPaths = 8
 // to carry, so that is what is asked for: one segment holding something that is not a
 // wildcard. `sign/**`, `*.go` and `**/*.go` all clear it; `**/*` and `*/**` do not.
 func ValidatePaths(paths []string) error {
-	if len(paths) > maxPaths {
-		return fmt.Errorf("PATHS: has %d entries, at most %d", len(paths), maxPaths)
-	}
 	for _, p := range paths {
 		if strings.TrimSpace(p) != p || p == "" {
 			return fmt.Errorf("PATHS: %q is empty or padded", p)
