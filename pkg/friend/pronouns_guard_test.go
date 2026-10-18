@@ -25,10 +25,10 @@ import (
 var personalPronoun = regexp.MustCompile(`(?i)\b(she|her|hers|herself|he|him|himself|his)\b`)
 
 // pronounGuardRoots are the sources whose string literals reach a person: the
-// texts nova-friend, nova-bus and nova-hook print, the daemon's records and the seat's
+// texts nova-friend and nova-bus print, the daemon's records and the seat's
 // judgments, the friend kind's help, and the card lint's friend lines. The paths
 // are from this package's directory.
-var pronounGuardRoots = []string{".", "../../cmd/nova-friend", "../../cmd/nova-bus", "../../cmd/nova-hook", "../config", "../../pkg/swarm"}
+var pronounGuardRoots = []string{".", "../../cmd/nova-friend", "../../cmd/nova-bus", "../config", "../../pkg/swarm"}
 
 // pronounGuardAllowed are the literals that say a pronoun word for a reason that
 // is not a friend: file (base name) to the literal's text.

@@ -29,12 +29,11 @@ func (r *rig) storeNow(t *testing.T) string {
 // hook under ONE name, as in production. Over a fake store, bus and clock, the
 // coordinator's hook runs its real loop and the passes run inside it, one
 // stage at a time, each after the lines of the one before arrived: every
-// change of level by every friend (a lapse to expired, a re-arm live and then
-// proven, a hook in, a lapse and a recovery) reaches the loop as its own HOOK
-// PUSH line naming the friend, the old level, the new level and the store's
-// TIME of the pass that saw it (down, live or proven; a friend coming up from
-// down is FRIEND UP <name> <level>); a change between two down states
-// (expired to unhooked) is no line; two friends that
+// crossing of proven by every friend (a lapse to expired, a re-arm proven, a
+// hook in, a lapse and a recovery) reaches the loop as its own HOOK PUSH line naming
+// the friend, the old state, the new state and the store's TIME of the pass
+// that saw it, every state but proven named down; a change between two down
+// states (expired to unhooked, unhooked to live) is no line; two friends that
 // change in one pass are two lines; a send that
 // fails is sent at the next pass and once; and what the coordinator sent itself
 // with nova-bus send is not echoed.
@@ -50,10 +49,6 @@ func TestEveryFriendTransitionIsPushedToTheCoordinator(t *testing.T) {
 	b := &bus.Bus{Store: bus.Redis{C: r.h.Client}}
 	var want []string
 	expect := func(name, old, new, at string) {
-		if old == hook.StateDown {
-			want = append(want, "FRIEND UP "+name+" "+new+" at="+at) // a comms name: no sprint row
-			return
-		}
 		want = append(want, "FRIEND STATE "+name+" "+old+"->"+new+" at="+at)
 	}
 	pass := func(answering ...string) string {
@@ -86,23 +81,22 @@ func TestEveryFriendTransitionIsPushedToTheCoordinator(t *testing.T) {
 			expect("bob", "proven", "down", down)
 			expect("carl", "proven", "down", down)
 		},
-		func() { // a re-arm is up at once, armed; a send that fails is sent at the next pass, once
+		func() { // a re-arm with no proof is no push; a send that fails is sent at the next pass, once
 			require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
 			_, _, err := r.h.Store.HookAs(ctx, "bob", hook.Comms, "hooktest") // bob is back, not yet proven: live
 			require.NoError(t, err)
 			require.NoError(t, (&hook.Holder{Store: r.h.Store, Name: "bob", Role: hook.Comms, Pushes: hook.PushesOf(hook.Comms), By: "hooktest"}).Start(ctx))
 			require.Equal(t, hook.StateLive, r.h.State(t, "bob").State)
-			armed := pass("ada", "bob") // bob live is up at this pass, its proof not yet in; its answer proves it for the next pass
-			assert.Len(t, r.stateLines(t), 3, "unhooked to live is FRIEND UP at the pass that finds it")
-			expect("bob", "down", "live", armed)
+			pass("ada", "bob") // bob live is down, as unhooked was: no push; its answer proves it for the next pass
+			assert.Len(t, r.stateLines(t), 2, "unhooked to live is down to down: no push")
 			r.failTells.Store(true)
 			pass("ada", "bob") // bob holds its lease from here on: its hook renews
-			assert.Len(t, r.stateLines(t), 3, "the failed send put nothing on the stream")
+			assert.Len(t, r.stateLines(t), 2, "the failed send put nothing on the stream")
 			r.failTells.Store(false)
 			// each pass here is a new server process (serve --once), which holds no transition over: the retry
 			// finds bob's change again against the last pushed mark, and stamps it with its own pass's time
 			at := pass("ada", "bob")
-			expect("bob", "live", "proven", at)
+			expect("bob", "down", "proven", at)
 		},
 		func() { // carl hooks in
 			r.h.Hook(t, "carl", hook.Comms)
@@ -144,7 +138,7 @@ func TestEveryFriendTransitionIsPushedToTheCoordinator(t *testing.T) {
 			return
 		}
 		pushes = append(pushes, l)
-		if strings.Contains(l, "FRIEND STATE ") || strings.Contains(l, "FRIEND UP ") {
+		if strings.Contains(l, "FRIEND STATE ") {
 			got = append(got, l)
 		}
 		if next < len(stages) && len(got) == len(want) {
@@ -168,19 +162,19 @@ func TestEveryFriendTransitionIsPushedToTheCoordinator(t *testing.T) {
 	}
 	assert.True(t, slices.ContainsFunc(pushes, func(l string) bool { return strings.Contains(l, `subject="hello"`) }), "a friend's message is shown")
 	for _, m := range r.stream(t, "ada") {
-		if strings.HasPrefix(m.subject, "FRIEND STATE ") || strings.HasPrefix(m.subject, "FRIEND UP ") {
+		if strings.HasPrefix(m.subject, "FRIEND STATE ") {
 			assert.Equal(t, bus.KindStatus, m.kind, "a status line, never a judgment: nothing answers it and nothing is OVERDUE")
 		}
 		assert.NotContains(t, m.subject, "OVERDUE FRIEND STATE")
 	}
 }
 
-// stateLines is the FRIEND STATE and FRIEND UP subjects now on the coordinator's stream, oldest first.
+// stateLines is the FRIEND STATE subjects now on the coordinator's stream, oldest first.
 func (r *rig) stateLines(t *testing.T) []string {
 	t.Helper()
 	var out []string
 	for _, m := range r.stream(t, "ada") {
-		if strings.HasPrefix(m.subject, "FRIEND STATE ") || strings.HasPrefix(m.subject, "FRIEND UP ") {
+		if strings.HasPrefix(m.subject, "FRIEND STATE ") {
 			out = append(out, m.subject)
 		}
 	}
@@ -201,8 +195,6 @@ func TestAMessageFromTheHooksOwnNameIsShownOnlyWhenTheServerSentIt(t *testing.T)
 		{bus.Message{From: "ada", Subject: "HOOK CHALLENGE nonce=x"}, true},
 		{bus.Message{From: "ada", Kind: bus.KindStatus, Subject: "HOOK CHALLENGE nonce=x"}, true}, // as the bus stores it
 		{bus.Message{From: "ada", Kind: bus.KindStatus, Subject: "FRIEND STATE bob proven->unhooked at=2026-10-15T14:00:00Z"}, true},
-		{bus.Message{From: "ada", Kind: bus.KindStatus, Subject: "FRIEND UP bob live held width=32 ready=0 working=16 at=2026-10-18T15:57:25Z"}, true},
-		{bus.Message{From: "bob", Kind: bus.KindStatus, Subject: "FRIEND UP bob live at=x"}, false},
 		{bus.Message{From: "ada", Kind: bus.KindJudgment, Subject: "FRIEND DOWN bob: no answer"}, true},
 		{bus.Message{From: "ada", Kind: bus.KindJudgment, Subject: "FRIEND BACK bob"}, true},
 		{bus.Message{From: "ada", Kind: bus.KindJudgment, Subject: "OVERDUE FRIEND BACK bob"}, true},

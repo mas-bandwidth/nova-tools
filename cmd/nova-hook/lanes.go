@@ -115,9 +115,9 @@ func configPass(ctx context.Context, lc *friend.Client, now time.Time) (*tool.Ou
 		return nil, false
 	}
 	if !ch.OK {
-		return tool.Done().As("STATE").Fact("state", "config-unread").Fact("intake", 0).Note("the friend's nova-config row did not read: " + ch.Why + "; no lane takes a card until it reads again, and every held card's lane is still renewed while friend cards answers"), true
+		return tool.Done().As("STATE").Fact("state", "config-unread").Fact("intake", 0).Note("her nova-config row did not read: " + ch.Why + "; no lane takes a card until it reads again, and every held card's lane is still renewed while friend cards answers"), true
 	}
-	return tool.Done().As("STATE").Fact("state", "config-applied").Fact("width", ch.Config.Width).Note("the friend's nova-config row applied: the lanes take to width " + fmt.Sprint(ch.Config.Width) + "; a lowered width drains, never returns a held card"), true
+	return tool.Done().As("STATE").Fact("state", "config-applied").Fact("width", ch.Config.Width).Note("her nova-config row applied: the lanes take to width " + fmt.Sprint(ch.Config.Width) + "; a lowered width drains, never returns a held card"), true
 }
 
 // novaConfigRun runs the canonical nova-config read, argv after the binary: the one beside
@@ -192,7 +192,7 @@ func laneSelf(m bus.Message, as string) bool {
 
 // laneFlags are the hook verb's lane client flags.
 func laneFlags(w world, f *tool.Flags) {
-	f.Int("lanes", 0, "retired: a service installed with an explicit --lanes 0 carries no lanes, any other value is accepted and ignored so a service installed with it still starts: a friend's lanes take to the friend's nova-config row's width, read every second (nova-config friend set <name> --width <n>); reinstall the service to drop it")
+	f.Int("lanes", 0, "retired: a service installed with an explicit --lanes 0 carries no lanes, any other value is accepted and ignored so a service installed with it still starts: a friend's lanes take to her nova-config row's width, read every second (nova-config friend set <name> --width <n>); reinstall the service to drop it")
 	f.String("sprint-server", orDefault(w.getenv(sprintServerEnv), DefaultSprintServer), "the sprint server the lanes ask, host:port (default: "+sprintServerEnv+", else "+DefaultSprintServer+")")
 }
 
