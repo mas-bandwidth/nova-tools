@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x04')
+[]byte("{\n  \"secret\": null,\n  \"path\": null,\n  \"file\": null,\n  \"head\": null,\n  \"blob\": null,\n  \"stamp\": null\n}\n")

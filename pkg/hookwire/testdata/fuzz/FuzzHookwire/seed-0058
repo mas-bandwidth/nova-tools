@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x01')
+[]byte("\x01\x01\f@0000000000000000000000000000000000000001JZ8Q4W6V2N7K3M5X9R0T1Y2B\x02\x1e\x03\x04\x1e\x05\x06\f\x98\x01zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\x00\xc0:\\\xb5\a.\xb7\b\x8dD\xe3E\xad\xba\x9d\xeetR'\x1d\xb4\x0f\bQ\x9dEb'\x0e\x03\x80l\x9e\x10\xcaE\xad\x9a\x7f\xee9&OG\xf3\xd7\xe8e\x06\x00\x00\x00\x00\x00\x00\x00")
