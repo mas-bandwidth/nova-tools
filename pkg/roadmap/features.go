@@ -1,8 +1,8 @@
 package roadmap
 
 // The feature-table form: the standard every ROADMAP.md is moving to (owner,
-// 2026-10-17), first built for mas-bandwidth/schema by its tools/roadmap/render.lisp
-// and folded in here so there is one generator. A page is a series of areas; each
+// 2026-10-17), first built as a Lisp renderer in the schema repository and folded
+// in here so there is one generator. A page is a series of areas; each
 // area is one ## section, a line saying what the area is, and a table with one row
 // per feature a user would recognise, one ✅/❌ cell per column (a single "done"
 // column, or an axis such as languages or platforms), a "complete" row, and a link
@@ -148,7 +148,7 @@ func isNil(f sexp.Form, ok bool) bool {
 }
 
 // blank is the whitespace the data's text is trimmed and joined on: blank, tab,
-// newline, return and form feed, exactly, so a no-break space in a title stays text.
+// newline, return and form feed, exactly, so a no-break blank in a title stays text.
 func isBlank(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' }
 
 func nonBlank(s string) bool { return strings.TrimFunc(s, isBlank) != "" }

@@ -173,6 +173,7 @@ tools/newrule	0.0	@run37411066588	self-hosted
 tools/newverb	0.0	@run37411066588	self-hosted
 tools/notes20261002	0.1	@local	-
 tools/preflight	0.2	@local	-
+tools/roadmap	0.0	@run39129433661	self-hosted
 tools/sandboxcheck	0.1	@local	-
 tools/sessiontrace	0.1	@local	-
 tools/testmanifest	0.0	@run37411066588	self-hosted
