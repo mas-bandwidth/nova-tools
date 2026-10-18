@@ -2080,14 +2080,37 @@ func wallMaxMemOK(s string) bool {
 			if rest := s[i+1:]; rest != "" && rest != "b" && rest != "B" {
 				return false
 			}
-			n, err := strconv.ParseFloat(s[:i], 64)
-			return err == nil && n > 0
+			goto parse
 		default:
 			return false
 		}
 	}
+	if digits == 0 {
+		return false
+	}
+parse:
+	// Match the wall's parseBytes result too: positive fractions below one byte become
+	// zero, and an unrepresentable byte count must not wrap past its int64 cap.
+	s = strings.TrimSuffix(strings.TrimSuffix(s, "b"), "B")
+	multiplier := float64(1)
+	if n := len(s); n > 0 {
+		switch s[n-1] {
+		case 'k', 'K':
+			multiplier, s = 1<<10, s[:n-1]
+		case 'm', 'M':
+			multiplier, s = 1<<20, s[:n-1]
+		case 'g', 'G':
+			multiplier, s = 1<<30, s[:n-1]
+		case 't', 'T':
+			multiplier, s = 1<<40, s[:n-1]
+		}
+	}
 	n, err := strconv.ParseFloat(s, 64)
-	return err == nil && n > 0
+	if err != nil || n <= 0 {
+		return false
+	}
+	bytes := n * multiplier
+	return bytes >= 1 && bytes < 9223372036854775808 // int64's positive byte range
 }
 
 // nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the

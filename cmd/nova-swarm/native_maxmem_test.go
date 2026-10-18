@@ -37,7 +37,7 @@ func TestNativeSandboxArgvPassesNoMemoryCapByDefault(t *testing.T) {
 func TestNativeRefusesABadMaxMem(t *testing.T) {
 	t.Parallel()
 
-	for _, value := range []string{"0", "twelve", "12q"} {
+	for _, value := range []string{"0", "0.1", "999999999999999999999999t", "twelve", "12q"} {
 		t.Run(value, func(t *testing.T) {
 			t.Parallel()
 
