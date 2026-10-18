@@ -128,6 +128,16 @@ type Stopper interface {
 // rules table's row late).
 const ProgressEvery = 3 * time.Minute
 
+// IdleQueueEvery is how often an idle member reads its queue: one whose last answer listed
+// no card, with nothing running, nothing posted by its long work and nothing owed (a refused
+// finish, a stop-return, a returned read). The beat keeps its own clock (BeatLoop), so the
+// server never marks the member down for it; a Wake (a push ended, a child exited, a
+// reader's beat answered with a card) or any card ends the backoff at once, and the next pass
+// reads its queue. On 2026-10-17 nine idle benches, each a member and a reader asking their
+// queue every pass of 3 s, sent the sprint server ~750 serial batches a minute (its SERVE
+// line); an idle member on this clock sends four.
+const IdleQueueEvery = 15 * time.Second
+
 // Pusher puts a work card's commit on origin, outside the wall: the commit
 // the child's result names (Result.Head) pushed to the branch the packet
 // names (Packet.Branch), never forced. It is asked once per ended launch.
@@ -471,6 +481,12 @@ type Config struct {
 	Room func() (ok bool, why string)
 	// Now is the clock the work pass's progress is read on (BeatLoop); nil is time.Now.
 	Now func() time.Time
+	// Every is the loop's interval between passes and beats (nova-swarm member --every). It
+	// sets the idle load: a pass that found nothing to do reads its queue again only
+	// IdleQueueEvery after the last (Tick, skipQueue), and a reader's beat sends no queue of
+	// its own while the pass's ran within Every (Beat), one queue an interval. 0 is a member
+	// ticked by hand (the tests'): every pass reads its queue and every beat sends one.
+	Every time.Duration
 	// Meter is the machine's one-second CPU samples, taken by a goroutine of the caller
 	// (hostload.Sampler.Run); nil, or with no sample since the last beat, the beat falls
 	// back to the load average, and with no reading at all carries 0 (never omitting --load).
@@ -695,6 +711,20 @@ type Member struct {
 	// instead of one after another (docs/SPEC-SPRINT.md, the fleet member).
 	reportGate chan struct{}
 	wake       chan struct{}
+
+	// lastQueue is when the pass last read its queue and was answered, in unix nanoseconds
+	// (0: never). The idle pass reads it again IdleQueueEvery later (skipQueue), and a
+	// reader's beat, on its own goroutine, sends no queue of its own while it is within the
+	// loop's interval (Beat, Config.Every).
+	lastQueue atomic.Int64
+	// idle says the last queue answer listed no card (Tick): with nothing running, posted or
+	// owed, the next passes skip their queue until IdleQueueEvery has passed or queueDue is
+	// set. A reader's beat reads it: it wakes the pass when its answer carries a card.
+	idle atomic.Bool
+	// queueDue is the word that the next pass reads its queue whatever the idle clock says:
+	// set with the Wake (woken: a push ended, a child exited, a reader's beat saw a card),
+	// cleared as the pass reads its queue.
+	queueDue atomic.Bool
 }
 
 // post is what a launch's long work found: its start (the child, or why there is none),
@@ -894,8 +924,10 @@ func (m *Member) reads(l launch) bool { return m.cfg.Reader || l.packet.Kind == 
 // a child exited (a Background member). It holds at most one word.
 func (m *Member) Wake() <-chan struct{} { return m.wake }
 
-// woken leaves the word for the loop, once.
+// woken leaves the word for the loop, once, and for the next pass: it reads its queue
+// whatever the idle clock says (queueDue, skipQueue).
 func (m *Member) woken() {
+	m.queueDue.Store(true)
 	select {
 	case m.wake <- struct{}{}:
 	default:
@@ -991,6 +1023,11 @@ func (m *Member) Stalled() time.Duration {
 func (m *Member) Beat() error {
 	m.beatMu.Lock()
 	defer m.beatMu.Unlock()
+	if m.cfg.Reader && m.passQueuedWithin(m.cfg.Every) {
+		// the pass's queue is the reader's beat too (the server renews its read leases on
+		// either): one queue an interval, not two, so a reader at work sends none of its own
+		return nil
+	}
 	// a reader's beat wants no packet: none for a card it may start, none for one it runs
 	args := []string{"queue", "--as", m.cfg.As, "--json", "--packets", "0"}
 	if have := m.have.Load(); have != nil && *have != "" {
@@ -1048,6 +1085,12 @@ func (m *Member) Beat() error {
 	}
 	if code == 0 && !m.cfg.Reader && m.cfg.Meter != nil {
 		m.beaten = total
+	}
+	if code == 0 && m.cfg.Reader && m.idle.Load() && queueHasCards(out) {
+		// the idle pass reads its queue only every IdleQueueEvery; a read asked of this
+		// reader meanwhile shows in the beat's answer, so the pass is woken to read its queue
+		// now and begin it, and never waits the idle clock out
+		m.woken()
 	}
 	if code == 2 && !m.cfg.Reader {
 		m.sayBeatRefused(args, out)
@@ -1196,22 +1239,35 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		return reports + m.collectReports()
 	}
 
+	if m.skipQueue(now) {
+		// idle: nothing to report, recover or take, and the last queue was read within
+		// IdleQueueEvery. Room is still asked, so the word the beat carries is this tick's
+		// (noRoomArgs), and the pass ends with no verb sent.
+		m.room(now)
+		m.spent.Fill = since()
+		return acted, nil
+	}
 	// the beat is not this pass's: it goes on its own clock (BeatLoop), so a pass held for
 	// minutes by its pushes and finishes never lets the machine go down while it works
+	m.queueDue.Store(false)
 	code, out := queueOf(m.run, m.queueArgs())
 	m.spent.Queue = since()
 	m.queueRead = true // the queue read is attempted: a report post applies from here on
 	if code != 0 {
+		m.idle.Store(false)
 		acted += m.collect()
 		acted += reportOnQueueFailure()
 		return acted, fmt.Errorf("queue: exit %d: %s", code, strings.TrimSpace(string(out)))
 	}
 	var q queueOut
 	if err := json.Unmarshal(out, &q); err != nil {
+		m.idle.Store(false)
 		acted += m.collect()
 		acted += reportOnQueueFailure()
 		return acted, fmt.Errorf("queue: not JSON: %w", err)
 	}
+	m.lastQueue.Store(now.UnixNano())
+	m.idle.Store(len(q.Cards) == 0)
 	m.epoch = q.Epoch
 	if e, ok := m.runner.(Epocher); ok {
 		e.Epoch(q.Epoch)
@@ -2595,6 +2651,46 @@ func queueOf(run func(...string) (int, []byte), args []string) (int, []byte) {
 	}
 	i := slices.Index(args, "--packets")
 	return run(args[:i]...)
+}
+
+// skipQueue says this pass sends no queue: the member is idle (the last answer listed no
+// card, nothing runs, nothing is posted or owed, the machine is not STOPPED and the member
+// does not drain), nothing woke it (queueDue), and the last queue was read within
+// IdleQueueEvery. A member ticked by hand (Config.Every 0) never skips.
+func (m *Member) skipQueue(now time.Time) bool {
+	if m.cfg.Every <= 0 || !m.idle.Load() || m.queueDue.Load() || m.drain || m.stopped {
+		return false
+	}
+	if len(m.running) > 0 || len(m.finishRefused) > 0 || len(m.stopRetry) > 0 || len(m.returnedAt) > 0 || m.OwedStopReturns() > 0 {
+		return false
+	}
+	m.postMu.Lock()
+	posted := len(m.posted)
+	m.postMu.Unlock()
+	if posted > 0 {
+		return false
+	}
+	return m.lastQueueWithin(now, IdleQueueEvery)
+}
+
+// passQueuedWithin says the pass read its queue and was answered within d of the clock now
+// (the beat's goroutine: Beat); never when d is 0 or no queue was answered yet.
+func (m *Member) passQueuedWithin(d time.Duration) bool {
+	return d > 0 && m.lastQueueWithin(m.clock(), d)
+}
+
+func (m *Member) lastQueueWithin(now time.Time, d time.Duration) bool {
+	last := m.lastQueue.Load()
+	return last != 0 && now.Sub(time.Unix(0, last)) < d
+}
+
+// queueHasCards says a queue answer lists at least one card, without reading the rest of
+// it (the reader's beat reads nothing else of its answer).
+func queueHasCards(out []byte) bool {
+	var q struct {
+		Cards []json.RawMessage `json:"cards"`
+	}
+	return json.Unmarshal(out, &q) == nil && len(q.Cards) > 0
 }
 
 // stampProgress stamps progress on the work cards whose child printed since the card's last
