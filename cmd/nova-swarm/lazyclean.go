@@ -49,20 +49,30 @@ const keepEpochs = 2
 // its removal takes is not measured here. A round stops partway when a launch is tagged.
 const lazyRound = 32
 
-// lazyEvery is how often the cleaner, with no tagged launch to clean, runs a lazy round: a
-// backlog of a few thousand entries is gone within minutes, and an idle round is one
-// directory listing.
-const lazyEvery = 2 * time.Second
+// The cleaner's pace, with no tagged launch to clean: the next lazy round comes lazyEvery
+// after a round that removed something, lazyQuiet after one that removed nothing, and
+// lazyBacklog after one that removed its bound and left more (old epochs past lazyRound, a
+// cache over its limit or still trimming toward its low-water mark), so a backlog of a few thousand entries is still gone
+// within minutes. A round every 2 s whatever it found listed the slots and the results
+// (1,096 and 309 entries), re-read the pid files of what it still could not remove, and
+// read 4 of the cache's subdirectories, the whole 16 GB, 77k-file cache every 128 s, some
+// 350 to 1,200 stats a second on every seat, forever (mini-m5-1, 2026-10-17).
+const (
+	lazyEvery   = 30 * time.Second
+	lazyQuiet   = 60 * time.Second
+	lazyBacklog = 2 * time.Second
+)
 
 // The build cache's trim (pkg/gocache): held under the member's --gocache-limit, then
-// down to the low-water mark a fifth under it (gocache.SlackOf). cacheDirsPerRound is how
-// many of the cache's 256 subdirectories a round reads (measures, and trims when over): the
-// size is never measured by walking the whole cache at once, but as a running sum, each
-// subdirectory's part re-read once every 64 rounds.
-// cacheRemovePerRound is the most entries one round removes.
+// down to the low-water mark a fifth under it (gocache.SlackOf). While the last measured
+// size is at or under the low-water mark there is nothing to trim, and the cache is only
+// measured again, whole, once every cacheRemeasure; above it, each round reads
+// cacheDirsPerRound of the cache's 256 subdirectories (measures, and trims when over), the
+// size a running sum. cacheRemovePerRound is the most entries one round removes.
 const (
 	cacheDirsPerRound   = 4
 	cacheRemovePerRound = 256
+	cacheRemeasure      = 10 * time.Minute
 )
 
 // Epoch records the sprint's epoch the member's pass read (member.Epocher): a store, never a
@@ -73,23 +83,50 @@ func (r *nativeRunner) Epoch(epoch uint64) { r.epoch.Store(epoch + 1) }
 func (r *nativeRunner) urgent() bool { return len(r.tagged) > 0 }
 
 // lazy is one round of the cleaner's lazy work, when no tagged launch waits: old epochs'
-// entries, then the build cache. Each says one line when it removed something.
-func (r *nativeRunner) lazy(now time.Time) {
+// entries, then the build cache. Each says one line when it removed something. It returns
+// how long until the next round (lazyEvery, lazyQuiet, lazyBacklog).
+func (r *nativeRunner) lazy(now time.Time) time.Duration {
 	if r.urgent() {
-		return
+		return lazyEvery
 	}
-	if o := r.cleanOld(now); o.removed > 0 || o.failed > 0 {
+	o := r.cleanOld(now)
+	if o.removed > 0 || o.failed > 0 {
 		fmt.Fprintf(r.stderr, "CLEAN old epochs: removed %d entries, %s freed, %d left%s\n", o.removed, oneline.Escape(sizeWord(o.freed)), o.left, oneline.Escape(o.failures()))
 	}
+	removed, backlog := o.removed > 0, o.removed > 0 && o.left > 0
+	pace := func() time.Duration {
+		switch {
+		case backlog:
+			return lazyBacklog
+		case removed:
+			return lazyEvery
+		}
+		return lazyQuiet
+	}
 	if r.urgent() {
-		return
+		return pace()
 	}
 	dir := r.goBuildCache()
 	if dir == "" {
-		return
+		return pace()
 	}
 	limit := r.gocacheLimit()
-	c := r.cache.Round(dir, now, gocache.Bounds{Limit: limit, Slack: gocache.SlackOf(limit), Dirs: cacheDirsPerRound, Remove: cacheRemovePerRound})
+	low := limit - gocache.SlackOf(limit)
+	dirs := cacheDirsPerRound
+	if r.cacheAt.IsZero() || r.cache.Total() <= low {
+		// nothing to trim at the last measure: measured again, whole, once every cacheRemeasure
+		if !r.cacheAt.IsZero() && now.Sub(r.cacheAt) < cacheRemeasure {
+			return pace()
+		}
+		dirs = gocache.Subdirs
+		r.cacheAt = now
+	}
+	c := r.cache.Round(dir, now, gocache.Bounds{Limit: limit, Slack: gocache.SlackOf(limit), Dirs: dirs, Remove: cacheRemovePerRound})
+	// a cache over its limit, or trimming toward the low-water mark, is a backlog: its rounds
+	// stay lazyBacklog apart until it is down (and over its limit with every entry in use,
+	// the alarm said once an hour, they stay so as they always were)
+	removed = removed || c.Removed > 0
+	backlog = backlog || c.Size > limit || c.Removed > 0 && c.Size > low
 	if c.Removed > 0 || c.Failed > 0 {
 		failures := lazyCount{failed: c.Failed, why: c.Why}.failures()
 		fmt.Fprintf(r.stderr, "CLEAN go build cache: removed %d entries, %s freed, %s now, limit %s%s\n", c.Removed,
@@ -99,6 +136,7 @@ func (r *nativeRunner) lazy(now time.Time) {
 		fmt.Fprintf(r.stderr, "CLEAN go build cache: over the limit, all entries in use: raise the limit (%s now, limit %s, every entry used in the last two hours; nothing is removed; said once an hour; nova-swarm member --gocache-limit <GiB>)\n",
 			oneline.Escape(sizeWord(c.Size)), oneline.Escape(sizeWord(limit)))
 	}
+	return pace()
 }
 
 // gocacheLimit is the size the build cache is held under: the member's --gocache-limit,
