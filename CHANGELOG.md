@@ -4,7 +4,7 @@
 
 Cut from e2341ed536f009069dadea8b9538680a81ae847e. 4 pull requests since v1.6.1.
 
-Recovery journeys proven at e2341ed536f009069dadea8b9538680a81ae847e: 5 (functions nova_sprint 10a33f52bf84df5d, schema schema v2.5.1-0.20261017012433-9b397a277ad3, installed hulk v1.6.2-0.20261018192244-e2341ed536f0).
+Recovery journeys proven at e2341ed536f009069dadea8b9538680a81ae847e: 5 (functions nova_sprint 10a33f52bf84df5d, schema schema v2.5.1-0.20261017012433-9b397a277ad3, installed one Linux bench v1.6.2-0.20261018192244-e2341ed536f0).
 
 Spend gate waived: point release of a staging fix; no provider spend is attributable to this cut (window 2026-10-18T00:00:00Z..2026-10-18T19:40:05Z)
 - unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
