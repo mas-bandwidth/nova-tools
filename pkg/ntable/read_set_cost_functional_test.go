@@ -46,7 +46,14 @@ func commandCalls(t *testing.T, c *redis.Client) map[string]int64 {
 // over the cells in turn, on its own throwaway store.
 func costTable(t *testing.T, rows, cols, n int) *redis.Client {
 	t.Helper()
-	_, c := live(t)
+	_, c := costStore(t, rows, cols, n)
+	return c
+}
+
+// costStore is costTable with the store's address, for a second client.
+func costStore(t *testing.T, rows, cols, n int) (string, *redis.Client) {
+	t.Helper()
+	addr, c := live(t)
 	ctx := context.Background()
 	names := make([]string, cols)
 	for i := range names {
@@ -64,7 +71,7 @@ func costTable(t *testing.T, rows, cols, n int) *redis.Client {
 		_, err := ntable.CellAdd(ctx, c, "cost", fmt.Sprintf("r%d", cell/cols), names[cell%cols], fmt.Sprintf("m%d", i), float64(i))
 		require.NoError(t, err)
 	}
-	return c
+	return addr, c
 }
 
 // A read set of one id reads each cell of the table once, with one ZSCORE,
@@ -116,84 +123,143 @@ func TestAOneIDReadSetCostsOneCommandPerCell(t *testing.T) {
 	require.Equal(t, beyond[0], beyond[1], "what a 1-id read set costs beyond one command per cell grew with the table")
 }
 
-// The direct path (an id list up to T.place_index_direct) and the sized path
-// (one longer) answer the same: the same member, and the same refusal for a
-// second placement, for an owned set no record places an id in, and for a
-// cell of the wrong type, whichever comes first in cell order.
+// The three ways T.place_index reads a cell answer the same: one id (ZSCORE
+// per cell), two to T.place_index_direct ids (ZMSCORE per cell), and a longer
+// list (ZCARD, then ZRANGE or ZMSCORE). A read set and a batch that writes are
+// each run once per way, the id under test first and absent ids after it, and
+// give the same member, the same refusal for a second placement, for an owned
+// set no record places an id in, for a record whose cell does not hold it and
+// for a cell of the wrong type, and rethrow an error that is not WRONGTYPE (a
+// command the caller's ACL denies) rather than answer.
 func TestReadSetDirectAndSizedPathsAnswerTheSame(t *testing.T) {
 	t.Parallel()
 	const direct = 8 // T.place_index_direct in table.lua
-	pad := func(ids ...string) []string {
-		for i := 0; len(ids) <= direct; i++ {
-			ids = append(ids, fmt.Sprintf("absent-%d", i))
-		}
-		return ids
-	}
 	ctx := context.Background()
-	both := func(t *testing.T, c *redis.Client, id string) (ntable.ReadSetResult, error, ntable.ReadSetResult, error) {
-		t.Helper()
-		small, serr := ntable.ReadSetMembers(ctx, c, "cost", []string{id})
-		large, lerr := ntable.ReadSetMembers(ctx, c, "cost", pad(id))
-		return small, serr, large, lerr
+	paths := []struct {
+		name string
+		n    int // ids in the call: the id under test and n-1 absent ones
+		uses string
+	}{{"one id", 1, "zscore"}, {"a few ids", direct, "zmscore"}, {"a long list", direct + 1, "zcard"}}
+	ids := func(id string, n int) []string {
+		out := []string{id}
+		for i := 1; i < n; i++ {
+			out = append(out, fmt.Sprintf("absent-%d", i))
+		}
+		return out
 	}
-	sameRefusal := func(t *testing.T, what string, serr, lerr error, kind error) {
+	// a batch: the entry under test first, then a guard that each absent id
+	// stays absent; an absent id is unplaced, so it joins the place index
+	batch := func(c *redis.Client, e ntable.BatchMemberEntry, n int) error {
+		m := ntable.BatchManifest{Schema: 1, Table: "cost", Epoch: "0", ExpectedTableRevision: c.HGet(ctx, ntable.DefKey("cost")+":revision", "n").Val(), OperationID: "paths", Actor: "p", Members: []ntable.BatchMemberEntry{e}}
+		for _, id := range ids(e.ID, n)[1:] {
+			m.Members = append(m.Members, ntable.BatchMemberEntry{ID: id, Expect: &ntable.MemberExpect{Absent: true}})
+		}
+		_, err := ntable.ApplyBatch(ctx, c, m)
+		return err
+	}
+	set := func(id string) ntable.BatchMemberEntry {
+		return ntable.BatchMemberEntry{ID: id, Expect: &ntable.MemberExpect{}, Set: map[string]string{"note": "y"}}
+	}
+	// refusals: each call, by read set and by batch, on each path, refuses
+	// with the kind and with the same words as on the one-id path
+	refuses := func(t *testing.T, c *redis.Client, id string, e ntable.BatchMemberEntry, kind error) {
 		t.Helper()
-		require.Error(t, serr, "%s: the direct path accepted", what)
-		require.ErrorIs(t, serr, kind, "%s: the direct path", what)
-		require.Error(t, lerr, "%s: the sized path accepted", what)
-		require.Equal(t, lerr.Error(), serr.Error(), "%s: the two paths refuse differently", what)
+		var first [2]string
+		for i, p := range paths {
+			_, rerr := ntable.ReadSetMembers(ctx, c, "cost", ids(id, p.n))
+			berr := batch(c, e, p.n)
+			for j, err := range []error{rerr, berr} {
+				what := []string{"read set", "batch"}[j]
+				require.Error(t, err, "%s, %s: accepted", what, p.name)
+				require.ErrorIs(t, err, kind, "%s, %s", what, p.name)
+				if i == 0 {
+					first[j] = err.Error()
+				} else {
+					require.Equal(t, first[j], err.Error(), "%s, %s: refuses unlike the one-id path", what, p.name)
+				}
+			}
+		}
 	}
 
 	t.Run("a placed member", func(t *testing.T) {
 		c := costTable(t, 3, 3, 20)
 		require.NoError(t, c.HSet(ctx, ntable.MemberKey("m4"), "note", "x").Err())
-		small, serr, large, lerr := both(t, c, "m4")
-		require.NoError(t, serr)
-		require.NoError(t, lerr)
-		require.Len(t, small.Members, 1)
-		got, ok := large.Member("m4")
-		require.True(t, ok)
-		require.Equal(t, got, small.Members[0])
-		require.Equal(t, large.Revision, small.Revision)
+		var first ntable.ReadSetMember
+		for i, p := range paths {
+			rs, err := ntable.ReadSetMembers(ctx, c, "cost", ids("m4", p.n))
+			require.NoError(t, err, p.name)
+			got, ok := rs.Member("m4")
+			require.True(t, ok, p.name)
+			require.Len(t, rs.Missing, p.n-1, p.name)
+			if i == 0 {
+				first = got
+			}
+			require.Equal(t, first, got, p.name)
+		}
+	})
+	t.Run("a placed member a batch writes", func(t *testing.T) {
+		for _, p := range paths {
+			c := costTable(t, 3, 3, 20)
+			require.NoError(t, batch(c, set("m4"), p.n), p.name)
+			require.Equal(t, "y", c.HGet(ctx, ntable.MemberKey("m4"), "note").Val(), p.name)
+		}
 	})
 	t.Run("a missing id", func(t *testing.T) {
 		c := costTable(t, 3, 3, 20)
-		small, serr, _, lerr := both(t, c, "nobody")
-		require.NoError(t, serr)
-		require.NoError(t, lerr)
-		require.Equal(t, []string{"nobody"}, small.Missing)
+		for _, p := range paths {
+			rs, err := ntable.ReadSetMembers(ctx, c, "cost", ids("nobody", p.n))
+			require.NoError(t, err, p.name)
+			require.Equal(t, ids("nobody", p.n), rs.Missing, p.name)
+		}
 	})
-	t.Run("a second placement", func(t *testing.T) {
+	t.Run("a second placement, in the last cell", func(t *testing.T) {
 		c := costTable(t, 3, 3, 20)
 		require.NoError(t, c.ZAdd(ctx, ntable.CellKey("cost", "r2", "c2"), redis.Z{Score: 1, Member: "m0"}).Err())
-		_, serr, _, lerr := both(t, c, "m0")
-		sameRefusal(t, "a second placement", serr, lerr, ntable.ErrDrift)
+		refuses(t, c, "m0", set("m0"), ntable.ErrDrift)
+	})
+	t.Run("a second placement, in a middle cell", func(t *testing.T) {
+		c := costTable(t, 3, 3, 20)
+		require.NoError(t, c.ZAdd(ctx, ntable.CellKey("cost", "r1", "c1"), redis.Z{Score: 1, Member: "m0"}).Err())
+		refuses(t, c, "m0", set("m0"), ntable.ErrDrift)
 	})
 	t.Run("an owned set no record places an id in", func(t *testing.T) {
 		c := costTable(t, 3, 3, 20)
-		require.NoError(t, c.ZAdd(ctx, ntable.CellKey("cost", "r1", "c1"), redis.Z{Score: 1, Member: "ghost"}).Err())
-		_, serr, _, lerr := both(t, c, "ghost")
-		sameRefusal(t, "a set-only placement", serr, lerr, ntable.ErrDrift)
+		require.NoError(t, c.ZAdd(ctx, ntable.CellKey("cost", "r2", "c2"), redis.Z{Score: 1, Member: "ghost"}).Err())
+		refuses(t, c, "ghost", ntable.BatchMemberEntry{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "r0", Col: "c0", Score: 1}}, ntable.ErrDrift)
 	})
 	t.Run("a record whose cell does not hold it", func(t *testing.T) {
 		c := costTable(t, 3, 3, 20)
 		require.NoError(t, c.ZRem(ctx, ntable.CellKey("cost", "r0", "c0"), "m0").Err())
-		_, serr, _, lerr := both(t, c, "m0")
-		sameRefusal(t, "a record with no set entry", serr, lerr, ntable.ErrDrift)
+		refuses(t, c, "m0", set("m0"), ntable.ErrDrift)
 	})
 	t.Run("a cell of the wrong type", func(t *testing.T) {
 		c := costTable(t, 3, 3, 20)
-		require.NoError(t, c.Del(ctx, ntable.CellKey("cost", "r2", "c1")).Err())
-		require.NoError(t, c.Set(ctx, ntable.CellKey("cost", "r2", "c1"), "s", 0).Err())
-		_, serr, _, lerr := both(t, c, "m0")
-		sameRefusal(t, "a wrong-type cell", serr, lerr, ntable.ErrWrongType)
+		require.NoError(t, c.Del(ctx, ntable.CellKey("cost", "r2", "c2")).Err())
+		require.NoError(t, c.Set(ctx, ntable.CellKey("cost", "r2", "c2"), "s", 0).Err())
+		refuses(t, c, "m0", set("m0"), ntable.ErrWrongType)
 	})
 	t.Run("a wrong-type cell before a second placement", func(t *testing.T) {
 		c := costTable(t, 3, 3, 20)
 		require.NoError(t, c.Del(ctx, ntable.CellKey("cost", "r1", "c0")).Err())
 		require.NoError(t, c.Set(ctx, ntable.CellKey("cost", "r1", "c0"), "s", 0).Err())
 		require.NoError(t, c.ZAdd(ctx, ntable.CellKey("cost", "r2", "c2"), redis.Z{Score: 1, Member: "m0"}).Err())
-		_, serr, _, lerr := both(t, c, "m0")
-		sameRefusal(t, "a wrong-type cell before a drift", serr, lerr, ntable.ErrWrongType)
+		refuses(t, c, "m0", set("m0"), ntable.ErrWrongType)
+	})
+	t.Run("an error that is not WRONGTYPE is rethrown", func(t *testing.T) {
+		for _, p := range paths {
+			addr, c := costStore(t, 3, 3, 20)
+			// a caller whose ACL denies the command this path reads a cell with
+			require.NoError(t, c.Do(ctx, "ACL", "SETUSER", "denied", "on", "nopass", "~*", "&*", "+@all", "-"+p.uses).Err(), p.name)
+			dc := redis.NewClient(&redis.Options{Addr: addr, Username: "denied", Password: "unused"})
+			t.Cleanup(func() { _ = dc.Close() })
+			_, rerr := ntable.ReadSetMembers(ctx, dc, "cost", ids("nobody", p.n))
+			berr := batch(dc, ntable.BatchMemberEntry{ID: "nobody", Expect: &ntable.MemberExpect{Absent: true}}, p.n)
+			for j, err := range []error{rerr, berr} {
+				what := []string{"read set", "batch"}[j]
+				require.Error(t, err, "%s, %s: answered past a denied %s", what, p.name, p.uses)
+				require.False(t, ntable.IsRefusal(err), "%s, %s: a denied %s became a refusal: %v", what, p.name, p.uses, err)
+				require.Contains(t, strings.ToLower(err.Error()), p.uses, "%s, %s: %v", what, p.name, err)
+			}
+		}
 	})
 }

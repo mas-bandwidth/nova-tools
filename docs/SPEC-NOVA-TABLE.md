@@ -669,8 +669,11 @@ placed members against 100,000 rows x 1,000 columns issues a small constant numb
 cell reads. A member the batch writes, and an unplaced member (a record with no
 `place:<table>`, or no record), need the reverse check, that no cell other than its
 own holds it, and that check reads every cell of the table once, for all such members
-of the batch together: one `ZRANGE` of the rows plus one `ZRANGE` or `ZMSCORE` per cell
-(rows x columns calls), the one bound that scales with the table. A guarded placed
+of the batch together: one `ZRANGE` of the rows plus, per cell, one `ZSCORE` when one
+id is checked, one `ZMSCORE` of the ids when 2 to 8 are, and otherwise a `ZCARD` and then
+a `ZRANGE` (a cell no bigger than the ids) or a `ZMSCORE` (rows x columns calls, or twice
+that), the one bound that scales with the table. A read set checks its members the same
+way, in one such pass. A guarded placed
 member that a second cell also holds is not seen by a guard-only batch; any batch that
 writes it, and `nova-table check`, find that disagreement.
 
