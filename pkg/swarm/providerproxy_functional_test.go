@@ -4,11 +4,11 @@ package swarm
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,28 +16,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNoHeadersIsOneUpstreamRequestAndUnknown waits out a real 200 ms header
-// timeout: the wait is net/http's ResponseHeaderTimeout, which takes no clock, so
-// until the proxy has a header-wait seam the test is the functional tier's, not a
-// unit test (Glenn 2026-09-26, nova-tools#4328: unit tests never wait on the wall
-// clock).
+func proxyClient() *http.Client {
+	return &http.Client{
+		Transport:     &http.Transport{Proxy: nil, DisableCompression: true},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
 
-// TestNoHeadersIsOneUpstreamRequestAndUnknown is the header wait on a real
-// timer (stella 5782441006). The upstream reads the POST and never answers
-// with headers. The proxy ends it at its own header wait, marks it lost, and
-// refuses the next request, so the upstream count stays 1.
-func TestNoHeadersIsOneUpstreamRequestAndUnknown(t *testing.T) {
+func discardReq(r *http.Request) {
+	_, _ = io.Copy(io.Discard, r.Body)
+	_ = r.Body.Close()
+}
+
+// TestSilentBodyAfterHeadersIsOneUpstreamRequest is the body-read deadline on
+// a real timer. Headers have arrived. No body byte follows. The proxy aborts
+// that one request and refuses the next one, so the upstream count stays 1.
+func TestSilentBodyAfterHeadersIsOneUpstreamRequest(t *testing.T) {
 	t.Parallel()
 
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)
 		discardReq(r)
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
 		<-r.Context().Done()
 	}))
 	defer up.Close()
 
-	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: up.URL, Silence: 20 * time.Second, HeaderWait: 200 * time.Millisecond})
+	// The body's silence is an event the test fires, never a gap it waits out
+	// (nova-tools#4328): the clock answers at once, as if the whole gap passed.
+	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: up.URL, Silence: 200 * time.Millisecond,
+		After: func(time.Duration) <-chan time.Time {
+			passed := make(chan time.Time, 1)
+			passed <- time.Unix(0, 1)
+			return passed
+		}})
 	require.NoError(t, err)
 	defer p.Close()
 
@@ -47,13 +63,13 @@ func TestNoHeadersIsOneUpstreamRequestAndUnknown(t *testing.T) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.HarnessURL(), strings.NewReader("card"))
 	require.NoError(t, err)
 	resp, err := client.Do(req)
-	if err == nil {
-		resp.Body.Close()
-		require.Fail(t, fmt.Sprintf("a request with no upstream headers was answered %d", resp.StatusCode))
-	}
-	require.True(t, p.Lost(), "no headers after a written request was not unknown")
-	require.GreaterOrEqual(t, p.HeaderWall(), 200*time.Millisecond, "header wall %s silence wall %s", p.HeaderWall(), p.SilenceWall())
-	require.Zero(t, p.SilenceWall(), "header wall %s silence wall %s", p.HeaderWall(), p.SilenceWall())
+	require.NoError(t, err)
+	_, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.Error(t, readErr, "a silent body was delivered as a finished response")
+	require.True(t, p.Lost(), "a silent body was not unknown")
+	gap := p.SilenceWall()
+	require.Positive(t, gap, "the body gap was not measured: %s", gap)
 
 	again, err := http.NewRequestWithContext(ctx, http.MethodPost, p.HarnessURL(), strings.NewReader("again"))
 	require.NoError(t, err)
@@ -61,42 +77,51 @@ func TestNoHeadersIsOneUpstreamRequestAndUnknown(t *testing.T) {
 	require.NoError(t, err)
 	_, _ = io.Copy(io.Discard, resp2.Body)
 	resp2.Body.Close()
-	require.Equal(t, http.StatusBadGateway, resp2.StatusCode, "the request after a lost one was answered %d", resp2.StatusCode)
+
 	got, upn := p.Requests(), upstream.Load()
 	require.Equal(t, int64(1), got, "requests=%d upstream=%d, want 1 and 1", got, upn)
 	require.Equal(t, int32(1), upn, "requests=%d upstream=%d, want 1 and 1", got, upn)
+	t.Logf("CANARY requests=%d silence_ms=%d verdict=unknown", p.Requests(), p.SilenceWall().Milliseconds())
 }
 
-// TestDelayedHeadersInsideTheWaitPassThrough waits out real delays shorter than
-// the header wait, for the same reason as the test above: the header wait is
-// net/http's ResponseHeaderTimeout, which takes no clock.
-//
-// TestDelayedHeadersInsideTheWaitPassThrough: headers late but inside the
-// wait, then a streamed body. The status, a header and every body byte pass
-// through unchanged. Nothing is marked lost.
-func TestDelayedHeadersInsideTheWaitPassThrough(t *testing.T) {
+// TestBodyThatResumesInsideTheDeadlineIsNotUnknown: headers, a pause shorter
+// than the gap, then the body. That is success. Nothing is marked lost. The
+// gap is the After seam: the upstream holds its body until the proxy has armed
+// the silence timer (the proxy is waiting on the body), and that timer never
+// fires, so the pause is inside the deadline by construction, with no
+// duration waited.
+func TestBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 	t.Parallel()
 
+	armed := make(chan struct{}, 1)
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)
 		discardReq(r)
-		time.Sleep(100 * time.Millisecond)
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("X-Upstream", "kept")
+		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		f, _ := w.(http.Flusher)
-		for _, chunk := range []string{"data: one\n\n", "data: two\n\n", "data: [DONE]\n\n"} {
-			_, _ = w.Write([]byte(chunk))
-			if f != nil {
-				f.Flush()
-			}
-			time.Sleep(30 * time.Millisecond)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
 		}
+		select {
+		case <-armed: // the proxy is inside its body wait
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = w.Write([]byte("ok\n"))
 	}))
 	defer up.Close()
 
-	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: up.URL, Silence: 2 * time.Second, HeaderWait: time.Second})
+	p, err := ListenProviderProxy(ProviderProxyConfig{
+		Upstream: up.URL,
+		After: func(time.Duration) <-chan time.Time {
+			select {
+			case armed <- struct{}{}:
+			default:
+			}
+			return nil // a gap that never ends: the body always comes inside it
+		},
+	})
 	require.NoError(t, err)
 	defer p.Close()
 
@@ -108,15 +133,73 @@ func TestDelayedHeadersInsideTheWaitPassThrough(t *testing.T) {
 	require.NoError(t, err)
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	require.NoError(t, err, "a body after delayed headers failed: %v", err)
-	require.Equal(t, http.StatusOK, resp.StatusCode, "status %d headers %v", resp.StatusCode, resp.Header)
-	require.Equal(t, "kept", resp.Header.Get("X-Upstream"), "status %d headers %v", resp.StatusCode, resp.Header)
-	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"), "status %d headers %v", resp.StatusCode, resp.Header)
-	want := "data: one\n\ndata: two\n\ndata: [DONE]\n\n"
-	require.Equal(t, want, string(body), "body %q, want %q", body, want)
-	require.False(t, p.Lost(), "delayed headers inside the wait were marked unknown (header wall %s)", p.HeaderWall())
-	require.Zero(t, p.HeaderWall(), "delayed headers inside the wait were marked unknown (header wall %s)", p.HeaderWall())
+	require.NoError(t, err, "a body inside the deadline failed: %v", err)
+	require.Equal(t, "ok\n", string(body), "body %q, want ok", body)
+	require.False(t, p.Lost(), "a body inside the deadline was marked unknown")
 	got, upn := p.Requests(), upstream.Load()
 	require.Equal(t, int64(1), got, "requests=%d upstream=%d, want 1 and 1", got, upn)
 	require.Equal(t, int32(1), upn, "requests=%d upstream=%d, want 1 and 1", got, upn)
+}
+
+// TestUnsetSilenceArmsFortyFiveSeconds: a proxy with no silence of its own
+// arms ProviderBodySilence. The clock fires at once so the test does not wait.
+func TestUnsetSilenceArmsFortyFiveSeconds(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var armed []time.Duration
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		discardReq(r)
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer up.Close()
+
+	p, err := ListenProviderProxy(ProviderProxyConfig{
+		Upstream: up.URL,
+		After: func(d time.Duration) <-chan time.Time {
+			mu.Lock()
+			armed = append(armed, d)
+			mu.Unlock()
+			ch := make(chan time.Time, 1)
+			ch <- time.Unix(0, 1)
+			return ch
+		},
+	})
+	require.NoError(t, err)
+	defer p.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.HarnessURL(), strings.NewReader("card"))
+	require.NoError(t, err)
+	resp, err := proxyClient().Do(req)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	mu.Lock()
+	got := append([]time.Duration(nil), armed...)
+	mu.Unlock()
+	require.NotEmpty(t, got, "armed %v, want %s", got, ProviderBodySilence)
+	require.Equal(t, ProviderBodySilence, got[0], "armed %v, want %s", got, ProviderBodySilence)
+	require.True(t, p.Lost(), "lost=%v requests=%d", p.Lost(), p.Requests())
+	require.Equal(t, int64(1), p.Requests(), "lost=%v requests=%d", p.Lost(), p.Requests())
+}
+
+// TestUnsetHeaderWaitIsFortyFiveSeconds: a proxy with no header wait of its
+// own waits ProviderHeaderTimeout.
+func TestUnsetHeaderWaitIsFortyFiveSeconds(t *testing.T) {
+	t.Parallel()
+
+	up := httptest.NewServer(http.NotFoundHandler())
+	defer up.Close()
+	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: up.URL})
+	require.NoError(t, err)
+	defer p.Close()
+	require.Equal(t, ProviderHeaderTimeout, p.HeaderWait(), "header wait %s, want %s (45s)", p.HeaderWait(), ProviderHeaderTimeout)
+	require.Equal(t, 45*time.Second, ProviderHeaderTimeout, "header wait %s, want %s (45s)", p.HeaderWait(), ProviderHeaderTimeout)
 }
