@@ -40,7 +40,7 @@ func TestLintCardRefusesAWindowsDriveLetterPath(t *testing.T) {
 // The cap on the number of globs was removed: what bounds a card is each glob, and a
 // long list of good globs is valid. Nine and twelve globs lint clean; one bad glob in a
 // long list is still refused, and named.
-func TestLintCardRefusesMoreThanEightPathGlobs(t *testing.T) {
+func TestLintCardAllowsLongPathGlobsAndRefusesBadLongList(t *testing.T) {
 	t.Parallel()
 
 	nine := "p1/**, p2/**, p3/**, p4/**, p5/**, p6/**, p7/**, p8/**, p9/**"

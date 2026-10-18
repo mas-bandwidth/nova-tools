@@ -71,7 +71,7 @@ func TestAWindowsDriveLetterIsNotARepoRelativeGlob(t *testing.T) {
 // The cap on the number of globs was removed: what bounds a card is each glob (a literal
 // segment, repository-relative, no `..`), and a long list of good globs is valid. Nine
 // and twelve globs lint clean; one bad glob in a long list is still refused, and named.
-func TestNineGlobsIsOverThePathsCap(t *testing.T) {
+func TestLongPathGlobsLintCleanButKeepPerGlobRules(t *testing.T) {
 	t.Parallel()
 
 	nine := "a1.go, a2.go, a3.go, a4.go, a5.go, a6.go, a7.go, a8.go, a9.go"

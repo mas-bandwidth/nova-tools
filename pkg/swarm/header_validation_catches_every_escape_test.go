@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestIssue1853 reproduces every validation escape in nova-tools#1853: Windows drive
-// paths, more than eight PATHS: globs, comma-only PATHS: lines, unknown kinds, and
-// TEST: none on gated kinds. Each subtest was a clean lint on the buggy code.
+// TestIssue1853 reproduces validation escapes in nova-tools#1853: Windows drive paths,
+// long valid PATHS: glob lists, comma-only PATHS: lines, unknown kinds, and TEST: none on
+// gated kinds. The long list must lint clean; invalid declarations are refused.
 func TestIssue1853(t *testing.T) {
 	t.Parallel()
 
