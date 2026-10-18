@@ -907,10 +907,6 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		return nil, nativeRunResult{}, 2
 	}
 	writeStageOK(os.Stdout, bench, stageRes)
-	if stageRes.Submodules != "" {
-		fmt.Fprintf(os.Stdout, "STAGE SUBMODULES INCOMPLETE bench=%s repo=%s why=%s\n",
-			oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Escape(stageRes.Submodules))
-	}
 	if stageRes.Carry != nil {
 		fmt.Fprintln(os.Stdout, oneline.Escape(stageRes.Carry.Line()))
 	}
@@ -2805,8 +2801,13 @@ func nativePrompt(cfg nativeRunConfig) string {
 // writeStageOK names the command phases of staging (docs/SPEC-CARD-CONTRACT.md,
 // staging), while preserving the readiness line before the frame is installed.
 func writeStageOK(w io.Writer, bench string, st swarm.StageResult) {
-	fmt.Fprintf(w, "STAGE OK bench=%s repo=%s base=%s secs=%.0f clone=%.1f fetch=%.1f checkout=%.1f\n",
-		oneline.Field(bench), oneline.Field(st.BaseRepo), oneline.Field(swarm.Version8(st.BaseSha)), st.Wall.Seconds(), st.Clone.Seconds(), st.Fetch.Seconds(), st.Checkout.Seconds())
+	// a submodule staging could not check out rides on the line, the stage itself is OK
+	submodules := ""
+	if st.Submodules != "" {
+		submodules = " submodules-incomplete=" + oneline.Field(oneline.Escape(st.Submodules))
+	}
+	fmt.Fprintf(w, "STAGE OK bench=%s repo=%s base=%s secs=%.0f clone=%.1f fetch=%.1f checkout=%.1f%s\n",
+		oneline.Field(bench), oneline.Field(st.BaseRepo), oneline.Field(swarm.Version8(st.BaseSha)), st.Wall.Seconds(), st.Clone.Seconds(), st.Fetch.Seconds(), st.Checkout.Seconds(), submodules)
 }
 
 // installFrameTimed reports the whole successful frame installation, including

@@ -310,7 +310,7 @@ func TestStageCardChecksOutSubmodulesFromTheBenchMirror(t *testing.T) {
 	run(root, "clone", "-q", "--mirror", subSrc, filepath.Join(mirrorDir, "fixed3d.git"))
 
 	// the superproject: a gitlink to the submodule's commit, its URL the private https one
-	const subURL = "https://github.com/robotgamedevelopers/fixed3d.git"
+	const subURL = "https://git.example.invalid/robotgamedevelopers/fixed3d.git"
 	sup := filepath.Join(root, "sup")
 	require.NoError(t, os.MkdirAll(sup, 0o755))
 	run(sup, "init", "-q", "-b", "main")

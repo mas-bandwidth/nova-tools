@@ -717,7 +717,7 @@ func stageSubmodules(ctx context.Context, stageCmd func(context.Context, ...stri
 		return out, err
 	}
 	// the URLs init wrote (a relative one resolved against origin); -z: each entry is
-	// "key\nvalue\x00", so a name with a space or a dot parses whole
+	// "key\nvalue\x00", so a name with a blank or a dot parses whole
 	listed, _ := stageCmd(ctx, "-C", dir, "config", "-z", "--local", "--get-regexp", `^submodule\..*\.url$`).Output()
 	for _, entry := range strings.Split(string(listed), "\x00") {
 		key, url, ok := strings.Cut(entry, "\n")
@@ -736,7 +736,7 @@ func stageSubmodules(ctx context.Context, stageCmd func(context.Context, ...stri
 		if _, err := run("config", "--local", "submodule."+name+".url", mirror); err != nil {
 			continue
 		}
-		// a mirror without the commit is no failure here: the plain update below fetches it
+		// ignored: a mirror without the commit is no failure here; the plain update below fetches it
 		_, _ = run("-c", "protocol.file.allow=always", "submodule", "update", "--init", "--", strings.TrimSpace(string(path)))
 	}
 	// every URL back to .gitmodules' own, in .git/config and in each cloned submodule's origin
