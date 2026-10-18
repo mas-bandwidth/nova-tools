@@ -1,15 +1,21 @@
 package bus
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/answerwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // A send's token (SPEC-BUS.md, a-lost-send-response-is-safe-to-retry.w1):
@@ -82,6 +88,180 @@ type sentRecord struct {
 	At          time.Time `json:"at"`
 }
 
+// The send-token record's strict read (the owner's rules S2 and S4, readers
+// first, UNION.md C13): replay reads the record a send under a token left
+// through pkg/schemaread and the generated table answerwire.SentRecord
+// (schemas/answer/token.schema), in each form the record may arrive in: the
+// table's binary wire led by its form byte, the padded standard base64 of
+// that wire, the schema JSON text form, and the legacy JSON sendOnce writes
+// today. A damaged or out-of-bound record is refused as `SENT_RECORD REFUSED:
+// <reason>; run: nova-bus send -h`, never read as no record, and every read is
+// counted under the form it arrived in: the cutover's evidence. Every writer
+// still writes the legacy form.
+
+// sentRecordName is the prefix of every refusal of a send-token record.
+const sentRecordName = "SENT_RECORD"
+
+// sentRecordHelp is the command a send-token record refusal points at.
+const sentRecordHelp = "nova-bus send -h"
+
+// sentRecordForm is the form byte the record's wire leads with: the table
+// wire's first form.
+const sentRecordForm byte = 1
+
+// sentRecordLegacy opens the legacy form: json.Marshal of sentRecord writes
+// its keys in declaration order with no space, and the schema JSON text form
+// is indented, so the two are told apart by their first bytes.
+var sentRecordLegacy = []byte(`{"fingerprint":`)
+
+// sentRecords is the reader replay reads every send-token record with; its
+// counts are the per-form reads of this record.
+var sentRecords = schemaread.NewReader(sentRecordCodec())
+
+// sentRecordBound is a string field's declared bound, read from the generated
+// descriptors, never typed twice.
+func sentRecordBound(name string) int {
+	for _, f := range answerwire.SentRecordTableType().Fields {
+		if f.Name == name {
+			return int(f.ArrayBound)
+		}
+	}
+	panic("the send-token record has no field " + name)
+}
+
+// sentRecordText is a string field of a loaded row, its used length kept
+// inside its buffer.
+func sentRecordText(b []byte, n int32) string {
+	return string(b[:min(max(int(n), 0), len(b))])
+}
+
+// sentRecordOf is the bus's record of a loaded row. A zero stamp is no stamp:
+// it reads as the zero time, which the constraints refuse as absent, never as
+// 1970.
+func sentRecordOf(v *answerwire.SentRecord) sentRecord {
+	rec := sentRecord{Fingerprint: sentRecordText(v.Fingerprint[:], v.FingerprintLength), ID: sentRecordText(v.Id[:], v.IdLength)}
+	if v.At != 0 {
+		rec.At = v.AtTime()
+	}
+	return rec
+}
+
+func sentRecordReport(r *answerwire.TableReport) schemaread.Report {
+	return schemaread.Report{
+		Unknown:      int(r.Unknown),
+		KindMismatch: int(r.KindMismatch),
+		Clamped:      int(r.Clamped),
+		// a key given twice in the JSON text is ambiguous: refused, never last-wins
+		Malformed: r.Malformed || r.Duplicate > 0,
+		Reason:    r.Reason,
+	}
+}
+
+func sentRecordLoadWire(rec *sentRecord, wire []byte) schemaread.Report {
+	n := answerwire.SentRecordLoadMeasure(wire)
+	if n < 0 {
+		return schemaread.Report{Malformed: true}
+	}
+	var r answerwire.TableReport
+	v := answerwire.SentRecordLoad(alignedRegion(n), wire, &r)
+	if v == nil {
+		return schemaread.Report{Malformed: true}
+	}
+	*rec = sentRecordOf(v)
+	return sentRecordReport(&r)
+}
+
+func sentRecordLoadJSON(rec *sentRecord, text []byte) schemaread.Report {
+	var b answerwire.SentRecordBuilder
+	if !b.Init() {
+		return schemaread.Report{Malformed: true}
+	}
+	defer b.Shutdown()
+	var r answerwire.TableReport
+	if !answerwire.SentRecordFromJson(&b, text, &r) || !b.Lock() {
+		return schemaread.Report{Malformed: true, Reason: r.Reason}
+	}
+	*rec = sentRecordOf(b.AsConst())
+	return sentRecordReport(&r)
+}
+
+// sentRecordLoadLegacy reads the JSON sendOnce writes today: one value and
+// nothing after it. A stamp the table's timestamp cannot hold (outside
+// Time.UnixNano) is clamped, as the table would clamp it. An unknown key is
+// passed over, as encoding/json passes it over.
+func sentRecordLoadLegacy(rec *sentRecord, text []byte) schemaread.Report {
+	dec := json.NewDecoder(bytes.NewReader(text))
+	if err := dec.Decode(rec); err != nil {
+		return schemaread.Report{Malformed: true}
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return schemaread.Report{Malformed: true}
+	}
+	var row answerwire.SentRecord
+	if !rec.At.IsZero() && row.SetAtTime(rec.At) != nil {
+		return schemaread.Report{Clamped: 1}
+	}
+	return schemaread.Report{}
+}
+
+// sentRecordConstraints are the record's bounds: every field a written record
+// always has is required (a variable table reads an absent field as zero, and
+// a record with no id or stamp must never answer a retry), the strings are
+// held to the table's bounds, and the fingerprint is the SHA-256 hex digest
+// fingerprint writes.
+func sentRecordConstraints(rec *sentRecord, c *schemaread.Checker) {
+	c.Required("fingerprint", rec.Fingerprint != "")
+	c.Required("id", rec.ID != "")
+	c.Required("at", !rec.At.IsZero())
+	c.Text("fingerprint", rec.Fingerprint, sentRecordBound("fingerprint"))
+	c.Text("id", rec.ID, sentRecordBound("id"))
+	if rec.Fingerprint != "" && !isDigest(rec.Fingerprint) {
+		c.Text("fingerprint", "\x00", sentRecordBound("fingerprint"))
+	}
+}
+
+// isDigest says s is a SHA-256 digest as hex.EncodeToString spells it.
+func isDigest(s string) bool {
+	if len(s) != 2*sha256.Size {
+		return false
+	}
+	for i := range len(s) {
+		if b := s[i]; (b < '0' || b > '9') && (b < 'a' || b > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// sentRecordCodec is the generated table's read functions as pkg/schemaread
+// takes them. It carries no writer: every writer writes the legacy form until
+// the writer switch.
+func sentRecordCodec() *schemaread.Codec[sentRecord] {
+	return &schemaread.Codec[sentRecord]{
+		Name:  sentRecordName,
+		Help:  sentRecordHelp,
+		Reset: func(rec *sentRecord) { *rec = sentRecord{} },
+		Forms: []byte{sentRecordForm},
+		Measure: func(wire []byte) error {
+			_, err := answerwire.SentRecordLoadMeasureReason(wire)
+			return err
+		},
+		LoadWire:    sentRecordLoadWire,
+		LoadJSON:    sentRecordLoadJSON,
+		Legacy:      func(in []byte) bool { return bytes.HasPrefix(in, sentRecordLegacy) },
+		LoadLegacy:  sentRecordLoadLegacy,
+		Constraints: sentRecordConstraints,
+	}
+}
+
+// readSentRecord is the record prior holds, read strictly by r. A refusal is
+// a *schemaread.Refusal naming the record and the reason, never a zero record.
+func readSentRecord(r *schemaread.Reader[sentRecord], prior string) (sentRecord, error) {
+	rec, _, err := r.Read([]byte(prior))
+	return rec, err
+}
+
 // fingerprint is the send's arguments as check normalised them (recipients
 // sorted and once each, the kind spelled out), so a retry that names them in
 // another order is the same send. Each field is length-prefixed: no two
@@ -130,9 +310,9 @@ func (b *Bus) sendOnce(ctx context.Context, m Message, now time.Time, streams []
 // names when the arguments are the same and the token is inside its life,
 // else a refusal saying which message went.
 func (b *Bus) replay(m Message, fp, prior string, now time.Time) (Message, error) {
-	var rec sentRecord
-	if err := json.Unmarshal([]byte(prior), &rec); err != nil || rec.ID == "" {
-		return Message{}, &Refusal{[]string{fmt.Sprintf("the token %q has a record that is not one (%s holds %q); a new message wants a new token", m.Token, SentOf(m.From, m.Token), prior)}}
+	rec, err := readSentRecord(sentRecords, prior)
+	if err != nil { // the record is refused by name, never read as no record
+		return Message{}, &Refusal{[]string{err.Error(), fmt.Sprintf("the token %q has a record that is not one (%s holds %q); a new message wants a new token", m.Token, SentOf(m.From, m.Token), prior)}}
 	}
 	at := rec.At.UTC().Format(time.RFC3339)
 	if rec.Fingerprint != fp {
