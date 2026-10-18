@@ -41,3 +41,15 @@ func stopNativeTerm(ch chan os.Signal) {
 func lowerChildPriority(pgid int) error {
 	return syscall.Setpriority(syscall.PRIO_PGRP, pgid, childNice)
 }
+
+// nativeChildSignal is the name of the signal that ended the child, or "" when it
+// exited on its own. A child ended by a signal gives ExitCode() -1, so the wait
+// status is the only place its cause is readable.
+func nativeChildSignal(ee *exec.ExitError) string {
+	if ws, ok := ee.ProcessState.Sys().(syscall.WaitStatus); ok {
+		if ws.Signaled() {
+			return ws.Signal().String()
+		}
+	}
+	return ""
+}

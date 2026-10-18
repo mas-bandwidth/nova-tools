@@ -260,6 +260,12 @@ type nativeRunResult struct {
 	// -- tokens_in, tokens_out, usd, provider, model -- rather than a second reading of
 	// the provider store that could disagree with the file.
 	usage swarm.UsageRow
+	// childEnd is the NATIVE CHILD-END line when the child ended by a signal or
+	// with an exit code of 128 or more, else "": it records how the child ended
+	// (signal name, stderr tail, an abort line and a core file) in the slot's
+	// native.log and in the finish report, where the exit code alone left the
+	// cause unreadable.
+	childEnd string
 }
 
 // THE ONE SEAM IN THE IDLE PATH, AND WHY IT HAD TO EXIST.
@@ -313,6 +319,97 @@ func nativeEndLeftovers(pgid int, started string) string {
 		return strconv.Itoa(pgid) + ":alive"
 	}
 	return strconv.Itoa(pgid) + ":reaped"
+}
+
+// recordChildEnd fills s.res.childEnd when the child ended by a signal or with an
+// exit code of 128 or more: the line names the exit code, the signal (or none),
+// the tail of the child's stderr (the last 20 lines, newline-escaped, bounded to
+// 4 KiB), the abort line when the child printed one, and the core file found in
+// the job directory. A child that exits 0 or with a small code writes no line.
+func (s *nativeRunState) recordChildEnd(sig string) {
+	rc := s.res.rc
+	if sig == "" && rc < 128 {
+		return
+	}
+	stderr := s.wallOut.String()
+	name := orElse(sig, "none")
+	line := fmt.Sprintf("NATIVE CHILD-END rc=%d signal=%s stderr-tail=%s", rc, oneline.Field(name), oneline.Escape(nativeChildEndTail(stderr, 4096)))
+	if abort := nativeAbortLine(stderr); abort != "" {
+		line += " abort=" + oneline.Field(abort)
+	}
+	if core := nativeCoreFile(s.prep.jobDir); core != "" {
+		line += " core=" + oneline.Field(core)
+	}
+	s.res.childEnd = line
+}
+
+// nativeChildEndTail is the tail of the child's stderr as the child-end line
+// carries it: the last 20 lines, newline-escaped, bounded to max bytes; "none"
+// when the child printed no stderr. The tail comes from the stderr capture the
+// run already holds, never a second read of a file.
+func nativeChildEndTail(stderr string, max int) string {
+	if stderr == "" {
+		return "none"
+	}
+	lines := strings.Split(stderr, "\n")
+	if len(lines) > 20 {
+		lines = lines[len(lines)-20:]
+	}
+	escaped := oneline.Escape(strings.Join(lines, "\n"))
+	if len(escaped) <= max {
+		return escaped
+	}
+	for len(lines) > 1 {
+		lines = lines[1:]
+		escaped = oneline.Escape(strings.Join(lines, "\n"))
+		if len(escaped) <= max {
+			return escaped
+		}
+	}
+	return cutTailToFit(strings.Join(lines, "\n"), max)
+}
+
+// cutTailToFit is the largest prefix of raw whose escape fits in max bytes.
+func cutTailToFit(raw string, max int) string {
+	lo, hi := 0, len(raw)
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if len(oneline.Escape(raw[:mid])) <= max {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return oneline.Escape(raw[:lo])
+}
+
+// nativeAbortLine is the first line of the child's stderr that holds an abort
+// message: a line carrying `abort`, `SIGABRT`, `core dumped` or `panic`, else "".
+func nativeAbortLine(stderr string) string {
+	for _, line := range strings.Split(stderr, "\n") {
+		low := strings.ToLower(line)
+		if strings.Contains(low, "abort") || strings.Contains(low, "sigabrt") ||
+			strings.Contains(low, "core dumped") || strings.Contains(low, "panic") {
+			return line
+		}
+	}
+	return ""
+}
+
+// nativeCoreFile is a core file's path in the job directory, or "" when none is
+// found there; the core file is searched for in the job directory only, never
+// elsewhere.
+func nativeCoreFile(jobDir string) string {
+	cores, err := filepath.Glob(filepath.Join(jobDir, "core*"))
+	if err != nil {
+		return ""
+	}
+	for _, c := range cores {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+			return c
+		}
+	}
+	return ""
 }
 
 type nativePrepared struct {
@@ -1316,11 +1413,13 @@ func watch(s *nativeRunState, st *nativeStarted) *nativeWatched {
 	select {
 	case runErr := <-st.done:
 		st.stopDeadline()
+		var sig string
 		switch ee := runErr.(type) {
 		case nil:
 			s.res.rc = 0
 		case *exec.ExitError:
 			s.res.rc = ee.ExitCode()
+			sig = nativeChildSignal(ee)
 		default:
 			s.res.rc = -1
 			if errors.Is(runErr, exec.ErrWaitDelay) {
@@ -1328,6 +1427,7 @@ func watch(s *nativeRunState, st *nativeStarted) *nativeWatched {
 			}
 		}
 		s.res.survivors = nativeEndLeftovers(st.pgid, st.started)
+		s.recordChildEnd(sig)
 	case <-st.deadlineC:
 		nativeKillGroup(st.pgid, st.started)
 		<-st.done
@@ -1477,6 +1577,9 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 	s.res.defect = s.sampler.Defect()
+	if s.res.childEnd != "" {
+		fmt.Fprintln(s.log, oneline.Escape(s.res.childEnd))
+	}
 	s.log.Close()
 	s.harnessOut.Close()
 	s.res.harness = harnessState(s.prep.jobDir)

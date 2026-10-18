@@ -1377,6 +1377,26 @@ line after it.
 **The tool never prints a credential, a file's contents, or an argument
 vector.** A refusal about a path prints the path, which the caller supplied.
 
+### The NATIVE CHILD-END line
+
+`nova-swarm native` runs the card's child inside the wall, and when the child
+ends by a signal, or with an exit code of 128 or more (a wrapper that turns a
+signal into `128+n`), it writes one line to the slot's `native.log` and into its
+finish report:
+
+```
+NATIVE CHILD-END rc=<n> signal=<name|none> stderr-tail=<last 20 lines of the child's stderr, newline-escaped, at most 4 KiB> [abort=<line>] [core=<path>]
+```
+
+The `rc=` is the child's exit code, `-1` when the child died by a signal, whose
+name `signal=` carries (or `none` for a `128+n` exit). `stderr-tail=` is the tail
+of the child's stderr from the capture the run already holds, `none` when the
+child printed no stderr. When the child dumped core or printed an abort message a
+line holding `abort`, `SIGABRT`, `core dumped` or `panic` — the line also carries
+`abort=<that line>`, and `core=<path>` names a core file found in the job
+directory only, never elsewhere. A child that exits 0 or with a small code writes
+no line.
+
 ## The two lists, and the roots
 
 **The write set** is each `--write` and everything under it: read and write,
