@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
 	friendcards "github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/harness/notice"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
@@ -435,7 +437,7 @@ func serverSent(m bus.Message, as string) bool {
 		// the bus stores a kind-less send as status (bus.Bus.check): the challenge,
 		// and a judgment from a server whose wire form sends it with no kind (the
 		// fleet's v1.4.5 FRIEND BACK, 2026-10-16)
-		return strings.HasPrefix(m.Subject, stateSubject) || strings.HasPrefix(m.Subject, challengeSubject) || judgmentSubject(m.Subject)
+		return strings.HasPrefix(m.Subject, stateSubject) || strings.HasPrefix(m.Subject, upSubject) || strings.HasPrefix(m.Subject, challengeSubject) || judgmentSubject(m.Subject)
 	case bus.KindJudgment:
 		return judgmentSubject(m.Subject)
 	}
@@ -472,30 +474,40 @@ type transition struct {
 	gen      int64
 }
 
-// push tells the coordinator each friend's crossing of proven, up or down, as
-// its own message (tla/HookBeat.tla, Pass's compare and PushSend): each name's
-// state as the store reads it now, proven or down (upOrDown), against the
-// state last pushed for it (the row's pushed mark, read the same way) or the
-// last still in hand; a difference is a transition in hand, and
-// each in hand goes out oldest first as one message of kind status, never
-// folded with another name's or another change's, under a once-key of the name,
-// its epoch, the new state and the count, in one write with the mark. A send
-// that fails leaves the transition in hand and the mark unwritten, and the next
-// pass sends it; one that went is never sent again (NeverPushedTwice,
+// up says t is a friend coming up: from down to live or proven, the push
+// that goes out as FRIEND UP with her sprint row.
+func (t transition) up() bool { return t.old == hook.StateDown && t.new != hook.StateDown }
+
+// push tells the coordinator each friend's change of level, down, live or
+// proven (pushLevel), as its own message (tla/HookBeat.tla, Pass's compare and
+// PushSend): each name's state as the store reads it now, against the level
+// last pushed for it (the row's pushed mark, read the same way) or the last
+// still in hand; a difference is a transition in hand, and each in hand goes
+// out oldest first as one message of kind status, never folded with another
+// name's or another change's, under a once-key of the name, its epoch, the new
+// level and the count, in one write with the mark. A send that fails leaves
+// the transition in hand and the mark unwritten, and the next pass sends it;
+// one that went is never sent again (NeverPushedTwice,
 // TransitionPushedToCoordinator). The message waits on no judgment and on no
-// --judge-within: it is not answered and never OVERDUE. With no coordinator the
-// pass pushes nothing, and the first pass of a fresh row writes the states it
-// finds as pushed with no message.
+// --judge-within: it is not answered and never OVERDUE. With no coordinator
+// the pass pushes nothing, and the first pass of a fresh row writes the
+// levels it finds as pushed with no message.
 //
-// Only a crossing of proven is pushed (upOrDown): live, partial, expired,
-// unhooked and down are one state, down, so a change among them is no
-// message, and the coordinator's own state is never pushed to her. Each bus
-// message interrupts the coordinator's turn, and she acts only on a friend
-// that came up or went down; the FRIEND DOWN and FRIEND BACK judgments carry
-// the rest. Measured on the fleet's bus 2026-10-17: 304 FRIEND STATE pushes
-// in 34 hours, none to act on, one friend's live->unhooked->live flap (a
-// service's re-arm) 183 of them and the coordinator's own
-// proven->partial->proven 60, pushed to herself.
+// A friend coming up (down to live or proven) is FRIEND UP <name> <level>
+// with her sprint row: held or unheld, her width and her ready and working
+// cards (friendRows), read in one sprint request for every friend coming up
+// this pass, so the coordinator sees her at the pass that finds her armed,
+// not a pass later at her proof, and a held friend at a glance (Glenn,
+// 2026-10-18: Stella's FRIEND BACK came a minute after she armed, and nothing
+// said her row was held). Every other change is FRIEND STATE <name>
+// <old>-><new>. The FRIEND BACK judgment still waits for the proof
+// (tla/HookBeat.tla, NoBackWithoutProof).
+//
+// The coordinator's own state is never pushed to her (NeverPushedSelf), and
+// a change between two down states (unhooked, expired, down) is no message
+// (NoPushWithinDown): each bus message interrupts the coordinator's turn.
+// Measured on the fleet's bus 2026-10-17: 304 FRIEND STATE pushes in 34
+// hours, rowan's own proven->partial->proven 60 of them, pushed to herself.
 func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names []string) {
 	if p.Coord == "" || len(names) == 0 {
 		return
@@ -517,7 +529,7 @@ func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names [
 	if !seen {
 		base := map[string]string{}
 		for _, st := range sts {
-			base[st.Name] = upOrDown(hook.PushState(st))
+			base[st.Name] = pushLevel(hook.PushState(st))
 		}
 		ctx, cancel := call()
 		err := s.hooks.Baseline(ctx, base)
@@ -530,12 +542,13 @@ func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names [
 	if s.pending == nil {
 		s.pending = map[string][]transition{}
 	}
+	var ups []string // the friends coming up this pass, whose sprint rows the FRIEND UP lines carry
 	for _, st := range sts {
 		if st.Name == p.Coord { // her own state is never pushed to her (tla/HookBeat.tla, NeverPushedSelf)
 			delete(s.pending, st.Name)
 			continue
 		}
-		last := upOrDown(cmp.Or(pushed[st.Name].State, hook.StateNone))
+		last := pushLevel(cmp.Or(pushed[st.Name].State, hook.StateNone))
 		gen := pushed[st.Name].Gen
 		q := s.pending[st.Name]
 		for len(q) > 0 && q[0].gen < gen { // sent already, by this server or another
@@ -544,15 +557,26 @@ func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names [
 		if len(q) > 0 {
 			last = q[len(q)-1].new
 		}
-		if cur := upOrDown(hook.PushState(st)); cur != last {
+		if cur := pushLevel(hook.PushState(st)); cur != last {
 			q = append(q, transition{old: last, new: cur, at: now, epoch: st.Epoch, gen: gen + int64(len(q))})
 		}
+		if st.Role == hook.Friend && slices.ContainsFunc(q, transition.up) {
+			ups = append(ups, st.Name)
+		}
+		s.pending[st.Name] = q
+	}
+	rows := w.friendRows(c, ups)
+	for _, st := range sts {
+		q := s.pending[st.Name]
 		for len(q) > 0 {
 			t := q[0]
 			subject := fmt.Sprintf("%s%s %s->%s at=%s", stateSubject, st.Name, t.old, t.new, t.at.UTC().Format(time.RFC3339))
+			body := subject + "\nnova-hook friends shows every name's state. No answer is wanted.\n"
+			if t.up() {
+				subject, body = upLine(st.Name, t, st.Role == hook.Friend, rows[st.Name])
+			}
 			mark := hook.PushMark(st.Name, t.new, t.gen)
-			m := bus.Message{From: s.as, To: []string{p.Coord}, Kind: bus.KindStatus, Subject: subject,
-				Body:  fmt.Sprintf("%s\nnova-hook friends shows every name's state. No answer is wanted.\n", subject),
+			m := bus.Message{From: s.as, To: []string{p.Coord}, Kind: bus.KindStatus, Subject: subject, Body: body,
 				Once:  hook.PushOnce(st.Name, t.epoch, t.new, t.gen),
 				Marks: []bus.Mark{{Key: hook.ServeKey, Field: mark.Field, Value: mark.Value}}}
 			if _, ok := w.sendOnce(c, s, b, m); !ok {
@@ -569,13 +593,134 @@ func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names [
 	}
 }
 
-// upOrDown is the state a friend-status push compares and names: proven, or
-// down for every other state (tla/HookBeat.tla, PS). A mark written before
-// this rule (live, partial, expired, unhooked) reads as down, so the first
-// pass after an upgrade pushes nothing for it.
-func upOrDown(state string) string {
-	if state == hook.StateProven {
+// upSubject starts the push of a friend coming up (push, upLine).
+const upSubject = "FRIEND UP "
+
+// sprintRow is a friend's sprint row as a FRIEND UP line says it: whether the
+// sprint holds her and why, her width, and the cards on her row by column.
+// read is false when the sprint did not answer it (the line says so).
+type sprintRow struct {
+	read           bool
+	held           bool
+	reason         string
+	width          int
+	ready, working int
+	why            string // read false: why not
+}
+
+// rowAnswer is the row part of the sprint's answer to friend cards <friend>
+// --json (nova-sprint friendcards_verb.go): her hold and width beside her
+// cards. A server older than the field sends no row, and the line says the
+// row was not read.
+type rowAnswer struct {
+	Friend string `json:"friend"`
+	Row    *struct {
+		Held   bool   `json:"held"`
+		Reason string `json:"reason"`
+		Width  int    `json:"width"`
+	} `json:"row"`
+}
+
+// friendRows reads the sprint rows of the friends coming up, in one sprint
+// request (the friend cards verb the busy set reads, tla/HookBeat.tla
+// SetBusy); a friend whose row did not read is there with read false and why.
+func (w world) friendRows(c *tool.Call, names []string) map[string]sprintRow {
+	out := map[string]sprintRow{}
+	if len(names) == 0 {
+		return out
+	}
+	if w.sprintBatch == nil {
+		for _, n := range names {
+			out[n] = sprintRow{why: "no sprint reader"}
+		}
+		return out
+	}
+	verbs := make([][]string, len(names))
+	for i, n := range names {
+		verbs[i] = friendcards.FriendCardsArgv(n)
+	}
+	ctx, cancel := call()
+	results, err := w.sprintBatch(ctx, c.Str("sprint-server"), verbs...)
+	cancel()
+	if err != nil || len(results) != len(names) {
+		fault(c, "friend rows", fmt.Errorf("sprint rows unavailable (%v, %d of %d replies)", err, len(results), len(names)))
+		for _, n := range names {
+			out[n] = sprintRow{why: "the sprint server did not answer"}
+		}
+		return out
+	}
+	for i, n := range names {
+		out[n] = parseRow(n, results[i])
+	}
+	return out
+}
+
+// parseRow is one friend's sprint row from the sprint's answer to friend cards.
+func parseRow(name string, res sprintwire.Result) sprintRow {
+	if res.Code != 0 {
+		return sprintRow{why: "the sprint refused friend cards " + name}
+	}
+	cards, err := friendcards.ParseHeld(name, res.Stdout)
+	if err != nil {
+		return sprintRow{why: err.Error()}
+	}
+	var a rowAnswer
+	if err := json.Unmarshal([]byte(strings.TrimSpace(res.Stdout)), &a); err != nil || a.Row == nil {
+		return sprintRow{why: "the sprint server sends no row (older than this nova-hook)"}
+	}
+	r := sprintRow{read: true, held: a.Row.Held, reason: a.Row.Reason, width: a.Row.Width}
+	for _, cd := range cards {
+		switch cd.Col {
+		case "ready":
+			r.ready++
+		case "working":
+			r.working++
+		}
+	}
+	return r
+}
+
+// upLine is the subject and body of a name coming up: FRIEND UP <name>
+// <level>, then, for a friend, her sprint row (held or unheld, width, ready,
+// working) or row=unread, and the store time of the pass.
+func upLine(name string, t transition, friend bool, r sprintRow) (string, string) {
+	subject := upSubject + name + " " + t.new
+	var detail string
+	switch {
+	case !friend:
+	case r.read:
+		hold := "unheld"
+		if r.held {
+			hold = "held"
+		}
+		subject += fmt.Sprintf(" %s width=%d ready=%d working=%d", hold, r.width, r.ready, r.working)
+		if r.held {
+			detail = "Her sprint row is held" + cmp.Or(": "+r.reason, "") + "; nova-sprint friend up " + name + " releases it.\n"
+		}
+	default:
+		subject += " row=unread"
+		detail = "Her sprint row was not read: " + r.why + ".\n"
+	}
+	subject += " at=" + t.at.UTC().Format(time.RFC3339)
+	proof := "She is armed; FRIEND BACK follows her proof.\n"
+	if t.new == hook.StateProven {
+		proof = ""
+	}
+	return subject, subject + "\n" + detail + proof + "nova-hook friends shows every name's state. No answer is wanted.\n"
+}
+
+// pushLevel is the level a friend-status push compares and names
+// (tla/HookBeat.tla, PS): proven; live for a name hooked whose proof is not
+// in (live, partial: armed, the push the coordinator acts on at once); down
+// for every other state (unhooked, expired, none, down). A mark written
+// before this rule reads the same way: live and partial as live, the rest as
+// down, so the first pass after an upgrade pushes nothing new for them.
+func pushLevel(state string) string {
+	switch state {
+	case hook.StateProven:
 		return hook.StateProven
+	case hook.StateLive, hook.StatePartial:
+		return hook.StateLive
 	}
 	return hook.StateDown
 }

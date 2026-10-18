@@ -14,13 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestOnlyACrossingOfProvenIsPushed pins the push rule of 2026-10-17
-// (tla/HookBeat.tla, PS and NeverPushedSelf): a friend's change between two
-// states that are not proven (unhooked to live, the supervised re-arm johnny's
-// service made every ten minutes) is no FRIEND STATE message, a crossing of
-// proven either way is one, and a mark written before the rule (live) reads
-// as down, so the upgrade itself pushes nothing.
-func TestOnlyACrossingOfProvenIsPushed(t *testing.T) {
+// TestOnlyAChangeOfLevelIsPushed pins the push rule (tla/HookBeat.tla, PS,
+// NoPushWithinDown and ArmingPushedAtPass): the levels are down, live and
+// proven. A name coming up from down is FRIEND UP at the pass that finds it,
+// armed or proven (2026-10-18: Stella armed at 15:57:25 and nothing said so
+// until her proof a minute later); its fall back is FRIEND STATE; a change
+// between two down states is no message; a mark written before the rule reads
+// by its level, so an old expired mark is down and pushes nothing.
+func TestOnlyAChangeOfLevelIsPushed(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	ctx := context.Background()
@@ -32,26 +33,30 @@ func TestOnlyACrossingOfProvenIsPushed(t *testing.T) {
 
 	r.h.Unhook(t, "bob")
 	r.step(t, []string{"ada"}, "ada")
-	assert.Equal(t, 1, r.count(t, "ada", "FRIEND STATE bob proven->down"), "proven to unhooked is a crossing")
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND STATE bob proven->down"), "proven to unhooked is a change of level")
 
-	_, _, err := r.h.Store.HookAs(ctx, "bob", hook.Comms, "hooktest") // a service's re-arm with no model: live
+	_, _, err := r.h.Store.HookAs(ctx, "bob", hook.Comms, "hooktest") // an arming, its proof not yet in: live
 	require.NoError(t, err)
 	require.NoError(t, (&hook.Holder{Store: r.h.Store, Name: "bob", Role: hook.Comms, Pushes: hook.PushesOf(hook.Comms), By: "hooktest"}).Start(ctx))
 	require.Equal(t, hook.StateLive, r.h.State(t, "bob").State)
 	r.step(t, []string{"ada"}, "ada")
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND UP bob live at="), "armed is up at the pass that finds it; a comms name has no sprint row")
 	r.h.Unhook(t, "bob")
 	r.step(t, []string{"ada"}, "ada")
-	assert.Equal(t, 1, r.count(t, "ada", "FRIEND STATE "), "unhooked to live and back is down to down: no push")
-
-	// a mark from before the rule: live reads as down, so bob down is no change
-	require.NoError(t, r.h.Client.HSet(ctx, hook.ServeKey, "pushed:bob", "live:7").Err())
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND STATE bob live->down"))
 	r.step(t, []string{"ada"}, "ada")
-	assert.Equal(t, 1, r.count(t, "ada", "FRIEND STATE "), "an old live mark is down")
+	assert.Equal(t, 2, r.count(t, "ada", "FRIEND STATE "), "down stays down: no push")
+
+	// a mark from before the rule: expired reads as down, so bob down is no change
+	require.NoError(t, r.h.Client.HSet(ctx, hook.ServeKey, "pushed:bob", "expired:7").Err())
+	r.step(t, []string{"ada"}, "ada")
+	assert.Equal(t, 2, r.count(t, "ada", "FRIEND STATE "), "an old expired mark is down")
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND UP "))
 
 	r.h.Hook(t, "bob", hook.Comms)
 	r.step(t, []string{"ada"}, "ada", "bob")
-	assert.Equal(t, 1, r.count(t, "ada", "FRIEND STATE bob down->proven"), "down to proven is a crossing")
-	assert.Equal(t, 2, r.count(t, "ada", "FRIEND STATE "))
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND UP bob proven at="), "down to proven is up too")
+	assert.Equal(t, 2, r.count(t, "ada", "FRIEND UP "))
 }
 
 // TestTheCoordinatorsOwnStateIsNeverPushedToHer pins NeverPushedSelf: the
@@ -67,7 +72,7 @@ func TestTheCoordinatorsOwnStateIsNeverPushedToHer(t *testing.T) {
 	r.step(t, []string{"ada"}, "ada", "bob")
 	r.step(t, []string{"ada"}, "ada", "bob")
 	other := "down"
-	if upOrDown(hook.PushState(r.h.State(t, "ada"))) == "down" {
+	if pushLevel(hook.PushState(r.h.State(t, "ada"))) != hook.StateProven {
 		other = hook.StateProven
 	}
 	// her mark says the other side of proven: the rule before pushed that to her
@@ -76,7 +81,7 @@ func TestTheCoordinatorsOwnStateIsNeverPushedToHer(t *testing.T) {
 		r.step(t, []string{"ada"}, "ada", "bob")
 	}
 	assert.Zero(t, r.count(t, "ada", "FRIEND STATE ada"), "her own state is never pushed to her")
-	assert.Equal(t, 1, r.count(t, "ada", "FRIEND STATE bob down->proven"), "a friend's crossing still is")
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND UP bob proven"), "a friend's change still is")
 }
 
 // TestANameWithNoRosterRowUnhooksOnTheUsualMissCount pins finding 4 of
