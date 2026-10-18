@@ -2801,13 +2801,19 @@ func nativePrompt(cfg nativeRunConfig) string {
 // writeStageOK names the command phases of staging (docs/SPEC-CARD-CONTRACT.md,
 // staging), while preserving the readiness line before the frame is installed.
 func writeStageOK(w io.Writer, bench string, st swarm.StageResult) {
-	// a submodule staging could not check out rides on the line, the stage itself is OK
-	submodules := ""
-	if st.Submodules != "" {
-		submodules = " submodules-incomplete=" + oneline.Field(oneline.Escape(st.Submodules))
+	// a submodule staging could not check out rides on the line as one more field; the stage itself is OK
+	fmt.Fprintf(w, "STAGE OK bench=%s repo=%s base=%s secs=%.0f clone=%.1f fetch=%.1f checkout=%.1f%s%s\n",
+		oneline.Field(bench), oneline.Field(st.BaseRepo), oneline.Field(swarm.Version8(st.BaseSha)), st.Wall.Seconds(), st.Clone.Seconds(), st.Fetch.Seconds(), st.Checkout.Seconds(),
+		oneline.Escape(stageSubmodulesKey(st)), oneline.Field(oneline.Escape(st.Submodules)))
+}
+
+// stageSubmodulesKey is the STAGE OK line's last key, " submodules-incomplete=", when
+// staging left a submodule unchecked-out, and nothing (with an empty value) when it did not.
+func stageSubmodulesKey(st swarm.StageResult) string {
+	if st.Submodules == "" {
+		return ""
 	}
-	fmt.Fprintf(w, "STAGE OK bench=%s repo=%s base=%s secs=%.0f clone=%.1f fetch=%.1f checkout=%.1f%s\n",
-		oneline.Field(bench), oneline.Field(st.BaseRepo), oneline.Field(swarm.Version8(st.BaseSha)), st.Wall.Seconds(), st.Clone.Seconds(), st.Fetch.Seconds(), st.Checkout.Seconds(), submodules)
+	return " submodules-incomplete="
 }
 
 // installFrameTimed reports the whole successful frame installation, including
