@@ -86,8 +86,8 @@ func upMessages(t *testing.T, r *rig) []upMsg {
 	return out
 }
 
-// TestAFriendComingUpIsPushedAtOnceWithHerRow pins Glenn's ask of 2026-10-18
-// (tla/HookBeat.tla, ArmingPushedAtPass): Stella armed at 15:57:25 and the
+// TestAFriendComingUpIsPushedAtOnceWithHerRow pins the owner's ask of 2026-10-18
+// (tla/HookBeat.tla, ArmingPushedAtPass): a friend armed at 15:57:25 and the
 // coordinator heard FRIEND STATE unhooked->live, then FRIEND BACK only at her
 // proof a minute later, and nothing said her sprint row was held. A friend
 // coming up is one FRIEND UP push at the pass that finds her armed, carrying

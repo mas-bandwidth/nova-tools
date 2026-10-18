@@ -88,7 +88,7 @@
 \* between two down states is no transition (NoPushWithinDown; 2026-10-17, when
 \* 304 pushes in 34 hours carried nothing to act on), and an arming is pushed
 \* at the pass that finds it, before its proof (ArmingPushedAtPass; 2026-10-18,
-\* when Stella armed and the coordinator heard of her only at her proof, a
+\* when a friend armed and the coordinator heard of her only at her proof, a
 \* pass later: the code's FRIEND UP, with her sprint row, which the model does
 \* not carry); and no push names the coordinator it goes to
 \* (NeverPushedSelf). The recipient is the coordinator up at the send

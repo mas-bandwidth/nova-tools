@@ -226,8 +226,8 @@ Every line runs as printed:
   cards by column) for every friend coming up that pass, the hold's reason and the release verb in the
   body, `row=unread` and why when the sprint does not answer or is older than the field, and no row for a
   name that is no friend. It goes at the pass that finds her armed, a pass before her proof and its
-  `FRIEND BACK` judgment (2026-10-18: Stella armed at 15:57:25Z and the coordinator heard of her only at
-  her proof a minute later, with nothing saying her row was held). Every other change is `FRIEND STATE
+  `FRIEND BACK` judgment (2026-10-18: a friend armed and the coordinator heard of the friend only at the
+  proof a minute later, with nothing saying the row was held). Every other change is `FRIEND STATE
   <name> <old>-><new> at=<store TIME>`. A change between two down states is no message, and the
   coordinator's own state is never pushed to her (each message interrupts her turn: 2026-10-17, 304
   pushes in 34 hours, none to act on). One message per change per name, never joined with another name's

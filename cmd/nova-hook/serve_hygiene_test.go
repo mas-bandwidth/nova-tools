@@ -17,7 +17,7 @@ import (
 // TestOnlyAChangeOfLevelIsPushed pins the push rule (tla/HookBeat.tla, PS,
 // NoPushWithinDown and ArmingPushedAtPass): the levels are down, live and
 // proven. A name coming up from down is FRIEND UP at the pass that finds it,
-// armed or proven (2026-10-18: Stella armed at 15:57:25 and nothing said so
+// armed or proven (2026-10-18: a friend armed at 15:57:25 and nothing said so
 // until her proof a minute later); its fall back is FRIEND STATE; a change
 // between two down states is no message; a mark written before the rule reads
 // by its level, so an old expired mark is down and pushes nothing.

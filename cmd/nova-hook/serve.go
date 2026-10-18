@@ -495,11 +495,11 @@ func (t transition) up() bool { return t.old == hook.StateDown && t.new != hook.
 //
 // A friend coming up (down to live or proven) is FRIEND UP <name> <level>
 // with her sprint row: held or unheld, her width and her ready and working
-// cards (friendRows), read in one sprint request for every friend coming up
+// cards (upRows), read in one sprint request for every friend coming up
 // this pass, so the coordinator sees her at the pass that finds her armed,
-// not a pass later at her proof, and a held friend at a glance (Glenn,
-// 2026-10-18: Stella's FRIEND BACK came a minute after she armed, and nothing
-// said her row was held). Every other change is FRIEND STATE <name>
+// not a pass later at her proof, and a held friend at a glance (the owner,
+// 2026-10-18: a friend's FRIEND BACK came a minute after the arming, and
+// nothing said the row was held). Every other change is FRIEND STATE <name>
 // <old>-><new>. The FRIEND BACK judgment still waits for the proof
 // (tla/HookBeat.tla, NoBackWithoutProof).
 //
@@ -507,7 +507,7 @@ func (t transition) up() bool { return t.old == hook.StateDown && t.new != hook.
 // a change between two down states (unhooked, expired, down) is no message
 // (NoPushWithinDown): each bus message interrupts the coordinator's turn.
 // Measured on the fleet's bus 2026-10-17: 304 FRIEND STATE pushes in 34
-// hours, rowan's own proven->partial->proven 60 of them, pushed to herself.
+// hours, the coordinator's own proven->partial->proven 60 of them, pushed to herself.
 func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names []string) {
 	if p.Coord == "" || len(names) == 0 {
 		return
@@ -565,7 +565,7 @@ func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names [
 		}
 		s.pending[st.Name] = q
 	}
-	rows := w.friendRows(c, ups)
+	rows := w.upRows(c, ups)
 	for _, st := range sts {
 		q := s.pending[st.Name]
 		for len(q) > 0 {
@@ -621,10 +621,10 @@ type rowAnswer struct {
 	} `json:"row"`
 }
 
-// friendRows reads the sprint rows of the friends coming up, in one sprint
+// upRows reads the sprint rows of the friends coming up, in one sprint
 // request (the friend cards verb the busy set reads, tla/HookBeat.tla
 // SetBusy); a friend whose row did not read is there with read false and why.
-func (w world) friendRows(c *tool.Call, names []string) map[string]sprintRow {
+func (w world) upRows(c *tool.Call, names []string) map[string]sprintRow {
 	out := map[string]sprintRow{}
 	if len(names) == 0 {
 		return out
