@@ -2,7 +2,9 @@ package swarm
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -61,6 +63,70 @@ func countAssistantLines(path string) int {
 		if strings.Contains(strings.ToLower(sc.Text()), "assistant") {
 			n++
 		}
+	}
+	return n
+}
+
+// LogTurns is countAssistantLines for a log that only grows, read as it grows: the lines
+// already counted are never read again. A live sampler asked the whole log every sample,
+// lowercasing every line, so a card's turn count cost the square of its log over its life
+// (2026-10-17). The offset is the end of the last whole line counted; a last line with no
+// newline yet is counted on each read, as a scanner at EOF counts it, and kept for the next.
+// A log that shrank or is another file than the one counted is counted again from its start.
+// The zero LogTurns has counted nothing; one LogTurns is used by one goroutine.
+type LogTurns struct {
+	path   string
+	file   os.FileInfo
+	offset int64
+	n      int
+}
+
+// logLineMost is the longest unterminated tail LogTurns holds back for its newline; a longer
+// one is counted as a line of its own (the scanner it replaces stopped counting at a line
+// past 1 MiB).
+const logLineMost = 1 << 20
+
+// Count is the log's assistant lines now, read from where the last Count stopped; 0 for a
+// log that cannot be read, which is counted from its start once it can.
+func (c *LogTurns) Count(path string) int {
+	f, err := openRegularRead(path)
+	if err != nil {
+		*c = LogTurns{}
+		return 0
+	}
+	defer f.Close() // ignored: a file opened read-only loses nothing on a failed close
+	fi, err := f.Stat()
+	if err != nil {
+		*c = LogTurns{}
+		return 0
+	}
+	if c.file == nil || c.path != path || !os.SameFile(c.file, fi) || fi.Size() < c.offset {
+		*c = LogTurns{path: path, file: fi}
+	}
+	if _, err := f.Seek(c.offset, io.SeekStart); err != nil {
+		return c.n
+	}
+	chunk, err := io.ReadAll(io.LimitReader(f, fi.Size()-c.offset))
+	if err != nil {
+		return c.n
+	}
+	whole := bytes.LastIndexByte(chunk, '\n') + 1
+	if whole == 0 && len(chunk) > logLineMost {
+		whole = len(chunk)
+	}
+	c.n += assistantLines(chunk[:whole])
+	c.offset += int64(whole)
+	return c.n + assistantLines(chunk[whole:])
+}
+
+// assistantLines is how many of the lines in b carry "assistant", in any case.
+func assistantLines(b []byte) (n int) {
+	for len(b) > 0 {
+		line, rest, _ := bytes.Cut(b, []byte{'\n'})
+		if bytes.Contains(bytes.ToLower(line), []byte("assistant")) {
+			n++
+		}
+		b = rest
 	}
 	return n
 }

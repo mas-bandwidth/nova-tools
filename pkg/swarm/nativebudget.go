@@ -109,8 +109,9 @@ func SQLiteOnPath() bool {
 
 // DefaultUsageInterval is how often a live sample reads the source. It is a tool property,
 // like a timeout, and never a fact about anybody's job. The `run` route names its own flag and
-// `native` takes the same flag and the same default.
-const DefaultUsageInterval = 5 * time.Second
+// `native` takes the same flag and the same default. It was 5 s until 2026-10-17: a sqlite3
+// launch per running card every 5 s across the bench width.
+const DefaultUsageInterval = 15 * time.Second
 
 // UsageIntervalFloor is the shortest interval `native` accepts. Each sample launches
 // sqlite3 against the harness's own live database, and under a second that is more launches
