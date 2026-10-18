@@ -779,6 +779,19 @@ do
   -- the refusals are the ones the per-member checks give: a cell of the wrong
   -- type is named when a member's check reaches it, as T.check_placement
   -- names it.
+  -- T.place_index_direct: the longest id list T.place_index scores in each
+  -- cell directly, one command per cell (ZSCORE of one id, ZMSCORE of up to
+  -- this many), where the sized path asks the cell's size first (ZCARD) and
+  -- then lists it (ZRANGE) or scores the ids (ZMSCORE): two commands per
+  -- cell. The cells, their order, the holders found and the WRONGTYPE error
+  -- of a cell of the wrong type are the same on both paths. Measured on a
+  -- bench store (40 x 30 cells, 240 and 24,000 members, 2026-10-18), the
+  -- direct path costs the server less up to 8 ids (about half at one) and
+  -- more from 16: each id it sends is scored in every cell, empty ones too,
+  -- where the sized path lists a small cell once. A longer list keeps the
+  -- sized path, so a whole-table read set costs the table's members and not
+  -- cells x ids.
+  T.place_index_direct = 8
   function T.place_index(d, ids)
     -- where[id] is the places (in cell order) of the cells holding the id;
     -- wrong the places of the cells of the wrong type; row_of each cell's row
@@ -786,6 +799,12 @@ do
     local idx = {cells = {}, d = d, hashed = {}, where = {}, wrong = {}, rows = {}}
     local want = {}
     for _, id in ipairs(ids) do want[id] = true end
+    local direct = #ids > 0 and #ids <= T.place_index_direct
+    local dargv
+    if direct and #ids > 1 then
+      dargv = {'ZMSCORE', ''}
+      for i, id in ipairs(ids) do dargv[i + 2] = id end
+    end
     local rows = redis.call('ZRANGE', T.rowskey(d), 0, -1)
     for r, row in ipairs(rows) do
       idx.rows[r] = row
@@ -799,23 +818,42 @@ do
           if not w then w = {}; idx.where[id] = w end
           w[#w + 1] = at
         end
-        local n = redis.pcall('ZCARD', key)
-        local res = n
-        if type(n) ~= 'table' and n <= #ids then
-          res = redis.pcall('ZRANGE', key, 0, -1)
-          if not res.err then
-            for _, id in ipairs(res) do
-              if want[id] then holds(id) end
+        local res
+        if direct then
+          -- a short id list is scored in the cell directly, one command
+          -- (ZSCORE of the one id, else ZMSCORE of them all), without asking
+          -- the cell's size first
+          if #ids == 1 then
+            res = redis.pcall('ZSCORE', key, ids[1])
+            if res and type(res) ~= 'table' then holds(ids[1]) end
+          else
+            dargv[2] = key
+            res = redis.pcall(unpack(dargv))
+            if not res.err then
+              for i, score in ipairs(res) do
+                if score then holds(ids[i]) end
+              end
             end
           end
-        elseif type(n) ~= 'table' then
-          for start = 1, #ids, 1000 do
-            local argv = {'ZMSCORE', key}
-            for i = start, math.min(start + 999, #ids) do argv[#argv + 1] = ids[i] end
-            res = redis.pcall(unpack(argv))
-            if type(res) == 'table' and res.err then break end
-            for i, score in ipairs(res) do
-              if score then holds(argv[i + 2]) end
+        else
+          local n = redis.pcall('ZCARD', key)
+          res = n
+          if type(n) ~= 'table' and n <= #ids then
+            res = redis.pcall('ZRANGE', key, 0, -1)
+            if not res.err then
+              for _, id in ipairs(res) do
+                if want[id] then holds(id) end
+              end
+            end
+          elseif type(n) ~= 'table' then
+            for start = 1, #ids, 1000 do
+              local argv = {'ZMSCORE', key}
+              for i = start, math.min(start + 999, #ids) do argv[#argv + 1] = ids[i] end
+              res = redis.pcall(unpack(argv))
+              if type(res) == 'table' and res.err then break end
+              for i, score in ipairs(res) do
+                if score then holds(argv[i + 2]) end
+              end
             end
           end
         end
