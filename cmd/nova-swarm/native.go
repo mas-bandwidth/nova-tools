@@ -3266,6 +3266,14 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		// stall on them. The deadline is the proxy below, and only when the
 		// provider has an http baseURL the proxy can stand in front of.
 		body = swarm.ApplyProviderReadDeadline(body, provider)
+		// A PROVIDER WITH A TABLE BASE URL IS DECLARED DIRECT IN THE JOB CONFIG as an
+		// OpenAI-compatible provider with an env-ref key, for every route before the proxy
+		// decision, so a provider the pinned harness's catalog does not know (paperinstruments)
+		// still runs. The Zen and openrouter providers are never used for it.
+		// (swarm.SeedDirectProvider; a row whose config is pinned unchanged is left alone.)
+		if seeded, ok := swarm.SeedDirectProvider(body, provider); ok {
+			body = seeded
+		}
 		// A LIMITED ROUTE'S EVERY REQUEST TAKES THE GLOBAL BUDGET (pkg/swarm/providerbudget.go;
 		// nova-sprint tla/RateBudget.tla), and the budget lives in the proxy, so
 		// a limited route whose generated config names no baseURL (a fleet member launches

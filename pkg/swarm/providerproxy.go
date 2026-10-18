@@ -317,6 +317,73 @@ func SeedProviderBaseURL(raw []byte, provider, base string) ([]byte, bool) {
 	return append(out, '\n'), true
 }
 
+// seedDirectExcluded are the rows the direct seed leaves alone. Their job configs are
+// pinned byte for byte by existing tests: inception's limited-route config is tested to
+// carry no apiKey (the harness sends the route's own key), and ollama's keyless localhost
+// provider is tested as a baseURL with no apiKey. Seeding either would change bytes a test
+// pins, so they keep today's write.
+var seedDirectExcluded = map[string]bool{
+	"INCEPTION_API_KEY": true,
+	"OLLAMA_API_KEY":    true,
+}
+
+// SeedDirectProvider returns the config with that provider declared direct as an
+// OpenAI-compatible provider: npm @ai-sdk/openai-compatible when the entry has none,
+// options.baseURL from the providers table when the entry has none, and options.apiKey as
+// the {env:<envVar>} reference when the entry has none. Anything the entry already carries
+// is kept, and the key is only the env reference text, never a value read from the
+// environment. A provider whose row has no base URL, or no envVar, or no row, gets the
+// config back byte for byte; ok is false then, as it is for a row seedDirectExcluded names
+// (their configs are pinned unchanged). It is called for every route before the proxy
+// decision, so a provider the pinned harness's catalog does not know (paperinstruments)
+// still runs; the Zen and openrouter providers are never used for such a route.
+func SeedDirectProvider(raw []byte, provider string) ([]byte, bool) {
+	table, err := readProvidersTable()
+	if err != nil {
+		return raw, false
+	}
+	entry, ok := table[provider]
+	if !ok || entry.BaseURL == "" || entry.EnvVar == "" || seedDirectExcluded[entry.EnvVar] {
+		return raw, false
+	}
+	var cfg map[string]any
+	if json.Unmarshal(raw, &cfg) != nil || cfg == nil {
+		return raw, false
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	if providers == nil {
+		return raw, false
+	}
+	providerMap, _ := providers[provider].(map[string]any)
+	if providerMap == nil {
+		return raw, false
+	}
+	if npm, _ := providerMap["npm"].(string); strings.TrimSpace(npm) == "" {
+		providerMap["npm"] = "@ai-sdk/openai-compatible"
+	}
+	opts, _ := providerMap["options"].(map[string]any)
+	if opts == nil {
+		if _, other := providerMap["options"]; other {
+			return raw, false
+		}
+		opts = map[string]any{}
+	}
+	if cur, _ := opts["baseURL"].(string); strings.TrimSpace(cur) == "" {
+		opts["baseURL"] = strings.TrimSpace(entry.BaseURL)
+	}
+	if _, has := opts["apiKey"]; !has {
+		opts["apiKey"] = "{env:" + entry.EnvVar + "}"
+	}
+	providerMap["options"] = opts
+	providers[provider] = providerMap
+	cfg["provider"] = providers
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return raw, false
+	}
+	return append(out, '\n'), true
+}
+
 // LetTheHarnessWaitOutAStall returns the config with that provider's harness-side request
 // clocks off (options.headerTimeout and options.timeout both false), for a limited route
 // whose requests stall inside the budget proxy before any header is written. The pinned

@@ -136,20 +136,17 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 	deal := stepIndex(job, hostedDealStep)
 	require.GreaterOrEqual(t, deal, 0, "test-hosted has no %q step", hostedDealStep)
 	assert.Contains(t, job.Steps[deal].Run, ciRunner+" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }}", "the deal step does not deal this shard of matrix.shards through `ci deal`:\n%s", job.Steps[deal].Run)
-	vet, test := -1, -1
+	test := -1
 	for i, s := range job.Steps {
 		switch {
 		case strings.HasPrefix(s.Name, "vet"):
-			vet = i
+			assert.Fail(t, "test-hosted still vets its shard: the lint job's whole-tree `make vet` is the separate vet job (run 39155212547, 2-10 s a macOS leg)", "step %q", s.Name)
 		case strings.HasPrefix(s.Name, "test (shard"):
 			test = i
 		}
 	}
-	require.GreaterOrEqual(t, vet, deal, "test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
-	require.GreaterOrEqual(t, test, deal, "test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
-	for _, i := range []int{vet, test} {
-		assert.Contains(t, job.Steps[i].Run, `PKGS="$HOSTED_PKGS"`, "test-hosted step %q does not read the deal's HOSTED_PKGS", job.Steps[i].Name)
-	}
+	require.GreaterOrEqual(t, test, deal, "test-hosted's test step (%d) must follow the deal (%d)", test, deal)
+	assert.Contains(t, job.Steps[test].Run, `PKGS="$HOSTED_PKGS"`, "test-hosted step %q does not read the deal's HOSTED_PKGS", job.Steps[test].Name)
 }
 
 // dealHeavyRe reads the heavy list the deal step passes.
