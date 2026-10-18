@@ -75,6 +75,8 @@ func TestLoopSecretFileMustBeOwnerOnly(t *testing.T) {
 	statArgs, ok := statTask["ansible.builtin.stat"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "{{ item.path }}", asText(statArgs["path"]))
+	assert.Equal(t, false, statArgs["get_checksum"], "stat must not hash secret-file contents")
+	assert.Equal(t, false, statArgs["get_mime"], "stat must not inspect secret-file contents for MIME")
 	assert.Equal(t, "loop_secret_file_stats", asText(statTask["register"]))
 	ownerTask := loopSecretOwnerAssertion(t)
 	assert.Equal(t, "{{ loop_secret_file_stats.results }}", asText(ownerTask["loop"]))

@@ -168,6 +168,8 @@
     - name: stat every loop secret file without reading it
       ansible.builtin.stat:
         path: "{{ item.path }}"
+        get_checksum: false
+        get_mime: false
       loop: "{{ loop_secret_file_entries }}"
       loop_control: { label: "{{ item.path }}" }
       register: loop_secret_file_stats
