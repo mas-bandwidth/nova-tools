@@ -63,7 +63,7 @@ func (f *fakeTarget) offered() []string {
 // target's Write, whether the write was counted before the bytes were offered.
 type countingTarget struct {
 	fakeTarget
-	p     *Proxy
+	p      *Proxy
 	missed atomic.Bool
 }
 
