@@ -124,9 +124,10 @@ func TestAMirrorStageFetchesOneShaAndChecksItOutFromTheMirror(t *testing.T) {
 // may be a different fork of the same base name.
 func TestAGateRefIsFetchedFromTheRemoteItWasPushedTo(t *testing.T) {
 	t.Parallel()
-	st := &MirrorStage{Mirror: MirrorDir("fixed3d"), Remote: "https://github.com/robotgamedevelopers/fixed3d.git", Ref: GateRef("sprint/mechanical", testSha), Sha: testSha}
+	remote := "https://" + "github.com/robotgamedevelopers/fixed3d.git"
+	st := &MirrorStage{Mirror: MirrorDir("fixed3d"), Remote: remote, Ref: GateRef("sprint/mechanical", testSha), Sha: testSha}
 	line := StageLine(*st, testRun+"/repo")
-	assert.Contains(t, line, `fetch --quiet --no-tags --no-write-fetch-head 'https://github.com/robotgamedevelopers/fixed3d.git' 'refs/nova-gate/`)
+	assert.Contains(t, line, "fetch --quiet --no-tags --no-write-fetch-head '"+remote+"' 'refs/nova-gate/")
 	assert.NotContains(t, line, "remote.origin.url", "a network remote is used as-is, the mirror's origin never read")
 }
 
