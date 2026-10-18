@@ -119,6 +119,18 @@ func TestAMirrorStageFetchesOneShaAndChecksItOutFromTheMirror(t *testing.T) {
 	assert.Equal(t, []string{"copy vision 0MB 1.0s via mirror"}, said, "the stage is said before the command runs")
 }
 
+// A mirror stage whose remote is a network URL fetches the gate's ref from that remote,
+// never from the mirror's origin: the lander pushed the ref there, and the mirror's origin
+// may be a different fork of the same base name.
+func TestAGateRefIsFetchedFromTheRemoteItWasPushedTo(t *testing.T) {
+	t.Parallel()
+	remote := "https://" + "github.com/robotgamedevelopers/fixed3d.git"
+	st := &MirrorStage{Mirror: MirrorDir("fixed3d"), Remote: remote, Ref: GateRef("sprint/mechanical", testSha), Sha: testSha}
+	line := StageLine(*st, testRun+"/repo")
+	assert.Contains(t, line, "fetch --quiet --no-tags --no-write-fetch-head '"+remote+"' 'refs/nova-gate/")
+	assert.NotContains(t, line, "remote.origin.url", "a network remote is used as-is, the mirror's origin never read")
+}
+
 // The temporary ref is pushed before the gate and deleted after it, whatever the gate
 // did and even when the caller's context has ended; a push that fails runs no gate and
 // leaves nothing to delete.

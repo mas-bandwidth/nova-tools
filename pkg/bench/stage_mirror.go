@@ -72,8 +72,11 @@ type MirrorStage struct {
 	// Mirror is the bare mirror on the bench, relative to the login's home or absolute
 	// (MirrorDir).
 	Mirror string
-	// Remote is the URL the ref is fetched from when the mirror names no origin of its
-	// own; the mirror's origin is preferred, since that is the URL the bench can read.
+	// Remote is where the temporary ref is fetched from. A local path (starts with "/")
+	// falls back to the mirror's origin when it names none, a path on the lander's machine
+	// meaning nothing on the bench; a network Remote (a URL, or an scp-style
+	// user@host:path) is used as-is, never the mirror's origin, since the lander pushed the
+	// ref there.
 	Remote string
 	// Ref is the temporary ref the lander pushed (GateRef); Sha the commit it names, the
 	// tree the run's command runs in.
@@ -122,16 +125,27 @@ func StandaloneLine(dst string) string {
 }
 
 // StageLine is the remote line of the mirror stage into dst: the mirror must exist; the
-// commit is fetched from the mirror's origin (else Remote) by the temporary ref unless the
-// mirror holds it already, no ref or FETCH_HEAD written; then dst is a clone of the mirror
-// borrowing its objects, checked out detached at the sha.
+// commit is fetched by the temporary ref unless the mirror holds it already, no ref or
+// FETCH_HEAD written. A Remote that is a local path (starts with "/") is fetched from the
+// mirror's origin (else Remote), a path on the lander's machine meaning nothing on the
+// bench; a network Remote (a URL, or an scp-style user@host:path) is itself where the ref
+// is fetched from, never the mirror's origin, since the lander pushed the ref there. Then
+// dst is a clone of the mirror borrowing its objects, checked out detached at the sha.
 func StageLine(s MirrorStage, dst string) string {
 	m, d := Quote(s.Mirror), Quote(dst)
 	commit := Quote(s.Sha + "^{commit}")
+	local := strings.HasPrefix(s.Remote, "/")
+	src := ""
+	if local {
+		src = "src=$(git -C " + m + " config --get remote.origin.url) || src=" + Quote(s.Remote) + "; "
+	}
+	from := `"$src"`
+	if !local {
+		from = Quote(s.Remote)
+	}
 	return "test -f " + m + "/HEAD || { echo " + Quote("no mirror at "+s.Mirror) + " >&2; exit " + fmt.Sprint(NoMirror) + "; }" +
 		" && { git -C " + m + " cat-file -e " + commit + " 2>/dev/null" +
-		" || { src=$(git -C " + m + " config --get remote.origin.url) || src=" + Quote(s.Remote) +
-		"; GIT_TERMINAL_PROMPT=0 git -C " + m + " fetch --quiet --no-tags --no-write-fetch-head \"$src\" " + Quote(s.Ref) +
+		" || { " + src + "GIT_TERMINAL_PROMPT=0 git -C " + m + " fetch --quiet --no-tags --no-write-fetch-head " + from + " " + Quote(s.Ref) +
 		" && git -C " + m + " cat-file -e " + commit + "; }; }" +
 		" && git clone --quiet --shared --no-checkout " + m + " " + d +
 		" && git -C " + d + " checkout --quiet --detach " + Quote(s.Sha) +
