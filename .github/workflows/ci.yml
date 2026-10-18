@@ -995,7 +995,8 @@ jobs:
     # 2026-10-18, main's push runs 39147571763 and 39150632936: macos-latest
     # shard 5 was cancelled at the cap in both. It held internal/ci (27 s),
     # internal/docs (23 s) and cmd/nova-ci (11 s) behind ~88 s of fixed setup,
-    # build and vet. Both packages are heavy now, one per shard and alone, and
+    # build and vet. Both packages are heavy now (so is cmd/nova-sandbox, 29 s on macOS, which
+    # then topped shard 10), one per shard and alone, and
     # both OSes deal ten ways; internal/docs builds its eleven tools in one go
     # build, not eleven. The cap stays two minutes.
     name: test-hosted (${{ matrix.os }}, ${{ matrix.shard }})
