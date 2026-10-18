@@ -4109,4 +4109,148 @@ nova-card left nova-tools in v1.2.3 (the split): it lives in [mas-bandwidth/nova
 
 ## nova-work
 
-nova-work left nova-tools in v1.2.3 (the split): it lives in [mas-bandwidth/nova-sprint](https://github.com/mas-bandwidth/nova-sprint), whose own command reference documents it.
+nova-work is pre-alpha: not ready for production use.
+
+Every issue of every repository of a GitHub organization in one tree file, with
+each issue's full contents, and a check that the file holds exactly what GitHub
+holds. The design is [SPEC-WORK-V1.md](SPEC-WORK-V1.md); this section is how to
+use it. It reads GitHub only (no GitLab, no Gitea), never writes to GitHub (the
+seam refuses any GraphQL document that is not a query), and captures the fields
+SPEC-WORK-V1 section 1.3 lists, not reactions or other timeline events.
+
+**Try it with no login.** `nova-work example --dir ./example` writes a minimal pair of tree files and a recorded GraphQL replay fixture. Run `nova-work verify --tree ./example/tree.lisp --against ./example/against.lisp` with no network or credentials: `VERIFY OK ... differences=0`, exit 0. `nova-work verify -h` also prints the tree's grammar and a minimal tree. Save that tree as `a.lisp`, copy it to `b.lisp` with
+`:archived true`, and run `nova-work verify --tree a.lisp --against b.lisp`: one
+`VERIFY DRIFT ... field=archived` line under `VERIFY FAIL`, exit 1.
+
+**First run against GitHub.** Needs `gh auth status` to pass and one repository
+you can read: export `ORG` and `REPO`, then run the three lines of the banner's
+`example:` block in a scratch directory (a dry run, the import to
+`./tree.lisp`, the verify). The executed transcript of that sitting, with every
+line of output, is in [TESTS.md](TESTS.md#nova-work).
+
+**Output.** One result per run: `IMPORT OK`, `VERIFY OK`, `VERIFY FAIL` (exit 1,
+the differences as `VERIFY MISSING`, `EXTRA` or `DRIFT` lines, values quoted),
+or `<VERB> REFUSED: <why>; run: <next command>` (exit 2). `--json` prints the
+same result as one JSON object.
+
+### import
+
+Reads every issue of `--org` (or of each `--repo`) through your `gh` login,
+read-only, and writes one local tree file, `--out`, only after the encoded tree
+has read back equal to what was fetched. `--dry-run` is not offline: it reads
+GitHub exactly as the import does (every issue, the same calls), checks the
+round trip, and writes nothing. A dry run costs what the import costs:
+`IMPORT PLAN` names `est_calls`, and `--max-calls` (default 1500) refuses a plan
+past it before any issue is read.
+
+### verify
+
+Reads the tree and GitHub again and writes nothing: zero differences is
+`VERIFY OK ... differences=0`, the receipt that the tree holds what GitHub
+holds. `--against <tree>` puts a second tree file where GitHub stands and reads
+no network at all.
+
+### example
+
+Writes a minimal pair of tree files (`tree.lisp`, `against.lisp`) and a recorded
+GraphQL import replay fixture (`call-01.json`, `call-02.json`) under `--dir`.
+These allow running `nova-work verify` and `nova-work import` offline without `gh`
+credentials or network access:
+
+```
+nova-work example --dir <dir> [--replace]
+```
+
+### roadmap check, list, add, remove, pull, done, note, render
+
+```
+nova-work roadmap check  [--repo <dir>]
+nova-work roadmap list   [--repo <dir>] [--file roadmap|fixes] [--release <v> | --group <g>] [--state <s>] [--text <t>] [--max <n>]
+nova-work roadmap add    [--repo <dir>] --id <id> (--release <v> | --group <g>) --title <t> [--text <t>] --origin <o> [--status planned|in-progress] [--why <w>]
+nova-work roadmap remove [--repo <dir>] --id <id>...
+nova-work roadmap pull   [--repo <dir>] --id <id>... (--release <v> | --group <g>)
+nova-work roadmap done   [--repo <dir>] --id <id>... --evidence <PR #n | commit>
+nova-work roadmap note   [--repo <dir>] --id <id>... [--text <t>] [--title <t>]
+nova-work roadmap render [--repo <dir>] | --file <data.sexp> --out <page.md> [--source <name>]
+```
+
+Edit and read a repository's own work record: `docs/roadmap.sexp` (rendered to
+`ROADMAP.md`) and `docs/fixes.sexp` (rendered to `FIXES.md`), in the shapes of
+`pkg/roadmap`. Every writing verb edits the data, decodes it again, and
+writes the data and its page in the same step, so neither is edited by hand and
+the sync tests (`TestRoadmapIsGeneratedFromTheSexp`,
+`TestFixesIsGeneratedFromTheSexp`) stay green. Every byte a verb does not change
+(comments, spacing, the other records) is kept; a removed record takes only its
+own trailing comment with it. `--id` repeats for more entries.
+
+The verbs read and write local files only: no GitHub call per entry. A batch of
+edits lands as one commit and one pull request, so GitHub sees an occasional push
+rather than one API call per item (the 2026-10-10 cleanup made about 1,000 calls,
+one per issue and pull request closed or moved, and tripped GitHub's secondary
+rate limit).
+
+- `check`: both files decode, no id stands in both, each page is what its data
+  renders. Exit 1, one `ROADMAP-CHECK FAILED` line per problem.
+- `list`: the entries, by file, release or group, state and words; `--json` is
+  one object with an `entry` item per entry (id, file, kind, place, state, title).
+- `add`: a roadmap item under `--group`, or a fix in `--release` (planned unless
+  `--status in-progress`). A duplicate id (in either file, groups and releases
+  included) is refused.
+- `remove`: the entries go.
+- `pull`: to `--release`, an item becomes a planned fix or a fix changes release;
+  to `--group`, a fix becomes an item or an item changes group.
+- `done`: a fix's status becomes `done`; an item moves to the roadmap's `:done`
+  list, dated today. `--evidence` (a pull request or a commit) is appended to the
+  text.
+- `note`: `--text` is appended to each entry's text; `--title` retitles it, and
+  the title it had is kept under `:kept` (`earlier-title`).
+
+A move across the two files, and `done` of an item, carries every field. A field
+the target shape has no key for is kept under the record's `:kept` as
+`<from>-<key>` (`item-why` on a fix, `fix-status` on an item), and a move back
+restores it, so roadmap -> fixes -> roadmap gives back the item it was.
+- `render`: writes the pages from the data; `--file` and `--out` render data kept
+  outside the repository whose page it is (a roadmap held in the private work
+  repository) through the same renderer.
+
+An entry is todo (a roadmap item), open (a fix, planned or in-progress) or done
+(an item on `:done`, a fix done or shipped), and its rules are modelled in
+[tla/RoadmapEntry.tla](../tla/RoadmapEntry.tla): done is final; a release whose
+status is shipped is frozen; every group and release keeps one entry, so a
+remove, pull or done that would empty one is refused; every entry names a group
+or release that is there. A pull across the two files writes the destination
+first, so a stop between the writes leaves the id in both files (check names
+it, every verb refuses until one copy is removed), never in neither. On a
+refusal (exit 2) nothing is written.
+
+The roadmap verbs of nova-sprint 8c87a4b (`roadmap check`, `add`, `remove`,
+`pull`, `note`) edited the private work record's `roadmaps/*.sexp` and were left
+out by the v1.2.3 re-seed. These verbs replace them, on the repository's own files.
+
+
+### A reader may read now
+
+`cannot ask` means no up unit may read the primary at its read tier. The next
+tick closes it with `a reader may read <card> now (<units>)` when an eligible
+reader exists, even while that reader waits for room. An unchanged eligible
+set raises at most one judgment per episode; losing eligibility starts a new one.
+`ask <card> --answers <j>` answers it when at least one read is dealt. With no
+eligible reader, ask names the reader reason and remedy. `rework`, `drop` and
+`wait` are also decisions; rework ends the attempt and closes the judgment.
+
+A `wait` on `cannot ask` quiets its reader condition until the requested review
+time; if no reader becomes eligible, that time raises one reminder. Eligibility
+still closes the wait earlier. The wait does not block an eligible read.
+
+`nova-sprint where` begins with `DECISIONS OWED n, oldest <age>; server-defaults applied this hour n; delivery faults n`. A delivery fault means an escalation still
+needs a successful bus receipt; it is not proof that the coordinator or owner saw
+anything. The server folds overdue decisions to the coordinator once per changed
+set and to the configured owner at most every 30 minutes while unchanged. Failed
+or ambiguous sends retry, including a renewed token after expiry. Safe defaults
+and the terminal sprint-done exemption are listed in SPEC-SPRINT.md, "Decisions owed".
+
+Server-default parked cards remain in DECISIONS OWED and folded escalation until
+released, even after their audit report is older than one hour. Their hold reason
+names server-default and the original judgment. Oldest decision age excludes
+STOPPED time. The owner lane sends at most once every 30 minutes after a successful
+receipt, including when the set changes; pending failed deliveries retain retries.

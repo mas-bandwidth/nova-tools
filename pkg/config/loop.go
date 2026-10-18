@@ -30,13 +30,13 @@ var NovaTools = []string{
 	"nova-bus", "nova-cairn", "nova-check", "nova-ci", "nova-config", "nova-decide",
 	"nova-doctor", "nova-friend", "nova-fuse", "nova-hook", "nova-local", "nova-memory", "nova-redis",
 	"nova-sandbox", "nova-secrets", "nova-self-talk", "nova-swarm", "nova-table",
-	"nova-tokens", "nova-up", "nova-update", "nova-version",
+	"nova-tokens", "nova-up", "nova-update", "nova-version", "nova-work",
 }
 
 // SprintTools are the programs the same release ships from nova-sprint's own
 // release (the split, v1.2.3: nova-update release build --sprint-release), not
 // from cmd/. A loop that runs one is asked like any other.
-var SprintTools = []string{"nova-card", "nova-sprint", "nova-work"}
+var SprintTools = []string{"nova-card", "nova-sprint"}
 
 // verbWord is a word that can be a verb: lower-case, a letter first. A path, a
 // flag or a value with any other character is no verb, and is never asked.

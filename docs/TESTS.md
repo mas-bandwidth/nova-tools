@@ -2,7 +2,7 @@
 
 Every `$` line under a `### First run` heading below is run by a test against the fixture named beside it, and what the tool prints is compared with what is written here by SHAPE: the two-token event prefix and the field names in order, per [docs/ONBOARDING.md](ONBOARDING.md) point 5(c). The values are deliberately not compared, so that this file stays a document instead of becoming a fixture -- but every block below was produced by RUNNING the tool, so the values are a run's own and not anybody's memory of one. [docs/CLI.md](CLI.md) explains the tools; this file is what they do today. Change a tool, change this file in the same commit, or the test says so.
 
-nova-sprint, nova-card and nova-work left this repository in v1.2.3; their first-run transcripts live in [mas-bandwidth/nova-sprint](https://github.com/mas-bandwidth/nova-sprint).
+nova-sprint and nova-card left this repository in v1.2.3; their first-run transcripts live in [mas-bandwidth/nova-sprint](https://github.com/mas-bandwidth/nova-sprint).
 
 ## Reading a block
 
@@ -1148,6 +1148,51 @@ $ nova-doctor run --check harness --json
 $ nova-doctor run --check nosuch
 ! RUN REFUSED: no check named "nosuch"; the checks are dashboard, friend-login, friend-row, friend-wall, gosdk, harness, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
 ```
+
+## nova-work
+
+Run by `cmd/nova-work/firstrun_test.go` against a recorded conversation with
+GitHub (`internal/workgh/testdata/reliable`: one public repository of twenty
+issues, read at fifteen a page), so no network is used and no process is
+started. `$ORG` and `$REPO` are yours: the test stands them for the recording's
+organization and repository, and the counts below are that repository's. `gh=`
+names the gh a run used; yours is the gh on your PATH, and here it is `./gh`,
+where the test says it found one, while every call is answered from the
+recording. The `sha256` is the tree file's, and the tree records the instant it
+was fetched, so it differs on every real run; the test passes a fixed time in
+so the value below reproduces. `./tree.lisp` is a file in a directory of the
+test's own. The usage banner's `example:` block is this same sitting, line for
+line.
+
+Requires: a gh login that can read the repository (`gh auth status`); import
+(the dry run too) and verify read GitHub through gh and write nothing there.
+
+### First run
+
+```text
+$ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
+IMPORT OK org=$ORG out=- repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65046 sha256=f310cfebb96d29ac1affee4673d7c5a88354351d939826b0cf0c34ee4c8c69f0 calls=3 points=3 rest=0 seconds=0.0 gh=./gh dry_run=true
+IMPORT PLAN repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
+IMPORT REPO repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
+IMPORT NOTE the dry run read GitHub as the import does (calls=3, read-only) and wrote nothing
+
+$ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp
+IMPORT OK org=$ORG out=./tree.lisp repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65046 sha256=f310cfebb96d29ac1affee4673d7c5a88354351d939826b0cf0c34ee4c8c69f0 calls=3 points=3 rest=0 seconds=0.0 gh=./gh
+IMPORT PLAN repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
+IMPORT REPO repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
+
+$ nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15
+VERIFY OK tree=./tree.lisp sha256=f310cfebb96d29ac1affee4673d7c5a88354351d939826b0cf0c34ee4c8c69f0 repos=1 issues=20 comments=74 calls=3 points=3 rest=0 seconds=0.0 differences=0 missing=0 extra=0 drift=0 gh=./gh
+```
+
+The dry run is not offline: it reads GitHub exactly as the import does (every
+issue, read-only, the same calls) and writes nothing, and its last line says so.
+`est_calls` is the calls the import will spend, checked against `max_calls`
+before any issue is read, and `out=-` says no file was written. The import
+prints the same plan, one `IMPORT REPO` per repository, and the `sha256` of the
+file it wrote; verify names the same `sha256`, and when the two differ it says
+`VERIFY FAILED` with one `VERIFY MISSING`, `EXTRA` or `DRIFT` line per difference.
+`differences=0` is the proof the tree holds what GitHub holds.
 
 ## One-shot lanes at parity (pkg/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
 

@@ -26,3 +26,4 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-up/` | set nova up on one machine: plan every step, then apply, from nothing to a first sprint | `go test ./cmd/nova-up` | `go test ./cmd/nova-up` |
 | `nova-update/` | binary release update CLI | `go test ./cmd/nova-update` | `go test ./cmd/nova-update` |
 | `nova-version/` | build identity and version CLI | `go test ./cmd/nova-version` | `go test ./cmd/nova-version` |
+| `nova-work/` | every issue of an organization's repositories in one tree file, verified field for field; a repository's roadmap and fixes edited as data | `go test ./cmd/nova-work` | `go test ./cmd/nova-work` |

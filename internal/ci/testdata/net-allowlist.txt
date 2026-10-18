@@ -15,3 +15,5 @@ cmd/nova-swarm/lint_test.go:21 url 2026-09-17 a github.com clone line in a card 
 cmd/nova-swarm/lint_test.go:61 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
 cmd/nova-swarm/lint_test.go:86 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
 cmd/nova-swarm/profile_test.go:93 url 2026-09-17 a github.com clone line in a log fixture, not a live call; predates the checker
+internal/roadmap/roadmap_test.go:280 url 2026-10-18 github.com pull and commit URLs as evidence strings matched by a regexp, not a live call; moved with nova-work from nova-sprint
+internal/workfile/version_test.go:29 url 2026-10-18 a github.com repository URL inside a tree-file fixture that Decode checks against its path, not a live call; moved with nova-work from nova-sprint

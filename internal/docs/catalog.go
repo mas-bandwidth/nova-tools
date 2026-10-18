@@ -49,6 +49,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-update", "binary release update CLI", "go test ./cmd/nova-update", "go test ./cmd/nova-update"),
 	E("cmd/nova-up", "set nova up on one machine: plan every step, then apply, from nothing to a first sprint", "go test ./cmd/nova-up", "go test ./cmd/nova-up"),
 	E("cmd/nova-version", "build identity and version CLI", "go test ./cmd/nova-version", "go test ./cmd/nova-version"),
+	E("cmd/nova-work", "every issue of an organization's repositories in one tree file, verified field for field; a repository's roadmap and fixes edited as data", "go test ./cmd/nova-work", "go test ./cmd/nova-work"),
 
 	// internal/
 	E("pkg/atomicfile", "atomic file write: standard-library rename beside the target", "go test ./pkg/atomicfile", "go test ./pkg/atomicfile"),
@@ -110,6 +111,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/pathcase", "the one case-folding probe pkg/sandbox and pkg/swarm share: whether a directory folds case, and the case-boundary path the fixture measures", "go test ./pkg/pathcase", "go test ./pkg/pathcase"),
 	E("pkg/pkgselect", "package selection, the shard deal and the test fan-out that CI and nova-ci local share", "go test ./pkg/pkgselect", "go test ./pkg/pkgselect"),
 	E("pkg/provbalance", "a model provider's balance read through the seat's key", "go test ./pkg/provbalance", "go test ./pkg/provbalance"),
+	E("internal/roadmap", "nova-work's roadmap editor: edits docs/roadmap.sexp and docs/fixes.sexp by splicing bytes and renders the pages in the same step (tla/RoadmapEntry.tla)", "go test ./internal/roadmap", "go test ./internal/roadmap"),
 	E("internal/record", "decision and execution records", "go test ./internal/record", "go test ./internal/record"),
 	E("pkg/readregular", "the one way to read a file a tool did not write: regular files only (links followed), size capped, FIFOs and devices refused by name", "go test ./pkg/readregular", "go test ./pkg/readregular"),
 	E("pkg/redisconn", "the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown", "go test ./pkg/redisconn", "go test ./pkg/redisconn"),
@@ -150,6 +152,8 @@ var DefaultCatalog = []Entry{
 	E("pkg/units", "the text and install of every unit a running sprint needs: a launchd agent or systemd user unit per kind, written by a verb and loaded through the caller's loader", "go test ./pkg/units", "go test ./pkg/units"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
 	E("internal/up", "nova-up's steps: the registry, the plan and apply of each step over a fake-able machine", "go test ./internal/up", "go test ./internal/up"),
+	E("internal/workfile", "nova-work's tree file: the canonical s-expression Encode, a strict Decode through pkg/sexp, and a field-for-field Diff (docs/SPEC-WORK-V1.md)", "go test ./internal/workfile", "go test ./internal/workfile"),
+	E("internal/workgh", "nova-work's read-only GitHub issue reader: GraphQL queries through gh into the tree model, budgeted, with a replay seam for tests", "go test ./internal/workgh", "go test -tags functional ./internal/workgh"),
 	E("internal/yield", "CI over work: a copy, a local test run or a sprint card's native launch steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/

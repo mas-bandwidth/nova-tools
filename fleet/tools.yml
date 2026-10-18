@@ -1,5 +1,5 @@
-# tools.yml: the build nova_version of the nova-tools checkout nova_source, with
-# nova-sprint, nova-card and nova-work taken from mas-bandwidth/nova-sprint's own
+# tools.yml: the build nova_version of the nova-tools checkout nova_source
+# (nova-work among its tools), with nova-sprint and nova-card taken from mas-bandwidth/nova-sprint's own
 # release, downloaded into nova_sprint_release (`gh release download <tag> -R
 # mas-bandwidth/nova-sprint -D <dir>`; the split, v1.2.3: verified against its
 # checksums, never compiled here; one SHA256SUMS per platform over both

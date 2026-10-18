@@ -106,7 +106,7 @@ func Tools(source string) ([]string, error) {
 
 // SprintReleaseFlag is --sprint-release, said once for build and cycle.
 const SprintReleaseFlag = "a directory holding one nova-sprint release as `gh release download <tag> -R <owner>/nova-sprint -D <dir>` writes it " +
-	"(<tool>_<tag>_<goos>_<goarch> and SHA256SUMS_<goos>_<goarch>): its tools (nova-sprint, nova-card, nova-work) are verified against " +
+	"(<tool>_<tag>_<goos>_<goarch> and SHA256SUMS_<goos>_<goarch>): its tools (nova-sprint, nova-card) are verified against " +
 	"its checksums and shipped in this release beside the ones built from --source, never compiled here"
 
 // sprintAsset is one tool of a nova-sprint release for one platform: the
@@ -120,8 +120,8 @@ const sprintReleaseRemedy = "download the nova-sprint release into an empty dire
 var sprintToolName = regexp.MustCompile(`^nova-[a-z0-9-]+$`)
 
 // sprintRelease reads one platform's tools out of a downloaded nova-sprint
-// release (the split, v1.2.3: nova-sprint, nova-card and nova-work left this
-// tree for the nova-sprint repository, and its own release builds them). Every
+// release (the split, v1.2.3: nova-sprint and nova-card left this tree for the
+// nova-sprint repository, and its own release builds them). Every
 // tool the platform's SHA256SUMS_<goos>_<goarch> lists must be there as
 // exactly one <tool>_<tag>_<goos>_<goarch> holding those bytes, every one of
 // the same tag, and none of them a tool --source builds: one name, one source.
