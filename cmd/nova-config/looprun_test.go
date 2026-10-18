@@ -203,6 +203,12 @@ func TestLoopRunSignalHelper(t *testing.T) {
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(t, err)
 	require.NoError(t, p.Signal(syscall.SIGTERM))
+	// kill(2) on itself returns before the signal is delivered: the runtime raises
+	// the default disposition from its signal thread, so a helper that returned here
+	// could finish its test and exit 0 first (both callers then read 0, about one run
+	// in twenty). It waits for the death the signal is, with no clock: the package's
+	// -timeout bounds it if a signal were ever lost.
+	select {}
 }
 
 // A command a signal ended is 128+N, env(1)'s status, never a made-up one: the
