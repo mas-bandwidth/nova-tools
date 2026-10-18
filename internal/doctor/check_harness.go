@@ -87,7 +87,7 @@ func checkHarness(ctx context.Context, env Env) Result {
 	}
 
 	if len(problems) > 0 {
-		return Result{Status: Fail, Evidence: strings.Join(problems, "; "), Fix: "run nova-friend install --as <friend> --harness <h> --dir <friend-dir> and set --config-dir <dir> for Claude one-shot rows"}
+		return Result{Status: Fail, Evidence: strings.Join(problems, "; "), Fix: "install the harness on PATH at a supported version, and give a Claude one-shot friend her config_dir on her row: nova-config friend set <friend> --config_dir <absolute dir>"}
 	}
 	if len(friends) == 0 {
 		return Result{Status: OK, Evidence: "no friend rows"}

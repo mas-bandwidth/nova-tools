@@ -31,7 +31,8 @@ func TestDoctorHarnessCheckNamesAFriendWhoseHarnessIsMissing(t *testing.T) {
 	result := checkHarness(context.Background(), fake)
 	assert.Equal(t, Fail, result.Status)
 	assert.Contains(t, result.Evidence, "claude is not on PATH")
-	assert.Contains(t, result.Fix, "nova-friend install")
+	assert.Contains(t, result.Fix, "nova-config friend set <friend> --config_dir")
+	assert.NotContains(t, result.Fix, "nova-friend", "the friend daemons are retired: no remedy names nova-friend")
 
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "claude"), []byte("fake"), 0o755))
 	version = "claude unknown"

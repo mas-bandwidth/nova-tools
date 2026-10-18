@@ -98,7 +98,7 @@ func TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline(t *testing.T) {
 	db := filepath.Join(slot, "data", "opencode", "opencode.db")
 	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
 	cmd := exec.Command(swarm.SQLiteBinary, db)
-	cmd.Stdin = strings.NewReader("CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n")
+	cmd.Stdin = strings.NewReader("CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER);\n")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "building the fixture store:\n%s", out)
 	// A `sqlite3` on PATH that never answers, ahead of the real one.

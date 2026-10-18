@@ -774,10 +774,12 @@ type decided struct {
 	err      error
 }
 
-// NewMeter is the member's one-second CPU sampler for its beat's load: the
-// machine's busy percent read in-process (Linux from /proc/stat, darwin from
-// top's CPU usage line over a second; hostload.Local), one sample a second
-// (hostload.Sampler.Run). A
+// NewMeter is the member's CPU sampler for its beat's load: the machine's busy
+// percent read in-process (Linux from /proc/stat, darwin from top's CPU usage
+// line over a second; hostload.Local), one sample a second on Linux, and on
+// darwin one second's sample every hostload.MeterEvery and none while the seat
+// runs nothing (hostload.Sampler.Run, SetIdle, set by Beat), the beats between
+// carrying the one-minute load average. A
 // beat always carries --load (docs/SPEC-SPRINT.md, the fleet, the beat), so the
 // sampler is the member's one meter, run apart from the pass.
 func NewMeter() *hostload.Sampler {
@@ -1048,6 +1050,14 @@ func (m *Member) Beat() error {
 		var pct float64
 		var ok bool
 		if m.cfg.Meter != nil {
+			// a seat running nothing reads no CPU meter (hostload.Sampler.SetIdle: darwin's is a
+			// top a second); the beat then carries the one-minute load average. The word is this
+			// member's own live set: a reader on the same machine running reads leaves it idle, so
+			// the beat carries the average while the reader loads the machine. The average still
+			// rises with that load, and the deal reads no load; only the loaded-grace window and
+			// the pegged judgment read it.
+			live := m.live.Load()
+			m.cfg.Meter.SetIdle(live == nil || *live == "-")
 			if pct, total, ok = m.cfg.Meter.Peak(m.beaten); !ok {
 				pct, ok = m.cfg.Meter.Load1Percent()
 			}

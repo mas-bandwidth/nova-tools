@@ -74,9 +74,22 @@ const nativeBusyShare = 10
 // its own reading.
 const nativeLogDribble = 4096
 
-// nativeIdlePoll is how often the log's size is re-read: short enough that the end lands near the window rather than a tick past
-// it, and cheap because it is one stat of one file.
-const nativeIdlePoll = 100 * time.Millisecond
+// nativeIdlePoll is how often the log's size is re-read: the end lands within a second of
+// the window, which is a 300 s one. At 100 ms it was 3,000 stats a window per running card,
+// and past the window a listing of the job directory every 100 ms until the child exited
+// (FindCardResult; 2026-10-17).
+const nativeIdlePoll = time.Second
+
+// nativeSnapshotEvery is how often the watch reads the process table for the tree's CPU:
+// batch's coarse poll (activityInterval, at most 5 s), and no oftener than every 15 s where
+// the window is long enough to hold four of those. A snapshot is the whole table (on Linux a
+// /proc listing and a read of every /proc/N/stat), taken per running card. The busy bar is
+// not raised with the span: a tree must spend a tenth of batch's poll since the last reading
+// (0.5 s in the default window), as it did when the reading came every 5 s (IdleWatch's
+// treeMoved).
+func nativeSnapshotEvery(idle time.Duration) time.Duration {
+	return max(activityInterval(idle), min(15*time.Second, idle/4))
+}
 
 // IdleEnd is one card ended by the watch: how long it had been still, the step it had
 // reached, and -- when the card's own output named one it never moved past -- the refusal
@@ -198,6 +211,32 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 		var lastSample time.Time
 		var cpu uint64
 		var haveCPU bool
+		// treeMoved reads the process table at at and says whether the tree worked since the
+		// last reading: it lost a process, or it spent a tenth (nativeBusyShare) of the span
+		// or of batch's poll (activityInterval), whichever is shorter. The bar stays what it
+		// was at a 5 s poll (0.5 s in the default window): measured against a 15 s span it
+		// was 1.5 s, and a card behind the shell cap inside one tool call that ran
+		// `gh pr checks` every 10 s at ~0.6 s of CPU each never showed it, and was reaped
+		// while it worked (the cold read of PR 5953).
+		treeMoved := func(at time.Time) bool {
+			span := at.Sub(lastSample)
+			lastSample = at
+			s := snap()
+			if s == nil || w.Pid <= 0 {
+				return false
+			}
+			got, ok := s.TreeCPU(w.Pid)
+			if !ok {
+				return false
+			}
+			grew := haveCPU && got > cpu
+			shrank := haveCPU && got < cpu
+			prev := cpu
+			cpu, haveCPU = got, true
+			// A tree that LOST a process did work: the process was alive, it was charged,
+			// and its departure is not stillness.
+			return shrank || (grew && got-prev >= uint64(min(span, activityInterval(w.Idle)))/nativeBusyShare)
+		}
 		// lastSpend is the accounting the watch last saw, with haveSpend saying one has
 		// been seen: the base a rise is measured from, never a reset on its own.
 		var lastSpend int
@@ -232,26 +271,14 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 					// answer the tree's CPU reading below like any other quiet card.
 					lastSize = size
 				}
-				// A silent log is not a silent card. The tree's CPU is read on
-				// the coarse poll batch uses, and the same one-percent-of-the-interval share
-				// separates a working tree from a sleeping one's bookkeeping.
-				if at.Sub(lastSample) >= activityInterval(w.Idle) {
-					span := at.Sub(lastSample)
-					lastSample = at
-					if s := snap(); s != nil && w.Pid > 0 {
-						if got, ok := s.TreeCPU(w.Pid); ok {
-							grew := haveCPU && got > cpu
-							shrank := haveCPU && got < cpu
-							prev := cpu
-							cpu, haveCPU = got, true
-							// A tree that LOST a process did work: the process was alive,
-							// it was charged, and its departure is not stillness.
-							if shrank || (grew && got-prev >= uint64(span)/nativeBusyShare) {
-								lastGrow = at
-								continue
-							}
-						}
-					}
+				// A silent log is not a silent card. The tree's CPU is read every
+				// nativeSnapshotEvery (15 s in the default window), and a tree that spent a
+				// tenth of batch's poll (0.5 s in the default window) since the last reading
+				// is working (treeMoved), which separates a working tree from a sleeping one's
+				// bookkeeping.
+				if at.Sub(lastSample) >= nativeSnapshotEvery(w.Idle) && treeMoved(at) {
+					lastGrow = at
+					continue
 				}
 				// THE SHELL CAP (docs/roadmap.sexp, swarm-idle-reap-verdict): the harness
 				// caps what a shell tool prints, so a working card's log can stay silent
@@ -274,6 +301,14 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 				// A CARD THAT ALREADY PUBLISHED IS FINISHING, NOT IDLE: its
 				// report is on disk and the end would only race the write.
 				if _, published := FindCardResult(w.Job); published {
+					continue
+				}
+				// ONE FRESH READING BEFORE THE END (after the published check, which a finishing
+				// card answers every poll until it exits): the last may be up to nativeSnapshotEvery
+				// old, and a tree still for most of the window that began working since it
+				// is not idle.
+				if at.After(lastSample) && treeMoved(at) {
+					lastGrow = at
 					continue
 				}
 				end := IdleEnd{Idle: at.Sub(lastGrow), Step: w.Reader.Step()}

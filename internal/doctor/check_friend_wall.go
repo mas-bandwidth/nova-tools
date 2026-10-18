@@ -46,7 +46,7 @@ func checkFriendWall(ctx context.Context, env Env) Result {
 	}
 	if len(bad) > 0 {
 		return Result{Status: Fail, Evidence: strings.Join(bad, "; "),
-			Fix: "move --dir beside the self (a sibling directory), never inside it: nova-friend install --as <friend> --dir <sibling>"}
+			Fix: "the friend daemons are retired (2026-10-17; nova-hook is the friend channel): boot this daemon out and remove its unit; a lane --dir goes beside the self (a sibling directory), never inside it"}
 	}
 	return Result{Status: OK, Evidence: fmt.Sprintf("%d friend daemons write outside the wall", len(daemons))}
 }

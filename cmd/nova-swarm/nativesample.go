@@ -73,10 +73,15 @@ const SampleRiseFloor = 100
 type liveSampler struct {
 	dataHome string
 	interval time.Duration
-	// now is the clock and read the one read (swarm.ReadJobUsageLiveWithin); nil is each
-	// one's own, a test gives its fakes.
+	// now is the clock and read the one read (the sampler's own swarm.LiveUsage, which
+	// reads only what may have changed since its last, and every tenth read whole); nil is
+	// each one's own, a test gives its fakes.
 	now  func() time.Time
 	read func(dataHome string, limit time.Duration) (swarm.ProviderUsage, error)
+	live swarm.LiveUsage
+	// turnLog counts logPath's assistant lines as the log grows (swarm.LogTurns): touched
+	// only by the loop's goroutine, one read at a time.
+	turnLog swarm.LogTurns
 	// THE BUDGETS THIS SAMPLER WATCHES. tokens/unmetered belong to the token budget, worker
 	// carries the card budget's max_turns and max_cache_read, and logPath is the capture the turn count is
 	// asked of -- `<job>/harness-output.log` on this route and never `harness.log`.
@@ -163,12 +168,13 @@ func (s *liveSampler) clock() time.Time {
 	return time.Now()
 }
 
-// reader is the one read: the sampler's own, else rule 13d's live read.
+// reader is the one read: the sampler's own, else rule 13d's live read, kept from read to
+// read (swarm.LiveUsage).
 func (s *liveSampler) reader() func(string, time.Duration) (swarm.ProviderUsage, error) {
 	if s.read != nil {
 		return s.read
 	}
-	return swarm.ReadJobUsageLiveWithin
+	return s.live.Read
 }
 
 // readLimit is what the next read is given: four times the slowest answered read, never
@@ -272,7 +278,7 @@ func (s *liveSampler) readOnce() {
 	// fewer", and on this route the log is `<job>/harness-output.log`.
 	turns := 0
 	if err == nil && s.worker != nil && s.worker.HasCardBudget() {
-		turns = swarm.CountCardTurnsIn(s.logPath, usage)
+		turns = max(s.turnLog.Count(s.logPath), usage.Turns) // swarm.CountCardTurnsIn, read as it grows
 	}
 	s.fold(usage, err, turns)
 }

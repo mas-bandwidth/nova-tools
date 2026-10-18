@@ -157,13 +157,11 @@ nova_seat_tick_deadline: 60s
 nova_seat_beat_within: 60
 nova_seat_hold: []
 # The launchd agents directory the seat play reads and the launchctl it
-# runs, the system-domain LaunchDaemons directory (a member in the system
-# domain), and how long it waits for a stale friend daemon's lanes to put
-# their cards down when its plist sets no ExitTimeOut (seconds).
+# runs, and the system-domain LaunchDaemons directory (a member in the system
+# domain).
 nova_seat_agents_dir: "{{ nova_home }}/Library/LaunchAgents"
 nova_seat_daemons_dir: /Library/LaunchDaemons
 nova_launchctl: launchctl
-nova_seat_friend_drain: 180
 
 # One nova-sprint live read's flags, defined once per platform for every play
 # that reads live (docs/SPEC-RELEASE.md, "Adopting a build"): on Darwin live
@@ -193,16 +191,3 @@ nova_seat_live_flags: "{{ nova_seat_live_flags_darwin if ansible_system == 'Darw
 # nova-sprint and nova-swarm member to be gone before it migrates (seconds).
 nova_seat_rollback_dir: "{{ nova_release_dir }}/adopt-rollback"
 nova_seat_quiet: 60
-
-# The coordinator's self a friend's lane wall never writes inside (nova-friend install
-# --deny-self), for a friend whose plist records none; the seat play passes it to the
-# reinstall. Empty (the default) leaves the daemon's own default: the seat's working root,
-# <home>/<seat>-working. A friend's plist that already records --deny-self keeps its own.
-nova_friend_deny_self: ""
-
-# What a friend's lane wall lets its harness read beyond the system roots (nova-friend install
-# --wall-reads), for a friend whose plist records none; the seat play passes it to the reinstall.
-# A pinned harness whose shim lives under the home (~/.local/bin/opencode execs ~/nova-bench/<harness_dir>)
-# needs its directory here or every lane exits 126 (Operation not permitted). Set it in the host's
-# host_vars; empty (the default) adds nothing. A friend's plist that already records --wall-reads keeps its own.
-nova_friend_wall_reads: ""

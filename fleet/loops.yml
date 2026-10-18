@@ -67,7 +67,9 @@
     # periodic row this play adds beside the records, its --root each root a
     # record's argv names (--root <dir> or --root=<dir>), then
     # nova_disk_guard_args. A record named disk-guard on the host takes its
-    # place; nova_disk_guard false leaves it out.
+    # place; nova_disk_guard false leaves it out. On darwin it names
+    # --logs ~/Library/Logs, where the launchd agents above log (only the nova-*.log
+    # there are its own); ~/nova-bench/loops holds no darwin log.
     loop_guard_roots: >-
       {%- set out = [] -%}
       {%- for r in nova_loops -%}
@@ -78,7 +80,7 @@
       {%- endfor -%}
       {{ out | unique | list }}
     loop_guard_argv: >-
-      {%- set out = ['nova-swarm', 'disk-guard'] -%}
+      {%- set out = ['nova-swarm', 'disk-guard'] + (['--logs', '~/Library/Logs'] if loop_darwin else []) -%}
       {%- for r in loop_guard_roots -%}{%- set _ = out.extend(['--root', r]) -%}{%- endfor -%}
       {{ out + nova_disk_guard_args }}
     loop_guard:

@@ -15,84 +15,94 @@ import (
 )
 
 // tools_test.go pins the friend step of fleet/tools.yml (docs/FLEET.md, the
-// tools play; fleet/seat-friend.yml): the adopt reinstalls the friend daemons
-// the friends table places on a host, the ones launchd holds, and removes the
-// unit of a friend who no longer lives there. A friend who moved hosts leaves
-// her old unit installed and not loaded — live lists it stale with
-// why="not loaded" (cmd/nova-sprint/adopt_live.go, liveAgent.Stale) — so the
-// step separates the stale friends launchd holds (reinstalled with
-// seat-friend.yml) from the stale friends it does not (their unit removed with
-// `nova-friend uninstall --as <friend>`, never reinstalled on the host she
-// left).
+// tools play). The friend daemons are retired (2026-10-17, the owner: nova-hook
+// is the one friend channel; every nova-friend process stopped, its launch agent
+// moved out, its binary deleted). The step used to reinstall every stale friend
+// daemon launchd still held (fleet/seat-friend.yml), so an orphan unit like
+// aurora's came back on the next deploy. Now it removes every friend daemon live
+// lists, loaded or not, stale or not, and installs or starts none.
 
 // friendPlay is one friend step of tools.yml: the play's name, the fact that
-// names the stale friends the host runs (selectattr('loaded')), the fact that
-// names the stale friends it does not (rejectattr('loaded')), and the fact that
-// names the seat hold.
+// names the friend daemons it removes, and the fact that names the seat hold.
 type friendPlay struct {
 	play     string
-	ran      string // the friends the host runs: reinstalled
-	gone     string // the friends who no longer live here: their units removed
+	gone     string // every friend daemon live lists on the host: removed
 	holdFact string
 }
 
-func TestFriendStepRemovesAMovedFriendsUnit(t *testing.T) {
+func TestFriendStepRemovesEveryFriendDaemonAndInstallsNone(t *testing.T) {
 	t.Parallel()
 	plays := readTools(t)
 	for _, fp := range []friendPlay{
-		{play: "the seat adopts the build", ran: "seat_friends", gone: "seat_friends_gone", holdFact: "nova_seat_hold"},
-		{play: "the friends of the fleet hosts reinstalled onto the installed build", ran: "ff_stale", gone: "ff_gone", holdFact: "nova_seat_hold"},
+		{play: "the seat adopts the build", gone: "seat_friends_gone", holdFact: "nova_seat_hold"},
+		{play: "the friend daemons of the fleet hosts removed", gone: "ff_gone", holdFact: "nova_seat_hold"},
 	} {
 		t.Run(fp.play, func(t *testing.T) {
 			t.Parallel()
 			play := playNamed(t, plays, fp.play)
 			tasks := flattenTasks(t, tasksOf(t, play))
 
-			// The stale friends are split by what launchd holds: the ones it
-			// holds are reinstalled, the ones it does not are the units of a
-			// friend who no longer lives here and are removed.
-			ran := varOf(t, play, tasks, fp.ran)
-			assert.Contains(t, ran, "selectattr('stale')", "%s is not the stale friends", fp.ran)
-			assert.Contains(t, ran, "selectattr('role', 'equalto', 'friend')", "%s is not the friend daemons", fp.ran)
-			assert.Contains(t, ran, "selectattr('loaded')", "%s is not the friends launchd holds, whom the host runs", fp.ran)
-			assert.Contains(t, ran, fp.holdFact, "%s does not keep the held labels out", fp.ran)
-
+			// Every friend daemon, not only the stale ones nor only the ones launchd
+			// does not hold: a loaded one is the orphan that came back.
 			gone := varOf(t, play, tasks, fp.gone)
-			assert.Contains(t, gone, "selectattr('stale')", "%s is not the stale friends", fp.gone)
-			assert.Contains(t, gone, "rejectattr('loaded')", "%s is not the friends launchd does not hold, who no longer live here", fp.gone)
+			assert.Contains(t, gone, "selectattr('role', 'equalto', 'friend')", "%s is not the friend daemons", fp.gone)
+			assert.NotContains(t, gone, "'stale'", "%s keeps a fresh friend daemon", fp.gone)
+			assert.NotContains(t, gone, "'loaded'", "%s keeps the friend daemons launchd holds or does not", fp.gone)
+			assert.Contains(t, gone, fp.holdFact, "%s does not keep the held labels out", fp.gone)
 
-			// The unit of a moved friend is removed with nova-friend
-			// uninstall, keyed on the friend live named.
-			removed := taskMatching(t, tasks, func(tool string, argv []string, loop string) bool {
-				return tool == "uninstall" && strings.Contains(loop, fp.gone)
-			})
-			require.NotNil(t, removed, "%s: no uninstall of %s: a moved friend's unit stays", fp.play, fp.gone)
-			command := strings.Join(argvOf(removed), " ")
-			assert.Contains(t, command, "nova-friend", "the unit is removed with nova-friend, not by hand")
-			assert.Contains(t, command, "uninstall", "the unit is removed, not reloaded")
-			assert.Contains(t, command, "--as", "uninstall names the friend")
-			assert.Contains(t, command, "item.friend", "uninstall names the friend live reported")
+			var bootout, unit map[string]any
+			for _, task := range tasks {
+				loop := asText(task["loop"])
+				if !strings.Contains(loop, fp.gone) {
+					continue
+				}
+				if argv := strings.Join(argvOf(task), " "); strings.Contains(argv, "bootout") {
+					bootout = task
+				}
+				if f, ok := task["ansible.builtin.file"].(map[string]any); ok && f["state"] == "absent" {
+					unit = task
+				}
+			}
+			// A daemon launchd holds is booted out; launchd holding none any more is the state wanted.
+			require.NotNil(t, bootout, "%s: no bootout of %s: a loaded friend daemon keeps running", fp.play, fp.gone)
+			assert.Equal(t, "{{ ("+fp.gone+" | selectattr('loaded') | list) if not ansible_check_mode else [] }}", asText(bootout["loop"]),
+				"%s: the bootout is not the loaded friend daemons, run only outside --check", fp.play)
+			assert.Contains(t, strings.Join(argvOf(bootout), " "), "item.target")
+			// Its plist is removed, so launchd never loads it again at login.
+			require.NotNil(t, unit, "%s: no removal of %s's plists: the unit stays installed", fp.play, fp.gone)
+			assert.True(t, removesOnlyOutsideCheck(asText(unit["loop"]), fp.gone),
+				"%s: the removal loop %q is not %s guarded by `if not ansible_check_mode else []`", fp.play, asText(unit["loop"]), fp.gone)
+			assert.Contains(t, fmt.Sprint(unit["ansible.builtin.file"]), "item.plist")
 
-			// The removal runs only on a real adopt, never under --check, which
-			// reports it instead: the loop is the gone list guarded by
-			// `not ansible_check_mode`, and the --check report is its twin.
-			assert.True(t, removesOnlyOutsideCheck(asText(removed["loop"]), fp.gone),
-				"%s: the removal loop %q is not %s guarded by `if not ansible_check_mode else []`", fp.play, asText(removed["loop"]), fp.gone)
+			// --check reports what it would remove.
 			var reported bool
 			for _, task := range tasks {
-				if strings.Contains(asText(task["loop"]), fp.gone) && task["when"] == "ansible_check_mode" {
+				if strings.Contains(asText(task["loop"]), fp.gone) && task["when"] == "ansible_check_mode" && strings.Contains(debugMsg(task), "WOULD-REMOVE") {
 					reported = true
 				}
 			}
 			assert.True(t, reported, "%s: no --check report (WOULD-REMOVE) of %s", fp.play, fp.gone)
 
-			// A friend the host runs is reinstalled, never removed.
-			reinstall := taskMatching(t, tasks, func(task string, argv []string, loop string) bool {
-				return task == "include_tasks" && strings.Contains(loop, fp.ran)
-			})
-			require.NotNil(t, reinstall, "%s: no reinstall of %s: a stale daemon the host runs is left stale", fp.play, fp.ran)
+			// Nothing installs, reinstalls, accepts or starts a friend daemon, and no
+			// step runs the retired nova-friend binary.
+			for _, task := range tasks {
+				assert.NotContains(t, fmt.Sprint(task), "nova-friend", "%s: task %q runs or names nova-friend", fp.play, asText(task["name"]))
+				_, include := task["ansible.builtin.include_tasks"]
+				assert.False(t, include && strings.Contains(fmt.Sprint(task), "seat-friend"), "%s: the friend reinstall is still included", fp.play)
+				for _, w := range []string{"bootstrap", "kickstart"} {
+					argv := strings.Join(argvOf(task), " ")
+					assert.False(t, strings.Contains(argv, w) && strings.Contains(asText(task["loop"]), fp.gone),
+						"%s: task %q %ss a friend daemon", fp.play, asText(task["name"]), w)
+				}
+			}
 		})
 	}
+	_, err := os.Stat("seat-friend.yml")
+	assert.True(t, os.IsNotExist(err), "fleet/seat-friend.yml, the friend reinstall, is gone")
+	raw, err := os.ReadFile("tools.yml")
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "nova-friend install", "no play installs a friend daemon")
+	assert.NotContains(t, string(raw), "/nova-friend'", "no play runs the retired nova-friend binary")
 }
 
 // removesOnlyOutsideCheck says loop is the list gone, emptied under --check:
@@ -198,37 +208,6 @@ func varOf(t *testing.T, play map[string]any, tasks []map[string]any, key string
 	return ""
 }
 
-// taskMatching is the first task where match says which tool it runs, its argv
-// and its loop expression. tool is the command's last word (uninstall,
-// install), or include_tasks for the include.
-func taskMatching(t *testing.T, tasks []map[string]any, match func(tool string, argv []string, loop string) bool) map[string]any {
-	t.Helper()
-	for _, task := range tasks {
-		tool, argv := "", []string{}
-		if cmd, ok := task["ansible.builtin.command"].(map[string]any); ok {
-			argv = argvOf(map[string]any{"ansible.builtin.command": cmd})
-			joined := strings.Join(argv, " ")
-			switch {
-			case strings.Contains(joined, "uninstall"):
-				tool = "uninstall"
-			case strings.Contains(joined, "install"):
-				tool = "install"
-			}
-		}
-		if _, ok := task["ansible.builtin.include_tasks"]; ok {
-			tool = "include_tasks"
-		}
-		if tool == "" {
-			continue
-		}
-		loop := asText(task["loop"])
-		if match(tool, argv, loop) {
-			return task
-		}
-	}
-	return nil
-}
-
 // argvOf is a command task's argv, the list of words it runs.
 func argvOf(task map[string]any) []string {
 	cmd, _ := task["ansible.builtin.command"].(map[string]any)
@@ -321,24 +300,6 @@ func debugMsg(task map[string]any) string {
 }
 
 // taskNamed is the first task whose name is exactly name.
-func readSeatFriend(t *testing.T) []map[string]any {
-	content, err := os.ReadFile("seat-friend.yml")
-	require.NoError(t, err)
-	var tasks []map[string]any
-	require.NoError(t, yaml.Unmarshal(content, &tasks))
-	return tasks
-}
-
-func findTaskNamed(t *testing.T, tasks []map[string]any, name string) map[string]any {
-	for _, task := range tasks {
-		if task["name"] == name {
-			return task
-		}
-	}
-	t.Fatalf("task %q not found", name)
-	return nil
-}
-
 func taskNamed(t *testing.T, tasks []map[string]any, name string) map[string]any {
 	t.Helper()
 	for _, task := range tasks {
@@ -433,40 +394,8 @@ func TestToolsPlayNeverCompilesATool(t *testing.T) {
 	}
 }
 
-// TestFriendHostInstallsAdoptedBuild: the friend host step of the friends play
-// installs the adopted build named in the config: it runs nova-friend install
-// from {{ nova_bin_dir }}/nova-friend.
-func TestFriendHostInstallsAdoptedBuild(t *testing.T) {
-	t.Parallel()
-	plays := readTools(t)
-	play := playNamed(t, plays, "the friends of the fleet hosts reinstalled onto the installed build")
-	tasks := flattenTasks(t, tasksOf(t, play))
-
-	// Find the include_tasks that references seat-friend.yml for the friends reinstall.
-	found := false
-	for _, task := range tasks {
-		if include, ok := task["ansible.builtin.include_tasks"].(string); ok {
-			if include == "seat-friend.yml" {
-				found = true
-				break
-			}
-		}
-	}
-	require.True(t, found, "the friend host step does not include seat-friend.yml")
-
-	// Read seat-friend.yml and assert the install command uses {{ nova_bin_dir }}/nova-friend.
-	seat := readSeatFriend(t)
-	installTask := findTaskNamed(t, seat, "friends: {{ seat_friend.friend }} is reinstalled with the flags its plist records")
-	cmd, ok := installTask["ansible.builtin.command"].(map[string]any)
-	require.True(t, ok, "seat-friend.yml reinstall task has no ansible.builtin.command")
-	argv, ok := cmd["argv"].(string)
-	require.True(t, ok, "seat-friend.yml reinstall task has no argv")
-	assert.Contains(t, argv, "nova_bin_dir", "seat-friend.yml install does not reference nova_bin_dir")
-	assert.Contains(t, argv, "nova-friend", "seat-friend.yml install does not reference nova-friend")
-}
-
 // TestToolsPlayChecksEveryInstalledToolAgainstTheRelease: after the install and
-// the friends' reinstall, a play on every host lists the bin directory with the
+// the friends' removal, a play on every host lists the bin directory with the
 // sha256 of each file, compares it with the release's SHA256SUMS, and refuses
 // the host whose tool differs, naming the step.
 func TestToolsPlayChecksEveryInstalledToolAgainstTheRelease(t *testing.T) {
@@ -477,12 +406,12 @@ func TestToolsPlayChecksEveryInstalledToolAgainstTheRelease(t *testing.T) {
 	play := plays[id]
 
 	assert.Equal(t, "all", play["hosts"], "a local build can be on any machine, the coordinator's included")
-	assert.Contains(t, play["tags"], "seat", "it runs wherever the friends' reinstall does, which assumes the build is installed")
+	assert.Contains(t, play["tags"], "seat", "it runs wherever the friends' removal does, which assumes the build is installed")
 
 	// It runs after everything that installs or reinstalls a tool.
 	install := playIndex(plays, "the build in ~/.local/bin on every machine")
 	seat := playIndex(plays, "the seat adopts the build")
-	friends := playIndex(plays, "the friends of the fleet hosts reinstalled")
+	friends := playIndex(plays, "the friend daemons of the fleet hosts removed")
 	require.True(t, install >= 0 && seat >= 0 && friends >= 0, "the install, seat and friends plays are in tools.yml")
 	assert.Greater(t, id, install)
 	assert.Greater(t, id, seat)
@@ -613,25 +542,6 @@ func TestVersionCheckFailsAnOlderRunningVersion(t *testing.T) {
 	assert.True(t, runsInstalled(true, false), "the installed version failed the check")
 }
 
-// TestFriendVersionCheckedAfterReinstall pins the friend half: the reinstall
-// reads the reinstalled daemon's running process (the manifest's stale in the
-// beat check), never the binary file's `version` verb. Bug 13 left friends
-// version-unread; their only post-install check was a beat, which now requires
-// not stale.
-func TestFriendVersionCheckedAfterReinstall(t *testing.T) {
-	t.Parallel()
-	b, err := os.ReadFile("seat-friend.yml")
-	require.NoError(t, err)
-	var tasks []map[string]any
-	require.NoError(t, yaml.Unmarshal(b, &tasks))
-	check := taskContaining(t, tasks, "is there exactly once, not stale")
-	assert.Contains(t, fmt.Sprint(check), "stale", "the friend's running process is checked, not the binary file")
-	raw := string(b)
-	assert.NotContains(t, raw, "version", "the friend's check never runs the binary file's version verb")
-	assert.Less(t, strings.Index(raw, "is reinstalled with the flags its plist records"),
-		strings.Index(raw, "is there exactly once, not stale"), "the running-process check follows the reinstall")
-}
-
 // TestAdoptionEndsWithOneTable pins the closing table: the last play prints one
 // row per host with the host, the version running, the members and readers up,
 // the harness present and the disk free. The play ended in per-step debug
@@ -655,68 +565,11 @@ func TestAdoptionEndsWithOneTable(t *testing.T) {
 // is printed whole: neither play cuts a cause at a fixed width.
 func TestRefusalCausesAreNotTruncated(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"tools.yml", "seat-friend.yml"} {
+	for _, name := range []string{"tools.yml"} {
 		b, err := os.ReadFile(name)
 		require.NoError(t, err)
 		assert.NotContains(t, string(b), "truncate(", "%s cuts a refusal's cause", name)
 	}
-}
-
-// TestSeatFriendAcceptanceRunFailsOnNonZeroExit pins the acceptance step in
-// seat-friend.yml: each friend placed on the host has a command task that runs
-// a probe card, registered with failed_when: false, followed by a separate
-// ansible.builtin.assert whose fail_msg names the friend, the exit code and the
-// log line when the lane exits non-zero.
-func TestSeatFriendAcceptanceRunFailsOnNonZeroExit(t *testing.T) {
-	t.Parallel()
-	b, err := os.ReadFile("seat-friend.yml")
-	require.NoError(t, err)
-	var tasks []map[string]any
-	require.NoError(t, yaml.Unmarshal(b, &tasks))
-
-	// Find the acceptance task (one that runs a probe card under the lane wall)
-	acceptanceTask := taskContaining(t, tasks, "acceptance")
-	require.NotNil(t, acceptanceTask, "seat-friend.yml has no acceptance task for each friend")
-
-	// The acceptance task should be a command that registers its result
-	cmd, ok := acceptanceTask["ansible.builtin.command"].(map[string]any)
-	require.True(t, ok, "acceptance task is not a command")
-
-	// The argv appends the plist's recorded flags WITHOUT the install verb:
-	// seat_friend.install is the whole install command including its verb (the
-	// reinstall step runs [<bin>/nova-friend] + seat_friend.install), so the
-	// acceptance argv appends seat_friend.install[1:] and its element 2 is a flag
-	// (--as), never the install positional the tool refuses at exit 2
-	// (docs/SPEC-FRIEND.md, the acceptance run: the flags the daemon runs with).
-	argv, ok := cmd["argv"].(string)
-	require.True(t, ok, "acceptance task has no argv")
-	const tail = "'acceptance'] + "
-	i := strings.Index(argv, tail)
-	require.GreaterOrEqual(t, i, 0, "acceptance argv does not append the recorded flags after the acceptance verb: %q", argv)
-	rest := argv[i+len(tail):]
-	assert.True(t, strings.HasPrefix(rest, "seat_friend.install[1:]"),
-		"acceptance argv appends the recorded flags without dropping the install verb, so element 2 is the install positional: %q", rest)
-
-	// Should register the result to read rc later
-	assert.Contains(t, acceptanceTask, "register", "acceptance task does not register its result")
-
-	// The acceptance task should have failed_when: false so it doesn't immediately fail
-	assert.Contains(t, acceptanceTask, "failed_when", "acceptance task has no failed_when")
-	assert.Equal(t, false, acceptanceTask["failed_when"], "acceptance task should not fail immediately on non-zero exit")
-
-	// There should be a separate assert task that checks the acceptance
-	assertTask := taskContaining(t, tasks, "acceptance: the lane ran")
-	require.NotNil(t, assertTask, "seat-friend.yml has no separate assert for the acceptance run")
-
-	// The assert should have a fail_msg that names the friend, exit code and log line
-	assertMsg, ok := assertTask["ansible.builtin.assert"].(map[string]any)
-	require.True(t, ok, "acceptance assert is not an assert task")
-	failMsg, ok := assertMsg["fail_msg"].(string)
-	require.True(t, ok, "acceptance assert has no fail_msg")
-	assert.Contains(t, failMsg, "seat_friend.friend", "acceptance fail_msg does not name the friend")
-	assert.Contains(t, failMsg, "seat_acceptance.rc", "acceptance fail_msg does not name the exit code")
-	assert.Contains(t, failMsg, "stdout", "acceptance fail_msg does not name the output line")
-	assert.Contains(t, failMsg, "stderr", "acceptance fail_msg does not name the output line")
 }
 
 // TestLiveManifestFlagsArePerPlatform pins the one live manifest command per
@@ -740,7 +593,7 @@ func TestLiveManifestFlagsArePerPlatform(t *testing.T) {
 	plays := readTools(t)
 	for _, read := range []struct{ play, key string }{
 		{"the build in ~/.local/bin on every machine", "tools_live"},
-		{"the friends of the fleet hosts reinstalled onto the installed build", "seat_live"},
+		{"the friend daemons of the fleet hosts removed", "seat_live"},
 		{"the adoption table", "seat_live"},
 	} {
 		t.Run(read.play, func(t *testing.T) {

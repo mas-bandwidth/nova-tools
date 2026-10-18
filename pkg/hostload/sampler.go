@@ -40,15 +40,46 @@ func (r *Ring) MaxSince(count uint64) (float64, bool) {
 	return m, true
 }
 
-// Sampler takes the machine's busy percent once a second into a Ring. Its readings
-// are the Source's: ProcStat counters (the percent between two readings), else
-// CPUSecond (a meter that takes its own second). Safe for use from the goroutine that
-// runs it and the one that reads it.
+// Sampler takes the machine's busy percent into a Ring. Its readings are the Source's:
+// ProcStat counters (the percent between two readings, once a second), else CPUSecond (a
+// meter that takes its own second and costs a process, read once every MeterEvery and
+// never while the caller says the seat is idle: SetIdle). Safe for use from the goroutine
+// that runs it and the one that reads it.
 type Sampler struct {
 	src  Source
 	mu   sync.Mutex
 	prev *Ticks
 	ring Ring
+	idle bool // the caller's word that nothing runs on this seat (SetIdle)
+	// now and after are Run's clock, nil for the wall's: a test's fake.
+	now   func() time.Time
+	after func(time.Duration) <-chan time.Time
+}
+
+// MeterEvery is how often Run reads a CPUSecond source (darwin's top, a process that runs
+// for a second): one second's sample every RingSize seconds. That is about one in each ten
+// seconds the fleet's load cell shows the highest of, not one in every such window: the beat
+// goes every 3 s, so two beats that carry a sample can be 13 s apart, and every beat between
+// carries Load1Percent, a free sysctl. Read back to back, top cost a Mac seat 0.33 s of CPU
+// every 1.35 s, about a quarter of a core around the clock and 44 spawns a minute
+// (a Mac bench, 2026-10-17).
+const MeterEvery = RingSize * time.Second
+
+// SetIdle is the caller's word that nothing runs on this seat (idle) or that something
+// does: while idle, Run reads no CPUSecond source at all, and the beat carries the
+// one-minute load average (Load1Percent). A ProcStat source is a file read and is read
+// whatever the word.
+func (s *Sampler) SetIdle(idle bool) {
+	s.mu.Lock()
+	s.idle = idle
+	s.mu.Unlock()
+}
+
+// Idle is the word SetIdle last gave; false until it is given.
+func (s *Sampler) Idle() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.idle
 }
 
 // NewSampler is a Sampler over src with nothing sampled yet.
@@ -119,18 +150,33 @@ func (s *Sampler) Load1Percent() (float64, bool) {
 	return LoadPercent(l, s.src.NCPU), true
 }
 
-// Run steps once a second until ctx ends. A source that takes its own second sets the
-// pace; one that does not is waited on for the rest of the second.
+// Run steps until ctx ends: a ProcStat source once a second; a CPUSecond source once
+// every MeterEvery, and not at all while the seat is idle (SetIdle), when it looks again
+// each second for the word to change.
 func (s *Sampler) Run(ctx context.Context) {
 	if s.src.CPUSecond == nil && s.src.ProcStat == nil {
 		return
 	}
+	now, after := s.now, s.after
+	if now == nil {
+		now = time.Now
+	}
+	if after == nil {
+		after = time.After
+	}
 	for ctx.Err() == nil {
-		began := time.Now()
-		s.Step()
+		began := now()
+		pace := time.Second
+		switch {
+		case s.src.CPUSecond == nil:
+			s.Step()
+		case !s.Idle():
+			s.Step()
+			pace = MeterEvery
+		}
 		select {
 		case <-ctx.Done():
-		case <-time.After(time.Second - time.Since(began)):
+		case <-after(pace - now().Sub(began)):
 		}
 	}
 }
