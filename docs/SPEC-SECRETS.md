@@ -107,6 +107,8 @@ makes the store backed up, reviewable and portable. The boundary is the private 
 *decrypt leaves no record anywhere*: neither the store, nor git, nor this tool can say who
 opened what, or when, so nobody may build a belief on an audit trail that does not exist.
 
+A long-running fleet loop receives its secret only through `secret_files`: the unit's environment names the path to a 0600 file and never carries the secret value. The sprint-server loop record moves to this form after `v17-store-secret-never-in-process-env` lands.
+
 ## The verbs
 
 ```

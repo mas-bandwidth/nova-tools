@@ -289,6 +289,9 @@ func readFleetSource(t *testing.T, root string, invs map[string]*config.AnsibleI
 	for _, f := range jsonFields(config.InventoryLoop{}) {
 		src.loopFields[f] = true
 	}
+	// secret_files is an optional fleet-play extension to the typed loop
+	// inventory: it carries only paths for placed secrets, never values.
+	src.loopFields["secret_files"] = true
 	return src, groups
 }
 
@@ -385,6 +388,7 @@ func TestFleetPlaysRuleReadsTheShapes(t *testing.T) {
 			s.templates["nova-loop.service.j2"] += "{{ loop_become }}\n"
 		}, "reads loop_become"},
 		{"record field", func(s *fleetSource) { s.templates["nova-loop.plist.j2"] += "{{ l.interval }}\n" }, "reads l.interval"},
+		{"unregistered optional record field", func(s *fleetSource) { delete(s.loopFields, "secret_files") }, "reads l.secret_files"},
 		{"fact not gathered", func(s *fleetSource) { s.templates["nova-loop.plist.j2"] += "{{ ansible_hostname }}\n" }, "reads ansible_hostname"},
 		{"unknown group", func(s *fleetSource) {
 			s.plays["redis.yml"] = []byte(strings.Replace(string(s.plays["redis.yml"]), "hosts: store_deployer", "hosts: deployers", 1))
