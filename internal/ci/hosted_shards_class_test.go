@@ -41,7 +41,7 @@ const hostedDealStep = "deal this shard's packages"
 // leg was cancelled at 123 s (reader measurement, #4421 round 2); cmd/nova-swarm
 // is the one heavy command left (the git bus, 46.4 s -short, is removed).
 // ci.yml's deal step spells the same list.
-var hostedHeavy = []string{"cmd/nova-swarm", "internal/ci", "internal/docs"}
+var hostedHeavy = []string{"cmd/nova-swarm", "cmd/nova-sandbox", "internal/ci", "internal/docs"}
 
 type hostedMatrix struct {
 	OS      []string         `yaml:"os"`
