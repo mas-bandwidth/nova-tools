@@ -85,18 +85,18 @@ type ended struct {
 const cleanQueue = 1024
 
 // cleaner starts the runner's queue of launches to clean and the one goroutine that works
-// it, for as long as the process lives; with no tagged launch waiting, every lazyEvery it
-// does a bounded round of its lazy work (lazyclean.go).
+// it, for as long as the process lives; with no tagged launch waiting it does a bounded
+// round of its lazy work, each round setting when the next comes (lazyclean.go).
 func (r *nativeRunner) cleaner() {
 	r.tagged = make(chan ended, cleanQueue)
 	go func() {
-		lazy := time.NewTicker(lazyEvery)
+		lazy := time.NewTimer(lazyEvery)
 		for {
 			select {
 			case e := <-r.tagged:
 				r.clean(e)
 			case now := <-lazy.C:
-				r.lazy(now)
+				lazy.Reset(r.lazy(now))
 			}
 		}
 	}()

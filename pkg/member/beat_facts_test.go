@@ -61,3 +61,23 @@ func TestABeatAnOldSprintRefusesForItsFactsGoesAgainWithout(t *testing.T) {
 		"fleet beat m --stop-returns 0 --load 0.0",
 	}, old.calls)
 }
+
+// TestABeatTellsTheMeterWhetherTheSeatRunsAnything (2026-10-17): darwin's meter is a top a
+// second, a quarter of a core of a seat that runs nothing. The beat tells the meter the seat
+// is idle while the last pass's live set is empty (or no pass has left one), and busy while
+// it names a card, so the meter reads nothing when there is nothing to measure.
+func TestABeatTellsTheMeterWhetherTheSeatRunsAnything(t *testing.T) {
+	t.Parallel()
+	meter := hostload.NewSampler(hostload.Source{})
+	g := newWidthRig(1, Config{As: "m", Meter: meter, Now: func() time.Time { return time.Unix(1000, 0) }})
+	require.NoError(t, g.m.Beat())
+	require.True(t, meter.Idle(), "before any pass: nothing runs")
+	busy := "c1@1"
+	g.m.live.Store(&busy)
+	require.NoError(t, g.m.Beat())
+	require.False(t, meter.Idle(), "a live card: the meter reads")
+	none := "-"
+	g.m.live.Store(&none)
+	require.NoError(t, g.m.Beat())
+	require.True(t, meter.Idle(), "the empty live set: idle again")
+}

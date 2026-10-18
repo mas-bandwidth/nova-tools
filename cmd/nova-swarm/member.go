@@ -595,7 +595,8 @@ type nativeRunner struct {
 	epoch      atomic.Uint64
 	oldFailed  map[string]bool
 	cache      gocache.Trim
-	cacheLimit int64 // --gocache-limit in bytes; 0 is gocache.Limit
+	cacheAt    time.Time // when the cache was last measured whole (lazyclean.go); zero: never
+	cacheLimit int64     // --gocache-limit in bytes; 0 is gocache.Limit
 }
 
 // stageTimeout is native's --stage-timeout for each launch: the member's --stage-wall, else
