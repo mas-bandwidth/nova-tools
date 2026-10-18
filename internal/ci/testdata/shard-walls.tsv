@@ -34,6 +34,7 @@ cmd/nova-hook	0.0	@local	-
 cmd/nova-local	0.0	@run37518625834	self-hosted
 cmd/nova-memory	0.6	@run37518625834	self-hosted
 cmd/nova-redis	0.5	@run37518625834	self-hosted
+cmd/nova-roadmap	0.2	@local	-
 cmd/nova-sandbox	7.0	@local	-
 cmd/nova-secrets	3.3	@run37517528825	self-hosted
 cmd/nova-self-talk	6.9	@run37518625834	self-hosted
@@ -173,6 +174,7 @@ tools/newrule	0.0	@run37411066588	self-hosted
 tools/newverb	0.0	@run37411066588	self-hosted
 tools/notes20261002	0.1	@local	-
 tools/preflight	0.2	@local	-
+tools/roadmap	0.0	@run39129433661	self-hosted
 tools/sandboxcheck	0.1	@local	-
 tools/sessiontrace	0.1	@local	-
 tools/testmanifest	0.0	@run37411066588	self-hosted

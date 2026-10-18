@@ -775,6 +775,25 @@ REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20da
 ```
 
 
+## nova-roadmap
+
+### First run
+
+With the binary alone, in an empty directory: `example` writes a starter
+`docs/roadmap.sexp`, `render` writes `ROADMAP.md` from it, and `check` is the
+drift gate a repository's CI runs. `cmd/nova-roadmap/firstrun_test.go` runs
+each `$` line in `t.TempDir()`, so the `./` paths are a fresh directory per run.
+
+```text
+$ nova-roadmap example --out ./docs/roadmap.sexp
+EXAMPLE OK file=./docs/roadmap.sexp
+EXAMPLE NOTE next: nova-roadmap render --file ./docs/roadmap.sexp
+$ nova-roadmap render --file ./docs/roadmap.sexp --out ./ROADMAP.md
+RENDER OK kind=roadmap items=2 file=./ROADMAP.md
+$ nova-roadmap check --file ./docs/roadmap.sexp --out ./ROADMAP.md
+CHECK OK kind=roadmap items=2 file=./ROADMAP.md
+```
+
 ## nova-config
 
 No database: the first run keeps its rows in `./try.json` (`--file`), the
