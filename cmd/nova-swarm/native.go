@@ -351,6 +351,9 @@ func nativeChildEndTail(stderr string, max int) string {
 	if stderr == "" {
 		return "none"
 	}
+	// One trailing newline is not a line: trimming it before the split keeps
+	// twenty terminated lines twenty lines rather than twenty-one.
+	stderr = strings.TrimSuffix(stderr, "\n")
 	lines := strings.Split(stderr, "\n")
 	if len(lines) > 20 {
 		lines = lines[len(lines)-20:]
@@ -369,18 +372,25 @@ func nativeChildEndTail(stderr string, max int) string {
 	return cutTailToFit(strings.Join(lines, "\n"), max)
 }
 
-// cutTailToFit is the largest prefix of raw whose escape fits in max bytes.
+// cutTailToFit is the largest suffix of raw whose escape fits in max bytes. The
+// cut starts on a UTF-8 rune boundary, so no rune and no escape is split.
 func cutTailToFit(raw string, max int) string {
 	lo, hi := 0, len(raw)
 	for lo < hi {
-		mid := (lo + hi + 1) / 2
-		if len(oneline.Escape(raw[:mid])) <= max {
-			lo = mid
+		mid := lo + (hi-lo)/2
+		for mid > lo && raw[mid]&0xc0 == 0x80 {
+			mid--
+		}
+		if len(oneline.Escape(raw[mid:])) <= max {
+			hi = mid
 		} else {
-			hi = mid - 1
+			lo = mid + 1
+			for lo < hi && raw[lo]&0xc0 == 0x80 {
+				lo++
+			}
 		}
 	}
-	return oneline.Escape(raw[:lo])
+	return oneline.Escape(raw[lo:])
 }
 
 // nativeAbortLine is the first line of the child's stderr that holds an abort
