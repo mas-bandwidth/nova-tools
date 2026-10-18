@@ -176,4 +176,4 @@ tools/preflight	0.2	@local	-
 tools/sandboxcheck	0.1	@local	-
 tools/sessiontrace	0.1	@local	-
 tools/testmanifest	0.0	@run37411066588	self-hosted
-tools/tlacheck	0.6	@run37517528825	self-hosted
+cmd/nova-tla	0.6	@run37517528825	self-hosted

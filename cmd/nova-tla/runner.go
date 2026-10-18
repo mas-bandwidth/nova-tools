@@ -10,12 +10,11 @@ import (
 
 	"golang.org/x/mod/modfile"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 )
 
-// Which runner a tree's records are measured with, now that one tlacheck serves every
-// repository (helpRunner says it to the reader). A record's fingerprint holds the
+// Which runner a tree's records are measured with, now that one nova-tla serves every
+// repository (runnerTopic says it to the reader). A record's fingerprint holds the
 // runner's result files (pkg/tlc: outcome.go, plan.go, run.go, suite.go), so a record is
 // current only under the runner that wrote it, and the runner is named by
 // tlc.RunnerDigest of those files, never by the repository that built the binary. A
@@ -25,13 +24,13 @@ import (
 //     tlc.CheckRunner refuses a binary built from others;
 //  2. a tree whose go.mod requires nova-tools (nova-sprint) is measured with the
 //     pkg/tlc of the nova-tools its go.mod names: the binary must be built at that
-//     module, as `go tool tlacheck` (a go.mod tool line) or `go run
-//     <nova-tools>/tools/tlacheck` from the tree builds it;
+//     module, as `go tool nova-tla` (a go.mod tool line) or `go run
+//     <nova-tools>/cmd/nova-tla` from the tree builds it;
 //  3. any other tree (a bench copy of tla/ alone, or a repository that pins its runner
 //     in its CI workflow, as rocketnet does) is measured with this binary's runner, and
 //     every record names it in its fingerprint.
 
-// toolsModule is the module tlacheck and pkg/tlc belong to, read off pkg/tlc's own
+// toolsModule is the module nova-tla and pkg/tlc belong to, read off pkg/tlc's own
 // import path so no repository path is written here.
 var toolsModule = strings.TrimSuffix(reflect.TypeOf(tlc.Record{}).PkgPath(), "/pkg/tlc")
 
@@ -126,7 +125,7 @@ func checkTreeRunner(root, built string) error {
 	if have == "" {
 		have = "a build that records no nova-tools version"
 	}
-	return fmt.Errorf("the tree under %s measures its records with the runner of %s (its go.mod), and this tlacheck is %s (runner %s), whose fingerprints may differ; run the tree's own from %s: go tool tlacheck (a go.mod tool line), or go run %s/tools/tlacheck",
+	return fmt.Errorf("the tree under %s measures its records with the runner of %s (its go.mod), and this nova-tla is %s (runner %s), whose fingerprints may differ; run the tree's own from %s: go tool nova-tla (a go.mod tool line), or go run %s/cmd/nova-tla",
 		root, want, have, runnerDigest(), root, toolsModule)
 }
 
@@ -136,50 +135,44 @@ func buildModule() string {
 	return builtModule(version, info, ok)
 }
 
-func cmdVersion(e env, args []string) int {
-	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
-		fmt.Fprint(e.stdout, helpVersion)
-		return 0
-	}
-	if len(args) > 0 {
-		return refuse(e, "version", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)), tool+" help version")
-	}
+// versionExtras are the facts the version line carries after the build identity:
+// runner=, the digest of the runner's result files, and module=, the nova-tools
+// this binary was built from, when the build records one (runnerTopic says why).
+func versionExtras() []string {
 	extras := []string{"runner=" + runnerDigest()}
 	if m := buildModule(); m != "" && !strings.HasSuffix(m, "@") {
 		extras = append(extras, "module="+m)
 	}
-	fmt.Fprintln(e.stdout, buildinfo.Line(tool, version, extras...))
-	return 0
+	return extras
 }
 
-const helpVersion = `tlacheck version: print which build is running, and its runner.
+// runnerTopic is `nova-tla help runner`. It is built at start, because it names
+// the module by toolsModule.
+func runnerTopic() string {
+	return `nova-tla help runner: which runner a tree's records are measured with.
 
-usage: tlacheck version         (also: tlacheck --version)
-
-One line: tlacheck <build identity> <goos>/<goarch> <go version> runner=<12 hex>
-[module=<path>@<version>]. runner= is the digest of the runner's result files
-(pkg/tlc: outcome.go, plan.go, run.go, suite.go), the part of the runner every
-record's fingerprint holds: two builds with one runner= give every case one
-fingerprint, whichever repository built them. module= is the nova-tools the binary
-was built from.
-
-output: the one line, on stdout. Exit 0, or 2 given any argument.
-first run: tlacheck version
-`
-
-// helpRunner is built at start, because it names the module by toolsModule.
-var helpRunner = `WHICH RUNNER A TREE'S RECORDS ARE MEASURED WITH. A record's fingerprint holds
-the runner's result files, so a record is current only under the runner that wrote it.
-The runner is named by its digest (tlacheck version prints runner=), never by the
-repository that built the binary, and the tree decides which runner is its own:
-  1. a tree that holds pkg/tlc (nova-tools): those files; a tlacheck built from
-     others is refused (build it from the tree: go build -o /tmp/tlacheck ./tools/tlacheck);
+A record's fingerprint holds the runner's result files (pkg/tlc: outcome.go, plan.go,
+run.go, suite.go), so a record is current only under the runner that wrote it. The runner
+is named by its digest, never by the repository that built the binary, and the tree
+decides which runner is its own:
+  1. a tree that holds pkg/tlc (nova-tools): those files; a nova-tla built from others is
+     refused (build it from the tree: go build -o /tmp/nova-tla ./cmd/nova-tla);
   2. a tree whose go.mod requires nova-tools (nova-sprint): the nova-tools that go.mod
-     names; a tlacheck of another version is refused (run the tree's own, built at the
-     pinned version, from the tree: go tool tlacheck <verb> ... with a go.mod tool line,
-     or go run ` + toolsModule + `/tools/tlacheck <verb> ...);
-  3. any other tree (a bench copy of tla/ alone, or a repository whose CI pins the
-     runner at a nova-tools commit): this binary's runner.
+     names; a nova-tla of another version is refused (run the tree's own, built at the
+     pinned version, from the tree: go tool nova-tla <verb> ... with a go.mod tool line,
+     or go run ` + toolsModule + `/cmd/nova-tla <verb> ...);
+  3. any other tree (a bench copy of tla/ alone, or a repository whose CI pins the runner
+     at a nova-tools commit): this binary's runner.
 Moving a tree's nova-tools pin to a version with other result files stales every record:
-tlacheck groups --stale then names every group.
+nova-tla groups --stale then names every group.
+
+The version line names the runner: nova-tla <build identity> <goos>/<goarch> <go version>
+runner=<12 hex> [module=<path>@<version>]. runner= is the digest of the result files above:
+two builds with one runner= give every case one fingerprint, whichever repository built
+them. module= is the nova-tools the binary was built from. In a nova-tools tree, run
+--bench builds ./cmd/nova-tla for the bench; in a tree that requires nova-tools it builds
+` + toolsModule + `/cmd/nova-tla at the version its go.mod names.
+
+first run: nova-tla version
 `
+}

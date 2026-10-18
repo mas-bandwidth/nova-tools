@@ -1,0 +1,3 @@
+---- MODULE MCLock ----
+EXTENDS Door
+====

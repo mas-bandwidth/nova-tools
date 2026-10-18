@@ -16,8 +16,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/bench"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // run --bench: a record refresh as one command from a working machine. The
@@ -61,7 +64,7 @@ type remote interface {
 	// Stage unpacks the archive into a new directory of its own on the
 	// bench and returns that directory.
 	Stage(ctx context.Context, archive io.Reader) (string, error)
-	// Run runs the staged tlacheck in dir with args, niced, its output
+	// Run runs the staged nova-tla in dir with args, niced, its output
 	// streamed, and returns its exit status.
 	Run(ctx context.Context, dir string, args []string, stdout, stderr io.Writer) (int, error)
 	// Fetch returns a tar of a run directory's records and logs.
@@ -80,7 +83,7 @@ type benchDeps struct {
 
 func realBench() benchDeps {
 	return benchDeps{
-		dial:     func(m string) remote { return sshRemote{machine: m} },
+		dial:     func(m string) remote { return sshRemote{machine: m, sh: bench.Exec{}.ShellIn} },
 		machines: novaConfigMachines,
 		build:    goBuild,
 		sleep:    time.Sleep,
@@ -129,26 +132,28 @@ func trough(ctx context.Context, load func(context.Context) (float64, error), li
 	}
 }
 
-func runOnBench(e env, o benchOpts) int {
-	ctx := context.Background()
-	refuseB := func(cause, next string) int { return refuse(e, "run", cause, next) }
-	again := tool + " run --bench " + o.machine + " ..."
+// runOnBench is run --bench: pick the record machine, stage the tree's runner
+// and models on it, run each case of each group after the load trough, fetch
+// the records and merge them into the checkout's tla/RUNS.tsv.
+func runOnBench(ctx context.Context, e env, o benchOpts) *tool.Out {
+	refuseB := refuse
+	again := name + " run --bench " + o.machine + " ..."
 	want, err := pinnedSum(o.root)
 	if err != nil {
-		return refuseB(err.Error(), tool+" run -h")
+		return refuseB(err.Error(), name+" run -h")
 	}
 	groups, err := benchGroups(o)
 	if err != nil {
-		return refuseB(err.Error(), tool+" groups --root "+o.root+" --stale")
+		return refuseB(err.Error(), name+" groups --root "+o.root+" --stale")
 	}
 	if len(groups) == 0 {
 		event(e.stdout, "BENCH", "OK", "bench", o.machine, "stale", "0", "records", filepath.Join(o.root, "tla", tlc.RunsFile))
-		return 0
+		return tool.Exit(0)
 	}
 	var rows []benchRow
 	if o.machine == "any" {
 		if rows, err = e.bench.machines(ctx); err != nil {
-			return refuseB("the fleet's machine rows cannot be read: "+err.Error(), "nova-config machine list (with NOVA_PG_DSN set), or name the record machine: "+tool+" run --bench <machine> ...")
+			return refuseB("the fleet's machine rows cannot be read: "+err.Error(), "nova-config machine list (with NOVA_PG_DSN set), or name the record machine: "+name+" run --bench <machine> ...")
 		}
 	}
 	machine, probe, err := pickBench(ctx, e, o, rows, want)
@@ -167,20 +172,20 @@ func runOnBench(e env, o benchOpts) int {
 	event(e.stdout, "BENCH", "OK", "bench", machine, "platform", platform, "cpus", strconv.Itoa(probe.CPUs),
 		"load", fmt.Sprintf("%.2f", probe.Load), "below", fmt.Sprintf("%.2f", limit), "jar", o.jar, "sha256", want)
 
-	bin := filepath.Join(o.dir, "bin", tool+"-"+platform)
+	bin := filepath.Join(o.dir, "bin", name+"-"+platform)
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
-		return refuseB("cannot create "+filepath.Dir(bin)+": "+err.Error(), tool+" run --dir <a directory you can write> ...")
+		return refuseB("cannot create "+filepath.Dir(bin)+": "+err.Error(), name+" run --dir <a directory you can write> ...")
 	}
 	pkg, err := benchPackage(o.root)
 	if err != nil {
-		return refuseB(err.Error(), tool+" help runner")
+		return refuseB(err.Error(), name+" help runner")
 	}
 	if err := e.bench.build(ctx, o.root, pkg, probe.GOOS, probe.GOARCH, bin); err != nil {
-		return refuseB("tlacheck cannot be built for "+platform+": "+err.Error(), "go build "+pkg)
+		return refuseB(name+" cannot be built for "+platform+": "+err.Error(), "go build "+pkg)
 	}
 	archive, files, err := stageArchive(o.root, bin)
 	if err != nil {
-		return refuseB(err.Error(), tool+" run -h")
+		return refuseB(err.Error(), name+" run -h")
 	}
 	r := e.bench.dial(machine)
 	rdir, err := r.Stage(ctx, archive)
@@ -189,7 +194,9 @@ func runOnBench(e env, o benchOpts) int {
 	}
 	event(e.stdout, "STAGE", "OK", "bench", machine, "dir", rdir, "files", strconv.Itoa(files))
 	defer func() {
-		if err := r.Remove(ctx, rdir); err != nil {
+		// The remove runs under a context the caller's interrupt does not end, so
+		// an interrupted run still removes what it staged (pkg/bench's step 4).
+		if err := r.Remove(context.WithoutCancel(ctx), rdir); err != nil {
 			eventWhy(e.stderr, "CLEAN", "FAIL", err.Error()+"; the next run --bench on it removes it after a day", "bench", machine, "dir", rdir)
 		}
 	}()
@@ -203,7 +210,7 @@ func runOnBench(e env, o benchOpts) int {
 			if err != nil {
 				eventWhy(e.stderr, "BENCH", "FAIL", err.Error()+"; tla/RUNS.tsv is unchanged; run the same command again when the bench is quieter, or name another record machine",
 					"bench", machine, "group", g, "case", fmt.Sprintf("%d/%d", i+1, len(chosen)))
-				return 1
+				return tool.Exit(1)
 			}
 			event(e.stdout, "TROUGH", "OK", "bench", machine, "group", g, "case", fmt.Sprintf("%d/%d", i+1, len(chosen)),
 				"load", fmt.Sprintf("%.2f", load), "below", fmt.Sprintf("%.2f", limit), "waited", waited.String())
@@ -220,18 +227,18 @@ func runOnBench(e env, o benchOpts) int {
 			code, err := r.Run(runCtx, rdir, args, e.stdout, e.stderr)
 			cancel()
 			if err != nil || (code != 0 && code != 1) {
-				why := fmt.Sprintf("the bench's tlacheck exited %d", code)
+				why := fmt.Sprintf("the bench's nova-tla exited %d", code)
 				if err != nil {
 					why = err.Error()
 				}
 				eventWhy(e.stderr, "BENCH", "FAIL", why+"; tla/RUNS.tsv is unchanged", "bench", machine, "group", g, "case", fmt.Sprintf("%d/%d", i+1, len(chosen)))
-				return 2
+				return tool.Exit(2)
 			}
 			cases++
 			local := filepath.Join(o.dir, g, strconv.Itoa(i))
 			if err := fetchRun(ctx, r, path.Join(rdir, sub), local); err != nil {
 				eventWhy(e.stderr, "BENCH", "FAIL", "the records cannot be fetched: "+err.Error()+"; tla/RUNS.tsv is unchanged", "bench", machine, "group", g)
-				return 2
+				return tool.Exit(2)
 			}
 			if code == 1 {
 				failed = true
@@ -243,11 +250,11 @@ func runOnBench(e env, o benchOpts) int {
 	if failed {
 		eventWhy(e.stderr, "BENCH", "FAIL", "a case did not reach the result CASES.tsv declares; nothing was merged and tla/RUNS.tsv is unchanged; each run's records and logs are under "+o.dir,
 			"bench", machine, "groups", strconv.Itoa(len(groups)), "cases", strconv.Itoa(cases))
-		return 1
+		return tool.Exit(1)
 	}
 	event(e.stdout, "BENCH", "OK", "bench", machine, "groups", strconv.Itoa(len(groups)), "cases", strconv.Itoa(cases), "runs", o.dir)
 	runs := filepath.Join(o.root, "tla", tlc.RunsFile)
-	return cmdMerge(e, append([]string{"--root", o.root, "--keep", runs, "--out", runs}, fetched...))
+	return doMerge(e, o.root, runs, runs, fetched)
 }
 
 // benchGroups is the group named, or else every group the records call
@@ -343,7 +350,7 @@ func playLine(m string) string {
 }
 
 // stageArchive is the tar a bench run needs: every regular file at the top of
-// the checkout's tla/ under tla/, and the bench's tlacheck as tlacheck.
+// the checkout's tla/ under tla/, and the bench's nova-tla as nova-tla.
 func stageArchive(root, bin string) (io.Reader, int, error) {
 	var b bytes.Buffer
 	tw := tar.NewWriter(&b)
@@ -372,7 +379,7 @@ func stageArchive(root, bin string) (io.Reader, int, error) {
 		}
 		files++
 	}
-	if err := add(tool, bin, 0o755); err != nil {
+	if err := add(name, bin, 0o755); err != nil {
 		return nil, 0, err
 	}
 	return &b, files + 1, tw.Close()
@@ -413,15 +420,24 @@ func fetchRun(ctx context.Context, r remote, dir, local string) error {
 
 // --- the transport: ssh, nova-config and go -------------------------------
 
+// shellIn is one remote line on a host with stdin on its stdin: pkg/bench's ssh
+// (bench.Exec.ShellIn), the one door to a bench. The int is the remote status,
+// bench.NoAnswer when ssh itself could not reach the host.
+type shellIn func(ctx context.Context, host, line string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
+
 // sshRemote is a bench reached as `ssh <machine>`: a fleet machine's name is
-// its tailnet host. Each operation is one shell line.
-type sshRemote struct{ machine string }
+// its tailnet host. Each operation is one shell line through sh.
+type sshRemote struct {
+	machine string
+	sh      shellIn
+}
 
 // stageLine makes a directory of its own under ~/tla-runs, unpacks the
 // archive on stdin into it and prints it. A directory a run left behind (a
 // crash between staging and removal) is removed by the next stage after a
-// day, so nothing piles up.
-const stageLine = `mkdir -p "$HOME/tla-runs" && { find "$HOME/tla-runs" -mindepth 1 -maxdepth 1 -type d -name 'tlacheck-*' -mmin +1440 -exec rm -r -- {} + 2>/dev/null; d=$(mktemp -d "$HOME/tla-runs/tlacheck-XXXXXX") && tar -x -C "$d" && printf '%s\n' "$d"; }`
+// day, so nothing piles up; tlacheck-* is the name the runner staged under
+// before it was nova-tla.
+const stageLine = `mkdir -p "$HOME/tla-runs" && { find "$HOME/tla-runs" -mindepth 1 -maxdepth 1 -type d \( -name 'nova-tla-*' -o -name 'tlacheck-*' \) -mmin +1440 -exec rm -r -- {} + 2>/dev/null; d=$(mktemp -d "$HOME/tla-runs/nova-tla-XXXXXX") && tar -x -C "$d" && printf '%s\n' "$d"; }`
 
 func probeLine(jar string) string {
 	return "uname -s -m && nproc && cat /proc/loadavg && { sha256sum -- " + shq(jar) + " 2>/dev/null || true; }"
@@ -429,10 +445,10 @@ func probeLine(jar string) string {
 
 const loadLine = "cat /proc/loadavg"
 
-// runLine runs the staged tlacheck in dir, niced, as the bench's own work
+// runLine runs the staged nova-tla in dir, niced, as the bench's own work
 // goes first.
 func runLine(dir string, args []string) string {
-	words := []string{"cd", shq(dir), "&&", "exec", "nice", "-n", "15", shq(path.Join(dir, tool))}
+	words := []string{"cd", shq(dir), "&&", "exec", "nice", "-n", "15", shq(path.Join(dir, name))}
 	for _, a := range args {
 		words = append(words, shq(a))
 	}
@@ -443,18 +459,18 @@ func fetchLine(dir string) string {
 	return "cd " + shq(dir) + ` && find . -maxdepth 1 -type f \( -name ` + tlc.RunsFile + ` -o -name '*.log' \) -print0 | tar -c -f - --null -T -`
 }
 
-var stagedRE = regexp.MustCompile(`^/.+/tla-runs/tlacheck-[A-Za-z0-9]+$`)
+var stagedRE = regexp.MustCompile(`^/.+/tla-runs/nova-tla-[A-Za-z0-9]+$`)
 
 // removeLine removes a directory stageLine made, and nothing else.
 func removeLine(dir string) (string, error) {
 	if path.Clean(dir) != dir || !stagedRE.MatchString(dir) {
-		return "", fmt.Errorf("%s is not a directory run --bench staged (~/tla-runs/tlacheck-*); it is left", oneline.Quote(dir))
+		return "", fmt.Errorf("%s is not a directory run --bench staged (~/tla-runs/nova-tla-*); it is left", oneline.Quote(dir))
 	}
 	return "rm -r -- " + shq(dir), nil
 }
 
 // shq quotes a word for a POSIX shell.
-func shq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+func shq(s string) string { return bench.Quote(s) }
 
 // parseProbe reads probeLine's output: `uname -s -m`, nproc, /proc/loadavg
 // and, when the jar is there, its sha256sum line.
@@ -507,19 +523,15 @@ func (s sshRemote) do(ctx context.Context, limit time.Duration, line string, std
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	var out, errs bytes.Buffer
-	cmd := s.command(ctx, line)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, &out, &errs
-	if err := cmd.Run(); err != nil {
+	code, err := s.sh(ctx, s.machine, line, stdin, &out, &errs)
+	if err != nil {
+		return nil, fmt.Errorf("ssh %s: %v", s.machine, err)
+	}
+	if code != 0 {
 		first, _, _ := strings.Cut(strings.TrimSpace(errs.String()), "\n")
-		return nil, fmt.Errorf("ssh %s: %v: %s", s.machine, err, first)
+		return nil, fmt.Errorf("ssh %s: exit status %d: %s", s.machine, code, first)
 	}
 	return out.Bytes(), nil
-}
-
-func (s sshRemote) command(ctx context.Context, line string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", s.machine, line)
-	cmd.WaitDelay = 5 * time.Second
-	return cmd
 }
 
 func (s sshRemote) Probe(ctx context.Context, jar string) (benchProbe, error) {
@@ -551,17 +563,16 @@ func (s sshRemote) Stage(ctx context.Context, archive io.Reader) (string, error)
 }
 
 func (s sshRemote) Run(ctx context.Context, dir string, args []string, stdout, stderr io.Writer) (int, error) {
-	cmd := s.command(ctx, runLine(dir, args))
-	cmd.Stdout, cmd.Stderr = stdout, stderr
-	err := cmd.Run()
-	var exit *exec.ExitError
+	code, err := s.sh(ctx, s.machine, runLine(dir, args), nil, stdout, stderr)
 	switch {
-	case err == nil:
-		return 0, nil
-	case errors.As(err, &exit) && exit.ExitCode() != 255 && ctx.Err() == nil:
-		return exit.ExitCode(), nil
+	case err != nil:
+		return 0, fmt.Errorf("ssh %s: %v", s.machine, err)
+	case code == bench.NoAnswer:
+		return 0, fmt.Errorf("ssh %s: the bench did not answer (ssh exit %d)", s.machine, code)
+	case ctx.Err() != nil:
+		return 0, fmt.Errorf("ssh %s: %v", s.machine, ctx.Err())
 	}
-	return 0, fmt.Errorf("ssh %s: %v", s.machine, err)
+	return code, nil
 }
 
 func (s sshRemote) Fetch(ctx context.Context, dir string) ([]byte, error) {
@@ -623,21 +634,21 @@ func parseMachineList(out string) []benchRow {
 }
 
 // benchPackage is the package run --bench builds as the tree's runner (runner.go):
-// nova-tools' own tools/tlacheck in a nova-tools checkout, and nova-tools' at the
+// nova-tools' own cmd/nova-tla in a nova-tools checkout, and nova-tools' at the
 // version its go.mod names in a tree that requires nova-tools. Any other tree pins
 // no runner the bench can build, and is refused.
 func benchPackage(root string) (string, error) {
-	if info, err := os.Stat(filepath.Join(root, "tools", "tlacheck")); err == nil && info.IsDir() {
-		return "./tools/tlacheck", nil
+	if info, err := os.Stat(filepath.Join(root, "cmd", name)); err == nil && info.IsDir() {
+		return "./cmd/" + name, nil
 	}
 	_, ok, err := treeModule(root)
 	if err != nil {
 		return "", fmt.Errorf("the tree's go.mod cannot be read to find the runner it pins: %v", err)
 	}
 	if !ok {
-		return "", fmt.Errorf("the tree under %s neither holds tools/tlacheck nor requires %s in its go.mod, so there is no runner of its own to build for the bench; run the groups on the bench by hand (tlacheck run --group <group>, there)", root, toolsModule)
+		return "", fmt.Errorf("the tree under %s neither holds cmd/nova-tla nor requires %s in its go.mod, so there is no runner of its own to build for the bench; run the groups on the bench by hand (nova-tla run --group <group>, there)", root, toolsModule)
 	}
-	return toolsModule + "/tools/tlacheck", nil
+	return toolsModule + "/cmd/" + name, nil
 }
 
 // goBuild builds the tree's runner pkg for a platform, with no cgo, so it runs
@@ -647,7 +658,7 @@ func goBuild(ctx context.Context, root, pkg, goos, goarch, out string) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", out, pkg)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
+	cmd.Env = append(goenv.Clean(os.Environ()), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
 	cmd.WaitDelay = 5 * time.Second
 	if b, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, oneline.Escape(strings.TrimSpace(string(b))))

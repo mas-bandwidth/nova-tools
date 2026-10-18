@@ -1149,6 +1149,26 @@ $ nova-doctor run --check nosuch
 ! RUN REFUSED: no check named "nosuch"; the checks are dashboard, friend-login, friend-row, friend-wall, gosdk, harness, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
 ```
 
+## nova-tla
+
+The example checkout of the tool's own testdata, typed from the nova-tools
+checkout root: two required groups and no records yet, so the stale groups are
+every group; then an inputs with no case. Each run reads the plan and writes
+nothing; no java runs. Run by `cmd/nova-tla/firstrun_test.go`.
+
+### First run
+
+```
+$ nova-tla groups --root ./cmd/nova-tla/testdata/example
+["door","lock"]
+
+$ nova-tla groups --root ./cmd/nova-tla/testdata/example --stale
+["door","lock"]
+
+$ nova-tla inputs --root ./cmd/nova-tla/testdata/example
+! INPUTS REFUSED: --case is required; it wants the case's config (MCFoo.cfg), as --case or as the one argument; run: nova-tla help
+```
+
 ## One-shot lanes at parity (pkg/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
 
 `TestOpencodeLanesDoWhatTheRunnerStopgapsDid` has one subtest per behaviour the two runner scripts had (card filter, row

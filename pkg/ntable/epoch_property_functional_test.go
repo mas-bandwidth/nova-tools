@@ -35,7 +35,7 @@ import (
 // of member placement, immutable member epochs, and retained historical bytes.
 // Accepted receipts must identify the drawn model action, arguments, epoch,
 // writer, revision and membership delta. A second owned Redis replays accepted
-// commands FROM those receipts, as `tlacheck replay` does; refused
+// commands FROM those receipts, as `nova-tla replay` does; refused
 // commands have no receipt and are checked against complete-store snapshots.
 // Accepted commands also compare complete-store snapshots, permitting changes
 // only to keys named by the model transition, on both source and replay stores.

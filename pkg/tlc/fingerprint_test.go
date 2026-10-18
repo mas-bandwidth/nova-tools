@@ -94,7 +94,7 @@ func TestCheckRunnerComparesTheEmbeddedCheckedFilesWithTheRoot(t *testing.T) {
 		want                  []string
 	}{
 		{"the same files", "", "", "", nil},
-		{"an edited result file", "suite.go", "other\n", "", []string{"pkg/tlc/suite.go differ", "build tlacheck from this tree"}},
+		{"an edited result file", "suite.go", "other\n", "", []string{"pkg/tlc/suite.go differ", "build nova-tla from this tree"}},
 		{"an edited input-list file", "inputs.go", "another input list\n", "suite.go", []string{"pkg/tlc/inputs.go differ"}},
 		{"an edited bookkeeping file", "records.go", "another bookkeeping file\n", "", nil},
 	} {

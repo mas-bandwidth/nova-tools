@@ -45,6 +45,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-self-talk", "flags sentences where a writer passes a standing verdict on themselves", "go test ./cmd/nova-self-talk", "go test ./cmd/nova-self-talk"),
 	E("cmd/nova-swarm", "native card runner, bench slot leases and card lint CLI", "go test ./cmd/nova-swarm", "go test ./cmd/nova-swarm"),
 	E("cmd/nova-table", "tables of ordered sets, text and percentages over Redis", "go test ./cmd/nova-table", "go test ./cmd/nova-table"),
+	E("cmd/nova-tla", "the TLA+ runner of every repository: TLC over the declared cases of tla/CASES.tsv, their run records, the stale groups, and the table model's suites", "go test ./cmd/nova-tla", "go test ./cmd/nova-tla"),
 	E("cmd/nova-tokens", "token consumption metering and budgeting CLI", "go test ./cmd/nova-tokens", "go test ./cmd/nova-tokens"),
 	E("cmd/nova-update", "binary release update CLI", "go test ./cmd/nova-update", "go test ./cmd/nova-update"),
 	E("cmd/nova-up", "set nova up on one machine: plan every step, then apply, from nothing to a first sprint", "go test ./cmd/nova-up", "go test ./cmd/nova-up"),
@@ -180,6 +181,5 @@ var DefaultCatalog = []Entry{
 	E("tools/roadmap", "ROADMAP.md and FIXES.md generator from docs/roadmap.sexp and docs/fixes.sexp", "go test ./internal/docs", "make roadmap"),
 	E("tools/sandboxcheck", "the darwin profile check of nova-sandbox: fills the profile template for a scratch write set and runs the first second of a job inside the wall, each denial beside a control outside it", "go test ./tools/sandboxcheck", "go run ./tools/sandboxcheck"),
 	E("tools/sessiontrace", "bounded shell trace replay against TableSession", "go test ./tools/sessiontrace", "go test ./tools/sessiontrace"),
-	E("tools/tlacheck", "TLA+ model check CLI: run the declared cases, the table and member suites, the receipt replay and the finding witnesses", "go test ./tools/tlacheck", "go test ./tools/tlacheck"),
 	E("tools/testmanifest", "exact named Go test manifest checker", "go test ./tools/testmanifest", "go test ./tools/testmanifest"),
 }

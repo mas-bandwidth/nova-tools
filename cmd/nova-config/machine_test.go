@@ -193,7 +193,7 @@ func TestMachineWidthDefaultIsUnset(t *testing.T) {
 
 // TestMachineTLAIsTheRecordMachineFact: tla is a declared fact of the machine
 // row, false unless set: add takes it, set moves it, and list and show print
-// it (tlacheck run --bench reads it from the list; the tools play installs
+// it (nova-tla run --bench reads it from the list; the tools play installs
 // the TLC jar where it is true).
 func TestMachineTLAIsTheRecordMachineFact(t *testing.T) {
 	t.Parallel()

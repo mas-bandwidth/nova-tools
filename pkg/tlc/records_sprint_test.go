@@ -19,7 +19,7 @@ func TestReadRecordsFileOfAMissingFileIsANotExistError(t *testing.T) {
 	t.Parallel()
 	_, err := ReadRecordsFile(filepath.Join(t.TempDir(), "nope.tsv"))
 	require.Error(t, err, "a missing records file was read")
-	assert.True(t, errors.Is(err, os.ErrNotExist), "the error is not a not-exist error, which tlacheck groups --stale reads as no records: %v", err)
+	assert.True(t, errors.Is(err, os.ErrNotExist), "the error is not a not-exist error, which nova-tla groups --stale reads as no records: %v", err)
 }
 
 func TestStaleGroupsNamesTheGroupOfACaseWithNoRecord(t *testing.T) {
