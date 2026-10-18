@@ -421,8 +421,8 @@ every FRIEND DOWN and FRIEND BACK, open until answered with nova-bus send --re <
 once past --judge-within; and apart from it, never folded into it, every change of a friend's level (down: unhooked,
 expired, or proven with no answer in the window; live: armed, its proof not yet in; proven) is pushed to the
 coordinator at once, in that pass, as its own bus message of kind status: a friend coming up from down is FRIEND UP
-<name> <live|proven> <held|unheld> width=<n> ready=<n> working=<n> at=<store time, RFC 3339> (her sprint row, from
-friend cards; row=unread when the sprint does not answer it), at the pass that finds her armed, before her proof and
+<name> <live|proven> <held|unheld> width=<n> ready=<n> working=<n> at=<store time, RFC 3339> (the friend's sprint row, from
+friend cards; row=unread when the sprint does not answer it), at the pass that finds the friend armed, before the proof and
 its FRIEND BACK; every other change is FRIEND STATE <name> <old>-><new> at=<store time>; a change between two down
 states, and the coordinator's own state, are never pushed. One per name per change, sent with its mark in one write under a once-key so a failed
 send is sent at the next pass and a sent one never twice; it is not answered and never OVERDUE, and the first pass
