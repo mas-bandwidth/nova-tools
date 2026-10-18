@@ -10,7 +10,7 @@ Spend gate waived: point release of a staging fix; no provider spend is attribut
 - unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
 
 - #5986 CHANGELOG: the v1.6.2 cut's record
-- #5987 sandbox: the darwin wall's default deny is no-report (mini-m5-1 harness hang)
+- #5987 sandbox: the darwin wall's default deny is no-report (a macOS 27.0.1 harness cold-start hang)
 - #5988 nova-config: the signal helper waits for its own SIGTERM to land
 - #5989 Release notes for v1.6.3
 
