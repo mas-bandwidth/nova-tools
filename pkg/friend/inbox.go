@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/answerwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
@@ -41,31 +41,37 @@ type workerViewRead struct {
 // server writes today (S1, S2, S4: readers first). Every read is counted per
 // record and per form (UNION.md C13). A malformed, clamped or damaged image of
 // any form is refused by name, never read as absent, empty or zero.
-var workerViewReader = schemaread.NewReader(&schemaread.Codec[workerViewRead]{
-	Name:  "WorkerView",
-	Help:  "nova-sprint view worker --help",
-	Forms: []byte{1},
-	Reset: func(v *workerViewRead) { *v = workerViewRead{} },
-	Measure: func(wire []byte) error {
-		_, err := answerwire.WorkerViewLoadMeasureReason(wire)
-		return err
-	},
-	LoadWire: func(v *workerViewRead, wire []byte) schemaread.Report {
-		return workerViewLoad(v, wire, func(b *answerwire.WorkerViewBuilder) (*answerwire.TableReport, bool) {
-			var rep answerwire.TableReport
-			ok := answerwire.WorkerViewLoadBuilder(b, wire, &rep)
-			return &rep, ok
-		})
-	},
-	LoadJSON: func(v *workerViewRead, text []byte) schemaread.Report {
-		return workerViewLoad(v, text, func(b *answerwire.WorkerViewBuilder) (*answerwire.TableReport, bool) {
-			var rep answerwire.TableReport
-			ok := answerwire.WorkerViewFromJson(b, text, &rep)
-			return &rep, ok
-		})
-	},
-	Constraints: workerViewCheck,
-})
+var workerViewReader = newWorkerViewReader()
+
+// newWorkerViewReader is the worker view's one strict reader and its counters
+// (UNION.md C13: one reader per record, its reads counted per form).
+func newWorkerViewReader() *schemaread.Reader[workerViewRead] {
+	return schemaread.NewReader(&schemaread.Codec[workerViewRead]{
+		Name:  "WorkerView",
+		Help:  "nova-sprint view worker --help",
+		Forms: []byte{1},
+		Reset: func(v *workerViewRead) { *v = workerViewRead{} },
+		Measure: func(wire []byte) error {
+			_, err := answerwire.WorkerViewLoadMeasureReason(wire)
+			return err
+		},
+		LoadWire: func(v *workerViewRead, wire []byte) schemaread.Report {
+			return workerViewLoad(v, wire, func(b *answerwire.WorkerViewBuilder) (*answerwire.TableReport, bool) {
+				var rep answerwire.TableReport
+				ok := answerwire.WorkerViewLoadBuilder(b, wire, &rep)
+				return &rep, ok
+			})
+		},
+		LoadJSON: func(v *workerViewRead, text []byte) schemaread.Report {
+			return workerViewLoad(v, text, func(b *answerwire.WorkerViewBuilder) (*answerwire.TableReport, bool) {
+				var rep answerwire.TableReport
+				ok := answerwire.WorkerViewFromJson(b, text, &rep)
+				return &rep, ok
+			})
+		},
+		Constraints: workerViewCheck,
+	})
+}
 
 // workerViewLoad runs one generated load into the builder and copies the value
 // out as workerViewRead. The generated report of the load is mapped to the
@@ -107,23 +113,36 @@ func workerViewReport(rep *answerwire.TableReport, ok bool) schemaread.Report {
 	if rep == nil {
 		rep = &answerwire.TableReport{}
 	}
-	out := schemaread.Report{
-		Unknown:       int(rep.Unknown),
+	return schemaread.Report{
+		Unknown:      int(rep.Unknown),
 		KindMismatch: int(rep.KindMismatch),
-		Clamped:       int(rep.Clamped),
-		Malformed:     rep.Malformed || !ok,
+		Clamped:      int(rep.Clamped),
+		// a key given twice in the JSON text is ambiguous: refused, never
+		// last-wins (S2, the strict read)
+		Malformed: rep.Malformed || rep.Duplicate > 0 || !ok,
+		Reason:    rep.Reason,
 	}
-	out.Reason = rep.Reason
-	return out
 }
 
-// workerViewCheck states the worker view table's bounds: the view, the as and
-// the kind names are required, and the cards list is bounded.
+// workerViewCheck states the worker view table's bounds the generated Go
+// cannot state: the view, the as and the kind names are required, and the
+// cards list holds the schema-table design's ceiling of 1024 (schemas/answer
+// answer.schema, table WorkerView: an unbounded array declares no count).
 func workerViewCheck(v *workerViewRead, c *schemaread.Checker) {
 	c.Required("view", len(v.view) > 0)
 	c.Required("as", len(v.as) > 0)
 	c.Required("kind", len(v.kind) > 0)
+	// every text is UTF-8 with no NUL, within its declared size (the
+	// schema's string(n) bounds)
+	c.Text("view", v.view, 32)
+	c.Text("as", v.as, 64)
+	c.Text("kind", v.kind, 32)
 	c.Bound("cards", int64(len(v.cards)), 0, 1024)
+	for _, card := range v.cards {
+		c.Text("id", card.id, 160)
+		c.Text("st", card.st, 32)
+		c.Text("brief", card.brief, 512)
+	}
 }
 
 // The daemon writes every card she holds (the finding of 2026-10-05: from about 18:59 the
@@ -608,7 +627,13 @@ const ViewWhy = "the server does not serve friend cards, and the worker view nam
 // <help>). Each work card on her row, its job, the inbox directory its brief
 // path names, and no brief (Why says so).
 func ParseView(friend, out string) ([]HeldCard, error) {
-	v, _, err := workerViewReader.Read([]byte(out))
+	return parseView(workerViewReader, friend, out)
+}
+
+// parseView is ParseView over the reader r, so a test counts one read's forms
+// on a reader of its own.
+func parseView(r *schemaread.Reader[workerViewRead], friend, out string) ([]HeldCard, error) {
+	v, _, err := r.Read([]byte(out))
 	if err != nil {
 		return nil, err
 	}
