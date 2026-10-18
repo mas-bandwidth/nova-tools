@@ -82,8 +82,9 @@ output: HELPER OK name=jar|java|java-version ..., one CASE OK|FAIL config= resul
         STAGE OK bench= dir= files=, TROUGH OK bench= group= case= load= below= waited=,
         the bench's own CASE and RUN lines, and MERGE OK runs= records= out=. OK lines go to
         stdout, FAIL lines to stderr.
-first run: nova-tla run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
-           nova-tla run --root . --dir /tmp/tlc-bench --bench any`,
+example (a first run):
+  nova-tla run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
+  nova-tla run --root . --dir /tmp/tlc-bench --bench any`,
 			Flags: func(f *tool.Flags) {
 				f.Prints()
 				tlcFlags(f)
@@ -135,7 +136,8 @@ refuses a nova-tla that is not the tree's runner (nova-tla help runner).
 output: exactly one line of JSON on stdout, such as ["alpha","beta"]; nothing else is printed
         there, and a refusal goes to stderr. With --json, that line is the payload of the
         result object.
-first run: nova-tla groups --root .`,
+example (a first run):
+  nova-tla groups --root .`,
 			Flags: func(f *tool.Flags) {
 				f.String("root", ".", "the checkout whose tla/CASES.tsv is read (default .)")
 				f.Bool("stale", false, "print the groups to run again instead: a case's record missing or not its current fingerprint")
@@ -162,7 +164,8 @@ is refused naming both layouts. The verb refuses a nova-tla that is not the tree
 output: MERGE OK runs= records= out= on stdout, and DROP OK config= why=not-in-the-plan keep=
         for each kept record dropped; MERGE FAIL runs=: <why> on stderr, exit 1, with --out
         left as it was.
-first run: nova-tla merge --root . --out /tmp/RUNS.tsv /tmp/tlc-a/RUNS.tsv /tmp/tlc-b/RUNS.tsv`,
+example (a first run):
+  nova-tla merge --root . --out /tmp/RUNS.tsv /tmp/tlc-a/RUNS.tsv /tmp/tlc-b/RUNS.tsv`,
 			Flags: func(f *tool.Flags) {
 				f.Prints()
 				f.Required("out", "the records file to write, a path (replaced whole, atomically)")
@@ -199,7 +202,8 @@ that is not the tree's runner (nova-tla help runner).
 
 output: one INPUT OK path= sha256= line per input, sorted by path, then INPUTS OK case= files=
         fingerprint=, all on stdout; a refusal goes to stderr.
-first run: nova-tla inputs --root . --case MCFirstConn.cfg`,
+example (a first run):
+  nova-tla inputs --root . --case MCFirstConn.cfg`,
 			Flags: func(f *tool.Flags) {
 				f.Prints()
 				f.String("root", ".", "the checkout whose tla/ holds CASES.tsv and the models (default .)")
@@ -234,7 +238,8 @@ controls. The run stops at the first case that is not what its mode expects.
 
 output: HELPER OK lines, one TABLE OK|FAIL case= verdict= seconds= generated= distinct= log= per
         case, then TABLE OK|FAIL mode= cases= seconds=. Exit 1 a case failed or timed out.
-first run: nova-tla table --root . --jar /path/to/tla2tools.jar --dir /tmp/table-out --mode witnesses`,
+example (a first run):
+  nova-tla table --root . --jar /path/to/tla2tools.jar --dir /tmp/table-out --mode witnesses`,
 			Flags: func(f *tool.Flags) {
 				f.Prints()
 				tlcFlags(f)
@@ -255,7 +260,8 @@ stops at the first case that is not what it expects.
 
 output: HELPER OK lines, one MEMBER OK|FAIL case= verdict= seconds= generated= distinct= log=
         per case, then MEMBER OK|FAIL suite= cases= seconds=. Exit 1 a case failed or timed out.
-first run: nova-tla member --root . --jar /path/to/tla2tools.jar --dir /tmp/member-out --suite small`,
+example (a first run):
+  nova-tla member --root . --jar /path/to/tla2tools.jar --dir /tmp/member-out --suite small`,
 			Flags: func(f *tool.Flags) {
 				f.Prints()
 				tlcFlags(f)
@@ -282,7 +288,8 @@ digests are kept in trace.json.
 
 output: HELPER OK lines, REPLAY OK step= verdict= ... per step, then REPLAY OK seconds=, or
         REPLAY FAIL seconds=: <why> on stderr and exit 1 when a check failed.
-first run: nova-tla replay --root . --source pkg/nsprint/fn/lua/table.lua --jar /path/to/tla2tools.jar --dir /tmp/replay-out`,
+example (a first run):
+  nova-tla replay --root . --source pkg/nsprint/fn/lua/table.lua --jar /path/to/tla2tools.jar --dir /tmp/replay-out`,
 			Flags: func(f *tool.Flags) {
 				f.Prints()
 				tlcFlags(f)
@@ -311,8 +318,9 @@ defect, and the finding is retired or the model updated.
 output: HELPER OK name=redis-server path=, one WITNESS OK result=confirmed|pass name=<finding>:
         <what> per finding, then WITNESS OK findings=, or WITNESS FAIL findings=: <why> on
         stderr and exit 1 when one differed.
-first run: git show f77458853af46fdbbafd6881a4b46006431f266f:pkg/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
-           nova-tla witnesses /tmp/table-pinned.lua`,
+example (a first run):
+  git show f77458853af46fdbbafd6881a4b46006431f266f:pkg/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
+  nova-tla witnesses /tmp/table-pinned.lua`,
 			Flags: func(f *tool.Flags) {
 				f.Prints()
 				f.String("redis-server", "", "the redis-server program, a path; without it redis-server on PATH; the path found is echoed")

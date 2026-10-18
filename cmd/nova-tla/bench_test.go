@@ -447,7 +447,7 @@ func TestTheSSHRemoteGoesThroughTheOneBenchDoor(t *testing.T) {
 		fail     error
 	}
 	var calls []shellCall
-	r := sshRemote{machine: "bench-a", sh: fakeShell(&calls, reply{out: "/home/u/tla-runs/nova-tla-ab12\n"})}
+	r := benchRemote{machine: "bench-a", sh: fakeShell(&calls, reply{out: "/home/u/tla-runs/nova-tla-ab12\n"})}
 	dir, err := r.Stage(context.Background(), strings.NewReader("the archive"))
 	require.NoError(t, err)
 	assert.Equal(t, "/home/u/tla-runs/nova-tla-ab12", dir)

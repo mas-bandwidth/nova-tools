@@ -70,12 +70,29 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 // whole output compared with the block.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
+	// The banner's example lines, named here so the pasted-examples rule
+	// (SPEC-TOOLWORK.md documents rule 6) reads the command text in this test;
+	// the transcript runs the same lines.
+	documentedExamples := []string{
+		"nova-tla groups --root ./cmd/nova-tla/testdata/example",
+		"nova-tla groups --root ./cmd/nova-tla/testdata/example --stale",
+		"nova-tla inputs --root ./cmd/nova-tla/testdata/example --case MCDoor.cfg",
+	}
+	help := call(t, nil, "help")
+	examples, err := onboarding.ExampleLines(help.stdout, "nova-tla")
+	require.NoError(t, err)
+	require.Equal(t, documentedExamples, examples, "the banner's examples and the ones this test names are one list")
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-tla")
 	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-tla", lines)
 	require.NoError(t, err)
+	var commands []string
+	for _, s := range steps {
+		commands = append(commands, strings.TrimPrefix(s.Line, "$ "))
+	}
+	require.Equal(t, documentedExamples, commands, "the transcript runs the banner's examples")
 	run := sitting(t)
 	got := make([]onboarding.Result, 0, len(steps))
 	for _, s := range steps {

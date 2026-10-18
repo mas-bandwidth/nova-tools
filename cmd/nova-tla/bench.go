@@ -56,7 +56,7 @@ type benchRow struct {
 	TLA  bool
 }
 
-// remote is one bench machine, as operations. sshRemote sends each as one
+// remote is one bench machine, as operations. benchRemote sends each as one
 // shell line over ssh.
 type remote interface {
 	Probe(ctx context.Context, jar string) (benchProbe, error)
@@ -83,7 +83,7 @@ type benchDeps struct {
 
 func realBench() benchDeps {
 	return benchDeps{
-		dial:     func(m string) remote { return sshRemote{machine: m, sh: bench.Exec{}.ShellIn} },
+		dial:     func(m string) remote { return benchRemote{machine: m, sh: bench.Exec{}.ShellIn} },
 		machines: novaConfigMachines,
 		build:    goBuild,
 		sleep:    time.Sleep,
@@ -425,9 +425,9 @@ func fetchRun(ctx context.Context, r remote, dir, local string) error {
 // bench.NoAnswer when ssh itself could not reach the host.
 type shellIn func(ctx context.Context, host, line string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 
-// sshRemote is a bench reached as `ssh <machine>`: a fleet machine's name is
+// benchRemote is a bench reached as `ssh <machine>`: a fleet machine's name is
 // its tailnet host. Each operation is one shell line through sh.
-type sshRemote struct {
+type benchRemote struct {
 	machine string
 	sh      shellIn
 }
@@ -519,7 +519,7 @@ func parseLoad(line string) (float64, error) {
 
 // do runs one line on the machine and returns its stdout; a non-zero exit is
 // an error naming the line's first stderr line.
-func (s sshRemote) do(ctx context.Context, limit time.Duration, line string, stdin io.Reader) ([]byte, error) {
+func (s benchRemote) do(ctx context.Context, limit time.Duration, line string, stdin io.Reader) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	var out, errs bytes.Buffer
@@ -534,7 +534,7 @@ func (s sshRemote) do(ctx context.Context, limit time.Duration, line string, std
 	return out.Bytes(), nil
 }
 
-func (s sshRemote) Probe(ctx context.Context, jar string) (benchProbe, error) {
+func (s benchRemote) Probe(ctx context.Context, jar string) (benchProbe, error) {
 	out, err := s.do(ctx, time.Minute, probeLine(jar), nil)
 	if err != nil {
 		return benchProbe{}, err
@@ -542,7 +542,7 @@ func (s sshRemote) Probe(ctx context.Context, jar string) (benchProbe, error) {
 	return parseProbe(string(out))
 }
 
-func (s sshRemote) Load(ctx context.Context) (float64, error) {
+func (s benchRemote) Load(ctx context.Context) (float64, error) {
 	out, err := s.do(ctx, time.Minute, loadLine, nil)
 	if err != nil {
 		return 0, err
@@ -550,7 +550,7 @@ func (s sshRemote) Load(ctx context.Context) (float64, error) {
 	return parseLoad(string(out))
 }
 
-func (s sshRemote) Stage(ctx context.Context, archive io.Reader) (string, error) {
+func (s benchRemote) Stage(ctx context.Context, archive io.Reader) (string, error) {
 	out, err := s.do(ctx, 5*time.Minute, stageLine, archive)
 	if err != nil {
 		return "", err
@@ -562,7 +562,7 @@ func (s sshRemote) Stage(ctx context.Context, archive io.Reader) (string, error)
 	return dir, nil
 }
 
-func (s sshRemote) Run(ctx context.Context, dir string, args []string, stdout, stderr io.Writer) (int, error) {
+func (s benchRemote) Run(ctx context.Context, dir string, args []string, stdout, stderr io.Writer) (int, error) {
 	code, err := s.sh(ctx, s.machine, runLine(dir, args), nil, stdout, stderr)
 	switch {
 	case err != nil:
@@ -575,11 +575,11 @@ func (s sshRemote) Run(ctx context.Context, dir string, args []string, stdout, s
 	return code, nil
 }
 
-func (s sshRemote) Fetch(ctx context.Context, dir string) ([]byte, error) {
+func (s benchRemote) Fetch(ctx context.Context, dir string) ([]byte, error) {
 	return s.do(ctx, 5*time.Minute, fetchLine(dir), nil)
 }
 
-func (s sshRemote) Remove(ctx context.Context, dir string) error {
+func (s benchRemote) Remove(ctx context.Context, dir string) error {
 	line, err := removeLine(dir)
 	if err != nil {
 		return err

@@ -173,6 +173,7 @@ them. module= is the nova-tools the binary was built from. In a nova-tools tree,
 --bench builds ./cmd/nova-tla for the bench; in a tree that requires nova-tools it builds
 ` + toolsModule + `/cmd/nova-tla at the version its go.mod names.
 
-first run: nova-tla version
+example (a first run):
+  nova-tla version
 `
 }
