@@ -145,7 +145,7 @@ func readLoopTemplate(t *testing.T, template string) string {
 func renderSecretFiles(t *testing.T, template, home string, secretFiles map[string]string) string {
 	t.Helper()
 	src := readLoopTemplate(t, template)
-	const marker = "{% for secret_file in (l.secret_files | default({}) | dictsort) %}"
+	const marker = "{% for secret_file in loop_secret_files %}"
 	start := strings.Index(src, marker)
 	require.GreaterOrEqual(t, start, 0, "the template has no secret_files loop")
 	rest := src[start+len(marker):]
@@ -213,9 +213,9 @@ func evalSecretFileExpr(t *testing.T, expr, name, path, home string) string {
 	parts := strings.Split(expr, "|")
 	var value string
 	switch base := strings.TrimSpace(parts[0]); base {
-	case "secret_file[0]":
+	case "secret_file.name":
 		value = name
-	case "secret_file[1]":
+	case "secret_file.path":
 		value = path
 	default:
 		t.Fatalf("the secret_files block interpolates unexpected %q", base)

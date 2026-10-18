@@ -283,6 +283,9 @@
         mode: "0644"
       vars:
         l: "{{ item }}"
+        # The record's placed secret files: the play expanded each path once;
+        # the template writes the name and path, never the file's content.
+        loop_secret_files: "{{ loop_secret_file_entries | selectattr('record', 'equalto', item.name) | list }}"
         # The command the unit runs: the record's argv, a bare program being the
         # installed tool and ~/ the login's home, behind nova-secrets exec when
         # the record names keys (the seat opens them; their values never reach

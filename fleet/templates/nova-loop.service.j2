@@ -34,8 +34,8 @@ Environment="NOVA_SPRINT_REDIS={{ nova_redis_addr }}"
 {% if nova_bus_addr is defined and nova_bus_addr | length > 0 %}
 Environment="NOVA_BUS_REDIS={{ nova_bus_addr }}"
 {% endif %}
-{% for secret_file in (l.secret_files | default({}) | dictsort) %}
-Environment="{{ secret_file[0] }}={{ secret_file[1] | regex_replace('^~/', nova_home ~ '/') | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') }}"
+{% for secret_file in loop_secret_files %}
+Environment="{{ secret_file.name }}={{ secret_file.path | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') }}"
 {% endfor %}
 ExecStart={% for w in loop_exec %}"{{ w | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') | replace('$', '$$') }}"{{ ' ' if not loop.last else '' }}{% endfor %}
 
