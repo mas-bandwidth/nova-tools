@@ -1798,6 +1798,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// (3)-(5) execution loop: start, watch, collect
 	for attempt := 1; ; attempt++ {
 		state.lastAttempt = attempt
+		// Each attempt's child-end line and the stderr tail it reads start empty: a
+		// fast failure that recorded one must not outlive a later attempt. The
+		// whole-run capture the operator reads is s.capture and stays as it is.
+		state.res.childEnd = ""
+		state.wallOut.Reset()
 
 		st, earlyRes, earlyCode := start(state, attempt, errOut)
 		if earlyCode != 0 {
