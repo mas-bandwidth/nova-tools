@@ -1,5 +1,16 @@
 # nova-tools changelog
 
+## v1.6.0 — 2026-10-18
+
+The stable tools release beside nova-sprint v1.6.0. The v1.5.3 section below was never tagged: its fix (the wall's caps from the machine's memory, 2026-10-17) ships here. The night's audit of what the fleet's daemons do for nothing lands here too; no wire or record change.
+
+- Idle members read their queue every 15 s, not every 3; a reader sends one `queue` an interval, not two; a Wake (a push ended, a child exited) reads at once. Eighteen seats on nine benches sent ~750 serial verbs a minute to the sprint server with nothing to do on 2026-10-17. (#5951)
+- The idle seat's background churn stops: on a Mac the load sampler ran `top` back to back forever (a quarter of a core per seat); it runs once in ten seconds while a card runs and not at all while the seat is idle, the beat carrying the one-minute average then. The cleaner round runs every 30 s, 60 s when it removed nothing, and 2 s only while a backlog stands or a card runs; the live usage sampler reads only the rows that may have changed, a whole read every tenth time; the idle watch polls each second and snapshots the process table every fifteen, with one fresh reading before a card is declared idle, and a working tree is measured against the same half-second bar as before; the turn counter streams the log and carries an open line. (#5953)
+- `push.git` is repacked and pruned at most hourly after a push and never while another push holds it (4.4 GB of unreachable objects on one Mac); the disk guard rotates `nova-*.log` under `~/Library/Logs` on darwin, leaving the member loop logs the canary counts; the member's own mirror refresh is every ten minutes on worker seats, and the docs say readers stage from the bench mirror the fleet's loop row keeps. (#5952)
+- The fleet never installs or starts a nova-friend daemon again: both friend plays boot out every daemon launchd still lists and delete its plist; the friend-seat doctor check is retired (`nova-hook status` reads a friend's liveness; it does not say which seat she answers). The nova-friend daemons were retired by the owner on 2026-10-17 ("nova-hook is the one friend channel"); the binary stays in the tree and in the release until its removal is its own decision. (#5952)
+- The hook server pushes a FRIEND STATE only when a friend crosses proven (live, partial, expired and unhooked are one "down"), never the coordinator's own state to her; the hook client loop reads its record at renewal and after a batch, not fifteen Redis commands a second; a name with no roster row misses and unhooks on the usual count instead of being challenged forever; the client service restarts no faster than every 10 s and refuses a temp path at install; `tla/HookBeat.tla` carries NoPushWithinDown and NeverPushedSelf with their witnesses. The bus streams keep their unbounded retention: a trim needs the receipts model and sized bounds, carded for v1.7. (#5954)
+- The sandbox wall's caps follow the machine: 64 processes per logical CPU, an eighth of the memory, bounded by the member's login slice (the unreleased v1.5.3). (#5944, #5950)
+
 ## v1.5.3 — 2026-10-17
 
 Hotfix: the wall's caps follow the machine's memory, not its CPU count, so ordinary builds on 16-thread members are no longer killed as runaways.
