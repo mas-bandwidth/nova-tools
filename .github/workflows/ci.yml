@@ -984,9 +984,12 @@ jobs:
     # shards per OS, ubuntu-latest's shards 1, 2 and 4 went green at 88-95 s and
     # shard 3 was cancelled by the cap at 123 s; all four macos-latest shards
     # were cancelled at 125-173 s. The cap stays two minutes; the legs meet it by
-    # more shards: ubuntu-latest deals the tree six ways, macos-latest eight.
-    # `shards` rides in by include, the unused ubuntu indices are excluded, and
-    # the job name keeps its (os, shard) shape. internal/ci:
+    # more shards: ubuntu-latest dealt the tree six ways, macos-latest eight; and
+    # 2026-10-18, on main's six push runs of that night, ubuntu-latest's shard 3
+    # took 108 to 135 s and was cancelled five times (the fleet package's ansible
+    # renders alone take 45 s on a hosted runner), so ubuntu-latest deals eight
+    # ways too. `shards` rides in by include and the job name keeps its (os, shard)
+    # shape. internal/ci:
     # TestHostedShardsUnderTheCap.
     name: test-hosted (${{ matrix.os }}, ${{ matrix.shard }})
     strategy:
@@ -994,14 +997,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-        exclude:
-          - os: ubuntu-latest
-            shard: 7
-          - os: ubuntu-latest
-            shard: 8
         include:
           - os: ubuntu-latest
-            shards: 6
+            shards: 8
           - os: macos-latest
             shards: 8
     runs-on: ${{ matrix.os }}

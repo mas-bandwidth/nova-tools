@@ -21,10 +21,13 @@ import (
 // shard 3 was cancelled at 123 s and all four macos-latest shards at 125-173 s.
 // The cap stays two minutes; the legs meet it by more shards.
 
-// hostedMinShards is the shard count per hosted OS the four-shard run above
-// justifies: ubuntu-latest from four to six, macos-latest from four to eight.
+// hostedMinShards is the shard count per hosted OS the runs above justify:
+// ubuntu-latest from four to six (2026-09-26), then to eight (2026-10-18: on
+// main's six push runs of that night ubuntu-latest's shard 3 took 108 to 135 s
+// against the 120 s cap, cancelled five times; the fleet package's ansible
+// renders alone take 45 s on a hosted runner), macos-latest from four to eight.
 var hostedMinShards = map[string]int{
-	"ubuntu-latest": 6,
+	"ubuntu-latest": 8,
 	"macos-latest":  8,
 }
 
