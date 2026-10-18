@@ -83,8 +83,10 @@ const nativeIdlePoll = time.Second
 // nativeSnapshotEvery is how often the watch reads the process table for the tree's CPU:
 // batch's coarse poll (activityInterval, at most 5 s), and no oftener than every 15 s where
 // the window is long enough to hold four of those. A snapshot is the whole table (on Linux a
-// /proc listing and a read of every /proc/N/stat), taken per running card; the busy share
-// is of the span between two, so a working tree still clears it.
+// /proc listing and a read of every /proc/N/stat), taken per running card. The busy bar is
+// not raised with the span: a tree must spend a tenth of batch's poll since the last reading
+// (0.5 s in the default window), as it did when the reading came every 5 s (IdleWatch's
+// treeMoved).
 func nativeSnapshotEvery(idle time.Duration) time.Duration {
 	return max(activityInterval(idle), min(15*time.Second, idle/4))
 }
@@ -210,7 +212,12 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 		var cpu uint64
 		var haveCPU bool
 		// treeMoved reads the process table at at and says whether the tree worked since the
-		// last reading: it lost a process, or it spent a tenth of the span (nativeBusyShare).
+		// last reading: it lost a process, or it spent a tenth (nativeBusyShare) of the span
+		// or of batch's poll (activityInterval), whichever is shorter. The bar stays what it
+		// was at a 5 s poll (0.5 s in the default window): measured against a 15 s span it
+		// was 1.5 s, and a card behind the shell cap inside one tool call that ran
+		// `gh pr checks` every 10 s at ~0.6 s of CPU each never showed it, and was reaped
+		// while it worked (the cold read of PR 5953).
 		treeMoved := func(at time.Time) bool {
 			span := at.Sub(lastSample)
 			lastSample = at
@@ -228,7 +235,7 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 			cpu, haveCPU = got, true
 			// A tree that LOST a process did work: the process was alive, it was charged,
 			// and its departure is not stillness.
-			return shrank || (grew && got-prev >= uint64(span)/nativeBusyShare)
+			return shrank || (grew && got-prev >= uint64(min(span, activityInterval(w.Idle)))/nativeBusyShare)
 		}
 		// lastSpend is the accounting the watch last saw, with haveSpend saying one has
 		// been seen: the base a rise is measured from, never a reset on its own.
@@ -266,8 +273,9 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 				}
 				// A silent log is not a silent card. The tree's CPU is read every
 				// nativeSnapshotEvery (15 s in the default window), and a tree that spent a
-				// tenth of the span since the last reading (nativeBusyShare) is working, which
-				// separates a working tree from a sleeping one's bookkeeping.
+				// tenth of batch's poll (0.5 s in the default window) since the last reading
+				// is working (treeMoved), which separates a working tree from a sleeping one's
+				// bookkeeping.
 				if at.Sub(lastSample) >= nativeSnapshotEvery(w.Idle) && treeMoved(at) {
 					lastGrow = at
 					continue

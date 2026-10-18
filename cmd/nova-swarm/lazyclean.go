@@ -86,7 +86,13 @@ func (r *nativeRunner) Epoch(epoch uint64) { r.epoch.Store(epoch + 1) }
 // urgent says a tagged launch waits for the cleaner: lazy work yields to it.
 func (r *nativeRunner) urgent() bool { return len(r.tagged) > 0 }
 
-// busy says a launch of this runner is live: claimed by Start and not yet ended.
+// busy says a launch of this runner is live: claimed by Start and not yet ended. It is read
+// once a round and Start does not wake the cleaner, so the word is up to one round stale: a
+// card started on an idle seat is seen busy at the next round, at most lazyQuiet later.
+// Accepted, and so is the idle seat's other lag: a cache measured between its low-water mark
+// and its limit is read cacheDirsPerRound subdirectories a round at the idle pace, so the
+// whole of it is measured again in about 64 minutes (64 rounds of up to lazyQuiet), not
+// 128 s; an idle seat's cache does not grow.
 func (r *nativeRunner) busy() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

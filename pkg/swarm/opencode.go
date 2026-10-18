@@ -200,10 +200,12 @@ func ReadJobUsageLiveWithin(dataHome string, limit time.Duration) (ProviderUsage
 //
 //   - every message after the highest rowid it has read;
 //   - every message written at or after the newest write it has read, less liveMarkSlack
-//     (COALESCE(time_updated, time_created): OpenCode writes an assistant message's tokens
-//     and cost in place as its steps finish, and on one machine's own store 4 of 22,265
-//     messages were written again more than 500 ms after their completion, the latest
-//     1.01 s after; a rowid reused after a delete is a new write too);
+//     (COALESCE(time_updated, time_created)). OpenCode writes an assistant message's tokens
+//     and cost in place as its steps finish, and a message written again after its
+//     completion was measured on one machine's own store (22,265 assistant rows: none
+//     updated before completion, none more than 2 s after it, the latest 1,013 ms after).
+//     Any such rewrite advances time_updated, so this test reads it again whatever the
+//     margin, and a rowid reused after a delete is a new write the same way;
 //   - every message it read unfinished (the assistant's, with no time.completed).
 //
 // Every liveWholeEvery-th read is a whole one, and so is the first: it reads every message,
@@ -235,9 +237,12 @@ type LiveUsage struct {
 // long a deletion or a replaced store can leave its count wrong.
 const liveWholeEvery = 10
 
-// liveMarkSlack is how far before the newest write it has read a LiveUsage asks again: a
-// write that commits after a read may carry a time its writer took before that read's
-// newest one.
+// liveMarkSlack is how far before the newest write it has read a LiveUsage asks again. It
+// guards one case only: a write whose timestamp its writer took before a row the last read
+// already saw was committed, and which itself commits after that read, so its time is under
+// the newest the read saw. That case was never measured; the margin is a guess at how long
+// a writer holds a timestamp before its commit. Rewrites after completion need no margin
+// (LiveUsage).
 const liveMarkSlack = 2000 // milliseconds, the unit of OpenCode's times
 
 // liveColumns are a live read's first four columns: the rowid, whether the message is

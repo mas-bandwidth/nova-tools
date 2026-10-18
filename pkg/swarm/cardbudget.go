@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -67,32 +68,40 @@ func countAssistantLines(path string) int {
 	return n
 }
 
-// LogTurns is countAssistantLines for a log that only grows, read as it grows: the lines
-// already counted are never read again. A live sampler asked the whole log every sample,
-// lowercasing every line, so a card's turn count cost the square of its log over its life
-// (2026-10-17). The offset is the end of the last whole line counted; a last line with no
-// newline yet is counted on each read, as a scanner at EOF counts it, and kept for the next.
+// LogTurns is countAssistantLines for a log that only grows, read as it grows: no byte is
+// read twice. A live sampler asked the whole log every sample, lowercasing every line, so a
+// card's turn count cost the square of its log over its life (2026-10-17). The log is
+// streamed through a logReadChunk buffer from where the last Count stopped, which is the
+// log's end then: the line it ended inside is carried (whether it has shown "assistant" so
+// far, and its last bytes, for a word cut across two reads), so its rest is joined to it and
+// the line is counted once when its newline comes. A last line with no newline yet is
+// counted on each read, as a scanner at EOF counts it, and is never counted twice.
+//
 // A log that shrank, was gone at the last Count, or is another file than the one counted is
 // counted again from its start, and so is every log on every logRecountEvery-th Count: a
 // file system may give a new file the old one's inode, so the identity check is no proof,
 // and the recount bounds how long a replaced log can be miscounted. Native's capture is
-// only ever appended to.
-// The zero LogTurns has counted nothing; one LogTurns is used by one goroutine.
+// only ever appended to. The zero LogTurns has counted nothing; one LogTurns is used by one
+// goroutine.
 type LogTurns struct {
 	path   string
 	file   os.FileInfo
-	offset int64
-	n      int
-	counts int // Counts since the count last began at the log's start
+	offset int64 // the bytes counted: the log's end at the last Count
+	n      int   // the whole lines counted that carry "assistant"
+	counts int   // Counts since the count last began at the log's start
+	// the line the last Count ended inside: whether it has carried "assistant" so far, and
+	// its last len("assistant")-1 bytes, lowercased
+	hit  bool
+	tail []byte
 }
 
 // logRecountEvery is how many Counts a LogTurns takes between counts from the log's start.
 const logRecountEvery = 10
 
-// logLineMost is the longest unterminated tail LogTurns holds back for its newline; a longer
-// one is counted as a line of its own (the scanner it replaces stopped counting at a line
-// past 1 MiB).
-const logLineMost = 1 << 20
+// logReadChunk is the buffer a LogTurns streams the log through.
+const logReadChunk = 64 << 10
+
+var assistantWord = []byte("assistant")
 
 // Count is the log's assistant lines now, read from where the last Count stopped; 0 for a
 // log that cannot be read, which is counted from its start once it can.
@@ -113,31 +122,47 @@ func (c *LogTurns) Count(path string) int {
 	}
 	c.counts++
 	if _, err := f.Seek(c.offset, io.SeekStart); err != nil {
-		return c.n
+		return c.now()
 	}
-	chunk, err := io.ReadAll(io.LimitReader(f, fi.Size()-c.offset))
-	if err != nil {
-		return c.n
+	buf := make([]byte, logReadChunk)
+	r := io.LimitReader(f, fi.Size()-c.offset)
+	for {
+		k, err := r.Read(buf)
+		c.feed(buf[:k])
+		c.offset += int64(k)
+		if err != nil {
+			break // io.EOF at the size read above, or a read that failed: counted so far
+		}
 	}
-	whole := bytes.LastIndexByte(chunk, '\n') + 1
-	if whole == 0 && len(chunk) > logLineMost {
-		whole = len(chunk)
-	}
-	c.n += assistantLines(chunk[:whole])
-	c.offset += int64(whole)
-	return c.n + assistantLines(chunk[whole:])
+	return c.now()
 }
 
-// assistantLines is how many of the lines in b carry "assistant", in any case.
-func assistantLines(b []byte) (n int) {
+// now is the count: the whole lines, and the line still open when it has shown the word.
+func (c *LogTurns) now() int {
+	if c.hit {
+		return c.n + 1
+	}
+	return c.n
+}
+
+// feed counts one stretch of the log, carrying the line it ends inside.
+func (c *LogTurns) feed(b []byte) {
 	for len(b) > 0 {
-		line, rest, _ := bytes.Cut(b, []byte{'\n'})
-		if bytes.Contains(bytes.ToLower(line), []byte("assistant")) {
-			n++
+		seg, rest, ended := bytes.Cut(b, []byte{'\n'})
+		low := bytes.ToLower(append(slices.Clone(c.tail), seg...))
+		if bytes.Contains(low, assistantWord) {
+			c.hit = true
+		}
+		if ended {
+			if c.hit {
+				c.n++
+			}
+			c.hit, c.tail = false, nil
+		} else {
+			c.tail = slices.Clone(low[max(0, len(low)-(len(assistantWord)-1)):])
 		}
 		b = rest
 	}
-	return n
 }
 
 // OverCardBudget reports whether the observed usage and turn count exceed the

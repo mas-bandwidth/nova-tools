@@ -148,8 +148,11 @@ func TestNativeSamplesThroughAWriteAheadLog(t *testing.T) {
 	dataHome := filepath.Join(slot, "data")
 	db := filepath.Join(dataHome, "opencode", "opencode.db")
 	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
+	// This store has NO time_updated column, as an older harness's: the live read's timed
+	// statement is refused by the real sqlite3 and it falls back to whole reads
+	// (swarm.LiveUsage); the fakeharness's stores carry the column.
 	sql := `PRAGMA journal_mode=WAL;
-CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER);
+CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);
 INSERT INTO message (data, time_created) VALUES (json_object('role','assistant','providerID','fake','modelID','fake-model','tokens',json_object('input',1000,'output',500,'cache',json_object('write',0,'read',0),'reasoning',0),'cost',0.1), ` +
 		strconv.FormatInt(time.Now().UnixMilli(), 10) + `);
 `

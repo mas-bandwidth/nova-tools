@@ -112,4 +112,17 @@ func TestTheIdleWatchPollsEachSecondAndSnapshotsEveryFifteen(t *testing.T) {
 	}
 	_, _, ended = run(t, late, 400)
 	assert.False(t, ended, "a tree that began working inside the last snapshot span is not idle")
+
+	// BURSTY WORK BEHIND THE SHELL CAP (the second cold read of PR 5953): one tool call
+	// running `gh pr checks` every 10 s at ~0.6 s of CPU each, nothing printed. Every 15 s
+	// span holds 0.6 to 1.2 s, never the 1.5 s a tenth of the span would ask; the bar is a
+	// tenth of batch's 5 s poll, and the card is kept.
+	bursty := func(s int) uint64 {
+		if s%10 == 0 {
+			return uint64(600 * time.Millisecond)
+		}
+		return eventLoop(s)
+	}
+	_, _, ended = run(t, bursty, 400)
+	assert.False(t, ended, "a tree spending 0.6 s every 10 s is working")
 }
