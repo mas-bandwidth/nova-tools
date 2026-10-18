@@ -524,13 +524,13 @@ from there, outside the wall, as before.
 ### warm-clones-and-caches.w2: the mirror and the cache are kept warm
 
 Staging borrows a bench mirror, so the mirror has to exist and be current, and a first
-build has to find a warm cache. `swarm.MirrorKeeper` keeps both. a member
+build has to find a warm cache. `swarm.MirrorKeeper` keeps both. a worker member
 whose environment holds `NOVA_SWARM_MIRRORS=<url,...>` (the repositories it works on)
-keeps one; for each the keeper
+keeps one (a reader keeps none and borrows the worker seats'); for each the keeper
 creates `~/nova-bench/mirror/<name>.git` (`git clone --mirror`, the place `FindBenchMirror`
 looks first), sets `gc.auto=0`, and afterwards only fetches into it. It runs at the member's
-start and in the background before a pass at most once a minute, so a landing the member
-sees is fetched at the next pass past it. When the tip of the mirror's HEAD branch moves it
+start and in the background before a pass at most once every ten minutes, by the clock
+(a minute until 2026-10-17: every seat fetched every repository each minute). When the tip of the mirror's HEAD branch moves it
 fills the member's shared `GOCACHE` (`swarm.GoBuildCacheDir`, the one the cards share): a
 checkout borrowed from the mirror under `<root>/cache/warm/<name>`, moved to the tip, then
 `nice -n 19 go build ./...` and `nice -n 19 go vet ./...`, once per tip (the tip it last

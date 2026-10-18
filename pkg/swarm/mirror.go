@@ -86,8 +86,8 @@ type MirrorRefresh struct {
 
 // Refresh creates the mirror when absent and fetches into it otherwise, then warms the
 // cache when the Ref tip moved. A warm failure is returned beside the refresh: the mirror
-// is good, and a cold cache costs time, never correctness. It runs at the member's start
-// and after each landing the member sees.
+// is good, and a cold cache costs time, never correctness. A worker member runs it at its
+// start and then every ten minutes by the clock (cmd/nova-swarm, mirrorEvery).
 func (k MirrorKeeper) Refresh(ctx context.Context) (MirrorRefresh, error) {
 	var res MirrorRefresh
 	if _, err := os.Stat(filepath.Join(k.Mirror, "HEAD")); err != nil {
