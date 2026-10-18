@@ -83,7 +83,7 @@
   (group "quality" :title "Cleanup, dead code and debt"
    :text "Shrinking, dead code removal, lint and debt work that waits for the code under it to settle.")
   (group "export-v19" :title "Moved out of the sprint on 2026-10-18: v19, target v1.9"
-   :text "The open cards of sprint stream v19, moved out of the sprint when Glenn said v19 and v111 live in roadmaps only (2026-10-18), one item per card. Each item keeps the card's whole brief under :kept :brief, with its column, tier, base and needs; none had a pushed head."))
+   :text "The open cards of sprint stream v19, moved out of the sprint when the owner said v19 and v111 live in roadmaps only (2026-10-18), one item per card. Each item keeps the card's whole brief under :kept :brief, with its column, tier, base and needs; none had a pushed head."))
 
  :items
  (
@@ -1772,10 +1772,10 @@
   (item "v19-hook-claude-settings-splices-only-its-stop-hook" :group "export-v19" :area "nova-tools"
    :title "v19-hook-claude-settings-splices-only-its-stop-hook"
    :text "nova-hook's Claude installer splices only its Stop hook into settings.json and leaves every other byte of the file unchanged. Column waiting, tier pro, base sprint/v19. The whole brief is kept under :kept :brief. No pushed head recorded."
-   :why "Glenn 2026-10-18: \"Please remove v19 and v111 from this sprint. They live in roadmaps only.\""
+   :why "The owner, 2026-10-18: \"Please remove v19 and v111 from this sprint. They live in roadmaps only.\""
    :date "2026-10-18"
    :release "v1.9"
-   :origin "sprint card v19-hook-claude-settings-splices-only-its-stop-hook (stream v19, column waiting, tier pro, base sprint/v19), moved out of the sprint 2026-10-18; card source: the owner, Glenn, 2026-10-18 (for v1.9): cards from what we learned from Paper Instruments' Feather (paperinstruments.com/feather), lesson 1: an edit verb refuses instead of corrupting: a verb that rewrites a brief or a file changes exactly the region it names, or refuses. Read on nova-tools main 71"
+   :origin "sprint card v19-hook-claude-settings-splices-only-its-stop-hook (stream v19, column waiting, tier pro, base sprint/v19), moved out of the sprint 2026-10-18; card source: the owner, 2026-10-18 (for v1.9): cards from what we learned from Paper Instruments' Feather (paperinstruments.com/feather), lesson 1: an edit verb refuses instead of corrupting: a verb that rewrites a brief or a file changes exactly the region it names, or refuses. Read on nova-tools main 71"
    :kept (:sprint-card "v19-hook-claude-settings-splices-only-its-stop-hook" :sprint-stream "v19" :sprint-column "waiting" :tier "pro" :sprint-base "sprint/v19" :needs "" :pushed-head "" :pushed-branch "" :brief "RESULT: v19-hook-claude-settings-splices-only-its-stop-hook sha=<sha12> tier: pro
 REPO: mas-bandwidth/nova-tools
 BASE: sprint/v19
@@ -1783,7 +1783,7 @@ KIND: fix
 PRIORITY: normal
 STREAM: v19
 DEPENDS-ON: none
-SOURCE: the owner, Glenn, 2026-10-18 (for v1.9): cards from what we learned from Paper Instruments' Feather (paperinstruments.com/feather), lesson 1: an edit verb refuses instead of corrupting: a verb that rewrites a brief or a file changes exactly the region it names, or refuses. Read on nova-tools main 719420e5 (sprint/v19 was cut there): `nova-hook hook --harness claude` installs its Stop hook through notice.InstallClaude, which calls mergeClaudeStopHook (pkg/harness/notice/claude_settings.go): it decodes the whole of the person's settings.json into map[string]any and writes json.MarshalIndent of it back, so every key of the file is re-sorted, its layout replaced, a large integer rounded through float64 and `<`, `>` and `&` escaped as \\u003c, \\u003e and \\u0026, when the hook asked to change one array. No test pins the function today.
+SOURCE: the owner, 2026-10-18 (for v1.9): cards from what we learned from Paper Instruments' Feather (paperinstruments.com/feather), lesson 1: an edit verb refuses instead of corrupting: a verb that rewrites a brief or a file changes exactly the region it names, or refuses. Read on nova-tools main 719420e5 (sprint/v19 was cut there): `nova-hook hook --harness claude` installs its Stop hook through notice.InstallClaude, which calls mergeClaudeStopHook (pkg/harness/notice/claude_settings.go): it decodes the whole of the person's settings.json into map[string]any and writes json.MarshalIndent of it back, so every key of the file is re-sorted, its layout replaced, a large integer rounded through float64 and `<`, `>` and `&` escaped as \\u003c, \\u003e and \\u0026, when the hook asked to change one array. No test pins the function today.
 PATHS: pkg/harness/notice/claude_settings.go,pkg/harness/notice/claude_settings_test.go,docs/SPEC-HOOK.md
 NEW: pkg/harness/notice/claude_settings_test.go
 TEST: pkg/harness/notice TestTheClaudeStopHookChangesOnlyItsOwnArray
@@ -1819,8 +1819,8 @@ No `rm -rf` outside the job directory.
 Report what was not done.
 Unit tests use no real time, no sockets, no network and no outside services; a test that needs any of them is a functional test and keeps to that tier. Time is an argument, and a test clock starts at 1000.0 seconds, never 0.
 Make the smallest change, with no refactor.
-Never touch the space game's baseline or delta code.
-Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+Never touch the game's baseline or delta code.
+Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the coordinator machine.
 Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.
 Commit on your own branch; no gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
 Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
@@ -1833,10 +1833,10 @@ Schema-table bounds: a bound is declared only if every writer and reader path en
   (item "v19-friend-set-reaches-the-store" :group "export-v19" :area "nova-tools"
    :title "v19-friend-set-reaches-the-store"
    :text "A nova-config friend set reaches the store within a tick, with no manual apply --kind friend. Column waiting, tier pro, base sprint/v19. The whole brief is kept under :kept :brief. No pushed head recorded."
-   :why "Glenn 2026-10-18: \"Please remove v19 and v111 from this sprint. They live in roadmaps only.\""
+   :why "The owner, 2026-10-18: \"Please remove v19 and v111 from this sprint. They live in roadmaps only.\""
    :date "2026-10-18"
    :release "v1.9"
-   :origin "sprint card v19-friend-set-reaches-the-store (stream v19, column waiting, tier pro, base sprint/v19), moved out of the sprint 2026-10-18; card source: the owner, Glenn, 2026-10-18 (for v1.9): after `nova-config friend set`, the store kept the friends' stale tiers until a manual `nova-config apply --kind friend` was run; the nova-config-apply loop did not pick the change up. A friend-row config change reaches the store within one tick."
+   :origin "sprint card v19-friend-set-reaches-the-store (stream v19, column waiting, tier pro, base sprint/v19), moved out of the sprint 2026-10-18; card source: the owner, 2026-10-18 (for v1.9): after `nova-config friend set`, the store kept the friends' stale tiers until a manual `nova-config apply --kind friend` was run; the nova-config-apply loop did not pick the change up. A friend-row config change reaches the store within one tick."
    :kept (:sprint-card "v19-friend-set-reaches-the-store" :sprint-stream "v19" :sprint-column "waiting" :tier "pro" :sprint-base "sprint/v19" :needs "" :pushed-head "" :pushed-branch "" :brief "RESULT: v19-friend-set-reaches-the-store sha=<sha12> tier: pro
 REPO: mas-bandwidth/nova-tools
 BASE: sprint/v19
@@ -1844,7 +1844,7 @@ KIND: fix
 PRIORITY: normal
 STREAM: v19
 DEPENDS-ON: none
-SOURCE: the owner, Glenn, 2026-10-18 (for v1.9): after `nova-config friend set`, the store kept the friends' stale tiers until a manual `nova-config apply --kind friend` was run; the nova-config-apply loop did not pick the change up. A friend-row config change reaches the store within one tick.
+SOURCE: the owner, 2026-10-18 (for v1.9): after `nova-config friend set`, the store kept the friends' stale tiers until a manual `nova-config apply --kind friend` was run; the nova-config-apply loop did not pick the change up. A friend-row config change reaches the store within one tick.
 PATHS: cmd/nova-config/apply.go,cmd/nova-config/friend_write_applies_test.go,tla/ConfigApply.tla,tla/MCConfigApply.tla,tla/MCConfigApplyBrokenSilentUnappliedFriend.cfg,tla/CASES.tsv,tla/COVERAGE.tsv,tla/RUNS.tsv,internal/ci/testdata/dead_code_allowlist.txt,internal/ci/testdata/staticcheck/cmd/nova-config.txt,docs/SPEC-CONFIG.md
 SHARED: tla/CASES.tsv,tla/COVERAGE.tsv,tla/RUNS.tsv,internal/ci/testdata/dead_code_allowlist.txt,internal/ci/testdata/staticcheck/cmd/nova-config.txt,docs/SPEC-CONFIG.md
 NEW: cmd/nova-config/friend_write_applies_test.go,tla/MCConfigApplyBrokenSilentUnappliedFriend.cfg
@@ -1869,7 +1869,7 @@ THE TASK. STEP 1 first: find out from the code and the loop rows (nova-config lo
 STEP 1. cd into the staged checkout JOB.md names and run git log --oneline -1; it is a NEW worktree on the branch this card names. Record the loop finding.
 STEP 2. Red first, with t.Parallel() and the harness TestRouteWriteApplies uses (loopHarness, the file store and the Redis fake, no real time, no socket): cmd/nova-config/friend_write_applies_test.go (package main) TestFriendWriteApplies: for add, set and remove of a friend row, with the failures TestRouteWriteApplies runs (none, unreachable, refused), a success leaves the Redis copy at the new tiers and prints CONFIG APPLY kind=friend; a failed copy exits 1 with CONFIG NOT-APPLIED and the store row and its history unchanged by the failure. Run -run '^TestFriendWriteApplies' -v and keep the failing lines.
 STEP 3. Make the change THE TASK says, in the PATHS files only.
-STEP 4. Run the gate: go vet ./... ; the DONE-WHEN commands (the TLC cases on the bench, never on the studio: for each group g that `go run ./tools/tlacheck groups --root . --stale` lists, `make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g`, then `go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv $JOB/scratch/tlc-*/RUNS.tsv` until the groups command prints [], and commit tla/RUNS.tsv); then go test -count=1 -timeout 900s ./cmd/nova-config/ ./pkg/config/ at the head. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
+STEP 4. Run the gate: go vet ./... ; the DONE-WHEN commands (the TLC cases on the bench, never on the coordinator machine: for each group g that `go run ./tools/tlacheck groups --root . --stale` lists, `make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g`, then `go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv $JOB/scratch/tlc-*/RUNS.tsv` until the groups command prints [], and commit tla/RUNS.tsv); then go test -count=1 -timeout 900s ./cmd/nova-config/ ./pkg/config/ at the head. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
 STEP 5. Commit as `v19-friend-set-reaches-the-store: <what>` with the trailer and end as JOB.md says (docs/SPEC-CARD-CONTRACT.md): the pull request body states the diff stat, the red line, the test and what it pins, the loop finding, and what was not done.
 
 RULES.
@@ -1881,8 +1881,8 @@ No `rm -rf` outside the job directory.
 Report what was not done.
 Unit tests use no real time, no sockets, no network and no outside services; a test that needs any of them is a functional test and keeps to that tier. Time is an argument, and a test clock starts at 1000.0 seconds, never 0.
 Make the smallest change, with no refactor.
-Never touch the space game's baseline or delta code.
-Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+Never touch the game's baseline or delta code.
+Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the coordinator machine.
 Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.
 Commit on your own branch; no gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
 Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
