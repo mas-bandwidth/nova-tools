@@ -298,8 +298,8 @@ func TestAnUncataloguedProviderCarriesItsDirectFields(t *testing.T) {
 	for _, raw := range []map[string]string{
 		{"billing": "metered", "funded": "true", "key_env": "sk-a-literal-key"},
 		{"billing": "metered", "funded": "true", "key_env": "_API_KEY"},
-		{"billing": "metered", "funded": "true", "base_url": "ftp://api.example/v1"},
-		{"billing": "metered", "funded": "true", "base_url": "http://api.example/v1"},
+		{"billing": "metered", "funded": "true", "base_url": "ftp://api.example.invalid/v1"},
+		{"billing": "metered", "funded": "true", "base_url": "http://api.example.invalid/v1"},
 		{"billing": "metered", "funded": "true", "npm_adapter": "two words"},
 	} {
 		_, err := k.NewRow("bad", raw)
