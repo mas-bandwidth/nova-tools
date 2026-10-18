@@ -3,7 +3,8 @@
 // are wired (docs/STANDARD.md, Tests: shared rigs live beside the package's
 // tests, one constructor with defaults and scenarios over copies).
 //
-// These tests wait on no clock, bar the one real-clock scenario marked below.
+// These tests wait on no clock (the one real-clock scenario, realDelay, is in
+// delayproxy_functional_test.go).
 // The proxy is given a Clock whose waits are recorded and, where a test wants
 // to look inside a wait, held on a gate: what is proved is how many delays
 // were paid and that nothing was sent before its delay was over, never how
