@@ -261,6 +261,11 @@ func locked(path string, plan func([]Decision) ([]line, error)) (err error) {
 		if err != nil {
 			return err
 		}
+		if len(line) == 0 {
+			// the table builder could not build the image: refused by name,
+			// never written as an empty line (S2).
+			return fmt.Errorf("RECORD_LINE: the table image could not be built for %s", path)
+		}
 		out = append(out, append(line, '\n')...)
 	}
 	_, err = f.Write(out)
@@ -310,6 +315,8 @@ func fillDecisionRow(w *decidewire.TableWorker, r *decidewire.DecisionRow, d *De
 			na.Answer.Kind = decidewire.AnswerTypeChoice
 		}
 		setText(w, &na.Answer.Value, a.Value)
+		na.Answer.Confidence = a.Confidence
+		setText(w, &na.Answer.Method, a.Method)
 		for _, opt := range sortedKeys(a.P) {
 			o := decidewire.AnswerPAdd(w, &na.Answer.P)
 			setText(w, &o.Option, opt)

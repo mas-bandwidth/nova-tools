@@ -29,6 +29,12 @@ func TestDecideLedgerWriteTable(t *testing.T) {
 	path := filepath.Join(dir, "decisions.jsonl")
 
 	d := decisionSample()
+	// an answer carrying a confidence and a method (jev and judgment write
+	// both) keeps them through the table form.
+	b := d.Answers["B"]
+	b.Confidence = 0.75
+	b.Method = "wire"
+	d.Answers["B"] = b
 	_, err := decide.Append(path, d)
 	require.NoError(t, err)
 	loaded, err := decide.Load(path)
