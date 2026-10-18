@@ -93,7 +93,18 @@ type unitSocketSite struct {
 // tool, or when a literal argument -- a literal operand of a + concatenation
 // included -- contains "/dev/tcp/" or "/dev/udp/". The scan is syntactic: a
 // program or argument that is not a literal is not judged.
+//
+// The seven shared net shapes (unitSocketsSharedNet) are read only for a file in
+// the unit tier, judged by the name the file was parsed under; a caller that
+// parses under an absolute path and knows the file is in the tier calls
+// unitSocketsInTier with true.
 func unitSocketsIn(fset *token.FileSet, file *ast.File) []unitSocketSite {
+	return unitSocketsInTier(fset, file, unitSocketsInUnitDir(fset.Position(file.Pos()).Filename))
+}
+
+// unitSocketsInTier is unitSocketsIn with the unit-tier question answered by the
+// caller: false drops the shared net shapes unit-rule carries itself.
+func unitSocketsInTier(fset *token.FileSet, file *ast.File, inTier bool) []unitSocketSite {
 	local := make(map[string]string, len(unitSocketsRefused))
 	for p := range unitSocketsRefused {
 		if name := importName(file, p); name != "" {
@@ -116,12 +127,11 @@ func unitSocketsIn(fset *token.FileSet, file *ast.File) []unitSocketSite {
 			return true
 		}
 		if p, ok := local[id.Name]; ok {
-			rel := fset.Position(file.Pos()).Filename
 			for _, fn := range unitSocketsRefused[p] {
 				if sel.Sel.Name != fn {
 					continue
 				}
-				if unitSocketsSharedNet[fn] && !unitSocketsInUnitDir(rel) {
+				if unitSocketsSharedNet[fn] && !inTier {
 					continue
 				}
 				out = append(out, unitSocketSite{Line: fset.Position(call.Pos()).Line, What: id.Name + "." + fn})
@@ -225,7 +235,7 @@ func TestNoUnitTestOpensASocket(t *testing.T) {
 			continue
 		}
 		files++
-		for _, s := range unitSocketsIn(tree.FSet, f.AST) {
+		for _, s := range unitSocketsInTier(tree.FSet, f.AST, true) {
 			sites++
 			ledger.add(f.Rel+":socket", fmt.Sprintf("%s:%d: %s(...)", f.Rel, s.Line, s.What))
 		}
