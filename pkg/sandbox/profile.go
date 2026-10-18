@@ -77,7 +77,9 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 		name := fmt.Sprintf("NOEXEC%d", i)
 		noExec = append(noExec,
 			fmt.Sprintf("(allow file-read* (subpath (param %q)))", name),
-			fmt.Sprintf("(deny process-exec* (subpath (param %q)))", name))
+			// no-report, as the default deny is (profiles/darwin.sb.tmpl): a reporting
+			// deny hung a walled Bun harness on macOS 27.0.1 until it was killed.
+			fmt.Sprintf("(deny process-exec* (subpath (param %q)) (with no-report))", name))
 		params = append(params, name+"="+r)
 	}
 	for i, w := range p.Writes {

@@ -1314,7 +1314,7 @@ func TestPolicyVerbPrintsAndRunsNothing(t *testing.T) {
 	code, out, errOut := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write)
 	require.Equal(t, 0, code, "policy exit %d: %s", code, errOut)
 	require.Contains(t, out, "(version 1)", "the printed policy is not a profile:\n%s", out)
-	require.Contains(t, out, "(deny default)", "the printed policy is not a profile:\n%s", out)
+	require.Contains(t, out, "(deny default (with no-report))", "the printed policy is not a profile:\n%s", out)
 	require.Contains(t, errOut, "POLICY OK backend=sandbox-exec", "the POLICY OK line is not the grammar the spec fixes: %q", errOut)
 	_, err := os.Stat(marker)
 	require.Error(t, err, "the policy verb ran something")

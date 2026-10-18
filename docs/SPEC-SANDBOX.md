@@ -765,6 +765,19 @@ is built and kept because it costs one bounded query on a run that already
 failed, it is right wherever the OS does report, and the alternative is a tool
 with no way at all to say what it denied.
 
+**The default deny is `(deny default (with no-report))`** (measured 2026-10-18 on
+a darwin/arm64 bench, macOS 27.0.1). With the reporting form, a walled `opencode
+--version` hung forever on most cold starts (0.01 s of CPU, no file open), and
+every card on that host sat silent until the idle reap; with `no-report` the same
+profile passed every cold start, and `(allow default)` never hung. The deny
+itself is unchanged, and the `--read-noexec` exec denies are no-report too. The
+trade, named: the `SANDBOX DENIED` reader above can no longer fire for a default
+denial on any macOS. On macOS 26 those reports never reached the log for a
+`sandbox-exec` profile anyway; on 27.x that is unmeasured, and the hang suggests
+the OS does try to send one. A wall that never starts its child costs more than a
+report that never arrives. `pkg/sandbox/profile_noreport_test.go` refuses a template whose
+default rule is anything else.
+
 The query is bounded at **two seconds** and its absence is silence, never an
 error: measured, a `log show` for a three-second window took over ten seconds and
 found nothing, and a card whose test suite fails would have paid that on every

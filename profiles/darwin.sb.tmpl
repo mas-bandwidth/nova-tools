@@ -66,7 +66,18 @@
 ;; and identical to one of the WRITEn paths.
 
 (version 1)
-(deny default)
+;; The default deny is NO-REPORT (measured 2026-10-18 on a darwin/arm64 bench, macOS 27.0.1):
+;; with a reporting deny, a walled `opencode --version` (a 143 MB Bun binary) hung
+;; forever on most cold starts, before any file was open and with 0.01 s of CPU, while
+;; the same profile with this one modifier passed 4 of 4 cold starts interleaved with
+;; hangs of the reporting form, and `(allow default)` never hung. The thread that is
+;; denied waits for its violation report, and on that host the report never came; every
+;; card on every route sat silent until the 300 s idle reap (j17973). The deny is
+;; unchanged. The trade, named: nova-sandbox's SANDBOX DENIED lines can no longer fire for
+;; a default denial on any macOS. On macOS 26 those reports never reached the unified log
+;; for a sandbox-exec profile (docs/SPEC-SANDBOX.md, "What this can and cannot see"); on
+;; 27.x that is unmeasured, and the hang suggests the OS does try to send one.
+(deny default (with no-report))
 
 ;; exec and signal are TWO clauses. Folding them into
 ;; (allow process-exec* process-fork signal (target self)) applies the target filter

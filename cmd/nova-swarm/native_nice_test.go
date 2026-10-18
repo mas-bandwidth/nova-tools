@@ -18,7 +18,7 @@ import (
 
 // THE DARWIN WALL FORBIDS setpriority (its `system-sched` operation, measured 2026-10-02:
 // under `(allow default)(deny system-sched)` `nice -n 19 true` prints `nice: setpriority:
-// Operation not permitted`, and the wall's template is `(deny default)` with no
+// Operation not permitted`, and the wall's template is `(deny default (with no-report))` with no
 // system-sched grant). Every card's gate line begins `nice -n 19`, so every worker's output
 // carried the warning and its gate ran at the priority it started with. Native now lowers
 // the walled child's whole group itself, outside the wall, and puts a `nice` in the shim
@@ -32,7 +32,7 @@ func TestNativeNicesTheChildWhereTheWallForbidsIt(t *testing.T) {
 	assert.False(t, nativeNicesChild("linux", true), "landlock leaves setpriority alone: the card's own nice works")
 	tmpl, err := os.ReadFile(filepath.Join("..", "..", "profiles", "darwin.sb.tmpl"))
 	require.NoError(t, err)
-	assert.Contains(t, string(tmpl), "(deny default)", "the premise: the darwin wall denies what it does not grant")
+	assert.Contains(t, string(tmpl), "(deny default (with no-report))", "the premise: the darwin wall denies what it does not grant")
 	assert.NotContains(t, string(tmpl), "system-sched", "the premise: the darwin wall grants no system-sched")
 }
 

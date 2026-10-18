@@ -25,6 +25,10 @@
 //     report))` is refused by the compiler — "report modifier does not apply to deny
 //     action" — and `(trace "<file>")` aborts sandbox-exec with SIGABRT, exit 134.
 //
+// Since 2026-10-18 the darwin wall's denies are `(with no-report)` (a reporting deny hung a
+// walled Bun harness on macOS 27.0.1; profiles/darwin.sb.tmpl), so the wall's own denials
+// are never reported on any macOS, and this reader speaks only where another rule reports.
+//
 // So on this macOS these lines are usually silent, and the NOTE that goes with a non-zero
 // exit is what speaks instead. The reader is built and tested anyway, because it costs one
 // process on a failing run, it is right where the OS does report, and the alternative —
