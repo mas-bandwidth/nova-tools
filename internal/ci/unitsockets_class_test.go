@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -24,13 +25,20 @@ import (
 // THE RULE. Every _test.go the unit tier compiles -- under cmd/, internal/ and
 // tools/, outside testdata, behind no `//go:build functional`, slow, perf or
 // nightly constraint -- is scanned, and a call of net.Listen,
-// net.ListenPacket, net.ListenTCP, net.ListenUnix, net.Dial or net.DialTimeout,
-// or of httptest.NewServer, httptest.NewTLSServer or
-// httptest.NewUnstartedServer, is refused, naming file:line. The call is
-// resolved through the file's imports, so an aliased import counts. The
-// remedies are never refused: a conn comes from net.Pipe, a handler is proved
-// with httptest.NewRecorder, a client with an in-process RoundTripper; a test
-// whose subject is the real socket moves under //go:build functional.
+// net.ListenPacket, net.ListenTCP, net.ListenUnix, net.ListenUDP,
+// net.ListenUnixgram, net.ListenIP, net.ListenMulticastUDP, net.Dial,
+// net.DialTimeout, net.DialTCP, net.DialUDP, net.DialUnix or net.DialIP, or of
+// httptest.NewServer, httptest.NewTLSServer or httptest.NewUnstartedServer, is
+// refused, naming file:line. So is an os/exec Command or CommandContext whose
+// literal program is a networked tool (curl, wget, nc, ncat, netcat, socat,
+// telnet, ssh, scp, redis-cli), or any of whose literal arguments contains
+// "/dev/tcp/" or "/dev/udp/" (a networked program run by exec is a socket just
+// the same). The call is resolved through the file's imports, so an aliased
+// import counts. The scan is syntactic: a program or argument that is not a
+// literal is not judged. The remedies are never refused: a conn comes from
+// net.Pipe, a handler is proved with httptest.NewRecorder, a client with an
+// in-process RoundTripper; a test whose subject is the real socket moves under
+// //go:build functional.
 //
 // THE LEDGER. internal/ci/testdata/unit-sockets holds one counted shard per
 // source package, one `<file>:socket <sites> <reason>` row per test file still
@@ -44,8 +52,24 @@ const unitSocketsLedgerPath = "testdata/unit-sockets"
 // import path and the member name a call spells after the file's own name for
 // that import.
 var unitSocketsRefused = map[string][]string{
-	"net":               {"Listen", "ListenPacket", "ListenTCP", "ListenUnix", "Dial", "DialTimeout"},
+	"net":               {"Listen", "ListenPacket", "ListenTCP", "ListenUnix", "ListenUDP", "ListenUnixgram", "ListenIP", "ListenMulticastUDP", "Dial", "DialTimeout", "DialTCP", "DialUDP", "DialUnix", "DialIP"},
 	"net/http/httptest": {"NewServer", "NewTLSServer", "NewUnstartedServer"},
+}
+
+// unitSocketsSharedNet are the added net shapes unit-rule already carries. That
+// rule reads this scan only outside cmd/, internal/, pkg/ and tools/ (the unit
+// tier), where it carries these shapes itself; reading them here too would
+// count one call twice. Inside the unit tier unit-sockets is the only reader.
+var unitSocketsSharedNet = map[string]bool{
+	"DialTCP": true, "DialUDP": true, "DialUnix": true, "DialIP": true,
+	"ListenUDP": true, "ListenIP": true, "ListenMulticastUDP": true,
+}
+
+// unitSocketsNetworkPrograms are the programs whose run by os/exec is a socket:
+// each speaks to the network itself.
+var unitSocketsNetworkPrograms = map[string]bool{
+	"curl": true, "wget": true, "nc": true, "ncat": true, "netcat": true,
+	"socat": true, "telnet": true, "ssh": true, "scp": true, "redis-cli": true,
 }
 
 // unitSocketsRemedy is the one thing to do about a unit test that opens a
@@ -63,7 +87,11 @@ type unitSocketSite struct {
 // calls it makes (docs/SPEC-CI.md, `unit-sockets`), resolved through the file's
 // imports so an aliased import counts. It reads calls only: a name used as a
 // value, a comment or a string literal is not a socket. net.Pipe and
-// httptest.NewRecorder are the remedies and are never refused.
+// httptest.NewRecorder are the remedies and are never refused. An os/exec
+// Command or CommandContext is refused when its program is a literal networked
+// tool, or when a literal argument contains "/dev/tcp/" or "/dev/udp/". The
+// scan is syntactic: a program or argument that is not a literal is not
+// judged.
 func unitSocketsIn(fset *token.FileSet, file *ast.File) []unitSocketSite {
 	local := make(map[string]string, len(unitSocketsRefused))
 	for p := range unitSocketsRefused {
@@ -71,6 +99,7 @@ func unitSocketsIn(fset *token.FileSet, file *ast.File) []unitSocketSite {
 			local[name] = p
 		}
 	}
+	execName := importName(file, "os/exec")
 	var out []unitSocketSite
 	ast.Inspect(file, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -85,19 +114,68 @@ func unitSocketsIn(fset *token.FileSet, file *ast.File) []unitSocketSite {
 		if !ok {
 			return true
 		}
-		p, ok := local[id.Name]
+		if p, ok := local[id.Name]; ok {
+			rel := fset.Position(file.Pos()).Filename
+			for _, fn := range unitSocketsRefused[p] {
+				if sel.Sel.Name != fn {
+					continue
+				}
+				if unitSocketsSharedNet[fn] && !unitSocketsInUnitDir(rel) {
+					continue
+				}
+				out = append(out, unitSocketSite{Line: fset.Position(call.Pos()).Line, What: id.Name + "." + fn})
+			}
+			return true
+		}
+		if execName == "" || id.Name != execName || (sel.Sel.Name != "Command" && sel.Sel.Name != "CommandContext") {
+			return true
+		}
+		first := 0
+		if sel.Sel.Name == "CommandContext" {
+			first = 1
+		}
+		if len(call.Args) <= first {
+			return true
+		}
+		prog, ok := stringLit(call.Args[first])
 		if !ok {
 			return true
 		}
-		for _, fn := range unitSocketsRefused[p] {
-			if sel.Sel.Name == fn {
-				out = append(out, unitSocketSite{Line: fset.Position(call.Pos()).Line, What: id.Name + "." + fn})
+		what := id.Name + "." + sel.Sel.Name + " " + prog
+		if unitSocketsNetworkPrograms[filepath.Base(prog)] {
+			out = append(out, unitSocketSite{Line: fset.Position(call.Pos()).Line, What: what})
+			return true
+		}
+		for _, arg := range call.Args[first+1:] {
+			v, ok := stringLit(arg)
+			if !ok {
+				continue
 			}
+			switch {
+			case strings.Contains(v, "/dev/tcp/"):
+				out = append(out, unitSocketSite{Line: fset.Position(call.Pos()).Line, What: what + " /dev/tcp"})
+			case strings.Contains(v, "/dev/udp/"):
+				out = append(out, unitSocketSite{Line: fset.Position(call.Pos()).Line, What: what + " /dev/udp"})
+			default:
+				continue
+			}
+			break
 		}
 		return true
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].Line < out[j].Line })
 	return out
+}
+
+// unitSocketsInUnitDir reports whether rel is a file under one of the trees the
+// unit-sockets rule scans (unitWaitDirs).
+func unitSocketsInUnitDir(rel string) bool {
+	for _, d := range unitWaitDirs {
+		if rel == d || strings.HasPrefix(rel, d+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // TestNoUnitTestOpensASocket holds every _test.go the unit tier compiles

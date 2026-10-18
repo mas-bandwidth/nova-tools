@@ -686,11 +686,17 @@ definition, functional tests, and those are slower"). Every `_test.go` the unit
 tier compiles — under `cmd/`, `internal/` and `tools/`, outside testdata, behind
 no `//go:build functional`, `slow`, `perf` or `nightly` constraint — is scanned,
 and a call of `net.Listen`, `net.ListenPacket`, `net.ListenTCP`,
-`net.ListenUnix`, `net.Dial` or `net.DialTimeout`, or of `httptest.NewServer`,
+`net.ListenUnix`, `net.ListenUDP`, `net.ListenUnixgram`, `net.ListenIP`,
+`net.ListenMulticastUDP`, `net.Dial`, `net.DialTimeout`, `net.DialTCP`,
+`net.DialUDP`, `net.DialUnix` or `net.DialIP`, or of `httptest.NewServer`,
 `httptest.NewTLSServer` or `httptest.NewUnstartedServer`, is refused, naming
-file:line. The call is resolved through the file's imports, so an aliased
-import counts. `net.Pipe` and `httptest.NewRecorder` are the remedies and are
-never refused.
+file:line. So is an `os/exec` `Command` or `CommandContext` whose literal
+program is a networked tool (`curl`, `wget`, `nc`, `ncat`, `netcat`, `socat`,
+`telnet`, `ssh`, `scp`, `redis-cli`), or any of whose literal arguments
+contains `/dev/tcp/` or `/dev/udp/`: a networked program run by exec is a
+socket just the same. The call is resolved through the file's imports, so an
+aliased import counts. `net.Pipe` and `httptest.NewRecorder` are the remedies
+and are never refused.
 **The mistake it prevents.** A unit test that opens a socket is by definition a
 functional test: it is slower than the unit budget allows, it needs a free
 port, and its verdict can turn on the machine's load — the test proves the
@@ -700,7 +706,10 @@ cannot carry one.
 (`internal/ci/unitsockets_class_test.go`), with
 `TestUnitSocketsDetectorRefusesTheCallsAndNotTheRemedies` beside it, which pins
 the calls it refuses (through an aliased import too), the remedies it never
-refuses, and the functional-tagged file it skips whole.
+refuses, and the functional-tagged file it skips whole, and
+`TestUnitSocketsSeesANetworkedExecAndEveryDialShape`
+(`internal/ci/unitsockets_exec_test.go`), which pins the exec programs, the
+`/dev/tcp` argument and every added dial and listen shape.
 **Its ledger.** the `unit-sockets` package ledger,
 `internal/ci/testdata/unit-sockets/`, one counted shard per source package, one
 `<file>:socket <sites> <reason>` row per test file still short. The count only
@@ -715,9 +724,12 @@ a later package shard remains growth.
 **Its narrowings.** It reads calls in the test file's own syntax: a socket
 opened by a helper in another package, a call made through a variable or a
 method value, or a dot-imported `net` is not seen, and a name used as a value
-is not counted a second time. The tier decision reuses `unitTierFile`, so it
-follows the unit suite's supported build platforms and tags. The `net` class
-test beside it refuses a host a test NAMES; this one refuses a socket it OPENS.
+is not counted a second time. The scan of an `os/exec` call is syntactic too:
+a program or argument that is not a literal is not judged, so a `/dev/tcp`
+path assembled or aliased at run time is invisible. The tier decision reuses
+`unitTierFile`, so it follows the unit suite's supported build platforms and
+tags. The `net` class test beside it refuses a host a test NAMES; this one
+refuses a socket it OPENS.
 
 ### `unit-rule` — no unit test uses real time, a real socket or an external service
 
