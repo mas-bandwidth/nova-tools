@@ -43,3 +43,21 @@ func TestSliceLimitsAreTheTightestAncestor(t *testing.T) {
 	assert.Zero(t, mem, "no unified hierarchy: no limits")
 	assert.Zero(t, tasks)
 }
+
+// TestNprocLimitLeavesRoomForEverySlot: the thread limit holds every slot of the bench at
+// its cap, whatever the machine ran when the child started, and stays under the slice.
+func TestNprocLimitLeavesRoomForEverySlot(t *testing.T) {
+	t.Parallel()
+	// hetzner2 quiet at the start (900 tasks), a 1024-process tree, slice TasksMax 337242.
+	lim := nprocLimit(900, 1024, 337242)
+	assert.Equal(t, uint64(900+SizedSliceTrees*NprocThreadsPerProc*1024), lim)
+	// The old limit, now plus twice the cap, is what a growing bench ran out of.
+	assert.Greater(t, lim, uint64(900+2*1024))
+	// No slice visible: the same headroom.
+	assert.Equal(t, uint64(500+SizedSliceTrees*NprocThreadsPerProc*512), nprocLimit(500, 512, 0))
+	// A tight slice caps it, but never under now plus twice the cap.
+	assert.Equal(t, uint64(10000), nprocLimit(1000, 1024, 10000))
+	assert.Equal(t, uint64(9000+2*1024), nprocLimit(9000, 1024, 10000))
+	// An absurd cap is held to nprocMaxProcs: no overflow, no wrap.
+	assert.Equal(t, uint64(100+SizedSliceTrees*NprocThreadsPerProc*nprocMaxProcs), nprocLimit(100, 1<<62, 0))
+}

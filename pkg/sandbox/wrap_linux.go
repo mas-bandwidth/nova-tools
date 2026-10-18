@@ -335,10 +335,10 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 }
 
 // lowerNproc sets RLIMIT_NPROC for the child about to be forked and returns the function
-// that puts the tool's own back. The kernel counts every task of the user, not the tree's,
-// so the limit is the machine's task total now plus TWICE the tree's cap: a floor under
-// the runaway line, not the line. The watch kills at the cap and sees the count only
-// because forks are allowed to pass it; the limit is what stops a bomb between two counts.
+// that puts the tool's own back. The kernel counts every task (thread) of the USER, not the
+// tree's processes, so the limit is nprocLimit: the machine's task total now plus room for
+// every slot of the bench to grow to its cap, in threads. A floor under the runaway line,
+// not the line: the watch kills at the cap; the limit is what stops a bomb between counts.
 func lowerNproc(maxProcs int) func() {
 	raw, err := os.ReadFile("/proc/loadavg")
 	if err != nil || maxProcs <= 0 {
@@ -357,7 +357,8 @@ func lowerNproc(maxProcs int) func() {
 	if unix.Getrlimit(unix.RLIMIT_NPROC, &old) != nil {
 		return func() {}
 	}
-	lim := uint64(n + 2*maxProcs)
+	_, sliceTasks := machineSlice()
+	lim := nprocLimit(n, maxProcs, sliceTasks)
 	if old.Cur != unix.RLIM_INFINITY && old.Cur < lim {
 		return func() {} // the user's own limit is already tighter
 	}
@@ -368,6 +369,33 @@ func lowerNproc(maxProcs int) func() {
 	}
 	// ignored: the soft limit was lowered by this call and raising it back to the hard limit it came from cannot be refused
 	return func() { _ = unix.Setrlimit(unix.RLIMIT_NPROC, &old) }
+}
+
+// NprocThreadsPerProc is the threads one process of a capped tree is allowed for, in the
+// RLIMIT_NPROC headroom: a Go test binary or compiler runs about GOMAXPROCS plus a few
+// threads, and the kernel counts each one.
+const NprocThreadsPerProc = 8
+
+// nprocMaxProcs bounds the cap nprocLimit sizes from (pid_max is at most 2^22).
+const nprocMaxProcs = 1 << 22
+
+// nprocLimit is the RLIMIT_NPROC for a child walled at maxProcs processes, with now the
+// machine's task count when it starts and sliceTasks the login slice's TasksMax (0 when
+// none is visible). The headroom is sized from the machine facts SizedCaps uses, never
+// from a snapshot alone: SizedSliceTrees slots of the bench, each grown to maxProcs
+// processes of NprocThreadsPerProc threads. On 2026-10-17 the limit was now plus twice the
+// cap, so a child started while the bench was quiet ran out of threads (Go's
+// "newosproc" / "pthread_create failed", exit 134) as the bench's other slots grew. It is
+// never above the slice's TasksMax, which bounds the user's tasks anyway, unless now plus
+// twice the cap is. maxProcs is held to nprocMaxProcs first, so an absurd --max-procs
+// cannot overflow the sum.
+func nprocLimit(now, maxProcs, sliceTasks int) uint64 {
+	maxProcs = min(maxProcs, nprocMaxProcs)
+	lim := now + SizedSliceTrees*NprocThreadsPerProc*maxProcs
+	if sliceTasks > 0 && lim > sliceTasks {
+		lim = max(sliceTasks, now+2*maxProcs)
+	}
+	return uint64(lim)
 }
 
 // GroupUsage counts the live processes of group pgid and their resident bytes, read from
