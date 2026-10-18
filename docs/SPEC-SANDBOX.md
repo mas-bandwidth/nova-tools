@@ -601,6 +601,12 @@ half the worker runs on hetzner1, hetzner2 and amd-3, `runaway: 714 processes (c
   `TestTheBareFormRefusesABadCapBeforeItRuns`). `probe` refuses them, being a proof of the
   wall and not of a tree's caps, and `policy` notes them as ignored. The fork-bomb tests
   name `--max-procs 256`, so they test the mechanism at one cap on every machine.
+- **A member's own cap.** `nova-swarm native` and `nova-swarm member` take the same
+  `--max-mem <size>` and hand it to the wall as this flag. Absent, nothing is passed and
+  the wall's sized default above stands; given, it overrides that default, so a member
+  whose share is under 8 GiB names the cap its children get. A value the wall would refuse
+  is refused by native before the child starts, one `REFUSED` line naming `--max-mem`, and
+  with `--no-wall` the flag is refused as the other wall flags are.
 - **Checked by** `TestWallCapsAForkBomb` (a shell loop that forks until refused, itself
   capped at 1,000, run by the tool in a group of the test's making, ends `runaway: <n>
   processes` with `n` over 256 and no live process of that group),

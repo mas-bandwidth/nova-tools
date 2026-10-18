@@ -70,6 +70,7 @@ type nativeRunConfig struct {
 	recipients []string // bus lanes a card may address; default none, and a bus
 	// send is denied inside the wall regardless
 	sandbox        string // the nova-sandbox binary naming the wall; "" = resolve on PATH
+	maxMem         string // the wall's --max-mem: the child tree's resident-memory cap; "" = the wall's sized default
 	noWall         bool   // the caller typed --no-wall: run with no containment, named by its OK line
 	noSharedCaches bool   // the caller typed --no-shared-caches: the Go caches stay under HOME as today
 	configFile     string // optional: an opencode.json provider config copied beside the auth copy
@@ -517,6 +518,18 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		cfg.onPhase("prepare")
 	}
 	startTime := time.Now()
+	// A MEMORY CAP THE WALL WOULD REFUSE IS REFUSED HERE, before a directory is made and
+	// before any child starts: one REFUSED line naming the flag.
+	if cfg.maxMem != "" {
+		if !wallMaxMemOK(cfg.maxMem) {
+			refuseNative(errOut, "--max-mem wants a positive size such as 16g, a number with an optional k, m, g or t")
+			return nil, nativeRunResult{}, 2
+		}
+		if cfg.noWall {
+			refuseNative(errOut, "--no-wall and --max-mem together: one asks for no containment at all and the other caps the wall's tree; pass at most one")
+			return nil, nativeRunResult{}, 2
+		}
+	}
 	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
 	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
 	// `--write x/...`), and so the run's own paths cannot disagree with each other: on darwin
@@ -2047,6 +2060,59 @@ func sandboxHostRules(sandbox string) bool {
 	return strings.Contains(string(out), "hosts=enforceable")
 }
 
+// wallMaxMemOK is the shape the wall's own --max-mem parser accepts (cmd/nova-sandbox's
+// parseBytes and okSize): a positive number with an optional k, m, g or t and an optional
+// trailing b, so "12", "1.5g" and "12gb" pass and "0", "12q" and "twelve" do not. The wall
+// still parses the value it is handed; this refuses one it would refuse before the child
+// starts. pkg/sandbox exports no size parser, so the shape is checked here.
+func wallMaxMemOK(s string) bool {
+	if s == "" {
+		return false
+	}
+	digits := 0
+	for i, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case r == '.' && digits > 0 && i < len(s)-1:
+		case (r == 'k' || r == 'K' || r == 'm' || r == 'M' || r == 'g' || r == 'G' || r == 't' || r == 'T') && digits > 0:
+			// A unit letter ends the number: what follows may only be a b or B.
+			if rest := s[i+1:]; rest != "" && rest != "b" && rest != "B" {
+				return false
+			}
+			goto parse
+		default:
+			return false
+		}
+	}
+	if digits == 0 {
+		return false
+	}
+parse:
+	// Match the wall's parseBytes result too: positive fractions below one byte become
+	// zero, and an unrepresentable byte count must not wrap past its int64 cap.
+	s = strings.TrimSuffix(strings.TrimSuffix(s, "b"), "B")
+	multiplier := float64(1)
+	if n := len(s); n > 0 {
+		switch s[n-1] {
+		case 'k', 'K':
+			multiplier, s = 1<<10, s[:n-1]
+		case 'm', 'M':
+			multiplier, s = 1<<20, s[:n-1]
+		case 'g', 'G':
+			multiplier, s = 1<<30, s[:n-1]
+		case 't', 'T':
+			multiplier, s = 1<<40, s[:n-1]
+		}
+	}
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil || n <= 0 {
+		return false
+	}
+	bytes := n * multiplier
+	return bytes >= 1 && bytes < 9223372036854775808 // int64's positive byte range
+}
+
 // nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the
 // harness verbatim (SPEC-SANDBOX rule 12) -- launch, the one launcher's argv, binary first. The job directory is the first --write and the
 // --cwd (rule 13); the data home is the second --write and the child's HOME (rule 9); the
@@ -2073,6 +2139,11 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	// its default, <first --write>/.nova-sandbox-tmp, inside the job directory's repo, and
 	// set TMPDIR there over the one nativeChildEnv hands (fault 1, 2026-10-10).
 	argv = append(argv, "--tmp", tmpDir, "--cwd", jobDir)
+	// A member that named a memory cap overrides the wall's sized default. Absent, nothing
+	// is passed and the wall sizes the cap itself (sandbox.SizedCaps).
+	if cfg.maxMem != "" {
+		argv = append(argv, "--max-mem", cfg.maxMem)
+	}
 	// The keyless provider's loopback address is opened back up by name, never by widening
 	// the wall's network promise (issue #591).
 	if cfg.netAllow != "" {

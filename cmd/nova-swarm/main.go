@@ -66,8 +66,8 @@ usage:
                         OK|FAILED line per step; --remainder prints the card a failed step leaves.)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>] [--prompt <file>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>] [--prompt <file>]
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--max-mem <size>] [--frame <file>] [--identity <owner>,<name>,<email>] [--prompt <file>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--max-mem <size>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>] [--prompt <file>]
                         (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
                          Each tick beats, reads the queue, reports ended children and takes cards to the
                          fleet row's width; --width overrides it, and --pass names environment secrets to
@@ -618,6 +618,7 @@ type nativeFlags struct {
 	config          *string
 	workerFile      *string
 	sandbox         *string
+	maxMem          *string
 	noWall          *bool
 	noSharedCaches  *bool
 	resultsRootFlag *string
@@ -664,6 +665,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 		config:          f.fs.String("config", "", "the harness's provider config `file` (opencode.json), copied beside the auth (not with a --worker naming a secret)"),
 		workerFile:      f.fs.String("worker", "", "the worker description `file` (JSON) that names the model, the key and the read roots; nova-swarm worker check checks it"),
 		sandbox:         f.fs.String("sandbox", "", "the nova-sandbox binary `path` that builds the wall (default: nova-sandbox on PATH); not with --no-wall"),
+		maxMem:          f.fs.String("max-mem", "", "the wall's memory cap for the child's tree, a `size` such as 16g (default: the wall sizes it, an eighth of RAM and at least 8g; this overrides it); not with --no-wall"),
 		noWall:          f.fs.Bool("no-wall", false, "run the child with no nova-sandbox wall: the caller owns every read and write it makes"),
 		noSharedCaches:  f.fs.Bool("no-shared-caches", false, "keep the Go caches under the child's HOME instead of the bench's shared <root>/cache"),
 		resultsRootFlag: f.fs.String("results-root", "", "the `dir` RESULT.md, usage.tsv and the report are published under (default <root>/results)"),
@@ -724,6 +726,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	recipients := nf.recipients
 	if *noWall && *sandbox != "" {
 		f.add("--no-wall and --sandbox together: one asks for no containment at all and the other names the wall to use; pass at most one")
+	}
+	if *noWall && *nf.maxMem != "" {
+		f.add("--no-wall and --max-mem together: one asks for no containment at all and the other caps the wall's tree; pass at most one")
 	}
 	// --worker <file> names a worker description, and the description is the
 	// source of the model and of the key. It is loaded HERE, before the flag checks, so a
@@ -911,6 +916,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		repos:          repos,
 		recipients:     recipients,
 		sandbox:        *sandbox,
+		maxMem:         *nf.maxMem,
 		noWall:         *noWall,
 		noSharedCaches: *noSharedCaches,
 		resultsRoot:    resultsRootOf(*resultsRootFlag, *root),
