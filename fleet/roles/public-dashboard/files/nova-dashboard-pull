@@ -7,7 +7,8 @@
 # the dashboard host sees one request per second whatever the viewer count:
 #   - api/sprint.json (and .gz): <upstream>/api/sprint, fetched once per second;
 #   - landings.json (and .gz): <upstream>/landings.json, every LANDINGS_EVERY seconds;
-#   - the page and its assets: fetched again when the snapshot's build changes.
+#   - the page (the reader's /public.html, saved as index.html) and its assets: fetched again when
+#     the snapshot's build changes.
 # Each file is written under the temp directory and renamed into place. A failed fetch keeps
 # the last file, so an unreachable upstream leaves the last snapshot, which the page shows stale.
 set -u
@@ -43,7 +44,9 @@ publish() {
 # sync_static: the page and its assets, assets first so a new page never names one not yet here.
 sync_static() {
 	local n code got=() gone=()
-	fetch / "$tmp/s.index.html" 5 >/dev/null || return 1
+	# the public copy's page (nova-sprint dashboard's /public.html: the page without the reader's
+	# charts, which are not the public site's to show), saved as the site's index.html
+	fetch /public.html "$tmp/s.index.html" 5 >/dev/null || return 1
 	fetch /app.js "$tmp/s.app.js" 5 >/dev/null || return 1
 	for n in "${assets[@]}"; do
 		code=$(fetch "/$n" "$tmp/s.$n" 5)
