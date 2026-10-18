@@ -2502,15 +2502,17 @@ func holdersReduce(v *friend.Holders, root *answerwire.HoldersView, rep *answerw
 		return schemaread.Report{Reason: schemaread.ReasonKindMismatch}
 	}
 	m := map[string]string{}
+	seen := map[string]bool{}
 	for i := int32(0); i < root.Cards.Count; i++ {
 		c := root.Cards.At(i)
 		if c.IdLength <= 0 {
 			return schemaread.Report{Malformed: true}
 		}
 		id := string(c.Id[:c.IdLength])
-		if _, dup := m[id]; dup {
+		if seen[id] {
 			return schemaread.Report{Malformed: true}
 		}
+		seen[id] = true
 		if c.HolderLength > 0 {
 			m[id] = string(c.Holder[:c.HolderLength])
 		}
