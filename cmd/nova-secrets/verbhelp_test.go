@@ -174,9 +174,19 @@ func TestTheHelpSetupBlockRunsAsPrinted(t *testing.T) {
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.test",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.test",
 	}
+	// A line is a pipeline where the keygen's output is read by sed: under plain sh
+	// the pipeline's status is sed's, so a keygen refusal ran unseen and the test
+	// failed two lines later on the key file that was never written (GitHub-hosted
+	// ubuntu, 2026-10-18). A reader's shell is bash or zsh; the lines run under
+	// bash with pipefail where bash exists, so a refusal is the line's own failure
+	// and its message is in the assertion.
+	shell, shellArgs := "sh", []string{"-c"}
+	if bash, err := exec.LookPath("bash"); err == nil {
+		shell, shellArgs = bash, []string{"-o", "pipefail", "-c"}
+	}
 	for _, line := range lines {
 		var stdout, stderr bytes.Buffer
-		cmd := exec.Command("sh", "-c", line)
+		cmd := exec.Command(shell, append(shellArgs, line)...)
 		cmd.Dir, cmd.Env = home, env
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		err := cmd.Run()
