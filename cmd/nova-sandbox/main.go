@@ -113,10 +113,12 @@ usage:
                   with one NOTE line, for the same reason as --name.
   --max-procs <n> the most processes the command's tree may hold. Past it the
                   tree is frozen and killed, SANDBOX RUNAWAY, exit 137. Default:
-                  sized to the machine, 64 per CPU and at least 512.
+                  sized to the machine, 64 per CPU and at least 512, never more
+                  than a quarter of the cgroup TasksMax above it.
   --max-mem <s>   the most resident memory the tree may hold, e.g. 16g. Default:
-                  a quarter of the machine's memory and at least 8g, never more
-                  than half of it; 8g where the memory cannot be read.
+                  an eighth of the machine's memory, never more than a quarter of
+                  the cgroup MemoryMax above it, at least 8g and never more than
+                  half the machine; 8g where the memory cannot be read.
   --secret <path> probe only: the file a probe proves it cannot read. A path is
                   not a secret; the file's contents are never read. A probe may run
                   WITHOUT one -- a caller whose key is delivered by nova-secrets

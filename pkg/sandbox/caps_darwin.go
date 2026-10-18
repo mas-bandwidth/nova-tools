@@ -10,3 +10,6 @@ func machineRAM() int64 {
 	}
 	return int64(n)
 }
+
+// machineSlice is unknown on darwin: launchd sets no cgroup limits.
+func machineSlice() (int64, int) { return 0, 0 }
