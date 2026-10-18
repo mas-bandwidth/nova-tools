@@ -34,15 +34,16 @@ type Machine struct {
 }
 
 // SizedCaps is the process and memory cap for a machine. Processes follow the CPUs:
-// SizedProcsPerCPU per CPU and at least SizedProcs, and never more than the slice's
-// TasksMax over SizedSliceTrees. Memory follows the memory, never the CPU count: an
+// SizedProcsPerCPU per CPU and at least SizedProcs, but never more than the slice's
+// TasksMax over SizedSliceTrees (and at least 1). Memory follows the memory, never the CPU count: an
 // eighth of the machine (SizedMemShare), never more than the slice's MemoryMax over
-// SizedSliceTrees, at least DefaultMaxMem, and never more than half the machine. With the
+// SizedSliceTrees, at least DefaultMaxMem (the floor wins over the slice share, so on a
+// small slice four trees at the floor may pass it), and never more than half the machine. With the
 // memory unread the memory cap is DefaultMaxMem.
 //
 // The share is small on purpose. The wall kills only the runaway tree; the slice's OOM
 // killer kills whatever it picks, often a sibling worker. So SizedSliceTrees trees at
-// their caps must fit under the slice together (hetzner2: 125 GiB, slice 106 GiB, caps
+// their caps fit under the slice together where the share is above the floor (hetzner2: 125 GiB, slice 106 GiB, caps
 // 15.6 GiB). The first sizing (v1.5.1) keyed both caps on 32 CPUs, so a 16-thread member
 // with 124 GiB got 512 processes and 8 GiB, and on 2026-10-17 the wall still ended about
 // half the fleet's worker runs (`runaway: 714 processes (cap 512)`, `8714186752 bytes of
@@ -50,7 +51,7 @@ type Machine struct {
 func SizedCaps(m Machine) (int, int64) {
 	procs := max(SizedProcs, m.CPUs*SizedProcsPerCPU)
 	if m.SliceTasks > 0 {
-		procs = min(procs, m.SliceTasks/SizedSliceTrees)
+		procs = max(1, min(procs, m.SliceTasks/SizedSliceTrees))
 	}
 	mem := DefaultMaxMem
 	if m.RAM > 0 {

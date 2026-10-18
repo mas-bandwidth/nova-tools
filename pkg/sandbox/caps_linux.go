@@ -69,7 +69,7 @@ func sliceLimits(selfCgroup string, read func(string) (string, error)) (int64, i
 		if v, ok := cgroupLimit(read, path.Join(at, "memory.max")); ok && (mem == 0 || v < mem) {
 			mem = v
 		}
-		if v, ok := cgroupLimit(read, path.Join(at, "pids.max")); ok && v <= 1<<31 && (tasks == 0 || int(v) < tasks) {
+		if v, ok := cgroupLimit(read, path.Join(at, "pids.max")); ok && v <= 1<<30 && (tasks == 0 || int(v) < tasks) {
 			tasks = int(v)
 		}
 		if dir == "/" {

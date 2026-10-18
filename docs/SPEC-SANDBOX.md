@@ -535,7 +535,8 @@ than a quarter of the MemoryMax (`memory.max`) of the cgroups above it, at least
 never more than half the machine, where the memory can be read (`/proc/meminfo` MemTotal,
 darwin's `hw.memsize`), else 8 GiB. Memory is sized from memory, never from the CPU count.
 The share is small so that four trees at their caps fit under the member's login slice
-together: past the slice's MemoryMax the kernel's OOM killer picks its own victim, often
+together wherever a quarter of the slice is 8 GiB or more (the 8 GiB floor wins on smaller
+slices): past the slice's MemoryMax the kernel's OOM killer picks its own victim, often
 an unrelated sibling worker, where the wall kills only the runaway. The fixed 256 and 8
 GiB killed ordinary parallel builds on the fleet's members (2026-10-17: about 90 worker
 children in a day, `runaway: 287` to `697 processes (cap 256)`, and `8611000320 bytes of
