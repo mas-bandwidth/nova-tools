@@ -172,7 +172,7 @@ func TestHelpIsOnStdoutAtExitZeroForTheToolAndEveryVerb(t *testing.T) {
 			assert.Equal(t, 0, r.code, "%v", args)
 			assert.Empty(t, r.stderr, "%v", args)
 			assert.True(t, strings.HasPrefix(r.stdout, "usage: nova-tla "+v+" "), "%v: %q", args, r.stdout)
-			for _, want := range []string{"output:", "example (a first run):\n", "  nova-tla " + v + " ", "flags:", "exit codes: 0 ", "effect: "} {
+			for _, want := range []string{"output:", "example:\n", "  nova-tla " + v + " ", "flags:", "exit codes: 0 ", "effect: "} {
 				assert.Contains(t, r.stdout, want, "%v", args)
 			}
 		}
