@@ -81,7 +81,9 @@
   (group "tests" :title "Tests and test tiers"
    :text "Test tiers, test speed and flaky tests.")
   (group "quality" :title "Cleanup, dead code and debt"
-   :text "Shrinking, dead code removal, lint and debt work that waits for the code under it to settle."))
+   :text "Shrinking, dead code removal, lint and debt work that waits for the code under it to settle.")
+  (group "export-v19" :title "Moved out of the sprint on 2026-10-18: v19, target v1.9"
+   :text "The open cards of sprint stream v19, moved out of the sprint when Glenn said v19 and v111 live in roadmaps only (2026-10-18), one item per card. Each item keeps the card's whole brief under :kept :brief, with its column, tier, base and needs; none had a pushed head."))
 
  :items
  (
@@ -1765,4 +1767,129 @@
     unexported code there, documented in SPEC-CI with a reversed witness."
    :date "2026-10-10"
    :release "v1.5"
-   :origin "seat decision after the repository split")))
+   :origin "seat decision after the repository split")
+  ; Moved out of the sprint on 2026-10-18: v19, target v1.9
+  (item "v19-hook-claude-settings-splices-only-its-stop-hook" :group "export-v19" :area "nova-tools"
+   :title "v19-hook-claude-settings-splices-only-its-stop-hook"
+   :text "nova-hook's Claude installer splices only its Stop hook into settings.json and leaves every other byte of the file unchanged. Column waiting, tier pro, base sprint/v19. The whole brief is kept under :kept :brief. No pushed head recorded."
+   :why "Glenn 2026-10-18: \"Please remove v19 and v111 from this sprint. They live in roadmaps only.\""
+   :date "2026-10-18"
+   :release "v1.9"
+   :origin "sprint card v19-hook-claude-settings-splices-only-its-stop-hook (stream v19, column waiting, tier pro, base sprint/v19), moved out of the sprint 2026-10-18; card source: the owner, Glenn, 2026-10-18 (for v1.9): cards from what we learned from Paper Instruments' Feather (paperinstruments.com/feather), lesson 1: an edit verb refuses instead of corrupting: a verb that rewrites a brief or a file changes exactly the region it names, or refuses. Read on nova-tools main 71"
+   :kept (:sprint-card "v19-hook-claude-settings-splices-only-its-stop-hook" :sprint-stream "v19" :sprint-column "waiting" :tier "pro" :sprint-base "sprint/v19" :needs "" :pushed-head "" :pushed-branch "" :brief "RESULT: v19-hook-claude-settings-splices-only-its-stop-hook sha=<sha12> tier: pro
+REPO: mas-bandwidth/nova-tools
+BASE: sprint/v19
+KIND: fix
+PRIORITY: normal
+STREAM: v19
+DEPENDS-ON: none
+SOURCE: the owner, Glenn, 2026-10-18 (for v1.9): cards from what we learned from Paper Instruments' Feather (paperinstruments.com/feather), lesson 1: an edit verb refuses instead of corrupting: a verb that rewrites a brief or a file changes exactly the region it names, or refuses. Read on nova-tools main 719420e5 (sprint/v19 was cut there): `nova-hook hook --harness claude` installs its Stop hook through notice.InstallClaude, which calls mergeClaudeStopHook (pkg/harness/notice/claude_settings.go): it decodes the whole of the person's settings.json into map[string]any and writes json.MarshalIndent of it back, so every key of the file is re-sorted, its layout replaced, a large integer rounded through float64 and `<`, `>` and `&` escaped as \\u003c, \\u003e and \\u0026, when the hook asked to change one array. No test pins the function today.
+PATHS: pkg/harness/notice/claude_settings.go,pkg/harness/notice/claude_settings_test.go,docs/SPEC-HOOK.md
+NEW: pkg/harness/notice/claude_settings_test.go
+TEST: pkg/harness/notice TestTheClaudeStopHookChangesOnlyItsOwnArray
+DONE-WHEN: `go test -count=1 -timeout 600s ./pkg/harness/notice/ -run '^(TestTheClaudeStopHookChangesOnlyItsOwnArray|TestTheClaudeStopHookRefusesAFileItCannotSplice)$' -v` shows both RUN and PASS at head (red at BASE with the test file of STEP 2 added: the output differs from the input outside hooks.Stop, its keys re-sorted; the worker records the actual line); go vet ./... is clean; `go test -count=1 -timeout 900s ./pkg/harness/notice/ ./cmd/nova-hook/` passes; and no test is newly red against BASE.
+TOOLCHAIN: go (the version go.mod names) on the Linux bench JOB.md names
+GATE-NEEDS: linux
+STOP: the change and its tests are committed with DONE-WHEN holding, or the deadline is reached
+DEADLINE: finish within 120 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 120 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: encoding/json's Decoder (Token and InputOffset give each value's byte span, so the file is spliced rather than re-encoded) and json.Valid for the result; no third-party JSON patcher (none is in go.mod) and no helper beyond the two named below.
+
+THIS REPOSITORY. mas-bandwidth/nova-tools, the fleet's tools (nova-hook, nova-bus, nova-swarm and the packages under pkg/); `go test ./...` is the unit suite, `go test -tags functional ./...` the functional tier.
+
+WHAT IS THERE (read it before writing; extend it, never build a second path). pkg/harness/notice/claude_settings.go: mergeClaudeStopHook(path, command) (read; Unmarshal into map[string]any; objectField hooks, arrayField Stop; stopCommandPresent; append a group {hooks: [{type: command, command}]}; MarshalIndent the whole root; atomicfile.Write 0600 ExactMode), objectField, arrayField, stopCommandPresent. pkg/harness/notice/claude.go InstallClaude (writes the boundary script, then mergeClaudeStopHook on <settings>/settings.json). docs/SPEC-HOOK.md, the Claude harness section.
+
+THE TASK. In pkg/harness/notice/claude_settings.go only: mergeClaudeStopHook writes the file's bytes unchanged except for one splice. (1) Keep the decode as today to answer whether the command is present (no write when it is) and to refuse a file that is not a JSON object, or whose hooks is not an object or whose hooks.Stop is not an array, as today. (2) Find the byte span to change with a json.Decoder over the raw bytes (Token, InputOffset): when hooks.Stop exists, insert `, <group>` before the closing `]` of that array (or `<group>` into an empty one); when hooks exists without Stop, insert `\"Stop\": [<group>]` (with a leading comma when hooks is not empty) before hooks' closing `}`; when hooks is absent, insert `\"hooks\": {\"Stop\": [<group>]}` before the root's closing `}` likewise; an empty or missing file becomes the document MarshalIndent writes today. The group is json.Marshal of the same map as today, so its escaping is the encoder's. Write the two helpers `spanOf(raw []byte, path ...string) (start, end int, ok bool, err error)` and `insertAt(raw []byte, at int, text string) []byte`. (3) Refuse, writing nothing, when the result is not json.Valid, when the file names hooks or Stop twice (two spans), or when the spliced document does not decode to the same root as today's merge would build (compare with reflect.DeepEqual on the two decoded values): the error names the file and says `settings.json left as it was; add the Stop hook by hand: <the group's JSON>`. (4) One paragraph in docs/SPEC-HOOK.md's Claude section: the install changes only hooks.Stop and refuses a file it cannot splice. Cite this card's tests from the function's comment.
+
+STEP 1. cd into the staged checkout JOB.md names and run git log --oneline -1; it is a NEW worktree on the branch this card names.
+STEP 2. Red first: write pkg/harness/notice/claude_settings_test.go, package notice, opening each test with t.Parallel(), each in t.TempDir() (no other filesystem, no clock). TestTheClaudeStopHookChangesOnlyItsOwnArray, table-driven over settings files written by hand with keys out of order, a tab-indented layout, `\"big\": 12345678901234567890`, `\"s\": \"a<b>&c\"`: (a) with hooks.Stop holding one other group, (b) with hooks holding only PreToolUse, (c) with no hooks: after the merge, the file with the inserted text cut out is byte-identical to the input, the result decodes, and stopCommandPresent finds the command; a second merge writes nothing (the bytes are identical). TestTheClaudeStopHookRefusesAFileItCannotSplice: a file naming `hooks` twice, and one whose hooks is an array: an error naming the file, and the file's bytes unchanged. Run go test -count=1 -timeout 600s ./pkg/harness/notice/ -run '^TestTheClaudeStopHook' -v and keep the failing line.
+STEP 3. Make the change THE TASK says, in the PATHS files only.
+STEP 4. Run the gate: go vet ./... ; the DONE-WHEN command; then go test -count=1 -timeout 900s ./pkg/harness/... ./cmd/nova-hook/ at the head. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
+STEP 5. Commit as `v19-hook-claude-settings-splices-only-its-stop-hook: <what>` with the trailer and end as JOB.md says (docs/SPEC-CARD-CONTRACT.md): the pull request body states the diff stat, the red line, each test and what it pins, and what was not done.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Unit tests use no real time, no sockets, no network and no outside services; a test that needs any of them is a functional test and keeps to that tier. Time is an argument, and a test clock starts at 1000.0 seconds, never 0.
+Make the smallest change, with no refactor.
+Never touch the space game's baseline or delta code.
+Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.
+Commit on your own branch; no gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+Never read outside the job's working directory.
+Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+Schema-table bounds: a bound is declared only if every writer and reader path enforces it; otherwise the field stays open (*string, []T).
+\"Not done\" is a welcome report; a green claim you did not run is not.
+"))
+  (item "v19-friend-set-reaches-the-store" :group "export-v19" :area "nova-tools"
+   :title "v19-friend-set-reaches-the-store"
+   :text "A nova-config friend set reaches the store within a tick, with no manual apply --kind friend. Column waiting, tier pro, base sprint/v19. The whole brief is kept under :kept :brief. No pushed head recorded."
+   :why "Glenn 2026-10-18: \"Please remove v19 and v111 from this sprint. They live in roadmaps only.\""
+   :date "2026-10-18"
+   :release "v1.9"
+   :origin "sprint card v19-friend-set-reaches-the-store (stream v19, column waiting, tier pro, base sprint/v19), moved out of the sprint 2026-10-18; card source: the owner, Glenn, 2026-10-18 (for v1.9): after `nova-config friend set`, the store kept the friends' stale tiers until a manual `nova-config apply --kind friend` was run; the nova-config-apply loop did not pick the change up. A friend-row config change reaches the store within one tick."
+   :kept (:sprint-card "v19-friend-set-reaches-the-store" :sprint-stream "v19" :sprint-column "waiting" :tier "pro" :sprint-base "sprint/v19" :needs "" :pushed-head "" :pushed-branch "" :brief "RESULT: v19-friend-set-reaches-the-store sha=<sha12> tier: pro
+REPO: mas-bandwidth/nova-tools
+BASE: sprint/v19
+KIND: fix
+PRIORITY: normal
+STREAM: v19
+DEPENDS-ON: none
+SOURCE: the owner, Glenn, 2026-10-18 (for v1.9): after `nova-config friend set`, the store kept the friends' stale tiers until a manual `nova-config apply --kind friend` was run; the nova-config-apply loop did not pick the change up. A friend-row config change reaches the store within one tick.
+PATHS: cmd/nova-config/apply.go,cmd/nova-config/friend_write_applies_test.go,tla/ConfigApply.tla,tla/MCConfigApply.tla,tla/MCConfigApplyBrokenSilentUnappliedFriend.cfg,tla/CASES.tsv,tla/COVERAGE.tsv,tla/RUNS.tsv,internal/ci/testdata/dead_code_allowlist.txt,internal/ci/testdata/staticcheck/cmd/nova-config.txt,docs/SPEC-CONFIG.md
+SHARED: tla/CASES.tsv,tla/COVERAGE.tsv,tla/RUNS.tsv,internal/ci/testdata/dead_code_allowlist.txt,internal/ci/testdata/staticcheck/cmd/nova-config.txt,docs/SPEC-CONFIG.md
+NEW: cmd/nova-config/friend_write_applies_test.go,tla/MCConfigApplyBrokenSilentUnappliedFriend.cfg
+TEST: cmd/nova-config TestFriendWriteApplies
+DONE-WHEN: `go test -count=1 -timeout 600s ./cmd/nova-config/ -run '^(TestFriendWriteApplies|TestRouteWriteApplies)$' -v` shows both RUN and PASS at head, TestFriendWriteApplies red at BASE with the test of STEP 2 added (a friend set leaves the Redis copy at the old tiers; the worker records the actual line); `make tlc` for the configapply group, the pass cases passing and MCConfigApplyBrokenSilentUnappliedFriend failing on NoSilentUnappliedWrite; go vet ./... is clean; `go test -count=1 -timeout 900s ./cmd/nova-config/ ./pkg/config/` passes; and no test is newly red against BASE.
+TOOLCHAIN: go (the version go.mod names) on the Linux bench JOB.md names; TLC on the bench (tla/README.md)
+GATE-NEEDS: linux, tla
+STOP: the change, its test and the model are committed with DONE-WHEN holding, or the deadline is reached
+DEADLINE: finish within 90 minutes.
+
+The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).
+You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.
+Deadline: finish within 90 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
+Libraries considered: pkg/config's Apply as copyRouteWrite uses it; no new package.
+
+THIS REPOSITORY. mas-bandwidth/nova-tools, the fleet's tools; `go test ./...` is the unit suite, `go test -tags functional ./...` the functional tier; tla/ holds the models, tla/CASES.tsv the gated cases, tla/COVERAGE.tsv the code each model covers and tla/RUNS.tsv the TLC records (tla/README.md (read), \"Run checks on a Linux bench\" and \"Refreshing the records after a model edit\").
+
+WHAT IS THERE (read it before writing; extend it, never build a second path). cmd/nova-config/apply.go finishKindWrite: after a committed kind write it does nothing for every kind but route, and for route it copies the fleet Redis copy at once (copyRouteWrite), printing CONFIG APPLY or CONFIG NOT-APPLIED (exit 1, the write and its history preserved); that is tla/ConfigApply.tla NoSilentUnappliedWrite, and TestRouteWriteApplies (cmd/nova-config/route_write_applies_test.go) is its test. A friend row's write (`nova-config friend set|add|remove`) goes through the same runKindWrite and runKindRemove and stops at the store (PostgreSQL), so the Redis copy the sprint server reads, and its friend sync takes the tiers from, stays old until `nova-config apply --kind friend` runs by hand. tla/ConfigApply.tla already has FriendWidthNeverRefused and the machine-before-friend order for the apply run.
+
+THE TASK. STEP 1 first: find out from the code and the loop rows (nova-config loop list shape in pkg/config, cmd/nova-config/looprun.go (read)) why the nova-config-apply loop did not apply the friend change within a tick: not scheduled, scheduled slower, or its apply skipped the kind; put the finding in the report in one paragraph. Then the fix, the smallest that makes a friend-row write reach the store within one tick: finishKindWrite treats the friend kind as it treats route, applying that kind's Redis copy at once after the committed write (one copy helper for both kinds, not a second path; kind friend only, no other kind changes), NOT-APPLIED exit 1 with the write and history preserved when the copy fails, `friend set` of a field the apply does not copy (a note) applies harmlessly. If STEP 1 shows the loop row is the defect, say so in the report and put the loop fix in the report as a proposed diff, still making the write apply. tla/ConfigApply.tla: NoSilentUnappliedWrite names friend rows as well as route (a completed friend command either stamps its committed revision or reports NOT-APPLIED), with the reversed witness MCConfigApplyBrokenSilentUnappliedFriend.cfg failing on it; the gated tables refreshed. Cite the model and this card's test from finishKindWrite. docs/SPEC-CONFIG.md says in one sentence that route and friend writes apply at once. Nothing else changes.
+
+STEP 1. cd into the staged checkout JOB.md names and run git log --oneline -1; it is a NEW worktree on the branch this card names. Record the loop finding.
+STEP 2. Red first, with t.Parallel() and the harness TestRouteWriteApplies uses (loopHarness, the file store and the Redis fake, no real time, no socket): cmd/nova-config/friend_write_applies_test.go (package main) TestFriendWriteApplies: for add, set and remove of a friend row, with the failures TestRouteWriteApplies runs (none, unreachable, refused), a success leaves the Redis copy at the new tiers and prints CONFIG APPLY kind=friend; a failed copy exits 1 with CONFIG NOT-APPLIED and the store row and its history unchanged by the failure. Run -run '^TestFriendWriteApplies' -v and keep the failing lines.
+STEP 3. Make the change THE TASK says, in the PATHS files only.
+STEP 4. Run the gate: go vet ./... ; the DONE-WHEN commands (the TLC cases on the bench, never on the studio: for each group g that `go run ./tools/tlacheck groups --root . --stale` lists, `make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g`, then `go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv $JOB/scratch/tlc-*/RUNS.tsv` until the groups command prints [], and commit tla/RUNS.tsv); then go test -count=1 -timeout 900s ./cmd/nova-config/ ./pkg/config/ at the head. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
+STEP 5. Commit as `v19-friend-set-reaches-the-store: <what>` with the trailer and end as JOB.md says (docs/SPEC-CARD-CONTRACT.md): the pull request body states the diff stat, the red line, the test and what it pins, the loop finding, and what was not done.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+Unit tests use no real time, no sockets, no network and no outside services; a test that needs any of them is a functional test and keeps to that tier. Time is an argument, and a test clock starts at 1000.0 seconds, never 0.
+Make the smallest change, with no refactor.
+Never touch the space game's baseline or delta code.
+Never run `nova-sprint friend stage`. Clone on the bench from GitHub, never on the studio Mac.
+Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.
+Commit on your own branch; no gh, no push: JOB.md's finish does both, from outside the wall. Never merge into BASE.
+Touch only the files PATHS and NEW name; a fix that needs another file goes into the report as a proposed diff, not a commit.
+Never read outside the job's working directory.
+Finish LAND with `--head <sha>`; finish HOLD with `--failed`. A red is pre-existing only if reproduced at BASE in the same environment.
+The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 2.
+Schema-table bounds: a bound is declared only if every writer and reader path enforces it; otherwise the field stays open (*string, []T).
+\"Not done\" is a welcome report; a green claim you did not run is not.
+
+"))))
