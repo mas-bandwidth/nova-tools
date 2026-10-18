@@ -126,10 +126,10 @@ jobs:
   lint:
     # gofmt, `go build ./...`, `go vet ./...` and the Windows cross-vet on one
     # runner. Formatting is a property of the source, not of the platform, so
-    # gofmt is checked once; build and vet run here on Linux, and their macOS
-    # coverage is test-hosted's `make build` and per-shard `make vet` on
-    # macos-latest (certification's race legs no longer build or vet: they
-    # compile what they test). On a pull_request this is
+    # gofmt is checked once; build and vet run here on Linux, and macOS
+    # compilation is covered by test-hosted's `make test-short` on macos-latest
+    # (certification's race legs no longer build or vet: they compile what they
+    # test). On a pull_request this is
     # a self-hosted Linux job, guarded so fork code never runs here.
     #
     # THE WINDOWS COMPILE GUARD LIVES HERE: it is the only Windows this file runs.
@@ -1021,10 +1021,18 @@ jobs:
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: name the Go toolchain's tool-cache directory
+        id: gover
         # Run 37167141048 spent 23-31 s installing Go on each macOS shard.
         # Cache the toolchain separately so the native build cache keeps its old paths/key.
+        # The Go version go.mod names is also the cache key's version: a
+        # toolchain move must miss both caches, not restore the old toolchain
+        # under a new tree.
         shell: bash
-        run: echo "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)" >> "$GITHUB_ENV"
+        run: |
+          v=$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)
+          [ -n "$v" ] || { echo "go.mod names no Go version"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/$v" >> "$GITHUB_ENV"
 
       - name: cache go build and module cache
         id: gocache
@@ -1034,16 +1042,22 @@ jobs:
         # outlives the job's timeout, and is orphaned still compressing (82 of them put a macOS
         # runner at load 147). internal/ci holds the class test.
         #
-        # The build cache path is per OS and the save is its own step before the tests:
-        # docs/SPEC-CI.md, `hosted-shards`, says why (run 36357749371), and internal/ci's
-        # TestHostedCacheIsWhereGoKeepsIt holds both.
+        # The build cache path is per OS (run 36357749371) and the save is its own
+        # step after the tests (run 39155212547: with `make build` gone, the tests
+        # are what fill the cache). The key moves with go.sum, the Go version and
+        # this tree's .go files, so a hit is this tree's compile; the restore-keys
+        # fall back through the same go.sum/version and then the old key, so the
+        # first run after this change starts warm. internal/ci's
+        # TestHostedCacheIsWhereGoKeepsIt holds all of it.
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          key: ${{ runner.os }}-go-${{ steps.gover.outputs.version }}-${{ hashFiles('go.sum') }}-${{ hashFiles('**/*.go') }}
           restore-keys: |
+            ${{ runner.os }}-go-${{ steps.gover.outputs.version }}-${{ hashFiles('go.sum') }}-
+            ${{ runner.os }}-go-${{ steps.gover.outputs.version }}-
             ${{ runner.os }}-go-
 
       - name: restore Go toolchain cache
@@ -1052,7 +1066,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.GO_TOOL_DIR }}
-          key: ${{ runner.os }}-go-toolchain-${{ hashFiles('go.mod') }}
+          key: ${{ runner.os }}-go-toolchain-${{ steps.gover.outputs.version }}
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
@@ -1074,19 +1088,17 @@ jobs:
         shell: bash
         run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
 
-      - name: build
-        run: make build
-
-      - name: save go build and module cache
-        # On a miss or a restore-keys fallback only: an exact hit is already the entry. Shards
-        # race for the key; the first reserves it and the rest log a warning and go on.
-        if: runner.environment == 'github-hosted' && steps.gocache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
-            ~/go/pkg/mod
-          key: ${{ steps.gocache.outputs.cache-primary-key }}
+      - name: start installing redis-server in the background
+        # The apt/brew install was 5-10 s on every macOS leg in run 39155212547.
+        # Start it here, before the deal, and let the foreground step below wait
+        # on the installer's lock; that step publishes the binary directory on
+        # GITHUB_PATH for the tests. GITHUB_PATH is emptied here so this step's
+        # copy of the file, which is gone once the background process ends, is
+        # never the one the runner reads.
+        shell: bash
+        run: |
+          GITHUB_PATH= nohup "$RUNNER_TEMP/ci" install-redis-server >"$RUNNER_TEMP/install-redis-server.log" 2>&1 </dev/null &
+          echo "redis-server installer started in the background, pid $!"
 
       - name: fetch dev's ancestry for a main run
         # On main (the default branch) at a merge commit, the landed promotion,
@@ -1119,8 +1131,8 @@ jobs:
         # 46 s -short, is removed). Then every other package
         # round-robin in go list order (stable: go list sorts) over the shards without
         # a heavy package: the heavy one has its shard to itself. One line of
-        # space-separated packages, so vet and test below
-        # read the same deal ($HOSTED_PKGS). `go run ./tools/ci help deal`;
+        # space-separated packages, so the test below reads the deal
+        # ($HOSTED_PKGS). `go run ./tools/ci help deal`;
         # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
         run: |
@@ -1133,11 +1145,6 @@ jobs:
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" fetch-ancestry dev
-
-      - name: vet this shard's packages
-        # The shard's packages only: every shard vetting the whole tree would be a
-        # fixed cost more shards cannot shrink. The union of the shards is the tree.
-        run: make vet PKGS="$HOSTED_PKGS"
 
       - name: install redis-server
         # ubuntu-latest has no redis-server until apt installs it; macos-latest
@@ -1172,6 +1179,21 @@ jobs:
           # two-minute job cap kills the leg silently (internal/ci:
           # TestEveryMakeTimeoutIsUnderTheJobCap). The shard travels in PKGS.
           make test-short PKGS="$HOSTED_PKGS"
+
+      - name: save go build and module cache
+        # After the tests, because with `make build` gone the tests are what fill
+        # the cache. On a miss or a restore-keys fallback only (an exact hit is
+        # already the entry), and by the one shard per OS that writes it, so the
+        # shards do not race to tar the same cache. always() keeps the save on a
+        # red test; a shard the cap cancels still cannot save, which is why the
+        # next run's restore-keys fallback exists.
+        if: runner.environment == 'github-hosted' && always() && steps.gocache.outputs.cache-hit != 'true' && matrix.shard == matrix.shards
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
 
   # THERE IS NO HOSTED MERGE LEG. The merge group's gate is the same sharded
   # `test` legs the pull request ran on our own benches on the group commit
