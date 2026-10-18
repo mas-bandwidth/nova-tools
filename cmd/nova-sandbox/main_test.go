@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
@@ -289,77 +285,6 @@ func TestZshLargeHeredocKeepsItsTemporaryFileInsideTheWall(t *testing.T) {
 	require.Equal(t, int64(16001), info.Size(), "report was not written inside the selected temp directory at its full size: info=%v err=%v", info, err)
 }
 
-// This build's fix to the spec: (allow network*) reaches every unix-domain socket, so
-// the SSH agent socket was connectable from inside the wall. A socket created outside
-// the wall must not be connectable from inside it, and SSH_AUTH_SOCK must be gone.
-//
-// The control is deterministic under load (#2958). The earlier form bound with
-// `nc -lU` and took "the socket file exists" as readiness, but bind(2) creates the
-// file before listen(2), so a busy machine could dial in that window and the control
-// failed with a refused connect. The listener is now this test binary re-executed with
-// an internal verb: it prints READY only after net.Listen has returned (bind AND
-// listen), serves every connection in order, and prints the line each client sent. The
-// walled attempt sits between two unwalled controls on the same listener, so "nothing
-// connected from inside the wall" is read from the accept order, not from a timeout.
-func TestTheAgentSocketIsUnreachable(t *testing.T) {
-	t.Parallel()
-
-	needDarwin(t)
-	j := newJob(t)
-	if _, err := exec.LookPath("nc"); err != nil {
-		t.Skip("skipped: nc is not on this machine, and it is how a socket is dialled here")
-	}
-	// Test 16: no test reaches outside t.TempDir(). The socket therefore lives in this
-	// job's own outside directory, which is under t.TempDir() and in NEITHER list — and
-	// it is bound and dialled by RELATIVE name, with the process's cwd in that directory,
-	// exactly as tools/sandboxcheck does it. sun_path is 104 bytes and the absolute
-	// path of a t.TempDir() is longer, so an absolute bind fails silently and the one
-	// test this build's network fix exists for would pass for the wrong reason.
-	lines := startUnixListener(t, j.outside, "agent.sock")
-	// The reads are received directly, with no wall-clock bound: a listener that
-	// stops answers ok=false (the channel closes), and one that answers nothing
-	// hangs until the package test's own -timeout.
-	next := func(what string) string {
-		t.Helper()
-		l, ok := <-lines
-		require.True(t, ok, "control: the listener exited before %s", what)
-		return l
-	}
-	l := next("READY")
-	require.Equal(t, "READY", l, "control: no listener could be bound outside the wall: %s", l)
-
-	sock := filepath.Join(j.outside, "agent.sock")
-	env := j.env("SSH_AUTH_SOCK="+sock, "SSH_AGENT_PID=1")
-	// The cwd inside the wall is the first --write, so the controls dial from there too:
-	// the same relative name, the same socket, a sun_path of 26 bytes. Each client sends
-	// one tagged line, and the listener echoes the tag of every connection it accepts.
-	dial := func(tag string) string { return "printf '" + tag + "\\n' | nc -U ../outside/agent.sock -w 1" }
-	control := func(tag string) {
-		t.Helper()
-		cmd := exec.Command("/bin/sh", "-c", dial(tag))
-		cmd.Dir = j.write
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "control: the socket is not connectable outside the wall (%s): %v %s", tag, err, out)
-		got := next("ACCEPT " + tag)
-		require.NotEqual(t, "ACCEPT walled", got, "a unix socket outside the wall was connectable from inside it: the listener accepted the walled client")
-		require.Equal(t, "ACCEPT "+tag, got, "control: the listener saw %q, want %q", got, "ACCEPT "+tag)
-	}
-
-	control("control-before")
-	code, _, errOut := j.tool(t, env, "--read", j.read, "--write", j.write, "--",
-		"/bin/sh", "-c", dial("walled"))
-	require.NotEqual(t, 0, code, "a unix socket outside the wall was connectable from inside it")
-	// The listener serves in accept order, and the walled client has exited, so had it
-	// connected its line would come before this control's.
-	control("control-after")
-	require.Contains(t, errOut, "SANDBOX NOTE dropped", "the dropped agent variables were not named before the command started: %q", errOut)
-	require.Contains(t, errOut, "SSH_AUTH_SOCK", "the dropped agent variables were not named before the command started: %q", errOut)
-	code, _, _ = j.tool(t, env, "--read", j.read, "--write", j.write, "--",
-		"/bin/sh", "-c", "test -z \"$SSH_AUTH_SOCK\" && test -z \"$SSH_AGENT_PID\"")
-	require.Equal(t, 0, code, "SSH_AUTH_SOCK reached the child's environment")
-}
-
 // unixListenerVerb is the test binary's internal verb for TestTheAgentSocketIsUnreachable's
 // listener; TestMain dispatches it. It is a child process, not a goroutine, because the
 // socket is bound by a relative name from its own cwd and a test must not chdir.
@@ -369,57 +294,11 @@ const unixListenerVerb = "test-unix-listener"
 // environment field, not a positional argument: argv carries only the verb (law #2583).
 const unixListenerNameEnv = "NOVA_SANDBOX_TEST_UNIX_NAME"
 
-// startUnixListener runs the listener in dir and returns its stdout lines: READY once
-// bound and listening (or LISTEN-ERROR), then ACCEPT <tag> per connection, in order.
-func startUnixListener(t *testing.T, dir, name string) <-chan string {
-	t.Helper()
-	self, err := os.Executable()
-	require.NoError(t, err)
-	pr, pw, err := os.Pipe()
-	require.NoError(t, err)
-	cmd := exec.Command(self, unixListenerVerb)
-	cmd.Env = append(os.Environ(), unixListenerNameEnv+"="+name)
-	cmd.Dir = dir
-	cmd.Stdout = pw
-	err = cmd.Start()
-	require.NoError(t, err, "control: no listener could be started outside the wall: %v", err)
-	_ = pw.Close()
-	lines := make(chan string, 16)
-	go func() {
-		defer close(lines)
-		defer pr.Close()
-		sc := bufio.NewScanner(pr)
-		for sc.Scan() {
-			lines <- sc.Text()
-		}
-	}()
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	})
-	return lines
-}
-
-// serveUnixForTest is the listener's body: bind and listen by relative name, say READY,
-// then accept one connection at a time and echo the first line each client sends.
-func serveUnixForTest(name string) int {
-	ln, err := net.Listen("unix", name)
-	if err != nil {
-		fmt.Printf("LISTEN-ERROR %v\n", err)
-		return 1
-	}
-	fmt.Println("READY")
-	for {
-		c, err := ln.Accept()
-		if err != nil {
-			return 1
-		}
-		_ = c.SetReadDeadline(time.Now().Add(30 * time.Second))
-		line, _ := bufio.NewReader(c).ReadString('\n')
-		fmt.Printf("ACCEPT %s\n", strings.TrimSpace(line))
-		_ = c.Close()
-	}
-}
+// unixListener is the listener child's body, serveUnixForTest, set by
+// main_functional_test.go: TestTheAgentSocketIsUnreachable binds a real unix socket,
+// so it and its listener are functional tests (2026-10-17, Glenn: no real sockets in
+// unit tests, ever). Nil in the unit tier, where no test starts the listener.
+var unixListener func(name string) int
 
 // With no key readable and no agent reachable, a push out of the job fails. The remote
 // is a local path outside every named list, because no test here touches the network.
@@ -740,8 +619,8 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && (os.Args[1] == "probe" || os.Args[1] == "probe-step") {
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ()))
 	}
-	if len(os.Args) == 2 && os.Args[1] == unixListenerVerb {
-		os.Exit(serveUnixForTest(os.Getenv(unixListenerNameEnv)))
+	if len(os.Args) == 2 && os.Args[1] == unixListenerVerb && unixListener != nil {
+		os.Exit(unixListener(os.Getenv(unixListenerNameEnv)))
 	}
 	os.Exit(m.Run())
 }
