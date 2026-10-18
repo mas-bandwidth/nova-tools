@@ -94,21 +94,22 @@ func TestFriendStageJobMDNamesTheWorkerPlaybookFirst(t *testing.T) {
 }
 
 // TestOnlyJobMDWritesJobMD is the lint behind R-WORKER-PLAYBOOK's one definition: every call in
-// the module's production code that writes, creates or opens a path naming JOB.md (JobName,
-// friend.JobFile or the literal) passes text made by cardcontract.JobMD, and the playbook
-// sentence is spelled in one production file only. It reads source files; it runs nothing.
+// the module's production code that writes, creates, opens for writing or renames onto a path
+// naming JOB.md (JobName, friend.JobFile, the literal, or a variable of the same file assigned
+// from one) writes exactly []byte(JobMD(...)) of pkg/cardcontract, and the playbook sentence is
+// spelled in one production file only. It reads source files; it runs nothing.
 func TestOnlyJobMDWritesJobMD(t *testing.T) {
 	t.Parallel()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 	require.FileExists(t, filepath.Join(root, "go.mod"))
-	writers := map[string]bool{"Write": true, "WriteFile": true, "Create": true, "OpenFile": true}
-	namesJobMD := func(n ast.Node) bool {
+	writers := map[string]bool{"Write": true, "WriteFile": true, "Create": true, "CreateTemp": true, "OpenFile": true, "Rename": true}
+	mentions := func(n ast.Node, names map[string]bool) bool {
 		found := false
 		ast.Inspect(n, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Ident:
-				found = found || x.Name == "JobName" || x.Name == "JobFile"
+				found = found || x.Name == "JobName" || x.Name == "JobFile" || names[x.Name]
 			case *ast.BasicLit:
 				if x.Kind == token.STRING {
 					v, err := strconv.Unquote(x.Value)
@@ -119,20 +120,40 @@ func TestOnlyJobMDWritesJobMD(t *testing.T) {
 		})
 		return found
 	}
-	callsJobMD := func(n ast.Node) bool {
-		found := false
-		ast.Inspect(n, func(n ast.Node) bool {
-			if c, ok := n.(*ast.CallExpr); ok {
-				switch fn := c.Fun.(type) {
-				case *ast.Ident:
-					found = found || fn.Name == "JobMD"
-				case *ast.SelectorExpr:
-					found = found || fn.Sel.Name == "JobMD"
+	// isJobMD says e is []byte(JobMD(...)) or JobMD(...): the cardcontract one, named bare
+	// inside pkg/cardcontract and as cardcontract.JobMD anywhere else
+	isJobMD := func(e ast.Expr, inCardcontract bool) bool {
+		c, ok := e.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		if conv, ok := c.Fun.(*ast.ArrayType); ok && len(c.Args) == 1 {
+			if el, ok := conv.Elt.(*ast.Ident); ok && el.Name == "byte" {
+				if c, ok = c.Args[0].(*ast.CallExpr); !ok {
+					return false
 				}
 			}
-			return !found
-		})
-		return found
+		}
+		switch fn := c.Fun.(type) {
+		case *ast.Ident:
+			return inCardcontract && fn.Name == "JobMD"
+		case *ast.SelectorExpr:
+			x, ok := fn.X.(*ast.Ident)
+			return ok && x.Name == "cardcontract" && fn.Sel.Name == "JobMD"
+		}
+		return false
+	}
+	// pathish says e is a path's own expression (a name, a literal, a join or a concatenation),
+	// so a result assigned from a write (err := os.WriteFile(...JobName...)) is no JOB.md path
+	pathish := func(e ast.Expr) bool {
+		switch x := e.(type) {
+		case *ast.Ident, *ast.BasicLit, *ast.BinaryExpr:
+			return true
+		case *ast.CallExpr:
+			sel, ok := x.Fun.(*ast.SelectorExpr)
+			return ok && (sel.Sel.Name == "Join" || sel.Sel.Name == "Sprintf")
+		}
+		return false
 	}
 	var through, bypass, spelled []string
 	fset := token.NewFileSet()
@@ -154,29 +175,56 @@ func TestOnlyJobMDWritesJobMD(t *testing.T) {
 			return err
 		}
 		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
 		if strings.Contains(string(src), wantPlaybookLine) {
-			spelled = append(spelled, filepath.ToSlash(rel))
+			spelled = append(spelled, rel)
 		}
 		file, err := parser.ParseFile(fset, path, src, 0)
 		if err != nil {
 			return err
+		}
+		inCardcontract := file.Name.Name == "cardcontract"
+		// the file's variables that hold a JOB.md path, to a fixed point: p := filepath.Join(dir, JobName); q := p
+		names := map[string]bool{}
+		for grew := true; grew; {
+			grew = false
+			ast.Inspect(file, func(n ast.Node) bool {
+				a, ok := n.(*ast.AssignStmt)
+				if !ok || len(a.Lhs) != len(a.Rhs) {
+					return true
+				}
+				for i, l := range a.Lhs {
+					if id, ok := l.(*ast.Ident); ok && !names[id.Name] && pathish(a.Rhs[i]) && mentions(a.Rhs[i], names) {
+						names[id.Name], grew = true, true
+					}
+				}
+				return true
+			})
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			c, ok := n.(*ast.CallExpr)
 			if !ok || len(c.Args) == 0 {
 				return true
 			}
-			sel, ok := c.Fun.(*ast.SelectorExpr)
-			if !ok || !writers[sel.Sel.Name] || !namesJobMD(c.Args[0]) {
+			name := ""
+			switch fn := c.Fun.(type) {
+			case *ast.Ident:
+				name = fn.Name
+			case *ast.SelectorExpr:
+				name = fn.Sel.Name
+			}
+			target := c.Args[0]
+			if name == "Rename" && len(c.Args) == 2 {
+				target = c.Args[1]
+			}
+			if !writers[name] || !mentions(target, names) {
 				return true
 			}
-			at := fset.Position(c.Pos())
-			where := filepath.ToSlash(rel) + ":" + strconv.Itoa(at.Line)
-			made := false
-			for _, a := range c.Args[1:] {
-				made = made || callsJobMD(a)
+			if name == "OpenFile" && !mentions(c, map[string]bool{"O_WRONLY": true, "O_RDWR": true, "O_CREATE": true, "O_APPEND": true, "O_TRUNC": true}) {
+				return true // opened to read
 			}
-			if made {
+			where := rel + ":" + strconv.Itoa(fset.Position(c.Pos()).Line)
+			if (name == "Write" || name == "WriteFile") && len(c.Args) >= 2 && isJobMD(c.Args[1], inCardcontract) {
 				through = append(through, where)
 			} else {
 				bypass = append(bypass, where)
@@ -186,7 +234,7 @@ func TestOnlyJobMDWritesJobMD(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	assert.Empty(t, bypass, "these write a JOB.md with text not made by cardcontract.JobMD")
+	assert.Empty(t, bypass, "these write a JOB.md with text other than []byte(cardcontract.JobMD(...))")
 	joined := strings.Join(through, " ")
 	assert.Contains(t, joined, "pkg/cardcontract/contract.go:", "the lint sees Install's write")
 	assert.Contains(t, joined, "pkg/friend/stage.go:", "the lint sees the friend stager's write")
