@@ -271,3 +271,29 @@ func TestStatusWarningRemediesUseTheChosenStore(t *testing.T) {
 		})
 	}
 }
+
+// The add/set/show/history verbs carry an uncatalogued provider's direct fields, and the
+// key is the variable's name only.
+func TestProviderDirectFieldsThroughTheVerbs(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	h.dir = t.TempDir()
+	h.env["NOVA_FRIEND"] = "operator"
+	code, _, errs := h.run(t, "migrate", "--file", "case.json")
+	require.Zero(t, code, errs)
+	code, _, errs = h.run(t, "provider", "add", "paperinstruments", "--billing", "metered", "--funded", "true",
+		"--base_url", "https://api.example.invalid/v1", "--key_env", "PAPERINSTRUMENTS_API_KEY",
+		"--npm", "@ai-sdk/openai-compatible", "--file", "case.json")
+	require.Zero(t, code, errs)
+	code, out, errs := h.run(t, "provider", "show", "paperinstruments", "--file", "case.json")
+	require.Zero(t, code, errs)
+	assert.Contains(t, out, "PROVIDER name=paperinstruments")
+	assert.Contains(t, out, "base_url=https://api.example.invalid/v1")
+	assert.Contains(t, out, "key_env=PAPERINSTRUMENTS_API_KEY")
+	assert.Contains(t, out, "npm=@ai-sdk/openai-compatible")
+	code, _, errs = h.run(t, "provider", "set", "paperinstruments", "--npm", "@ai-sdk/openai", "--file", "case.json")
+	require.Zero(t, code, errs)
+	code, out, errs = h.run(t, "provider", "history", "paperinstruments", "--file", "case.json")
+	require.Zero(t, code, errs)
+	assert.Contains(t, out, "npm=@ai-sdk/openai-compatible>@ai-sdk/openai")
+}
