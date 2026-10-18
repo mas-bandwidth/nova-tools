@@ -331,9 +331,9 @@ var seedDirectExcluded = map[string]bool{
 // environment variable holding its key, and the npm adapter the harness loads. It is the
 // provider row's fields (nova-config provider: base_url, key_env, npm), never a key value.
 type DirectProvider struct {
-	BaseURL string
-	KeyEnv  string
-	NPM     string
+	BaseURL    string
+	KeyEnv     string
+	NPMAdapter string
 }
 
 // DeclareDirectProvider returns the config with provider declared direct as an
@@ -350,7 +350,7 @@ func DeclareDirectProvider(raw []byte, provider string, p DirectProvider) ([]byt
 	if provider == "" || base == "" || keyEnv == "" {
 		return raw, false
 	}
-	npm := strings.TrimSpace(p.NPM)
+	npm := strings.TrimSpace(p.NPMAdapter)
 	if npm == "" {
 		npm = "@ai-sdk/openai-compatible"
 	}

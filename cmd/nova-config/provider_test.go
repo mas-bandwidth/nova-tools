@@ -283,17 +283,17 @@ func TestProviderDirectFieldsThroughTheVerbs(t *testing.T) {
 	require.Zero(t, code, errs)
 	code, _, errs = h.run(t, "provider", "add", "paperinstruments", "--billing", "metered", "--funded", "true",
 		"--base_url", "https://api.example.invalid/v1", "--key_env", "PAPERINSTRUMENTS_API_KEY",
-		"--npm", "@ai-sdk/openai-compatible", "--file", "case.json")
+		"--npm_adapter", "@ai-sdk/openai-compatible", "--file", "case.json")
 	require.Zero(t, code, errs)
 	code, out, errs := h.run(t, "provider", "show", "paperinstruments", "--file", "case.json")
 	require.Zero(t, code, errs)
 	assert.Contains(t, out, "PROVIDER name=paperinstruments")
 	assert.Contains(t, out, "base_url=https://api.example.invalid/v1")
 	assert.Contains(t, out, "key_env=PAPERINSTRUMENTS_API_KEY")
-	assert.Contains(t, out, "npm=@ai-sdk/openai-compatible")
-	code, _, errs = h.run(t, "provider", "set", "paperinstruments", "--npm", "@ai-sdk/openai", "--file", "case.json")
+	assert.Contains(t, out, "npm_adapter=@ai-sdk/openai-compatible")
+	code, _, errs = h.run(t, "provider", "set", "paperinstruments", "--npm_adapter", "@ai-sdk/openai", "--file", "case.json")
 	require.Zero(t, code, errs)
 	code, out, errs = h.run(t, "provider", "history", "paperinstruments", "--file", "case.json")
 	require.Zero(t, code, errs)
-	assert.Contains(t, out, "npm=@ai-sdk/openai-compatible>@ai-sdk/openai")
+	assert.Contains(t, out, "npm_adapter=@ai-sdk/openai-compatible>@ai-sdk/openai")
 }

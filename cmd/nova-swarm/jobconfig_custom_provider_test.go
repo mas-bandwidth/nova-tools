@@ -40,7 +40,7 @@ func TestJobConfigWritesCustomProviderBlockForUncataloguedProvider(t *testing.T)
 	cfg := nativeRunConfig{
 		model:          provider + "/" + model,
 		label:          "c1",
-		providerDirect: &swarm.DirectProvider{BaseURL: base, KeyEnv: keyEnv, NPM: "@ai-sdk/openai-compatible"},
+		providerDirect: &swarm.DirectProvider{BaseURL: base, KeyEnv: keyEnv, NPMAdapter: "@ai-sdk/openai-compatible"},
 	}
 
 	var notes bytes.Buffer
@@ -65,4 +65,36 @@ func TestJobConfigWritesCustomProviderBlockForUncataloguedProvider(t *testing.T)
 	assert.Equal(t, "{env:"+keyEnv+"}", pp.Options["apiKey"], "the apiKey is the env reference, the variable name only")
 	assert.Contains(t, pp.Models, model, "the route's model is declared under the provider")
 	assert.NotContains(t, string(body), keyValue, "the key's value appears nowhere in the file")
+}
+
+// The route's provider row reaches the job writer in production: nova-sprint reads the
+// row from nova-config and the member hands its three fields to native, which resolves
+// them into the custom block before writeJobConfig. A worker description naming the same
+// provider is the other real source of the same block. Both are pure: no socket, no key
+// value.
+func TestRouteProviderDirectFromTheProvidersRow(t *testing.T) {
+	t.Parallel()
+	const (
+		provider = "acme"
+		base     = "https://api.acme.invalid/v1"
+		keyEnv   = "ACME_TEST_API_KEY"
+		npm      = "@ai-sdk/openai-compatible"
+	)
+	got := routeProviderDirect(nativeRunConfig{
+		providerBaseURL: base, providerKeyEnv: keyEnv, providerNPM: npm,
+	}, provider)
+	require.NotNil(t, got, "a route provider row resolves to a custom block")
+	assert.Equal(t, base, got.BaseURL)
+	assert.Equal(t, keyEnv, got.KeyEnv)
+	assert.Equal(t, npm, got.NPMAdapter)
+
+	fromWorker := routeProviderDirect(nativeRunConfig{worker: &swarm.Worker{
+		Provider: provider, BaseURL: base, Secret: keyEnv,
+	}}, provider)
+	require.NotNil(t, fromWorker, "a worker description naming the provider resolves too")
+	assert.Equal(t, base, fromWorker.BaseURL)
+	assert.Equal(t, keyEnv, fromWorker.KeyEnv)
+
+	assert.Nil(t, routeProviderDirect(nativeRunConfig{}, provider), "a catalogued provider keeps the providers table")
+	assert.Nil(t, routeProviderDirect(nativeRunConfig{providerBaseURL: base}, provider), "a base with no key variable is not a block")
 }

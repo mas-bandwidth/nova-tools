@@ -652,7 +652,7 @@ var Kinds = []*Kind{
 			{Name: "console_url", Type: TypeText, Help: "the provider's HTTPS console URL; empty when unknown"},
 			{Name: "base_url", Type: TypeText, Help: "the provider's OpenAI-compatible API base (https://api.example.com/v1) for a provider the pinned harness's catalog does not know; empty when catalogued, and never routed through openrouter or opencode Zen"},
 			{Name: "key_env", Type: TypeText, Help: "the NAME of the environment variable that holds the provider's key ({env:NAME} is written, never the value); empty when catalogued"},
-			{Name: "npm", Type: TypeText, Help: "the npm adapter the harness loads for an uncatalogued provider, normally @ai-sdk/openai-compatible; empty when catalogued"},
+			{Name: "npm_adapter", Type: TypeText, Help: "the npm adapter the harness loads for an uncatalogued provider, normally @ai-sdk/openai-compatible; empty when catalogued"},
 			noteField("the owner's funding facts, or migration's reminder to declare them"),
 		},
 		Check: checkProvider,
