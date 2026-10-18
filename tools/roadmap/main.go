@@ -21,6 +21,7 @@ func main() {
 	kind := flag.String("kind", "roadmap", "what the file holds: roadmap (docs/roadmap.sexp) or fixes (docs/fixes.sexp)")
 	file := flag.String("file", "docs/roadmap.sexp", "the data to read")
 	out := flag.String("out", "ROADMAP.md", "where to write the rendered page")
+	diagrams := flag.Bool("diagrams", false, "add the At a glance section of Mermaid diagrams after the opening paragraph (roadmap kind only)")
 	flag.Parse()
 	if flag.NArg() > 0 {
 		refuse("takes no positional words: " + strings.Join(flag.Args(), " "))
@@ -38,7 +39,13 @@ func main() {
 			refuse(oneLine(err.Error()))
 		}
 		page, items = roadmap.Render(doc, *file), len(doc.Items)
+		if *diagrams {
+			page = roadmap.RenderWithDiagrams(doc, *file)
+		}
 	case "fixes":
+		if *diagrams {
+			refuse("--diagrams is for --kind roadmap only")
+		}
 		fx, err := roadmap.DecodeFixes(*file, raw)
 		if err != nil {
 			refuse(oneLine(err.Error()))
