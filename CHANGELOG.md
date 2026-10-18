@@ -1,5 +1,19 @@
 # nova-tools changelog
 
+## v1.6.3 — 2026-10-18
+
+Cut from 16afa0f4105636ebaee2970f09e28a6abb31c65c. 4 pull requests since v1.6.2.
+
+Recovery journeys proven at 16afa0f4105636ebaee2970f09e28a6abb31c65c: 5 (functions nova_sprint 10a33f52bf84df5d, schema schema v2.5.1-0.20261017012433-9b397a277ad3, installed one Linux bench v1.6.3-0.20261018204253-16afa0f41056).
+
+Spend gate waived: point release of a staging fix; no provider spend is attributable to this cut (window 2026-10-18T00:00:00Z..2026-10-18T20:54:19Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #5986 CHANGELOG: the v1.6.2 cut's record
+- #5987 sandbox: the darwin wall's default deny is no-report (mini-m5-1 harness hang)
+- #5988 nova-config: the signal helper waits for its own SIGTERM to land
+- #5989 Release notes for v1.6.3
+
 ## v1.6.2 — 2026-10-18
 
 Cut from e2341ed536f009069dadea8b9538680a81ae847e. 4 pull requests since v1.6.1.
