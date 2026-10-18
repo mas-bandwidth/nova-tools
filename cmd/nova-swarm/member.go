@@ -1736,7 +1736,7 @@ func mirrorDue(last, now time.Time) bool { return last.IsZero() || now.Sub(last)
 // background when none runs and mirrorDue says so (the first call, at start, always).
 // A reader keeps none (nil) and builds nothing from the mirrors' tips, but its cards still
 // need the mirror (StageCard refuses "no bench mirror for <repo>"): what keeps it there and
-// current is the bench's own mirror-refresh loop (the rowan-tools fleet row, every 600 s),
+// current is the bench's own mirror-refresh loop (its fleet loop row, every 600 s),
 // not this keeper, which NOVA_SWARM_MIRRORS turns on for a worker seat alone.
 // A card's clone step reaches the mirrors by the path the card names (PointCardAtMirrors),
 // never by an environment word: the harness's environment is rebuilt, and its HOME is the

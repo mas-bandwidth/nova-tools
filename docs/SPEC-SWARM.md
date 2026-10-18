@@ -526,7 +526,7 @@ from there, outside the wall, as before.
 Staging borrows a bench mirror, so the mirror has to exist and be current, and a first
 build has to find a warm cache. `swarm.MirrorKeeper` keeps both. a worker member
 whose environment holds `NOVA_SWARM_MIRRORS=<url,...>` (the repositories it works on)
-keeps one (a reader keeps none, though its cards need the mirror: staging refuses `no bench mirror for <repo>`; what keeps the mirror for it is the bench's own mirror-refresh loop, the rowan-tools fleet row, every 600 s); for each the keeper
+keeps one (a reader keeps none, though its cards need the mirror: staging refuses `no bench mirror for <repo>`; what keeps the mirror for it is the bench's own mirror-refresh loop, its fleet loop row, every 600 s); for each the keeper
 creates `~/nova-bench/mirror/<name>.git` (`git clone --mirror`, the place `FindBenchMirror`
 looks first), sets `gc.auto=0`, and afterwards only fetches into it. It runs at the member's
 start and in the background before a pass at most once every ten minutes, by the clock
