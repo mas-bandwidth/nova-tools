@@ -129,3 +129,20 @@ func TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs(t *testing.T) {
 		})
 	}
 }
+
+// The disk guard's unit on darwin names --logs ~/Library/Logs (fleet/loops.yml,
+// loop_guard_argv): every launchd agent logs there, ~/nova-bench/loops is empty on
+// darwin, and a guard that read only that never rotated a darwin log (2026-10-17:
+// nova-friend-zhi.log at 12 MB on mini-m5-1). Linux keeps the default.
+func TestLoopsPlayDiskGuardRotatesTheDarwinLogDirectory(t *testing.T) {
+	t.Parallel()
+	for _, play := range loopsPlays(t) {
+		vars, _ := play["vars"].(map[string]any)
+		if argv, ok := vars["loop_guard_argv"].(string); ok {
+			assert.Contains(t, argv, "['--logs', '~/Library/Logs'] if loop_darwin else []",
+				"the disk guard on darwin does not name the directory its launchd logs are in")
+			return
+		}
+	}
+	require.FailNow(t, "fleet/loops.yml has no loop_guard_argv")
+}

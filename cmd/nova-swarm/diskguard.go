@@ -90,6 +90,7 @@ const (
 type guard struct {
 	roots, caches, modCaches   []string
 	logDir, landDir, mirrorDir string
+	logPrefix                  string // when set, only the logs whose name starts with it (guardLogDir)
 	cacheMax, modMax, logMax   int64
 	floor, stopFloor           int64
 	logKeep                    int
@@ -297,6 +298,9 @@ func (g *guard) logs() {
 		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".log") {
 			continue // a link, a directory, a rotated copy
 		}
+		if !strings.HasPrefix(e.Name(), g.logPrefix) {
+			continue // another program's log in a directory the fleet shares with it
+		}
 		path := filepath.Join(g.logDir, e.Name())
 		fi, err := e.Info()
 		if err != nil || fi.Size() <= g.logMax {
@@ -310,6 +314,30 @@ func (g *guard) logs() {
 		}
 		g.say(fmt.Sprintf("ROTATED log %s freed=%d size=%d keep=%d", oneline.Field(path), freed, fi.Size(), g.logKeep))
 	}
+}
+
+// guardLogDir is the default --logs on goos, and the prefix a log's name has there to be
+// rotated. On darwin every launchd agent of the fleet writes ~/Library/Logs/nova-*.log
+// (fleet/templates/nova-loop.plist.j2, the friend and mirror-refresh agents), and
+// ~/nova-bench/loops is empty, so a guard that read only that never rotated a darwin log:
+// on 2026-10-17 mini-m5-1 held nova-friend-zhi.log at 12 MB and the mirror-refresh log at
+// 2.9 MB, growing 2 KB a pass. ~/Library/Logs is shared with every other program of the
+// login, so there only the nova- logs are the guard's. Elsewhere the loop logs are
+// ~/nova-bench/loops, every one of them the fleet's.
+func guardLogDir(goos string) (dir, prefix string) {
+	if goos == "darwin" {
+		return "~/Library/Logs", "nova-"
+	}
+	return "~/nova-bench/loops", ""
+}
+
+// guardLogPrefix is the prefix a log's name needs in dir to be rotated: "nova-" in the
+// home's Library/Logs, whichever way --logs named it, else none.
+func guardLogPrefix(home, dir string) string {
+	if filepath.Clean(dir) == filepath.Join(home, "Library", "Logs") {
+		return "nova-"
+	}
+	return ""
 }
 
 // rotate copies path to path.1 and empties path in place, after removing path.<keep> and
@@ -834,7 +862,8 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	f.fs.Var(stringListValue{&caches}, "cache", "another Go build cache, a `dir` or a glob such as ~/runner-*/_cache/go-build (again for more); the login's own is always held")
 	cacheGB := f.fs.Int("cache-max-gb", guardCacheGiB, "the `GiB` each Go build cache is held under (default 20)")
 	modGB := f.fs.Int("modcache-max-gb", guardModGiB, "the `GiB` over which a module cache is emptied, while no go command runs (default 50)")
-	logs := f.fs.String("logs", "~/nova-bench/loops", "the `dir` of the loop logs to rotate (default ~/nova-bench/loops)")
+	logDefault, _ := guardLogDir(runtime.GOOS)
+	logs := f.fs.String("logs", logDefault, "the `dir` of the loop logs to rotate (default ~/Library/Logs on macOS, where only nova-*.log is the guard's; ~/nova-bench/loops elsewhere)")
 	logMB := f.fs.Int("log-max-mb", guardLogMiB, "the `MiB` over which a loop log is rotated (default 50)")
 	logKeep := f.fs.Int("log-keep", guardLogKeep, "how many rotated copies of a log stay, `n` (default 3)")
 	poolIdle := f.fs.Duration("pool-idle", guardPoolIdle, "how long a pool's slots must be still, with no process naming it, before it is swept, a `duration` of at least 10m (default 30m)")
@@ -886,7 +915,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	g := &guard{
 		cacheMax: int64(*cacheGB) * gib, modMax: int64(*modGB) * gib, logMax: int64(*logMB) << 20, logKeep: *logKeep,
 		floor: int64(*floor) * gib, stopFloor: int64(*stopFloor) * gib, poolIdle: *poolIdle, cloneAge: *cloneAge, now: time.Now(), home: home,
-		logDir: tilde(*logs), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
+		logDir: tilde(*logs), logPrefix: guardLogPrefix(home, tilde(*logs)), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
 		dry: *dry, procs: processList, held: heldPaths, free: diskFree, cleanMod: cleanModCache, dirty: landDirty, out: stdout,
 	}
 	if runtime.GOOS != "linux" {
