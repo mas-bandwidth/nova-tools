@@ -1,24 +1,15 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/delayproxy"
 )
-
-// farCeiling bounds each read of a socket here, generously: a test that is not
-// answered fails at it and does not hang.
-const farCeiling = 30 * time.Second
-
-// listenFields is the words of the LISTEN line: LISTEN, OK, addr=, target=, delay=.
-const listenFields = 5
 
 func TestFlagsParse(t *testing.T) {
 	t.Parallel()
@@ -182,6 +173,3 @@ func TestHelpIsEnoughToUseTheToolCold(t *testing.T) {
 		}
 	}
 }
-
-// lines reads what the tool writes to stdout, a line at a time.
-func lines(r io.Reader) *bufio.Reader { return bufio.NewReader(r) }

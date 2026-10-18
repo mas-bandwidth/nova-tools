@@ -271,3 +271,10 @@ func TestFarStopsInCleanupAndLeavesNothingRunning(t *testing.T) {
 	}
 	p.Stop() // a second call only waits
 }
+
+// farPipelined is how many of them the pipeline holds, and farSeparate is how
+// many commands the test sends one after the other, each waiting for its reply.
+const (
+	farPipelined = 100
+	farSeparate  = 3
+)

@@ -24,13 +24,6 @@ import (
 // number the proxy is told and never a time that passes.
 const farDelay = 100 * time.Millisecond
 
-// farPipelined is how many of them the pipeline holds, and farSeparate is how
-// many commands the test sends one after the other, each waiting for its reply.
-const (
-	farPipelined = 100
-	farSeparate  = 3
-)
-
 // unbound stands in for net.Listen in the tests of what Far refuses: the
 // listener it hands out owns no port, so a refusal made after the listener is
 // opened is proved without a socket.

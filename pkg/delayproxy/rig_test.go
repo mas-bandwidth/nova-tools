@@ -21,7 +21,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,43 +36,12 @@ const delay = 100 * time.Millisecond
 // is not answered fails at it and does not hang.
 const ceiling = 30 * time.Second
 
-// ping is one command of a pipeline: PING as a RESP array, 14 bytes.
-const ping = "*1\r\n$4\r\nPING\r\n"
-
-// pipelined is how many commands the pipeline holds, and pipeline is that many
-// in one string: one write, well inside one read of the proxy's.
-const pipelined = 100
-
-var pipeline = strings.Repeat(ping, pipelined)
-
-// acceptLoop is the goroutine a proxy runs to accept, beside the
-// GoroutinesPerConn of each open connection.
-const acceptLoop = 1
-
-// echoBuffer is what the echo server reads at a time.
-const echoBuffer = 4096
-
-// largeWrite is a write of several reads, and patternPeriod is the period of
-// the bytes it carries: a prime, so no read of ChunkBytes ends where the
-// pattern starts over and a read that lost or repeated a byte cannot pass.
-const (
-	largeWrite    = 100 << 10
-	patternPeriod = 251
-)
-
 // apart is the time between one read of a client and the next in the test that
 // drives the two halves of the proxy by hand, and reads is how many there are.
 const (
 	apart = time.Millisecond
 	reads = 3
 )
-
-// heldClients is how many clients the Stop test leaves mid-hold.
-const heldClients = 4
-
-// realDelay is the least a timer can be asked for and the delay of the one test
-// that waits on time.
-const realDelay = 2 * time.Millisecond
 
 // onlyDelays reports whether the clock was asked for exactly n waits, each of
 // the whole delay.
@@ -89,60 +57,7 @@ func onlyDelays(asked []time.Duration, n int) bool {
 	return true
 }
 
-// fakeClock stands still: Now never moves, so a write's delay is always the
-// whole delay. It writes down every wait it is asked for. Given a gate, a wait
-// signals on waiting and then blocks until the gate is closed or the connection
-// ends; with firstOnly, only the first wait it is asked for blocks, and every
-// later one returns at once.
-type fakeClock struct {
-	mu        sync.Mutex
-	waits     []time.Duration
-	gate      chan struct{}
-	waiting   chan struct{}
-	firstOnly bool
-}
-
 var epoch = time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-
-func (f *fakeClock) clock() Clock {
-	return Clock{
-		Now: func() time.Time { return epoch },
-		Wait: func(stop <-chan struct{}, d time.Duration) bool {
-			f.mu.Lock()
-			f.waits = append(f.waits, d)
-			first := len(f.waits) == 1
-			f.mu.Unlock()
-			if f.waiting != nil {
-				f.waiting <- struct{}{}
-			}
-			if f.gate != nil && (first || !f.firstOnly) {
-				select {
-				case <-f.gate:
-				case <-stop:
-					return false
-				}
-			}
-			return true
-		},
-	}
-}
-
-func (f *fakeClock) asked() []time.Duration {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]time.Duration(nil), f.waits...)
-}
-
-// roundTrip writes send in one write and reads that many bytes back.
-func roundTrip(t *testing.T, c net.Conn, send string) string {
-	t.Helper()
-	_, err := io.WriteString(c, send)
-	require.NoError(t, err, "write: %v", err)
-	got := make([]byte, len(send))
-	_, err = io.ReadFull(c, got)
-	require.NoError(t, err, "read %d bytes back: %v", len(send), err)
-	return string(got)
-}
 
 // steppedClock is a clock that moves only when the test lets it: Now is the time
 // so far, and a Wait writes itself down, says so on waiting, blocks until the

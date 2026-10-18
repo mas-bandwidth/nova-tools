@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"io"
@@ -12,6 +13,9 @@ import (
 	"testing"
 	"time"
 )
+
+// listenFields is the words of the LISTEN line: LISTEN, OK, addr=, target=, delay=.
+const listenFields = 5
 
 // The tool listens where it says, forwards to its target and stops when asked,
 // and says what it held. The target is an echo server the test owns, and the
@@ -115,3 +119,10 @@ func TestARunThatCannotListenIsRefused(t *testing.T) {
 		t.Fatalf("exit %d, stdout %q, stderr %q; want exit 2 and a line naming the listen that failed", code, stdout.String(), stderr.String())
 	}
 }
+
+// farCeiling bounds each read of a socket here, generously: a test that is not
+// answered fails at it and does not hang.
+const farCeiling = 30 * time.Second
+
+// lines reads what the tool writes to stdout, a line at a time.
+func lines(r io.Reader) *bufio.Reader { return bufio.NewReader(r) }
