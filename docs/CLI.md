@@ -2230,8 +2230,8 @@ usage:
                        (runs the card's own programs: a card whose every work step is a script step, walked in the checkout with no model, each program, POST command and git in its own wall (network denied, no credential, the checkout and a private temp the only writes); one STEP OK|FAILED line per step, stopping at the first failed; refused with no wall unless --no-wall, which runs them unconfined; --remainder prints the card a failed step leaves)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    [--output-token-max <tokens>] --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--max-mem <size>] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--max-mem <size>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+  nova-swarm native    [--output-token-max <tokens>] --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
                        (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
                         Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
                         A reader uses its machine's width; --width overrides it. This machine opens no store.
@@ -2293,11 +2293,7 @@ the provider's auth entry into the data home, mode 0600, and removes it when
 the run ends. A worker naming secret refuses --auth and writes no auth file.
 
 Sandbox: native uses nova-sandbox unless --no-wall is explicit
-(docs/SPEC-SANDBOX.md). --max-mem <size> names the wall's memory cap for the
-child's tree and overrides the wall's sized default (an eighth of RAM, at most a
-quarter of the login slice's MemoryMax, at least 8g; 8g where memory is
-unreadable); absent, nothing is passed and that default stands. A card cannot
-request this opt-out; the NATIVE line
+(docs/SPEC-SANDBOX.md). A card cannot request this opt-out; the NATIVE line
 names it as sandbox=none-by-flag. The job directory, data home, temporary directory and
 default shared cache are writable. The slot, harness and toolchain directories,
 worker read_roots and any borrowed Git objects are readable.
