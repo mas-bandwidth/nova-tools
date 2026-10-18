@@ -642,6 +642,14 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		}
 	}
 
+	// The staged head's submodules are checked out here, outside the card wall: inside it
+	// there is no credential and no bench git config (StagingGitEnv), so a private
+	// submodule (virtualgo's sim/extern/fixed3d) is unfetchable there and the card's build
+	// fails at configure ("No SOURCES given to target: box3d", 2026-10-18).
+	if out, err := stageSubmodules(ctx, stageCmd, opts.TargetDir, opts.BenchHome, &fetchTime); err != nil {
+		return fail("submodule update", out, err)
+	}
+
 	return StageResult{
 		BaseRepo: baseRepo,
 		BaseSha:  head,
@@ -679,6 +687,80 @@ func stageHead(ctx context.Context, stageCmd func(context.Context, ...string) *e
 		return false, fetched, ferr
 	}
 	return haveHead(), fetched, nil
+}
+
+// stageSubmodules checks out every submodule the staged head names, recursively. A
+// submodule whose URL has a bench mirror (FindBenchMirror, by repository name) is cloned
+// from the mirror, local and quick; the rest, and a mirror that lacks the commit, come from
+// their own URL with the bench's credential, which staging has and the card wall does not.
+// The URLs the checkout keeps, in .git/config and in each submodule's origin, are the ones
+// .gitmodules names, never a mirror path. A head with no .gitmodules does nothing.
+func stageSubmodules(ctx context.Context, stageCmd func(context.Context, ...string) *exec.Cmd, dir, benchHome string, fetchTime *time.Duration) ([]byte, error) {
+	if _, err := os.Stat(filepath.Join(dir, ".gitmodules")); err != nil {
+		return nil, nil
+	}
+	type sub struct{ name, url, mirror string }
+	var subs []sub
+	listed, _ := stageCmd(ctx, "-C", dir, "config", "-f", ".gitmodules", "--get-regexp", `^submodule\..*\.url$`).Output()
+	for _, line := range strings.Split(strings.TrimSpace(string(listed)), "\n") {
+		key, url, ok := strings.Cut(line, " ")
+		if !ok || url == "" || strings.HasPrefix(url, "-") {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(key, "submodule."), ".url")
+		s := sub{name: name, url: url}
+		if isRemoteRepo(url) {
+			if m := FindBenchMirror(benchHome, url); m != "" && m != url {
+				s.mirror = m
+			}
+		}
+		subs = append(subs, s)
+	}
+	run := func(args ...string) ([]byte, error) {
+		return stageTimedOutput(stageCmd(ctx, append([]string{"-C", dir}, args...)...), fetchTime)
+	}
+	if out, err := run("submodule", "init"); err != nil {
+		return out, err
+	}
+	setURLs := func(mirrored bool) ([]byte, error) {
+		for _, s := range subs {
+			url := s.url
+			if mirrored && s.mirror != "" {
+				url = s.mirror
+			}
+			if out, err := run("config", "--local", "submodule."+s.name+".url", url); err != nil {
+				return out, err
+			}
+		}
+		return nil, nil
+	}
+	update := []string{"-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive"}
+	if out, err := setURLs(true); err != nil {
+		return out, err
+	}
+	out, err := run(update...)
+	if err != nil && !stageTimedOut(ctx, err) {
+		// a mirror without the commit: the submodule's own URL, with the bench's credential;
+		// sync points a submodule already cloned from the mirror back at that URL too
+		if o, e := setURLs(false); e != nil {
+			return o, e
+		}
+		if o, e := run("submodule", "sync", "--recursive"); e != nil {
+			return o, e
+		}
+		out, err = run(update...)
+	}
+	if err != nil {
+		return out, err
+	}
+	// the URLs .gitmodules names, in .git/config and in each submodule's origin, never a mirror path
+	if o, e := setURLs(false); e != nil {
+		return o, e
+	}
+	if o, e := run("submodule", "sync", "--recursive"); e != nil {
+		return o, e
+	}
+	return nil, nil
 }
 
 // stageTimedOutput accumulates the Git command time of a staging phase,

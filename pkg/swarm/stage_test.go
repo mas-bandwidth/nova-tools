@@ -279,3 +279,56 @@ func TestAStageBorrowsTheMirrorsObjects(t *testing.T) {
 	assert.Equal(t, []string{"clone", "-q", "--shared", "--", "/m.git", "/j/repo"}, MirrorCloneArgs("/m.git", "/j/repo", true))
 	assert.Equal(t, []string{"clone", "-q", "--reference", "/m.git", "--dissociate", "--", "/m.git", "/j/repo"}, MirrorCloneArgs("/m.git", "/j/repo", false))
 }
+
+// A staged head's submodules are checked out by staging, outside the card wall, from the
+// bench mirror when one holds the submodule's repository: the card wall has no credential,
+// so a private submodule left for the card is unfetchable (virtualgo's sim/extern/fixed3d,
+// 2026-10-18). The checkout keeps the URL .gitmodules names, never the mirror path. No
+// network: the submodule's https URL resolves to the bench mirror, and only the mirror is read.
+func TestStageCardChecksOutSubmodulesFromTheBenchMirror(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	run := func(dir string, args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = testgit.Environ()
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	// the submodule's repository, and the bench mirror of it
+	subSrc := filepath.Join(root, "subsrc")
+	require.NoError(t, os.MkdirAll(subSrc, 0o755))
+	run(subSrc, "init", "-q", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(subSrc, "box3d.c"), []byte("int x;\n"), 0o644))
+	run(subSrc, "add", "-A")
+	run(subSrc, "commit", "-q", "-m", "sub")
+	subSha := run(subSrc, "rev-parse", "HEAD")
+	home := filepath.Join(root, "home")
+	mirrorDir := filepath.Join(home, "nova-bench", "mirror")
+	require.NoError(t, os.MkdirAll(mirrorDir, 0o755))
+	run(root, "clone", "-q", "--mirror", subSrc, filepath.Join(mirrorDir, "fixed3d.git"))
+
+	// the superproject: a gitlink to the submodule's commit, its URL the private https one
+	const subURL = "https://github.com/robotgamedevelopers/fixed3d.git"
+	sup := filepath.Join(root, "sup")
+	require.NoError(t, os.MkdirAll(sup, 0o755))
+	run(sup, "init", "-q", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(sup, ".gitmodules"),
+		[]byte("[submodule \"sim/extern/fixed3d\"]\n\tpath = sim/extern/fixed3d\n\turl = "+subURL+"\n"), 0o644))
+	run(sup, "add", ".gitmodules")
+	run(sup, "update-index", "--add", "--cacheinfo", "160000,"+subSha+",sim/extern/fixed3d")
+	run(sup, "commit", "-q", "-m", "base")
+	supSha := run(sup, "rev-parse", "HEAD")
+
+	target := filepath.Join(root, "jobs", "card-1", "repo")
+	card := []byte("RESULT: c1 sha=000000000000 tier: pro\nbase-repo: " + sup + "\nbase-sha: " + supSha + "\n\nTHE TASK.\n")
+	res, err := StageCard(StageOptions{Card: card, TargetDir: target, BenchHome: home, Timeout: 30 * time.Second})
+	require.NoError(t, err)
+	require.True(t, res.Staged)
+
+	assert.FileExists(t, filepath.Join(target, "sim", "extern", "fixed3d", "box3d.c"), "the submodule was not checked out")
+	assert.Equal(t, subSha, run(filepath.Join(target, "sim", "extern", "fixed3d"), "rev-parse", "HEAD"))
+	assert.Equal(t, subURL, run(target, "config", "--local", "--get", "submodule.sim/extern/fixed3d.url"), "the checkout kept the mirror path")
+	assert.Equal(t, subURL, run(filepath.Join(target, "sim", "extern", "fixed3d"), "remote", "get-url", "origin"), "the submodule's origin is the mirror path")
+}
