@@ -525,6 +525,17 @@ func line(c *tool.Call, o *tool.Out) {
 	o.Render(c.Stdout, false)
 }
 
+// armedLine pins R-PLAYBOOK and R-WORKER-PLAYBOOK to ARMED emissions only.
+func armedLine(c *tool.Call, o *tool.Out, role hook.Role) {
+	switch role {
+	case hook.Coordinator:
+		o.Note("read now: nova-sprint help playbook")
+	case hook.Friend:
+		o.Note("read now: nova-sprint help worker-playbook")
+	}
+	line(c, o)
+}
+
 // stateLine is the record's state as one HOOK STATE line, with the breadcrumb
 // as its notes when it is not proven.
 func stateLine(st hook.Status, role hook.Role) *tool.Out {
@@ -840,7 +851,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	}
 	once := c.Bool("once")
 	if !once {
-		line(c, armed)
+		armedLine(c, armed, role)
 	}
 	challenge := func(epoch int64) *tool.Out {
 		if len(held) == 0 {
@@ -1072,7 +1083,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				if e, ok := w.rearm(s, role, held); ok {
 					// the record was lost (none), not unhooked: armed again, a new challenge
 					epoch, err = e, nil
-					line(c, tool.Done().As("ARMED").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", false).Fact("hold", pushList(held)).Note("the hook record was lost under this hook (no record: deleted, or the store flushed); armed again"))
+					armedLine(c, tool.Done().As("ARMED").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", false).Fact("hold", pushList(held)).Note("the hook record was lost under this hook (no record: deleted, or the store flushed); armed again"), role)
 					nextChallenge = w.now()
 					if core != nil {
 						core.Rearm(epoch)
