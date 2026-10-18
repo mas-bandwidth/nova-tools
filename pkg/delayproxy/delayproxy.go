@@ -499,9 +499,10 @@ func (p *Proxy) forward(up net.Conn, queue <-chan held, done <-chan struct{}, en
 		// out, so a reply the client reads is never visible before the count. A
 		// write that fails or comes up short (io.ErrShortWrite) ends the
 		// connection and the count is taken back, because a chunk that did not
-		// reach the target is not a write the proxy forwarded.
+		// reach the target is not a write the proxy forwarded. The shortest hold
+		// is kept only once the write reached the target, so a failure cannot
+		// undo a successful write's shorter or longer hold.
 		hold := p.clock.now().Sub(h.at)
-		prev := p.shortest.Load()
 		p.record(hold)
 		n, err := up.Write(h.data)
 		if err == nil && n != len(h.data) {
@@ -509,16 +510,23 @@ func (p *Proxy) forward(up net.Conn, queue <-chan held, done <-chan struct{}, en
 		}
 		// ignored: a target that cannot be written to ends the connection, which end() does; the client sees the hang-up
 		if err != nil {
-			p.unrecord(hold, prev)
+			p.unrecord()
 			end()
 			return
 		}
+		p.succeed(hold)
 	}
 }
 
-// record counts one write and keeps the shortest time any was held.
-func (p *Proxy) record(d time.Duration) {
+// record counts one write at once, before its bytes go out. The hold is only a
+// candidate for Shortest once the write reached the target: succeed keeps it
+// then, and unrecord takes the count back without touching Shortest.
+func (p *Proxy) record(_ time.Duration) {
 	p.writes.Add(1)
+}
+
+// succeed keeps the shortest time any write that reached the target was held.
+func (p *Proxy) succeed(d time.Duration) {
 	for {
 		cur := p.shortest.Load()
 		if cur != noHold && cur <= int64(d) {
@@ -530,18 +538,9 @@ func (p *Proxy) record(d time.Duration) {
 	}
 }
 
-// unrecord takes back a write that failed or came up short, recorded before the
-// write went out: it subtracts the one write, and restores the shortest hold to
-// what it was before when this write was the one that set it.
-func (p *Proxy) unrecord(d time.Duration, prev int64) {
+// unrecord takes back a write that failed or came up short, counted before the
+// write went out: it subtracts the one write and never touches Shortest, which
+// only a write that reached the target lowered.
+func (p *Proxy) unrecord() {
 	p.writes.Add(-1)
-	for {
-		cur := p.shortest.Load()
-		if cur != int64(d) {
-			return
-		}
-		if p.shortest.CompareAndSwap(cur, prev) {
-			return
-		}
-	}
 }
