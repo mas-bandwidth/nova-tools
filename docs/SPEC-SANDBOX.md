@@ -766,7 +766,7 @@ failed, it is right wherever the OS does report, and the alternative is a tool
 with no way at all to say what it denied.
 
 **The default deny is `(deny default (with no-report))`** (measured 2026-10-18 on
-mini-m5-1, macOS 27.0.1, M5 Pro). With the reporting form, a walled `opencode
+a darwin/arm64 bench, macOS 27.0.1). With the reporting form, a walled `opencode
 --version` hung forever on most cold starts (0.01 s of CPU, no file open), and
 every card on that host sat silent until the idle reap; with `no-report` the same
 profile passed every cold start, and `(allow default)` never hung. The deny

@@ -6,7 +6,7 @@ import (
 )
 
 // Every deny the filled darwin profile carries is no-report: a reporting deny hung a walled
-// Bun harness forever on macOS 27.0.1 (mini-m5-1, 2026-10-18), the denied thread waiting on
+// Bun harness forever on macOS 27.0.1 (a darwin/arm64 bench, 2026-10-18), the denied thread waiting on
 // a violation report that never came. The --read-noexec exec deny is emitted here, after the
 // template's default deny, so it is checked in the filled text, not the template alone.
 func TestDarwinProfileEveryDenyIsNoReport(t *testing.T) {

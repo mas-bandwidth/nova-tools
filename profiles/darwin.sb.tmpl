@@ -66,7 +66,7 @@
 ;; and identical to one of the WRITEn paths.
 
 (version 1)
-;; The default deny is NO-REPORT (measured 2026-10-18 on mini-m5-1, macOS 27.0.1, M5 Pro):
+;; The default deny is NO-REPORT (measured 2026-10-18 on a darwin/arm64 bench, macOS 27.0.1):
 ;; with a reporting deny, a walled `opencode --version` (a 143 MB Bun binary) hung
 ;; forever on most cold starts, before any file was open and with 0.01 s of CPU, while
 ;; the same profile with this one modifier passed 4 of 4 cold starts interleaved with

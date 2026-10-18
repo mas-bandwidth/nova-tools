@@ -6,7 +6,7 @@ import (
 )
 
 // The darwin wall's one default deny is NO-REPORT. A reporting deny hung a walled Bun
-// harness (opencode 1.18.20) forever on most cold starts on mini-m5-1 (macOS 27.0.1,
+// harness (opencode 1.18.20) forever on most cold starts on a darwin/arm64 bench (macOS 27.0.1,
 // measured 2026-10-18): the denied thread waited on a violation report that never came.
 // The deny itself must stay: this test refuses both a reporting deny and an allow default.
 func TestDarwinTemplateDefaultDenyIsNoReport(t *testing.T) {
