@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"io"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/hook"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -97,4 +101,52 @@ func TestANameWithNoRosterRowUnhooksOnTheUsualMissCount(t *testing.T) {
 		out += r.step(t, []string{"ada"}, "ada")
 	}
 	assert.Equal(t, faults, strings.Count(out, "zed is no known name"), "unhooked, it is challenged no more")
+}
+
+// TestOnlyTheUnknownNameRefusalIsAMiss pins the cold read of #5954: a send
+// that fails for another reason is not the name's miss. A challenge whose send
+// times out, with the name off the roster, is sent again and never unhooks the
+// name; a roster that answers empty (restored empty, not yet synced) refuses
+// the server's own name too, and is a store fault, not a miss.
+func TestOnlyTheUnknownNameRefusalIsAMiss(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, r *rig, w *world)
+	}{
+		{"timeout", func(t *testing.T, r *rig, w *world) {
+			deliver := w.deliver
+			w.deliver = func(b *bus.Bus, m bus.Message) (bus.Message, error) {
+				if slices.Contains(m.To, "zed") {
+					return bus.Message{}, context.DeadlineExceeded
+				}
+				return deliver(b, m)
+			}
+		}},
+		{"empty roster", func(t *testing.T, r *rig, w *world) {
+			require.NoError(t, r.h.Client.Del(context.Background(), "friends", "machines").Err())
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.h.Hook(t, "ada", hook.Coordinator)
+			r.h.Hook(t, "zed", hook.Comms) // no roster row
+			w := r.world()
+			tc.setup(t, r, &w)
+			cli := testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+				return run(args, stdin, stdout, stderr, w)
+			})
+			var out string
+			for range 40 {
+				res := cli.Run("serve", "--as", "ada", "--once", "--down-after", stepDownAfter)
+				require.Equal(t, 0, res.Code, res.Stdout+res.Stderr)
+				out += res.Stdout
+				r.h.Pass(hook.BeatEvery)
+				r.h.Hook(t, "ada", hook.Coordinator)
+			}
+			assert.Contains(t, out, "event=fault", "the send failed every pass")
+			assert.NotEqual(t, hook.StateUnhooked, r.h.State(t, "zed").State, "and zed was never unhooked for it: %s", out)
+		})
+	}
 }

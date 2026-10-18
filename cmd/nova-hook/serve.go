@@ -144,13 +144,14 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, downAfter, with
 		// the nonce goes only to the name's own stream: never on this server's lines
 		m := bus.Message{From: s.as, To: []string{bt.Name}, Subject: "HOOK CHALLENGE nonce=" + bt.Nonce,
 			Body: notice.ChallengeText(bt.Name, bt.Nonce, hook.AnswerBound), Once: hook.DeliveryOnce(bt.Name, bt.Epoch, bt.Nonce)}
-		if _, ok := w.sendOnce(c, s, b, m); !ok && !w.unknownName(b, bt.Name) {
+		if _, ok, err := w.sendOnceErr(c, s, b, m); !ok && !unheard(err, bt.Name, s.as) {
 			continue
 		}
-		// a name the bus roster does not hold (a hook:names entry with no nova-config row)
-		// is never heard: its refused challenge counts as sent, so it misses and unhooks on
-		// the usual count instead of being challenged every pass for ever (a stray name on
-		// the fleet's bus, 2026-10-17: 1,443 fault lines, never unhooked)
+		// a name the bus refuses as no known name (a hook:names entry with no nova-config
+		// row) is never heard: its refused challenge counts as sent, so it misses and unhooks
+		// on the usual count instead of being challenged every pass for ever (a stray name on
+		// the fleet's bus, 2026-10-17: 1,443 fault lines, never unhooked); a timeout or a
+		// store fault is no such refusal, and is sent again at the next pass
 		ctx, cancel := call()
 		err := s.hooks.Delivered(ctx, bt)
 		cancel()
@@ -226,13 +227,12 @@ func fault(c *tool.Call, what string, err error) {
 	serveLine(c, "fault", err.Error()+"; the next pass tries again", "at", what)
 }
 
-// unknownName says the bus roster holds no name n: a challenge to it is refused
-// by every send. A roster that does not answer says nothing is unknown.
-func (w world) unknownName(b *bus.Bus, n string) bool {
-	ctx, cancel := call()
-	defer cancel()
-	friends, machines, _, err := b.Store.Members(ctx)
-	return err == nil && !slices.Contains(friends, n) && !slices.Contains(machines, n)
+// unheard says err is the bus's refusal of name as no known name while it
+// knows the sender from: the roster answered, holds the server's own name and
+// not name. An empty roster (restored empty, or not yet synced) refuses the
+// sender too, and is a store fault, never a name's miss; so is a timeout.
+func unheard(err error, name, from string) bool {
+	return bus.UnknownName(err, name) && !bus.UnknownName(err, from)
 }
 
 // tell says what each audience has not yet been told, in at most one
@@ -334,18 +334,24 @@ func telling(p hook.Passed, audience string) (string, []bus.Mark) {
 // send under the key already went) and whether it is sent. A send whose
 // answer was lost is sent if its once-key stands.
 func (w world) sendOnce(c *tool.Call, s *session, b *bus.Bus, m bus.Message) (bus.Message, bool) {
+	sent, ok, _ := w.sendOnceErr(c, s, b, m) // ignored: the fault is said; a caller that reads the refusal asks sendOnceErr
+	return sent, ok
+}
+
+// sendOnceErr is sendOnce with the send's error when it did not go.
+func (w world) sendOnceErr(c *tool.Call, s *session, b *bus.Bus, m bus.Message) (bus.Message, bool, error) {
 	sent, err := w.deliver(b, m)
 	if err == nil {
-		return sent, true
+		return sent, true, nil
 	}
 	ctx, cancel := call()
 	went, serr := s.hooks.Sent(ctx, m.Once)
 	cancel()
 	if serr == nil && went {
-		return bus.Message{}, true
+		return bus.Message{}, true, nil
 	}
 	fault(c, "send "+m.Once, err)
-	return bus.Message{}, false
+	return bus.Message{}, false, err
 }
 
 // judge raises one judgment for an audience: a bus message of kind judgment,
@@ -466,10 +472,11 @@ type transition struct {
 	gen      int64
 }
 
-// push tells the coordinator every friend status change as its own message
-// (tla/HookBeat.tla, Pass's compare and PushSend): each name's state, as the
-// store reads it now, against the state last pushed for it (the row's pushed
-// mark) or the last still in hand; a difference is a transition in hand, and
+// push tells the coordinator each friend's crossing of proven, up or down, as
+// its own message (tla/HookBeat.tla, Pass's compare and PushSend): each name's
+// state as the store reads it now, proven or down (upOrDown), against the
+// state last pushed for it (the row's pushed mark, read the same way) or the
+// last still in hand; a difference is a transition in hand, and
 // each in hand goes out oldest first as one message of kind status, never
 // folded with another name's or another change's, under a once-key of the name,
 // its epoch, the new state and the count, in one write with the mark. A send

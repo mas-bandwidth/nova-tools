@@ -30,6 +30,8 @@ type fakeServiceManager struct {
 	goos    string
 	active  map[string]*fakeServiceUnit
 	makeRun func(as string, args []string, ctx context.Context, ready func())
+	// checkErr is what Check answers: a login item the manager refuses
+	checkErr error
 }
 
 type fakeServiceUnit struct {
@@ -83,6 +85,9 @@ func newFakeServiceManager(goos string, r *rig, baseWorld func() world) *fakeSer
 	}
 	return m
 }
+
+// Check is the fake's login-item check: checkErr, nil unless a test sets it.
+func (m *fakeServiceManager) Check([]string) error { return m.checkErr }
 
 func (m *fakeServiceManager) Held(as string) (string, bool) {
 	m.mu.Lock()

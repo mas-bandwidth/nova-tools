@@ -26,6 +26,9 @@ const (
 // (launchd on macOS, systemd --user on Linux).
 type serviceManager interface {
 	Held(as string) (string, bool)
+	// Check says why a login item may not run the binary with args, nil when it
+	// may: asked before any harness setup, so a refusal leaves nothing half-installed.
+	Check(args []string) error
 	Install(as string, args []string) (string, error)
 	Remove(as string) error
 }
@@ -119,18 +122,30 @@ func (m *osServiceManager) Held(as string) (string, bool) {
 	return "", false
 }
 
+// Check refuses a login item naming a path under a temporary directory, the
+// binary's own included: a login item holds only paths that stay.
+func (m *osServiceManager) Check(args []string) error {
+	exe, err := m.exe()
+	if err != nil {
+		return err
+	}
+	if p := tempPath(append([]string{exe}, args...)...); p != "" {
+		return fmt.Errorf("%s is under a temporary directory, which the system empties; a login item names only paths that stay (install the binary and its files under ~/.local, then hook in again)", p)
+	}
+	return nil
+}
+
 func (m *osServiceManager) Install(as string, args []string) (string, error) {
 	path, err := m.unitPath(as)
 	if err != nil {
 		return "", err
 	}
+	if err := m.Check(args); err != nil { // the hook verb asked before its setup; asked again here so no caller installs past it
+		return "", err
+	}
 	exe, err := m.exe()
 	if err != nil {
 		return "", err
-	}
-	// a login item holds only paths that stay: one under a temporary directory is gone some day
-	if p := tempPath(append([]string{exe}, args...)...); p != "" {
-		return "", fmt.Errorf("%s is under a temporary directory, which the system empties; a login item names only paths that stay (install the binary and its files under ~/.local, then hook in again)", p)
 	}
 	h, err := m.home()
 	if err != nil {

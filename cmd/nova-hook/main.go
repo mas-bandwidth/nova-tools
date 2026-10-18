@@ -46,10 +46,17 @@ var version string
 // core or the lanes step every tick, and the least any read waits.
 const Tick = time.Second
 
-// IdleTicks bounds one blocking read of a loop with nothing due before it:
-// ten ticks, so a stop signal ends the loop well inside launchd's twenty
-// seconds, and the read wakes for whatever falls due first (blockFor).
-const IdleTicks = 10
+// IdleTicks bounds one blocking read of a loop with nothing due before it, and
+// the read wakes for whatever falls due first (blockFor). A blocking read ends
+// at its context's deadline, never at a cancel (go-redis), and its deadline is
+// bus.CallTimeout + the block + bus.BlockMargin: 5 + 4 + 10 = 19 s on a store
+// that hangs, so a stop signal ends the loop inside LaunchdExit even then (a
+// tick's read, with a core or lanes, is 16 s, as it always was).
+const IdleTicks = 4
+
+// LaunchdExit is how long launchd waits after SIGTERM before it kills a
+// service (its default ExitTimeOut): the loop's longest blocking read stays under it.
+const LaunchdExit = 20 * time.Second
 
 // world is what the tool reaches outside itself: the environment, the store
 // it opens, the clock, the signals the loop stops on and the nonce source.
@@ -651,6 +658,9 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		}
 	}
 	if w.service != nil && !c.Bool("once") && !w.isServiceRun() && (strings.TrimSpace(c.Str("harness")) != "" || native != nil || dsh != nil || claude != nil) {
+		if err := w.service.Check(hookServiceArgs(c, s.as, role, s.addr)); err != nil {
+			return tool.Refuse("supervised service could not be installed: " + err.Error()) // before any harness setup: nothing is half-installed
+		}
 		dshRestart := false
 		if dsh != nil {
 			var err error

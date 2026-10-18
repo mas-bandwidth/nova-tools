@@ -57,6 +57,14 @@ func unknown(n string) string {
 	return fmt.Sprintf("%s is no known name; the names are nova-config's friend and machine rows (nova-bus names lists them); add one with nova-config friend add %s --width 1 --tiers flash --as <you>, then nova-config apply", n, n)
 }
 
+// UnknownName says err is a send's refusal naming n as no known name: the
+// roster answered and does not hold n. A timeout, a store fault or any other
+// refusal is not.
+func UnknownName(err error, n string) bool {
+	var r *Refusal
+	return errors.As(err, &r) && slices.Contains(r.Problems, unknown(n))
+}
+
 // nameRe is a name: lowercase letters, digits and hyphens.
 var nameRe = regexp.MustCompile(`^[a-z0-9-]+$`)
 

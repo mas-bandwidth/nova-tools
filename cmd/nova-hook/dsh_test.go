@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -49,8 +50,12 @@ func TestDshRouteRefusesBeforeArming(t *testing.T) {
 
 // recordingService captures the supervised service a hook installs without
 // running it: no launchd, no process, no real time.
-type recordingService struct{ args map[string][]string }
+type recordingService struct {
+	args   map[string][]string
+	refuse error // what Check answers
+}
 
+func (s *recordingService) Check([]string) error       { return s.refuse }
 func (s *recordingService) Held(string) (string, bool) { return "", false }
 func (s *recordingService) Install(as string, args []string) (string, error) {
 	if s.args == nil {
@@ -146,4 +151,27 @@ func TestDshOneLineRefusesWithoutAWorkspaceAndHonoursOverrides(t *testing.T) {
 	code = run([]string{"hook", "--as", "ada", "--role", "comms", "--harness", "dsh", "--dsh-session", "session-pinned"}, strings.NewReader(""), &out, io.Discard, w)
 	require.Equal(t, 0, code, out.String())
 	assert.Contains(t, strings.Join(svc.args["ada"], " "), "--dsh-session session-pinned")
+}
+
+// TestARefusedLoginItemLeavesNoHarnessHalfInstalled pins the cold read of
+// #5954: the login item's check (a temporary path refused) ran inside Install,
+// after the dsh, Grok and Claude setup, so a refused install left the harness
+// half-installed. The check is now asked first: refused, the dsh hooks file is
+// never written, nothing is mounted and no service is installed.
+func TestARefusedLoginItemLeavesNoHarnessHalfInstalled(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dsh := dshFixture(t, r.home, "session-live")
+	w := fakeDshWorld(r)
+	w.dshHeld = func(locks []string) map[string]bool { return map[string]bool{locks[0]: true} }
+	svc := &recordingService{refuse: errors.New("/tmp/x is under a temporary directory")}
+	w.service = svc
+	var out bytes.Buffer
+	code := run([]string{"hook", "--as", "ada", "--role", "comms", "--harness", "dsh"}, strings.NewReader(""), &out, &out, w)
+	assert.Equal(t, 2, code, out.String())
+	assert.Contains(t, out.String(), "/tmp/x is under a temporary directory")
+	_, err := os.Stat(filepath.Join(dsh, "ada-hook", "hooks.json"))
+	assert.ErrorIs(t, err, os.ErrNotExist, "no hooks file was written")
+	assert.False(t, dshdesktop.Mounted(dshdesktop.ProfileDir(dsh), filepath.Join(dsh, "ada-hook", "hooks.json")), "nothing is mounted")
+	assert.Empty(t, svc.args, "no service is installed")
 }
