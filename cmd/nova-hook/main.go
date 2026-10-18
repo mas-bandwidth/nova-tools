@@ -519,6 +519,20 @@ func call() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), bus.CallTimeout)
 }
 
+// playbookNote adds to an ARMED line, the first push a session sees after a
+// start or a context wrap, the one note naming the playbook its role reads
+// now: the coordinator's (R-PLAYBOOK) or a friend's (R-WORKER-PLAYBOOK). Other
+// roles, and every other line, carry none.
+func playbookNote(armed *tool.Out, role hook.Role) *tool.Out {
+	switch role {
+	case hook.Coordinator:
+		armed.Note("read the playbook now: nova-sprint help playbook")
+	case hook.Friend:
+		armed.Note("read the worker playbook now: nova-sprint help worker-playbook")
+	}
+	return armed
+}
+
 // line prints one line of a verb that prints as it goes.
 func line(c *tool.Call, o *tool.Out) {
 	o.Verb = "hook"
@@ -810,6 +824,7 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	serverOwned := native != nil || dsh != nil
 
 	armed := tool.Done().As("ARMED").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", joined).Fact("hold", pushList(held))
+	playbookNote(armed, role)
 	if took != "" {
 		armed.Note("the record was hooked as " + took + ": it is " + string(role) + " from now, and the holders of " + took + " hold nothing until it is hooked as " + took + " again")
 	}
@@ -1072,7 +1087,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 				if e, ok := w.rearm(s, role, held); ok {
 					// the record was lost (none), not unhooked: armed again, a new challenge
 					epoch, err = e, nil
-					line(c, tool.Done().As("ARMED").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", false).Fact("hold", pushList(held)).Note("the hook record was lost under this hook (no record: deleted, or the store flushed); armed again"))
+					line(c, playbookNote(tool.Done().As("ARMED").Fact("as", s.as).Fact("role", string(role)).Fact("epoch", epoch).Fact("joined", false).Fact("hold", pushList(held)).Note("the hook record was lost under this hook (no record: deleted, or the store flushed); armed again"), role))
 					nextChallenge = w.now()
 					if core != nil {
 						core.Rearm(epoch)
