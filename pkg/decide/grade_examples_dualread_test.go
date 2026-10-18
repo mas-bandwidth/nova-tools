@@ -53,6 +53,13 @@ func TestGradeExamplesDualRead(t *testing.T) {
 		assert.Equal(t, want, got[0], "%s form reads equal", name)
 	}
 
+	// a bad line is named by its number in the one error (the examples file reads
+	// one value per line, and the file's error names the line)
+	mixed := bytes.Join([][]byte{legacy, append(bytes.Clone(wire[:len(wire)/2]), '\n')}, []byte{'\n'})
+	_, err = decide.ParseExamples(mixed)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "line 2")
+
 	// a fresh reader counts each read under the form it arrived in
 	rd := decide.NewExamplesReader()
 	for _, in := range [][]byte{wire, base64v, schemaJSON, legacy} {
