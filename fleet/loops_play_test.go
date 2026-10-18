@@ -133,7 +133,7 @@ func TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs(t *testing.T) {
 // The disk guard's unit on darwin names --logs ~/Library/Logs (fleet/loops.yml,
 // loop_guard_argv): every launchd agent logs there, ~/nova-bench/loops is empty on
 // darwin, and a guard that read only that never rotated a darwin log (2026-10-17:
-// nova-friend-zhi.log at 12 MB on mini-m5-1). Linux keeps the default.
+// a friend daemon's log at 12 MB on one bench). Linux keeps the default.
 func TestLoopsPlayDiskGuardRotatesTheDarwinLogDirectory(t *testing.T) {
 	t.Parallel()
 	for _, play := range loopsPlays(t) {

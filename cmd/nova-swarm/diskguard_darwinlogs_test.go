@@ -32,7 +32,7 @@ func TestDiskGuardRotatesOnlyTheNovaLogsInLibraryLogs(t *testing.T) {
 	t.Parallel()
 	g, out := dgGuard(t)
 	dir := filepath.Join(g.home, "Library", "Logs")
-	friend := filepath.Join(dir, "nova-friend-zhi.log")
+	friend := filepath.Join(dir, "nova-friend-f1.log")
 	mirror := filepath.Join(dir, "nova-loop-mirror-refresh.log")
 	other := filepath.Join(dir, "SomeOtherApp.log")
 	for _, p := range []string{friend, mirror, other} {

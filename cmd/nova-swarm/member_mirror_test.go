@@ -24,7 +24,7 @@ func TestTheMemberMirrorRefreshIsEveryTenMinutes(t *testing.T) {
 
 func TestAReaderKeepsNoMirror(t *testing.T) {
 	t.Parallel()
-	assert.Nil(t, mirrorKeeping("https://github.com/o/r.git", true, t.TempDir(), t.TempDir(), io.Discard, io.Discard),
+	assert.Nil(t, mirrorKeeping("/origins/r.git", true, t.TempDir(), t.TempDir(), io.Discard, io.Discard),
 		"a reader refreshes no mirror: the worker seats of the bench keep the shared ~/nova-bench/mirror")
 	assert.Nil(t, mirrorKeeping("", false, t.TempDir(), t.TempDir(), io.Discard, io.Discard), "no repositories named, no mirrors kept")
 }

@@ -320,7 +320,7 @@ func (g *guard) logs() {
 // rotated. On darwin every launchd agent of the fleet writes ~/Library/Logs/nova-*.log
 // (fleet/templates/nova-loop.plist.j2, the friend and mirror-refresh agents), and
 // ~/nova-bench/loops is empty, so a guard that read only that never rotated a darwin log:
-// on 2026-10-17 mini-m5-1 held nova-friend-zhi.log at 12 MB and the mirror-refresh log at
+// on 2026-10-17 one bench held a friend daemon's log at 12 MB and the mirror-refresh log at
 // 2.9 MB, growing 2 KB a pass. ~/Library/Logs is shared with every other program of the
 // login, so there only the nova- logs are the guard's. Elsewhere the loop logs are
 // ~/nova-bench/loops, every one of them the fleet's.

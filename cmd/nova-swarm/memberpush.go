@@ -86,7 +86,7 @@ type gitPusher struct {
 // and `prune --expire=now`, run at the end of a push when no other push is in flight.
 // The repository has gc.auto=0 and maintenance.auto=false (pushes run side by side, and
 // git's own gc would prune under them), and every push drops its refs at its end, so all
-// it keeps is unreachable: nothing ever removed it. On 2026-10-17 mini-m5-1's push.git
+// it keeps is unreachable: nothing ever removed it. On 2026-10-17 one bench's push.git
 // held 4.4 GB in 195 packs and 95 loose objects, and every push's for-each-ref
 // --contains, rev-list and fetch read through them all. A tidy leaves only what a ref
 // left by an interrupted push names; the next fetch copies the history again (nova-tools:

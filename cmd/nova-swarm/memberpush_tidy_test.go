@@ -16,7 +16,7 @@ import (
 )
 
 // The push repository's tidy (memberpush.go, tidyEvery): push.git keeps gc.auto=0 and every
-// push drops its refs, so what it keeps is unreachable; on 2026-10-17 mini-m5-1's held 4.4 GB
+// push drops its refs, so what it keeps is unreachable; on 2026-10-17 one bench's held 4.4 GB
 // in 195 packs. A push's end repacks and prunes it once tidyEvery has passed, and never while
 // another push holds it. The git is scripted and the clock is the test's, from 1000 s.
 
