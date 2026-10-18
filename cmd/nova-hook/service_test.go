@@ -30,6 +30,8 @@ type fakeServiceManager struct {
 	goos    string
 	active  map[string]*fakeServiceUnit
 	makeRun func(as string, args []string, ctx context.Context, ready func())
+	// checkErr is what Check answers: a login item the manager refuses
+	checkErr error
 }
 
 type fakeServiceUnit struct {
@@ -83,6 +85,9 @@ func newFakeServiceManager(goos string, r *rig, baseWorld func() world) *fakeSer
 	}
 	return m
 }
+
+// Check is the fake's login-item check: checkErr, nil unless a test sets it.
+func (m *fakeServiceManager) Check([]string) error { return m.checkErr }
 
 func (m *fakeServiceManager) Held(as string) (string, bool) {
 	m.mu.Lock()
@@ -455,4 +460,42 @@ func TestMidLoopLeaseRenewalErrorRetriesWithBackoff(t *testing.T) {
 	assert.Contains(t, out.all.String(), "state=unrenewed")
 	assert.Contains(t, out.all.String(), "state=read")
 	assert.Equal(t, hook.StateLive, r.h.State(t, "ada").State)
+}
+
+// TestTheClientServiceRestartsNoFasterThanTenSecondsAndNamesNoTempPath pins
+// finding 6 of 2026-10-17: aurora's client exited 2 on a refusal of its own
+// configuration (a /tmp muse bundle that was gone) and launchd restarted it
+// once a second for ever. The unit waits ten seconds between starts, and a
+// login item naming a path under a temporary directory is refused at install,
+// the binary's own path included; nothing is written.
+func TestTheClientServiceRestartsNoFasterThanTenSecondsAndNamesNoTempPath(t *testing.T) {
+	t.Parallel()
+	assert.Contains(t, hookServiceText("darwin", "ada", "/opt/nova/bin/nova-hook", nil, ""), "<key>ThrottleInterval</key>\n\t<integer>10</integer>")
+	assert.Contains(t, hookServiceText("linux", "ada", "/opt/nova/bin/nova-hook", nil, ""), "RestartSec=10\n")
+	for _, tc := range []struct {
+		exe  string
+		args []string
+		bad  string
+	}{
+		{"/opt/nova/bin/nova-hook", []string{"--as", "aurora", "--harness", "Muse", "--muse-bundle", "/tmp/muse-bundle-x"}, "/tmp/muse-bundle-x"},
+		{"/opt/nova/bin/nova-hook", []string{"--muse-bundle", "/private/tmp/b"}, "/private/tmp/b"},
+		{"/var/folders/zz/T/go-build1/exe/nova-hook", []string{"--as", "ada"}, "/var/folders/zz/T/go-build1/exe/nova-hook"},
+		{"/opt/nova/bin/nova-hook", []string{"--as", "ada", "--muse-bundle", "/opt/nova/muse-bundle", "--codex-since", "tmp"}, ""},
+		{"/opt/nova/bin/nova-hook", []string{"--grok-home", "/tmpx/home"}, ""},
+	} {
+		home := t.TempDir()
+		wrote := 0
+		mgr := newOSServiceManager("darwin", func() (string, error) { return home, nil }, func() (string, error) { return tc.exe, nil },
+			func(string) string { return "" }, func(string, string, string) error { wrote++; return nil })
+		_, err := mgr.Install("ada", tc.args)
+		if tc.bad == "" {
+			assert.NoError(t, err, "%v", tc.args)
+			continue
+		}
+		require.Error(t, err, "%v", tc.args)
+		assert.Contains(t, err.Error(), tc.bad+" is under a temporary directory")
+		_, held := mgr.Held("ada")
+		assert.False(t, held, "a refused install writes no unit")
+		assert.Zero(t, wrote, "and loads nothing")
+	}
 }

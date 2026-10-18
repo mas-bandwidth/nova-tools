@@ -42,9 +42,21 @@ import (
 
 var version string
 
-// Tick is how long one blocking read of the hook's loop waits: the bus
-// stream is read, and the record looked at, once a tick.
+// Tick is how long one blocking read of the hook's loop waits while a notice
+// core or the lanes step every tick, and the least any read waits.
 const Tick = time.Second
+
+// IdleTicks bounds one blocking read of a loop with nothing due before it, and
+// the read wakes for whatever falls due first (blockFor). A blocking read ends
+// at its context's deadline, never at a cancel (go-redis), and its deadline is
+// bus.CallTimeout + the block + bus.BlockMargin: 5 + 4 + 10 = 19 s on a store
+// that hangs, so a stop signal ends the loop inside LaunchdExit even then (a
+// tick's read, with a core or lanes, is 16 s, as it always was).
+const IdleTicks = 4
+
+// LaunchdExit is how long launchd waits after SIGTERM before it kills a
+// service (its default ExitTimeOut): the loop's longest blocking read stays under it.
+const LaunchdExit = 20 * time.Second
 
 // world is what the tool reaches outside itself: the environment, the store
 // it opens, the clock, the signals the loop stops on and the nonce source.
@@ -73,6 +85,7 @@ type world struct {
 	nonce              func() string
 	after              func(time.Duration) <-chan time.Time                                    // the heartbeat server's wait between passes
 	wait               func(context.Context, time.Duration)                                    // the hook loop's pause or retry backoff wait
+	waitOn             func(bus.Waiter) bus.Waiter                                             // a test's clock over the loop's blocking read; nil in main
 	deliver            func(*bus.Bus, bus.Message) (bus.Message, error)                        // the heartbeat server's one send: Bus.Send under a call's deadline
 	holder             string                                                                  // who holds the pushes this process holds, as the lease shows it
 	tick               time.Duration                                                           // one blocking read of the loop
@@ -645,6 +658,9 @@ func (w world) hook(c *tool.Call) *tool.Out {
 		}
 	}
 	if w.service != nil && !c.Bool("once") && !w.isServiceRun() && (strings.TrimSpace(c.Str("harness")) != "" || native != nil || dsh != nil || claude != nil) {
+		if err := w.service.Check(hookServiceArgs(c, s.as, role, s.addr)); err != nil {
+			return tool.Refuse("supervised service could not be installed: " + err.Error()) // before any harness setup: nothing is half-installed
+		}
 		dshRestart := false
 		if dsh != nil {
 			var err error
@@ -960,8 +976,14 @@ func (w world) onceResult(s *session, role hook.Role, held []hook.Push, armed, c
 }
 
 // loop holds the bus push and streams it until a signal or an unhook: one
-// blocking read of the stream a tick, the lease renewed every RenewEvery, a
-// new challenge every ChallengeEvery, and a HOOK STATE line on each change.
+// blocking read of the stream at a time, until the next renewal or challenge
+// falls due (blockFor; a tick while a notice core or the lanes step), the lease
+// renewed every RenewEvery, a new challenge every ChallengeEvery, and a HOOK
+// STATE line on each change the record shows. The record is read at the
+// start, at each renewal, after each batch off the stream (a challenge, an
+// unhook's word) and after the loop's own challenge, never every tick: on the
+// fleet's bus, 2026-10-17, the read every tick (15 commands: HGETALL, 6 GET, 6
+// PTTL, TIME, HGETALL) was 28.3M of the bus Redis's 38.3M commands.
 // A stream that does not answer is said once while it stays the same fault,
 // and the loop waits a tick before it reads again: a store that is down never
 // floods the Monitor. A record lost under the loop (none: deleted, or the
@@ -972,9 +994,15 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 	defer stop()
 	stream := bus.StreamOf(s.as)
 	waiter, _ := s.bus.(bus.Waiter) // ignored: a store with no wait reads holds no bus push here; its loop only renews
+	if waiter != nil && w.waitOn != nil {
+		waiter = w.waitOn(waiter)
+	}
 	nextRenew, nextChallenge := w.now().Add(hook.RenewEvery), w.now().Add(hook.ChallengeEvery)
 	nextLanes := w.now() // the lane client's first round is at once: a restart resumes from the server
 	lastState, unread := "", ""
+	var st []hook.Status
+	var err error
+	read := true // the record is read at the loop's first pass
 	renewAttempts := 0
 	var lk link
 	pause := func() {
@@ -986,7 +1014,12 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			return tool.Exit(0)
 		}
 		if waiter != nil && slices.Contains(held, hook.Bus) {
-			got, err := waiter.BlockRead(ctx, stream, cursor, w.tick, bus.WaitRead)
+			block := w.tick
+			if core == nil && lanes == nil {
+				block = w.blockFor(serverOwned, nextRenew, nextChallenge)
+			}
+			got, err := waiter.BlockRead(ctx, stream, cursor, block, bus.WaitRead)
+			read = read || len(got) > 0
 			switch {
 			case err != nil && ctx.Err() == nil:
 				if why := err.Error(); why != unread {
@@ -1014,6 +1047,8 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 					return core.Fail(ctx, err)
 				}
 			}
+		} else if core == nil && lanes == nil {
+			w.sleep(ctx, w.blockFor(serverOwned, nextRenew, nextChallenge))
 		} else {
 			pause()
 		}
@@ -1026,6 +1061,7 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			}
 		}
 		if !w.now().Before(nextRenew) {
+			read = true
 			nextRenew = w.now().Add(hook.RenewEvery)
 			w.watchServer(c, s, role, &lk)
 			err := w.renew(s, role, held, epoch)
@@ -1063,16 +1099,20 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 		}
 		if !serverOwned && !w.now().Before(nextChallenge) {
 			nextChallenge = w.now().Add(hook.ChallengeEvery)
+			read = true
 			if ch := challenge(epoch); ch != nil {
 				line(c, ch)
 			}
 		}
-		cctx, cancel := call()
-		st, _, err := s.hooks.Read(cctx, s.as)
-		cancel()
-		if err == nil && st[0].Words() != lastState {
-			lastState = st[0].Words()
-			line(c, stateLine(st[0], role))
+		if read {
+			cctx, cancel := call()
+			st, _, err = s.hooks.Read(cctx, s.as)
+			cancel()
+			read = err != nil // a read that failed is tried again at the next pass
+			if err == nil && st[0].Words() != lastState {
+				lastState = st[0].Words()
+				line(c, stateLine(st[0], role))
+			}
 		}
 		if lanes != nil {
 			// her canonical nova-config row, applied every friend.ConfigEvery: a change asks the
@@ -1096,6 +1136,24 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			lcancel()
 		}
 	}
+}
+
+// blockFor is how long one read of the loop waits: until the next renewal
+// (and, unless the heartbeat server owns the challenges, the next challenge)
+// falls due, at most IdleTicks ticks and at least one. A message on the stream
+// ends the wait at once, so a challenge is seen when it lands, however long
+// the read was to wait.
+func (w world) blockFor(serverOwned bool, nextRenew, nextChallenge time.Time) time.Duration {
+	d := w.tick * IdleTicks
+	due := []time.Time{nextRenew}
+	if !serverOwned {
+		due = append(due, nextChallenge)
+	}
+	now := w.now()
+	for _, t := range due {
+		d = min(d, t.Sub(now))
+	}
+	return max(d, w.tick)
 }
 
 // rearm arms the record again when it is gone (none) or unhooked by heartbeat

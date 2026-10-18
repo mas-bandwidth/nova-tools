@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -25,6 +26,9 @@ const (
 // (launchd on macOS, systemd --user on Linux).
 type serviceManager interface {
 	Held(as string) (string, bool)
+	// Check says why a login item may not run the binary with args, nil when it
+	// may: asked before any harness setup, so a refusal leaves nothing half-installed.
+	Check(args []string) error
 	Install(as string, args []string) (string, error)
 	Remove(as string) error
 }
@@ -43,13 +47,41 @@ func hookServiceFile(goos, as string) string {
 	return hookServiceName(goos, as)
 }
 
+// serviceThrottle is the least time, in seconds, between two starts of the
+// client service (launchd's ThrottleInterval, systemd's RestartSec). It was 1,
+// and a client that exits on a refusal of its own configuration restarted
+// once a second for ever (2026-10-17: a /tmp muse bundle gone, an 11 MB
+// log). A refused start is no faster to fix for being tried every second.
+const serviceThrottle = 10
+
 func hookServiceText(goos, as, exe string, args []string, logPath string) string {
 	cmdArgs := append([]string{exe, "hook"}, args...)
 	env := [][2]string{{serviceRunEnv, "1"}}
 	if goos == "darwin" {
-		return units.LaunchdPlist(hookServiceName(goos, as), cmdArgs, env, logPath, 1)
+		return units.LaunchdPlist(hookServiceName(goos, as), cmdArgs, env, logPath, serviceThrottle)
 	}
-	return units.SystemdUnit("nova-hook supervised client for "+as, cmdArgs, env, 1)
+	return units.SystemdUnit("nova-hook supervised client for "+as, cmdArgs, env, serviceThrottle)
+}
+
+// tempRoots are the directories the system empties on its own (at a reboot, or
+// by age): a path under one is gone some day, and a login item naming it fails
+// every start from then on.
+var tempRoots = []string{"/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", "/var/folders", "/private/var/folders"}
+
+// tempPath is the first word of words that is a path under a tempRoot, "" when none is.
+func tempPath(words ...string) string {
+	for _, w := range words {
+		p := filepath.Clean(w)
+		if !filepath.IsAbs(w) {
+			continue
+		}
+		for _, root := range tempRoots {
+			if p == root || strings.HasPrefix(p, root+"/") {
+				return w
+			}
+		}
+	}
+	return ""
 }
 
 type osServiceManager struct {
@@ -90,9 +122,25 @@ func (m *osServiceManager) Held(as string) (string, bool) {
 	return "", false
 }
 
+// Check refuses a login item naming a path under a temporary directory, the
+// binary's own included: a login item holds only paths that stay.
+func (m *osServiceManager) Check(args []string) error {
+	exe, err := m.exe()
+	if err != nil {
+		return err
+	}
+	if p := tempPath(append([]string{exe}, args...)...); p != "" {
+		return fmt.Errorf("%s is under a temporary directory, which the system empties; a login item names only paths that stay (install the binary and its files under ~/.local, then hook in again)", p)
+	}
+	return nil
+}
+
 func (m *osServiceManager) Install(as string, args []string) (string, error) {
 	path, err := m.unitPath(as)
 	if err != nil {
+		return "", err
+	}
+	if err := m.Check(args); err != nil { // the hook verb asked before its setup; asked again here so no caller installs past it
 		return "", err
 	}
 	exe, err := m.exe()

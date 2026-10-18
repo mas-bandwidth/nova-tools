@@ -144,9 +144,14 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, downAfter, with
 		// the nonce goes only to the name's own stream: never on this server's lines
 		m := bus.Message{From: s.as, To: []string{bt.Name}, Subject: "HOOK CHALLENGE nonce=" + bt.Nonce,
 			Body: notice.ChallengeText(bt.Name, bt.Nonce, hook.AnswerBound), Once: hook.DeliveryOnce(bt.Name, bt.Epoch, bt.Nonce)}
-		if _, ok := w.sendOnce(c, s, b, m); !ok {
+		if _, ok, err := w.sendOnceErr(c, s, b, m); !ok && !unheard(err, bt.Name, s.as) {
 			continue
 		}
+		// a name the bus refuses as no known name (a hook:names entry with no nova-config
+		// row) is never heard: its refused challenge counts as sent, so it misses and unhooks
+		// on the usual count instead of being challenged every pass for ever (a stray name on
+		// the fleet's bus, 2026-10-17: 1,443 fault lines, never unhooked); a timeout or a
+		// store fault is no such refusal, and is sent again at the next pass
 		ctx, cancel := call()
 		err := s.hooks.Delivered(ctx, bt)
 		cancel()
@@ -220,6 +225,14 @@ func (w world) plan(c *tool.Call, s *session, b *bus.Bus, every, downAfter time.
 // fault is one store or bus fault, said and passed over.
 func fault(c *tool.Call, what string, err error) {
 	serveLine(c, "fault", err.Error()+"; the next pass tries again", "at", what)
+}
+
+// unheard says err is the bus's refusal of name as no known name while it
+// knows the sender from: the roster answered, holds the server's own name and
+// not name. An empty roster (restored empty, or not yet synced) refuses the
+// sender too, and is a store fault, never a name's miss; so is a timeout.
+func unheard(err error, name, from string) bool {
+	return bus.UnknownName(err, name) && !bus.UnknownName(err, from)
 }
 
 // tell says what each audience has not yet been told, in at most one
@@ -321,18 +334,24 @@ func telling(p hook.Passed, audience string) (string, []bus.Mark) {
 // send under the key already went) and whether it is sent. A send whose
 // answer was lost is sent if its once-key stands.
 func (w world) sendOnce(c *tool.Call, s *session, b *bus.Bus, m bus.Message) (bus.Message, bool) {
+	sent, ok, _ := w.sendOnceErr(c, s, b, m) // ignored: the fault is said; a caller that reads the refusal asks sendOnceErr
+	return sent, ok
+}
+
+// sendOnceErr is sendOnce with the send's error when it did not go.
+func (w world) sendOnceErr(c *tool.Call, s *session, b *bus.Bus, m bus.Message) (bus.Message, bool, error) {
 	sent, err := w.deliver(b, m)
 	if err == nil {
-		return sent, true
+		return sent, true, nil
 	}
 	ctx, cancel := call()
 	went, serr := s.hooks.Sent(ctx, m.Once)
 	cancel()
 	if serr == nil && went {
-		return bus.Message{}, true
+		return bus.Message{}, true, nil
 	}
 	fault(c, "send "+m.Once, err)
-	return bus.Message{}, false
+	return bus.Message{}, false, err
 }
 
 // judge raises one judgment for an audience: a bus message of kind judgment,
@@ -453,10 +472,11 @@ type transition struct {
 	gen      int64
 }
 
-// push tells the coordinator every friend status change as its own message
-// (tla/HookBeat.tla, Pass's compare and PushSend): each name's state, as the
-// store reads it now, against the state last pushed for it (the row's pushed
-// mark) or the last still in hand; a difference is a transition in hand, and
+// push tells the coordinator each friend's crossing of proven, up or down, as
+// its own message (tla/HookBeat.tla, Pass's compare and PushSend): each name's
+// state as the store reads it now, proven or down (upOrDown), against the
+// state last pushed for it (the row's pushed mark, read the same way) or the
+// last still in hand; a difference is a transition in hand, and
 // each in hand goes out oldest first as one message of kind status, never
 // folded with another name's or another change's, under a once-key of the name,
 // its epoch, the new state and the count, in one write with the mark. A send
@@ -466,6 +486,16 @@ type transition struct {
 // --judge-within: it is not answered and never OVERDUE. With no coordinator the
 // pass pushes nothing, and the first pass of a fresh row writes the states it
 // finds as pushed with no message.
+//
+// Only a crossing of proven is pushed (upOrDown): live, partial, expired,
+// unhooked and down are one state, down, so a change among them is no
+// message, and the coordinator's own state is never pushed to her. Each bus
+// message interrupts the coordinator's turn, and she acts only on a friend
+// that came up or went down; the FRIEND DOWN and FRIEND BACK judgments carry
+// the rest. Measured on the fleet's bus 2026-10-17: 304 FRIEND STATE pushes
+// in 34 hours, none to act on, one friend's live->unhooked->live flap (a
+// service's re-arm) 183 of them and the coordinator's own
+// proven->partial->proven 60, pushed to herself.
 func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names []string) {
 	if p.Coord == "" || len(names) == 0 {
 		return
@@ -487,7 +517,7 @@ func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names [
 	if !seen {
 		base := map[string]string{}
 		for _, st := range sts {
-			base[st.Name] = hook.PushState(st)
+			base[st.Name] = upOrDown(hook.PushState(st))
 		}
 		ctx, cancel := call()
 		err := s.hooks.Baseline(ctx, base)
@@ -501,7 +531,11 @@ func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names [
 		s.pending = map[string][]transition{}
 	}
 	for _, st := range sts {
-		last := cmp.Or(pushed[st.Name].State, hook.StateNone)
+		if st.Name == p.Coord { // her own state is never pushed to her (tla/HookBeat.tla, NeverPushedSelf)
+			delete(s.pending, st.Name)
+			continue
+		}
+		last := upOrDown(cmp.Or(pushed[st.Name].State, hook.StateNone))
 		gen := pushed[st.Name].Gen
 		q := s.pending[st.Name]
 		for len(q) > 0 && q[0].gen < gen { // sent already, by this server or another
@@ -510,7 +544,7 @@ func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names [
 		if len(q) > 0 {
 			last = q[len(q)-1].new
 		}
-		if cur := hook.PushState(st); cur != last {
+		if cur := upOrDown(hook.PushState(st)); cur != last {
 			q = append(q, transition{old: last, new: cur, at: now, epoch: st.Epoch, gen: gen + int64(len(q))})
 		}
 		for len(q) > 0 {
@@ -533,4 +567,15 @@ func (w world) push(c *tool.Call, s *session, b *bus.Bus, p hook.Passed, names [
 			s.pending[st.Name] = q
 		}
 	}
+}
+
+// upOrDown is the state a friend-status push compares and names: proven, or
+// down for every other state (tla/HookBeat.tla, PS). A mark written before
+// this rule (live, partial, expired, unhooked) reads as down, so the first
+// pass after an upgrade pushes nothing for it.
+func upOrDown(state string) string {
+	if state == hook.StateProven {
+		return hook.StateProven
+	}
+	return hook.StateDown
 }
