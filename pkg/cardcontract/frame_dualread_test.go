@@ -52,6 +52,19 @@ func TestCardFrameDualRead(t *testing.T) {
 		assert.Equal(t, rec, got, "%s form file reads the frame equal", f.form)
 	}
 
+	// A legacy frame that also carries the table's later fields (recipes and
+	// the decide answers) still reads as legacy, the form the writer emits,
+	// not as the table's schema JSON text (S2, C13).
+	withLater := rec
+	withLater.Recipes = "recipes/one.md"
+	withLater.DecideBounce = "bounce"
+	legacyLater, err := json.MarshalIndent(withLater, "", "  ")
+	require.NoError(t, err)
+	legacyLater = append(legacyLater, '\n')
+	gotLater, err := cardcontract.FrameReadBytes(legacyLater)
+	require.NoError(t, err)
+	assert.Equal(t, withLater, gotLater)
+
 	// A truncated, flipped and clamped value of every form is refused by name,
 	// never read as absent, empty or zero (S2, C13).
 	refused := 0

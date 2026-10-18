@@ -236,17 +236,20 @@ func frameLoadLegacy(d *frameDoc, in []byte) schemaread.Report {
 	return schemaread.Report{}
 }
 
-// frameLegacy is true when in is the legacy JSON object: one naming none of
-// the table's later fields (recipes and the decide answers), which the legacy
-// writer never writes; an object that is not JSON is legacy too, so its
-// damage is named by the table read.
+// frameLegacy is true when in is the legacy JSON object: one the legacy
+// writer emits, whose kind is the lowercase word work or read (the table
+// JSON text writes the enum word Work or Read); an object that is not JSON is
+// legacy too, so its damage is named by the table read.
 func frameLegacy(in []byte) bool {
 	t := bytes.TrimLeft(in, " \t\r\n")
 	return len(t) > 0 && t[0] == '{' && !frameTableJSON(t)
 }
 
-// frameTableJSON reports whether the object's top level names a field only
-// the schema JSON text has.
+// frameTableJSON reports whether the object is the schema JSON text of the
+// Frame table: its kind is the table's enum word, Work or Read, which the
+// legacy writer never emits (it writes work/read). A legacy frame that also
+// carries the table's later fields (recipes and the decide answers) is not
+// the table form, so it reads as legacy.
 func frameTableJSON(t []byte) bool {
 	d := json.NewDecoder(bytes.NewReader(t))
 	if tok, err := d.Token(); err != nil || tok != json.Delim('{') {
@@ -257,9 +260,16 @@ func frameTableJSON(t []byte) bool {
 		if err != nil {
 			return false
 		}
-		switch key {
-		case "recipes", "decide_bounce", "decide_review", "decide_gate_flaky", "decide_gate_preexisting":
-			return true
+		k, ok := key.(string)
+		if !ok {
+			return false
+		}
+		if k == "kind" {
+			var v string
+			if err := d.Decode(&v); err != nil {
+				return false
+			}
+			return v == "Work" || v == "Read"
 		}
 		var skip json.RawMessage
 		if err := d.Decode(&skip); err != nil {
