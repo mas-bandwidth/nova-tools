@@ -59,6 +59,21 @@ func (f *fakeTarget) offered() []string {
 	return append([]string(nil), f.chunks...)
 }
 
+// countingTarget is fakeTarget with a hook that asks the proxy, from inside the
+// target's Write, whether the write was counted before the bytes were offered.
+type countingTarget struct {
+	fakeTarget
+	p     *Proxy
+	missed atomic.Bool
+}
+
+func (c *countingTarget) Write(b []byte) (int, error) {
+	if c.p.Writes() < 1 {
+		c.missed.Store(true)
+	}
+	return c.fakeTarget.Write(b)
+}
+
 func (f *fakeTarget) CloseWrite() error {
 	f.mu.Lock()
 	f.closed++
@@ -166,4 +181,33 @@ func TestFailedForwardDoesNotCountAsSent(t *testing.T) {
 			assert.Equal(t, c.offered, target.offered(), "the target was offered %q; want %q", target.offered(), c.offered)
 		})
 	}
+}
+
+// A write is counted before the target sees the bytes: the target's own Write
+// asks the proxy, and the reply a client reads can never come back before the
+// count it would read. The fake target and fake clock own no socket and no real
+// time, and the write succeeds, so the count is never taken back.
+func TestAWriteIsCountedBeforeTheTargetSeesIt(t *testing.T) {
+	t.Parallel()
+
+	now := epoch
+	p := &Proxy{delay: delay, clock: Clock{
+		Now: func() time.Time { return now },
+		Wait: func(_ <-chan struct{}, d time.Duration) bool {
+			now = now.Add(d)
+			return true
+		},
+	}}
+	p.shortest.Store(noHold)
+
+	target := &countingTarget{p: p}
+	target.steps = []step{{}}
+
+	queue := make(chan held, 1)
+	queue <- held{data: []byte("a"), at: epoch, due: epoch.Add(delay)}
+	close(queue)
+
+	p.forward(target, queue, make(chan struct{}), func() {})
+
+	assert.False(t, target.missed.Load(), "the write was counted only after the target saw the bytes")
 }
