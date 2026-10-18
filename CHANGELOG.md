@@ -1,5 +1,19 @@
 # nova-tools changelog
 
+## v1.6.2 — 2026-10-18
+
+Cut from e2341ed536f009069dadea8b9538680a81ae847e. 4 pull requests since v1.6.1.
+
+Recovery journeys proven at e2341ed536f009069dadea8b9538680a81ae847e: 5 (functions nova_sprint 10a33f52bf84df5d, schema schema v2.5.1-0.20261017012433-9b397a277ad3, installed one Linux bench v1.6.2-0.20261018192244-e2341ed536f0).
+
+Spend gate waived: point release of a staging fix; no provider spend is attributable to this cut (window 2026-10-18T00:00:00Z..2026-10-18T19:40:05Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #5978 CHANGELOG: the v1.6.1 cut's record
+- #5979 ci: test-hosted macOS shard 5 under the cap (rebalance + one-build playbook test)
+- #5980 staging: check out a card head submodules outside the wall
+- #5983 Release notes for v1.6.2
+
 ## v1.6.1 — 2026-10-18
 
 Cut from f644b4159ee559e2c52211b76aab69e0afe4acfa. 1 pull request since v1.6.0.
