@@ -214,22 +214,37 @@ Every line runs as printed:
   <name>: <reason>`, `FRIEND BACK <name>`) and one message (or `COORDINATOR DOWN` judgment) to the
   other live names. Open judgments in `hook:judgments` are re-pushed once as `OVERDUE` past
   `--judge-within` (2 min). Each pass also runs `bus.ExpireAsks`.
-- **Friend status is pushed, one line per change.** Apart from the coalesced telling, each pass compares
-  every name's state (the record's `hook.Status` state: `unhooked`, `expired`, `partial`, `live`, `proven`,
-  and `down` for a proven one the heartbeat has no answer for in the window) with the state last pushed for
-  it (`pushed:<name>` on `hook:serve`, `<state>:<count>`) and sends the coordinator each change as its own bus
-  message of kind `status`: subject `FRIEND STATE <name> <old>-><new> at=<RFC 3339 store TIME of the pass that saw it>`. One message per change per name, never joined with another name's or another change; sent with
-  its mark in one write under the once-key `hook:push:<name>:<epoch>:<state>:<count>` (the count makes a
-  flap back to a state a push of its own), so a failed send leaves the change in the server's hand and the
-  mark unwritten and the next pass sends it, and a sent one is never sent twice. It is not answered, never
-  `OVERDUE`, and waits on no judgment and no `--judge-within`. The first pass on a row with no `pushed:*`
-  field writes the states it finds with no message; a pass with no coordinator pushes nothing. A server
-  restart loses the changes in its hand: the next pass finds them again against the mark (a down and a
-  back that both fell in the lost interval are then one change, not two). Model: `tla/HookBeat.tla`
-  (`PushSend`, `Show`, `NeverPushedTwice`, `NoFold`, `TransitionPushedToCoordinator`); the reversed witnesses
-  `MCHookBeatBrokenSelfFiltered` and `MCHookBeatBrokenFolded`.
+- **Friend status is pushed, one line per change of level.** Apart from the coalesced telling, each pass
+  reads every name's state (the record's `hook.Status` state, and `down` for a proven one the heartbeat has
+  no answer for in the window) as a level (`pushLevel`): `proven`; `live` for `live` and `partial` (armed,
+  its proof not yet in); `down` for every other state (`unhooked`, `expired`, `none`, `down`). It compares
+  that level with the level last pushed for the name (`pushed:<name>` on `hook:serve`, `<level>:<count>`; a
+  mark written before this rule reads by its level) and sends the coordinator each change as its own bus
+  message of kind `status`. A friend coming up from down is `FRIEND UP <name> <live|proven>
+  <held|unheld> width=<n> ready=<n> working=<n> at=<RFC 3339 store TIME of the pass>`: her sprint row,
+  read in one sprint request (`friend cards <name> --json`, its `row` field: held, reason, width; the
+  cards by column) for every friend coming up that pass, the hold's reason and the release verb in the
+  body, `row=unread` and why when the sprint does not answer or is older than the field, and no row for a
+  name that is no friend. It goes at the pass that finds her armed, a pass before her proof and its
+  `FRIEND BACK` judgment (2026-10-18: a friend armed and the coordinator heard of the friend only at the
+  proof a minute later, with nothing saying the row was held). Every other change is `FRIEND STATE
+  <name> <old>-><new> at=<store TIME>`. A change between two down states is no message, and the
+  coordinator's own state is never pushed to her (each message interrupts her turn: 2026-10-17, 304
+  pushes in 34 hours, none to act on). One message per change per name, never joined with another name's
+  or another change; sent with its mark in one write under the once-key
+  `hook:push:<name>:<epoch>:<level>:<count>` (the count makes a flap back to a level a push of its own),
+  so a failed send leaves the change in the server's hand and the mark unwritten and the next pass sends
+  it, and a sent one is never sent twice. It is not answered, never `OVERDUE`, and waits on no judgment
+  and no `--judge-within`. The first pass on a row with no `pushed:*` field writes the levels it finds
+  with no message; a pass with no coordinator pushes nothing. A server restart loses the changes in its
+  hand: the next pass finds them again against the mark (a down and a back that both fell in the lost
+  interval are then one change, not two). Model: `tla/HookBeat.tla` (`PS`, `PushSend`, `Show`,
+  `NeverPushedTwice`, `NoFold`, `NoPushWithinDown`, `NeverPushedSelf`, `ArmingPushedAtPass`,
+  `TransitionPushedToCoordinator`); the reversed witnesses `MCHookBeatBrokenSelfFiltered`,
+  `MCHookBeatBrokenFolded`, `MCHookBeatBrokenPushAll`, `MCHookBeatBrokenPushSelf`,
+  `MCHookBeatBrokenRawMark` and `MCHookBeatBrokenProvenOnly`.
 - **The hook shows what the server says under its own name.** The heartbeat server runs under the
-  coordinator's own name, so its `FRIEND STATE`, `FRIEND DOWN`, `FRIEND BACK`, `COORDINATOR DOWN` and
+  coordinator's own name, so its `FRIEND STATE`, `FRIEND UP`, `FRIEND DOWN`, `FRIEND BACK`, `COORDINATOR DOWN` and
   `OVERDUE` messages are from the name that reads them. The hook's stream loop (and the Codex backlog
   recovery) passes over a message from its own name only when this session sent it (a `nova-bus send`);
   `serverSent` tells the server's by kind (`status`, `judgment`) and subject prefix, and the server's
