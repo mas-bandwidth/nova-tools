@@ -954,6 +954,42 @@ jobs:
         if: matrix.entry.packages != ''
         run: make test-functional PKGS="${{ matrix.entry.packages }}"
 
+  functional-darwin:
+    # v17-tools-unit-tier-opens-no-socket moved the Darwin sandbox regressions
+    # behind `functional`, but the functional job above runs on Linux and
+    # pkgselect's DarwinOnly keeps ./pkg/sandbox and ./cmd/nova-sandbox off its
+    # legs; the hosted macOS matrix runs without -tags functional. This job is
+    # the one place the --net-allow positive and negative controls and the two
+    # wall checks run: nightly and by hand, never gating a CL (not in ci-ok's
+    # needs), under the same two-minute cap as every other job.
+    name: functional-darwin
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 2
+    steps:
+      - name: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: the Darwin sandbox functional tests
+        # Through make, as every build/test command in ci.yml is: test-functional
+        # selects the //go:build functional tests of both packages and runs them
+        # with -tags functional -count=1. The step after proves the three named
+        # regressions were among them.
+        shell: bash
+        run: |
+          set -o pipefail
+          make test-functional PKGS="./pkg/sandbox/ ./cmd/nova-sandbox/" | tee "$RUNNER_TEMP/darwin-functional.log"
+      - name: every named test reported --- PASS
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/darwin-functional.log"
+          grep -Fq -- "--- PASS: TestNetAllowGrantsExactlyTheNamedLoopbackPort" "$log" || { echo "::error::TestNetAllowGrantsExactlyTheNamedLoopbackPort did not report --- PASS"; exit 1; }
+          grep -Fq -- "--- PASS: TestTheCheckScriptPassesAgainstTheToolsProfile" "$log" || { echo "::error::TestTheCheckScriptPassesAgainstTheToolsProfile did not report --- PASS"; exit 1; }
+          grep -Fq -- "--- PASS: TestTheAgentSocketIsUnreachable" "$log" || { echo "::error::TestTheAgentSocketIsUnreachable did not report --- PASS"; exit 1; }
+
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest and
     # macos-latest — on every push (dev and main), on the nightly schedule and on
