@@ -637,11 +637,7 @@ func (s *Set) Save() error {
 func Check(dir string) ([]string, error) {
 	s, err := Load(dir, "")
 	if err != nil {
-		var probs []string
-		for _, l := range strings.Split(err.Error(), "\n") {
-			probs = append(probs, l)
-		}
-		return probs, nil
+		return strings.Split(err.Error(), "\n"), nil
 	}
 	var probs []string
 	for page, want := range s.Pages() {
