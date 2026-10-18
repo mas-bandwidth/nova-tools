@@ -74,6 +74,11 @@ type nativeRunConfig struct {
 	noWall         bool   // the caller typed --no-wall: run with no containment, named by its OK line
 	noSharedCaches bool   // the caller typed --no-shared-caches: the Go caches stay under HOME as today
 	configFile     string // optional: an opencode.json provider config copied beside the auth copy
+	// providerDirect is an uncatalogued provider's custom block (its base_url, key_env and
+	// npm adapter, a nova-config provider row): when set and it names the route's provider,
+	// writeJobConfig declares it instead of reading the providers table, and opens no read
+	// proxy over it. Nil is the ordinary case: the table's row decides.
+	providerDirect *swarm.DirectProvider
 	// benchHome is the BENCH's home -- this process's own, never the child's -- and it is
 	// where the provisioning standard puts the toolchain (swarm.ToolchainRoots). Empty is
 	// the ordinary case and means "ask the OS"; a test names a home of its own, because the
@@ -3320,7 +3325,14 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		// decision, so a provider the pinned harness's catalog does not know (paperinstruments)
 		// still runs. The Zen and openrouter providers are never used for it.
 		// (swarm.SeedDirectProvider; a row whose config is pinned unchanged is left alone.)
-		if seeded, ok := swarm.SeedDirectProvider(body, provider); ok {
+		// An explicit provider block (cfg.providerDirect, the route's provider row) is written
+		// as it is, and no proxy is opened over it: the block's base is the provider's own.
+		direct := cfg.providerDirect != nil
+		if direct {
+			if declared, ok := swarm.DeclareDirectProvider(body, provider, *cfg.providerDirect); ok {
+				body = declared
+			}
+		} else if seeded, ok := swarm.SeedDirectProvider(body, provider); ok {
 			body = seeded
 		}
 		// A LIMITED ROUTE'S EVERY REQUEST TAKES THE GLOBAL BUDGET (pkg/swarm/providerbudget.go;
@@ -3329,12 +3341,15 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		// with --model only) is given its provider's base from the providers table: the proxy
 		// then opens in front of it and the harness is pointed at the proxy. A route with no
 		// limit (no --budget-server) takes no part of this, and its config is as it was.
-		if cfg.budgetServer != "" && swarm.ProviderBaseURL(body, provider) == "" {
+		if !direct && cfg.budgetServer != "" && swarm.ProviderBaseURL(body, provider) == "" {
 			if seeded, ok := swarm.SeedProviderBaseURL(body, provider, swarm.ProviderTableBaseURL(provider)); ok {
 				body = seeded
 			}
 		}
-		upstream := swarm.ProviderBaseURL(body, provider)
+		upstream := ""
+		if !direct {
+			upstream = swarm.ProviderBaseURL(body, provider)
+		}
 		if swarm.ProviderProxyEligible(upstream) {
 			silence := cfg.bodySilence
 			if silence <= 0 {
