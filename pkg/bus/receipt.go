@@ -99,7 +99,6 @@ func (b *Bus) Undelivered(ctx context.Context, names ...string) ([]Backlog, erro
 	}
 	out := make([]Backlog, len(names))
 	for i, h := range hashes {
-		b.prune(ctx, keys[i], StreamOf(names[i]), h)
 		bl := Backlog{Name: names[i], Count: len(h)}
 		for id, v := range h {
 			at, _ := time.Parse(time.RFC3339, v) // ignored: an odd stamp is the zero time, said above

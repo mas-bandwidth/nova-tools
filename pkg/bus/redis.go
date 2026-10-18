@@ -38,32 +38,6 @@ type Redis struct {
 	C       *redis.Client
 	Timeout time.Duration
 	Margin  time.Duration // a blocking read's wait beyond its block (BlockMargin when zero)
-	LogMax  int64         // the log's approximate bound in entries (LogMax when zero)
-	ToMax   int64         // each recipient stream's approximate bound (ToMax when zero)
-}
-
-// The streams' bounds (SPEC-BUS.md, the data): every append trims the stream
-// it writes to about its bound (XADD MAXLEN ~), the shape of nova-config's cap
-// log. Measured on the fleet's bus 2026-10-17, nothing was ever trimmed: bus2:log
-// held 83,559 entries (140 MB) and the busiest recipient's 52,280 (119 MB), at about
-// 5,600 and 5,350 a day; the bounds keep about five weeks of the log and over
-// a week of the busiest recipient's stream at that rate. A message trimmed off
-// a stream unread is past every reader's ClaimAfter by weeks.
-const (
-	LogMax = 200000
-	ToMax  = 50000
-)
-
-// bounds is the log's and a recipient stream's bound, the defaults when unset.
-func (r Redis) bounds() (int64, int64) {
-	logMax, toMax := r.LogMax, r.ToMax
-	if logMax <= 0 {
-		logMax = LogMax
-	}
-	if toMax <= 0 {
-		toMax = ToMax
-	}
-	return logMax, toMax
 }
 
 // TimeoutError is a call the store did not answer within After. It names the
@@ -170,10 +144,8 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 // addOnce is AddOnce's one atomic step: Redis runs a script alone, so no
 // other send under the key comes between its GET and its writes. KEYS are the
 // record's key, the streams, then each mark's hash; ARGV are the record, its
-// expiry in ms, the count of streams, the count of field pairs, the log's
-// bound and a recipient stream's (each XADD trims its stream about its bound:
-// MAXLEN ~), the pairs, then each mark as "set" field value, "del" field,
-// "fwd" field state or "nx" field value.
+// expiry in ms, the count of streams, the count of field pairs, the pairs,
+// then each mark as "set" field value, "del" field, "fwd" field state or "nx" field value.
 var addOnce = redis.NewScript(forwardLua + activityLua + `
 if ARGV[1] ~= '' then
   local prior = redis.call('GET', KEYS[1])
@@ -203,13 +175,9 @@ for key, want in pairs(expected) do
   end
 end
 local fields = {}
-for i = 1, nf * 2 do fields[i] = ARGV[6 + i] end
-for i = 1, ns do
-  local cap = ARGV[6]
-  if KEYS[1 + i] == '` + LogKey + `' then cap = ARGV[5] end
-  redis.call('XADD', KEYS[1 + i], 'MAXLEN', '~', cap, '*', unpack(fields))
-end
-local j, k = 7 + nf * 2, 2 + ns
+for i = 1, nf * 2 do fields[i] = ARGV[4 + i] end
+for i = 1, ns do redis.call('XADD', KEYS[1 + i], '*', unpack(fields)) end
+local j, k = 5 + nf * 2, 2 + ns
 local now = redis.call('TIME')[1]
 while j <= #ARGV do
   if ARGV[j] == 'activity' then
@@ -245,8 +213,7 @@ func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Durati
 		}
 		keys := append([]string{key}, streams...)
 		names := slices.Sorted(maps.Keys(fields))
-		logMax, toMax := r.bounds()
-		args := []any{record, keep.Milliseconds(), len(streams), len(names), logMax, toMax}
+		args := []any{record, keep.Milliseconds(), len(streams), len(names)}
 		for _, n := range names {
 			args = append(args, n, fields[n])
 		}

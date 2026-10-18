@@ -100,8 +100,7 @@ func (b *Bus) stamp(ctx context.Context, as, state string, id string) string {
 
 // Stages is as's receipts and the store's time, in two trips: those of ids in
 // their order (State "" for one with none), or with no ids every receipt as
-// holds, oldest first. The receipts of messages trimmed off as's stream are
-// cleared on the way (prune: one trip more, and one to clear when any are).
+// holds, oldest first.
 func (b *Bus) Stages(ctx context.Context, as string, ids ...string) ([]Stage, time.Time, error) {
 	if p := CheckName(as); p != "" {
 		return nil, time.Time{}, &Refusal{[]string{p}}
@@ -115,7 +114,6 @@ func (b *Bus) Stages(ctx context.Context, as string, ids ...string) ([]Stage, ti
 		return nil, time.Time{}, err
 	}
 	h := hashes[0]
-	b.prune(ctx, StagesOf(as), StreamOf(as), h)
 	if len(ids) == 0 {
 		for id := range h {
 			ids = append(ids, id)
@@ -177,7 +175,6 @@ func (b *Bus) Overdue(ctx context.Context, older time.Duration) ([]Late, time.Ti
 	}
 	var late []Late
 	for i := range names {
-		b.prune(ctx, keys[i], StreamOf(names[i]), hashes[i])
 		for _, l := range waiting[i] {
 			if _, stamped := hashes[i][l.ID]; !stamped && l.Age >= older {
 				late = append(late, l)

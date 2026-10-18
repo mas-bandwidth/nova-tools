@@ -17,7 +17,6 @@ import (
 	"regexp"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -234,9 +233,8 @@ func (e Entry) Message() Message {
 }
 
 // Store is the few Redis commands the bus uses, each one round trip. The
-// bus removes no group and no key (a token's record expires: AddOnce); an
-// append trims its stream about its bound (Redis.bounds), and a whole-hash
-// read clears the receipt and owed marks of what was trimmed (prune).
+// bus never deletes: no command here removes an entry, a group or a key
+// (a token's record expires: AddOnce).
 type Store interface {
 	// Roster is the known names (nova-config's friend and machine rows, the
 	// sets `friends` and `machines`) and the server's time (TIME), in one trip.
@@ -929,67 +927,4 @@ func (b *Bus) ulid(at time.Time) (string, error) {
 		j--
 	}
 	return string(out[:]), nil
-}
-
-// PruneMargin is how much older than a stream's first entry a message must be
-// for its receipt and owed marks to be pruned (prune): a send's id is made
-// from the store's time one round trip before its entry lands, so the first
-// entry left after a trim is never taken for one trimmed.
-const PruneMargin = time.Minute
-
-// prune clears the fields of h, the hash at key as just read (a receipts or an
-// owed hash of stream's recipient, one field per message id), whose message
-// is older than stream's first entry by PruneMargin: a message trimmed off
-// the stream (Redis.bounds) is owed no receipt and is staged no further, and
-// left there it only makes every whole-hash read of that recipient slower
-// (2026-10-17: the busiest recipient's receipts 35,524 fields, her owed 22,979,
-// none ever cleared). The pruned fields leave h once the store cleared them. A
-// stream with no entry, a field that is no message id and a store that does
-// not answer leave everything as it is: the read it rides on never fails for it.
-func (b *Bus) prune(ctx context.Context, key, stream string, h map[string]string) {
-	if len(h) == 0 {
-		return
-	}
-	first, err := b.Store.Range(ctx, stream, "-", "+", 1)
-	if err != nil || len(first) == 0 { // ignored: with no first entry known, nothing is known trimmed; the read goes on whole
-		return
-	}
-	ms, err := strconv.ParseInt(strings.SplitN(first[0].Entry, "-", 2)[0], 10, 64)
-	if err != nil { // ignored: an entry id that is no time says nothing of what is trimmed
-		return
-	}
-	var old []string
-	for id := range h {
-		if at, ok := ulidMillis(id); ok && at < ms-PruneMargin.Milliseconds() {
-			old = append(old, id)
-		}
-	}
-	if len(old) == 0 {
-		return
-	}
-	slices.Sort(old)
-	if _, err := b.Store.Unmark(ctx, key, old...); err != nil { // ignored: a login that may not clear the hash reads it whole, as before
-		return
-	}
-	for _, id := range old {
-		delete(h, id)
-	}
-}
-
-// ulidMillis is the store time a message id (a ULID, ulid) was made at, in ms
-// since the epoch, and whether id is one.
-func ulidMillis(id string) (int64, bool) {
-	const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-	if len(id) != 26 {
-		return 0, false
-	}
-	var ms int64
-	for i := 0; i < 10; i++ {
-		v := strings.IndexByte(alphabet, id[i])
-		if v < 0 {
-			return 0, false
-		}
-		ms = ms<<5 | int64(v)
-	}
-	return ms, true
 }

@@ -37,13 +37,8 @@ nova-bus on 2026-10-04, when the git bus was removed.
   the token's record as JSON (`fingerprint`, `id`, `at`), written in the
   send's own atomic step and expiring at the token's cleanup (below,
   a-lost-send-response-is-safe-to-retry.w1).
-- Every append trims the stream it writes about its bound (`XADD MAXLEN ~`):
-  `bus2:log` about 200,000 entries, each `bus2:to:<name>` about 50,000
-  (pkg/bus `LogMax`, `ToMax`; 2026-10-17, when nothing had ever been trimmed
-  and the log held 83,559 entries, 140 MB). A whole-hash read of a receipts or
-  owed hash clears the fields of messages older than the recipient stream's
-  first entry by a minute (pkg/bus `prune`). No record's format changes. The
-  one key the store removes is a token's record, by its own expiry.
+- Nothing is ever deleted by the tool. Trimming is a later decision. The one
+  key the store removes is a token's record, by its own expiry.
 - The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
   `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
   `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds
@@ -450,8 +445,8 @@ receipts. A ping is answered by the daemon's `daemon-pong`, which names it
 its receipt. `Bus.Undelivered` reads each friend's hash in one trip
 (`HGETALL` in a pipeline): the count and the oldest by its `at`, what the
 friends table shows as undelivered and the oldest undelivered age
-(SPEC-FRIEND.md). The keys are written by the tool and cleared by a receipt,
-or by the read that finds the message trimmed off the stream (the data, above).
+(SPEC-FRIEND.md). The keys are written by the tool and cleared by a receipt;
+an entry of a stream is still never deleted.
 
 A send that fails on the login (`NOAUTH`, `WRONGPASS`, as
 pkg/redisconn classifies it) or on the connection is an outage, said
