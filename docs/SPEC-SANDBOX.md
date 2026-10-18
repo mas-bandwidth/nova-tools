@@ -775,7 +775,7 @@ trade, named: the `SANDBOX DENIED` reader above can no longer fire for a default
 denial on any macOS. On macOS 26 those reports never reached the log for a
 `sandbox-exec` profile anyway; on 27.x that is unmeasured, and the hang suggests
 the OS does try to send one. A wall that never starts its child costs more than a
-report that never arrives. `profiles/embed_test.go` refuses a template whose
+report that never arrives. `pkg/sandbox/profile_noreport_test.go` refuses a template whose
 default rule is anything else.
 
 The query is bounded at **two seconds** and its absence is silence, never an
