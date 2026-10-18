@@ -304,7 +304,9 @@ SANDBOX LEAK with the one command that removes it and exits 3.
 
 When a contained command exits non-zero, the tool asks the operating system what it
 refused and prints one SANDBOX DENIED line per path, with the flag that would have
-allowed it. docs/SPEC-SANDBOX.md says what that can and cannot see on this macOS.
+allowed it. The darwin wall's denies are no-report (a reporting deny hung a walled
+harness on macOS 27.0.1), so on darwin these lines are silent; docs/SPEC-SANDBOX.md
+says what that can and cannot see.
 
 A COMMIT LEAVES AS A BUNDLE. The volume is deleted, so the card's last step is
 "git bundle create repo.bundle <branch>" in its working directory; the bundle is

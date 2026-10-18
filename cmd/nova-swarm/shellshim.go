@@ -296,7 +296,7 @@ func writeNativeGoShim(dir, goBin string) error {
 }
 
 // THE DARWIN WALL FORBIDS setpriority (its `system-sched` operation; the template is
-// `(deny default)` and grants none), so a card's `nice -n 19 <gate>` printed `nice:
+// `(deny default (with no-report))` and grants none), so a card's `nice -n 19 <gate>` printed `nice:
 // setpriority: Operation not permitted` into every worker's output and ran the gate at the
 // priority it started with. Where nativeNicesChild says so, native lowers the child's whole
 // group itself, outside the wall (lowerChildPriority), and writes this `nice` beside the
