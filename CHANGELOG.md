@@ -1,8 +1,8 @@
 # nova-tools changelog
 
-## v1.6.0 — 2026-10-18
+## v1.6.1 — 2026-10-18
 
-The stable tools release beside nova-sprint v1.6.0. The v1.5.3 section below was never tagged: its fix (the wall's caps from the machine's memory, 2026-10-17) ships here. The night's audit of what the fleet's daemons do for nothing lands here too; no wire or record change.
+The stable tools release beside nova-sprint v1.6.3; the same code as the v1.6.0 tag, which was never released. The v1.5.3 section below was never tagged: its fix (the wall's caps from the machine's memory, 2026-10-17) ships here. The night's audit of what the fleet's daemons do for nothing lands here too; no wire or record change.
 
 - Idle members read their queue every 15 s, not every 3; a reader sends one `queue` an interval, not two; a Wake (a push ended, a child exited) reads at once. Eighteen seats on nine benches sent ~750 serial verbs a minute to the sprint server with nothing to do on 2026-10-17. (#5951)
 - The idle seat's background churn stops: on a Mac the load sampler ran `top` back to back forever (a quarter of a core per seat); it runs once in ten seconds while a card runs and not at all while the seat is idle, the beat carrying the one-minute average then. The cleaner round runs every 30 s, 60 s when it removed nothing, and 2 s only while a backlog stands or a card runs; the live usage sampler reads only the rows that may have changed, a whole read every tenth time; the idle watch polls each second and snapshots the process table every fifteen, with one fresh reading before a card is declared idle, and a working tree is measured against the same half-second bar as before; the turn counter streams the log and carries an open line. (#5953)
@@ -11,6 +11,37 @@ The stable tools release beside nova-sprint v1.6.0. The v1.5.3 section below was
 - The hook server pushes a FRIEND STATE only when a friend crosses proven (live, partial, expired and unhooked are one "down"), never the coordinator's own state to her; the hook client loop reads its record at renewal and after a batch, not fifteen Redis commands a second; a name with no roster row misses and unhooks on the usual count instead of being challenged forever; the client service restarts no faster than every 10 s and refuses a temp path at install; `tla/HookBeat.tla` carries NoPushWithinDown and NeverPushedSelf with their witnesses. The bus streams keep their unbounded retention: a trim needs the receipts model and sized bounds, carded for v1.7. (#5954)
 - The hook server pushes a friend coming up at the pass that finds the friend armed, not a pass later at the proof: `FRIEND UP <name> <live|proven> <held|unheld> width=<n> ready=<n> working=<n> at=<time>`, the sprint row read from `friend cards --json` (nova-sprint v1.6.3 sends its `row`; an older server gives `row=unread`). Other changes of level (down, live, proven) stay `FRIEND STATE`; a change between two down states and the coordinator's own state are never pushed; `FRIEND BACK` still waits for the proof. nova-hook's texts name the friend, never a pronoun. (tla/HookBeat.tla ArmingPushedAtPass, MCHookBeatBrokenProvenOnly)
 - The sandbox wall's caps follow the machine: 64 processes per logical CPU, an eighth of the memory, bounded by the member's login slice (the unreleased v1.5.3). (#5944, #5950)
+
+## v1.6.0 — 2026-10-18
+
+Tagged and never released: the tagged tree has no docs/RELEASE-NOTES-1.6.0.md, which release.yml reads, and a tag is not amended. v1.6.1 ships the same code with its notes. The cut's record:
+
+Cut from 719420e54279551a0de83d805a19e90489a24577. 10 pull requests since v1.5.2.
+
+CI waived: the coordinator (on the owner's point-release go-ahead), 2026-10-18: test-hosted (macos-latest, 5) was never started (hosted runners over the account's spending limit); its steps (ci deal --shards 8 --shard 5, make vet, make test-short over its 24 packages) ran by hand at 719420e54 on a self-hosted darwin-arm64 bench, green
+CI waived checks: ci-ok=failure, test-hosted (macos-latest, 5)=cancelled
+
+Recovery journeys incomplete, gate waived: v1.6.0, the stable tools release the CHANGELOG section describes, with the owner's ask of 2026-10-18 (a push when a friend comes up, with the sprint row); journeys: no build of this revision is installed before the cut; spend: no provider readouts or friend receipts are available to this cut and the range changes no spend recording
+
+- TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce: not-run (no --journeys evidence)
+- TestNoServerOrNoAnswerIsNoEvidence: not-run (no --journeys evidence)
+- TestTheGateRefusesEveryoneWhileTheServerIsStale: not-run (no --journeys evidence)
+- TestAStaleAnswerIsDownWithAFreshServer: not-run (no --journeys evidence)
+- TestALostAnswerIsNeverToldTwice: not-run (no --journeys evidence)
+
+Spend gate waived: v1.6.0, the stable tools release the CHANGELOG section describes, with the owner's ask of 2026-10-18 (a push when a friend comes up, with the sprint row); journeys: no build of this revision is installed before the cut; spend: no provider readouts or friend receipts are available to this cut and the range changes no spend recording (window 2026-10-17T00:00:00Z..2026-10-18T17:29:27Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #5944 sandbox: size the memory cap from RAM and the process cap from CPUs (v1.5.3)
+- #5950 sandbox: RLIMIT_NPROC leaves room for every slot of the bench (v1.5.3)
+- #5951 member: idle members read their queue every 15 s; a reader sends one queue an interval
+- #5952 nova-swarm push.git tidy, darwin log rotation, mirror cadence; fleet never reinstalls a friend daemon
+- #5953 member: stop the idle seat's background churn (top, cleaner, sampler reads, idle watch)
+- #5954 nova-hook: push only crossings of proven, read the record when due, unhook unknown names, slow restarts
+- #5955 changelog: the v1.6.0 section
+- #5956 ci: the hosted ubuntu leg deals the tree eight ways
+- #5958 nova-secrets: the help setup block's lines run under pipefail in the test
+- #5971 nova-hook serve: FRIEND UP at the pass that finds a friend armed, with the sprint row
 
 ## v1.5.3 — 2026-10-17
 
