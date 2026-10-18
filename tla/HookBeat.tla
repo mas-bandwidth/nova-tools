@@ -471,7 +471,7 @@ Pass(s) ==
                             ELSE {}
              IN /\ pq' = [n \in Names |-> IF n \in grow THEN Append(pq[n], <<LastC(n), cur[n]>>) ELSE IF n \in drop THEN <<>> ELSE pq[n]]
                 /\ want' = want \cup {<<n, pgen[n] + Len(pq[n])>> : n \in grow}
-                /\ pdrop' = pdrop \cup {<<n, pgen[n] + i - 1>> : n \in drop, i \in 1..Len(pq[n])}
+                /\ pdrop' = pdrop \cup UNION {{<<n, pgen[n] + i - 1>> : i \in 1..Len(pq[n])} : n \in drop}
           /\ IF now # told /\ "tell" \in Parts
                 THEN /\ out' = [out EXCEPT ![s] = [v |-> tv, to |-> now, sent |-> FALSE]]
                      /\ IF "markfirst" \in Broken
