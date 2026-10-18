@@ -2442,6 +2442,102 @@ named binary's `version` by hand to see what it does, then rebuild it or remove 
 Removing the copy under `~/.local/bin` is tolerated: with no local copy there is nothing to
 shadow with, and the check passes on the PATH binary alone. No flag skips the check.
 
+## nova-roadmap
+
+Renders a repository's ROADMAP.md from its docs/roadmap.sexp and checks the committed page against the data: the one roadmap generator, run by every repository's `make roadmap` and `make roadmap-check` from a pinned release. `nova-roadmap help form` prints the feature-table form with a worked example.
+
+<!-- clidoc:begin nova-roadmap -->
+`nova-roadmap help`:
+
+```
+nova-roadmap: renders ROADMAP.md from docs/roadmap.sexp and checks the committed page against the data
+
+how it works: the data is read as data (no evaluation, bounded); the same data makes the same bytes.
+render writes the page; check writes nothing and exits 1 when the page on disk differs.
+A repository runs both from its Makefile (make roadmap, make roadmap-check) and CI runs the check.
+The standard form is feature tables: `nova-roadmap help form` prints it with a worked example.
+
+usage:
+  nova-roadmap example --out <docs/roadmap.sexp>
+  nova-roadmap render [--file docs/roadmap.sexp] [--out ROADMAP.md] [--evidence DIR] [--kind roadmap|fixes]
+  nova-roadmap check [--file docs/roadmap.sexp] [--out ROADMAP.md] [--evidence DIR] [--kind roadmap|fixes]
+  nova-roadmap version
+  nova-roadmap help [<verb>]
+topics: form; run: nova-roadmap help <topic>
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done (render) or up to date (check), 1 drift (check: the page is not what the data renders), 2 could not run (the data refused, every problem named, or a bad invocation)
+
+example:
+  nova-roadmap example --out ./docs/roadmap.sexp
+  nova-roadmap render --file ./docs/roadmap.sexp --out ./ROADMAP.md
+  nova-roadmap check --file ./docs/roadmap.sexp --out ./ROADMAP.md
+```
+
+`nova-roadmap example -h`:
+
+```
+usage: nova-roadmap example [flags]
+from `nova-roadmap help`:
+  nova-roadmap example --out <docs/roadmap.sexp>
+  nova-roadmap example --out ./docs/roadmap.sexp
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --out <string>  the data file to create, usually ./docs/roadmap.sexp (required)
+exit codes: 0 done (render) or up to date (check), 1 drift (check: the page is not what the data renders), 2 could not run (the data refused, every problem named, or a bad invocation)
+effect: local write: writes files on this machine: writes a starter data file (--out), never over one that is there
+```
+
+`nova-roadmap render -h`:
+
+```
+usage: nova-roadmap render [flags]
+from `nova-roadmap help`:
+  nova-roadmap render [--file docs/roadmap.sexp] [--out ROADMAP.md] [--evidence DIR] [--kind roadmap|fixes]
+  nova-roadmap render --file ./docs/roadmap.sexp --out ./ROADMAP.md
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --evidence <string>  feature tables only: the evidence overlay directory (default roadmap-evidence/ beside --file, when it exists)
+  --file <string>  the data to read (default docs/roadmap.sexp, or docs/fixes.sexp with --kind fixes)
+  --json  print the result as one JSON object instead of lines
+  --kind <string>  what the data holds: roadmap (feature tables or the card list) or fixes (FIXES.md)
+  --out <string>  the page (default ROADMAP.md, or FIXES.md with --kind fixes)
+exit codes: 0 done (render) or up to date (check), 1 drift (check: the page is not what the data renders), 2 could not run (the data refused, every problem named, or a bad invocation)
+effect: local write: writes files on this machine: writes the page (--out)
+```
+
+`nova-roadmap check -h`:
+
+```
+usage: nova-roadmap check [flags]
+from `nova-roadmap help`:
+  nova-roadmap check [--file docs/roadmap.sexp] [--out ROADMAP.md] [--evidence DIR] [--kind roadmap|fixes]
+  nova-roadmap check --file ./docs/roadmap.sexp --out ./ROADMAP.md
+flags:
+  --evidence <string>  feature tables only: the evidence overlay directory (default roadmap-evidence/ beside --file, when it exists)
+  --file <string>  the data to read (default docs/roadmap.sexp, or docs/fixes.sexp with --kind fixes)
+  --json  print the result as one JSON object instead of lines
+  --kind <string>  what the data holds: roadmap (feature tables or the card list) or fixes (FIXES.md)
+  --out <string>  the page (default ROADMAP.md, or FIXES.md with --kind fixes)
+exit codes: 0 done (render) or up to date (check), 1 drift (check: the page is not what the data renders), 2 could not run (the data refused, every problem named, or a bad invocation)
+effect: inspection: reads, writes nothing
+```
+
+`nova-roadmap version -h`:
+
+```
+usage: nova-roadmap version [flags]
+from `nova-roadmap help`:
+  nova-roadmap version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done (render) or up to date (check), 1 drift (check: the page is not what the data renders), 2 could not run (the data refused, every problem named, or a bad invocation)
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-roadmap -->
+
 ## nova-sprint
 
 nova-sprint left nova-tools in v1.2.3 (the split): it lives in [mas-bandwidth/nova-sprint](https://github.com/mas-bandwidth/nova-sprint), whose own command reference documents it.

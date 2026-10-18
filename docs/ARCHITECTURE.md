@@ -92,6 +92,7 @@ names it opens, and whether it runs every n seconds or is kept alive
 | `nova-local` | run local models: what an engine has, one model served at a chosen context, and a worker description `nova-swarm` accepts | [SPEC-LOCAL.md](SPEC-LOCAL.md) |
 | `nova-memory` | search your own markdown notes, and check a draft against what they already say | [SPEC.md](SPEC.md) |
 | `nova-redis` | run a local Redis store, keep short-lived named values in it, and render, check and apply the store's ACL and function library | [SPEC-REDIS.md](SPEC-REDIS.md) |
+| `nova-roadmap` | renders ROADMAP.md from docs/roadmap.sexp and checks the committed page against the data | [SPEC-ROADMAP.md](SPEC-ROADMAP.md) |
 | `nova-sandbox` | run one command inside an OS-enforced wall around the directories you name | [SPEC-SANDBOX.md](SPEC-SANDBOX.md) |
 | `nova-secrets` | encrypted secrets in a git repository, handed to one command at a time | [SPEC-SECRETS.md](SPEC-SECRETS.md) |
 | `nova-self-talk` | flags sentences where a writer passes a standing verdict on themselves | [SPEC.md](SPEC.md) |

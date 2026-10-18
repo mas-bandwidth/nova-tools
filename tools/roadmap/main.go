@@ -4,9 +4,9 @@
 // (nothing is evaluated) and renders the page, and
 // internal/docs's TestRoadmapIsGeneratedFromTheSexp and
 // TestFixesIsGeneratedFromTheSexp hold the committed pages to what this writes.
-// It is the one roadmap generator: every repository runs this command (go run on
-// this module's tools/roadmap at a pinned version) from its make roadmap, and
-// --check is its make roadmap-check.
+// It is retiring: cmd/nova-roadmap (render, check) is the generator now, over the
+// same roadmap.Page, and this command stays only until nova-sprint's make roadmap
+// stops running it (`go tool roadmap`); then it is deleted by name.
 package main
 
 import (
@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/roadmap"
@@ -113,50 +112,9 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	if *out == "" {
 		*out = map[bool]string{true: "FIXES.md", false: "ROADMAP.md"}[*kind == "fixes"]
 	}
-	raw, err := os.ReadFile(*file)
+	page, items, err := roadmap.Page(*kind, *file, *evidence)
 	if err != nil {
-		refuse(fmt.Sprintf("reading %s: %v", *file, err))
-	}
-	var page string
-	var items int
-	switch {
-	case *kind == "roadmap" && roadmap.IsFeatureForm(*file, raw):
-		fs, err := roadmap.DecodeFeatures(*file, raw)
-		if err != nil {
-			refuse(oneLine(err.Error()))
-		}
-		dir := *evidence
-		if dir == "" {
-			dir = filepath.Join(filepath.Dir(*file), roadmap.EvidenceDir)
-		}
-		named := ""
-		if st, err := os.Stat(dir); err == nil && st.IsDir() {
-			if _, err := fs.ApplyEvidenceDir(dir); err != nil {
-				refuse(oneLine(err.Error()))
-			}
-			named = filepath.ToSlash(dir)
-		} else if *evidence != "" {
-			refuse(fmt.Sprintf("--evidence %s is not a directory", *evidence))
-		}
-		page = roadmap.RenderFeatures(fs, *file, named)
-		for _, id := range fs.Areas {
-			rows, _ := fs.AreaTotals(id)
-			items += rows
-		}
-	case *kind == "roadmap":
-		doc, err := roadmap.Decode(*file, raw)
-		if err != nil {
-			refuse(oneLine(err.Error()))
-		}
-		page, items = roadmap.Render(doc, *file), len(doc.Items)
-	case *kind == "fixes":
-		fx, err := roadmap.DecodeFixes(*file, raw)
-		if err != nil {
-			refuse(oneLine(err.Error()))
-		}
-		page, items = roadmap.RenderFixes(fx, *file), len(fx.Items)
-	default:
-		refuse(fmt.Sprintf("--kind %q is not roadmap or fixes", *kind))
+		refuse(oneLine(err.Error()))
 	}
 	if *check {
 		have, err := os.ReadFile(*out)
