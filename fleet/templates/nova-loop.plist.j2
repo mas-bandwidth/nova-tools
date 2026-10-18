@@ -33,6 +33,10 @@
 <key>NOVA_BUS_REDIS</key>
 <string>{{ nova_bus_addr | e }}</string>
 {% endif %}
+{% for secret_file in (l.secret_files | default({}) | dictsort) %}
+<key>{{ secret_file[0] | e }}</key>
+<string>{{ secret_file[1] | regex_replace('^~/', nova_home ~ '/') | e }}</string>
+{% endfor %}
 </dict>
 <key>WorkingDirectory</key>
 <string>{{ nova_home | e }}</string>
