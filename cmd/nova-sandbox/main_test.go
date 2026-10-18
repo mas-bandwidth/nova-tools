@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -619,7 +620,11 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && (os.Args[1] == "probe" || os.Args[1] == "probe-step") {
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ()))
 	}
-	if len(os.Args) == 2 && os.Args[1] == unixListenerVerb && unixListener != nil {
+	if len(os.Args) == 2 && os.Args[1] == unixListenerVerb {
+		if unixListener == nil {
+			fmt.Fprintln(os.Stderr, "LISTEN-ERROR the unix listener is a functional test: build with -tags functional")
+			os.Exit(2)
+		}
 		os.Exit(unixListener(os.Getenv(unixListenerNameEnv)))
 	}
 	os.Exit(m.Run())

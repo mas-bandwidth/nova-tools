@@ -35,5 +35,3 @@ func TestStatusSaysTheRowIsReadFromTheView(t *testing.T) {
 	cli.Do(t, "status", "--as", "friend-b", "--dir", dir).Exit(0).
 		Out("held=7 inbox=0 missing=7", "NOTE the inbox: the friend's row is read from the worker view: "+friend.ViewWhy)
 }
-
-

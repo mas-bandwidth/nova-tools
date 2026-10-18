@@ -180,8 +180,8 @@ func TestFarListensOnTheLoopbackAndForwardsToItsTarget(t *testing.T) {
 
 // The delay Far is given is the delay each write is held, once for each write:
 // three commands one after the other are three delays, a hundred in one write
-// are one, and the replies are none. This is the unit test of the spec's
-// three functional ones.
+// are one, and the replies are none. The clock is fake, so this is a count, not
+// a measurement; it is functional because it runs over real loopback conns.
 func TestFarAppliesTheDelayOncePerWrite(t *testing.T) {
 	t.Parallel()
 

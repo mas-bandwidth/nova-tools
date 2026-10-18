@@ -185,4 +185,3 @@ func TestHelpIsEnoughToUseTheToolCold(t *testing.T) {
 
 // lines reads what the tool writes to stdout, a line at a time.
 func lines(r io.Reader) *bufio.Reader { return bufio.NewReader(r) }
-

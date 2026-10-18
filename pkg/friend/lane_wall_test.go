@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -28,9 +29,11 @@ func TestMain(m *testing.M) {
 		case WallVerb:
 			os.Exit(RunWall(os.Args[2:], os.Environ(), os.Stdin, os.Stdout, os.Stderr))
 		case "run":
-			if laneHarness != nil {
-				os.Exit(laneHarness())
+			if laneHarness == nil {
+				fmt.Fprintln(os.Stderr, "the lane harness is a functional test: build with -tags functional")
+				os.Exit(2)
 			}
+			os.Exit(laneHarness())
 		}
 	}
 	os.Exit(m.Run())
