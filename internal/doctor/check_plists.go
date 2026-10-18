@@ -33,7 +33,7 @@ func checkPlists(ctx context.Context, env Env) Result {
 	}
 	if len(bad) > 0 {
 		return Result{Status: Fail, Evidence: strings.Join(bad, "; "),
-			Fix: "rewrite the agent with the tool that owns it (nova-friend install, nova-config loop) and remove a hand-written stopgap"}
+			Fix: "rewrite the agent with the tool that owns it (nova-config loop, nova-swarm install) and remove a hand-written stopgap"}
 	}
 	return Result{Status: OK, Evidence: fmt.Sprintf("%d nova launch agents lint clean", len(paths))}
 }

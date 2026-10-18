@@ -1,7 +1,6 @@
 package doctor
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -183,34 +182,10 @@ func friendDaemonsOrOK(env Env) ([]friendDaemon, *Result) {
 	return daemons, nil
 }
 
-func init() {
-	Default.Register(Check{Name: "friend-seat", Dependency: "each friend daemon's --coordinator against the sprint seat", Run: checkFriendSeat})
-}
-
-// checkFriendSeat holds each friend daemon's --coordinator to the seat holder
-// the sprint server reports: a daemon pinned to a previous seat can never be
-// handed work (docs/SPEC-DOCTOR.md, "friend-seat").
-func checkFriendSeat(ctx context.Context, env Env) Result {
-	daemons, ok := friendDaemonsOrOK(env)
-	if ok != nil {
-		return *ok
-	}
-	out, err := env.Exec(ctx, "nova-sprint", "where", "--json")
-	if err != nil {
-		return Result{Status: Warn, Evidence: "nova-sprint where did not answer: " + firstLine(err.Error()),
-			Fix: "nova-sprint where --json (the daemon reads the seat from the server)"}
-	}
-	seat := jsonString(out, "coordinator")
-	var bad []string
-	for _, d := range daemons {
-		c := argValue(d.Argv, "--coordinator")
-		if c != "" && seat != "" && c != seat {
-			bad = append(bad, fmt.Sprintf("daemon %s: plist says %s, seat is %s", d.Name, c, seat))
-		}
-	}
-	if len(bad) > 0 {
-		return Result{Status: Fail, Evidence: strings.Join(bad, "; "),
-			Fix: "nova-friend install --as <friend> --coordinator " + seat + " (or drop --coordinator so the daemon reads the seat from the server)"}
-	}
-	return Result{Status: OK, Evidence: fmt.Sprintf("%d friend daemons on seat %s", len(daemons), seat)}
-}
+// The friend-seat check is retired (2026-10-17). It held each nova-friend daemon's
+// --coordinator to the sprint seat; the owner retired the friend daemons that night
+// (every process stopped, every launch agent moved out, every binary deleted) and
+// nova-hook is the one friend channel, so a seat's friends are read from their hook
+// records (`nova-hook status`), not from a daemon's plist, and the check would only
+// ever say "no friend daemons here". The helpers above stay: the friend-row,
+// friend-wall and friend-login checks still enumerate what a machine loads.
