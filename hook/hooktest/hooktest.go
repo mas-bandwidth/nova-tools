@@ -31,8 +31,14 @@ type Rig struct {
 // New is a rig whose clock reads start, closed at the test's end.
 func New(t testing.TB) *Rig {
 	t.Helper()
+	return NewAt(t, time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC))
+}
+
+// NewAt is New with its clock reading now at the start (a test that starts
+// time at 1000, so a zero time shows as a timeout at once).
+func NewAt(t testing.TB, now time.Time) *Rig {
+	t.Helper()
 	mr := miniredis.RunT(t)
-	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
 	mr.SetTime(now)
 	var piped atomic.Int64
 	c := redis.NewClient(&redis.Options{

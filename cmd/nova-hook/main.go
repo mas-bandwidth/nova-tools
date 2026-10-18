@@ -256,7 +256,7 @@ its epoch, otherwise a new epoch starts and every lease and proof of the old one
 the bus push when the role carries it: it renews the lease every ` + hook.RenewEvery.String() + ` and prints each message on your bus
 stream as it lands, HOOK PUSH push=bus id= from= subject=. A message from your own name is passed over (what
 this session sent itself with nova-bus send) except what the heartbeat server sent under that name, which a
-coordinator's does: each FRIEND STATE line, every FRIEND DOWN / FRIEND BACK / COORDINATOR DOWN judgment and its OVERDUE
+coordinator's does: each FRIEND STATE and FRIEND UP line, every FRIEND DOWN / FRIEND BACK / COORDINATOR DOWN judgment and its OVERDUE
 push-again, and the challenges, each its own HOOK PUSH line. A push it does not hold (the sprint push, held by
 nova-sprint run; the work push, held by the friend daemon or the member loop) is named with its holder on the
 HOOK ARMED line's notes. A standalone loop asks at start and every ` + hook.ChallengeEvery.String() + `.
@@ -315,7 +315,7 @@ example: nova-hook hook --as ada --role coordinator`,
 					f.String("codex-since", w.getenv("NOVA_HOOK_CODEX_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); by default the store's time at the first hook, kept in the events directory's .cutover; earlier work must be resent")
 					f.String("dsh-events-dir", w.getenv("NOVA_HOOK_DSH_EVENTS_DIR"), "private directory for bounded external event JSON and the native notification queue (default ~/.local/state/nova-hook/<as>-dsh, created 0700)")
 					f.String("dsh-hooks-file", w.getenv("NOVA_HOOK_DSH_HOOKS_FILE"), "absolute native Cordis include .json path, mounted into the harness desktop profile (default ~/.dsh/<as>-hook/hooks.json)")
-					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "pin one existing harness session (default: the newest live session in the friend's workspace, followed when she starts another); never creates or resumes a session")
+					f.String("dsh-session", w.getenv("NOVA_HOOK_DSH_SESSION"), "pin one existing harness session (default: the newest live session in the friend's workspace, followed when the friend starts another); never creates or resumes a session")
 					f.String("dsh-since", w.getenv("NOVA_HOOK_DSH_SINCE"), "fixed cutover UTC timestamp (RFC3339 seconds); by default the store's time at the first hook, kept in the events directory's .cutover; earlier work must be resent")
 					f.String("antigravity-dir", w.getenv("NOVA_HOOK_ANTIGRAVITY_DIR"), "Antigravity workspace directory for --harness antigravity")
 					f.String("antigravity-session", w.getenv("NOVA_HOOK_ANTIGRAVITY_SESSION"), "Antigravity conversation UUID (default: newest root conversation for --antigravity-dir)")
@@ -418,10 +418,13 @@ Readers also mark a name down after silence exceeds its quiet window plus the an
 A bus send does not create or extend a proof; only the model answers with nova-hook prove.
 Each real change is told once, coalesced per pass: the coordinator gets one judgment (bus kind judgment) naming
 every FRIEND DOWN and FRIEND BACK, open until answered with nova-bus send --re <id> and pushed again as OVERDUE
-once past --judge-within; and apart from it, never folded into it, every change of a friend's state (the record's:
-unhooked, expired, partial, live, proven, and down for a proven one with no answer in the window) is pushed to the
-coordinator at once, in that pass, as its own bus message of kind status, subject FRIEND STATE <name> <old>-><new>
-at=<store time, RFC 3339>, one per name per change, sent with its mark in one write under a once-key so a failed
+once past --judge-within; and apart from it, never folded into it, every change of a friend's level (down: unhooked,
+expired, or proven with no answer in the window; live: armed, its proof not yet in; proven) is pushed to the
+coordinator at once, in that pass, as its own bus message of kind status: a friend coming up from down is FRIEND UP
+<name> <live|proven> <held|unheld> width=<n> ready=<n> working=<n> at=<store time, RFC 3339> (the friend's sprint row, from
+friend cards; row=unread when the sprint does not answer it), at the pass that finds the friend armed, before the proof and
+its FRIEND BACK; every other change is FRIEND STATE <name> <old>-><new> at=<store time>; a change between two down
+states, and the coordinator's own state, are never pushed. One per name per change, sent with its mark in one write under a once-key so a failed
 send is sent at the next pass and a sent one never twice; it is not answered and never OVERDUE, and the first pass
 on a fresh row writes the states it finds with no message. Every other live name gets one message with the changes and COORDINATOR IS <name>,
 a judgment instead when the coordinator went down (COORDINATOR DOWN: who takes over). The pass also expires
