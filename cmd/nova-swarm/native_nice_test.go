@@ -32,7 +32,7 @@ func TestNativeNicesTheChildWhereTheWallForbidsIt(t *testing.T) {
 	assert.False(t, nativeNicesChild("linux", true), "landlock leaves setpriority alone: the card's own nice works")
 	tmpl, err := os.ReadFile(filepath.Join("..", "..", "profiles", "darwin.sb.tmpl"))
 	require.NoError(t, err)
-	assert.Contains(t, string(tmpl), "(deny default)", "the premise: the darwin wall denies what it does not grant")
+	assert.Contains(t, string(tmpl), "(deny default (with no-report))", "the premise: the darwin wall denies what it does not grant")
 	assert.NotContains(t, string(tmpl), "system-sched", "the premise: the darwin wall grants no system-sched")
 }
 

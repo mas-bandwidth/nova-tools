@@ -765,6 +765,15 @@ is built and kept because it costs one bounded query on a run that already
 failed, it is right wherever the OS does report, and the alternative is a tool
 with no way at all to say what it denied.
 
+**The default deny is `(deny default (with no-report))`** (measured 2026-10-18 on
+mini-m5-1, macOS 27.0.1, M5 Pro). With the reporting form, a walled `opencode
+--version` hung forever on most cold starts (0.01 s of CPU, no file open), and
+every card on that host sat silent until the idle reap; with `no-report` the same
+profile passed every cold start, and `(allow default)` never hung. Since the
+report never reaches the log for a `sandbox-exec` profile (above), the modifier
+costs nothing, and the deny itself is unchanged. `profiles/embed_test.go` refuses
+a template whose default rule is anything else.
+
 The query is bounded at **two seconds** and its absence is silence, never an
 error: measured, a `log show` for a three-second window took over ten seconds and
 found nothing, and a card whose test suite fails would have paid that on every
