@@ -6,8 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,14 +16,12 @@ import (
 // bus2:to:rowan 52,280 (119 MB). Each append now trims the stream it writes
 // (XADD MAXLEN ~, the shape of nova-config's cap log): the log about LogMax,
 // each recipient stream about ToMax, by the same one script, a once-send's
-// included; no entry's fields change. The store is miniredis, as the hook's
-// tests use it, with the bounds made small.
+// included; no entry's fields change. The store is testkit.PipeStore, with
+// the bounds made small.
 func TestEveryAppendTrimsItsStreamAboutItsBound(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
+	mr, c := testkit.PipeStore(t) // the store over net.Pipe: no socket
 	mr.SetTime(time.Unix(1000, 0))
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = c.Close() }) // ignored: closing the test's client
 	ctx := context.Background()
 	require.NoError(t, c.SAdd(ctx, friendsKey, "ada", "bob", "cy").Err())
 	b := &Bus{Store: Redis{C: c, LogMax: 7, ToMax: 3}}

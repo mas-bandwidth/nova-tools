@@ -951,12 +951,12 @@ func (b *Bus) prune(ctx context.Context, key, stream string, h map[string]string
 		return
 	}
 	first, err := b.Store.Range(ctx, stream, "-", "+", 1)
-	if err != nil || len(first) == 0 {
-		return // ignored: no first entry known, nothing is known trimmed
+	if err != nil || len(first) == 0 { // ignored: with no first entry known, nothing is known trimmed; the read goes on whole
+		return
 	}
 	ms, err := strconv.ParseInt(strings.SplitN(first[0].Entry, "-", 2)[0], 10, 64)
-	if err != nil {
-		return // ignored: an entry id that is no time says nothing of what is trimmed
+	if err != nil { // ignored: an entry id that is no time says nothing of what is trimmed
+		return
 	}
 	var old []string
 	for id := range h {
@@ -968,8 +968,8 @@ func (b *Bus) prune(ctx context.Context, key, stream string, h map[string]string
 		return
 	}
 	slices.Sort(old)
-	if _, err := b.Store.Unmark(ctx, key, old...); err != nil {
-		return // ignored: a login that may not clear the hash reads it whole, as before
+	if _, err := b.Store.Unmark(ctx, key, old...); err != nil { // ignored: a login that may not clear the hash reads it whole, as before
+		return
 	}
 	for _, id := range old {
 		delete(h, id)
