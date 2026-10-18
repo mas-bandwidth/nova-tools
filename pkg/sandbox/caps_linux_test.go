@@ -51,7 +51,6 @@ func TestNprocLimitLeavesRoomForEverySlot(t *testing.T) {
 	// hetzner2 quiet at the start (900 tasks), a 1024-process tree, slice TasksMax 337242.
 	lim := nprocLimit(900, 1024, 337242)
 	assert.Equal(t, uint64(900+SizedSliceTrees*NprocThreadsPerProc*1024), lim)
-	assert.Greater(t, lim, uint64(900+SizedSliceTrees*1024*NprocThreadsPerProc-1), "every slot grown to its cap fits")
 	// The old limit, now plus twice the cap, is what a growing bench ran out of.
 	assert.Greater(t, lim, uint64(900+2*1024))
 	// No slice visible: the same headroom.
@@ -59,4 +58,6 @@ func TestNprocLimitLeavesRoomForEverySlot(t *testing.T) {
 	// A tight slice caps it, but never under now plus twice the cap.
 	assert.Equal(t, uint64(10000), nprocLimit(1000, 1024, 10000))
 	assert.Equal(t, uint64(9000+2*1024), nprocLimit(9000, 1024, 10000))
+	// An absurd cap is held to nprocMaxProcs: no overflow, no wrap.
+	assert.Equal(t, uint64(100+SizedSliceTrees*NprocThreadsPerProc*nprocMaxProcs), nprocLimit(100, 1<<62, 0))
 }

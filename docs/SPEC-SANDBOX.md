@@ -589,7 +589,7 @@ half the worker runs on hetzner1, hetzner2 and amd-3, `runaway: 714 processes (c
 - **Linux, as well.** `RLIMIT_NPROC` is per user, not per tree, so it is a floor under the
   line and not the line: while the child is forked it is set to the machine's task total
   plus room for every slot of the bench at its cap (nprocLimit: 4 slots of the cap at 8
-  threads a process, never above the slice TasksMax), so a bomb is stopped between two
+  threads a process, never above the slice TasksMax unless now plus twice the cap is), so a bomb is stopped between two
   counts while the other slots grow, and the tool's own limit is
   put back at once. `RLIMIT_AS` is not used: it is per process and refuses ordinary
   programs that reserve a large virtual range. The memory cap is the resident sum above.

@@ -376,6 +376,9 @@ func lowerNproc(maxProcs int) func() {
 // threads, and the kernel counts each one.
 const NprocThreadsPerProc = 8
 
+// nprocMaxProcs bounds the cap nprocLimit sizes from (pid_max is at most 2^22).
+const nprocMaxProcs = 1 << 22
+
 // nprocLimit is the RLIMIT_NPROC for a child walled at maxProcs processes, with now the
 // machine's task count when it starts and sliceTasks the login slice's TasksMax (0 when
 // none is visible). The headroom is sized from the machine facts SizedCaps uses, never
@@ -383,9 +386,11 @@ const NprocThreadsPerProc = 8
 // processes of NprocThreadsPerProc threads. On 2026-10-17 the limit was now plus twice the
 // cap, so a child started while the bench was quiet ran out of threads (Go's
 // "newosproc" / "pthread_create failed", exit 134) as the bench's other slots grew. It is
-// never above the slice's TasksMax, which bounds the user's tasks anyway, unless now
-// already is.
+// never above the slice's TasksMax, which bounds the user's tasks anyway, unless now plus
+// twice the cap is. maxProcs is held to nprocMaxProcs first, so an absurd --max-procs
+// cannot overflow the sum.
 func nprocLimit(now, maxProcs, sliceTasks int) uint64 {
+	maxProcs = min(maxProcs, nprocMaxProcs)
 	lim := now + SizedSliceTrees*NprocThreadsPerProc*maxProcs
 	if sliceTasks > 0 && lim > sliceTasks {
 		lim = max(sliceTasks, now+2*maxProcs)

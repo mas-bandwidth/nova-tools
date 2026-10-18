@@ -85,8 +85,8 @@ func endGroup(pgid int) {
 // bombs makes the fork bombs of this package take turns. The wall's floor under the cap
 // is RLIMIT_NPROC (lowerNproc), which the kernel counts over every task of the USER, not
 // the tree: the limit is the machine's task total at the bomb's start plus room for every
-// slot at its cap (nprocLimit; it was twice the
-// cap when this was written). Two bombs run in parallel share that one count, so the later bomb's limit is
+// slot at its cap (nprocLimit; it was twice the cap when this was written). Two bombs run
+// in parallel share that one count, so the later bomb's limit is
 // spent by the earlier bomb's children, and its shell is refused a fork below the cap
 // ("Cannot fork", exit 2, about 200 children on ubuntu-latest, run 38582864454). A tree
 // under the cap is no runaway, so the wall rightly leaves it, and the test failed on
