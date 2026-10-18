@@ -19,3 +19,6 @@ func stopNativeTerm(ch chan os.Signal) {}
 
 // lowerChildPriority is nothing on windows, which is not a bench.
 func lowerChildPriority(pgid int) error { return nil }
+
+// nativeChildSignal is nothing on windows: a windows child has no signal name.
+func nativeChildSignal(ee *exec.ExitError) string { return "" }
