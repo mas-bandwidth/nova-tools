@@ -70,6 +70,8 @@ func TestLaneProfileInputRefusesDenyingNothing(t *testing.T) {
 	_, err := (LaneProfile{Work: "/w"}).Input("/w", []string{"sh"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "denies nothing")
+	assert.Contains(t, err.Error(), "--deny <self>", "the remedy names the wall's own flag")
+	assert.NotContains(t, err.Error(), "nova-friend", "the friend daemons are retired (2026-10-17): no remedy names nova-friend")
 }
 
 // A valid friend profile (the default name) produces a wall input: writes to the working

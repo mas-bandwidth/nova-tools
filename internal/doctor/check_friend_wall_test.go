@@ -22,6 +22,7 @@ func TestDoctorFriendWallNamesADirInsideTheDenySelf(t *testing.T) {
 	assert.Contains(t, r.Evidence, "home/ai/lead/working/ada")
 	assert.Contains(t, r.Evidence, "home/ai/lead/working")
 	assert.Contains(t, r.Fix, "sibling")
+	assert.NotContains(t, r.Fix, "nova-friend install", "the friend daemons are retired: the remedy never reinstalls one")
 
 	writeFriendPlist(t, root, "ada", "--as", "ada", "--harness", "claude",
 		"--coordinator", "lead", "--dir", "home/ada-lane")

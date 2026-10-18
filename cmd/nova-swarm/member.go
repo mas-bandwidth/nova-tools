@@ -305,8 +305,10 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	intr := make(chan os.Signal, 1)
 	signal.Notify(intr, os.Interrupt)
 	defer signal.Stop(intr)
-	keep := mirrorKeeping(os.Getenv(mirrorsEnv), *root, rn.goBuildCache(), stdout, stderr)
-	if keep != nil {
+	// a reader refreshes no mirror; its cards still borrow ~/nova-bench/mirror, which the bench's
+	// mirror-refresh loop keeps
+	keep := mirrorKeeping(os.Getenv(mirrorsEnv), *reader, *root, rn.goBuildCache(), stdout, stderr)
+	if os.Getenv(mirrorsEnv) != "" {
 		rn.benchHome, _ = os.UserHomeDir()
 	}
 	n, replaced := memberLoop(m, loopRun{keep: keep, every: every.d, limit: loopTicks(*once, ticksGiven, *ticks), stamp: func() string { return binstamp.Of(self) }, term: term, intr: intr, deadline: deadline.d, endLanes: rn.endLanes}, stdout, stderr)
@@ -1711,26 +1713,42 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	return fmt.Fprint(l.w, string(p))
 }
 
-// mirrorsEnv names the repositories (a `url,...` list) a member keeps a bare mirror of under
-// ~/nova-bench/mirror, fetched at start and after landings, with the shared build cache
-// warmed at each one's HEAD branch tip. An environment word and not a flag: a unit's
-// environment is where a bench's repositories are named, and the usage line stays as it is.
+// mirrorsEnv names the repositories (a `url,...` list) a worker member keeps a bare mirror of
+// under ~/nova-bench/mirror, fetched at start and then every mirrorEvery (by the clock, never on
+// a landing), with the shared build cache warmed at each one's HEAD
+// branch tip when it moved. An environment word and not a flag: a unit's environment is where
+// a bench's repositories are named, and the usage line stays as it is.
 const mirrorsEnv = "NOVA_SWARM_MIRRORS"
 
-// mirrorEvery is the least time between two refreshes of a member's mirrors: a landing the
-// member sees is fetched at the next pass past it.
-const mirrorEvery = time.Minute
+// mirrorEvery is the least time between two refreshes of a member's mirrors. It was a minute:
+// every seat of a bench fetched every repository from GitHub each minute (two seats share
+// ~/nova-bench/mirror, so twice, about four git spawns a repository), and ran go build and go
+// vet each time a tip moved (2026-10-17 audit). A stale mirror is not only a slower clone: a
+// card that names a BASE branch and no head sha is staged at the mirror's tip of that branch
+// with no fetch (pkg/swarm/stage.go, StageCard), so for up to ten minutes it can start behind a
+// landing.
+const mirrorEvery = 10 * time.Minute
+
+// mirrorDue says a refresh last started at last (zero: never) is due again at now.
+func mirrorDue(last, now time.Time) bool { return last.IsZero() || now.Sub(last) >= mirrorEvery }
 
 // mirrorKeeping is the member's warm mirrors (docs/SPEC-SWARM.md, the warm clones and caches
 // card): keep, which a pass calls with the time, starts a refresh of every mirror in the
-// background when none runs and mirrorEvery has passed (the first call, at start, always),
+// background when none runs and mirrorDue says so (the first call, at start, always).
+// A reader keeps none (nil) and builds nothing from the mirrors' tips, but its cards still
+// need the mirror (StageCard refuses "no bench mirror for <repo>"): what keeps it there and
+// current is the bench's own mirror-refresh loop (its fleet loop row, every 600 s),
+// not this keeper, which NOVA_SWARM_MIRRORS turns on for a worker seat alone.
 // A card's clone step reaches the mirrors by the path the card names (PointCardAtMirrors),
 // never by an environment word: the harness's environment is rebuilt, and its HOME is the
 // slot's. A refresh that fails is a NOTE and never stops a pass: staging reads the mirror
 // it finds, and a cold cache costs time only.
-func mirrorKeeping(urls, root, gocache string, stdout, stderr io.Writer) (keep func(time.Time)) {
+func mirrorKeeping(urls string, reader bool, root, gocache string, stdout, stderr io.Writer) (keep func(time.Time)) {
+	if urls == "" || reader {
+		return nil
+	}
 	home, err := os.UserHomeDir()
-	if urls == "" || err != nil {
+	if err != nil {
 		return nil
 	}
 	var keepers []swarm.MirrorKeeper
@@ -1741,7 +1759,7 @@ func mirrorKeeping(urls, root, gocache string, stdout, stderr io.Writer) (keep f
 	var busy atomic.Bool
 	var last time.Time
 	return func(now time.Time) {
-		if !last.IsZero() && now.Sub(last) < mirrorEvery || !busy.CompareAndSwap(false, true) {
+		if !mirrorDue(last, now) || !busy.CompareAndSwap(false, true) {
 			return
 		}
 		last = now

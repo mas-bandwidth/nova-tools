@@ -1,8 +1,6 @@
 package doctor
 
 import (
-	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,44 +54,36 @@ func writeFriendUnit(t *testing.T, root, name string, daemonArgs ...string) stri
 	return path
 }
 
-func TestDoctorFriendSeatHoldsTheDaemonToTheServerSeat(t *testing.T) {
+// The friend-seat check is retired (check_friend_seat.go, 2026-10-17): the friend daemons it
+// read are gone, so the doctor names no friend-seat.
+func TestDoctorFriendSeatIsRetired(t *testing.T) {
+	t.Parallel()
+	assert.NotContains(t, Default.Names(), "friend-seat")
+}
+
+// The friend checks that remain enumerate the units a machine loads on either platform,
+// through the injected one: the launchd plist's ProgramArguments, the systemd unit's ExecStart.
+func TestFriendDaemonsAreEnumeratedOnBothPlatforms(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	writeFriendPlist(t, root, "ada", "--as", "ada", "--coordinator", "old", "--harness", "claude")
-	fake := friendEnv{goos: "darwin", fakeEnv: fakeEnv{env: map[string]string{"HOME": "home"}, root: root,
-		exec: func(name string, _ ...string) (string, error) {
-			if name == "nova-sprint" {
-				return `{"coordinator":"new"}`, nil
-			}
-			return "", errors.New("unexpected " + name)
-		}}}
+	writeFriendPlist(t, root, "ada", "--as", "ada", "--coordinator", "old")
+	darwin := friendEnv{goos: "darwin", fakeEnv: fakeEnv{env: map[string]string{"HOME": "home"}, root: root}}
+	got := friendDaemons(darwin)
+	require.Len(t, got, 1)
+	assert.Equal(t, "ada", got[0].Name)
+	assert.Equal(t, "com.nova.friend-ada", got[0].Label)
+	assert.Equal(t, "old", argValue(got[0].Argv, "--coordinator"))
 
-	r := checkFriendSeat(context.Background(), fake)
-	assert.Equal(t, Fail, r.Status)
-	assert.Contains(t, r.Evidence, "plist says old, seat is new")
-	assert.Contains(t, r.Fix, "nova-friend install")
-
-	fake.exec = func(string, ...string) (string, error) { return `{"coordinator":"old"}`, nil }
-	r = checkFriendSeat(context.Background(), fake)
-	assert.Equal(t, OK, r.Status)
+	linuxRoot := t.TempDir()
+	writeFriendUnit(t, linuxRoot, "ada", "--as", "ada", "--coordinator", "old")
+	linux := friendEnv{goos: "linux", fakeEnv: fakeEnv{env: map[string]string{"HOME": "home"}, root: linuxRoot}}
+	got = friendDaemons(linux)
+	require.Len(t, got, 1)
+	assert.Equal(t, "nova-friend-ada", got[0].Label)
+	assert.Equal(t, "old", argValue(got[0].Argv, "--coordinator"))
 
 	empty := friendEnv{goos: "darwin", fakeEnv: fakeEnv{env: map[string]string{"HOME": "nowhere"}, root: root}}
-	r = checkFriendSeat(context.Background(), empty)
-	assert.Equal(t, OK, r.Status)
-	assert.Contains(t, r.Evidence, "no friend daemons here")
-
-	// The linux path is enumerated and its ExecStart= argv parsed on this bench
-	// too, through the injected platform.
-	linuxRoot := t.TempDir()
-	writeFriendUnit(t, linuxRoot, "ada", "--as", "ada", "--coordinator", "old", "--harness", "claude")
-	linux := friendEnv{goos: "linux", fakeEnv: fakeEnv{env: map[string]string{"HOME": "home"}, root: linuxRoot,
-		exec: func(name string, _ ...string) (string, error) {
-			if name == "nova-sprint" {
-				return `{"coordinator":"new"}`, nil
-			}
-			return "", errors.New("unexpected " + name)
-		}}}
-	r = checkFriendSeat(context.Background(), linux)
-	assert.Equal(t, Fail, r.Status)
-	assert.Contains(t, r.Evidence, "plist says old, seat is new")
+	_, ok := friendDaemonsOrOK(empty)
+	require.NotNil(t, ok)
+	assert.Contains(t, ok.Evidence, "no friend daemons here")
 }
