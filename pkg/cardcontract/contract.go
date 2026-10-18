@@ -248,10 +248,11 @@ func ReadFinish(job string) (typedrec.CardResult, bool) {
 // profile copy.
 const WorkerPlaybookLine = "Read nova-sprint help worker-playbook first: how to take, work, finish and report, and your harness's section."
 
-// jobMD is the JOB.md a profile's text makes: its title line first (ReadTitle stays line 1
-// of a read's), then WorkerPlaybookLine as the first instruction, then the rest of the text.
-func jobMD(p Profile, f Frame, s Staged) string {
-	text := p.JobText(f, s)
+// JobMD is the one maker of a JOB.md's text, and every writer of a JOB.md writes through it
+// (Install here, and the friend stager's writeJob in pkg/friend): the text's title line first
+// (ReadTitle stays line 1 of a read's), then WorkerPlaybookLine as the first instruction, then
+// the rest of the text.
+func JobMD(text string) string {
 	title, rest, ok := strings.Cut(text, "\n")
 	if !ok {
 		return text + "\n\n" + WorkerPlaybookLine + "\n"
@@ -261,7 +262,7 @@ func jobMD(p Profile, f Frame, s Staged) string {
 
 // Install writes JOB.md into the job directory and the profile's shims into shimDir.
 func Install(p Profile, f Frame, s Staged, shimDir string) error {
-	if err := atomicfile.Write(filepath.Join(s.Job, JobName), []byte(jobMD(p, f, s)), 0o644); err != nil {
+	if err := atomicfile.Write(filepath.Join(s.Job, JobName), []byte(JobMD(p.JobText(f, s))), 0o644); err != nil {
 		return fmt.Errorf("JOB.md: %w", err)
 	}
 	if err := os.MkdirAll(shimDir, 0o755); err != nil {
