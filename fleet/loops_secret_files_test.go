@@ -272,6 +272,7 @@ func evaluateLoopSecretAssertion(t *testing.T, path, recordName, login string) (
 			},
 		},
 	})
+	require.NoError(t, err)
 	const script = `import json, sys
 from jinja2 import Environment, StrictUndefined
 data = json.load(sys.stdin)
