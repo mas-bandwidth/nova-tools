@@ -5,4 +5,4 @@
 ALTER TABLE config.providers
     ADD COLUMN IF NOT EXISTS base_url text NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS key_env text NOT NULL DEFAULT '',
-    ADD COLUMN IF NOT EXISTS npm text NOT NULL DEFAULT '';
+    ADD COLUMN IF NOT EXISTS npm_adapter text NOT NULL DEFAULT '';

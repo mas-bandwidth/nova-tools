@@ -78,6 +78,14 @@ type nativeRunConfig struct {
 	// writeJobConfig declares it instead of reading the providers table, and opens no read
 	// proxy over it. Nil is the ordinary case: the table's row decides.
 	providerDirect *swarm.DirectProvider
+	// providerBaseURL, providerKeyEnv and providerNPM are the route's provider row as the
+	// sprint drew it from nova-config (base_url, key_env and npm_adapter), handed by the
+	// member from the packet or typed on the verb. A nonempty base URL and key env name are
+	// resolved into providerDirect before the job config is written; the key env is the
+	// NAME only, and the value is never read here.
+	providerBaseURL string
+	providerKeyEnv  string
+	providerNPM     string
 	// benchHome is the BENCH's home -- this process's own, never the child's -- and it is
 	// where the provisioning standard puts the toolchain (swarm.ToolchainRoots). Empty is
 	// the ordinary case and means "ask the OS"; a test names a home of its own, because the
@@ -804,6 +812,13 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		reads = swarm.CardReadPaths(cfg.card)
 	}
 	reads = append(reads, nativeReadRoots(cfg)...)
+	// THE ROUTE'S PROVIDER ROW DECLARES ITS OWN BLOCK. nova-sprint reads the route's
+	// nova-config provider row and hands base_url, key_env and npm_adapter on the packet
+	// (the member passes them as the provider flags); a worker description naming this
+	// route's provider carries the same base and key variable. Either way the job writer
+	// declares the block instead of leaving an uncatalogued provider to the harness's
+	// catalog, and no proxy is opened over the provider's own base.
+	cfg.providerDirect = routeProviderDirect(cfg, provider)
 	configSHA, reason, proxy := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	cleanup := func() {
 		releaseSlot()
@@ -2763,6 +2778,35 @@ func sweepNativeJob(root, job string) error {
 		return fmt.Errorf("the job directory is not known")
 	}
 	return safepath.RemoveUnder(root, job)
+}
+
+// routeProviderDirect is the custom block one launch writes for its route's provider: the
+// provider row's base_url, key_env and npm_adapter as the sprint drew them from nova-config
+// (cfg.providerDirect, or the three provider flags), else a worker description's own
+// provider declaration when it names this route's provider. A base URL and a key variable
+// name are both required: empty means the provider is catalogued and the providers table
+// decides, as before.
+func routeProviderDirect(cfg nativeRunConfig, provider string) *swarm.DirectProvider {
+	if cfg.providerDirect != nil {
+		if strings.TrimSpace(cfg.providerDirect.BaseURL) != "" && strings.TrimSpace(cfg.providerDirect.KeyEnv) != "" {
+			return cfg.providerDirect
+		}
+		return nil
+	}
+	base, keyEnv := strings.TrimSpace(cfg.providerBaseURL), strings.TrimSpace(cfg.providerKeyEnv)
+	if base != "" && keyEnv != "" {
+		return &swarm.DirectProvider{BaseURL: base, KeyEnv: keyEnv, NPMAdapter: strings.TrimSpace(cfg.providerNPM)}
+	}
+	if w := cfg.worker; w != nil && w.Provider == provider {
+		key := w.Secret
+		if key == "" {
+			key = w.EnvVar
+		}
+		if strings.TrimSpace(w.BaseURL) != "" && strings.TrimSpace(key) != "" {
+			return &swarm.DirectProvider{BaseURL: w.BaseURL, KeyEnv: key}
+		}
+	}
+	return nil
 }
 
 // launchArgvFor is the one launcher, swarm.LaunchArgvFor: the providers table decides the

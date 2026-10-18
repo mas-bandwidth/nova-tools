@@ -11,7 +11,7 @@ import (
 
 // envNameRE is a provider key's variable name: what key_env may hold. The value is never
 // stored, only the name, so a row with a literal key in key_env is refused.
-var envNameRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+var envNameRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 func checkProvider(r Row) error {
 	var problems []string
@@ -32,15 +32,15 @@ func checkProvider(r Row) error {
 	}
 	if raw := r.Fields["base_url"]; raw != "" {
 		u, err := url.Parse(raw)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil {
-			problems = append(problems, "--base_url wants an http:// or https:// API base without credentials, or empty")
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
+			problems = append(problems, "--base_url wants an https:// API base without credentials, or empty")
 		}
 	}
 	if raw := r.Fields["key_env"]; raw != "" && !envNameRE.MatchString(raw) {
-		problems = append(problems, "--key_env wants the NAME of an environment variable ([A-Z_][A-Z0-9_]*), never its value, or empty")
+		problems = append(problems, "--key_env wants the NAME of an environment variable ([A-Z][A-Z0-9_]*), never its value, or empty")
 	}
-	if raw := r.Fields["npm"]; raw != "" && strings.ContainsFunc(raw, func(c rune) bool { return c == ' ' || c == '\t' || c == '\n' }) {
-		problems = append(problems, "--npm wants one npm package name with no blank, or empty")
+	if raw := r.Fields["npm_adapter"]; raw != "" && strings.ContainsFunc(raw, func(c rune) bool { return c == ' ' || c == '\t' || c == '\n' }) {
+		problems = append(problems, "--npm_adapter wants one npm package name with no blank, or empty")
 	}
 	if len(problems) != 0 {
 		return fmt.Errorf("%s", strings.Join(problems, "; "))
