@@ -262,6 +262,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	cfg := memberConfig(*as, *reader, meter, room, *root, *noWall)
 	cfg.Sleep = time.Sleep // harness starts StartGap apart
+	// the loop's interval: an idle pass reads its queue every member.IdleQueueEvery instead,
+	// and a reader's beat sends one queue an interval, not two (pkg/member Beat, skipQueue)
+	cfg.Every = every.d
 	// a beat the server refuses marks this member's own status file, read by doctor
 	// (member.Config.Status); the --load-unmeasured probe is asked once at start
 	cfg.Status = memberStatusFile(*as, *root)
