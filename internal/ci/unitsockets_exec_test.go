@@ -60,3 +60,24 @@ func TestShells(t *testing.T) {
 	}
 	assert.Equal(t, want, got, "git status is no socket; every other line is:\n%s", strings.Join(got, "\n"))
 }
+
+// The real scan parses under an absolute path; the shared net shapes must still
+// be read there once the caller says the file is in the unit tier (and not when
+// it does not).
+func TestUnitSocketsReadsTheSharedNetShapesForATierFileUnderAnAbsolutePath(t *testing.T) {
+	t.Parallel()
+	const src = `package p
+
+import "net"
+
+func TestDial() { _, _ = net.DialTCP("tcp", nil, nil) }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "/work/repo/internal/p/p_test.go", src, 0)
+	require.NoError(t, err)
+	assert.Empty(t, unitSocketsIn(fset, f), "an absolute name is not judged to be in the tier")
+	assert.Empty(t, unitSocketsInTier(fset, f, false))
+	got := unitSocketsInTier(fset, f, true)
+	require.Len(t, got, 1)
+	assert.Equal(t, "net.DialTCP", got[0].What)
+}
