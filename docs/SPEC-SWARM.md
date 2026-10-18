@@ -33,8 +33,10 @@ its data home are the only writable paths; the slot directory and whatever
 the `gh` configuration are in neither list and the kernel denies them.
 A command that runs outside the wall and dies inside it is missing a `read_roots` entry.
 
-The wall sizes the child tree's memory cap itself (an eighth of the machine, at most a
-quarter of the login slice's `MemoryMax`, at least 8g; 8g where memory cannot be read).
+The wall sizes the child tree's memory cap from one eighth of machine RAM, limited to a
+quarter of visible slice `MemoryMax`, with an 8 GiB floor and then a ceiling of half the
+machine RAM. That ceiling can make the cap less than 8 GiB on machines below 16 GiB; the
+default is 8 GiB when machine RAM cannot be read.
 A member that needs a different cap names `--max-mem <size>` on `native` or `member`, which
 overrides that default; absent, nothing is passed and the sized default stands. A value
 the wall would refuse is refused by native before the child starts.

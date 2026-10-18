@@ -70,7 +70,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	auth := fs.String("auth", "", "the harness's auth `file`, handed to each child's native --auth")
 	config := fs.String("config", "", "the harness's provider config `file`, handed to each child's native --config")
 	workerFile := fs.String("worker", "", "the worker description `file` (JSON), handed to each child's native --worker; the secret it names is handed through too")
-	maxMem := fs.String("max-mem", "", "the wall's memory cap for each child's tree (native --max-mem), a `size` such as 16g (default: the wall sizes it, an eighth of RAM and at least 8g; this overrides it); not with --no-wall")
+	maxMem := fs.String("max-mem", "", "the wall's memory cap for each child's tree (native --max-mem), a positive `size` such as 16g (default: one eighth of RAM, limited to a quarter of visible slice MemoryMax, with an 8g floor and half-RAM ceiling; the ceiling can make it less than 8g; 8g if RAM is unreadable; this overrides the default); not with --no-wall")
 	noWall := fs.Bool("no-wall", false, "run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes")
 	ghBin := fs.String("gh", "gh", "the gh `path` the member opens a work card's pull request with, outside the wall (default gh)")
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")

@@ -665,7 +665,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 		config:          f.fs.String("config", "", "the harness's provider config `file` (opencode.json), copied beside the auth (not with a --worker naming a secret)"),
 		workerFile:      f.fs.String("worker", "", "the worker description `file` (JSON) that names the model, the key and the read roots; nova-swarm worker check checks it"),
 		sandbox:         f.fs.String("sandbox", "", "the nova-sandbox binary `path` that builds the wall (default: nova-sandbox on PATH); not with --no-wall"),
-		maxMem:          f.fs.String("max-mem", "", "the wall's memory cap for the child's tree, a `size` such as 16g (default: the wall sizes it, an eighth of RAM and at least 8g; this overrides it); not with --no-wall"),
+		maxMem:          f.fs.String("max-mem", "", "the wall's memory cap for the child's tree, a positive `size` such as 16g (default: one eighth of RAM, limited to a quarter of visible slice MemoryMax, with an 8g floor and half-RAM ceiling; the ceiling can make it less than 8g; 8g if RAM is unreadable; this overrides the default); not with --no-wall"),
 		noWall:          f.fs.Bool("no-wall", false, "run the child with no nova-sandbox wall: the caller owns every read and write it makes"),
 		noSharedCaches:  f.fs.Bool("no-shared-caches", false, "keep the Go caches under the child's HOME instead of the bench's shared <root>/cache"),
 		resultsRootFlag: f.fs.String("results-root", "", "the `dir` RESULT.md, usage.tsv and the report are published under (default <root>/results)"),

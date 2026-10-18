@@ -530,14 +530,15 @@ runaway command cannot take the machine (289 test processes ran unbounded under 
 `go test`). The `run` verb's defaults are **256 processes** and **8 GiB**. The bare form's
 are **sized to the machine** (`sandbox.MachineCaps`, `pkg/sandbox/caps.go`): 64
 processes per logical CPU and at least 512, never more than a quarter of the TasksMax
-(`pids.max`) of the cgroups above the wall; an eighth of the machine's memory, never more
-than a quarter of the MemoryMax (`memory.max`) of the cgroups above it, at least 8 GiB and
-never more than half the machine, where the memory can be read (`/proc/meminfo` MemTotal,
-darwin's `hw.memsize`), else 8 GiB. Memory is sized from memory, never from the CPU count.
-The share is small so that four trees at their caps fit under the member's login slice
-together wherever a quarter of the slice is 8 GiB or more (the 8 GiB floor wins on smaller
-slices): past the slice's MemoryMax the kernel's OOM killer picks its own victim, often
-an unrelated sibling worker, where the wall kills only the runaway. The fixed 256 and 8
+(`pids.max`) of the cgroups above the wall; memory is one eighth of machine RAM, limited to
+a quarter of the visible MemoryMax (`memory.max`), with an 8 GiB floor and then a ceiling of
+half the machine RAM. The half-machine ceiling can make the result less than 8 GiB on a
+machine below 16 GiB. When machine memory is unreadable (`/proc/meminfo` MemTotal, or
+darwin's `hw.memsize`), the default is 8 GiB. Memory is sized from memory, never from the
+CPU count. Four trees fit under the member's login slice where a quarter of that slice is at
+least 8 GiB. Below that share, the floor can exceed the slice limit, so the kernel's OOM
+killer may pick its own victim, often an unrelated sibling worker; the wall kills only the
+runaway. The fixed 256 and 8
 GiB killed ordinary parallel builds on the fleet's members (2026-10-17: about 90 worker
 children in a day, `runaway: 287` to `697 processes (cap 256)`, and `8611000320 bytes of
 memory (cap 8589934592)`), and so did the first sizing, which keyed both caps on 32 CPUs
