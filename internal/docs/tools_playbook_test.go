@@ -190,18 +190,25 @@ func TestToolsPlaybookNamesOnlyRealVerbsAndUsageLines(t *testing.T) {
 	stage := filepath.Join(t.TempDir(), "stage")
 	require.NoError(t, os.MkdirAll(stage, 0o755))
 	bin := t.TempDir()
+	// One go build for every tool: the compiles and links run in parallel and the
+	// toolchain starts once. Built one at a time, the eleven links took 8.6 s on a
+	// 16-core bench against 1.8 s together, and this was the slowest test of a
+	// two-core hosted shard.
+	pkgs := make([]string, 0, len(tools))
 	for tool := range tools {
 		_, err := os.Stat(filepath.Join(root, "cmd", tool))
 		require.NoError(t, err, "%s names %s, which is no ./cmd/%s here; add it to builtElsewhere if another repository builds it", toolsPlaybookPath, tool, tool)
-		out := filepath.Join(stage, tool)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		build := exec.CommandContext(ctx, "go", "build", "-o", out, "./cmd/"+tool)
-		build.Dir = root
-		build.Env = goenv.Clean(os.Environ())
-		built, err := build.CombinedOutput()
-		cancel()
-		require.NoError(t, err, "go build ./cmd/%s: %s", tool, built)
-		require.NoError(t, testbin.Place(out, filepath.Join(bin, tool)))
+		pkgs = append(pkgs, "./cmd/"+tool)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	build := exec.CommandContext(ctx, "go", append([]string{"build", "-o", stage + string(filepath.Separator)}, pkgs...)...)
+	build.Dir = root
+	build.Env = goenv.Clean(os.Environ())
+	built, err := build.CombinedOutput()
+	cancel()
+	require.NoError(t, err, "go build %s: %s", strings.Join(pkgs, " "), built)
+	for tool := range tools {
+		require.NoError(t, testbin.Place(filepath.Join(stage, tool), filepath.Join(bin, tool)))
 	}
 	h := &playbookHelp{bin: bin, home: t.TempDir(), cache: map[string]helpRun{}}
 

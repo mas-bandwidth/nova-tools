@@ -82,11 +82,15 @@
 \* every message from its own name) and "fold" (one message for every name's
 \* head in hand) are the reversed witnesses.
 \*
-\* Only a crossing of proven is pushed (serve.go upOrDown; 2026-10-17, when 304
-\* pushes in 34 hours carried nothing to act on): the state compared is proven
-\* or down, every other state (unhooked, expired, and the code's live and
-\* partial) being down, so a change between two down states is no transition
-\* (NoPushWithinDown); and no push names the coordinator it goes to
+\* Only a change of level is pushed (serve.go pushLevel): the level compared is
+\* proven, live (hooked with its proof not in: an arming, the code's live and
+\* partial; under Parts "proven") or down (unhooked, expired), so a change
+\* between two down states is no transition (NoPushWithinDown; 2026-10-17, when
+\* 304 pushes in 34 hours carried nothing to act on), and an arming is pushed
+\* at the pass that finds it, before its proof (ArmingPushedAtPass; 2026-10-18,
+\* when a friend armed and the coordinator heard of her only at her proof, a
+\* pass later: the code's FRIEND UP, with her sprint row, which the model does
+\* not carry); and no push names the coordinator it goes to
 \* (NeverPushedSelf). The recipient is the coordinator up at the send
 \* (PushTo, the code's p.Coord), with no push at all while none is up; the
 \* coordinator of a pass is never queued, and what was in hand for a name
@@ -95,12 +99,12 @@
 \* (MCHookBeatPushHandover, safety only: the shown lines' liveness is checked
 \* with one coordinator). Under Parts "upgrade" the server row starts with any
 \* marks, the old rule's unhooked and expired among them, which read as down
-\* (LastC). Not modelled: the hook's live and partial states (kin of expired
-\* here), and a coordinator whose record reads partial while her bus proof
-\* stands, the production case of a self-push (a name is proven or not).
-\* Broken: "pushall" (every change of the hook state, the rule before),
-\* "pushself" (her own state pushed to her) and "rawmark" (an old mark compared
-\* as written) are the reversed witnesses.
+\* (LastC). Not modelled: a coordinator whose record reads partial while her
+\* bus proof stands, the production case of a self-push (a name is proven or
+\* not). Broken: "pushall" (every change of the hook state, the rule before),
+\* "pushself" (her own state pushed to her), "rawmark" (an old mark compared
+\* as written) and "provenonly" (the rule of 2026-10-17: live is down, so an
+\* arming is heard only at its proof) are the reversed witnesses.
 \*
 \* Up is proven (Parts "proven"; hook/redis.go beatLua, Passed.Unhooked and
 \* Passed.Live; the ruling of 2026-10-16: a friend is live only when
@@ -180,6 +184,8 @@ QuietCap == IF Silence THEN CoordinatorEvery + 3 ELSE DownAfter + 2
 \*   "pushall"     BadPushAll: every change of the hook state is pushed, unhooked to
 \*                 expired and back included, the rule before 2026-10-17 (NoPushWithinDown)
 \*   "pushself"    BadPushSelf: the coordinator's own state is pushed to her (NeverPushedSelf)
+\*   "provenonly"  BadProvenOnly: live is down, the rule of 2026-10-17, so an arming is
+\*                 pushed only at its proof, a pass later (ArmingPushedAtPass; Parts "proven")
 \*   "rawmark"     BadRawMark: an old mark (unhooked, expired) is compared as written, so the
 \*                 first pass after the upgrade pushes expired->down (NoPushWithinDown; Parts "upgrade")
 \*   "othername"   BadProveOtherName: a proof answers another name's challenge
@@ -306,17 +312,25 @@ States == (SUBSET Names) \X (Names \cup {NoCoord})
 \* The state a pass finds a name in, of the hook state h and the answers' ages q
 \* (the code's hook.Status state; live and partial are proven's and expired's
 \* kin here: one push, so the record is live only until its first proof).
-PStates == {"unhooked", "proven", "expired", "down"}
+PStates == {"unhooked", "proven", "expired", "down", "live"}
 HookState(h, q, n) == IF ~h[n] THEN "unhooked" ELSE IF q[n] <= DownAfter THEN "proven" ELSE "expired"
-\* What a push compares and names: proven or down (serve.go upOrDown); under
-\* "pushall" the hook state itself, the rule before.
-PS(h, q, n) == IF "pushall" \in Broken \/ HookState(h, q, n) = "proven" THEN HookState(h, q, n) ELSE "down"
+\* What a push compares and names (serve.go pushLevel): proven, a hooked name
+\* answered in the window whose proof p stands; live, a hooked name whose proof
+\* is not in (an arming, under Parts "proven"; without it p stays TRUE); down,
+\* every other state. Under "pushall" the hook state itself, the rule before;
+\* under "provenonly" live is down, the rule of 2026-10-17.
+PS(h, p, q, n) ==
+    IF "pushall" \in Broken THEN HookState(h, q, n)
+    ELSE IF HookState(h, q, n) = "proven" /\ p[n] THEN "proven"
+    ELSE IF h[n] /\ ~p[n] /\ "provenonly" \notin Broken THEN "live"
+    ELSE "down"
 \* The state the server has pushed or has in hand to push last for n.
 Last(n) == IF pq[n] = <<>> THEN pushed[n] ELSE pq[n][Len(pq[n])][2]
-\* The last pushed as a push compares it (serve.go upOrDown of the mark): a
-\* mark of the rule before (unhooked, expired) reads as down; under "rawmark"
-\* the mark as written, so an old mark is a change of its own.
-LastC(n) == IF "pushall" \in Broken \/ "rawmark" \in Broken \/ Last(n) = "proven" THEN Last(n) ELSE "down"
+\* The last pushed as a push compares it (serve.go pushLevel of the mark): a
+\* mark of the rule before (unhooked, expired) reads as down, live as live
+\* (under "provenonly" as down); under "rawmark" the mark as written, so an old
+\* mark is a change of its own.
+LastC(n) == IF "pushall" \in Broken \/ "rawmark" \in Broken \/ Last(n) = "proven" \/ (Last(n) = "live" /\ "provenonly" \notin Broken) THEN Last(n) ELSE "down"
 \* The coordinator up now, whom a push goes to (serve.go push: the pass's p.Coord).
 PushTo == CoordOf(hooked, proven)
 PushCap == 2
@@ -463,7 +477,7 @@ Pass(s) ==
           \* with no coordinator up the pass pushes nothing (serve.go push); the
           \* coordinator of the pass is never queued, and what was in hand for her
           \* is dropped (delete(s.pending)): she reads her own state (NeverPushedSelf)
-          /\ LET cur == [n \in Names |-> PS(h2, qtime, n)]
+          /\ LET cur == [n \in Names |-> PS(h2, p2, qtime, n)]
                  c == now[2]
                  drop == IF c # NoCoord /\ "pushself" \notin Broken THEN {c} ELSE {}
                  grow == IF "push" \in Parts /\ c # NoCoord
@@ -1003,10 +1017,24 @@ AllAlive == \A n \in Names : alive[n]
 \* No push is delivered twice, however a send fails or servers race.
 NeverPushedTwice == pdups = 0
 
-\* Every transition in hand crosses proven: a change between two down states
-\* (unhooked and expired here; live and partial in the code) is never pushed
-\* (BadPushAll fails it).
-NoPushWithinDown == \A n \in Names : \A i \in 1..Len(pq[n]) : (pq[n][i][1] = "proven") # (pq[n][i][2] = "proven")
+\* Every transition in hand changes level, and one side of it is up (live or
+\* proven): a change between two down states (unhooked and expired) is never
+\* pushed (BadPushAll and BadRawMark fail it).
+Upper == {"proven", "live"}
+NoPushWithinDown == \A n \in Names : \A i \in 1..Len(pq[n]) :
+    /\ pq[n][i][1] # pq[n][i][2]
+    /\ {pq[n][i][1], pq[n][i][2]} \cap Upper # {}
+
+\* An arming is pushed at the pass that finds it (2026-10-18): after a pass
+\* with a coordinator up, a friend hooked whose proof is not in has live in
+\* hand or pushed, never down, unless she is the coordinator or her pushes are
+\* at the model's cap; the coordinator hears she is up a pass before her proof
+\* (BadProvenOnly fails it: live read as down, she is heard of only at proof).
+ArmingPushedAtPass ==
+    [][\A s \in Servers : Pass(s) =>
+        \A n \in Names : ("push" \in Parts /\ PushTo' # NoCoord /\ n # PushTo'
+                         /\ hooked'[n] /\ ~proven'[n] /\ pgen[n] + Len(pq[n]) < PushCap)
+                         => (Last(n))' = "live"]_vars
 
 \* No push names the coordinator it went to: the server runs as the coordinator
 \* up at the pass and pushes to her, and her own state is never queued while she
