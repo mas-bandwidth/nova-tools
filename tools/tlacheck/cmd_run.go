@@ -32,11 +32,11 @@ func findTLC(e env, verb, jarFlag, javaFlag string) (tlc.Jar, string, int, bool)
 	return jar, java, 0, false
 }
 
-// checkRunner refuses a binary that was built from other runner files than the
-// checkout's: what it calls stale, and the fingerprints it writes, would be
-// wrong with no sign of it.
+// checkRunner refuses a binary whose runner is not the tree's (runner.go): what
+// it calls stale, and the fingerprints it writes, would be wrong with no sign of
+// it.
 func checkRunner(e env, verb, root string) (int, bool) {
-	if err := tlc.CheckRunner(root); err != nil {
+	if err := checkTreeRunner(root, e.built); err != nil {
 		return refuse(e, verb, err.Error(), tool+" "+verb+" -h"), true
 	}
 	return 0, false
@@ -98,6 +98,7 @@ func cmdRun(e env, args []string) int {
 	timeout := fs.Duration("timeout", tlc.BoundedCap, "")
 	workers := fs.Int("workers", 2, "")
 	manual := fs.Bool("manual", false, "")
+	parallel := fs.Int("parallel", 0, "")
 	bench := fs.String("bench", "", "")
 	loadBelow := fs.Float64("load-below", 0, "")
 	troughWait := fs.Duration("trough-wait", 30*time.Minute, "")
@@ -108,7 +109,7 @@ func cmdRun(e env, args []string) int {
 	if *bench != "" {
 		set := map[string]bool{}
 		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-		for _, n := range []string{"shards", "shard"} {
+		for _, n := range []string{"shards", "shard", "parallel"} {
 			if set[n] {
 				return refuse(e, "run", "--"+n+" is not taken with --bench: it runs a group's cases one at a time itself", tool+" run --bench <machine> --group <group> ...")
 			}
@@ -159,6 +160,13 @@ func cmdRun(e env, args []string) int {
 	if err != nil {
 		return refuse(e, "run", err.Error(), tool+" groups --root "+*root)
 	}
+	width := *parallel
+	if width == 0 {
+		width = max(1, e.cpus()/4)
+	}
+	if err := tlc.CheckParallel(width, e.cpus()); err != nil {
+		return refuse(e, "run", err.Error()+"; nothing was run", tool+" run --parallel 1 ...")
+	}
 	jar, java, code, stop := findTLC(e, "run", *jarFlag, *javaFlag)
 	if stop {
 		return code
@@ -175,7 +183,7 @@ func cmdRun(e env, args []string) int {
 	res, err := tlc.RunSuite(tlc.Options{
 		Root: *root, Cases: chosen, Jar: jar, Java: java, JavaVer: javaVer, Out: *dir,
 		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard},
-		Budget:    *timeout, Workers: *workers, Manual: *manual, Platform: platform, CPUs: e.cpus(), Exec: e.exec,
+		Budget:    *timeout, Workers: *workers, Parallel: width, Manual: *manual, Platform: platform, CPUs: e.cpus(), Exec: e.exec,
 		OnCase: func(r tlc.Record) {
 			status, w := "OK", e.stdout
 			if r.Result != "PASS" {

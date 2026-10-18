@@ -242,7 +242,7 @@ func TestRunWritesRecordsAndReportsEachCase(t *testing.T) {
 	root, jar := checkout(t)
 	var runs []tlc.Run
 	dir := filepath.Join(t.TempDir(), "out")
-	r := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13}, &runs), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha", "--timeout", "100s", "--workers", "1")
+	r := call(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12, "MCAStale": 13}, &runs), "run", "--root", root, "--jar", jar, "--dir", dir, "--group", "alpha", "--timeout", "100s", "--workers", "1", "--parallel", "1")
 	if r.code != 0 || r.stderr != "" {
 		t.Fatalf("%+v", r)
 	}

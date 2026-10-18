@@ -203,12 +203,23 @@ func benchCheckout(t *testing.T, jarBytes []byte) string {
 	if err := os.WriteFile(filepath.Join(root, "tla", tlc.RunsFile), b.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(benchTreeGoMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	sum := sha256.Sum256(jarBytes)
 	if err := os.WriteFile(filepath.Join(root, "tla", pinnedSumFile), []byte(hex.EncodeToString(sum[:])+"  tla2tools.jar\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return root
 }
+
+// benchTreeGoMod is the go.mod of a bench checkout: a tree that requires nova-tools, so
+// its runner is the nova-tools its go.mod names (runner.go, case 2), and benchBuilt is
+// the binary built at it.
+var (
+	benchTreeGoMod = "module example.com/tree\n\ngo 1.26\n\nrequire " + toolsModule + " v1.6.0\n"
+	benchBuilt     = toolsModule + "@v1.6.0"
+)
 
 // benchEnv is testEnv on a Mac with the fake bench as the record machine
 // named, the fleet's rows saying which machines are record machines.
@@ -219,13 +230,17 @@ func benchEnv(t *testing.T, f *fakeBench, rows []benchRow) (env, *bytes.Buffer, 
 		return 0
 	})
 	e.goos, e.goarch = "darwin", "arm64"
+	e.built = benchBuilt
 	slept := &[]time.Duration{}
 	e.bench = benchDeps{
 		dial:     func(machine string) remote { return f },
 		machines: func(context.Context) ([]benchRow, error) { return rows, nil },
-		build: func(_ context.Context, root, goos, goarch, out string) error {
+		build: func(_ context.Context, root, pkg, goos, goarch, out string) error {
 			if goos != "linux" || goarch != "amd64" {
 				t.Errorf("built for %s-%s, want the bench's linux-amd64", goos, goarch)
+			}
+			if pkg != toolsModule+"/tools/tlacheck" {
+				t.Errorf("built %s, want the tree's runner, nova-tools' tools/tlacheck at its go.mod's version", pkg)
 			}
 			return os.WriteFile(out, []byte("#!tlacheck "+root+"\n"), 0o755)
 		},
@@ -287,6 +302,7 @@ func TestRunOnABenchMeasuresEachStaleCaseInATroughAndMergesTheRecords(t *testing
 		}
 	}
 	e2, out2, errs2 := testEnv(t, nil)
+	e2.built = benchBuilt
 	if g := do(e2, out2, errs2, "groups", "--root", root, "--stale"); g.code != 0 || g.stdout != "[]\n" {
 		t.Errorf("after the bench run the records are not current: %+v", g)
 	}

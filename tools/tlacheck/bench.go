@@ -73,8 +73,8 @@ type remote interface {
 // benchDeps is everything run --bench reaches outside this process.
 type benchDeps struct {
 	dial     func(machine string) remote
-	machines func(ctx context.Context) ([]benchRow, error)                   // the fleet's machine rows
-	build    func(ctx context.Context, root, goos, goarch, out string) error // tlacheck of root, for a platform
+	machines func(ctx context.Context) ([]benchRow, error)                        // the fleet's machine rows
+	build    func(ctx context.Context, root, pkg, goos, goarch, out string) error // package pkg built in root, for a platform
 	sleep    func(time.Duration)
 }
 
@@ -171,8 +171,12 @@ func runOnBench(e env, o benchOpts) int {
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		return refuseB("cannot create "+filepath.Dir(bin)+": "+err.Error(), tool+" run --dir <a directory you can write> ...")
 	}
-	if err := e.bench.build(ctx, o.root, probe.GOOS, probe.GOARCH, bin); err != nil {
-		return refuseB("tlacheck cannot be built for "+platform+": "+err.Error(), "go build ./tools/tlacheck")
+	pkg, err := benchPackage(o.root)
+	if err != nil {
+		return refuseB(err.Error(), tool+" help runner")
+	}
+	if err := e.bench.build(ctx, o.root, pkg, probe.GOOS, probe.GOARCH, bin); err != nil {
+		return refuseB("tlacheck cannot be built for "+platform+": "+err.Error(), "go build "+pkg)
 	}
 	archive, files, err := stageArchive(o.root, bin)
 	if err != nil {
@@ -618,12 +622,30 @@ func parseMachineList(out string) []benchRow {
 	return rows
 }
 
-// goBuild builds the checkout's tlacheck for a platform, with no cgo, so it
-// runs on the bench as it is.
-func goBuild(ctx context.Context, root, goos, goarch, out string) error {
+// benchPackage is the package run --bench builds as the tree's runner (runner.go):
+// nova-tools' own tools/tlacheck in a nova-tools checkout, and nova-tools' at the
+// version its go.mod names in a tree that requires nova-tools. Any other tree pins
+// no runner the bench can build, and is refused.
+func benchPackage(root string) (string, error) {
+	if info, err := os.Stat(filepath.Join(root, "tools", "tlacheck")); err == nil && info.IsDir() {
+		return "./tools/tlacheck", nil
+	}
+	_, ok, err := treeModule(root)
+	if err != nil {
+		return "", fmt.Errorf("the tree's go.mod cannot be read to find the runner it pins: %v", err)
+	}
+	if !ok {
+		return "", fmt.Errorf("the tree under %s neither holds tools/tlacheck nor requires %s in its go.mod, so there is no runner of its own to build for the bench; run the groups on the bench by hand (tlacheck run --group <group>, there)", root, toolsModule)
+	}
+	return toolsModule + "/tools/tlacheck", nil
+}
+
+// goBuild builds the tree's runner pkg for a platform, with no cgo, so it runs
+// on the bench as it is.
+func goBuild(ctx context.Context, root, pkg, goos, goarch, out string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", out, "./tools/tlacheck")
+	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", out, pkg)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
 	cmd.WaitDelay = 5 * time.Second

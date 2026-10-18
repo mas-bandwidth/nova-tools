@@ -13,7 +13,7 @@ const helpRun = `tlacheck run: run the declared cases of tla/CASES.tsv under one
 
 usage: tlacheck run --dir <dir> [--root <checkout>] [--jar <tla2tools.jar>] [--java <java>]
                     [--group <group>] [--shards <n> --shard <i>] [--timeout <duration>]
-                    [--workers 1|2] [--manual]
+                    [--workers 1|2] [--parallel <n>] [--manual]
        tlacheck run --dir <dir> --bench <machine>|any [--root <checkout>] [--group <group>]
                     [--jar <path on the bench>] [--java <java on the bench>] [--timeout <duration>]
                     [--workers 1|2] [--load-below <load>] [--trough-wait <duration>]
@@ -30,6 +30,9 @@ usage: tlacheck run --dir <dir> [--root <checkout>] [--jar <tla2tools.jar>] [--j
   --timeout  the whole run's limit, a Go duration (default 110s; at most 110s, or 1h with --manual)
   --workers  TLC workers for a case expected to pass, 1 or 2 (default 2); a counterexample
              case always uses one
+  --parallel independent cases to run at once, 1 to half the logical CPUs (default a
+             quarter of them, at least 1); each case's TLC takes two processors. Not
+             taken with --bench, which runs one case at a time
   --manual   an explicit bench experiment: mode=manual in the records; refused in CI
   --bench    run on a TLC record machine from here, the record refresh in one command: the
              machine named (ssh <machine>), or any: of the machine rows with tla=true
@@ -58,7 +61,11 @@ instantiates, the case's own row of CASES.tsv and the runner's result files (tla
 them). It is written only if every case's fingerprint is the same when the cases are done as
 when they started.
 
-With --bench, the command builds this checkout's tlacheck for the bench, stages it with
+The run refuses a tlacheck that is not the tree's runner (tlacheck help runner).
+
+With --bench, the command builds the tree's runner for the bench (./tools/tlacheck in
+nova-tools; nova-tools' tools/tlacheck at the version its go.mod
+names in a tree that requires nova-tools; refused in any other tree), stages it with
 the top of tla/ in ~/tla-runs/tlacheck-* there (ssh <machine>; removed when the run ends,
 and by the next run after a day if a run died), and runs each case of each group as its own
 bounded run, niced, after the load trough: so each record is under the cap, and a group's
@@ -90,11 +97,8 @@ usage: tlacheck groups [--root <checkout>] [--stale]
 Payload: exactly one line of JSON on stdout, the sorted groups that hold a required case (the
 matrix a CI run derives), or with --stale the groups that need a run. Nothing else is printed
 there; refusals go to stderr. Exit 0, or 2 when the case plan or the records cannot be read or
-The result files this binary was built from must be the ones under --root (when --root holds
-pkg/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
-checkout would call the wrong records stale, so with --stale the verb refuses and says to build tlacheck from
-this tree.
-are refused.
+are refused, or (with --stale) when this tlacheck is not the tree's runner (tlacheck help
+runner says which runner is a tree's).
 first run: tlacheck groups --root .
 `
 
@@ -117,11 +121,9 @@ with its group and the tlacheck run commands that measure it again. A --keep rec
 the plan no longer declares is dropped and named (DROP OK config= why=not-in-the-plan). A file in
 another column layout than this tool writes is refused naming both layouts.
 
-The result files this binary was built from must be the ones under --root (when --root holds
-pkg/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
-checkout would call the wrong records stale, so the verb refuses and says to build tlacheck from
-this tree.
-
+The verb refuses a tlacheck that is not the tree's runner: such a binary would call the
+wrong records stale, and write fingerprints the tree does not give its cases (tlacheck
+help runner says which runner is a tree's).
 output: MERGE OK runs= records= out=, and DROP OK config= why= for each kept record dropped.
 first run: tlacheck merge --root . --out /tmp/RUNS.tsv /tmp/tlc-a/RUNS.tsv /tmp/tlc-b/RUNS.tsv
 `
@@ -241,17 +243,16 @@ The inputs are the case's configuration; the module CASES.tsv gives it and every
 one EXTENDS or INSTANCEs, transitively (a name with no file under tla/ must be one of TLC's
 standard modules, which read nothing from the tree: the ten the jar bundles, listed in
 standardModules in pkg/tlc/inputs.go); the case's own row of CASES.tsv under
-its header; and the runner's result files (outcome.go, run.go and suite.go of pkg/tlc: the command
-line, flags, workers and timeouts of a run and the reading of its output) as this binary was
+its header; and the runner's result files (outcome.go, plan.go, run.go and suite.go of pkg/tlc: the
+command line, flags, workers and timeouts of a run, the reading of its output and of its
+plan row) as this binary was
 built. The package's other files are bookkeeping and in no fingerprint.
 The fingerprint in a record is the SHA-256 over the paths and hashes listed here, in path
 order, and the record's input_files is their count. A change to none of them leaves the
 record current. The jar is not an input: a record names it in its own column.
-The result files this binary was built from must be the ones under --root (when --root holds
-pkg/tlc; a bench copy of tla/ alone has none to compare): a binary built from another
-checkout would call the wrong records stale, so the verb refuses and says to build tlacheck from
-this tree.
-
+The verb refuses a tlacheck that is not the tree's runner: such a binary would call the
+wrong records stale, and write fingerprints the tree does not give its cases (tlacheck
+help runner says which runner is a tree's).
 Payload: one INPUT OK path= sha256= line per input, sorted by path, then INPUTS OK case=
 files= fingerprint=, all on stdout. Refusals go to stderr. Exit 0, or 2 when the case is not
 declared, the plan is refused, or a configuration or module cannot be read or names a module
