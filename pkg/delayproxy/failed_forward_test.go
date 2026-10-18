@@ -59,6 +59,21 @@ func (f *fakeTarget) offered() []string {
 	return append([]string(nil), f.chunks...)
 }
 
+// countingTarget is fakeTarget with a hook that asks the proxy, from inside the
+// target's Write, whether the write was counted before the bytes were offered.
+type countingTarget struct {
+	fakeTarget
+	p      *Proxy
+	missed atomic.Bool
+}
+
+func (c *countingTarget) Write(b []byte) (int, error) {
+	if c.p.Writes() < 1 {
+		c.missed.Store(true)
+	}
+	return c.fakeTarget.Write(b)
+}
+
 func (f *fakeTarget) CloseWrite() error {
 	f.mu.Lock()
 	f.closed++
@@ -74,13 +89,14 @@ func (f *fakeTarget) SetDeadline(time.Time) error      { return nil }
 func (f *fakeTarget) SetReadDeadline(time.Time) error  { return nil }
 func (f *fakeTarget) SetWriteDeadline(time.Time) error { return nil }
 
-// A write is counted and timed only once the target has accepted the whole
-// chunk. forward is driven by hand over a fake target that owns no socket, so a
-// write that fails, a short write and a full write are all the test's choice.
-// The documented Writes and Shortest claim forwarded traffic: a chunk that did
-// not reach the target is not one, and end is called instead. The clock stands
-// still but for its waits, so a held chunk's time is exactly the delay and a
-// chunk that fails after one succeeded cannot lower Shortest.
+// A write is counted and timed before the target sees the chunk, and the count
+// is taken back when the write fails or comes up short. forward is driven by
+// hand over a fake target that owns no socket, so a write that fails, a short
+// write and a full write are all the test's choice. The documented Writes and
+// Shortest claim forwarded traffic: a chunk that did not reach the target is
+// not one, and end is called instead. The clock stands still but for its waits,
+// so a held chunk's time is exactly the delay and a chunk that fails after one
+// succeeded cannot lower Shortest.
 func TestFailedForwardDoesNotCountAsSent(t *testing.T) {
 	t.Parallel()
 
@@ -128,7 +144,7 @@ func TestFailedForwardDoesNotCountAsSent(t *testing.T) {
 			offered:  []string{"abc"},
 		},
 		{
-			name:     "a full chunk is counted once the target accepts it",
+			name:     "a full chunk stays counted once the target accepts it",
 			queue:    []held{chunk("a", epoch), chunk("b", epoch)},
 			steps:    []step{{}, {}},
 			writes:   2,
@@ -166,4 +182,33 @@ func TestFailedForwardDoesNotCountAsSent(t *testing.T) {
 			assert.Equal(t, c.offered, target.offered(), "the target was offered %q; want %q", target.offered(), c.offered)
 		})
 	}
+}
+
+// A write is counted before the target sees the bytes: the target's own Write
+// asks the proxy, and the reply a client reads can never come back before the
+// count it would read. The fake target and fake clock own no socket and no real
+// time, and the write succeeds, so the count is never taken back.
+func TestAWriteIsCountedBeforeTheTargetSeesIt(t *testing.T) {
+	t.Parallel()
+
+	now := epoch
+	p := &Proxy{delay: delay, clock: Clock{
+		Now: func() time.Time { return now },
+		Wait: func(_ <-chan struct{}, d time.Duration) bool {
+			now = now.Add(d)
+			return true
+		},
+	}}
+	p.shortest.Store(noHold)
+
+	target := &countingTarget{p: p}
+	target.steps = []step{{}}
+
+	queue := make(chan held, 1)
+	queue <- held{data: []byte("a"), at: epoch, due: epoch.Add(delay)}
+	close(queue)
+
+	p.forward(target, queue, make(chan struct{}), func() {})
+
+	assert.False(t, target.missed.Load(), "the write was counted only after the target saw the bytes")
 }

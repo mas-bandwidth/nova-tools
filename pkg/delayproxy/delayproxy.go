@@ -495,21 +495,24 @@ func (p *Proxy) forward(up net.Conn, queue <-chan held, done <-chan struct{}, en
 		if wait := h.due.Sub(p.clock.now()); wait > 0 && !p.clock.wait(done, wait) {
 			return
 		}
-		// The hold is measured before the write, but the write is counted only
-		// once the target has accepted all of it: a write that fails or comes
-		// up short (io.ErrShortWrite) ends the connection, and a chunk that did
-		// not reach the target is not a write the proxy forwarded.
+		// The hold is measured and the write is counted before the write goes
+		// out, so a reply the client reads is never visible before the count. A
+		// write that fails or comes up short (io.ErrShortWrite) ends the
+		// connection and the count is taken back, because a chunk that did not
+		// reach the target is not a write the proxy forwarded.
 		hold := p.clock.now().Sub(h.at)
+		prev := p.shortest.Load()
+		p.record(hold)
 		n, err := up.Write(h.data)
 		if err == nil && n != len(h.data) {
 			err = io.ErrShortWrite
 		}
 		// ignored: a target that cannot be written to ends the connection, which end() does; the client sees the hang-up
 		if err != nil {
+			p.unrecord(hold, prev)
 			end()
 			return
 		}
-		p.record(hold)
 	}
 }
 
@@ -522,6 +525,22 @@ func (p *Proxy) record(d time.Duration) {
 			return
 		}
 		if p.shortest.CompareAndSwap(cur, int64(d)) {
+			return
+		}
+	}
+}
+
+// unrecord takes back a write that failed or came up short, recorded before the
+// write went out: it subtracts the one write, and restores the shortest hold to
+// what it was before when this write was the one that set it.
+func (p *Proxy) unrecord(d time.Duration, prev int64) {
+	p.writes.Add(-1)
+	for {
+		cur := p.shortest.Load()
+		if cur != int64(d) {
+			return
+		}
+		if p.shortest.CompareAndSwap(cur, prev) {
 			return
 		}
 	}
