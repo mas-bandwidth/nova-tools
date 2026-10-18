@@ -104,16 +104,18 @@ concurrency:
   # it lives here, where every other rule can be made to do without it.
   #
   # A pending run is evicted by a newly queued run in the same group before it
-  # ever starts. So a push to an integration branch keys on the commit SHA: no
-  # two of its runs share a group, so none can evict or cancel another, and the
-  # mechanical red gate always has a completed run to read.
+  # ever starts. So a push to an integration branch keys on the branch AND the
+  # sha: keyed on the sha alone, a dev push of main's commit would land in main's
+  # group and cancel its run; keyed on both, no dev push shares a group with
+  # main, while two pushes of one branch still key on the sha so none evicts
+  # another and the red gate always has a completed run to read.
   # A PR keys on its head SHA so each head gets one full run (issue #2795):
   # keyed on the number, one PR's heads shared a group and a newer head
   # cancelled the older head's run mid-job — under a load of PRs opening
   # together, every run at a head was cut short. Keyed on the head, a newer
   # head opens a group of its own and the older head's run runs to completion.
   # Every other branch keys on its ref.
-  group: ci-${{ github.event.pull_request.head.sha || (contains(fromJSON('["refs/heads/main","refs/heads/dev"]'), github.ref) && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
+  group: ci-${{ github.event.pull_request.head.sha || (contains(fromJSON('["refs/heads/main","refs/heads/dev"]'), github.ref) && format('{0}-{1}', github.ref, github.sha)) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
   # `cancel-in-progress` is a CONSTANT: not the second copy of the branch list. The
   # sha-keyed group above is what protects an integration branch's verdict: its
   # group holds that one run and nothing else, so there is never a sibling for
