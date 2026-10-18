@@ -47,9 +47,13 @@ import (
 // reads it. On 2026-10-03 the staged commit of a carried rework (the attempt before's head,
 // on a branch the mirror no longer held) was gone by the time the finish counted the
 // child's commits from it, and a correct carry was refused: "does not descend from the
-// staged commit: fatal: Not a valid commit name <staged>". The first fetch of a repository
-// copies its history once (nova-tools, 4,000 commits: 1.9 s and 66 MB), and every fetch
-// after it copies the child's own commits, as before.
+// staged commit: fatal: Not a valid commit name <staged>". The cost: the repository keeps
+// no ref between pushes (each push drops its own), so a fetch has nothing to offer in
+// negotiation and every fetch writes a full new pack of the repository's history, not
+// only the child's commits (nova-tools, 4,000 commits: 1.9 s and 66 MB the first time;
+// about 22 MB a push measured in a bare repository with no refs, 2026-10-17). That is
+// where push.git's 195 packs came from (tidyEvery). The lasting fix is one kept ref per
+// repository, so a fetch negotiates against it; it is not done here.
 type gitPusher struct {
 	root, slots string
 	// gh is the GitHub CLI the member opens a card's pull request with, as itself,
@@ -72,7 +76,30 @@ type gitPusher struct {
 	// notes is where the pusher says what it pushed that the result did not name (the
 	// member's own output); nil says nothing.
 	notes io.Writer
+	// pushing is held shared by every push from the moment it reaches the push repository
+	// to its end, and alone by tidy, so the repack and the prune never run beside a fetch
+	// or a push whose objects no ref names yet (tidyEvery). The lock is this process's
+	// only: it assumes one member per --root, the one process that uses <root>/push.git.
+	// Nothing refuses two members on one root; if that is ever configured, the remedy is a
+	// file lock on push.git.
+	pushing sync.RWMutex
+	tidyMu  sync.Mutex // tidyAt
+	tidyAt  time.Time  // the last tidy, or the end of the first push this process made
+	// now is the pusher's clock for tidyEvery; nil is time.Now, a test gives its own.
+	now func() time.Time
 }
+
+// tidyEvery is the least time between two tidies of the push repository: `repack -adq`
+// and `prune --expire=now`, run at the end of a push when no other push is in flight.
+// The repository has gc.auto=0 and maintenance.auto=false (pushes run side by side, and
+// git's own gc would prune under them), and every push drops its refs at its end, so all
+// it keeps is unreachable: nothing ever removed it. On 2026-10-17 one bench's push.git
+// held 4.4 GB in 195 packs and 95 loose objects, and every push's for-each-ref
+// --contains, rev-list and fetch read through them all. A tidy leaves only what a ref
+// left by an interrupted push names. It costs the pushes nothing: every fetch writes a
+// full pack already, since no ref is kept to negotiate against (the gitPusher type's
+// comment), so removing the old packs makes no fetch larger.
+const tidyEvery = time.Hour
 
 // pushWaits is the waits before a push that origin rejected on its own side, git's
 // `[remote rejected]`, is sent again: the remote's failure, never the commit's, and
@@ -116,6 +143,11 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	if err != nil {
 		return member.Push{Refused: "the member's push repository: " + oneLineOf(err.Error())}
 	}
+	// deferred in this order so the launch's refs are dropped, then this push lets go of
+	// the repository, then the tidy runs if it is due and no other push holds it
+	defer g.tidy(repo)
+	g.pushing.RLock()
+	defer g.pushing.RUnlock()
 	ctx := context.Background()
 	ns := "refs/member/" + launchName(p)
 	// a ref this launch's namespace kept from an interrupted push is dropped before the
@@ -367,6 +399,41 @@ func (g *gitPusher) repo() (string, error) {
 		}
 	}
 	return repo, nil
+}
+
+// tidy repacks the push repository and prunes what no ref names (tidyEvery): only once
+// tidyEvery has passed since the last tidy (the first push of the process starts the
+// count), and only when no push holds the repository; else it is left for a later push's
+// end. A tidy that fails is a NOTE on notes and the push it follows stands: the
+// repository is only larger than it should be.
+func (g *gitPusher) tidy(repo string) {
+	now := time.Now
+	if g.now != nil {
+		now = g.now
+	}
+	t := now()
+	g.tidyMu.Lock()
+	if g.tidyAt.IsZero() {
+		g.tidyAt = t
+	}
+	due := t.Sub(g.tidyAt) >= tidyEvery
+	g.tidyMu.Unlock()
+	if !due || !g.pushing.TryLock() {
+		return
+	}
+	defer g.pushing.Unlock()
+	g.tidyMu.Lock()
+	g.tidyAt = t
+	g.tidyMu.Unlock()
+	ctx := context.Background()
+	for _, args := range [][]string{{"repack", "-adq"}, {"prune", "--expire=now"}} {
+		if res, err := g.run(ctx, repo, nil, args...); err != nil {
+			if g.notes != nil {
+				fmt.Fprintf(g.notes, "NOTE push repository %s: git %s: %s\n", oneline.Field(repo), oneline.Field(args[0]), oneline.Escape(gitLine(res, err)))
+			}
+			return
+		}
+	}
 }
 
 // wait is the pause before a fetch or a push is made again: sleep, else time.Sleep.

@@ -53,4 +53,5 @@ func TestDoctorPlistsNamesAPlistPlutilRefuses(t *testing.T) {
 	assert.Equal(t, Fail, r.Status)
 	assert.Contains(t, r.Evidence, "Unknown key")
 	assert.Contains(t, r.Fix, "remove a hand-written stopgap")
+	assert.NotContains(t, r.Fix, "nova-friend", "the friend daemons are retired: no remedy names nova-friend")
 }

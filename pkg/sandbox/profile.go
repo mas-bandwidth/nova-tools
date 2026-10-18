@@ -270,7 +270,7 @@ func (lp LaneProfile) Input(cwd string, argv []string) (Input, error) {
 	}
 	deny := DeniedWrites(lp.Home, lp.Deny)
 	if len(deny) == 0 {
-		return Input{}, fmt.Errorf("the %s profile denies nothing: name the coordinator's self (nova-friend run --deny-self), a lane never runs with nothing denied", name)
+		return Input{}, fmt.Errorf("the %s profile denies nothing: name the coordinator's self (the wall's --deny <self>), a lane never runs with nothing denied", name)
 	}
 	home := lp.ConfigDir
 	if home == "" {

@@ -116,7 +116,7 @@ func (s *scriptedGit) run(ctx context.Context, o gitrun.Options, args ...string)
 			return gitrun.Result{Stdout: []byte(s.pushLine + "\n")}, errors.New("exit status 1")
 		}
 		return gitrun.Result{}, nil
-	case "update-ref":
+	case "update-ref", "repack", "prune":
 		return gitrun.Result{}, nil
 	}
 	return gitrun.Result{}, fmt.Errorf("unscripted git %v", args)
@@ -171,6 +171,7 @@ func (h *pushHarness) pusher() *gitPusher {
 	g.git = h.git.run
 	g.sleep = func(d time.Duration) { h.waits = append(h.waits, d) }
 	g.gh = "nova-no-such-gh-for-memberpush-behaviour"
+	g.now = func() time.Time { return time.Unix(1000, 0) } // the tidy's clock: no push test reads real time
 	return g
 }
 

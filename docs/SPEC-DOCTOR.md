@@ -79,11 +79,10 @@ units `nova-friend-*.service` on linux), read each daemon's argv from its plist
 machine with no such daemon gets `ok no friend daemons here` from each. None is
 a Fleet check, so `--local` runs all of them.
 
-**friend-seat.** Dependency: each daemon's `--coordinator` against the seat
-holder. Runs `nova-sprint where --json` and reads its `coordinator` field; a
-daemon whose `--coordinator` differs is `fail` `plist says <x>, seat is <y>`.
-Fix: `nova-friend install ... --coordinator <seat>`, or drop the flag so the
-daemon reads the seat from the server.
+**friend-seat** is retired (2026-10-17): it held each nova-friend daemon's
+`--coordinator` to the seat, and the friend daemons were retired that night;
+nova-hook is the one friend channel. Nothing replaces what it checked: `nova-hook status`
+reads a friend's liveness (hooked, armed, proven, down), not which seat she answers.
 
 **friend-row.** Dependency: each daemon's nova-config row. Runs `nova-config friend show <name> --json`; `fail` when the row's `mode` is not `one-shot`, when
 its `roles` lack `builder` while the daemon runs cards (`--harness` given), or
@@ -108,5 +107,5 @@ harness's answer and never prints, copies or moves a credential.
 Runs `plutil -lint` on every `com.nova.*.plist` under `~/Library/LaunchAgents`
 and `/Library/LaunchDaemons` (`systemd-analyze verify` for `nova-*.service` on
 linux) and quotes the refusing line. Fix: rewrite the agent with the tool that
-owns it (`nova-friend install`, `nova-config loop`) and remove a hand-written
+owns it (`nova-config loop`, `nova-swarm install`) and remove a hand-written
 stopgap.
