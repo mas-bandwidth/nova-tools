@@ -955,3 +955,99 @@ func TestASentryThatSaysNothingIsKilledAtTheBound(t *testing.T) {
 		require.Failf(t, "", "a sentry that does not stand was left alive, pid %d", pid)
 	}
 }
+
+func TestAFreePortIsALoopbackPortTheKernelChose(t *testing.T) {
+	t.Parallel()
+
+	var asked []string
+	port, err := freePort(func(network, address string) (net.Listener, error) {
+		asked = append(asked, network+" "+address)
+		return net.Listen(network, address)
+	})
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	if !slices.Equal(asked, []string{"tcp 127.0.0.1:0"}) {
+		require.Failf(t, "", "the port was asked for as %q; want tcp 127.0.0.1:0, loopback and the kernel's choice", asked)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		require.Failf(t, "", "freePort = %q; want a port", port)
+	}
+	if n, err := strconv.Atoi(FreePort(t)); err != nil || n < 1 || n > 65535 {
+		require.Failf(t, "", "FreePort = %d, %v; want a port", n, err)
+	}
+
+	full := errors.New("no descriptors left")
+	if _, err := freePort(func(string, string) (net.Listener, error) { return nil, full }); !errors.Is(err, full) {
+		require.Failf(t, "", "freePort with no listener = %v; want the cause", err)
+	}
+	l := real
+	l.sentry = standing()
+	l.look = func(string) (string, error) { return "redis-server", nil }
+	l.port = func() (string, error) { return "", full }
+	for name, call := range map[string]func(testing.TB){
+		"FreePort": func(tb testing.TB) { l.freePort(tb) },
+		"Start":    func(tb testing.TB) { l.start(tb, nil) },
+	} {
+		if r := provoke(t, call); !strings.Contains(r.fatal, full.Error()) {
+			assert.Failf(t, "", "%s with no port failed with %q; want the cause", name, r.fatal)
+		}
+	}
+}
+
+// answering is a loopback listener that reads one line from every client and
+// answers with reply; an empty reply hangs up.
+func answering(t *testing.T, reply string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		_ = ln.Close()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			if line, err := bufio.NewReader(c).ReadString('\n'); err != nil || line != "PING\r\n" {
+				assert.Failf(t, "", "the client sent %q, %v; want one PING", line, err)
+			}
+			_, _ = io.WriteString(c, reply)
+			_ = c.Close()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+func TestPingTakesPongAndNoauthForAServer(t *testing.T) {
+	t.Parallel()
+
+	until := time.Now().Add(time.Minute)
+	for reply, want := range map[string]string{
+		"+PONG\r\n":                             "",
+		"-NOAUTH Authentication required.\r\n":  "",
+		"-ERR unknown command 'PING'\r\n":       `it answered PING with "-ERR unknown command 'PING'"`,
+		"-DENIED Redis is running in protected": "EOF",
+		"":                                      "EOF",
+	} {
+		err := ping(answering(t, reply), until)
+		switch {
+		case want == "" && err != nil:
+			assert.Failf(t, "", "answer %q: ping = %v; want a server", reply, err)
+		case want != "" && (err == nil || !strings.Contains(err.Error(), want)):
+			assert.Failf(t, "", "answer %q: ping = %v; want an error with %q", reply, err, want)
+		}
+	}
+	// Nothing can listen there: port 0 is no port to connect to, so no
+	// parallel test can take it and answer, as it can a port freed a moment
+	// ago. The dial's own error is ping's.
+	if err := ping("127.0.0.1:0", until); err == nil || !strings.HasPrefix(err.Error(), "dial tcp 127.0.0.1:0: ") {
+		require.Failf(t, "", "ping to port 0 = %v; want the dial's error", err)
+	}
+}

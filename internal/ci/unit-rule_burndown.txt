@@ -9,7 +9,7 @@
 # Seeded 2026-10-12 (v1.2.16, A13) from every site the rule found on sprint/comfort.
 # Each row is allowed until moved, v1.3: the moves are the draft PR beside this one,
 # which empties this file (the owner, 2026-10-12: v1.2.16 takes surgical fixes only).
-# ceiling: 18
+# ceiling: 17
 cmd/nova-config/looprun_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): require.Eventually
 cmd/nova-sandbox/main_test.go:deadline 1 allowed until moved, v1.3 (2026-10-12): c.SetReadDeadline(time.Now()...)
 cmd/nova-sandbox/main_test.go:service 1 allowed until moved, v1.3 (2026-10-12): exec.LookPath("nc")
@@ -27,4 +27,3 @@ pkg/member/meter_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): re
 pkg/nsprint/testutil/github_test.go:http 1 allowed until moved, v1.3 (2026-10-12): http.Get
 pkg/redisconn/open_test.go:deadline 1 allowed until moved, v1.3 (2026-10-12): spy.SetWriteDeadline(time.Now()...)
 pkg/swarm/lanereap_unix_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): require.Eventually
-pkg/testredis/far_test.go:deadline 2 allowed until moved, v1.3 (2026-10-12): c.SetDeadline(time.Now()...)
