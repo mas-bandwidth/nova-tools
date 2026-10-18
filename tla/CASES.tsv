@@ -235,6 +235,7 @@ MCHookBeatBrokenProveOldNonce.cfg	MCHookBeat.tla	invariant	ProofNamesIssuedInWin
 MCHookBeatBrokenProveOtherName.cfg	MCHookBeat.tla	invariant	ProofNamesIssuedInWindow	ignore-terminal	hookbeat	required	-
 MCHookBeatWitnessProveOlder.cfg	MCHookBeat.tla	invariant	WitnessProveOlder	ignore-terminal	hookbeat	required	-
 MCHookBeatTransitionPush.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
+MCHookBeatPushThree.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenSelfFiltered.cfg	MCHookBeat.tla	temporal	TransitionPushedToCoordinator	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenFolded.cfg	MCHookBeat.tla	invariant	NoFold	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenPushAll.cfg	MCHookBeat.tla	invariant	NoPushWithinDown	ignore-terminal	hookbeat	required	-
