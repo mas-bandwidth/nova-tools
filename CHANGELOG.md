@@ -2,6 +2,26 @@
 
 ## v1.6.1 — 2026-10-18
 
+Cut from f644b4159ee559e2c52211b76aab69e0afe4acfa. 1 pull request since v1.6.0.
+
+CI waived: the coordinator (on the owner's point-release go-ahead), 2026-10-18: test-hosted (macos-latest, 5) is cancelled at its 2-minute cap on every main run of the day; its steps (ci deal --shards 8 --shard 5, make vet, make test-short over its 24 packages) ran by hand at f644b4159 on a self-hosted darwin-arm64 bench, green in 13 s; the self-hosted legs were cancelled by the concurrent dev push
+CI waived checks: ci-ok=failure, ci-ok=failure, test (1/8 darwin-arm64)=cancelled, test (1/8 space)=cancelled, test (2/8 darwin-arm64)=cancelled, test (3/8 darwin-arm64)=cancelled, test (4/8 darwin-arm64)=cancelled, test (4/8 space)=cancelled, test (5/8 darwin-arm64)=cancelled, test (6/8 darwin-arm64)=cancelled, test (6/8 space)=cancelled, test (7/8 darwin-arm64)=cancelled, test (8/8 darwin-arm64)=cancelled, test-hosted (macos-latest, 5)=cancelled
+
+Recovery journeys incomplete, gate waived: v1.6.1, the stable tools release the CHANGELOG section describes (the code of the unreleased v1.6.0 tag, with its notes), with the owner's ask of 2026-10-18 (a push when a friend comes up, with the sprint row); journeys: no build of this revision is installed before the cut; spend: no provider readouts or friend receipts are available to this cut and the range changes no spend recording
+
+- TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce: not-run (no --journeys evidence)
+- TestNoServerOrNoAnswerIsNoEvidence: not-run (no --journeys evidence)
+- TestTheGateRefusesEveryoneWhileTheServerIsStale: not-run (no --journeys evidence)
+- TestAStaleAnswerIsDownWithAFreshServer: not-run (no --journeys evidence)
+- TestALostAnswerIsNeverToldTwice: not-run (no --journeys evidence)
+
+Spend gate waived: v1.6.1, the stable tools release the CHANGELOG section describes (the code of the unreleased v1.6.0 tag, with its notes), with the owner's ask of 2026-10-18 (a push when a friend comes up, with the sprint row); journeys: no build of this revision is installed before the cut; spend: no provider readouts or friend receipts are available to this cut and the range changes no spend recording (window 2026-10-18T00:00:00Z..2026-10-18T17:52:53Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #5977 CHANGELOG and release notes for v1.6.1
+
+## v1.6.1 — 2026-10-18
+
 The stable tools release beside nova-sprint v1.6.3; the same code as the v1.6.0 tag, which was never released. The v1.5.3 section below was never tagged: its fix (the wall's caps from the machine's memory, 2026-10-17) ships here. The night's audit of what the fleet's daemons do for nothing lands here too; no wire or record change.
 
 - Idle members read their queue every 15 s, not every 3; a reader sends one `queue` an interval, not two; a Wake (a push ended, a child exited) reads at once. Eighteen seats on nine benches sent ~750 serial verbs a minute to the sprint server with nothing to do on 2026-10-17. (#5951)
