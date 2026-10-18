@@ -1765,4 +1765,9 @@
     unexported code there, documented in SPEC-CI with a reversed witness."
    :date "2026-10-10"
    :release "v1.5"
-   :origin "seat decision after the repository split")))
+   :origin "seat decision after the repository split")
+  (item "v17-paths-has-no-cap-on-the-number-of-globs" :group "quality" :date "2026-10-18"
+   :title "PATHS has no cap on the number of globs"
+   :text "hygiene.ValidatePaths stops refusing a PATHS line of more than eight globs: what bounds a card is each glob (a literal segment, repository-relative, no ..), and the PATHS lines the paths-cover-named, paths-cover-testdata and tla-records checks print can pass eight. nova-sprint takes the change with its next nova-tools pin. Target v1.7; sprint card v17-paths-has-no-cap-on-the-number-of-globs (stream v17, tier pro, BASE sprint/v17)."
+   :why "Following the lint's own corrected PATHS line made the next lint refuse the card."
+   :origin "the coordinator, 2026-10-18: Rowan's carding pass on nova-card lint")))
