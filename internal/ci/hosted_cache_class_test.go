@@ -96,31 +96,40 @@ func TestHostedCacheIsWhereGoKeepsIt(t *testing.T) {
 			test = i
 		}
 	}
-	require.GreaterOrEqual(t, restore, 0, "test-hosted: restore step %d, save step %d, build %d, test %d; want all four", restore, save, build, test)
-	require.GreaterOrEqual(t, save, 0, "test-hosted: restore step %d, save step %d, build %d, test %d; want all four", restore, save, build, test)
-	require.GreaterOrEqual(t, build, 0, "test-hosted: restore step %d, save step %d, build %d, test %d; want all four", restore, save, build, test)
-	require.GreaterOrEqual(t, test, 0, "test-hosted: restore step %d, save step %d, build %d, test %d; want all four", restore, save, build, test)
-	assert.True(t, restore < build && build < save && save < test, "test-hosted order: restore %d, build %d, save %d, test %d; want restore < build < save < test, so the entry is written before the tests the cap may cancel", restore, build, save, test)
+	require.GreaterOrEqual(t, restore, 0, "test-hosted: restore step %d, save step %d, test %d; want all three", restore, save, test)
+	require.GreaterOrEqual(t, save, 0, "test-hosted: restore step %d, save step %d, test %d; want all three", restore, save, test)
+	require.GreaterOrEqual(t, test, 0, "test-hosted: restore step %d, save step %d, test %d; want all three", restore, save, test)
+	assert.Equal(t, -1, build, "test-hosted still has a `build` step; go test compiles what it tests, so the cache save follows the tests instead (run 39155212547: `make build` was 11-33 s a macOS leg)")
+	assert.Less(t, restore, test, "test-hosted order: restore %d, test %d; the cache must be restored before the tests", restore, test)
+	assert.Greater(t, save, test, "test-hosted order: test %d, save %d; with no build step the cache is filled by the tests, so the save follows them", test, save)
 	require.GreaterOrEqual(t, toolDir, 0, "test-hosted must name, restore, set up and save the toolchain")
 	require.GreaterOrEqual(t, toolRestore, 0, "test-hosted must name, restore, set up and save the toolchain")
 	require.GreaterOrEqual(t, toolSave, 0, "test-hosted must name, restore, set up and save the toolchain")
 	require.GreaterOrEqual(t, setup, 0, "test-hosted must name, restore, set up and save the toolchain")
-	assert.True(t, toolDir < toolRestore && restore < setup && toolRestore < setup && setup < toolSave && toolSave < build, "test-hosted toolchain order: directory %d, restore %d, setup %d, save %d, build %d; restore before setup-go and save before compilation/tests", toolDir, toolRestore, setup, toolSave, build)
+	assert.True(t, toolDir < toolRestore && restore < setup && toolRestore < setup && setup < toolSave && toolSave < test, "test-hosted toolchain order: directory %d, restore %d, setup %d, save %d, test %d; restore before setup-go and save before the tests", toolDir, toolRestore, setup, toolSave, test)
 	assert.Contains(t, steps[toolDir].Run, "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/", "toolchain cache must use setup-go's tool-cache directory")
 	assert.Contains(t, steps[toolDir].Run, "go.mod", "toolchain cache must follow the requested Go version")
+	assert.Contains(t, steps[toolDir].Run, `echo "version=$v" >> "$GITHUB_OUTPUT"`, "toolchain cache must publish the Go version go.mod names")
 	assert.Equal(t, "go.mod", steps[setup].With["go-version-file"], "setup-go must use the module's requested toolchain")
 	assert.True(t, strings.HasPrefix(steps[toolRestore].Uses, "actions/cache/restore@"))
 	assert.True(t, strings.HasPrefix(steps[toolSave].Uses, "actions/cache/save@"))
 	for _, i := range []int{toolRestore, toolSave} {
 		assert.Equal(t, "${{ env.GO_TOOL_DIR }}", steps[i].With["path"], "toolchain cache must be separate from the established native cache")
 	}
-	assert.Equal(t, "${{ runner.os }}-go-toolchain-${{ hashFiles('go.mod') }}", steps[toolRestore].With["key"])
+	assert.Equal(t, "${{ runner.os }}-go-toolchain-${{ steps.gover.outputs.version }}", steps[toolRestore].With["key"])
 	tid := steps[toolRestore].ID
 	require.NotEmpty(t, tid)
 	assert.Contains(t, steps[toolSave].With["key"], "steps."+tid+".outputs.cache-primary-key")
 	assert.Contains(t, steps[toolSave].If, "steps."+tid+".outputs.cache-hit != 'true'")
 	assert.NotContains(t, steps[restore].With["path"], "GO_TOOL_DIR", "adding the toolchain changes the cache version and prevents restoration of the established native cache")
-	assert.Equal(t, "${{ runner.os }}-go-${{ hashFiles('go.mod') }}", steps[restore].With["key"], "the native cache must retain its existing key on a cold toolchain-cache run")
+	assert.Equal(t, "${{ runner.os }}-go-${{ steps.gover.outputs.version }}-${{ hashFiles('go.sum') }}-${{ hashFiles('**/*.go') }}", steps[restore].With["key"], "the native cache key must move with go.sum, the Go version and this tree's .go files")
+	for _, fallback := range []string{
+		"${{ runner.os }}-go-${{ steps.gover.outputs.version }}-${{ hashFiles('go.sum') }}-",
+		"${{ runner.os }}-go-${{ steps.gover.outputs.version }}-",
+		"${{ runner.os }}-go-",
+	} {
+		assert.Contains(t, steps[restore].With["restore-keys"], fallback, "the native cache restore-keys has no %q fallback", fallback)
+	}
 	for _, i := range []int{restore, save} {
 		s := steps[i]
 		path := s.With["path"]
@@ -135,4 +144,5 @@ func TestHostedCacheIsWhereGoKeepsIt(t *testing.T) {
 	assert.Contains(t, steps[save].With["key"], wantKey, "test-hosted save key %q does not read %s", steps[save].With["key"], wantKey)
 	wantIf := "steps." + id + ".outputs.cache-hit != 'true'"
 	assert.Contains(t, steps[save].If, wantIf, "test-hosted save if %q does not skip an exact hit (%s)", steps[save].If, wantIf)
+	assert.Contains(t, steps[save].If, "matrix.shard == matrix.shards", "test-hosted save if %q does not run on the one shard that writes the cache", steps[save].If)
 }

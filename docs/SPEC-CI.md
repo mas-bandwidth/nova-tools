@@ -1338,21 +1338,25 @@ server by an absolute path is not caught by the shim.
 shard count: ubuntu-latest runs shards 1..6 and macos-latest 1..8, every leg
 carrying its OS's `shards`. The `deal this shard's packages` step places the
 heavy package (`cmd/nova-swarm`) first and alone on its shard, then every other
-package round-robin in `go list` order over the remaining shards; vet and test
-both read the deal's `HOSTED_PKGS`. The Go cache
+package round-robin in `go list` order over the remaining shards; the test step
+reads the deal's `HOSTED_PKGS`. Each shard's setup is lean: it runs no
+`make build` (the lint job builds and vets the whole tree on Linux, and `go test`
+compiles what it tests from the same cache) and no per-shard vet. The Go cache
 is restored at the path Go uses on each OS (`~/Library/Caches/go-build` on
 macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
-`actions/cache/restore` before `build`, and written by `actions/cache/save`
-after `build` and before the test step, only when the key was not an exact hit.
+`actions/cache/restore` before the tests, and written by `actions/cache/save`
+after the test step, only when the key was not an exact hit.
 **Why the per-OS path.** GOCACHE is `os.UserCacheDir()/go-build`, which is
 `~/Library/Caches/go-build` on macos-latest (the job's own `go env`), so the one
 Linux path cached no macOS build at all.
 **Why restore and save are split.** The combined `actions/cache` saves in a post
 step with `post-if: success()`, so a shard the cap cancels never saves and a leg
 that only fits warm would never be warmed.
-**Why the save comes before the tests.** The tests are the step the cap cancels;
-a shard whose save runs before its tests warms the shards that start after it,
-even when its own test step is cancelled.
+**Why the save comes after the tests.** With no `make build` step the tests are
+what fill the cache, so a save before them would archive only the `tools/ci`
+binary. Only the last shard per OS saves, so the shards do not race to tar the
+same cache; `always()` keeps the save on a red test, and a shard the cap cancels
+still cannot save, which is why the restore-keys fallback exists.
 A separate toolchain cache carries the requested Go version from the runner's
 tool cache. Its directory is named from go.mod before restoration; setup-go then
 selects that version, installing it on a miss. The toolchain is saved immediately
@@ -1365,15 +1369,23 @@ the unchanged two-minute cap.
 packages together is cancelled by the cap and turns `ci-ok` red, and a
 count-only deal keeps them together however many shards there are. A cache step
 that caches the Linux path on every OS logs "cache hit" on macOS while caching
-no macOS build at all, and the macOS shards spend the cap building.
+no macOS build at all, and the macOS shards spend the cap building. A setup that
+fixed the cap by adding shards would not have been the fix: the lever was the
+per-shard setup. In run 39155212547 `make build` was 11-33 s and the per-shard
+vet 2-10 s on every macOS leg, so dropping both, tightening the cache key and
+running the redis install in the background brought each leg under the cap.
 **The test.** `TestHostedShardsUnderTheCap` (every ci.yml job at two minutes;
 both hosted OSes; shards 1..n with n at least 6 and 8), `TestHostedDealPartitionsTheTree`
 (the deal step over a stand-in list lands every package in exactly one shard)
 and `TestHostedDealSplitsTheHeavyPackages` (the deal step over the real
 `go list ./...`: no two heavy packages share a shard)
-(`internal/ci/hosted_shards_class_test.go`), and `TestHostedCacheIsWhereGoKeepsIt`
+(`internal/ci/hosted_shards_class_test.go`), `TestHostedCacheIsWhereGoKeepsIt`
 (restore and save carry the per-OS path, no combined `actions/cache`, restore
-before `build` before save before the tests; `internal/ci/hosted_cache_class_test.go`).
+before save after the tests; `internal/ci/hosted_cache_class_test.go`), and
+`TestHostedTestShardSetupIsLean` (the shard's setup: no `make build`, no
+per-shard vet; the build-cache key moves with go.sum, the Go version and the
+tree's .go files, with the restore-keys fallbacks; the redis install starts in
+the background before the deal; `internal/ci/hosted_setup_class_test.go`).
 **Its allowlist.** `hostedHeavy` in that file, which the step spells verbatim.
 **Its remedy line.** Add a shard to the OS's matrix and `include`, or name a
 package in `hostedHeavy` and in the step's `heavy=`; never raise the timeout.
