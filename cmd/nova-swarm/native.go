@@ -1578,7 +1578,10 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 	}
 	s.res.defect = s.sampler.Defect()
 	if s.res.childEnd != "" {
+		// The slot's log and the run's own report (stderr, which the member folds into
+		// the slot log beside stdout) both carry how the child ended.
 		fmt.Fprintln(s.log, oneline.Escape(s.res.childEnd))
+		fmt.Fprintln(errOut, oneline.Escape(s.res.childEnd))
 	}
 	s.log.Close()
 	s.harnessOut.Close()

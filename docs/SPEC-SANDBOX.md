@@ -1382,7 +1382,8 @@ vector.** A refusal about a path prints the path, which the caller supplied.
 `nova-swarm native` runs the card's child inside the wall, and when the child
 ends by a signal, or with an exit code of 128 or more (a wrapper that turns a
 signal into `128+n`), it writes one line to the slot's `native.log` and into its
-finish report:
+finish report (native's stderr, which the member keeps beside stdout in that
+log):
 
 ```
 NATIVE CHILD-END rc=<n> signal=<name|none> stderr-tail=<last 20 lines of the child's stderr, newline-escaped, at most 4 KiB> [abort=<line>] [core=<path>]

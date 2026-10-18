@@ -1004,14 +1004,6 @@ func printNativeResult(stdout, stderr io.Writer, cfg nativeRunConfig, res native
 		fmt.Fprintf(stdout, " why=%s", oneline.Field(why))
 	}
 	fmt.Fprintln(stdout)
-	// THE CHILD-END LINE: a child that died by a signal or exited 128+ leaves its
-	// end in the finish report as well as the slot's native.log, so the member's
-	// finish carries how the child ended, not only the exit code. The line is built
-	// escaped by recordChildEnd; Escape is the identity on it, so it is printed
-	// whole.
-	if res.childEnd != "" {
-		fmt.Fprintln(stdout, oneline.Escape(res.childEnd))
-	}
 	// THE PROMPT-DEFECT LINE, ON NATIVE'S OWN STDOUT AFTER THE `NATIVE` LINE, AND IN NO
 	// FILE. The pool appends it to the job's RESULT.md, creating the
 	// file where the worker published none; on this route that would score the card
