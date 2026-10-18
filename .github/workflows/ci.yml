@@ -991,17 +991,24 @@ jobs:
     # ways too. `shards` rides in by include and the job name keeps its (os, shard)
     # shape. internal/ci:
     # TestHostedShardsUnderTheCap.
+    #
+    # 2026-10-18, main's push runs 39147571763 and 39150632936: macos-latest
+    # shard 5 was cancelled at the cap in both. It held internal/ci (27 s),
+    # internal/docs (23 s) and cmd/nova-ci (11 s) behind ~88 s of fixed setup,
+    # build and vet. Both packages are heavy now, one per shard and alone, and
+    # both OSes deal ten ways; internal/docs builds its eleven tools in one go
+    # build, not eleven. The cap stays two minutes.
     name: test-hosted (${{ matrix.os }}, ${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         include:
           - os: ubuntu-latest
-            shards: 8
+            shards: 10
           - os: macos-latest
-            shards: 8
+            shards: 10
     runs-on: ${{ matrix.os }}
     timeout-minutes: 2
     steps:
@@ -1124,7 +1131,7 @@ jobs:
         # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-swarm"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-swarm internal/ci internal/docs"
 
       - name: fetch dev's ancestry for the hosted ratchet
         # Main already fetched this ancestry above. Other refs need it only
