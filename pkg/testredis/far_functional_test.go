@@ -45,7 +45,7 @@ const farStoreDelay = 100 * time.Millisecond
 
 // farOneWrite is what a single command, or a whole pipeline, is at the proxy.
 // The length of the pipeline and the commands sent one after the other are
-// farPipelined and farSeparate, in far_test.go.
+// farPipelined and farSeparate, in far_socket_functional_test.go.
 const farOneWrite = 1
 
 // farStoreBound bounds each test's own calls, generously.
