@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"sort"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/decide"
 	"github.com/mas-bandwidth/nova-tools/pkg/decidewire"
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
-	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 )
 
 // THE ATTEMPT DECISION (docs/SPEC-SPRINT.md section 2; pkg/decide, attempt.go). A work
@@ -39,25 +40,20 @@ func attemptDecider(b decide.Backend, now func() time.Time) func(member.Packet, 
 		if err != nil {
 			return "", nil, err
 		}
-		raw, err := attemptWriter.Write(&d, schemaread.FormBase64)
-		return dec.String(), raw, err
+		wire := decisionWire(&d)
+		if wire == nil {
+			return "", nil, errors.New("DECISION: cannot build the decision table wire")
+		}
+		raw := []byte(base64.StdEncoding.EncodeToString(wire))
+		return dec.String(), raw, nil
 	}
 }
 
-// attemptWriter is the decision's table writer: it saves the decision's wire
-// (pkg/decidewire Decision) as the padded standard base64 of that image, the
-// variable-table text form (the owner's rule S2). The value's bounds are the
-// reader's (decide.ParseAttemptReader); the writer checks none of its own, so
-// a value the table cannot hold is refused before a byte is written by the
-// same check the reader applies.
-var attemptWriter = schemaread.NewReader(&schemaread.Codec[decide.Decision]{
-	Name:     "DECISION",
-	Help:     "nova-sprint answer -h",
-	SaveWire: decisionWire,
-})
-
 // decisionWire builds the decision's binary wire from the Go record, the
-// inverse of pkg/decide's decisionFromTable (pkg/decide/dualread.go).
+// inverse of pkg/decide's decisionFromTable (pkg/decide/dualread.go). The
+// value's bounds are the reader's (decide.ParseAttemptReader, checked before
+// any byte is written); the writer checks none of its own. The variable-table
+// text form is the padded standard base64 of this wire (the owner's rule S2).
 func decisionWire(d *decide.Decision) []byte {
 	var b decidewire.DecisionBuilder
 	if !b.Init() {
