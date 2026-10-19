@@ -1,5 +1,23 @@
 # nova-tools changelog
 
+## v1.6.5 — 2026-10-19
+
+Cut from fb3641b4e6313868d692c6569e57e5f990e863a0. 2 pull requests since v1.6.4.
+
+Recovery journeys incomplete, gate waived: tools point release beside nova-sprint v1.6.5 carrying only --gpu metal for the sandbox (#6005); neither the hook journeys nor spend accounting are in this range
+
+- TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce: not-run (no --journeys evidence)
+- TestNoServerOrNoAnswerIsNoEvidence: not-run (no --journeys evidence)
+- TestTheGateRefusesEveryoneWhileTheServerIsStale: not-run (no --journeys evidence)
+- TestAStaleAnswerIsDownWithAFreshServer: not-run (no --journeys evidence)
+- TestALostAnswerIsNeverToldTwice: not-run (no --journeys evidence)
+
+Spend gate waived: tools point release beside nova-sprint v1.6.5 carrying only --gpu metal for the sandbox (#6005); neither the hook journeys nor spend accounting are in this range (window 2026-10-19T00:00:00Z..2026-10-19T04:39:16Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #6005 nova-sandbox --gpu metal opens the measured Metal grants; member/native forward --gpu
+- #6006 Release notes for v1.6.5
+
 ## v1.6.3 — 2026-10-18
 
 Cut from 16afa0f4105636ebaee2970f09e28a6abb31c65c. 4 pull requests since v1.6.2.

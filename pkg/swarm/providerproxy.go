@@ -320,15 +320,56 @@ func SeedProviderBaseURL(raw []byte, provider, base string) ([]byte, bool) {
 // DirectProvider is an uncatalogued provider's custom block: the API base, the NAME of the
 // environment variable holding its key, and the npm adapter the harness loads. It is the
 // provider row's fields (nova-config provider: base_url, key_env, npm), never a key value.
+// OutputLimit and ContextLimit are the model's token limits as the provider publishes them;
+// 0 is undeclared, and the output limit then takes DefaultDirectOutputLimit.
 type DirectProvider struct {
-	BaseURL    string
-	KeyEnv     string
-	NPMAdapter string
+	BaseURL      string
+	KeyEnv       string
+	NPMAdapter   string
+	OutputLimit  int
+	ContextLimit int
+}
+
+// DefaultDirectOutputLimit is the output limit written for a direct provider's model when
+// none is declared. A model the harness's catalog does not know otherwise has no output
+// limit, and the harness then asks for its own output maximum (the fleet's wrapper sets
+// OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000), which a provider capped lower refuses
+// with a 400 on every request (Ultramarine 1 Flash, 2026-10-19: "max_tokens must be between
+// 1 and 65536"). 65536 is the common cap of the OpenAI-compatible providers we run.
+const DefaultDirectOutputLimit = 65536
+
+// directModelLimit is the opencode model limit (provider.<id>.models.<model>.limit) a direct
+// provider's model is given: output and context, both present because the pinned harness
+// refuses a limit missing either ("Missing key ...limit.context", opencode v1.18.20). A
+// context of 0 is opencode's own value for an unknown context window. Keys the entry
+// already carries are kept.
+func directModelLimit(cur map[string]any, p DirectProvider) map[string]any {
+	limit := map[string]any{}
+	for k, v := range cur {
+		limit[k] = v
+	}
+	if _, has := limit["output"]; !has {
+		out := p.OutputLimit
+		if out <= 0 {
+			out = DefaultDirectOutputLimit
+		}
+		limit["output"] = out
+	}
+	if _, has := limit["context"]; !has {
+		ctx := p.ContextLimit
+		if ctx < 0 {
+			ctx = 0
+		}
+		limit["context"] = ctx
+	}
+	return limit
 }
 
 // DeclareDirectProvider returns the config with provider declared direct as an
 // OpenAI-compatible provider: npm (the adapter named, or @ai-sdk/openai-compatible when
-// empty), options.baseURL, and options.apiKey as the {env:<KeyEnv>} reference. Anything
+// empty), options.baseURL, options.apiKey as the {env:<KeyEnv>} reference, and on every
+// model declared under the provider a limit (directModelLimit: the declared output and
+// context, else DefaultDirectOutputLimit and 0). Anything
 // the entry already carries is kept, and the key is only the env reference text, never a
 // value read from the environment. ok is false, and raw is returned unchanged, when the
 // base or the key's variable name is empty, the config is not a JSON object, or the
@@ -373,6 +414,25 @@ func DeclareDirectProvider(raw []byte, provider string, p DirectProvider) ([]byt
 		opts["apiKey"] = "{env:" + keyEnv + "}"
 	}
 	providerMap["options"] = opts
+	if models, _ := providerMap["models"].(map[string]any); models != nil {
+		for name, raw := range models {
+			model, _ := raw.(map[string]any)
+			if model == nil {
+				if raw != nil {
+					continue
+				}
+				model = map[string]any{}
+			}
+			cur, _ := model["limit"].(map[string]any)
+			if cur == nil {
+				if _, other := model["limit"]; other {
+					continue
+				}
+			}
+			model["limit"] = directModelLimit(cur, p)
+			models[name] = model
+		}
+	}
 	providers[provider] = providerMap
 	cfg["provider"] = providers
 	out, err := json.MarshalIndent(cfg, "", "  ")
