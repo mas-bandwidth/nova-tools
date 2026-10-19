@@ -618,8 +618,9 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	}
 
 	// The local GPU capability is explicit and bounded. The default
-	// is none; metal records intent without widening mach-lookup or granting
-	// blanket device access, whose minimum mechanisms are still unmeasured.
+	// is none; metal appends the measured minimum (MetalGrants: two named
+	// iokit user clients and three named mach services), never a blanket
+	// iokit-open or mach-lookup.
 	if mode, r := ParseGPUMode(in.GPU); r != nil {
 		bad = append(bad, *r)
 	} else {
