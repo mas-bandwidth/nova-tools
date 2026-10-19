@@ -94,14 +94,16 @@ func (b *ProxyBudget) sleep(ctx context.Context, d time.Duration) error {
 }
 
 // budgetState is the proxy's count of requests stalled on their budget or a backoff.
+// Every proxy has one, limited or not: a transient refusal's backoff is a stall too.
 type budgetState struct {
 	stalled atomic.Int64
 	seq     atomic.Int64
 }
 
-// Stalling says a request is waiting on its budget or a refusal's backoff: the card is
-// waiting, not idle (the idle watch's Stalled).
-func (p *ProviderProxy) Stalling() bool { return p.budget != nil && p.bstate.stalled.Load() > 0 }
+// Stalling says a request is waiting on its budget or a refusal's backoff (a limited
+// route's, or any route's transient refusal, providerretry.go): the card is waiting, not
+// idle (the idle watch's Stalled).
+func (p *ProviderProxy) Stalling() bool { return p.bstate.stalled.Load() > 0 }
 
 // takeBudget stalls until the budget grants holder (or grants open); false when ctx ended.
 func (p *ProviderProxy) takeBudget(ctx context.Context, holder string) bool {
@@ -176,9 +178,12 @@ func oneLineErr(err error) string {
 	return s
 }
 
-// serveBudgeted is ServeHTTP for a limited route: the request's body is kept so a refusal
-// can send it again; each send takes the budget first and frees its slot after.
-func (p *ProviderProxy) serveBudgeted(w http.ResponseWriter, r *http.Request) {
+// serveRetried is ServeHTTP for every request: the request's body is kept so a refusal can
+// send it again. A limited route's every send takes the budget first and frees its slot
+// after; its limit refusals wait a doubling backoff (the provider's hint a floor under it)
+// and are never handed to the harness. Every other transient refusal (providerretry.go) is
+// sent again at most RefusalRetry.Attempts times in all, and the last is handed on whole.
+func (p *ProviderProxy) serveRetried(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	stop := context.AfterFunc(p.ctx, cancel)
@@ -189,45 +194,71 @@ func (p *ProviderProxy) serveBudgeted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b := p.budget
-	backoff := b.Backoff
-	if backoff <= 0 {
-		backoff = BudgetBackoff
-	}
-	capped := b.BackoffCap
-	if capped <= 0 {
-		capped = BudgetBackoffCap
-	}
-	for {
-		holder := fmt.Sprintf("%s.r%d", b.Holder, p.bstate.seq.Add(1))
-		if !p.takeBudget(ctx, holder) {
-			http.Error(w, "the run ended while its request waited for its budget", http.StatusBadGateway)
-			return
+	var backoff, capped time.Duration
+	if b != nil {
+		backoff, capped = b.Backoff, b.BackoffCap
+		if backoff <= 0 {
+			backoff = BudgetBackoff
 		}
-		retry := p.forwardBudgeted(ctx, w, r, body, holder)
-		if b.Release != nil {
+		if capped <= 0 {
+			capped = BudgetBackoffCap
+		}
+	}
+	attempts := p.retry.attempts()
+	sends := 0
+	for {
+		holder := ""
+		if b != nil {
+			holder = fmt.Sprintf("%s.r%d", b.Holder, p.bstate.seq.Add(1))
+			if !p.takeBudget(ctx, holder) {
+				http.Error(w, "the run ended while its request waited for its budget", http.StatusBadGateway)
+				return
+			}
+		}
+		sends++
+		// a limited route's limit refusal is never final; every other transient refusal
+		// is final on the last send
+		final := func(k refusalKind) bool { return sends >= attempts && !(b != nil && k == refusalLimit) }
+		kind, status, hint := p.forward(ctx, w, r, body, holder, final)
+		if b != nil && b.Release != nil {
 			b.Release(holder)
 		}
-		if !retry {
+		if kind == refusalNone {
 			return
 		}
-		b.log("RATE BUDGET REFUSED %s: the provider refused for its limit; the same request is sent again in %s (the card stalls, it does not fail)", holder, backoff)
+		var wait time.Duration
+		if b != nil && kind == refusalLimit {
+			// a limit refusal on a limited route does not count against the bounded retry
+			sends--
+			wait = max(backoff, hint)
+			b.log("RATE BUDGET REFUSED %s: the provider refused for its limit; the same request is sent again in %s (the card stalls, it does not fail)", holder, wait)
+			backoff = min(2*backoff, capped)
+		} else {
+			wait = p.retry.wait(sends, hint)
+			p.logf("PROVIDER REFUSED status=%d send=%d/%d hint=%s: a transient refusal; the same request is sent again in %s (the harness does not see it)", status, sends, attempts, hint, wait.Round(time.Millisecond))
+		}
 		p.bstate.stalled.Add(1)
-		err := b.sleep(ctx, backoff)
+		if b != nil && kind == refusalLimit {
+			err = b.sleep(ctx, wait)
+		} else {
+			err = p.retry.sleep(ctx, wait)
+		}
 		p.bstate.stalled.Add(-1)
 		if err != nil {
 			http.Error(w, "the run ended while its request waited out a refusal: "+oneLineErr(err), http.StatusBadGateway)
 			return
 		}
-		backoff = min(2*backoff, capped)
 	}
 }
 
-// forwardBudgeted is one send of the request upstream, as ServeHTTP sends it, renewing the
-// holder's slot while it runs. It answers true, having written nothing to the harness,
-// when the provider refused for its limit and the request is to be sent again.
-func (p *ProviderProxy) forwardBudgeted(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte, holder string) (retry bool) {
+// forward is one send of the request upstream, renewing a limited route's holder slot while
+// it runs. It answers the refusal's kind, status and the provider's hint, having written
+// nothing to the harness, when the provider refused transiently and final(kind) is false:
+// the request is to be sent again. Every other answer is handed to the harness and forward
+// answers refusalNone.
+func (p *ProviderProxy) forward(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte, holder string, final func(refusalKind) bool) (refusalKind, int, time.Duration) {
 	b := p.budget
-	if b.Renew != nil {
+	if b != nil && b.Renew != nil {
 		every := b.RenewEvery
 		if every <= 0 {
 			every = BudgetRenewEvery
@@ -263,38 +294,43 @@ func (p *ProviderProxy) forwardBudgeted(ctx context.Context, w http.ResponseWrit
 	out, err := http.NewRequestWithContext(traced, r.Method, target.String(), bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "upstream", http.StatusBadGateway)
-		return false
+		return refusalNone, 0, 0
 	}
 	out.Header = r.Header.Clone()
 	dropHop(out.Header)
 	out.ContentLength = int64(len(body))
+	// Count only a request that is about to be forwarded. A request after the
+	// body gap is refused here and does not touch the upstream.
 	if !p.begin() {
 		http.Error(w, "lost", http.StatusBadGateway)
-		return false
+		return refusalNone, 0, 0
 	}
 	resp, err := p.client.Do(out)
 	if err != nil {
 		if headerWaitExpired(ctx, err, wrote.Load()) {
+			// The request was written and no headers came back inside the
+			// owned wait. It may have been accepted: the same UNKNOWN as a
+			// silent body, signalled before the abort, and no second
+			// upstream request after it.
 			p.lose(true)
 			panic(http.ErrAbortHandler)
 		}
 		http.Error(w, "upstream", http.StatusBadGateway)
-		return false
+		return refusalNone, 0, 0
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			b.log("RATE BUDGET NOTE %s: the provider's body did not close: %s", holder, oneLineErr(err))
+			p.logf("PROVIDER NOTE %s: the provider's body did not close: %s", holder, oneLineErr(err))
 		}
 	}()
 	p.sawHeaders()
-	var head []byte
 	src := io.Reader(resp.Body)
 	if resp.StatusCode >= 400 {
-		// a refusal's body is read to tell a limit from any other refusal; what is not one
-		// is handed to the harness whole, the part read and then the rest
-		head, _ = io.ReadAll(io.LimitReader(resp.Body, budgetErrorBody))
-		if limitRefusal(resp.StatusCode, head) {
-			return true
+		// a refusal's body is read to tell a transient refusal from any other; what is not
+		// sent again is handed to the harness whole, the part read and then the rest
+		head, _ := io.ReadAll(io.LimitReader(resp.Body, budgetErrorBody))
+		if kind := classifyRefusal(resp.StatusCode, head); kind != refusalNone && !final(kind) {
+			return kind, resp.StatusCode, refusalHint(resp.Header, head, p.retry.now())
 		}
 		src = io.MultiReader(bytes.NewReader(head), resp.Body)
 	}
@@ -304,8 +340,12 @@ func (p *ProviderProxy) forwardBudgeted(ctx context.Context, w http.ResponseWrit
 		f.Flush()
 	}
 	if err := copyWithinSilence(ctx, w, src, p.silence, p.after); errors.Is(err, errBodySilence) {
+		// A normal return would finish a chunked body and the harness would
+		// read a clean EOF. Abort the connection so the stall is a broken
+		// read, and signal the run. The signal is sent before the panic so
+		// it is not lost when the server recovers ErrAbortHandler.
 		p.markLost()
 		panic(http.ErrAbortHandler)
 	}
-	return false
+	return refusalNone, 0, 0
 }
