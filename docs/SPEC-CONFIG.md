@@ -334,9 +334,12 @@ provider's OpenAI-compatible API base, `key_env` the NAME of the environment
 variable that holds its key (never the value), and `npm_adapter` the harness adapter
 (normally `@ai-sdk/openai-compatible`): the three fields a provider the pinned
 harness's catalog does not know (paperinstruments) is written with in the job's
-`opencode.json`. All three are empty for a catalogued provider; migration 0046
-adds them with that default. Such a provider is never routed through
-openrouter or opencode Zen. Migration 0041 seeds
+`opencode.json`. `base_url` must be `https://` with no credentials, `key_env`
+must be a variable name matching `^[A-Z][A-Z0-9_]*$` (a literal token is
+refused), and `npm_adapter` is one package name with no blanks. All three are
+empty for a catalogued provider; migration 0046 adds them with that default.
+Such a provider is never routed through openrouter or opencode Zen. Migration
+0041 seeds
 one row per existing route provider with `billing=metered`, `funded=false`
 and note `made by migrate from the routes: set --funded and --billing`.
 Those defaults are a reminder to declare the facts, not evidence that the
