@@ -40,6 +40,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
+// cardWorkNice is the one nice level card work runs at. The lander's gate runs at nice 0
+// and landing outranks card work (the owner, 2026-10-18), so a card's group is held at this
+// fixed, higher number and the gate line it is handed asks for the same one: 19.
+const cardWorkNice = 19
+
 // THE NATIVE OPENCODE EXECUTION PATH. A frozen run
 // configuration is a set of fields the caller hands over complete; nothing in it
 // is derived on this side, and the run starts exactly one child bound to exactly
