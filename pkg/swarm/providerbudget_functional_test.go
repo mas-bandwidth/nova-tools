@@ -182,18 +182,23 @@ func TestOutOfFundsIsNotRetried(t *testing.T) {
 }
 
 // With no budget the proxy is as it was: a 429 reaches the harness.
-func TestAnUnlimitedRouteIsUnchanged(t *testing.T) {
+func TestAnUnlimitedRouteRetriesThenHandsOnTheRefusal(t *testing.T) {
 	t.Parallel()
 	srv, n := upstreamSays(t, [2]string{"429", "slow down"})
-	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: srv.URL + "/v1"})
+	var waits atomic.Int64
+	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: srv.URL + "/v1", Retry: &RefusalRetry{
+		Attempts: 3,
+		Sleep:    func(context.Context, time.Duration) error { waits.Add(1); return nil },
+	}})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, p.Close()) })
-	assert.False(t, p.Stalling(), "an unlimited proxy never stalls")
+	assert.False(t, p.Stalling(), "an idle proxy does not stall")
 	resp, err := http.Post(p.HarnessURL()+"/chat/completions", "application/json", strings.NewReader(`{"model":"mercury-3"}`))
 	require.NoError(t, err)
 	assert.NoError(t, resp.Body.Close())
-	assert.Equal(t, 429, resp.StatusCode, "the 429 as before")
-	assert.Equal(t, int64(1), n.Load())
+	assert.Equal(t, 429, resp.StatusCode, "the last refusal after the bounded retry")
+	assert.Equal(t, int64(3), n.Load(), "three sends, the retry's attempts")
+	assert.Equal(t, int64(2), waits.Load(), "a backoff between each")
 }
 
 // The run ends while its request stalls: the request ends, no upstream request was made.
