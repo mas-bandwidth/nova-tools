@@ -1,26 +1,5 @@
 # nova-tools changelog
 
-## v1.6.6 — 2026-10-19
-
-Cut from 6efa3b16394a609f318c9e7ed69f055f6025e9fd. 5 pull requests since v1.6.5.
-
-Recovery journeys incomplete, gate waived: one-fix tools point release: a direct provider's model carries an output limit (#6011); neither the hook journeys nor spend accounting are in this range
-
-- TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce: not-run (no --journeys evidence)
-- TestNoServerOrNoAnswerIsNoEvidence: not-run (no --journeys evidence)
-- TestTheGateRefusesEveryoneWhileTheServerIsStale: not-run (no --journeys evidence)
-- TestAStaleAnswerIsDownWithAFreshServer: not-run (no --journeys evidence)
-- TestALostAnswerIsNeverToldTwice: not-run (no --journeys evidence)
-
-Spend gate waived: one-fix tools point release: a direct provider's model carries an output limit (#6011); neither the hook journeys nor spend accounting are in this range (window 2026-10-19T00:00:00Z..2026-10-19T19:02:37Z)
-- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
-
-- #6008 CHANGELOG: the v1.6.5 cut's record
-- #6009 roadmap: carry the unlanded sprint card out of the sprint (2026-10-19)
-- #6010 roadmap: add nova-proxy (after v1.7)
-- #6011 swarm: a direct provider's model carries an output limit (default 65536)
-- #6012 docs: v1.6.6 release notes
-
 ## v1.6.5 — 2026-10-19
 
 Cut from fb3641b4e6313868d692c6569e57e5f990e863a0. 2 pull requests since v1.6.4.
