@@ -210,13 +210,6 @@ work card and its packet, and the member launches that program from its own PATH
 member without it refuses the launch (`staging refused`) and the sprint deals the card to
 one that has it. `native` learns the harness from the binary's name.
 
-A route whose provider row names its block explicitly (`swarm.DirectProvider`: the
-provider row's `base_url`, `key_env` and `npm_adapter`) is declared direct in the job
-config as an OpenAI-compatible provider (the row's adapter, `baseURL`, and `apiKey` as the
-`{env:<key_env>}` reference, the variable name only), so a provider the pinned opencode
-catalog does not know (paperinstruments) still runs, and no read proxy opens over it.
-The Zen and openrouter providers are never used for such a route.
-
 | harness | the child | the usage |
 |---|---|---|
 | `claude` | `claude -p --model <m> --output-format json --permission-mode bypassPermissions --disallowed-tools WebFetch,WebSearch -- <prompt>` | its one JSON result: `usage` (input, output, cache write, cache read), `total_cost_usd`, `modelUsage` names the model |
