@@ -41,3 +41,12 @@ func stopNativeTerm(ch chan os.Signal) {
 func lowerChildPriority(pgid int) error {
 	return syscall.Setpriority(syscall.PRIO_PGRP, pgid, childNice)
 }
+
+// lowersEveryChild is false here: a unix child is lowered after its start only where the
+// darwin wall forbids it to lower its own (nativeNicesChild); elsewhere the card's own
+// `nice -n 19` does it.
+const lowersEveryChild = false
+
+// bindChildrenToThisProcess is nothing on unix: the process group (ownChildGroup) and the
+// lane's session (ownLaneSession) are how a stop reaches the children here.
+func bindChildrenToThisProcess() error { return nil }

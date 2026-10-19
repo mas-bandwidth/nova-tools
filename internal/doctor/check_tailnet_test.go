@@ -33,7 +33,7 @@ func tailnetJSON(state, self string, peers ...string) string {
 func novaConfigList(names ...string) string {
 	var b strings.Builder
 	for _, n := range names {
-		fmt.Fprintf(&b, "MACHINE name=%s user=u seat=coordinator slots=1 runners=0 width=- tla=false note=-\n", n)
+		fmt.Fprintf(&b, "MACHINE name=%s user=u seat=coordinator slots=1 runners=0 width=- gates_only=- tla=false note=-\n", n)
 	}
 	fmt.Fprintf(&b, "CONFIG LIST kind=machine rows=%d\n", len(names))
 	return b.String()

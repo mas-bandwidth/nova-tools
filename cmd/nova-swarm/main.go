@@ -275,10 +275,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "template":
 		return cmdTemplate(rest, stdout, stderr)
 	case "native":
+		bindChildren(cmd, stderr)
 		return cmdNative(rest, stdout, stderr)
 	case "step":
 		return cmdStep(rest, stdout, stderr)
 	case "member":
+		bindChildren(cmd, stderr)
 		return cmdMember(rest, stdout, stderr, nil)
 	case "slots":
 		return cmdSlots(rest, stdout, stderr)
@@ -1256,4 +1258,14 @@ func orElse(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// bindChildren puts this process in a kill-on-close Job Object on Windows before a member or
+// a native run starts its children, so a stop or a crash ends every child
+// (native_proc_windows.go); on unix it is nothing (the group and the session do it). A
+// failure is said and the run goes on: the deadline and the tree kill still end a card.
+func bindChildren(verb string, stderr io.Writer) {
+	if err := bindChildrenToThisProcess(); err != nil {
+		fmt.Fprintf(stderr, "nova-swarm %s: NOTE: children are not bound to this process: %s\n", oneline.Escape(verb), oneline.Err(err))
+	}
 }
