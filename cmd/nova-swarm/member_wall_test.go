@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
@@ -25,12 +27,28 @@ func TestMemberWithNoWallRefusesToStart(t *testing.T) {
 	args := memberFull(root)
 	args = append(args, "--sandbox", filepath.Join(root, "no-such-sandbox"))
 	var out, errb bytes.Buffer
-	code := run(args, strings.NewReader(""), &out, &errb, time.Now())
+	code := run(args, strings.NewReader(""), &out, &errb, time.Unix(1000, 0))
 	require.Equal(t, 2, code, "exit %d, stderr %q", code, errb.String())
 	require.Contains(t, errb.String(), "no wall")
 	require.Contains(t, errb.String(), "missing")
 	require.Contains(t, errb.String(), "--no-wall")
 	assert.NotContains(t, out.String(), "MEMBER ", "a refused member never starts")
+}
+
+// A native launch whose wall did not resolve is refused before any child ran: the member
+// ends it as a staging refusal carrying the native no-wall line, never the card's failed
+// work (docs/SPEC-SWARM.md, `member`).
+func TestANativeLaunchWithoutAWallEndsStagingRefused(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "c1.native.log")
+	log := "NATIVE REFUSED: c1 no wall: " + swarm.SandboxBinary + " is on no PATH entry and --sandbox names no file; name the wall with --sandbox <path> or run with --no-wall and own every read and write the child makes\n"
+	require.NoError(t, os.WriteFile(logPath, []byte(log), 0o644))
+	ch := &nativeChild{card: "c1", logPath: logPath, results: filepath.Join(dir, "results"), job: filepath.Join(dir, "job"), done: make(chan struct{})}
+	res := ch.Result()
+	assert.Equal(t, member.EndStaging, res.End, "a no-wall launch ends staging refused")
+	assert.Contains(t, res.Staging, "no wall:", "the staging reason is the native no-wall line")
+	assert.Contains(t, res.Report, "no wall:", "the report names the native refusal line")
 }
 
 // --no-wall skips the wall check: a member that names it starts even where nova-sandbox is
