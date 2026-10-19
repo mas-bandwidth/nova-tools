@@ -300,3 +300,6 @@ MCTypedFramesBrokenWritersFirst.cfg	MCTypedFrames.tla	invariant	ReadersBeforeWri
 MCTypedFramesBrokenClampAccepted.cfg	MCTypedFrames.tla	invariant	NoClampAccepted	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenAbsentIsZero.cfg	MCTypedFrames.tla	invariant	AbsentIsNotZero	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenWriterLooser.cfg	MCTypedFrames.tla	invariant	WriterRefusesWhatReaderRefuses	ignore-terminal	typed-frames	required	-
+MCProviderRetry.cfg	MCProviderRetry.tla	pass	-	ignore-terminal	providerretry	required	-
+MCProviderRetryBrokenHandFirst.cfg	MCProviderRetry.tla	invariant	NoRefusalBeforeTheCap	ignore-terminal	providerretry	required	-
+MCProviderRetryBrokenUnbounded.cfg	MCProviderRetry.tla	invariant	SendsBounded	ignore-terminal	providerretry	required	-
