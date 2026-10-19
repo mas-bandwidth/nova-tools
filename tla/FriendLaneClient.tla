@@ -350,7 +350,7 @@ AnswerRound ==
          asked == IF StopOnFirstFail /\ target # {} THEN {first} ELSE target
          renewed == IF StopOnFirstFail /\ target # {} THEN {} ELSE target
          serverTold == IF BrokenDoubleNotice
-                       THEN {<<srv[l], gen[srv[l]], 0>> : l \in target /\ srv[l] # None}
+                       THEN {<<srv[l], gen[srv[l]], 0>> : l \in {k \in target : srv[k] # None}}
                        ELSE {}
      IN
        /\ lease' = [l \in Lanes |-> IF l \in renewed /\ srv[l] # None THEN Bound ELSE lease[l]]
