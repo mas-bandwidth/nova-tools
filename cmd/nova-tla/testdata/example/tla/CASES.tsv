@@ -1,0 +1,4 @@
+config	module	expected	property	deadlock	group	gate	debt
+MCDoor.cfg	MCDoor.tla	pass	-	check	door	required	-
+MCDoorStuck.cfg	MCDoor.tla	invariant	DoorCloses	ignore-terminal	door	required	-
+MCLock.cfg	MCLock.tla	pass	-	check	lock	required	-

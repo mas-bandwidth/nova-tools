@@ -96,6 +96,11 @@ type Tool struct {
 	// (`<tool> <group> -h`), keyed by the group's word: what a reader of only
 	// that group needs, such as where an older set of its verbs went.
 	GroupNotes map[string]string
+	// VersionExtras, when set, are the key=value facts the version line
+	// carries after the build identity (buildinfo.Line's extras): what a reader
+	// of the line needs to tell two builds apart beyond their version, such as
+	// the digest of the code a record names.
+	VersionExtras func() []string
 }
 
 // Topic is one help topic: `<tool> help <name>` prints Text on stdout at exit
@@ -125,6 +130,7 @@ type Verb struct {
 	Detail    string         // lines `help <verb>` prints above its flags: a format, a worked example
 	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
+	Args      bool           // the verb takes positional arguments after its flags (its Usage names them), read with the Flags' Args; a flag after one is refused by name, unless a literal -- came first
 	Hidden    bool           // the verb runs and answers -h and `help <it>`, but the banner, the usage block and the verb lists a refusal names do not show it: a probe step verb a user never types (STANDARD §3, help is never a refusal; §2, a list names the verbs there are for the reader)
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
@@ -468,7 +474,13 @@ func (t *Tool) verbs() []Verb {
 		Name:   "version",
 		Usage:  "version",
 		Effect: Inspection,
-		Run:    func(*Call) *Out { return Payload(buildinfo.Line(t.Name, t.Stamp)) },
+		Run: func(*Call) *Out {
+			var extras []string
+			if t.VersionExtras != nil {
+				extras = t.VersionExtras()
+			}
+			return Payload(buildinfo.Line(t.Name, t.Stamp, extras...))
+		},
 	})
 }
 
@@ -582,8 +594,16 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 	if f.max && c.Int("max") < 0 {
 		c.Problem(fmt.Sprintf("--max must be zero or more (got %d); 0 lists all", c.Int("max")))
 	}
-	if v.Name != t.Default && f.NArg() > 0 {
+	if v.Name != t.Default && !v.Args && f.NArg() > 0 {
 		c.Problem(fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", f.Arg(0)))
+	}
+	if v.Args && !slices.Contains(args, "--") {
+		for _, a := range f.Args() {
+			if len(a) > 1 && a[0] == '-' {
+				c.Problem(fmt.Sprintf("flag %q comes after a positional argument; flags come first (a literal -- before an argument that starts with a dash)", a))
+				break
+			}
+		}
 	}
 	if o := c.Refused(); o != nil {
 		return t.emit(&v, o, asJSON, stdout, stderr)
@@ -808,6 +828,10 @@ func (c *Call) Str(name string) string        { return c.Get(name).(string) }
 func (c *Call) Int(name string) int           { return c.Get(name).(int) }
 func (c *Call) Bool(name string) bool         { return c.Get(name).(bool) }
 func (c *Call) Dur(name string) time.Duration { return c.Get(name).(time.Duration) }
+
+// Args are the positional arguments after the flags: none but for a verb that
+// takes them (Verb.Args) or the tool's default verb.
+func (c *Call) Args() []string { return c.flags.Args() }
 
 // Given reports whether the flag was on the command line.
 func (c *Call) Given(name string) bool { return c.given[name] }

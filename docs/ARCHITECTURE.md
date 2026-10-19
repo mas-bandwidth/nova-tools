@@ -98,6 +98,7 @@ names it opens, and whether it runs every n seconds or is kept alive
 | `nova-sprint` | a sprint of work cards, dealt to a fleet of workers and read before they land | [SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md) |
 | `nova-swarm` | one-task AI workers, each run in the sandbox with a deadline and a token budget; bench slot leases and card lint | [SPEC-SWARM.md](SPEC-SWARM.md) |
 | `nova-table` | tables whose cells are ordered sets, kept in Redis and drawn as text | [SPEC-NOVA-TABLE.md](SPEC-NOVA-TABLE.md) |
+| `nova-tla` | the TLA+ runner of every repository: TLC over a checkout's declared cases, their run records, and which records are stale | [SPEC-CI.md](SPEC-CI.md) |
 | `nova-tokens` | token spend per day, model and repository, read from AI session logs | [SPEC-TOKENS.md](SPEC-TOKENS.md) |
 | `nova-up` | set nova up on one machine: plan every step, then apply, from nothing to a first sprint | [SPEC-UP.md](SPEC-UP.md) |
 | `nova-update` | compare installed tools with their latest releases, and update one when asked | [SPEC-UPDATE.md](SPEC-UPDATE.md) |

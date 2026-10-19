@@ -176,7 +176,7 @@ runs at once (0, the default, is no member); `--roles` its explicit inventory
 memberships (bench by default; services, coordination and runner are never
 inferred); `--tla` whether it is a TLC record
 machine (false, the default, is none): the inventory's `tla` group, where the
-tools play holds the pinned TLC jar, and the machines `tlacheck run --bench
+tools play holds the pinned TLC jar, and the machines `nova-tla run --bench
 any` picks from (tla/README.md, "The record machines").
 
 Measured facts (os, arch, cores, memory) are never typed: "I like measured

@@ -1,6 +1,6 @@
 # Member placement and epoch protocol
 
-This is the member placement and epoch protocol today's `table.lua` implements (pkg/nsprint/fn/lua/table.lua). It is separate from `tla/TableMachine.tla`, which is the baseline of `table-pinned.lua`, the pinned `f77458853af46fdbbafd6881a4b46006431f266f` whose six findings hold only against that pin (`tlacheck witnesses`) and no longer describe today's Lua. The design follows SPEC-COORDINATOR section 7 at `599f786b9` (the wording cleanup at `00f6f18` does not change that contract).
+This is the member placement and epoch protocol today's `table.lua` implements (pkg/nsprint/fn/lua/table.lua). It is separate from `tla/TableMachine.tla`, which is the baseline of `table-pinned.lua`, the pinned `f77458853af46fdbbafd6881a4b46006431f266f` whose six findings hold only against that pin (`nova-tla witnesses`) and no longer describe today's Lua. The design follows SPEC-COORDINATOR section 7 at `599f786b9` (the wording cleanup at `00f6f18` does not change that contract).
 
 ## State and contract
 
@@ -44,7 +44,7 @@ The mutation controls must fail with the named property and TLC exit code. Forge
 Run with a locally installed Java and `tla2tools.jar` (validated with release v1.7.4 / TLC 2.19):
 
 ```sh
-go run ./tools/tlacheck member --jar /absolute/path/to/tla2tools.jar --dir /tmp/member-results
+go run ./cmd/nova-tla member --jar /absolute/path/to/tla2tools.jar --dir /tmp/member-results
 ```
 
 The runner has a **single 120-second wall-clock budget**, including all selected checks; a timeout is a failure (exit 1, `verdict=timeout`), never green. It defaults to four TLC workers for the positive cases and one for counterexamples. `--suite member`, `--suite epoch` and `--suite small` select diagnostic subsets and retain the same total cap. Deadlock checking is enabled; bounded cases have an explicit terminal stutter. No download, server, production Redis or external account is used.
@@ -61,7 +61,7 @@ One recorded run of the default suite completed in **83.96 seconds**, all queues
 ## Implementation trace check
 
 The implementation in the table member-contract change is exercised by
-`tlacheck replay`. Its generated harness applies the existing named
+`nova-tla replay`. Its generated harness applies the existing named
 `EpochMemberTable` actions, compares each abstract state to actual Redis
 record/set/shape snapshots, and replays the captured receipts into a fresh
 store. It covers selected accepted, refused and no-op actions in two epochs;

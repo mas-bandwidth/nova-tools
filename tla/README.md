@@ -40,7 +40,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `ConfigApply.tla` | `MCConfigApply*` | `pkg/config` apply (docs/SPEC-CONFIG.md, "History" and "Apply"): the store rows and one history row per change, the per-kind revision, Redis's views and `config:decl`'s stamps, the plan and the idempotency key `config:<kind>:<rev>`. Two machines and two friends. It proves a change has its history row, Redis equals the store after a completed apply, an ahead stamp is refused, a machine ceiling precedes a friend placed on it and a friend's removal is last among the ops, the stamp follows the ops, and a second apply of the same revision leaves that one copy; a crashed apply is completed by the next apply once crashes are exhausted and no earlier kind's stamp is ahead. Four reversed witnesses: a stamp before the ops, a friend written before its ceiling, a write with no history row, and an apply that writes over an ahead stamp |
 | `TypedFrames.tla` | `MCTypedFrames*` | fleet readers and writers exchanging typed frames in legacy and table forms, with damaged, clamped and absent-field frames injected on the wire: a reader acts on a frame only after it validates (`FrameRefusedBeforeTransition`), no valid frame of either form is lost during the dual-read window (`DualReadNoLoss`), writers switch to the table form only after every reader has adopted dual read (`ReadersBeforeWriters`), a clamped value on load is never accepted (`NoClampAccepted`), an absent required field is never read as zero (`AbsentIsNotZero`), and a writer refuses every frame shape its strict reader refuses (`WriterRefusesWhatReaderRefuses`); six reversed witnesses (`MCTypedFramesBrokenRefusedBeforeTransition`, `MCTypedFramesBrokenDualReadLoss`, `MCTypedFramesBrokenWritersFirst`, `MCTypedFramesBrokenClampAccepted`, `MCTypedFramesBrokenAbsentIsZero`, `MCTypedFramesBrokenWriterLooser`) |
 
-Runners. `tools/tlacheck` (Go, over `pkg/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
+Runners. `cmd/nova-tla` (Go, over `pkg/tlc` and `internal/tablemodel`) runs the checks. It is the one TLA+ runner of every repository, and it ships in the release with every other command, so a repository with no Go module runs the installed `nova-tla`: nova-sprint runs it as `go tool nova-tla` (a go.mod tool line), at the nova-tools version its go.mod names. A record's fingerprint holds the runner's result files, so the tree decides which runner is its own and the tool refuses any other: this tree's `pkg/tlc` here, the go.mod's nova-tools in a tree that requires it; `nova-tla help runner` says it whole, and `nova-tla version` prints the runner's digest (`runner=`). Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `nova-tla help` and `nova-tla <verb> -h` say the rest.
 
 | Verb | What it runs |
 |---|---|
@@ -54,14 +54,14 @@ Runners. `tools/tlacheck` (Go, over `pkg/tlc` and `internal/tablemodel`) runs th
 | `witnesses` | the table model's findings replayed against a pinned `table.lua` in a disposable Redis |
 
 ```sh
-go run ./tools/tlacheck groups --root .
-go run ./tools/tlacheck inputs --root . --case MCEpochMemberFixedPoint
-go run ./tools/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
-go run ./tools/tlacheck table --root . --jar /path/to/tla2tools.jar --dir /tmp/table-results --mode all
-go run ./tools/tlacheck member --root . --jar /path/to/tla2tools.jar --dir /tmp/member-results
-go run ./tools/tlacheck replay --root . --jar /path/to/tla2tools.jar --dir /tmp/member-replay --source pkg/nsprint/fn/lua/table.lua
+go run ./cmd/nova-tla groups --root .
+go run ./cmd/nova-tla inputs --root . --case MCEpochMemberFixedPoint
+go run ./cmd/nova-tla run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
+go run ./cmd/nova-tla table --root . --jar /path/to/tla2tools.jar --dir /tmp/table-results --mode all
+go run ./cmd/nova-tla member --root . --jar /path/to/tla2tools.jar --dir /tmp/member-results
+go run ./cmd/nova-tla replay --root . --jar /path/to/tla2tools.jar --dir /tmp/member-replay --source pkg/nsprint/fn/lua/table.lua
 git show f77458853af46fdbbafd6881a4b46006431f266f:pkg/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
-go run ./tools/tlacheck witnesses /tmp/table-pinned.lua
+go run ./cmd/nova-tla witnesses /tmp/table-pinned.lua
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock tla/MCFirstConn.tla
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock -config tla/MCFuseBox.cfg tla/MCFuseBox.tla
 ```
@@ -77,7 +77,7 @@ timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock -confi
 
 The fingerprint is the SHA-256 over those inputs in path order, each as its path, a NUL, the hex SHA-256 of its bytes and a newline. It holds no timestamp, no host and no absolute path. The jar is not an input: the record names it in `jar_sha256`.
 
-Editing one model therefore stales the records of the cases that read it and no other: a change to a module stales every case whose module extends or instantiates it, a change to a configuration or to a case's own row stales that case, and a change to a result file of the runner stales every case. `tlacheck inputs --case <config>` prints each input with its hash, then the fingerprint and the count (`inputs`, `groups --stale`, `merge` and `run` refuse a binary whose embedded result files or `inputs.go` differ from the ones under `--root`, and say to build `tlacheck` from that tree); a record is current when its two columns equal them and its `module`, `expected` and `property` cells equal the case's row (the row is hashed and the cells are not, so a merge refuses a record whose cells were edited, naming the cell and both values, and `groups --stale` counts its group stale). `TestTLCRecordsCoverCurrentModels` refuses a stale record by naming its case and the files it reads, a configuration with no record, a record with no configuration, and a case whose module or extended modules cannot be found.
+Editing one model therefore stales the records of the cases that read it and no other: a change to a module stales every case whose module extends or instantiates it, a change to a configuration or to a case's own row stales that case, and a change to a result file of the runner stales every case. `nova-tla inputs --case <config>` prints each input with its hash, then the fingerprint and the count (`inputs`, `groups --stale`, `merge` and `run` refuse a binary whose embedded result files or `inputs.go` differ from the ones under `--root`, and say to build `nova-tla` from that tree); a record is current when its two columns equal them and its `module`, `expected` and `property` cells equal the case's row (the row is hashed and the cells are not, so a merge refuses a record whose cells were edited, naming the cell and both values, and `groups --stale` counts its group stale). `TestTLCRecordsCoverCurrentModels` refuses a stale record by naming its case and the files it reads, a configuration with no record, a record with no configuration, and a case whose module or extended modules cannot be found.
 
 ### The record machines
 
@@ -86,39 +86,39 @@ A record machine is a Linux bench of the fleet whose machine row says `tla=true`
 A record refresh is one command from the working machine, in the checkout of the change:
 
 ```sh
-go build -o /tmp/tlacheck ./tools/tlacheck
+go build -o /tmp/nova-tla ./cmd/nova-tla
 runs=$(mktemp -d)
-/tmp/tlacheck run --root . --dir "$runs" --bench any
+/tmp/nova-tla run --root . --dir "$runs" --bench any
 ```
 
-`--bench any` reads the machine rows (`nova-config machine list`, in the command's environment: `NOVA_PG_DSN`) and takes the record machine with the lowest load per CPU among those holding the pinned jar; `--bench <machine>` names one, whose rows are not read: the pinned jar at the path is the check. Without `--group` it runs every group `groups --stale` lists. It builds this tree's `tlacheck` for the bench, stages it with the top of `tla/` in `~/tla-runs/tlacheck-*` there, and runs each case of each group as its own bounded run (`--group <g> --shards <n> --shard <i>`, `n` the group's size), under `nice -n 15` with `--workers 2`, each after the bench's 1-minute load falls under `--load-below` (default 0.8 x its logical CPUs; it waits at most `--trough-wait`, default 30m, reading every `--trough-poll`, 15s). Each record is under the 110 s cap; a group's total is not one budget. The records come back under `--dir`, and when every case is as declared they are merged into `tla/RUNS.tsv` with `merge --keep`, so `groups --stale` prints `[]` after it; when one is not, nothing is merged and the logs are under `--dir`. The staged directory is removed when the run ends, and one a dead run left is removed by the next run after a day.
+`--bench any` reads the machine rows (`nova-config machine list`, in the command's environment: `NOVA_PG_DSN`) and takes the record machine with the lowest load per CPU among those holding the pinned jar; `--bench <machine>` names one, whose rows are not read: the pinned jar at the path is the check. Without `--group` it runs every group `groups --stale` lists. It builds this tree's `nova-tla` for the bench, stages it with the top of `tla/` in `~/tla-runs/nova-tla-*` there, and runs each case of each group as its own bounded run (`--group <g> --shards <n> --shard <i>`, `n` the group's size), under `nice -n 15` with `--workers 2`, each after the bench's 1-minute load falls under `--load-below` (default 0.8 x its logical CPUs; it waits at most `--trough-wait`, default 30m, reading every `--trough-poll`, 15s). Each record is under the 110 s cap; a group's total is not one budget. The records come back under `--dir`, and when every case is as declared they are merged into `tla/RUNS.tsv` with `merge --keep`, so `groups --stale` prints `[]` after it; when one is not, nothing is merged and the logs are under `--dir`. The staged directory is removed when the run ends, and one a dead run left is removed by the next run after a day.
 
-A `models` card names its bench in its JOB.md with this sentence, the card builder filling in the record machine it chose (a row with `tla=true`) and the card's name: "Refresh the TLC records from this checkout with `go build -o /tmp/tlacheck ./tools/tlacheck && /tmp/tlacheck run --root . --dir /tmp/tlc-<card> --bench <machine>`; <machine> is a TLC record machine (its nova-config machine row says tla=true, and its pinned jar is at /opt/tla/tla2tools.jar), so never run TLC on this machine, and commit tla/RUNS.tsv only when the command ends with MERGE OK."
+A `models` card names its bench in its JOB.md with this sentence, the card builder filling in the record machine it chose (a row with `tla=true`) and the card's name: "Refresh the TLC records from this checkout with `go build -o /tmp/nova-tla ./cmd/nova-tla && /tmp/nova-tla run --root . --dir /tmp/tlc-<card> --bench <machine>`; <machine> is a TLC record machine (its nova-config machine row says tla=true, and its pinned jar is at /opt/tla/tla2tools.jar), so never run TLC on this machine, and commit tla/RUNS.tsv only when the command ends with MERGE OK."
 
 ### Refreshing the records after a model edit
 
 The author of a model change refreshes only the records the change staled. Start from the branch with the change rebased on the base branch (`git rebase origin/dev`), including a branch that still holds records in an older column layout: the base branch's `tla/RUNS.tsv` replaces the branch's, and the runs below measure again whatever the edit staled. The commands run as they stand, in this order, from the checkout root.
 
-1. Take the base branch's records, build `tlacheck` from this tree, and ask which groups are stale (the tool refuses a binary built from other runner files than this tree's, and records in another layout than its own, and says so):
+1. Take the base branch's records, build `nova-tla` from this tree, and ask which groups are stale (the tool refuses a binary built from other runner files than this tree's, and records in another layout than its own, and says so):
 
 ```sh
 git fetch origin
 git checkout origin/dev -- tla/RUNS.tsv
-go build -o /tmp/tlacheck ./tools/tlacheck
-/tmp/tlacheck groups --root . --stale
+go build -o /tmp/nova-tla ./cmd/nova-tla
+/tmp/nova-tla groups --root . --stale
 ```
 
 `[]` means the edit staled nothing: `tla/RUNS.tsv` is already current, and steps 2 and 3 have nothing to do. Otherwise the output lists the groups to run.
 
-2. Run the stale groups on a record machine and merge them, from here: `/tmp/tlacheck run --root . --dir "$runs" --bench any` with `runs=$(mktemp -d)` (above, "The record machines"), which ends with `MERGE OK`. By hand instead, on a Linux bench with java (never on a working machine), with the same tree, run each stale group into a clean directory of its own (a directory that holds an earlier run's records would be merged with them) and join the runs onto the base branch's records. Use the jar the kept records name (`cut -f5 tla/RUNS.tsv | sed 1d | sort -u`): one jar measures the whole file, and `merge` refuses a set of records with more than one. The tool downloads nothing and the records name the jar only by its SHA-256, so the jar comes from you: a `tla2tools.jar` of the TLA+ project (its releases are at github.com/tlaplus/tlaplus), checked by `sha256sum /path/to/tla2tools.jar`, which has to print the hash the records name. When no jar you can obtain has that hash, run every group with the one jar you have and merge without `--keep`, as below:
+2. Run the stale groups on a record machine and merge them, from here: `/tmp/nova-tla run --root . --dir "$runs" --bench any` with `runs=$(mktemp -d)` (above, "The record machines"), which ends with `MERGE OK`. By hand instead, on a Linux bench with java (never on a working machine), with the same tree, run each stale group into a clean directory of its own (a directory that holds an earlier run's records would be merged with them) and join the runs onto the base branch's records. Use the jar the kept records name (`cut -f5 tla/RUNS.tsv | sed 1d | sort -u`): one jar measures the whole file, and `merge` refuses a set of records with more than one. The tool downloads nothing and the records name the jar only by its SHA-256, so the jar comes from you: a `tla2tools.jar` of the TLA+ project (its releases are at github.com/tlaplus/tlaplus), checked by `sha256sum /path/to/tla2tools.jar`, which has to print the hash the records name. When no jar you can obtain has that hash, run every group with the one jar you have and merge without `--keep`, as below:
 
 ```sh
 runs=$(mktemp -d)
-stale=$(/tmp/tlacheck groups --root . --stale | tr -d '[]"' | tr ',' ' ')
+stale=$(/tmp/nova-tla groups --root . --stale | tr -d '[]"' | tr ',' ' ')
 for g in $stale; do
-  /tmp/tlacheck run --root . --jar /path/to/tla2tools.jar --dir "$runs/$g" --group "$g"
+  /tmp/nova-tla run --root . --jar /path/to/tla2tools.jar --dir "$runs/$g" --group "$g"
 done
-test -z "$stale" || /tmp/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv "$runs"/*/RUNS.tsv
+test -z "$stale" || /tmp/nova-tla merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv "$runs"/*/RUNS.tsv
 ```
 
 A group that ends over its budget exits 1 and still writes its records (the cases with declared debt are recorded as the failed measurements they are); a case that is not a declared debt and fails is a defect in the model or the plan, and the class test refuses its record.
@@ -132,14 +132,14 @@ To measure every case instead (a new jar, or a runner change that stales everyth
 ```sh
 runs=$(mktemp -d)
 for g in $(cut -f6 tla/CASES.tsv | sed 1d | sort -u); do
-  /tmp/tlacheck run --root . --jar /path/to/tla2tools.jar --dir "$runs/$g" --group "$g"
+  /tmp/nova-tla run --root . --jar /path/to/tla2tools.jar --dir "$runs/$g" --group "$g"
 done
-/tmp/tlacheck merge --root . --out tla/RUNS.tsv "$runs"/*/RUNS.tsv
+/tmp/nova-tla merge --root . --out tla/RUNS.tsv "$runs"/*/RUNS.tsv
 ```
 
 ## Table execution and receipt replay
 
-`tlacheck replay` captures 32 controlled source-API transitions in a
+`nova-tla replay` captures 32 controlled source-API transitions in a
 disposable Redis, then replays their committed receipt arguments into a second
 fresh store. It checks event counts, revision continuity, metadata, member
 changes and affected cells independently against the observed store states.

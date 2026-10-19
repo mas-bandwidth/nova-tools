@@ -2,7 +2,7 @@
 
 The table implementation is in `pkg/nsprint/fn/lua/table.lua`, with the public-call shape in `pkg/ntable/store.go`. The coordinator spec defines a table as a dimension and placement as one cell per member **per table**.
 
-**Disposition: the pinned baseline (`table-pinned.lua`, table.lua at f77458853af46fdbbafd6881a4b46006431f266f) does not implement the ONE PLACE and lossless-bind contract; today's table.lua does (`tla/MemberTable.tla`).** The model intentionally contains the baseline's behavior, and its findings hold only against that pin (`tlacheck witnesses`). Passing the narrower baseline-contract suite is not approval of the desired foundation. The default `strict` runner fails on an outstanding invariant; `witnesses` verifies that each named known failure remains reproducible. No assumed repair has been inserted into the model.
+**Disposition: the pinned baseline (`table-pinned.lua`, table.lua at f77458853af46fdbbafd6881a4b46006431f266f) does not implement the ONE PLACE and lossless-bind contract; today's table.lua does (`tla/MemberTable.tla`).** The model intentionally contains the baseline's behavior, and its findings hold only against that pin (`nova-tla witnesses`). Passing the narrower baseline-contract suite is not approval of the desired foundation. The default `strict` runner fails on an outstanding invariant; `witnesses` verifies that each named known failure remains reproducible. No assumed repair has been inserted into the model.
 
 ## What was checked
 
@@ -47,7 +47,7 @@ All start with `m1` at score 1 in `t1/r1/c1`; both tables have rows `r1,r2` and 
 
 The last two are distinct from ordinary external-owner updates. The same table accepted an alias to its owned storage, so its own permitted actions mutate/delete a bound target. An implementation must either reject these ownership conflicts or state a narrower view contract. Bound aliases also mean visible copies cannot be counted as separate owned placements.
 
-`tlacheck witnesses` retains these concrete reproductions, plus positive controls: successful move keeps the score, bound add/remove/move and whole-table clear refuse, refusal leaves the other owned member intact, drop preserves a disjoint external set, and successful clear removes owned rows/members while retaining the definition. The command owns only its temporary Unix-socket Redis process; it accepts a pinned source file, never a store address.
+`nova-tla witnesses` retains these concrete reproductions, plus positive controls: successful move keeps the score, bound add/remove/move and whole-table clear refuse, refusal leaves the other owned member intact, drop preserves a disjoint external set, and successful clear removes owned rows/members while retaining the definition. The command owns only its temporary Unix-socket Redis process; it accepts a pinned source file, never a store address.
 
 RowAdd also rewrites binding metadata without deleting the physical set; any lossless-reshape repair must cover that path as well as Bind.
 
@@ -58,11 +58,11 @@ ONE PLACE should be “at most one owned location per member within the chosen n
 Use the official [TLA+ tools v1.7.4 release](https://github.com/tlaplus/tlaplus/releases/tag/v1.7.4), `tla2tools.jar` SHA-1 `bee4a54f3ee3d4afc347c3240ec2d9e93b075104`. It identifies itself as TLC 2.19. The local run used OpenJDK 27, 2 TLC workers, a 2 GiB heap and no remote services. Java's local RMI listener may require the normal local-execution permission in a sandbox. The runner does not download anything.
 
 ```sh
-go run ./tools/tlacheck table --jar /path/to/tla2tools.jar --mode all --dir /tmp/table-model-results
-go run ./tools/tlacheck table --jar /path/to/tla2tools.jar --mode strict --dir /tmp/table-model-strict
+go run ./cmd/nova-tla table --jar /path/to/tla2tools.jar --mode all --dir /tmp/table-model-results
+go run ./cmd/nova-tla table --jar /path/to/tla2tools.jar --mode strict --dir /tmp/table-model-strict
 # Extract the exact pin in a nova-tools checkout, then replay locally:
 git show f77458853af46fdbbafd6881a4b46006431f266f:pkg/nsprint/fn/lua/table.lua > /tmp/table-f7745885.lua
-go run ./tools/tlacheck witnesses /tmp/table-f7745885.lua
+go run ./cmd/nova-tla witnesses /tmp/table-f7745885.lua
 ```
 
 `all` means current-contract checks plus **five expected failures and one allowed cross-table scope control**, not all desired invariants passing. The entire TLC runner has a 120-second budget, including all cases; timeout is a failure, not success or an inconclusive green. `strict` is expected to fail today: exit 1, with a `TABLE FAIL` line naming the first finding the table code still has. A newly missing or changed counterexample fails witness mode so a repair requires updating the model and its disposition. Do not install the positive-only suite as proof that ONE PLACE is solved. CI integration into nova-tools is still owed with the implementation repair and its cross-repository source pin.

@@ -211,7 +211,7 @@ func tlcRecordProblems(root string) []string {
 		}
 		if want, files, err := src.Fingerprint(name); err == nil {
 			if row[tc["input_sha256"]] != want || row[tc["input_files"]] != strconv.Itoa(files) {
-				bad("TLC %s record is stale: it was measured on inputs %s (%d files) and the case now reads %s (%d files): %s. The case is in group %s: run `tlacheck groups --stale` for the groups to run again, run each on a Linux bench into a clean directory, then `tlacheck merge --keep tla/RUNS.tsv` (tla/README.md gives the commands; `tlacheck inputs --case %s` prints each file and its hash)",
+				bad("TLC %s record is stale: it was measured on inputs %s (%d files) and the case now reads %s (%d files): %s. The case is in group %s: run `nova-tla groups --stale` for the groups to run again, run each on a Linux bench into a clean directory, then `nova-tla merge --keep tla/RUNS.tsv` (tla/README.md gives the commands; `nova-tla inputs --case %s` prints each file and its hash)",
 					name, row[tc["input_sha256"]], atoiOrZero(row[tc["input_files"]]), want, files, tlcInputList(src, name), p[5], name)
 			}
 		}
@@ -270,7 +270,7 @@ func tlcRecordProblems(root string) []string {
 			parts = append(parts, fmt.Sprintf("%.12s (%d records)", jar, n))
 		}
 		sort.Strings(parts)
-		bad("TLC run records hold %d jars (%s); one jar measures the whole file: run again the groups recorded under the other jars with one jar (`tlacheck groups --stale` names none, since the jar is not an input; run those groups, then `tlacheck merge --keep`), or run every group with one jar", len(jars), strings.Join(parts, ", "))
+		bad("TLC run records hold %d jars (%s); one jar measures the whole file: run again the groups recorded under the other jars with one jar (`nova-tla groups --stale` names none, since the jar is not an input; run those groups, then `nova-tla merge --keep`), or run every group with one jar", len(jars), strings.Join(parts, ", "))
 	}
 	for name := range wanted {
 		if !seen[name] && wanted[name][7] == "-" {
@@ -472,7 +472,7 @@ func TestTLCStaleRecordNamesTheCaseAndItsInputFiles(t *testing.T) {
 	require.Lenf(t, problems, 2, "problems %v", problems)
 	for i, config := range []string{"MCA.cfg", "MCB.cfg"} {
 		group := map[string]string{"MCA.cfg": "alpha", "MCB.cfg": "beta"}[config]
-		for _, want := range []string{"TLC " + config + " record is stale", "tla/Shared.tla", "tla/" + config, "tlacheck inputs --case " + config, "group " + group + ":", "`tlacheck groups --stale`", "`tlacheck merge --keep tla/RUNS.tsv`", "clean directory"} {
+		for _, want := range []string{"TLC " + config + " record is stale", "tla/Shared.tla", "tla/" + config, "nova-tla inputs --case " + config, "group " + group + ":", "`nova-tla groups --stale`", "`nova-tla merge --keep tla/RUNS.tsv`", "clean directory"} {
 			assert.Containsf(t, problems[i], want, "%q does not name %q", problems[i], want)
 		}
 	}
@@ -683,7 +683,7 @@ func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 
 // pinnedJarProblem is what is wrong between the jar tla/tla2tools.sha256 pins
 // (the jar the tools play's tla play holds the record machines to, and
-// tlacheck run --bench checks) and the jars the records name, or "".
+// nova-tla run --bench checks) and the jars the records name, or "".
 func pinnedJarProblem(pinned string, jars []string) string {
 	f := strings.Fields(pinned)
 	if len(f) == 0 || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(f[0]) {

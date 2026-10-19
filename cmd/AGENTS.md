@@ -22,6 +22,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-self-talk/` | flags sentences where a writer passes a standing verdict on themselves | `go test ./cmd/nova-self-talk` | `go test ./cmd/nova-self-talk` |
 | `nova-swarm/` | native card runner, bench slot leases and card lint CLI | `go test ./cmd/nova-swarm` | `go test ./cmd/nova-swarm` |
 | `nova-table/` | tables of ordered sets, text and percentages over Redis | `go test ./cmd/nova-table` | `go test ./cmd/nova-table` |
+| `nova-tla/` | the TLA+ runner of every repository: TLC over the declared cases of tla/CASES.tsv, their run records, the stale groups, and the table model's suites | `go test ./cmd/nova-tla` | `go test ./cmd/nova-tla` |
 | `nova-tokens/` | token consumption metering and budgeting CLI | `go test ./cmd/nova-tokens` | `go test ./cmd/nova-tokens` |
 | `nova-up/` | set nova up on one machine: plan every step, then apply, from nothing to a first sprint | `go test ./cmd/nova-up` | `go test ./cmd/nova-up` |
 | `nova-update/` | binary release update CLI | `go test ./cmd/nova-update` | `go test ./cmd/nova-update` |

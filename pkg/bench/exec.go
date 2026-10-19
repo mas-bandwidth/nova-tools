@@ -32,6 +32,13 @@ func (Exec) Shell(ctx context.Context, host, line string, stdout, stderr io.Writ
 	return sshLine(ctx, host, line, nil, stdout, stderr)
 }
 
+// ShellIn is Shell with stdin on the remote line's stdin: a stream the line
+// reads, such as an archive it unpacks (nova-tla's run --bench stages its
+// models so).
+func (Exec) ShellIn(ctx context.Context, host, line string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	return sshLine(ctx, host, line, stdin, stdout, stderr)
+}
+
 // Copy copies src's contents into host:dst: dst is made, and the tree goes over
 // as a tar stream on ssh's stdin that the bench's tar unpacks there.
 func (e Exec) Copy(ctx context.Context, host, src, dst string, withGit bool, stderr io.Writer) error {

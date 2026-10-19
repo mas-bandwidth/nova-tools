@@ -157,7 +157,7 @@ Each card is "make it usable by a stranger building a different workflow". The v
 - **TLA+**: SprintEvents, DirtyTick, DirtyTickRead, RouteIndex, Level and Land (sprint), and WorkImport (nova-work), with
   their MC modules, cfgs, READMEs, `sprintevents-bench/` and `dirtytick-bench/`, and their 220 `CASES.tsv` and
   `RUNS.tsv` rows. CardContract (nova-swarm and member) and CardMachine (the Lua in `nsprint/fn`) stay in nova-tools
-  beside the code they model. The TLC runner is still nova-tools' `tools/tlacheck`, so nova-sprint needs its own runner
+  beside the code they model. The TLC runner is still nova-tools' `cmd/nova-tla`, so nova-sprint needs its own runner
   or an imported one.
 - **Tests**: every test of the moved packages moved with them. internal/ci's sprint tables lock test became
   `internal/sprint/tables_lock_test.go`, beside `TABLES.lock`. Certification's `tick-gate` job (the

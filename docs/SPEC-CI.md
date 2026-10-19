@@ -2907,7 +2907,7 @@ this rule having run on it, and a main run excuses it all the same.
 ### `tlc` — bounded model evidence
 
 `make tlc` runs one declared `TLC_GROUP` on a Linux bench, using explicit
-`TLC_JAR` and `TLC_OUT` paths; it is `tlacheck run` (tools/tlacheck, over
+`TLC_JAR` and `TLC_OUT` paths; it is `nova-tla run` (cmd/nova-tla, over
 pkg/tlc). It downloads nothing, uses at most two TLC workers and two JVM
 processors, and caps the whole group at 110 seconds. Each case has an owned
 temporary state directory, and TLC runs in a private copy of the models under
@@ -2942,11 +2942,11 @@ are bookkeeping and in no fingerprint, and `TestEveryRunnerFileIsClassified` hol
 to exactly one of the two lists (`ResultFiles`, `BookkeepingFiles`). It is the SHA-256 over those inputs in path
 order, each as its path, a NUL, the hex SHA-256 of its bytes and a newline: no timestamp,
 no host and no absolute path. The jar is not an input; the record names it in its own
-column, beside the java version and the worker count. `tlacheck inputs --case <config>` prints each input and its hash, the fingerprint
-and the count. `tlacheck merge` joins the records of the group runs into the committed
+column, beside the java version and the worker count. `nova-tla inputs --case <config>` prints each input and its hash, the fingerprint
+and the count. `nova-tla merge` joins the records of the group runs into the committed
 file, refuses a record that is not the fingerprint its case has at that checkout (another
 runner, or a model edited since the run) or whose module, expected outcome or property cell is not the plan's for the case, and with `--keep` carries the current records of
-the cases no run measured again; `tlacheck groups --stale` names the groups to run again.
+the cases no run measured again; `nova-tla groups --stale` names the groups to run again.
 Unknown state counts on a failed timeout stay unknown, never zero-state success.
 Editing a model, a configuration or a case's row requires refreshing the records of the
 cases that read it, and only those; editing a result file of the runner requires refreshing every record, and editing a
@@ -2972,11 +2972,11 @@ other, an edit to one row of the case plan stales that case only, an edit to the
 stales every case, and edits to files no case reads stale none.
 `TestTLCEveryFileACaseReadsStalesIt` changes each file a case reads, one at a time, and
 each change stales the case. `TestTLCRecordHostIsAPlatformLabel` refuses a `host` cell that is not a listed platform label
-and a CPU count that is not a count. `TestTLCRecordFileHoldsOneJar` holds the record file to one `jar_sha256`, and `tlacheck merge` refuses a
+and a CPU count that is not a count. `TestTLCRecordFileHoldsOneJar` holds the record file to one `jar_sha256`, and `nova-tla merge` refuses a
 set of records measured with more than one jar, naming each jar with its record count and the
 groups to run again. `TestTLCRecordsNameThePinnedJar` holds that jar to the SHA-256
 `tla/tla2tools.sha256` pins, the one the record machines hold (the tools play's tla play)
-and `tlacheck run --bench` checks before it runs. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
+and `nova-tla run --bench` checks before it runs. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
 records, wrong exits, invalid gate waivers and manual required records refuse, while a
 declared failed bench measurement is retained as debt, never PASS.
 

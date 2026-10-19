@@ -29,7 +29,7 @@ import (
 var NovaTools = []string{
 	"nova-bus", "nova-cairn", "nova-check", "nova-ci", "nova-config", "nova-decide",
 	"nova-doctor", "nova-friend", "nova-fuse", "nova-hook", "nova-local", "nova-memory", "nova-redis",
-	"nova-sandbox", "nova-secrets", "nova-self-talk", "nova-swarm", "nova-table",
+	"nova-sandbox", "nova-secrets", "nova-self-talk", "nova-swarm", "nova-table", "nova-tla",
 	"nova-tokens", "nova-up", "nova-update", "nova-version",
 }
 

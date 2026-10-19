@@ -1,7 +1,9 @@
 package tlc
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,6 +63,22 @@ func RunnerFiles() (map[string][]byte, error) {
 	return out, nil
 }
 
+// RunnerDigest names a runner: the first 12 hex digits of the SHA-256 over its result
+// files (ResultFiles, by path under the checkout root as RunnerFiles returns them), each
+// as its path, its length and its bytes. The result files are what every fingerprint
+// holds of the runner, so two builds with one digest give every case one fingerprint
+// whichever repository built them, and two digests are two runners. nova-tla version
+// prints it (runner=), and the lander names a runner by it.
+func RunnerDigest(files map[string][]byte) string {
+	h := sha256.New()
+	for _, name := range ResultFiles {
+		p := RunnerDir + "/" + name
+		fmt.Fprintf(h, "%s\x00%d\x00", p, len(files[p]))
+		h.Write(files[p])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
+
 // CheckedFiles are the files CheckRunner holds to the checkout: ResultFiles and
 // InputListFiles.
 func CheckedFiles() []string {
@@ -90,7 +108,7 @@ func CheckRunner(root string) error {
 		}
 	}
 	if len(differ) > 0 {
-		return fmt.Errorf("this tlacheck was built from other runner files than the ones under %s (%s differ); build tlacheck from this tree: go build -o /tmp/tlacheck ./tools/tlacheck", root, strings.Join(differ, ", "))
+		return fmt.Errorf("this nova-tla was built from other runner files than the ones under %s (%s differ); build nova-tla from this tree: go build -o /tmp/nova-tla ./cmd/nova-tla", root, strings.Join(differ, ", "))
 	}
 	return nil
 }

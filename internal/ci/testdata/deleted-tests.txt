@@ -2353,3 +2353,9 @@ pkg/friend/codex_session_test.go NewestCodexSession was the retired Codex adapte
 pkg/friend/spendcap_daemon_test.go the spend cap through the daemon's batch turns is retired with them (v1.3.6); the cap's gate and lane tests stay in spendcap_test.go
 pkg/friend/spendcap_redis_functional_test.go the spend cap through the daemon's batch turns on a private store is retired with them (v1.3.6)
 pkg/friend/lock_unix_test.go FlockHeld is retired with the daemon Codex delivery adapter (v1.3.8); hook leases own session presence
+tools/tlacheck/bench_test.go moved to cmd/nova-tla/bench_test.go with the runner, promoted to a released command (tools/tlacheck retired)
+tools/tlacheck/host_test.go moved to cmd/nova-tla/host_test.go with the runner, promoted to a released command (tools/tlacheck retired)
+tools/tlacheck/main_test.go moved to cmd/nova-tla/main_test.go with the runner, promoted to a released command (tools/tlacheck retired)
+tools/tlacheck/parallel_test.go moved to cmd/nova-tla/parallel_test.go with the runner, promoted to a released command (tools/tlacheck retired)
+tools/tlacheck/runner_test.go moved to cmd/nova-tla/runner_test.go with the runner, promoted to a released command (tools/tlacheck retired)
+tools/tlacheck/sprint_forms_test.go moved to cmd/nova-tla/sprint_forms_test.go with the runner, promoted to a released command (tools/tlacheck retired)

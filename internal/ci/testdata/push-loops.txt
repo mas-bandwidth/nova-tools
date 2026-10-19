@@ -68,6 +68,7 @@ pkg/swarm/opencode.go walWait.read waits and retries
 pkg/swarm/slots.go TakeSlotLeasesWaiting waits and retries
 pkg/swarm/stage.go StageCard waits and retries
 internal/tablemodel/redis.go StartServer waits and retries
+cmd/nova-tla/bench.go trough bench load trough
 internal/tokens/lock_poll_other.go takeFold waits and retries
 internal/update/snapshot_lock_windows.go lockSnapshot waits and retries
 internal/update/snapshot_unix.go lockSnapshot waits and retries

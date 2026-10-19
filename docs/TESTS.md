@@ -1149,6 +1149,35 @@ $ nova-doctor run --check nosuch
 ! RUN REFUSED: no check named "nosuch"; the checks are dashboard, friend-login, friend-row, friend-wall, gosdk, harness, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
 ```
 
+## nova-tla
+
+The example checkout of the tool's own testdata, typed from the nova-tools
+checkout root: two required groups and no records yet, so the stale groups are
+every group; then what one case's fingerprint covers (its files and the
+runner's result files, each with its hash). Each run reads the plan and writes
+nothing; no java runs. Run by `cmd/nova-tla/firstrun_test.go`.
+
+### First run
+
+```
+$ nova-tla groups --root ./cmd/nova-tla/testdata/example
+["door","lock"]
+
+$ nova-tla groups --root ./cmd/nova-tla/testdata/example --stale
+["door","lock"]
+
+$ nova-tla inputs --root ./cmd/nova-tla/testdata/example --case MCDoor.cfg
+INPUT OK path=pkg/tlc/outcome.go sha256=beeb2482310944921dc38c1e481c83e75aced119be86418a2992d5291c30036f
+INPUT OK path=pkg/tlc/plan.go sha256=d2a932979746c8d5c856b7b04f9f57ccf484ca7fd14ae0be1e8f02516701626b
+INPUT OK path=pkg/tlc/run.go sha256=bb10dac644a7bf231a1f62fc982aa8598dff18c29954399fdeb26bd62f8c17c1
+INPUT OK path=pkg/tlc/suite.go sha256=f9e68431e9f82e37b4e306da11a1db5112f3a6c0968091f5e48d7e867b986d3f
+INPUT OK path=tla/CASES.tsv#MCDoor.cfg sha256=a91c139be98d86a7f5c7ec3238b50fba662dd20c36a23845baa5f6cdda556c30
+INPUT OK path=tla/Door.tla sha256=1f37d1f2ea4efe89939e8255a6ad3538f54fcae0884d940c458ac8c2d3765bd1
+INPUT OK path=tla/MCDoor.cfg sha256=ea9bc9a520aaabeae3f9c97592849bf442e3249c8910603fd102a9531e07f97f
+INPUT OK path=tla/MCDoor.tla sha256=58b41e0a5e4e91c72a2c01fda8655b6b51dfa22b556a7969a16efccf4c3073ed
+INPUTS OK case=MCDoor.cfg files=8 fingerprint=836ef43b8cac91bd2eb7279ed1c1c6b53cc216637818165173c50feaa8489e89
+```
+
 ## One-shot lanes at parity (pkg/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
 
 `TestOpencodeLanesDoWhatTheRunnerStopgapsDid` has one subtest per behaviour the two runner scripts had (card filter, row
