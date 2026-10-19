@@ -1,4 +1,4 @@
-The stable tools release beside nova-sprint v1.6.4, on Glenn's direct approval, carrying one change: an uncatalogued model provider (paperinstruments, the Ultramarine model) runs from opencode's custom provider block.
+The stable tools release beside nova-sprint v1.6.4, on the owner's direct approval, carrying one change: an uncatalogued model provider (paperinstruments, the Ultramarine model) runs from opencode's custom provider block.
 
 Install: download the assets for your platform from this release, then run `nova-sprint adopt v1.6.4 --source <nova-tools checkout at v1.6.4> --sprint-release <the nova-sprint v1.6.4 release downloaded> --inventory <file> --reason <text>` (see docs/SPEC-RELEASE.md).
 
