@@ -22,11 +22,11 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("HOME", home); err != nil {
 		panic(err)
 	}
-	os.Unsetenv("XDG_CONFIG_HOME")
-	os.Unsetenv("XDG_CACHE_HOME")
+	os.Unsetenv("XDG_CONFIG_HOME") // ignored: a fixed valid key; a refusal leaves it set and TestTheSuiteRunsWithATempHome reports it
+	os.Unsetenv("XDG_CACHE_HOME")  // ignored: a fixed valid key; a failure only leaves an override in place for this short-lived test process
 	code := m.Run()
 	_ = os.Setenv("HOME", oldHome)
-	os.RemoveAll(home)
+	os.RemoveAll(home) // ignored: the suite's exit code is already decided; a leftover temp directory is the OS's to reap
 	os.Exit(code)
 }
 
