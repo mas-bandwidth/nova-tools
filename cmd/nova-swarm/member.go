@@ -194,7 +194,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// member with no wall takes nothing (docs/SPEC-SWARM.md, `member`): every card it
 	// took would be refused by native before its child started, and each would sit as its
 	// own failed attempt
-	if why := memberWallRefusal(*noWall, *sandbox, exec.LookPath); why != "" {
+	if why := memberWallRefusal(*noWall, *sandbox, memberLookPath); why != "" {
 		return refuse(stderr, " member", why)
 	}
 	// the beat writes from its own goroutine (memberLoop), and each lane's end its LANE END
@@ -331,6 +331,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	fmt.Fprintf(stdout, "MEMBER OK as=%s ticks=%d running=%d\n", oneline.Field(*as), n, m.Running())
 	return 0
 }
+
+// memberLookPath resolves a bare binary name on PATH. A package var so the member tests,
+// which run on machines with no nova-sandbox, answer the wall lookup without reading the
+// host PATH; production uses exec.LookPath, and memberWallRefusal takes the lookup it uses
+// as an argument.
+var memberLookPath = exec.LookPath
 
 // memberWallRefusal is the reason a member must not start for want of a wall, "" when it
 // may. A member resolves the wall exactly as native does -- the --sandbox name as typed,

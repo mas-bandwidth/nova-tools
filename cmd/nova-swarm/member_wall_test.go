@@ -15,6 +15,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
+// The member tests must not read the host PATH: certification runs cmd/nova-swarm on
+// machines with no nova-sandbox, so every cmdMember that does not name a wall or --no-wall
+// would otherwise be refused here. memberLookPath is a package var (production keeps
+// exec.LookPath); this answers it with the running test binary, which exists. The lookup
+// itself is pinned through memberWallRefusal with an explicit fake below.
+func init() {
+	memberLookPath = func(string) (string, error) { return os.Executable() }
+}
+
 // A member whose PATH has no nova-sandbox and no --sandbox/--no-wall refuses to start
 // before its first take: exit 2 and one line naming the remedy, so no card is ever dealt to
 // a member that cannot wall it (docs/SPEC-SWARM.md, `member`).
