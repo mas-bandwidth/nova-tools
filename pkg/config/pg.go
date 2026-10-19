@@ -73,7 +73,12 @@ const readRole = "nova_read"
 // on a command line (cmd/nova-config resolves it from the environment).
 type PG struct {
 	db *sql.DB
+	// RefuserOff turns the funding refuser off for the reversed witness (a
+	// test-only seam, never a flag).
+	RefuserOff bool
 }
+
+func (p *PG) refuserDisabled() bool { return p.RefuserOff }
 
 // ConnectTimeout bounds the connection check of OpenPG when the context
 // carries no deadline of its own.
@@ -557,6 +562,9 @@ func (p *PG) Insert(ctx context.Context, kind string, row Row, actor string) (in
 	if err := checkRefs(ctx, p, k, row); err != nil {
 		return 0, err
 	}
+	if err := checkRefuseFunding(ctx, p, k, Row{}, row, nil, actor); err != nil {
+		return 0, err
+	}
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("postgres: begin: %w", err)
@@ -607,6 +615,12 @@ func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]s
 	maps.Copy(next.Fields, changes)
 	if err := checkRefs(ctx, p, k, next); err != nil {
 		return Row{}, 0, err
+	}
+	if err := checkRefuseFunding(ctx, p, k, cur, next, changes, actor); err != nil {
+		return Row{}, 0, err
+	}
+	if maps.Equal(next.Fields, cur.Fields) {
+		return cur.Clone(), 0, nil // a no-op write is skipped (tla/ProviderFunding.tla OneWritePerProvider)
 	}
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {

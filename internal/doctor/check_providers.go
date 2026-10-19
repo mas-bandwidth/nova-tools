@@ -119,6 +119,14 @@ type providerRoute struct {
 	Enabled  bool
 }
 
+// providerRow is one nova-config provider row as the check reads it: funded is
+// the owner's declaration, and an unfunded provider is skipped, never probed.
+type providerRow struct {
+	Funded bool
+	Note   string
+	Update string
+}
+
 // checkProviders reads the routes (nova-config route list --json) and the seat's secrets
 // store names, then holds every enabled route to its key, its models call and its funds.
 // The evidence names every route that would fail; a disabled route is listed with its note.
@@ -139,6 +147,12 @@ func checkProviders(ctx context.Context, env Env) Result {
 	if len(routes) == 0 {
 		return Result{Status: OK, Evidence: "no route names a provider; nothing to check"}
 	}
+	providers, err := providersRows(ctx, env)
+	if err != nil {
+		return Result{Status: Fail,
+			Evidence: "the providers could not be read: " + err.Error(),
+			Fix:      "nova-config provider list --json"}
+	}
 	probe := providerProbeFor(env)
 	var problems, notes []string
 	firstFix := ""
@@ -146,6 +160,10 @@ func checkProviders(ctx context.Context, env Env) Result {
 	for _, r := range routes {
 		if !r.Enabled {
 			notes = append(notes, "disabled "+r.Name+": "+orNoNote(r.Note))
+			continue
+		}
+		if p, ok := providers[r.Provider]; ok && !p.Funded {
+			notes = append(notes, "provider "+r.Provider+" UNFUNDED since "+orNoUpdate(p.Update)+" ("+orNoNote(p.Note)+"): the owner's to fund")
 			continue
 		}
 		checked++
@@ -170,10 +188,10 @@ func checkProviders(ctx context.Context, env Env) Result {
 		}
 		switch dollars, known, err := probe.Funds(ctx, r.Provider, key); {
 		case err != nil:
-			firstFix = orFix(firstFix, "nova-sprint funded "+r.Provider+" --reason '<the payment>'")
+			firstFix = orFix(firstFix, "nova-config provider set "+r.Provider+" --funded false --note '<the payment>'")
 			problems = append(problems, "route "+r.Name+": provider "+r.Provider+"'s funds could not be read: "+err.Error())
 		case known && dollars <= 0:
-			firstFix = orFix(firstFix, "nova-sprint funded "+r.Provider+" --reason '<the payment>'")
+			firstFix = orFix(firstFix, "nova-config provider set "+r.Provider+" --funded false --note '<the payment>'")
 			problems = append(problems, fmt.Sprintf("route %s: provider %s is out of funds ($%.2f)", r.Name, r.Provider, dollars))
 		}
 	}
@@ -227,6 +245,51 @@ func providersRoutes(ctx context.Context, env Env) ([]providerRoute, error) {
 		routes = append(routes, providerRoute{Name: f.Name, Provider: f.Provider, Model: f.Model, Note: f.Note, Enabled: f.Enabled == "true"})
 	}
 	return routes, nil
+}
+
+// providersRows reads nova-config's provider rows: `nova-config provider list --json`,
+// each row's funded, note and updated fields, through the one exec seam.
+func providersRows(ctx context.Context, env Env) (map[string]providerRow, error) {
+	ctx, cancel := context.WithTimeout(ctx, providersTimeout)
+	defer cancel()
+	out, err := env.Exec(ctx, "nova-config", "provider", "list", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var wire struct {
+		Items []struct {
+			Kind   string `json:"kind"`
+			Fields struct {
+				Name    string `json:"name"`
+				Funded  string `json:"funded"`
+				Note    string `json:"note"`
+				Updated string `json:"updated"`
+			} `json:"fields"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &wire); err != nil {
+		return nil, err
+	}
+	rows := map[string]providerRow{}
+	for _, it := range wire.Items {
+		if it.Kind != "" && it.Kind != "provider" {
+			continue
+		}
+		f := it.Fields
+		if f.Name == "" {
+			continue
+		}
+		rows[f.Name] = providerRow{Funded: f.Funded == "true", Note: f.Note, Update: f.Updated}
+	}
+	return rows, nil
+}
+
+// orNoUpdate is a provider row's last-change stamp, or the words one with none prints.
+func orNoUpdate(update string) string {
+	if update == "" {
+		return "no change recorded"
+	}
+	return update
 }
 
 // secretNames reads the top-level key names of the seat's file in the secrets store and

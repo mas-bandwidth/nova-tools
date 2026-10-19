@@ -59,7 +59,7 @@ func (c ProviderCause) Reason() string {
 }
 
 var (
-	causeCreditRE = regexp.MustCompile(`(?i)insufficient[ _-]?(?:credit|balance|funds|quota)|out of credit|credit balance|payment required|no credits|more credits|exceeded your current quota|billing`)
+	causeCreditRE = regexp.MustCompile(`(?i)insufficient[ _-]?(?:credit|balance|funds|quota)|out of credit|credit balance|payment required|no credits|more credits|exceeded your current quota|CreditsError|no payment method`)
 	causeRateRE   = regexp.MustCompile(`(?i)rate[ _-]?limit|too many requests`)
 	causeAuthRE   = regexp.MustCompile(`(?i)unauthori[sz]ed|invalid[ _-]?api[ _-]?key|incorrect api key|authenticat(?:ion|e)|session expired|not (?:logged in|authenticated)|api key (?:is )?(?:missing|invalid|not valid)|forbidden|ProviderAuthError`)
 	causeTimeRE   = regexp.MustCompile(`(?i)timed out|timeout`)

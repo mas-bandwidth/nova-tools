@@ -376,9 +376,38 @@ of a funded provider` and `tier show` as its remedy. These warnings are advisory
 and never change the exit code. CLI warning commands retain the chosen
 `--file`, `--pg` or `--seat`; writes carry the known actor or an explicit
 `--actor <name>` placeholder. JSON carries the provider lines as the
-`providers` fact and the same warnings as notes.
+ `providers` fact and the same warnings as notes.
 
-**`route`** (`config.routes`): one way to run a model tier, the provider
+### Funding is the owner's
+
+A provider's `funded` is the owner's declaration, and only the owner flips it
+to true (tla/ProviderFunding.tla `OnlyOwnerFunds`; pkg/config/funding.go). The
+sprint row's `owner` names the owner; it is empty until the first declaration
+(`sprint set --owner <name> --actor <name>`, the actor naming themself; after
+that only the current owner changes it). A provider write that moves `funded`
+to true — an add with `funded=true`, or a set from false to true — is refused
+with `ErrOwnerOnly` unless the actor is the owner; with no owner declared every
+such write is refused, naming the first declaration. A route write that moves
+`enabled` to true while its provider's row says `funded=false` is refused, and
+the owner funds the provider first (tla/ProviderFunding.tla `NoEnableOnUnfunded`).
+`funded=false` is always accepted from any actor, `machine` included (the flip),
+and a set that leaves `funded` false as it was is a no-op the store skips, so
+the flip writes once per provider (tla/ProviderFunding.tla `OneWritePerProvider`).
+The classifier classes every provider billing failure out-of-credit and nothing
+else (pkg/swarm/providercause.go `CauseCredit`). apply copies rows as the store
+holds them: it has no path to `funded=true`, and applying an unfunded provider
+row writes `funded=false` to the Redis hash. The doctor skips every provider
+whose row is `funded=false` — no models probe, no funds probe, no fail — and
+reports each as `provider <p> UNFUNDED since <last change> (<note>): the owner's
+to fund` on an OK result; a funded provider that reads $0 or less stays a
+problem whose fix names `provider set <p> --funded false --note ...`.
+
+The guard is the actor: a declared name, so it stops the machine and the
+coordinator re-funding by habit. It is not authentication against a deliberate
+false `--actor`; a role-based guard is a later card, not this one
+(docs/SPEC-CONFIG.md, "Funding is the owner's").
+
+ **`route`** (`config.routes`): one way to run a model tier, the provider
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
 models, in the order of the tier's array (the `tier` kind below); a card's

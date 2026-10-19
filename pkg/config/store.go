@@ -302,7 +302,12 @@ type Mem struct {
 	// Held is what Sessions answers: the other backends a test says hold the
 	// database (none, as a quiet store).
 	Held []Session
+	// RefuserOff turns the funding refuser off for the reversed witness (a
+	// test-only seam, never a flag).
+	RefuserOff bool
 }
+
+func (m *Mem) refuserDisabled() bool { return m.RefuserOff }
 
 // memRole is the role a Mem is connected as: it owns schema config and every
 // table in it until a test sets Catalog.
@@ -376,6 +381,9 @@ func (m *Mem) Insert(ctx context.Context, kind string, row Row, actor string) (i
 	if err := checkRefs(ctx, m, k, row); err != nil {
 		return 0, err
 	}
+	if err := checkRefuseFunding(ctx, m, k, Row{}, row, nil, actor); err != nil {
+		return 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.rows[kind][row.Name]; exists {
@@ -408,6 +416,12 @@ func (m *Mem) Update(ctx context.Context, kind, name string, changes map[string]
 	maps.Copy(next.Fields, changes)
 	if err := checkRefs(ctx, m, k, next); err != nil {
 		return Row{}, 0, err
+	}
+	if err := checkRefuseFunding(ctx, m, k, cur, next, changes, actor); err != nil {
+		return Row{}, 0, err
+	}
+	if maps.Equal(next.Fields, cur.Fields) {
+		return cur.Clone(), 0, nil // a no-op write is skipped (tla/ProviderFunding.tla OneWritePerProvider)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

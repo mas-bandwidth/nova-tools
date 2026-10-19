@@ -148,3 +148,35 @@ func TestTheHandbackLineCarriesTheCause(t *testing.T) {
 	assert.Equal(t, Cause5xx, h.Cause.Class)
 	assert.Equal(t, "502 Bad Gateway", h.Cause.Message)
 }
+
+// TestClassifyProviderCreditShapes pins the out-of-credit class: every provider billing
+// failure classes out-of-credit and nothing else does. The four providers on record are
+// openrouter (402), opencode Zen (CreditsError / insufficient balance / no payment
+// method), DeepSeek (402 "Insufficient Balance") and Inception and Paper Instruments
+// (402 with any body); a 429 is credit only on an explicit exhausted-quota shape.
+func TestClassifyProviderCreditShapes(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, text string; status int; want string }{
+		{"openrouter 402", `{"error":{"code":402,"message":"Insufficient credits. Add more using https://openrouter.ai/settings/credits"}}`, 402, CauseCredit},
+		{"opencode Zen CreditsError", `"type":"CreditsError"`, 0, CauseCredit},
+		{"opencode Zen insufficient balance", `"message":"Insufficient balance"`, 0, CauseCredit},
+		{"opencode Zen no payment method", `"message":"no payment method"`, 0, CauseCredit},
+		{"deepseek 402", `{"error":{"message":"Insufficient Balance","type":"unknown_error"}}`, 402, CauseCredit},
+		{"inception 402 any body", `{"error":"anything"}`, 402, CauseCredit},
+		{"paper instruments 402 any body", `{"error":{"message":"unexpected"}}`, 402, CauseCredit},
+		{"plain 429 rate limit", "Rate limit exceeded", 429, CauseRateLimited},
+		{"429 billing page body", "see https://example.test/billing for limits", 429, CauseRateLimited},
+		{"429 insufficient quota", `{"error":{"type":"insufficient_quota"}}`, 429, CauseCredit},
+		{"429 exceeded quota", "you have exceeded your current quota", 429, CauseCredit},
+		{"500", "internal server error", 500, Cause5xx},
+		{"503 overloaded", "overloaded", 503, Cause5xx},
+		{"timeout", "timed out", 504, CauseTimeout},
+		{"401 unauthorized", "invalid api key", 401, CauseAuth},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, ClassifyProvider(tc.status, tc.text))
+		})
+	}
+}

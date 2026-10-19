@@ -122,7 +122,7 @@ func TestDoctorProvidersCheckNamesARouteWithNoKeyOrNoFunds(t *testing.T) {
 		assert.Equal(t, Fail, r.Status, r)
 		assert.Contains(t, r.Evidence, "pro-a")
 		assert.Contains(t, r.Evidence, "out of funds")
-		assert.Contains(t, r.Fix, "nova-sprint funded")
+		assert.Contains(t, r.Fix, "nova-config provider set openrouter --funded false --note")
 	})
 	t.Run("a provider that does not answer its models list is a fail naming the route", func(t *testing.T) {
 		t.Parallel()
@@ -165,4 +165,79 @@ func TestDoctorProvidersCheckNamesARouteWithNoKeyOrNoFunds(t *testing.T) {
 		assert.Equal(t, OK, r.Status, r)
 		assert.Contains(t, r.Evidence, "no route")
 	})
+}
+
+// providersJSON is `nova-config provider list --json` as the tool prints it: one object
+// whose items carry each provider row's fields, funded as the word the store holds.
+func providersJSON(rows ...map[string]any) string {
+	type item struct {
+		Kind   string         `json:"kind"`
+		Fields map[string]any `json:"fields"`
+	}
+	items := make([]item, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, item{Kind: "provider", Fields: r})
+	}
+	b, err := json.Marshal(map[string]any{
+		"result": map[string]any{"verb": "provider list", "status": "ok", "exit": 0},
+		"facts":  map[string]any{"kind": "provider", "rows": len(rows)},
+		"items":  items,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+func providerRowJSON(name, funded, note, updated string) map[string]any {
+	return map[string]any{"name": name, "funded": funded, "note": note, "updated": updated}
+}
+
+// recordingProbe counts the outside calls it records, so a test asserts that none were
+// made for an unfunded provider.
+type recordingProbe struct {
+	models, funds int
+}
+
+func (p *recordingProbe) Models(context.Context, string, string) error { p.models++; return nil }
+func (p *recordingProbe) Funds(context.Context, string, string) (float64, bool, error) {
+	p.funds++
+	return 5, true, nil
+}
+
+// TestProvidersReportsUnfundedNotFail pins that a provider whose row is funded=false is
+// skipped: no models probe, no funds probe, no fail, and evidence
+// `provider <p> UNFUNDED since ... (...): the owner's to fund` on an OK result
+// (docs/SPEC-CONFIG.md, "Funding is the owner's").
+func TestProvidersReportsUnfundedNotFail(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "secrets"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "secrets", "coordinator.yaml"), []byte("OPENROUTER_API_KEY: ENC[AES256_GCM,data:x]\nsops:\n    age:\n        - recipient: age1qqqq\n"), 0o644))
+	probe := &recordingProbe{}
+	env := providerRig{
+		fakeEnv: fakeEnv{
+			env: map[string]string{"NOVA_SECRETS_STORE": "secrets", "NOVA_SECRETS_SEAT": "coordinator",
+				"OPENROUTER_API_KEY": "sk-live"},
+			root: root,
+			exec: func(name string, args ...string) (string, error) {
+				if len(args) >= 2 && args[0] == "provider" && args[1] == "list" {
+					return providersJSON(providerRowJSON("openrouter", "false", "declared missing", "2026-10-19T00:00:00Z")), nil
+				}
+				return routesJSON(routeRow("pro-a", "openrouter", "x-ai/grok-4", "", true)), nil
+			},
+			clock: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC),
+		},
+		ProviderProbe: probe,
+	}
+	r := NewRegistry()
+	r.Register(Default.checks["providers"])
+	res, _, err := r.Run(context.Background(), env, Options{})
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	assert.Equal(t, OK, res[0].Status, res[0])
+	assert.Contains(t, res[0].Evidence, "openrouter UNFUNDED since 2026-10-19T00:00:00Z (declared missing): the owner's to fund")
+	assert.NotContains(t, res[0].Evidence, "out of funds")
+	assert.Equal(t, 0, probe.models, "no models probe for the unfunded provider")
+	assert.Equal(t, 0, probe.funds, "no funds probe for the unfunded provider")
 }
