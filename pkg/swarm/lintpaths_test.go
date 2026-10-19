@@ -164,10 +164,10 @@ func TestAddLintRefusesABriefWhosePathsMissTheFilesItNames(t *testing.T) {
 			pass: map[string]string{"1": "RESULT: c sha=0123456789ab tier: flash"}},
 		{token: "tier-set", name: "tier -",
 			over: map[string]string{"1": "RESULT: c sha=0123456789ab tier: -"}},
-		{token: "new-model-is-heavy-or-above", name: "a new model at tier pro",
-			over: map[string]string{"PATHS": "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt,tla/Bar.tla", "NEW": "tla/Bar.tla"},
+		{token: "tla-is-heavy-or-above", name: "a model at tier pro",
+			over: map[string]string{"PATHS": "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt,tla/Model.tla"},
 			fix:  "RESULT: c sha=0123456789ab tier: heavy",
-			pass: map[string]string{"1": "RESULT: c sha=0123456789ab tier: heavy", "GATE-NEEDS": "linux, tla", "PATHS": "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt,tla/Bar.tla", "NEW": "tla/Bar.tla"},
+			pass: map[string]string{"1": "RESULT: c sha=0123456789ab tier: heavy", "GATE-NEEDS": "linux, tla", "PATHS": "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt,tla/Model.tla"},
 			// model-gate-named (nova-sprint 705fa0b1) also holds a brief that reaches tla/, so the
 			// corrected brief names its model gate step and GATE-NEEDS: tla.
 			passTask: "Fix internal/x/x.go so it says what README.md says.\n\nSTEP 0. Run the model: go run ./tools/tlacheck groups --root . --stale."},
@@ -251,18 +251,16 @@ func TestAddLintRefusesABriefWhosePathsMissTheFilesItNames(t *testing.T) {
 	})
 }
 
-// The TLA+ tier rule is new-model-is-heavy-or-above (lintpaths.go, matching
-// nova-sprint's copy): a card whose NEW names a new .tla module writes a model
-// and is tier heavy or frontier; a card that only edits what tla/ holds is any
-// tier (the owner, 2026-10-17). Flash and pro writing a model draw the finding,
-// heavy and frontier pass, the corrected line 1 sets tier heavy, and every tier
-// editing tla/Model.tla passes. The old tokens tla-is-heavy-or-above and
-// tla-is-frontier stay as aliases for one release.
-func TestNewModelIsHeavyOrAbove(t *testing.T) {
+// The TLA+ rule is tla-is-heavy-or-above (lintpaths.go, matching nova-sprint's
+// a-tla-card-is-heavy-or-above): a card whose PATHS covers tla/ is tier heavy
+// or frontier. Flash and pro draw the finding, heavy and frontier pass, and
+// the corrected line 1 sets tier heavy. The old token tla-is-frontier stays
+// as an alias for one release.
+func TestTlaIsHeavyOrAbove(t *testing.T) {
 	t.Parallel()
 	repo, sha := briefTwin(t)
 	bb := BriefBase{Repo: repo, Sha: sha, Listed: []string{"sprint/s1"}}
-	const base = "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt,"
+	tlaPaths := "internal/x/*.go,internal/x/*_test.go,internal/x/testdata/**,internal/ci/testdata/errcheck/internal/x.txt,internal/ci/testdata/dead_code_allowlist.txt,tla/Model.tla"
 	for _, tc := range []struct {
 		tier   string
 		refuse bool
@@ -272,38 +270,27 @@ func TestNewModelIsHeavyOrAbove(t *testing.T) {
 		{"heavy", false},
 		{"frontier", false},
 	} {
-		t.Run(tc.tier+" writing a model", func(t *testing.T) {
+		t.Run(tc.tier, func(t *testing.T) {
 			over := map[string]string{
 				"1":     "RESULT: c sha=0123456789ab tier: " + tc.tier,
-				"PATHS": base + "tla/Bar.tla",
-				"NEW":   "tla/Bar.tla",
+				"PATHS": tlaPaths,
 			}
 			fs, fix := LintBrief(twinBrief(repo, over, ""), bb)
-			got := findingsFor(fs, "new-model-is-heavy-or-above")
+			got := findingsFor(fs, "tla-is-heavy-or-above")
 			if !tc.refuse {
 				assert.Empty(t, got, "tier %s is heavy or above and passes", tc.tier)
-				assert.NotContains(t, fix, "RESULT: c sha=0123456789ab tier: heavy", "tier %s has no line 1 to correct", tc.tier)
+				assert.Empty(t, fix, "tier %s has nothing to correct", tc.tier)
 				return
 			}
 			require.NotEmpty(t, got, "tier %s is below heavy and draws the token; got %v", tc.tier, fs)
 			assert.Contains(t, got[0].Excerpt, "not heavy or frontier")
 			require.Contains(t, fix, "RESULT: c sha=0123456789ab tier: heavy", "the corrected line 1 sets tier heavy")
 		})
-		t.Run(tc.tier+" editing a model", func(t *testing.T) {
-			over := map[string]string{
-				"1":     "RESULT: c sha=0123456789ab tier: " + tc.tier,
-				"PATHS": base + "tla/Model.tla",
-			}
-			fs, fix := LintBrief(twinBrief(repo, over, ""), bb)
-			assert.Empty(t, findingsFor(fs, "new-model-is-heavy-or-above"), "tier %s editing tla/Model.tla passes", tc.tier)
-			assert.NotContains(t, fix, "RESULT: c sha=0123456789ab tier: heavy")
-		})
 	}
-	const wantRemedy = "a card whose NEW: names a new TLA+ module (a .tla file) writes a model, and writing a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or give the new model to its own card; editing the models, .cfg files or ledgers tla/ already holds is any tier"
-	assert.Equal(t, wantRemedy, BriefRemedy("new-model-is-heavy-or-above"), "the canonical remedy matches the sprint rule verbatim")
-	for _, old := range []string{"tla-is-heavy-or-above", "tla-is-frontier"} {
-		assert.Equal(t, BriefRemedy("new-model-is-heavy-or-above"), BriefRemedy(old), "the old token %s names the same remedy", old)
-	}
+	const wantRemedy = "a card whose PATHS: covers tla/ changes a TLA+ model, and a model is the heavy tier's work or above: write `tier: heavy` on line 1 (or `frontier`), or take tla/ out of PATHS: and give the model to its own card"
+	assert.Equal(t, wantRemedy, BriefRemedy("tla-is-heavy-or-above"), "the canonical remedy matches the sprint rule verbatim")
+	assert.NotEmpty(t, BriefRemedy("tla-is-frontier"), "the old token still has a remedy")
+	assert.Equal(t, BriefRemedy("tla-is-heavy-or-above"), BriefRemedy("tla-is-frontier"), "the old token names the same remedy")
 }
 
 // A LEDGER CARD KEEPS ITS CLASS TEST (the seat, 2026-10-07): a card nova-card generate cuts
