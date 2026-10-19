@@ -195,15 +195,15 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 			return "", nil, fmt.Errorf("the filled profile still carries the marker line %s", strings.TrimSpace(line))
 		}
 	}
-	// The explicit local GPU capability is recorded, never widened
-	// silently. A metal opt-in adds no mach-lookup service and no blanket
-	// device grant here: the minimum Metal mechanisms are still unmeasured, so
-	// the profile stays closed and the GPU probe classifies the outcome.
 	text = out.String()
 	// Deletes in every --write root ("deletes-in-every-write-root"): the template's
 	// file-write* grant on each --write includes unlink, and no later rule takes it back.
+	//
+	// The explicit local GPU capability: --gpu metal appends the MEASURED minimum
+	// (MetalGrants), never a blanket iokit-open or mach-lookup. Without it the profile
+	// stays closed to the GPU.
 	if p.GPUMode == GPUMetal {
-		text += ";; gpu=metal requested: no mach-lookup or device grant added; Metal stays denied until measured\n"
+		text += MetalGrants
 	}
 	return text, params, nil
 }

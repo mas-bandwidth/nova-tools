@@ -105,8 +105,11 @@ usage:
                   the keyless local provider (ollama) that (remote ip) does not
                   reach. Repeatable.
   --gpu <n|m>     the explicit local GPU capability: none (default) or metal.
-                  Opt-in only; metal records intent and never widens
-                  mach-lookup or grants blanket device access (#230).
+                  Opt-in only; metal opens exactly the measured Metal grants
+                  (pkg/sandbox MetalGrants): iokit-open for AGXDeviceUserClient
+                  and IOSurfaceRootUserClient, and mach-lookup for the shader
+                  compiler and the hardware video encoder/decoder services.
+                  Never a blanket iokit-open or mach-lookup (#230).
   --name <c>      the windows container name. Accepted and ignored on darwin, so
                   one caller builds one argv for three platforms.
   --acl <t|c>     who adds the windows ACEs. Accepted and ignored on darwin,
