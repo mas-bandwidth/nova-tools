@@ -79,6 +79,18 @@ type nativeRunConfig struct {
 	noWall         bool   // the caller typed --no-wall: run with no containment, named by its OK line
 	noSharedCaches bool   // the caller typed --no-shared-caches: the Go caches stay under HOME as today
 	configFile     string // optional: an opencode.json provider config copied beside the auth copy
+	// providerDirect is an uncatalogued provider's custom block (its base_url, key_env and
+	// npm adapter, a nova-config provider row): when set and it names the route's provider,
+	// writeJobConfig declares it instead of reading the providers table, and opens no read
+	// proxy over it. Nil is the ordinary case: the table's row decides.
+	providerDirect *swarm.DirectProvider
+	// providerBaseURL, providerKeyEnv and providerNPM are the route's provider row (its
+	// base_url, key_env and npm_adapter) when a caller resolves it before the job is
+	// written. A nonempty base URL and key env name are resolved into providerDirect;
+	// the key env is the NAME only, and its value is never read here.
+	providerBaseURL string
+	providerKeyEnv  string
+	providerNPM     string
 	// benchHome is the BENCH's home -- this process's own, never the child's -- and it is
 	// where the provisioning standard puts the toolchain (swarm.ToolchainRoots). Empty is
 	// the ordinary case and means "ask the OS"; a test names a home of its own, because the
@@ -924,6 +936,12 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		reads = swarm.CardReadPaths(cfg.card)
 	}
 	reads = append(reads, nativeReadRoots(cfg)...)
+	// THE ROUTE'S PROVIDER ROW DECLARES ITS OWN BLOCK. The route's provider fields
+	// (base_url, key_env and npm adapter) may be resolved by the caller; a worker
+	// description naming this route's provider carries its base and key variable. Either
+	// way the job writer declares the block instead of leaving an uncatalogued provider to
+	// the harness's catalog, and no proxy is opened over the provider's own base.
+	cfg.providerDirect = routeProviderDirect(cfg, provider)
 	configSHA, reason, proxy := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	cleanup := func() {
 		releaseSlot()
@@ -2957,6 +2975,35 @@ func sweepNativeJob(root, job string) error {
 	return safepath.RemoveUnder(root, job)
 }
 
+// routeProviderDirect is the custom block one launch writes for its route's provider: the
+// provider row's base_url, key_env and npm_adapter as the caller resolved them
+// (cfg.providerDirect, or the three provider fields), else a worker description's own
+// provider declaration when it names this route's provider. A base URL and a key variable
+// name are both required: empty means the provider is catalogued and the providers table
+// decides, as before.
+func routeProviderDirect(cfg nativeRunConfig, provider string) *swarm.DirectProvider {
+	if cfg.providerDirect != nil {
+		if strings.TrimSpace(cfg.providerDirect.BaseURL) != "" && strings.TrimSpace(cfg.providerDirect.KeyEnv) != "" {
+			return cfg.providerDirect
+		}
+		return nil
+	}
+	base, keyEnv := strings.TrimSpace(cfg.providerBaseURL), strings.TrimSpace(cfg.providerKeyEnv)
+	if base != "" && keyEnv != "" {
+		return &swarm.DirectProvider{BaseURL: base, KeyEnv: keyEnv, NPMAdapter: strings.TrimSpace(cfg.providerNPM)}
+	}
+	if w := cfg.worker; w != nil && w.Provider == provider {
+		key := w.Secret
+		if key == "" {
+			key = w.EnvVar
+		}
+		if strings.TrimSpace(w.BaseURL) != "" && strings.TrimSpace(key) != "" {
+			return &swarm.DirectProvider{BaseURL: w.BaseURL, KeyEnv: key}
+		}
+	}
+	return nil
+}
+
 // launchArgvFor is the one launcher, swarm.LaunchArgvFor: the providers table decides the
 // argv every native launch hands its harness. It is a variable only so a test can prove
 // that a launch asks it; nothing else ever assigns it.
@@ -3325,7 +3372,14 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		// decision, so a provider the pinned harness's catalog does not know (paperinstruments)
 		// still runs. The Zen and openrouter providers are never used for it.
 		// (swarm.SeedDirectProvider; a row whose config is pinned unchanged is left alone.)
-		if seeded, ok := swarm.SeedDirectProvider(body, provider); ok {
+		// An explicit provider block (cfg.providerDirect, the route's provider row) is written
+		// as it is, and no proxy is opened over it: the block's base is the provider's own.
+		direct := cfg.providerDirect != nil
+		if direct {
+			if declared, ok := swarm.DeclareDirectProvider(body, provider, *cfg.providerDirect); ok {
+				body = declared
+			}
+		} else if seeded, ok := swarm.SeedDirectProvider(body, provider); ok {
 			body = seeded
 		}
 		// A LIMITED ROUTE'S EVERY REQUEST TAKES THE GLOBAL BUDGET (pkg/swarm/providerbudget.go;
@@ -3334,12 +3388,15 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		// with --model only) is given its provider's base from the providers table: the proxy
 		// then opens in front of it and the harness is pointed at the proxy. A route with no
 		// limit (no --budget-server) takes no part of this, and its config is as it was.
-		if cfg.budgetServer != "" && swarm.ProviderBaseURL(body, provider) == "" {
+		if !direct && cfg.budgetServer != "" && swarm.ProviderBaseURL(body, provider) == "" {
 			if seeded, ok := swarm.SeedProviderBaseURL(body, provider, swarm.ProviderTableBaseURL(provider)); ok {
 				body = seeded
 			}
 		}
-		upstream := swarm.ProviderBaseURL(body, provider)
+		upstream := ""
+		if !direct {
+			upstream = swarm.ProviderBaseURL(body, provider)
+		}
 		if swarm.ProviderProxyEligible(upstream) {
 			silence := cfg.bodySilence
 			if silence <= 0 {
