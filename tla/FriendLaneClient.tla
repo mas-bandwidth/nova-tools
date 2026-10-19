@@ -101,9 +101,11 @@
 (* MCFriendLaneClientBlindRestart.cfg holds every other invariant and      *)
 (* property across a restart under a failed cards read.                    *)
 (*                                                                         *)
-(* The W2 batch abstraction (AnswerRound) attempts every held lane in one  *)
-(* answered request; a reversed stop-at-first-failure leaves later lanes   *)
-(* unasked (AllHeldRenewedEachAnsweredRound fails). A lane-0 tuple in told  *)
+(* The W2 batch abstraction (AnswerRound) attempts every lane in the       *)
+(* client's held view in one answered request and folds any server-held    *)
+(* lane named by friend cards into the view for the next round; a reversed *)
+(* stop-at-first-failure leaves later held lanes in the view unasked       *)
+(* (AllHeldRenewedEachAnsweredRound fails). A lane-0 tuple in told         *)
 (* records a server-sent notice; NoticedOnce rejects also telling that same *)
 (* card through the client's notice. MCFriendLaneClientBrokenDoubleNotice *)
 (* reverses that suppression. The two witness selectors are combinations  *)
@@ -339,18 +341,20 @@ TakeAnswerLost(l) ==
 
 \* AnswerRound is the bounded batch abstraction exercised by the normal design config and
 \* the two W2 witness configs.
-\* An answered request attempts every lane the server says is held (or the client's last
-\* held view when friend cards is blind) in one transition. StopOnFirstFail reverses that
-\* rule: the first held lane fails and later held lanes are never asked. A server-announced
-\* hold is recorded with lane 0 in told; the client notice remains the actual lane tuple.
+\* An answered request attempts every lane in the client's held view (held) in one
+\* transition, and when friend cards answers (cardsOk) folds any server-held lane not yet
+\* in the view into held' for the next round (matching client.go Round). StopOnFirstFail
+\* reverses that rule: the first held lane fails and later held lanes in the view are never
+\* asked. A server-announced hold is recorded with lane 0 in told; the client notice
+\* remains the actual lane tuple.
 AnswerRound ==
   /\ BatchRoundMode /\ Renewing
-  /\ LET target == IF cardsOk THEN {l \in Lanes : srv[l] # None} ELSE held
+  /\ LET target == held
          first == IF target = {} THEN 0 ELSE CHOOSE l \in target : \A k \in target : l <= k
          asked == IF StopOnFirstFail /\ target # {} THEN {first} ELSE target
          renewed == IF StopOnFirstFail /\ target # {} THEN {} ELSE target
          serverTold == IF BrokenDoubleNotice
-                       THEN {<<srv[l], gen[srv[l]], 0>> : l \in {k \in target : srv[k] # None}}
+                       THEN {<<srv[l], gen[srv[l]], 0>> : l \in {k \in renewed : srv[k] # None}}
                        ELSE {}
      IN
        /\ lease' = [l \in Lanes |-> IF l \in renewed /\ srv[l] # None THEN Bound ELSE lease[l]]
@@ -561,7 +565,8 @@ NoDuplicateHold ==
 \* No free lane takes while her held cards are at the width, or while the row is unread.
 DrainNeverTakes == ~overTake
 
-\* Every server-answered batch round attempts every lane it set out to renew.
+\* Every server-answered batch round attempts every lane in the client's held view (held);
+\* server-held lanes named by friend cards join held' for renewal on the next round.
 AllHeldRenewedEachAnsweredRound == ~roundMissed
 
 \* A hold is told either by the server (lane 0 marker) or the client (its real lane), never both.
