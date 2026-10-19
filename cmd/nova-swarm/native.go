@@ -1284,7 +1284,7 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 		return nil, nativeRunResult{}, 2
 	}
 	pgid := cmd.Process.Pid
-	if s.wal.niced {
+	if s.wal.niced || lowersEveryChild {
 		if err := lowerChildPriority(pgid); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the child's priority could not be lowered: %s\n", oneline.Err(err))
 		}

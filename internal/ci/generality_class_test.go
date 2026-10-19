@@ -100,6 +100,10 @@ var ignoredCompoundWords = map[string]bool{
 	"trimspace":        true,
 	"trimleadingspace": true,
 	"isspace":          true,
+	// GetDiskFreeSpaceEx(W), the Win32 call a Windows member's disk floor reads
+	// (cmd/nova-swarm/diskfree_windows.go)
+	"getdiskfreespaceex":  true,
+	"getdiskfreespaceexw": true,
 }
 
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)

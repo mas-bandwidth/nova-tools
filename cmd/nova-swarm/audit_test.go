@@ -145,6 +145,12 @@ var swarmAudit = audit.Config{
 		// syscall only sets Setpgid -- the process-group flag that lets the deadline reap
 		// the whole tree -- and holds no writer of its own.
 		`"os/signal"`, `"syscall"`,
+		// diskfree_windows.go and native_proc_windows.go (the native Windows
+		// member): golang.org/x/sys/windows only calls GetDiskFreeSpaceExW,
+		// SetPriorityClass and the Job Object functions, and unsafe only takes the size and
+		// address of the job's limit record for SetInformationJobObject; neither holds a
+		// writer, and an error they return is printed here through oneline.Err.
+		`"golang.org/x/sys/windows"`, `"unsafe"`,
 		// step.go (benchPasswdHome) reads the bench user's home from the password database with
 		// os/user.Current; it holds no writer, and the home it returns is a path the step's wall
 		// grants, never a line this binary prints.
