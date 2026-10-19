@@ -16,8 +16,10 @@
 // live client whose model stopped answering its challenges: the lease runs out and the
 // server returns the card. The model is tla/FriendLaneClient.tla (OneLanePerCard,
 // FinishedOnce, TakenStaysTaken, RestartResumes, DeadClientReleases, DeadModelReleases, and
-// for the width config.go applies NoLostCard, NoDuplicateHold, DrainNeverTakes, GrowTakes;
-// witnesses MCFriendLaneClientBroken*.cfg).
+// for the width config.go applies NoLostCard, NoDuplicateHold, DrainNeverTakes, GrowTakes.
+// One batch ask attempts every held lane in an answered round (AllHeldRenewedEachAnsweredRound),
+// and a server notice is not sent again by the client (NoticedOnce); witnesses are in
+// MCFriendLaneClientBroken*.cfg).
 package friend
 
 import (

@@ -166,6 +166,8 @@ MCFriendLaneClientBlindWidth.cfg	MCFriendLaneClient.tla	pass	-	ignore-terminal	f
 MCFriendLaneClientBlindRestartLapses.cfg	MCFriendLaneClient.tla	invariant	LiveHoldNeverExpires	ignore-terminal	friendlaneclient	required	-
 MCFriendLaneClientBrokenLostDrops.cfg	MCFriendLaneClient.tla	invariant	DrainNeverTakes	ignore-terminal	friendlaneclient	required	-
 MCFriendLaneClientBlindRestart.cfg	MCFriendLaneClient.tla	pass	-	ignore-terminal	friendlaneclient	required	-
+MCFriendLaneClientBrokenStopOnFirstFail.cfg	MCFriendLaneClient.tla	invariant	AllHeldRenewedEachAnsweredRound	ignore-terminal	friendlaneclient	required	-
+MCFriendLaneClientBrokenDoubleNotice.cfg	MCFriendLaneClient.tla	invariant	NoticedOnce	ignore-terminal	friendlaneclient	required	-
 MCBus2Receipts.cfg	MCBus2Receipts.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPushDup.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
 MCBus2BrokenBackStamp.cfg	MCBus2Receipts.tla	action	ReceiptNeverMovesBack	ignore-terminal	bus2	required	-
