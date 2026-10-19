@@ -160,6 +160,7 @@ pkg/units	0.0	@local	-
 internal/up	0.0	@run37518625834	self-hosted
 internal/update	0.8	@run37517528825	self-hosted
 internal/yield	0.0	@run37411066588	self-hosted
+pkg/winacl	0.1	@local	-
 tools/agentsmap	0.0	@local	-
 tools/analyzers/cmd/vetlaw	0.0	@run37411066588	self-hosted
 tools/analyzers/fixtures	0.0	@local	-

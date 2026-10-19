@@ -18,8 +18,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/winacl"
 )
 
 const (
@@ -69,11 +72,11 @@ func LoadSeatEnvironment(path string) (SeatEnvironment, error) {
 	if err != nil {
 		return zero, errors.New("seat environment is unavailable")
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || !seatEnvironmentOwner(info) {
+	if !info.Mode().IsRegular() || !privateFile(path, info) {
 		return zero, errors.New("seat environment is not a private file owned by this user")
 	}
 	dir, err := os.Lstat(filepath.Dir(path))
-	if err != nil || !dir.IsDir() || dir.Mode().Perm()&0022 != 0 || !seatEnvironmentOwner(dir) {
+	if err != nil || !dir.IsDir() || !privateDir(filepath.Dir(path), dir) {
 		return zero, errors.New("seat environment directory is writable by others or is not owned by this user")
 	}
 	f, err := os.Open(path)
@@ -375,4 +378,23 @@ func environmentKeyAllowed(parent, key string) bool {
 		}
 	}
 	return false
+}
+
+// privateFile says the seat environment file is this user's alone: mode with no group or
+// other bits and owned by this user, or on Windows (every file reports 0666 there) an access
+// list that grants only this user, SYSTEM and Administrators (winacl.OwnerOnly).
+func privateFile(path string, info os.FileInfo) bool {
+	if runtime.GOOS == "windows" {
+		return winacl.OwnerOnly(path) == nil
+	}
+	return info.Mode().Perm()&0077 == 0 && seatEnvironmentOwner(info)
+}
+
+// privateDir says no one else may write in the seat environment's directory: no group or
+// other write bit and owned by this user, or on Windows its access list as privateFile's.
+func privateDir(path string, info os.FileInfo) bool {
+	if runtime.GOOS == "windows" {
+		return winacl.OwnerOnly(path) == nil
+	}
+	return info.Mode().Perm()&0022 == 0 && seatEnvironmentOwner(info)
 }

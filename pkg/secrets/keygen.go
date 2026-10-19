@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/winacl"
 )
 
 // KeygenNextLine is the one line that tells the reader what is left to do in the rule
@@ -57,7 +59,12 @@ func runKeygen(run execCommand, asName, keyPath, ageKeygenPath, storeDir string)
 	if !dirFi.IsDir() {
 		return nil, fmt.Errorf("key directory path %s is not a directory", dir)
 	}
-	if dirFi.Mode().Perm() != 0700 {
+	if runtime.GOOS == "windows" {
+		// every Windows directory reports 0777: its access list is the check (winacl)
+		if err := winacl.OwnerOnly(dir); err != nil {
+			return nil, fmt.Errorf("key directory %s is not private to this user: %w", dir, err)
+		}
+	} else if dirFi.Mode().Perm() != 0700 {
 		return nil, fmt.Errorf("key directory %s mode is %04o; expected 0700; run: chmod 700 %s", dir, dirFi.Mode().Perm(), dir)
 	}
 
