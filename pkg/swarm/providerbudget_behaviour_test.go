@@ -22,8 +22,8 @@ import (
 // tla/RateBudget.tla): a limited route's every request takes the budget first,
 // a take told to wait stalls the request inside the proxy, and a limit refusal
 // is sent again after a backoff. These unit tests drive (*ProviderProxy).ServeHTTP
-// (providerproxy.go:423) with a budget set through takeBudget, serveBudgeted and
-// forwardBudgeted (providerbudget.go:107-228) and assert on the recorder's answer,
+// (providerproxy.go) with a budget set through takeBudget, serveRetried and
+// forward (providerbudget.go) and assert on the recorder's answer,
 // what reached the in-process RoundTripper, and the calls the fakes saw. The proxy
 // is built in package, as coverProxy builds it, never with ListenProviderProxy (a
 // socket): upstream, ctx and cancel, a stall channel, a client whose Transport is

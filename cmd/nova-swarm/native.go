@@ -117,6 +117,9 @@ type nativeRunConfig struct {
 	budgetSlots bool
 	// budgetTake, when set, is the budget's take in place of the server's (a test's).
 	budgetTake func(ctx context.Context, holder string) (bool, time.Duration, error)
+	// listenProxy, when set, opens the provider proxy in place of swarm.ListenProviderProxy
+	// (a test's, which binds no socket).
+	listenProxy func(swarm.ProviderProxyConfig) (*swarm.ProviderProxy, error)
 	// usd is the dollar budget (--usd, a route's usd): the harness's reported cost
 	// at which the card is stopped beside the token budget; nil for none.
 	usd *big.Rat
@@ -1304,8 +1307,9 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 		Log: s.outLog, Job: s.prep.jobDir, Pid: pgid, Idle: s.prep.cfg.idle, Reader: s.reader,
 		Spend: s.sampler.Spend,
 	}
-	if s.prep.proxy != nil && s.prep.cfg.budgetServer != "" {
-		// a request stalled on its budget is a card waiting, never an idle one
+	if s.prep.proxy != nil {
+		// a request stalled on its budget or a refusal's backoff is a card waiting, never
+		// an idle one
 		watchCfg.Stalled = s.prep.proxy.Stalling
 	}
 	watchIdle := nativeWatchIdle
@@ -3181,7 +3185,10 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		// provider has an http baseURL the proxy can stand in front of.
 		body = swarm.ApplyProviderReadDeadline(body, provider)
 		// An explicit provider block (cfg.providerDirect, the route's provider row) is written
-		// as it is, and no proxy is opened over it: the block's base is the provider's own.
+		// as it is, its base the provider's own; the proxy then opens in front of that base
+		// like any other, so a direct provider's transient refusals (a 429, a 503) are sent
+		// again by the proxy and never end the card (pkg/swarm/providerretry.go; the 2026-10-19
+		// Ultramarine reads that ended with no verdict on "Retry in 1 s").
 		direct := cfg.providerDirect != nil
 		if direct {
 			if declared, ok := swarm.DeclareDirectProvider(body, provider, *cfg.providerDirect); ok {
@@ -3199,18 +3206,25 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 				body = seeded
 			}
 		}
-		upstream := ""
-		if !direct {
-			upstream = swarm.ProviderBaseURL(body, provider)
-		}
+		upstream := swarm.ProviderBaseURL(body, provider)
 		if swarm.ProviderProxyEligible(upstream) {
 			silence := cfg.bodySilence
 			if silence <= 0 {
 				silence = swarm.ProviderBodySilence
 			}
-			opened, err := swarm.ListenProviderProxy(swarm.ProviderProxyConfig{
+			listen := cfg.listenProxy
+			if listen == nil {
+				listen = swarm.ListenProviderProxy
+			}
+			var proxyLog func(string)
+			if notes != nil {
+				proxyLog = func(line string) {
+					fmt.Fprintf(notes, "NATIVE NOTE: %s provider=%s\n", oneline.Escape(line), oneline.Field(provider))
+				}
+			}
+			opened, err := listen(swarm.ProviderProxyConfig{
 				Upstream: upstream, Silence: silence, After: cfg.bodyAfter,
-				HeaderWait: cfg.headerWait, Budget: nativeBudget(cfg, notes),
+				HeaderWait: cfg.headerWait, Budget: nativeBudget(cfg, notes), Log: proxyLog,
 			})
 			if err != nil {
 				return "", fmt.Sprintf("the provider read proxy could not listen: %s", oneline.Escape(err.Error())), nil
@@ -3223,15 +3237,15 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 			}
 			body = pointed
 			proxy = opened
-			// a limited route's request may wait inside the proxy before any header: the
-			// harness's own header and request clocks are turned off so that wait is a stall,
-			// never an abort (swarm.LetTheHarnessWaitOutAStall)
-			if cfg.budgetServer != "" {
-				if waited, ok := swarm.LetTheHarnessWaitOutAStall(body, provider); ok {
-					body = waited
-				} else if notes != nil {
-					fmt.Fprintf(notes, "NATIVE NOTE: the harness's header and request timeouts for %s could not be turned off; a request stalled on its budget past them may be ended by the harness\n", oneline.Field(provider))
-				}
+			// any proxied request may wait inside the proxy before any header (a limited
+			// route's budget, any route's transient-refusal backoff): the harness's own header
+			// and request clocks are turned off so that wait is a stall, never an abort
+			// (swarm.LetTheHarnessWaitOutAStall); the proxy's own header wait and body silence
+			// still bound every send
+			if waited, ok := swarm.LetTheHarnessWaitOutAStall(body, provider); ok {
+				body = waited
+			} else if notes != nil {
+				fmt.Fprintf(notes, "NATIVE NOTE: the harness's header and request timeouts for %s could not be turned off; a request stalled in the proxy past them may be ended by the harness\n", oneline.Field(provider))
 			}
 		}
 	}
