@@ -20,9 +20,8 @@ var livingTools = strings.Fields("nova-bus nova-hook nova-friend nova-table nova
 // in its README row, in its banner and as the first line of its docs/CLI.md
 // section, so a visitor meets the mark wherever they meet the tool. A tool
 // leaves this list when it is ready, and the sentence leaves all three places
-// with it. None is pre-alpha today: nova-work and nova-card, the last two,
-// left with nova-sprint for mas-bandwidth/nova-sprint.
-var preAlphaTools = []string{}
+// with it.
+var preAlphaTools = []string{"nova-work"}
 
 // stageSentence is the pre-alpha mark of one tool.
 func stageSentence(tool string) string { return tool + " is pre-alpha: not ready for production use." }

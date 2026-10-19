@@ -102,7 +102,7 @@ names it opens, and whether it runs every n seconds or is kept alive
 | `nova-up` | set nova up on one machine: plan every step, then apply, from nothing to a first sprint | [SPEC-UP.md](SPEC-UP.md) |
 | `nova-update` | compare installed tools with their latest releases, and update one when asked | [SPEC-UPDATE.md](SPEC-UPDATE.md) |
 | `nova-version` | which version of each tool is installed, recorded and compared | [SPEC-VERSION.md](SPEC-VERSION.md) |
-| `nova-work` | every issue of an organization's repositories in one tree file, verified field for field (pre-alpha) | [SPEC-WORK-V1.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-WORK-V1.md) |
+| `nova-work` | every issue of an organization's repositories in one tree file, verified field for field (pre-alpha) | [SPEC-WORK-V1.md](SPEC-WORK-V1.md) |
 
 ## The stores
 

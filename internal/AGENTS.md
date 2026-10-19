@@ -18,6 +18,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nogh/` | the refusing gh command installed first on child shell PATHs | `go test ./internal/nogh` | `go test ./internal/nogh` |
 | `nsprint/` | the shared Redis store and login, its Functions, and the verb flags the living tools use | `go test ./internal/nsprint/...` | `go test ./internal/nsprint/...` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
+| `roadmap/` | nova-work's roadmap editor: edits docs/roadmap.sexp and docs/fixes.sexp by splicing bytes and renders the pages in the same step (tla/RoadmapEntry.tla) | `go test ./internal/roadmap` | `go test ./internal/roadmap` |
 | `scaffold/` | scaffolding engine for class rules and CLI verbs | `go test ./internal/scaffold` | `go test ./internal/scaffold` |
 | `selftalk/` | agent self-talk journal stream | `go test ./internal/selftalk` | `go test ./internal/selftalk` |
 | `shippedsmoke/` | the smoke test of a shipped nova-check binary, behind the shippedsmoke build tag, run by the certification workflow | `go test -tags shippedsmoke ./internal/shippedsmoke` | `NOVA_SHIPPED_BIN=<binary> go test -tags shippedsmoke -v ./internal/shippedsmoke` |
@@ -26,4 +27,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `tokens/` | token counter and budget tracker | `go test ./internal/tokens` | `go test ./internal/tokens` |
 | `up/` | nova-up's steps: the registry, the plan and apply of each step over a fake-able machine | `go test ./internal/up` | `go test ./internal/up` |
 | `update/` | binary updater and checksum verifier | `go test ./internal/update` | `go test ./internal/update` |
+| `workfile/` | nova-work's tree file: the canonical s-expression Encode, a strict Decode through pkg/sexp, and a field-for-field Diff (docs/SPEC-WORK-V1.md) | `go test ./internal/workfile` | `go test ./internal/workfile` |
+| `workgh/` | nova-work's read-only GitHub issue reader: GraphQL queries through gh into the tree model, budgeted, with a replay seam for tests | `go test ./internal/workgh` | `go test -tags functional ./internal/workgh` |
 | `yield/` | CI over work: a copy, a local test run or a sprint card's native launch steps itself to nice 15 before it execs (nova-tools#4293) | `go test ./internal/yield` | `go test ./internal/yield` |

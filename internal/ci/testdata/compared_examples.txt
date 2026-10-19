@@ -125,3 +125,15 @@ cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova
 cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local status
 cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
 cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+cmd/nova-work/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
+cmd/nova-work/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp
+cmd/nova-work/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15
+cmd/nova-work/examples_compare_test.go:TestOfflineExamplesThroughTheComparator example: nova-work example --dir ./example
+cmd/nova-work/examples_compare_test.go:TestOfflineExamplesThroughTheComparator example: nova-work roadmap check
+cmd/nova-work/examples_compare_test.go:TestOfflineExamplesThroughTheComparator example: nova-work roadmap list --release v1.2.6 --state planned
+cmd/nova-work/examples_compare_test.go:TestOfflineExamplesThroughTheComparator example: nova-work roadmap add --id my-fix --release v1.2.6 --title "What the fix does" --origin "PR #12"
+cmd/nova-work/examples_compare_test.go:TestOfflineExamplesThroughTheComparator example: nova-work roadmap remove --id my-old-fix
+cmd/nova-work/examples_compare_test.go:TestOfflineExamplesThroughTheComparator example: nova-work roadmap pull --id my-item --release v1.2.6
+cmd/nova-work/examples_compare_test.go:TestOfflineExamplesThroughTheComparator example: nova-work roadmap done --id my-fix --evidence "PR #12"
+cmd/nova-work/examples_compare_test.go:TestOfflineExamplesThroughTheComparator example: nova-work roadmap note --id my-fix --text "Needs the store migration first."
+cmd/nova-work/examples_compare_test.go:TestOfflineExamplesThroughTheComparator example: nova-work roadmap render

@@ -42,7 +42,6 @@ pkg/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2
 
 # The sprint's docs and its sprint and work ratings moved to nova-sprint at v1.2.3 (split layer L5).
 docs/SPEC-SPRINT.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
-docs/SPEC-WORK-V1.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
 docs/SPEC-WORKLANG.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
 docs/SPRINT-COORDINATOR.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
 docs/SPRINT-COORDINATOR-SEAT.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
@@ -58,7 +57,6 @@ cmd/nova-sprint/main.go nova-sprint's path, in mas-bandwidth/nova-sprint since v
 cmd/nova-sprint/mergewindow.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 cmd/nova-sprint/pushproof.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 cmd/nova-sprint/verbs.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
-cmd/nova-work nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 docs/SPEC-SPRINT-DASHBOARD.md moved to mas-bandwidth/nova-sprint with the dashboard at v1.2.3; docs/SPLIT-NOVA-SPRINT.md, the split's plan, names it as a record of its day
 internal/cardgen nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/sprint nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
@@ -80,7 +78,5 @@ internal/sprintdash/pageview.go nova-sprint's path, in mas-bandwidth/nova-sprint
 internal/sprintdash/dashboard.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/sprintdash/page/ nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/sprintdash/pagelock.go nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
-internal/workfile nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
-internal/workgh nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/worklang nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 tools/sprintsize nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived

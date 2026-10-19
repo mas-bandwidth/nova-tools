@@ -14,13 +14,13 @@ import (
 
 // sprintOnlyPaths are nova-sprint's paths: the opinionated system that left this
 // tree for a repository of its own (mas-bandwidth/nova-sprint, the split,
-// v1.2.3), which imports this module's building blocks and is imported by none
+// v1.2.3; nova-work, which needs no sprint, came back as a tool of its own), which imports this module's building blocks and is imported by none
 // of them. None of them exists here; TestNovaSprintPathsAreNotInThisTree holds
 // that.
 var sprintOnlyPaths = []string{
-	"cmd/nova-sprint", "cmd/nova-card", "cmd/nova-work",
+	"cmd/nova-sprint", "cmd/nova-card",
 	"internal/sprint", "internal/sprintdash", "internal/card", "internal/cardgen",
-	"internal/workfile", "internal/workgh", "internal/worklang",
+	"internal/worklang",
 	"tools/sprintsize",
 }
 
@@ -54,8 +54,8 @@ func sprintPathsIn(root string) ([]string, error) {
 	return present, nil
 }
 
-// TestNovaSprintPathsAreNotInThisTree is layer L6 of the split: nova-sprint,
-// nova-card and nova-work and the packages only they import live in
+// TestNovaSprintPathsAreNotInThisTree is layer L6 of the split: nova-sprint
+// and nova-card and the packages only they import live in
 // mas-bandwidth/nova-sprint, and a change that brings one of their paths back
 // here is red, by pull request or by direct push. It supersedes the lint job's
 // diff step of #5535, which read only a pull request's diff.

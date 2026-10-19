@@ -24,7 +24,7 @@ import (
 // Every usage line the page quotes is in the tool's help (`<tool> help` or
 // `<tool> <verb> -h`, compared with runs of spaces folded), every command it
 // names runs a verb whose `-h` exits 0, and every flag it gives is one that
-// verb's help names. nova-card, nova-work and nova-sprint are built in
+// verb's help names. nova-card and nova-sprint are built in
 // nova-sprint, whose own playbook test holds their lines there.
 
 // toolsPlaybookPath is the page, relative to the repository root.
@@ -32,7 +32,7 @@ const toolsPlaybookPath = "docs/TOOLS-PLAYBOOK.md"
 
 // builtElsewhere is the tools the page names that this repository does not
 // build.
-var builtElsewhere = []string{"nova-card", "nova-work", "nova-sprint"}
+var builtElsewhere = []string{"nova-card", "nova-sprint"}
 
 // playbookSpanRe reads the inline code spans of the page.
 var playbookSpanRe = regexp.MustCompile("`([^`]+)`")

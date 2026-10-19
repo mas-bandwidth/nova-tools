@@ -43,6 +43,7 @@ cmd/nova-tokens	8.4	@run37518625834	self-hosted
 cmd/nova-up	0.0	@local	-
 cmd/nova-update	0.0	@run37517528825	self-hosted
 cmd/nova-version	0.0	@run37518625834	self-hosted
+cmd/nova-work	0.3	@local	-
 fleet	10.2	@local	-
 fleet/toolchainapply/baddigest	24.2	@local	-
 fleet/toolchainapply/drift	29.4	@local	-
@@ -131,6 +132,7 @@ pkg/releasewire	0.5	@local	-
 pkg/safepath	0.0	@run37411066588	self-hosted
 pkg/sandbox	0.3	@local	-
 pkg/sandbox/darwincheck	0.2	@local	-
+internal/roadmap	0.2	@local	-
 internal/scaffold	0.0	@run37411066588	self-hosted
 pkg/schemaread	0.2	@local	-
 pkg/seatcred	0.4	@run37411066588	self-hosted
@@ -159,6 +161,8 @@ pkg/typedrec	0.8	@run37514991425	self-hosted
 pkg/units	0.0	@local	-
 internal/up	0.0	@run37518625834	self-hosted
 internal/update	0.8	@run37517528825	self-hosted
+internal/workfile	0.0	@local	-
+internal/workgh	0.0	@local	-
 internal/yield	0.0	@run37411066588	self-hosted
 tools/agentsmap	0.0	@local	-
 tools/analyzers/cmd/vetlaw	0.0	@run37411066588	self-hosted
