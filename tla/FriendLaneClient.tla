@@ -129,7 +129,13 @@ ASSUME MaxCardFails \in Nat /\ BlindTakes \in BOOLEAN /\ LostDrops \in BOOLEAN
    legacy TLC cases keep their prior state space without new required constants. *)
 StopOnFirstFail == BlindTakes /\ LostDrops
 BrokenDoubleNotice == BlindTakes /\ ShrinkStopsRenew
-BatchRoundMode == StopOnFirstFail \/ BrokenDoubleNotice
+NormalBatchModel ==
+  /\ MaxRestarts = 1 /\ MaxDeaths = 1
+  /\ RenewTicks = 1 /\ ~RenewUnproven /\ ~TickUnstarts
+  /\ ~TrustCache /\ MaxResizes = 0 /\ MaxLosses = 0
+  /\ ~ShrinkStopsRenew /\ ~ShrinkMoves /\ ~TakeOverWidth /\ ~NoGrow
+  /\ MaxCardFails = 0 /\ ~BlindTakes /\ ~LostDrops
+BatchRoundMode == NormalBatchModel \/ StopOnFirstFail \/ BrokenDoubleNotice
 
 VARIABLES srv,       \* server: the card each lane holds, or None
           col,       \* server: each card ready, held or done
@@ -331,7 +337,8 @@ TakeAnswerLost(l) ==
   /\ UNCHANGED <<cardsOk, cardFails, roundMissed>>
 
 
-\* AnswerRound is the bounded batch abstraction exercised by the two W2 witness configs.
+\* AnswerRound is the bounded batch abstraction exercised by the normal design config and
+\* the two W2 witness configs.
 \* An answered request attempts every lane the server says is held (or the client's last
 \* held view when friend cards is blind) in one transition. StopOnFirstFail reverses that
 \* rule: the first held lane fails and later held lanes are never asked. A server-announced

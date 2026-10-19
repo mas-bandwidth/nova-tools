@@ -179,6 +179,11 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 			continue
 		}
 		if !ok {
+			// A held lane remains part of the renewal set even if its answer is
+			// empty; an empty free lane ends takes for this round.
+			if !slices.Contains(held, n) {
+				break
+			}
 			continue
 		}
 		holds = append(holds, h)
