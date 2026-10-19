@@ -32,7 +32,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
-	sandboxpkg "github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
@@ -720,6 +720,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	auth := nf.auth
 	config := nf.config
 	workerFile := nf.workerFile
+	// --gpu is parsed before the local sandbox (the wall binary's path) shadows the package.
+	gpuMode, gpuRefusal := sandbox.ParseGPUMode(*nf.gpu)
+	if gpuRefusal != nil {
+		f.add("--gpu wants none or metal (nova-sandbox --gpu) and got " + oneline.Field(*nf.gpu))
+	}
 	sandbox := nf.sandbox
 	noWall := nf.noWall
 	noSharedCaches := nf.noSharedCaches
@@ -731,10 +736,6 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	stageTimeout := nf.stageTimeout
 	repos := nf.repos
 	recipients := nf.recipients
-	gpuMode, gpuRefusal := sandboxpkg.ParseGPUMode(*nf.gpu)
-	if gpuRefusal != nil {
-		f.add("--gpu wants none or metal (nova-sandbox --gpu) and got " + oneline.Field(*nf.gpu))
-	}
 	if *noWall && *sandbox != "" {
 		f.add("--no-wall and --sandbox together: one asks for no containment at all and the other names the wall to use; pass at most one")
 	}

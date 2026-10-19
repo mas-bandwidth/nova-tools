@@ -35,7 +35,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
-	sandboxpkg "github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
@@ -230,7 +230,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// decide read with it, a worker's the gate decision of a red gate, and neither
 	// hands it to the harness (nativedecide.go, nativegate.go, nativeChildEnv)
 	nativePass := append(append([]string{}, pass...), decide.JevSecret)
-	gpuMode, gpuRefusal := sandboxpkg.ParseGPUMode(*gpu)
+	gpuMode, gpuRefusal := sandbox.ParseGPUMode(*gpu)
 	if gpuRefusal != nil {
 		fmt.Fprintf(stderr, "nova-swarm member: %s\n", oneline.WithRemedy("--gpu wants none or metal and got "+oneline.Field(*gpu), "nova-swarm member -h"))
 		return 2
@@ -571,7 +571,7 @@ type nativeRunner struct {
 	tokens, auth, config, worker, identity         string
 	prompt                                         string // the identity prompt file handed to each launch (native --prompt); "" for none
 	noWall                                         bool
-	gpu                                            sandboxpkg.GPUMode // --gpu: each child's wall GPU capability (native --gpu); none passes nothing
+	gpu                                            sandbox.GPUMode // --gpu: each child's wall GPU capability (native --gpu); none passes nothing
 	// server and as are the sprint's server and this worker's name: a limited route's
 	// child takes its global rate budget there (--budget-server, nativebudget.go)
 	server, as        string
@@ -1932,8 +1932,8 @@ func machineOfWorker(as string, reader bool) string {
 
 // gpuArgs is the native flag a member's --gpu becomes on each child's argv: --gpu metal for
 // metal, nothing for none, so a member that asked for no GPU hands its children none.
-func gpuArgs(mode sandboxpkg.GPUMode) []string {
-	if mode == sandboxpkg.GPUMetal {
+func gpuArgs(mode sandbox.GPUMode) []string {
+	if mode == sandbox.GPUMetal {
 		return []string{"--gpu", string(mode)}
 	}
 	return nil

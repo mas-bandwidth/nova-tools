@@ -12,7 +12,7 @@ import (
 
 // MetalGrants is the darwin profile text --gpu metal appends: the measured minimum for a
 // headless Metal renderer that compiles its shaders from source and records and decodes
-// HEVC/H.264 video (measured 2026-10-19 on mini-m5-1, Apple M5 Pro, macOS 27, with VG
+// HEVC/H.264 video (measured 2026-10-19 on an Apple M5 Pro bench, macOS 27, with VG
 // render2 --record and a MTLCreateSystemDefaultDevice + makeLibrary(source:) + compute
 // probe, each clause removed in turn):
 //

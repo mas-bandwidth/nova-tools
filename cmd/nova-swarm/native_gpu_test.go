@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	sandboxpkg "github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 )
 
 // A member started with --gpu metal hands each child's wall --gpu metal, before the --
@@ -19,7 +19,7 @@ func TestTheWallGetsGPUMetalOnlyWhenAsked(t *testing.T) {
 	plain := nativeSandboxArgv([]string{"/opt/bin/opencode"}, cfg, "/s/data", "/s/jobs/l", "/s/tmp/l")
 	assert.NotContains(t, plain, "--gpu", "a wall with no GPU capability asked for was handed --gpu")
 
-	cfg.gpu = sandboxpkg.GPUMetal
+	cfg.gpu = sandbox.GPUMetal
 	metal := nativeSandboxArgv([]string{"/opt/bin/opencode"}, cfg, "/s/data", "/s/jobs/l", "/s/tmp/l")
 	i := slices.Index(metal, "--gpu")
 	require.GreaterOrEqual(t, i, 0, "a --gpu metal run handed the wall no --gpu: Metal stays denied inside it")
@@ -34,9 +34,9 @@ func TestTheWallGetsGPUMetalOnlyWhenAsked(t *testing.T) {
 func TestMemberLaunchArgsCarryGPU(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		mode sandboxpkg.GPUMode
+		mode sandbox.GPUMode
 		want bool
-	}{{"", false}, {sandboxpkg.GPUNone, false}, {sandboxpkg.GPUMetal, true}} {
+	}{{"", false}, {sandbox.GPUNone, false}, {sandbox.GPUMetal, true}} {
 		args := gpuArgs(tc.mode)
 		assert.Equal(t, tc.want, slices.Equal(args, []string{"--gpu", "metal"}), "mode %q: native args %v", tc.mode, args)
 		if !tc.want {
