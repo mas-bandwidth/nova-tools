@@ -17,6 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
@@ -578,8 +579,9 @@ func (s *Stager) worktreeOf(checkout string) (repo, mirror string, ok bool) {
 	return repo, filepath.Join(mirrors, parts[0], parts[1]), true
 }
 
-// JobText is a staged job's JOB.md: the card-contract shape (docs/SPEC-CARD-CONTRACT.md), the
-// checkout, the branch, the outbox report and the finish.
+// JobText is a staged job's JOB.md body: the card-contract shape (docs/SPEC-CARD-CONTRACT.md),
+// the checkout, the branch, the outbox report and the finish. writeJob writes it through
+// cardcontract.JobMD, which puts the worker playbook line first (R-WORKER-PLAYBOOK).
 func JobText(dir string, p Packet, sha string) string {
 	attempt := max(p.Attempt, 1)
 	checkout := filepath.Join(JobDir(dir, p.Job), "repo")
@@ -593,7 +595,7 @@ func JobText(dir string, p Packet, sha string) string {
 }
 
 func (s *Stager) writeJob(p Packet, sha string) error {
-	err := atomicfile.WriteFile(filepath.Join(JobDir(s.Dir, p.Job), JobFile), []byte(JobText(s.Dir, p, sha)), 0o644, atomicfile.NoReplace())
+	err := atomicfile.WriteFile(filepath.Join(JobDir(s.Dir, p.Job), JobFile), []byte(cardcontract.JobMD(JobText(s.Dir, p, sha))), 0o644, atomicfile.NoReplace())
 	if errors.Is(err, fs.ErrExist) {
 		return nil // staged by another hand between the look and the write
 	}
