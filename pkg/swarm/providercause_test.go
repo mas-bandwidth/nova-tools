@@ -156,7 +156,11 @@ func TestTheHandbackLineCarriesTheCause(t *testing.T) {
 // (402 with any body); a 429 is credit only on an explicit exhausted-quota shape.
 func TestClassifyProviderCreditShapes(t *testing.T) {
 	t.Parallel()
-	cases := []struct{ name, text string; status int; want string }{
+	cases := []struct {
+		name, text string
+		status     int
+		want       string
+	}{
 		{"openrouter 402", `{"error":{"code":402,"message":"Insufficient credits. Add more using https://openrouter.ai/settings/credits"}}`, 402, CauseCredit},
 		{"opencode Zen CreditsError", `"type":"CreditsError"`, 0, CauseCredit},
 		{"opencode Zen insufficient balance", `"message":"Insufficient balance"`, 0, CauseCredit},

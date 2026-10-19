@@ -420,8 +420,8 @@ func (m *Mem) Update(ctx context.Context, kind, name string, changes map[string]
 	if err := checkRefuseFunding(ctx, m, k, cur, next, changes, actor); err != nil {
 		return Row{}, 0, err
 	}
-	if maps.Equal(next.Fields, cur.Fields) {
-		return cur.Clone(), 0, nil // a no-op write is skipped (tla/ProviderFunding.tla OneWritePerProvider)
+	if k.Name == KindProvider && next.Fields["funded"] == "false" && cur.Fields["funded"] == "false" && maps.Equal(next.Fields, cur.Fields) {
+		return cur.Clone(), 0, nil // the flip's repeated funded=false is a no-op (tla/ProviderFunding.tla OneWritePerProvider)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

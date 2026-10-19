@@ -46,6 +46,8 @@ func TestProviderMigrationSeedsRoutesAndEnforcesTheReference(t *testing.T) {
 	_, err = st.db.ExecContext(ctx, `DELETE FROM config.providers WHERE name='opencode'`)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "routes_provider_fkey")
+	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"owner": "operator"}, "operator")
+	require.NoError(t, err)
 	_, _, err = st.Update(ctx, KindProvider, "opencode", map[string]string{"billing": "both", "funded": "true"}, "operator")
 	require.NoError(t, err)
 	// The SQL is idempotent too: re-running it does not overwrite declared facts.
@@ -81,7 +83,7 @@ func TestProviderApplyWritesAndRemovesTheFundingView(t *testing.T) {
 	assert.Equal(t, "2026-10-13", hash["balance_as_of"])
 	views, rev, err := ap.Read(ctx, KindProvider)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), rev)
+	assert.Equal(t, int64(3), rev)
 	assert.Equal(t, "true", views["opencode"]["funded"])
 	_, err = st.Delete(ctx, KindProvider, "opencode", "operator")
 	require.NoError(t, err)
@@ -151,4 +153,34 @@ func TestProviderUpgradeRefusesEveryLegacyWordBeforeAnyWrite(t *testing.T) {
 	for _, p := range providers {
 		assert.Equal(t, "false", p.Fields["funded"])
 	}
+}
+
+// TestFundingRefusesInThePGStore is the refuser in Postgres, the tier the
+// production store runs: a route may not enable on an unfunded provider and a
+// non-owner may not fund it (docs/SPEC-CONFIG.md, "Funding is the owner's").
+func TestFundingRefusesInThePGStore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := migrated(t)
+
+	provider, _ := Lookup(KindProvider)
+	p, err := provider.NewRow("p1", map[string]string{"billing": "metered", "funded": "false"})
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindProvider, p, "machine")
+	require.NoError(t, err)
+
+	route, _ := Lookup(KindRoute)
+	r, err := route.NewRow("r1", map[string]string{"tier": "pro", "provider": "p1", "model": "m", "deadline": "60", "enabled": "true"})
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindRoute, r, "machine")
+	require.ErrorIs(t, err, ErrOwnerOnly)
+
+	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"owner": "glenn"}, "glenn")
+	require.NoError(t, err)
+	_, _, err = st.Update(ctx, KindProvider, "p1", map[string]string{"funded": "true"}, "machine")
+	require.ErrorIs(t, err, ErrOwnerOnly)
+	_, _, err = st.Update(ctx, KindProvider, "p1", map[string]string{"funded": "true"}, "glenn")
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindRoute, r, "machine")
+	require.NoError(t, err)
 }

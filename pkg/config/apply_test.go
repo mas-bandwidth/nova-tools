@@ -563,7 +563,7 @@ func TestApplyTakesADisabledUnpricedRoute(t *testing.T) {
 	res, err := Apply(ctx, st, ap, KindRoute, "operator", false, func(Op) {})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Add)
-	require.Equal(t, []string{"add route pro-off as=operator idem=config:route:2", "stamp route 2"}, ap.log)
+	require.Equal(t, []string{"add route pro-off as=operator idem=config:route:3", "stamp route 3"}, ap.log)
 }
 
 // TestApplyTakesAPricedRoute: a route with any price in its sheet is applied,

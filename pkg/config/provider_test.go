@@ -29,6 +29,10 @@ func TestARouteNamesAProviderRow(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.Insert(ctx, "provider", p, "operator")
 	require.NoError(t, err)
+	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"owner": "operator"}, "operator")
+	require.NoError(t, err)
+	_, _, err = st.Update(ctx, "provider", "nope", map[string]string{"funded": "true"}, "operator")
+	require.NoError(t, err)
 	_, err = st.Insert(ctx, KindRoute, row, "operator")
 	require.NoError(t, err)
 	_, err = st.Delete(ctx, "provider", "nope", "operator")
@@ -37,7 +41,10 @@ func TestARouteNamesAProviderRow(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoRef)
 }
 
-// addProvider is a fixture's explicit declaration before it writes a route.
+// addProvider is a fixture's explicit declaration before it writes a route: a
+// funded provider, because a route may not enable on an unfunded one, and the
+// sprint owner the funding refuser asks for (docs/SPEC-CONFIG.md, "Funding is
+// the owner's").
 func addProvider(t *testing.T, st Store, name string) {
 	t.Helper()
 	ctx := context.Background()
@@ -46,8 +53,14 @@ func addProvider(t *testing.T, st Store, name string) {
 	if exists {
 		return
 	}
+	sprint, exists, err := st.Get(ctx, KindSprint, KindSprint)
+	require.NoError(t, err)
+	if !exists || sprint.Fields["owner"] == "" {
+		_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"owner": "fixture"}, "fixture")
+		require.NoError(t, err)
+	}
 	k, _ := Lookup(KindProvider)
-	row, err := k.NewRow(name, map[string]string{"billing": "metered", "funded": "false"})
+	row, err := k.NewRow(name, map[string]string{"billing": "metered", "funded": "true"})
 	require.NoError(t, err)
 	_, err = st.Insert(ctx, KindProvider, row, "fixture")
 	require.NoError(t, err)
@@ -90,7 +103,7 @@ func TestStatusWarnsOnAFundedRouteOutsideEveryArray(t *testing.T) {
 	lines, warns := ProviderReport(providers, routes, tiers)
 	assert.Contains(t, lines, "PROVIDER name=opencode funded=true billing=both balance_usd=238 as_of=2026-10-13 pro=1/7")
 	assert.Contains(t, warns, "provider=opencode funded=true routes-in-no-tier-array=pro-b,pro-c,pro-d,pro-e,pro-f,pro-g; run: nova-config tier set pro --routes pro-a,pro-b,pro-c,pro-d,pro-e,pro-f,pro-g")
-	assert.Contains(t, warns, "tier=heavy holds no route of a funded provider; run: nova-config tier show heavy")
+	assert.Contains(t, warns, "tier=flash holds no route of a funded provider; run: nova-config tier show flash")
 }
 
 func TestAnEmptyTierArrayTakesEveryEnabledRoute(t *testing.T) {

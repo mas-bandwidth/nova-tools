@@ -21,9 +21,11 @@ func TestStatusWarnsOnAFundedRouteOutsideEveryArray(t *testing.T) {
 	h.env["NOVA_FRIEND"] = "operator"
 	code, _, errs := h.run(t, "migrate", "--file", "case.json")
 	require.Zero(t, code, errs)
+	code, _, errs = h.run(t, "sprint", "set", "--owner", "operator", "--actor", "operator", "--file", "case.json")
+	require.Zero(t, code, errs)
 	for _, args := range [][]string{
 		{"provider", "add", "opencode", "--billing", "both", "--funded", "true", "--balance_usd", "238", "--balance_as_of", "2026-10-13"},
-		{"provider", "add", "openrouter", "--billing", "metered", "--funded", "false"},
+		{"provider", "add", "openrouter", "--billing", "metered", "--funded", "true"},
 	} {
 		code, _, errs = h.run(t, append(args, "--file", "case.json")...)
 		require.Zero(t, code, errs)
@@ -46,7 +48,7 @@ func TestStatusWarnsOnAFundedRouteOutsideEveryArray(t *testing.T) {
 	assert.Contains(t, out, "PROVIDER name=opencode funded=true billing=both balance_usd=238 as_of=2026-10-13 pro=1/7\n")
 	warning := "provider=opencode funded=true routes-in-no-tier-array=pro-b,pro-c,pro-d,pro-e,pro-f,pro-g; run: nova-config tier set pro --routes pro-a,pro-b,pro-c,pro-d,pro-e,pro-f,pro-g --actor operator --file case.json"
 	assert.Contains(t, out, "CONFIG WARN "+warning+"\n")
-	assert.Contains(t, out, "CONFIG WARN tier=heavy holds no route of a funded provider; run: nova-config tier show heavy --file case.json\n")
+	assert.NotContains(t, out, "CONFIG WARN tier=heavy holds no route of a funded provider")
 	code, out, errs = h.run(t, "status", "--file", "case.json", "--json")
 	require.Zero(t, code, errs)
 	var result struct {
@@ -68,16 +70,23 @@ func TestStatusWarnsOnAFundedRouteOutsideEveryArray(t *testing.T) {
 
 func addProviders(t *testing.T, st config.Store, names ...string) {
 	t.Helper()
+	ctx := context.Background()
+	sprint, exists, err := st.Get(ctx, config.KindSprint, config.KindSprint)
+	require.NoError(t, err)
+	if !exists || sprint.Fields["owner"] == "" {
+		_, _, err = st.Update(ctx, config.KindSprint, config.KindSprint, map[string]string{"owner": "fixture"}, "fixture")
+		require.NoError(t, err)
+	}
 	for _, name := range names {
-		_, exists, err := st.Get(context.Background(), config.KindProvider, name)
+		_, exists, err := st.Get(ctx, config.KindProvider, name)
 		require.NoError(t, err)
 		if exists {
 			continue
 		}
 		k, _ := config.Lookup(config.KindProvider)
-		row, err := k.NewRow(name, map[string]string{"billing": "metered", "funded": "false"})
+		row, err := k.NewRow(name, map[string]string{"billing": "metered", "funded": "true"})
 		require.NoError(t, err)
-		_, err = st.Insert(context.Background(), config.KindProvider, row, "fixture")
+		_, err = st.Insert(ctx, config.KindProvider, row, "fixture")
 		require.NoError(t, err)
 	}
 }
@@ -97,8 +106,10 @@ func TestMissingProviderRemedyRunsOnTheSameFile(t *testing.T) {
 				h.env["NOVA_FRIEND"] = "operator"
 				code, _, errs := h.run(t, "migrate", "--file", "case.json")
 				require.Zero(t, code, errs)
+				code, _, errs = h.run(t, "sprint", "set", "--owner", "operator", "--actor", "operator", "--file", "case.json")
+				require.Zero(t, code, errs)
 				if verb == "set" {
-					code, _, errs = h.run(t, "provider", "add", "existing", "--billing", "metered", "--funded", "false", "--file", "case.json")
+					code, _, errs = h.run(t, "provider", "add", "existing", "--billing", "metered", "--funded", "true", "--file", "case.json")
 					require.Zero(t, code, errs)
 					code, _, errs = h.run(t, "route", "add", "r", "--tier", "pro", "--provider", "existing", "--model", "m", "--deadline", "60", "--file", "case.json")
 					require.Equal(t, 1, code, errs)
@@ -119,6 +130,8 @@ func TestMissingProviderRemedyRunsOnTheSameFile(t *testing.T) {
 				command := words(remedy)
 				code, _, errs = h.run(t, command[1:]...)
 				require.Zero(t, code, errs, "the exact suggested remedy runs")
+				code, _, errs = h.run(t, "provider", "set", "nope", "--funded", "true", "--actor", "operator", "--file", "case.json")
+				require.Zero(t, code, errs, "the owner funds the provider before a route enables on it")
 				code, _, errs = h.run(t, args...)
 				if dry {
 					require.Zero(t, code, errs)
@@ -141,7 +154,9 @@ func TestSetRepairsTheUnchangedMissingProvider(t *testing.T) {
 			h.env["NOVA_FRIEND"] = "operator"
 			code, _, errs := h.run(t, "migrate", "--file", "case.json")
 			require.Zero(t, code, errs)
-			code, _, errs = h.run(t, "provider", "add", "nope", "--billing", "metered", "--funded", "false", "--file", "case.json")
+			code, _, errs = h.run(t, "sprint", "set", "--owner", "operator", "--actor", "operator", "--file", "case.json")
+			require.Zero(t, code, errs)
+			code, _, errs = h.run(t, "provider", "add", "nope", "--billing", "metered", "--funded", "true", "--file", "case.json")
 			require.Zero(t, code, errs)
 			code, _, errs = h.run(t, "route", "add", "r", "--tier", "pro", "--provider", "nope", "--model", "m", "--deadline", "60", "--file", "case.json")
 			require.Equal(t, 1, code, errs)
@@ -167,6 +182,8 @@ func TestSetRepairsTheUnchangedMissingProvider(t *testing.T) {
 			assert.Contains(t, errs, "; run: "+remedy+"\n")
 			command := words(remedy)
 			code, _, errs = h.run(t, command[1:]...)
+			require.Zero(t, code, errs)
+			code, _, errs = h.run(t, "provider", "set", "nope", "--funded", "true", "--actor", "operator", "--file", "case.json")
 			require.Zero(t, code, errs)
 			code, _, errs = h.run(t, args...)
 			if dry {
@@ -246,7 +263,7 @@ func TestStatusWarningRemediesUseTheChosenStore(t *testing.T) {
 				code, _, errs := h.run(t, append([]string{"migrate"}, flags...)...)
 				require.Zero(t, code, errs)
 			}
-			commands := [][]string{{"provider", "add", "p", "--billing", "metered", "--funded", "true"}, {"route", "add", "a", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"route", "add", "b", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"tier", "set", "pro", "--routes", "a"}}
+			commands := [][]string{{"sprint", "set", "--owner", "review bot", "--actor", "review bot"}, {"provider", "add", "p", "--billing", "metered", "--funded", "true"}, {"route", "add", "a", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"route", "add", "b", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"}, {"tier", "set", "pro", "--routes", "a"}}
 			for _, command := range commands {
 				code, _, errs := h.run(t, append(command, flags...)...)
 				if command[0] == "route" {
@@ -280,6 +297,8 @@ func TestProviderDirectFieldsThroughTheVerbs(t *testing.T) {
 	h.dir = t.TempDir()
 	h.env["NOVA_FRIEND"] = "operator"
 	code, _, errs := h.run(t, "migrate", "--file", "case.json")
+	require.Zero(t, code, errs)
+	code, _, errs = h.run(t, "sprint", "set", "--owner", "operator", "--actor", "operator", "--file", "case.json")
 	require.Zero(t, code, errs)
 	code, _, errs = h.run(t, "provider", "add", "paperinstruments", "--billing", "metered", "--funded", "true",
 		"--base_url", "https://api.example.invalid/v1", "--key_env", "PAPERINSTRUMENTS_API_KEY",

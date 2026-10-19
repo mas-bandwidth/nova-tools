@@ -32,17 +32,17 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "add a pro route through one provider", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "add", "pro-deepseek-opencode", "--tier", "pro", "--provider", "opencode", "--model", "deepseek-v4", "--tokens", "400000", "--deadline", "1800"},
-			out:  "CONFIG ADD kind=route name=pro-deepseek-opencode rev=4\n",
+			out:  "CONFIG ADD kind=route name=pro-deepseek-opencode rev=5\n",
 		},
 		{
 			name: "add the same model direct", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "add", "pro-deepseek-direct", "--tier", "pro", "--provider", "deepseek", "--model", "deepseek-v4", "--tokens", "400000", "--deadline", "1800"},
-			out:  "CONFIG ADD kind=route name=pro-deepseek-direct rev=5\n",
+			out:  "CONFIG ADD kind=route name=pro-deepseek-direct rev=6\n",
 		},
 		{
 			name: "add a model whose name holds a slash", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "add", "pro-grok-openrouter", "--tier", "pro", "--provider", "openrouter", "--model", "x-ai/grok-4", "--tokens", "300000", "--deadline", "1800"},
-			out:  "CONFIG ADD kind=route name=pro-grok-openrouter rev=6\n",
+			out:  "CONFIG ADD kind=route name=pro-grok-openrouter rev=7\n",
 		},
 		{
 			name: "list prints every field in declaration order, a price not set as a dash",
@@ -63,7 +63,7 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 			args: []string{"route", "set", "pro-deepseek-opencode", "--price_input", "0.270", "--price_cache_read", "0.07", "--price_output", "1.10",
 				"--long_context", "128000", "--price_input_long", "0.54", "--price_output_long", "2.2", "--gateway_percent", "5", "--price_source", "https://example.com/pricing",
 				"--price_as_of", "2026-10-01"},
-			out: "CONFIG SET kind=route name=pro-deepseek-opencode rev=7 changed=gateway_percent,long_context,price_as_of,price_cache_read,price_input,price_input_long,price_output,price_output_long,price_source\n",
+			out: "CONFIG SET kind=route name=pro-deepseek-opencode rev=8 changed=gateway_percent,long_context,price_as_of,price_cache_read,price_input,price_input_long,price_output,price_output_long,price_source\n",
 		},
 		{
 			name: "show prints the sheet",
@@ -94,18 +94,18 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "set takes a route out of the deal, with its reason", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "set", "pro-grok-openrouter", "--enabled", "false", "--note", "not measured yet"},
-			out:  "CONFIG SET kind=route name=pro-grok-openrouter rev=8 changed=enabled,note\n",
+			out:  "CONFIG SET kind=route name=pro-grok-openrouter rev=9 changed=enabled,note\n",
 		},
 		{
 			name: "history names every change",
 			args: []string{"route", "history", "pro-grok-openrouter"},
-			out:  "HISTORY id=6 kind=route name=pro-grok-openrouter op=add actor=a1 ",
+			out:  "HISTORY id=7 kind=route name=pro-grok-openrouter op=add actor=a1 ",
 			pre:  true,
 		},
 		{
 			name: "remove", code: 1, errs: "CONFIG NOT-APPLIED",
 			args: []string{"route", "remove", "pro-deepseek-direct"},
-			out:  "CONFIG REMOVE kind=route name=pro-deepseek-direct rev=9\n",
+			out:  "CONFIG REMOVE kind=route name=pro-deepseek-direct rev=10\n",
 		},
 	}
 	for _, s := range steps {
@@ -250,18 +250,21 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 
 	h := loopHarness(t)
 	addProviders(t, h.store, "p")
-	code, _, errs := h.run(t, "route", "add", "r1", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--price_input", "1")
+	code, _, errs := h.run(t, "apply", "--kind", "sprint")
+	require.Zero(t, code, errs)
+	h.redis.log = nil
+	code, _, errs = h.run(t, "route", "add", "r1", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--price_input", "1")
 	require.Equal(t, 1, code, errs)
 	assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 
 	code, out, _ := h.run(t, "apply", "--redis", "127.0.0.1:6379", "--kind", "route", "--check")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "CHECK ADD kind=route name=r1\nCONFIG CHECK kind=route add=1 set=0 remove=0 rev=2 applied=0\n", out)
+	assert.Equal(t, "CHECK ADD kind=route name=r1\nCONFIG CHECK kind=route add=1 set=0 remove=0 rev=3 applied=0\n", out)
 	assert.Empty(t, h.redis.log, "--check writes nothing")
 
 	code, out, _ = h.run(t, "apply", "--redis", "127.0.0.1:6379", "--kind", "route")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "APPLY ADD kind=route name=r1\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=2 ms=0\nCONFIG APPLY OK kinds=1\n", out)
+	assert.Equal(t, "APPLY ADD kind=route name=r1\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=3 ms=0\nCONFIG APPLY OK kinds=1\n", out)
 	assert.Equal(t, []string{"write route r1"}, h.redis.log)
 	assert.Equal(t, "true", h.redis.views["route"]["r1"]["enabled"])
 
@@ -269,8 +272,10 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	require.Zero(t, code, errs)
 	code, out, errs = h.run(t, "status")
 	assert.Equal(t, 0, code, errs)
-	assert.Contains(t, out, " route=1 route_rev=2 ")
-	assert.True(t, strings.HasSuffix(out, " route_applied=2 tier_applied=0\nPROVIDER name=p funded=false billing=metered balance_usd=- as_of=- flash=1/1\n"+noFundedTierWarnings), out)
+	assert.Contains(t, out, " route=1 route_rev=3 ")
+	assert.True(t, strings.HasSuffix(out, " route_applied=3 tier_applied=0\nPROVIDER name=p funded=true billing=metered balance_usd=- as_of=- flash=1/1\n"+
+		"CONFIG WARN tier=heavy holds no route of a funded provider; run: nova-config tier show heavy\n"+
+		"CONFIG WARN tier=pro holds no route of a funded provider; run: nova-config tier show pro\n"), out)
 
 	// the price sheet reaches the view the sprint reads, exactly as typed in its one spelling
 	code, _, errs = h.run(t, "route", "set", "r1", "--price_input", "0.10000000000000000000000000001", "--price_output", "2.50", "--billing", "plan")
@@ -278,7 +283,7 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	assert.Contains(t, errs, "CONFIG NOT-APPLIED")
 	code, out, _ = h.run(t, "apply", "--redis", "127.0.0.1:6379", "--kind", "route")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "APPLY SET kind=route name=r1 changed=price_input,price_output,billing\nCONFIG APPLY kind=route add=0 set=1 remove=0 rev=3 ms=0\nCONFIG APPLY OK kinds=1\n", out)
+	assert.Equal(t, "APPLY SET kind=route name=r1 changed=price_input,price_output,billing\nCONFIG APPLY kind=route add=0 set=1 remove=0 rev=4 ms=0\nCONFIG APPLY OK kinds=1\n", out)
 	view := h.redis.views["route"]["r1"]
 	assert.Equal(t, "0.10000000000000000000000000001", view["price_input"], "a decimal, never through a float")
 	assert.Equal(t, "2.5", view["price_output"])
@@ -340,7 +345,7 @@ func TestTierVerbsEndToEndOnTheFake(t *testing.T) {
 	}
 	code, out, errs := h.run(t, "tier", "set", "flash", "--routes", "a,b,b")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG SET kind=tier name=flash rev=5 changed=routes\n", out)
+	assert.Equal(t, "CONFIG SET kind=tier name=flash rev=6 changed=routes\n", out)
 	for routes, refusal := range map[string]string{"a,nope": "--routes nope names no route row", "off": "--routes off names a disabled route"} {
 		code, _, errs = h.run(t, "tier", "set", "flash", "--routes", routes)
 		assert.Equal(t, 1, code, routes)
