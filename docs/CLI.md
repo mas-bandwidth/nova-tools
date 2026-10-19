@@ -2235,7 +2235,12 @@ usage:
                        (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
                         Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
                         A reader uses its machine's width; --width overrides it. This machine opens no store.
-                        Each card runs as one native child with its frame and an allowlist environment.
+                         Each card runs as one native child with its frame and an allowlist environment.
+                         Before its first take the member resolves its wall exactly as native does (--sandbox,
+                         else nova-sandbox on PATH; --no-wall skips it) and refuses to start, exit 2, with one
+                         line naming the remedy when none resolves: a member with no wall takes nothing. A launch
+                         native refused before any child started is a launch refusal, never the card's failed work:
+                         the member hands the card back and spends no attempt, and the finish reports the native refusal line.
                         Its packet supplies the model, budget and deadline; the flags fill missing route values.
                         --reader runs reads from the readers table; its flags override the read's route.
                         A flash card's first read is a decide read, asked by native with JEV_API_KEY

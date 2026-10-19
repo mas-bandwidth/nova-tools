@@ -72,6 +72,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	workerFile := fs.String("worker", "", "the worker description `file` (JSON), handed to each child's native --worker; the secret it names is handed through too")
 	maxMem := fs.String("max-mem", "", "the wall's memory cap for each child's tree (native --max-mem), a positive `size` such as 16g (default: one eighth of RAM, limited to a quarter of visible slice MemoryMax, with an 8g floor and half-RAM ceiling; the ceiling can make it less than 8g; 8g if RAM is unreadable; this overrides the default); not with --no-wall")
 	noWall := fs.Bool("no-wall", false, "run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes")
+	sandbox := fs.String("sandbox", "", "the nova-sandbox binary naming each child's wall (native --sandbox); default: resolve nova-sandbox on PATH; a member with no wall takes nothing")
 	ghBin := fs.String("gh", "gh", "the gh `path` the member opens a work card's pull request with, outside the wall (default gh)")
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
 	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
@@ -188,6 +189,14 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if f.refused(stderr) {
 		return 2
 	}
+	// a member resolves its wall before its first take, exactly as native does -- the
+	// --sandbox name as typed, else nova-sandbox on PATH; --no-wall skips it -- and a
+	// member with no wall takes nothing (docs/SPEC-SWARM.md, `member`): every card it
+	// took would be refused by native before its child started, and each would sit as its
+	// own failed attempt
+	if why := memberWallRefusal(*noWall, *sandbox, exec.LookPath); why != "" {
+		return refuse(stderr, " member", why)
+	}
 	// the beat writes from its own goroutine (memberLoop), and each lane's end its LANE END
 	// line from its own (nativeRunner.endLane), so what this verb writes is one line at a time
 	stderr = &lockedWriter{w: stderr}
@@ -235,7 +244,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, maxMem: *maxMem, noWall: *noWall, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity, prompt: *prompt,
+		worker: *workerFile, maxMem: *maxMem, sandbox: *sandbox, noWall: *noWall, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity, prompt: *prompt,
 		server: *server, as: *as,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
@@ -321,6 +330,31 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	fmt.Fprintf(stdout, "MEMBER OK as=%s ticks=%d running=%d\n", oneline.Field(*as), n, m.Running())
 	return 0
+}
+
+// memberWallRefusal is the reason a member must not start for want of a wall, "" when it
+// may. A member resolves the wall exactly as native does -- the --sandbox name as typed,
+// else nova-sandbox on PATH; --no-wall skips it -- and a member with no wall takes nothing:
+// every card it took would be refused by native before its child started, and each would sit
+// as its own failed attempt (docs/SPEC-SWARM.md, `member`).
+func memberWallRefusal(noWall bool, sandbox string, lookPath func(string) (string, error)) string {
+	if noWall {
+		return ""
+	}
+	wall := sandbox
+	if wall == "" {
+		var err error
+		wall, err = lookPath(swarm.SandboxBinary)
+		if err != nil {
+			return fmt.Sprintf("no wall: %s is on no PATH entry and --sandbox names no file; name the wall with --sandbox <path> or run with --no-wall and own every read and write the child makes",
+				oneline.Field(swarm.SandboxBinary))
+		}
+	}
+	if _, err := os.Stat(wall); err != nil {
+		return fmt.Sprintf("no wall: the wall %s is missing; name the wall with --sandbox <path> or run with --no-wall and own every read and write the child makes",
+			oneline.Field(wall))
+	}
+	return ""
 }
 
 // memberConfig is the member.Config nova-swarm runs a member or a reader with. A reader's
@@ -568,6 +602,7 @@ type nativeRunner struct {
 	tokens, auth, config, worker, identity         string
 	prompt                                         string // the identity prompt file handed to each launch (native --prompt); "" for none
 	maxMem                                         string // the wall's memory cap handed to each launch (native --max-mem); "" for the wall's sized default
+	sandbox                                        string // the nova-sandbox binary handed to each launch (native --sandbox); "" resolves nova-sandbox on PATH
 	noWall                                         bool
 	// server and as are the sprint's server and this worker's name: a limited route's
 	// child takes its global rate budget there (--budget-server, nativebudget.go)
@@ -819,6 +854,9 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	}
 	if r.noWall {
 		args = append(args, "--no-wall")
+	}
+	if r.sandbox != "" {
+		args = append(args, "--sandbox", r.sandbox)
 	}
 	if r.identity != "" {
 		args = append(args, "--identity", r.identity)
@@ -1271,7 +1309,7 @@ func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
 		exit := 0
-		var end, endCause, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
+		var end, endCause, staging, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
 		var wall time.Duration
 		nativeHasSpend := false
 		// noChild: native refused the launch before it opened the harness output log, so
@@ -1338,6 +1376,15 @@ func (c *nativeChild) Result() member.Result {
 				nativeSpendLine = string(s[1])
 			}
 			end = nativeEnd(b)
+			if refused != "" && noChild && end == "" {
+				// native refused the launch before any child ran, and the refusal is none of
+				// the stage, yield or harness-fault lines above: it is the member's failure
+				// and never the card's, so it ends as a staging refusal does and the sprint
+				// deals the card to another member (tla/CardContract.tla, StageRefused); the
+				// reason is the native refusal line itself
+				end = member.EndStaging
+				staging = refused
+			}
 			if end == member.EndIdleReap {
 				if m := nativeIdleCause.FindSubmatch(b); m != nil {
 					endCause = string(m[1])
@@ -1477,7 +1524,7 @@ func (c *nativeChild) Result() member.Result {
 			// their rerun passed: the work is done as far as its gate says; the readers read it
 			verdict, report = "ok", "gate: "+gateTests+" flaky, green on the rerun; "+report
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, EndCause: endCause, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry, Wall: wall, Exit: exit, HarnessOutput: harnessOutputTail(c.job)}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, EndCause: endCause, Staging: staging, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests, Carry: carry, Wall: wall, Exit: exit, HarnessOutput: harnessOutputTail(c.job)}
 	})
 	return c.result
 }
