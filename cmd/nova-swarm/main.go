@@ -32,6 +32,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	sandboxpkg "github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
@@ -622,6 +623,7 @@ type nativeFlags struct {
 	providerNPM     *string
 	sandbox         *string
 	noWall          *bool
+	gpu             *string
 	noSharedCaches  *bool
 	resultsRootFlag *string
 	sweepNow        *bool
@@ -671,6 +673,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 		providerNPM:     f.fs.String("provider-npm-adapter", "", "the route provider row's `npm_adapter` (normally @ai-sdk/openai-compatible), written in the job's opencode.json for an uncatalogued provider; empty means @ai-sdk/openai-compatible"),
 		sandbox:         f.fs.String("sandbox", "", "the nova-sandbox binary `path` that builds the wall (default: nova-sandbox on PATH); not with --no-wall"),
 		noWall:          f.fs.Bool("no-wall", false, "run the child with no nova-sandbox wall: the caller owns every read and write it makes"),
+		gpu:             f.fs.String("gpu", "", "the wall's local GPU capability, `none|metal` (nova-sandbox --gpu): metal opens the measured Metal, shader-compiler and video-codec grants and nothing wider (default none)"),
 		noSharedCaches:  f.fs.Bool("no-shared-caches", false, "keep the Go caches under the child's HOME instead of the bench's shared <root>/cache"),
 		resultsRootFlag: f.fs.String("results-root", "", "the `dir` RESULT.md, usage.tsv and the report are published under (default <root>/results)"),
 		sweepNow:        f.fs.Bool("sweep-now", false, "delete the job directory once its results are published (never before)"),
@@ -728,6 +731,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	stageTimeout := nf.stageTimeout
 	repos := nf.repos
 	recipients := nf.recipients
+	gpuMode, gpuRefusal := sandboxpkg.ParseGPUMode(*nf.gpu)
+	if gpuRefusal != nil {
+		f.add("--gpu wants none or metal (nova-sandbox --gpu) and got " + oneline.Field(*nf.gpu))
+	}
 	if *noWall && *sandbox != "" {
 		f.add("--no-wall and --sandbox together: one asks for no containment at all and the other names the wall to use; pass at most one")
 	}
@@ -921,6 +928,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		recipients:      recipients,
 		sandbox:         *sandbox,
 		noWall:          *noWall,
+		gpu:             gpuMode,
 		noSharedCaches:  *noSharedCaches,
 		resultsRoot:     resultsRootOf(*resultsRootFlag, *root),
 		tokens:          budgetTokens,

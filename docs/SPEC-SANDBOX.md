@@ -1974,9 +1974,21 @@ outside the wall but fails at import inside it with `[metal::load_device] No
 Metal device available`, under the narrowed mach-lookup profile with no IOKit
 clauses. The only
 opt-in is `--gpu none|metal` (default `none`, printed as `gpu=` on every OK
-line); it records intent and never widens mach-lookup nor grants blanket
-device access, whose minimum mechanisms are still unmeasured — the generated
-profile stays closed. The compared option is a separately supervised inference
+line). `none` leaves the generated profile closed to the GPU. `metal` appends
+the measured minimum (`pkg/sandbox/gpu.go` `MetalGrants`) and nothing wider:
+`iokit-open` for the two named user clients `AGXDeviceUserClient` (without it
+`MTLCreateSystemDefaultDevice` returns nil) and `IOSurfaceRootUserClient`, and
+`mach-lookup` for the three named XPC services `com.apple.MTLCompilerService`
+(runtime shader compilation), `com.apple.coremedia.videoencoder` and
+`com.apple.coremedia.videodecoder` (hardware video record and decode). It
+grants no blanket `iokit-open`, no blanket or prefixed `mach-lookup`, no
+`global-name` and no `iokit-get-properties` (measured unnecessary), so the
+clipboard and every launchd service stay denied. Measured 2026-10-19 on an
+Apple M5 Pro bench, macOS 27, with a Metal device/compile/compute probe and VG
+`render2 --record`, each clause removed in turn. `nova-swarm member --gpu
+metal` hands `native --gpu metal` to every child, and native hands the wall
+`--gpu metal`; a bench with an Apple GPU opts in in its loop record, and no
+card can opt itself in. The compared option is a separately supervised inference
 service: sandboxing its client does not sandbox the service, and that trust
 and resource boundary stays visible. Dedicated child HOME/cache/output roots,
 deadlines, process ownership, and measured receipts are unchanged.

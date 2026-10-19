@@ -35,6 +35,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	sandboxpkg "github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
@@ -69,10 +70,11 @@ type nativeRunConfig struct {
 	// github.com only, expressed as a wall host rule
 	recipients []string // bus lanes a card may address; default none, and a bus
 	// send is denied inside the wall regardless
-	sandbox        string // the nova-sandbox binary naming the wall; "" = resolve on PATH
-	noWall         bool   // the caller typed --no-wall: run with no containment, named by its OK line
-	noSharedCaches bool   // the caller typed --no-shared-caches: the Go caches stay under HOME as today
-	configFile     string // optional: an opencode.json provider config copied beside the auth copy
+	sandbox        string             // the nova-sandbox binary naming the wall; "" = resolve on PATH
+	noWall         bool               // the caller typed --no-wall: run with no containment, named by its OK line
+	gpu            sandboxpkg.GPUMode // --gpu: the wall's local GPU capability; "" or none passes no --gpu
+	noSharedCaches bool               // the caller typed --no-shared-caches: the Go caches stay under HOME as today
+	configFile     string             // optional: an opencode.json provider config copied beside the auth copy
 	// providerDirect is an uncatalogued provider's custom block (its base_url, key_env and
 	// npm adapter, a nova-config provider row): when set and it names the route's provider,
 	// writeJobConfig declares it instead of reading the providers table, and opens no read
@@ -1991,6 +1993,12 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	// the wall's network promise (issue #591).
 	if cfg.netAllow != "" {
 		argv = append(argv, "--net-allow", cfg.netAllow)
+	}
+	// The local GPU capability is the member's explicit opt-in (--gpu metal on a bench with
+	// an Apple GPU), handed to the wall as its own --gpu: the wall, not this caller, owns
+	// which IOKit clients and XPC services that opens (pkg/sandbox/gpu.go MetalGrants).
+	if cfg.gpu == sandboxpkg.GPUMetal {
+		argv = append(argv, "--gpu", string(cfg.gpu))
 	}
 	// The shell launcher read the harness's own directory and /opt/homebrew so git and the
 	// harness's libraries resolve inside the wall; the native path does the same (run 7).
