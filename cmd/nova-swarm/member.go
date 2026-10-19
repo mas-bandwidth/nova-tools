@@ -809,13 +809,6 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if r.worker != "" {
 		args = append(args, "--worker", r.worker)
 	}
-	// the route's provider row (base_url, key_env and npm_adapter as nova-sprint read it
-	// from nova-config): native writes the custom provider block, by the key's variable
-	// name only, and opens no proxy over the provider's own base
-	if p.ProviderBaseURL != "" || p.ProviderKeyEnv != "" || p.ProviderNPMAdapter != "" {
-		args = append(args, "--provider-base-url", p.ProviderBaseURL, "--provider-key-env", p.ProviderKeyEnv,
-			"--provider-npm-adapter", p.ProviderNPMAdapter)
-	}
 	if r.noWall {
 		args = append(args, "--no-wall")
 	}
