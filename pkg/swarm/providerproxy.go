@@ -317,6 +317,71 @@ func SeedProviderBaseURL(raw []byte, provider, base string) ([]byte, bool) {
 	return append(out, '\n'), true
 }
 
+// DirectProvider is an uncatalogued provider's custom block: the API base, the NAME of the
+// environment variable holding its key, and the npm adapter the harness loads. It is the
+// provider row's fields (nova-config provider: base_url, key_env, npm), never a key value.
+type DirectProvider struct {
+	BaseURL    string
+	KeyEnv     string
+	NPMAdapter string
+}
+
+// DeclareDirectProvider returns the config with provider declared direct as an
+// OpenAI-compatible provider: npm (the adapter named, or @ai-sdk/openai-compatible when
+// empty), options.baseURL, and options.apiKey as the {env:<KeyEnv>} reference. Anything
+// the entry already carries is kept, and the key is only the env reference text, never a
+// value read from the environment. ok is false, and raw is returned unchanged, when the
+// base or the key's variable name is empty, the config is not a JSON object, or the
+// provider entry is not an object. It is called for a provider the pinned harness's
+// catalog does not know, so that provider still runs; the Zen and openrouter providers are
+// never used for such a route.
+func DeclareDirectProvider(raw []byte, provider string, p DirectProvider) ([]byte, bool) {
+	base, keyEnv := strings.TrimSpace(p.BaseURL), strings.TrimSpace(p.KeyEnv)
+	if provider == "" || base == "" || keyEnv == "" {
+		return raw, false
+	}
+	npm := strings.TrimSpace(p.NPMAdapter)
+	if npm == "" {
+		npm = "@ai-sdk/openai-compatible"
+	}
+	var cfg map[string]any
+	if json.Unmarshal(raw, &cfg) != nil || cfg == nil {
+		return raw, false
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	if providers == nil {
+		return raw, false
+	}
+	providerMap, _ := providers[provider].(map[string]any)
+	if providerMap == nil {
+		return raw, false
+	}
+	if cur, _ := providerMap["npm"].(string); strings.TrimSpace(cur) == "" {
+		providerMap["npm"] = npm
+	}
+	opts, _ := providerMap["options"].(map[string]any)
+	if opts == nil {
+		if _, other := providerMap["options"]; other {
+			return raw, false
+		}
+		opts = map[string]any{}
+	}
+	if cur, _ := opts["baseURL"].(string); strings.TrimSpace(cur) == "" {
+		opts["baseURL"] = base
+	}
+	if _, has := opts["apiKey"]; !has {
+		opts["apiKey"] = "{env:" + keyEnv + "}"
+	}
+	providerMap["options"] = opts
+	providers[provider] = providerMap
+	cfg["provider"] = providers
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return raw, false
+	}
+	return append(out, '\n'), true
+}
+
 // LetTheHarnessWaitOutAStall returns the config with that provider's harness-side request
 // clocks off (options.headerTimeout and options.timeout both false), for a limited route
 // whose requests stall inside the budget proxy before any header is written. The pinned

@@ -329,7 +329,14 @@ route. `billing` is required (`metered`, `plan`, or `both`), and `funded` is
 required (`true` or `false`), so add forces an explicit funding decision.
 `balance_usd` is an optional non-negative decimal, empty when unknown;
 when set it needs `balance_as_of` (`YYYY-MM-DD`). `console_url` is an HTTPS
-console URL or empty; `note` carries the owner's facts. Migration 0041 seeds
+console URL or empty; `note` carries the owner's facts. `base_url` is the
+provider's OpenAI-compatible API base, `key_env` the NAME of the environment
+variable that holds its key (never the value), and `npm_adapter` the harness adapter
+(normally `@ai-sdk/openai-compatible`): the three fields a provider the pinned
+harness's catalog does not know (paperinstruments) is written with in the job's
+`opencode.json`. All three are empty for a catalogued provider; migration 0046
+adds them with that default. Such a provider is never routed through
+openrouter or opencode Zen. Migration 0041 seeds
 one row per existing route provider with `billing=metered`, `funded=false`
 and note `made by migrate from the routes: set --funded and --billing`.
 Those defaults are a reminder to declare the facts, not evidence that the
