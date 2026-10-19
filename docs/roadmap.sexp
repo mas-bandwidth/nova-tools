@@ -1903,7 +1903,7 @@ Schema-table bounds: a bound is declared only if every writer and reader path en
 Keys: provider keys live only in nova-secrets and are read by the proxy. Each friend, bench and session gets a virtual key, so no real key sits on a bench.
 Per call it records: card id (from a request header that workers set), friend, machine, model, input, output, cache-read and cache-write tokens, latency, status and cost.
 Use: per-card and per-friend token, cost and cache-hit-rate panels in the sprint dashboard. Cache-miss diagnosis that names the changing prompt prefix. Moving a tier to another provider becomes one config change.
-Privacy: prompt bodies are logged only on the proxy machine, with a retention bound, never uploaded and never on the studio. Metadata goes to the dashboard. Glenn's privacy is absolute.
+Privacy: prompt bodies are logged only on the proxy machine, with a retention bound, never uploaded and never on the keeper machine. Metadata goes to the dashboard. The owner's privacy is absolute.
 Done when: the fleet friends' API traffic flows through it; per-card tokens and cache-hit rate appear on the dashboard; the real provider keys are on the proxy host only; and turning the proxy off falls back to direct routing, which is tested."
    :why "Work starts after rocketnet v1.0.0 and after the v1.7 line; it does not join v1.7."
    :origin "the owner, 2026-10-19 (after an article on running your own LLM proxy: one endpoint you control, per-key, per-model and per-client logs, cache-miss diagnosis, virtual keys, fast provider switching)")))
