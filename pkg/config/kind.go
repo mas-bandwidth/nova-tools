@@ -546,6 +546,7 @@ var Kinds = []*Kind{
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "roles", Type: TypeList, Enum: MachineRoles, Default: DefaultMachineRoles, Help: "comma list of explicit inventory roles: " + strings.Join(MachineRoles, ", ") + "; bench by default, other roles are never inferred"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
+			{Name: "gates_only", Type: TypeNames, Help: "comma list of gate words (GATE-NEEDS words such as windows) that alone bring work to the sprint's member on it: set, the deal gives it only the cards whose GATE-NEEDS names one of them, never a generic card and never a read; empty (the default) is a member dealt any card its facts satisfy; nova-sprint fleet sync writes it onto the member's control card, where the deal reads it"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},

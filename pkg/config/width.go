@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // A machine's width is the most work cards the sprint's member on the machine
@@ -34,6 +35,11 @@ type MachineWidth struct {
 	Width int
 	// Default says the row has no width: the default, resolved from the cores.
 	Default bool
+	// GatesOnly is the row's gates_only field as its comma list: the GATE-NEEDS words that
+	// alone bring work to the machine's member (a windows member takes only the cards whose
+	// GATE-NEEDS names windows). Empty is a member dealt any card its facts satisfy.
+	// nova-sprint fleet sync writes it onto the member's control card, where the deal reads it.
+	GatesOnly []string
 }
 
 // Member says whether the machine is a member of the sprint's fleet: its
@@ -49,7 +55,7 @@ func Widths(ctx context.Context, st Store) ([]MachineWidth, error) {
 	}
 	out := make([]MachineWidth, 0, len(machines))
 	for _, m := range machines {
-		out = append(out, MachineWidth{Machine: m.Name, Width: m.Int("width"), Default: m.Fields["width"] == ""})
+		out = append(out, MachineWidth{Machine: m.Name, Width: m.Int("width"), Default: m.Fields["width"] == "", GatesOnly: gateWords(m.Fields["gates_only"])})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Machine < out[j].Machine })
 	return out, nil
@@ -73,4 +79,15 @@ func (w MachineWidth) Line() string {
 		width = "default"
 	}
 	return "CONFIG WIDTH machine=" + Value(w.Machine) + " width=" + width + " member=" + strconv.FormatBool(w.Member())
+}
+
+// gateWords is a gates_only field's comma list, trimmed, empty words dropped; nil for none.
+func gateWords(raw string) []string {
+	var out []string
+	for _, w := range strings.Split(raw, ",") {
+		if w = strings.TrimSpace(w); w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
 }
