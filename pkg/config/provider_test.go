@@ -195,7 +195,7 @@ func TestProviderDescriptorAndUnknownFacts(t *testing.T) {
 	require.True(t, ok)
 	assert.False(t, k.Singleton)
 	assert.Equal(t, "providers", k.Table)
-	assert.Equal(t, []string{"billing", "funded", "balance_usd", "balance_as_of", "console_url", "note"}, k.FieldNames())
+	assert.Equal(t, []string{"billing", "funded", "balance_usd", "balance_as_of", "console_url", "base_url", "key_env", "npm_adapter", "note"}, k.FieldNames())
 	names := KindNames()
 	assert.Equal(t, []string{KindProvider, KindRoute, KindTier}, names[len(names)-3:])
 	route, _ := Lookup(KindRoute)
@@ -276,4 +276,52 @@ func TestFileProviderUpgradeKeepsInvalidRouteNamesRefused(t *testing.T) {
 			assert.Equal(t, raw, unchanged)
 		})
 	}
+}
+
+// An uncatalogued provider carries its custom block's fields: the API base, the NAME of the
+// key's variable (never the value) and the npm adapter. Empty means catalogued.
+func TestAnUncataloguedProviderCarriesItsDirectFields(t *testing.T) {
+	t.Parallel()
+	k, ok := Lookup(KindProvider)
+	require.True(t, ok)
+	row, err := k.NewRow("paperinstruments", map[string]string{
+		"billing": "metered", "funded": "true",
+		"base_url":    "https://api.example.invalid/v1",
+		"key_env":     "PAPERINSTRUMENTS_API_KEY",
+		"npm_adapter": "@ai-sdk/openai-compatible",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "PAPERINSTRUMENTS_API_KEY", row.Fields["key_env"])
+	assert.Equal(t, "@ai-sdk/openai-compatible", row.Fields["npm_adapter"])
+	assert.Equal(t, "https://api.example.invalid/v1", row.Fields["base_url"])
+
+	for _, raw := range []map[string]string{
+		{"billing": "metered", "funded": "true", "key_env": "sk-a-literal-key"},
+		{"billing": "metered", "funded": "true", "key_env": "_API_KEY"},
+		{"billing": "metered", "funded": "true", "base_url": "ftp://api.example.invalid/v1"},
+		{"billing": "metered", "funded": "true", "base_url": "http://api.example.invalid/v1"},
+		{"billing": "metered", "funded": "true", "npm_adapter": "two words"},
+	} {
+		_, err := k.NewRow("bad", raw)
+		require.Error(t, err, "%v is refused", raw)
+	}
+}
+
+// The migration that adds the direct fields is embedded and runs after 0045.
+func TestProviderDirectFieldsMigration(t *testing.T) {
+	t.Parallel()
+	all, err := Migrations()
+	require.NoError(t, err)
+	var found bool
+	for _, m := range all {
+		if m.Name != "0046_provider_custom.sql" {
+			continue
+		}
+		found = true
+		assert.Equal(t, 46, m.Version)
+		for _, want := range []string{"base_url", "key_env", "npm_adapter"} {
+			assert.Contains(t, m.SQL, want, "migration adds the %s column", want)
+		}
+	}
+	assert.True(t, found, "the provider direct-fields migration is embedded")
 }
