@@ -194,7 +194,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// member with no wall takes nothing (docs/SPEC-SWARM.md, `member`): every card it
 	// took would be refused by native before its child started, and each would sit as its
 	// own failed attempt
-	if why := memberWallRefusal(*noWall, *sandbox, exec.LookPath); why != "" {
+	if why := memberWallRefusal(*noWall, *sandbox, memberWallLookPath); why != "" {
 		return refuse(stderr, " member", why)
 	}
 	// the beat writes from its own goroutine (memberLoop), and each lane's end its LANE END
@@ -331,6 +331,11 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	fmt.Fprintf(stdout, "MEMBER OK as=%s ticks=%d running=%d\n", oneline.Field(*as), n, m.Running())
 	return 0
 }
+
+// memberWallLookPath resolves the wall binary's name on PATH (memberWallRefusal). A package
+// var so a test answers it without depending on the host PATH; production is exec.LookPath
+// (docs/SPEC-SWARM.md, `member`).
+var memberWallLookPath = exec.LookPath
 
 // memberWallRefusal is the reason a member must not start for want of a wall, "" when it
 // may. A member resolves the wall exactly as native does -- the --sandbox name as typed,
@@ -1273,6 +1278,12 @@ var nativeRefusedWhy = regexp.MustCompile(`(?m)^NATIVE REFUSED: (.+)$`)
 // as a staging refusal; every other one is the card's and stays a failed finish.
 var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: (yield to CI: .+)$`)
 
+// nativeNoWallRefused is native's no-wall refusal (its wall step): a member with no wall
+// -- --sandbox names no file and nova-sandbox is on no PATH entry, without --no-wall --
+// refuses every card before its child starts, so it is the machine's failure, never the
+// card's, and ends as a staging refusal does (docs/SPEC-SWARM.md, `member`).
+var nativeNoWallRefused = regexp.MustCompile(`\bno wall:\s+\S+ is on no PATH entry`)
+
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
@@ -1376,12 +1387,12 @@ func (c *nativeChild) Result() member.Result {
 				nativeSpendLine = string(s[1])
 			}
 			end = nativeEnd(b)
-			if refused != "" && noChild && end == "" {
-				// native refused the launch before any child ran, and the refusal is none of
-				// the stage, yield or harness-fault lines above: it is the member's failure
-				// and never the card's, so it ends as a staging refusal does and the sprint
-				// deals the card to another member (tla/CardContract.tla, StageRefused); the
-				// reason is the native refusal line itself
+			if refused != "" && noChild && end == "" && nativeNoWallRefused.MatchString(refused) {
+				// native refused the launch before any child ran because this machine has no
+				// wall (its wall step): the machine's failure, never the card's, so it ends
+				// as a staging refusal does and the sprint deals the card to another member
+				// (tla/CardContract.tla, StageRefused); the reason is the native refusal line
+				// itself. Every other pre-start NATIVE REFUSED stays the card's failed work.
 				end = member.EndStaging
 				staging = refused
 			}

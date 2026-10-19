@@ -123,6 +123,12 @@ func TestMain(m *testing.M) {
 	// a no-op here, set once before any test runs; the built binary the launch tests start
 	// keeps the real step (TestACardsLaunchRunsBehindCI reads it).
 	nativeToCI = func() error { return nil }
+	// The member's wall lookup is a package var (memberWallLookPath) so the member tests do
+	// not depend on the host PATH: resolve every name to this test binary itself, which
+	// exists, so a member run starts wherever nova-sandbox is or is not on PATH. A test
+	// that pins the no-wall refusal drives memberWallRefusal directly or names an explicit
+	// --sandbox path.
+	memberWallLookPath = func(name string) (string, error) { return os.Args[0], nil }
 	code := m.Run()
 	if leftover := leftoverChildPIDs(); len(leftover) > 0 {
 		for _, pid := range leftover {
