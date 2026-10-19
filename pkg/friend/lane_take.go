@@ -68,12 +68,13 @@ func LaneTakeArgv(member string, n int) []string {
 // the card the lane holds there (Card "" for none) at its generation, its kind (work or read)
 // and its job (<id>~<epoch>, .g<gen> from the second generation).
 type LaneHold struct {
-	Lane  int
-	Epoch uint64
-	Card  string
-	Gen   int
-	Kind  string
-	Job   string
+	Lane   int
+	Epoch  uint64
+	Card   string
+	Gen    int
+	Kind   string
+	Job    string
+	Notice bool // the LANE line carried notice=sent: the server told the friend of this hold
 }
 
 // laneLineRE is the LANE line's head; the words after holds= are key=value fields read in any
@@ -131,6 +132,8 @@ func ParseLaneHold(member string, n int, out string) (LaneHold, error) {
 				h.Kind = v
 			case "job":
 				h.Job = v
+			case "notice":
+				h.Notice = v == "sent"
 			}
 		}
 		if m[4] == "-" {

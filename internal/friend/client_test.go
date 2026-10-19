@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	lane "github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,9 +31,13 @@ type fakeServer struct {
 	fail  map[int]bool // lanes whose ask the server refuses
 	lose  map[int]bool // lanes whose ask commits on the server and whose answer is lost
 
-	asked     []int // the lanes asked, in order
+	batch     int
+	last      [][]string
+	notice    map[int]bool // lanes whose answer says notice=sent
+	asked     []int        // the lanes asked, in order
 	cardAsks  int
 	cardsDown bool // friend cards refused
+	width     int  // the server's own take bound (0: unbounded)
 }
 
 // finish is the model's finish of lane n's card through the server: the lane holds nothing.
@@ -78,7 +83,17 @@ func client(t *testing.T, srv *fakeServer, cfg *row) *Client {
 	return c
 }
 
-func (f *fakeServer) ask(_ context.Context, argv []string) (string, error) {
+func (f *fakeServer) ask(_ context.Context, argvs [][]string) ([]Reply, error) {
+	f.batch++
+	f.last = argvs
+	replies := make([]Reply, len(argvs))
+	for i, argv := range argvs {
+		replies[i].Out, replies[i].Err = f.one(argv)
+	}
+	return replies, nil
+}
+
+func (f *fakeServer) one(argv []string) (string, error) {
 	if len(argv) == 4 && argv[0] == "friend" && argv[1] == "cards" && argv[3] == "--json" {
 		f.cardAsks++
 		if f.cardsDown {
@@ -107,7 +122,7 @@ func (f *fakeServer) ask(_ context.Context, argv []string) (string, error) {
 		return "", errors.New("take refused: the server is busy")
 	}
 	card, ok := f.held[n]
-	if !ok && len(f.ready) > 0 {
+	if !ok && len(f.ready) > 0 && (f.width == 0 || len(f.held) < f.width) {
 		card, f.ready = f.ready[0], f.ready[1:]
 		f.held[n] = card
 		f.takes++
@@ -120,7 +135,11 @@ func (f *fakeServer) ask(_ context.Context, argv []string) (string, error) {
 	if !ok {
 		a.Says = []string{fmt.Sprintf("LANE %s lane=%d epoch=%d holds=-", f.row, n, f.epoch)}
 	} else {
-		a.Says = []string{fmt.Sprintf("LANE %s lane=%d epoch=%d holds=%s@1 rank=1 kind=work job=%s~%d", f.row, n, f.epoch, card, card, f.epoch)}
+		notice := ""
+		if f.notice[n] {
+			notice = " notice=sent"
+		}
+		a.Says = []string{fmt.Sprintf("LANE %s lane=%d epoch=%d holds=%s@1 rank=1 kind=work job=%s~%d%s", f.row, n, f.epoch, card, card, f.epoch, notice)}
 		a.Packets = append(a.Packets, struct {
 			Card  string `json:"card"`
 			Brief string `json:"brief"`
@@ -204,9 +223,8 @@ func TestAnUnprovenRoundAsksNothing(t *testing.T) {
 	assert.Zero(t, srv.cardAsks)
 }
 
-// Free width and ready cards: each free lane takes one, in order, until one answers empty;
-// a lane the server refuses is skipped with its error and stops takes for the round; the
-// next round takes on.
+// Free width and ready cards: each free lane takes one in the round's one ask; a lane the
+// server refuses is skipped with its error and the other lanes are still renewed or taken.
 func TestARoundTakesToWidthAndStopsAtARefusedLane(t *testing.T) {
 	t.Parallel()
 	srv := newFake()
@@ -215,14 +233,14 @@ func TestARoundTakesToWidthAndStopsAtARefusedLane(t *testing.T) {
 	holds, _, errs := c.Round(context.Background(), true)
 	require.Len(t, errs, 1)
 	assert.Contains(t, errs[0].Error(), "lane 2")
-	assert.Equal(t, []int{1}, lanesOf(holds), "lane 1 took; the refused lane 2 stops takes this round")
-	assert.Equal(t, []int{1, 2}, srv.renewed())
+	assert.Equal(t, []int{1, 3, 4}, lanesOf(holds), "the refused lane 2 is skipped; lanes 1, 3 and 4 took")
+	assert.Equal(t, []int{1, 2, 3, 4, 5}, srv.renewed(), "the one request named every lane to width")
 
 	srv.fail = nil
 	holds, _, errs = c.Round(context.Background(), true)
 	require.Empty(t, errs)
-	assert.Equal(t, []int{1, 2, 3}, lanesOf(holds), "three ready cards in all; lane 4 answered empty and the round stopped there")
-	assert.Equal(t, []int{1, 2, 3, 4}, srv.renewed(), "lane 1 renewed, 2 and 3 taken, 4 empty; never lane 5")
+	assert.Equal(t, []int{1, 3, 4}, lanesOf(holds), "three cards held: the next free lanes answer empty")
+	assert.Equal(t, []int{1, 2, 3, 4, 5}, srv.renewed())
 	srv.heldOnce(t)
 }
 
@@ -280,6 +298,7 @@ func TestAWidthLoweredUnderActiveJobsDrainsWithNoLossAndNoDuplicate(t *testing.T
 	srv.renewed()
 
 	cfg.width = 1
+	srv.width = 1
 	_, changed := c.Apply(context.Background(), t0.Add(ConfigEvery))
 	require.True(t, changed)
 	holds, fresh, errs := c.Round(context.Background(), true)
@@ -293,14 +312,14 @@ func TestAWidthLoweredUnderActiveJobsDrainsWithNoLossAndNoDuplicate(t *testing.T
 	srv.finish(1)
 	holds, _, _ = c.Round(context.Background(), true)
 	assert.Equal(t, []int{2, 3}, lanesOf(holds))
-	assert.Equal(t, []int{2, 3}, srv.renewed(), "two held at width 1: no lane takes")
+	assert.Equal(t, []int{1, 2, 3}, srv.renewed(), "the round asks every held lane; the freed lane's take is refused by the server's width")
 	srv.finish(3)
 	holds, _, _ = c.Round(context.Background(), true)
 	assert.Equal(t, []int{2}, lanesOf(holds), "one held at width 1: still no take")
 	assert.Equal(t, 3, srv.takes)
 	srv.finish(2)
 	holds, fresh, _ = c.Round(context.Background(), true)
-	assert.Equal(t, []int{1}, lanesOf(holds), "drained under the width: lane 1 takes")
+	assert.Equal(t, []int{2}, lanesOf(holds), "drained under the width: the held lane takes")
 	assert.Equal(t, "s1-4.w1", fresh[0].Card)
 	srv.heldOnce(t)
 }
@@ -395,11 +414,9 @@ func TestAHeldLaneIsRenewedWhenFriendCardsDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, []int{1, 2}, srv.renewed())
 }
 
-// A client started fresh (it has found no held lane yet) whose friend cards read fails asks
-// nothing: it knows no lane to renew, and a blind ask of a free lane would be a take. Its
-// held lane is renewed on the first round friend cards answers again (the bound,
-// tla/FriendLaneClient.tla RenewBlind; the lease returns the card if the failure outlasts it).
-func TestAFreshClientWhoseCardsReadFailsAsksNothingUntilItReads(t *testing.T) {
+// A client started fresh whose friend cards read fails still takes to its width in the same
+// round: the lane takes carry it, and the server's own width bound holds them.
+func TestAFreshClientWhoseCardsReadFailsTakesInTheSameRound(t *testing.T) {
 	t.Parallel()
 	srv := newFake()
 	srv.held[2] = "s1-9.w1"
@@ -408,9 +425,9 @@ func TestAFreshClientWhoseCardsReadFailsAsksNothingUntilItReads(t *testing.T) {
 	holds, _, errs := c.Round(context.Background(), true)
 	require.Len(t, errs, 1)
 	assert.Contains(t, errs[0].Error(), "friend cards")
-	assert.Empty(t, srv.renewed(), "a blind fresh client asks no lane")
-	assert.Empty(t, holds)
-	assert.Zero(t, srv.takes)
+	assert.Equal(t, []int{1, 2}, srv.renewed(), "the request named the width's lanes without the card answer")
+	assert.Equal(t, []int{1, 2}, lanesOf(holds))
+	assert.Equal(t, 1, srv.takes)
 
 	srv.cardsDown = false
 	holds, _, errs = c.Round(context.Background(), true)
@@ -433,6 +450,7 @@ func TestABlindRoundWhileDrainingTakesNothing(t *testing.T) {
 	require.Equal(t, []int{1, 2, 3}, lanesOf(holds))
 	srv.renewed()
 	cfg.width = 1
+	srv.width = 1
 	_, changed := c.Apply(context.Background(), t0.Add(ConfigEvery))
 	require.True(t, changed)
 
@@ -440,7 +458,7 @@ func TestABlindRoundWhileDrainingTakesNothing(t *testing.T) {
 	srv.cardsDown = true
 	_, _, errs := c.Round(context.Background(), true)
 	require.Len(t, errs, 1)
-	assert.Empty(t, srv.renewed(), "draining and blind: no lane asked")
+	assert.Equal(t, []int{1, 2, 3}, srv.renewed(), "the held lanes are asked; the server's width bound refuses the freed lane's take")
 	assert.Equal(t, 3, srv.takes, "nothing taken into lane 1")
 	assert.Equal(t, []string{"s1-4.w1"}, srv.ready)
 
@@ -467,18 +485,19 @@ func TestATakeWhoseAnswerIsLostStaysInTheView(t *testing.T) {
 	srv.lose = nil
 
 	cfg.width = 1
+	srv.width = 1
 	_, changed := c.Apply(context.Background(), t0.Add(ConfigEvery))
 	require.True(t, changed)
 	srv.finish(1)
 	srv.cardsDown = true
 	c.Round(context.Background(), true)
-	assert.Empty(t, srv.renewed(), "two lanes in the view at width 1: the blind round asks nothing")
-	assert.Equal(t, 2, srv.takes, "nothing taken into lane 1")
+	assert.Equal(t, []int{1, 2}, srv.renewed(), "the two lanes in the view are asked")
+	assert.Equal(t, 2, srv.takes, "the server's width bound refuses the freed lane's take")
 }
 
-// A blind round takes nothing while her row is unread (intake 0), even on a lane it found
-// held that finished since.
-func TestABlindRoundWithTheRowUnreadTakesNothing(t *testing.T) {
+// A blind round with the row unread asks no free lane past the held view; a held lane that
+// finished since is still asked, and the server's width bound holds its take.
+func TestABlindRoundWithTheRowUnreadTakesNoFreeLane(t *testing.T) {
 	t.Parallel()
 	srv := newFake()
 	cfg := &row{width: 1}
@@ -494,8 +513,8 @@ func TestABlindRoundWithTheRowUnreadTakesNothing(t *testing.T) {
 	srv.finish(1)
 	srv.cardsDown = true
 	c.Round(context.Background(), true)
-	assert.Empty(t, srv.renewed(), "row unread and blind: no lane asked")
-	assert.Equal(t, 1, srv.takes, "nothing taken")
+	assert.Equal(t, []int{1}, srv.renewed(), "only the held lane is asked, never a free lane past intake")
+	assert.Equal(t, 2, srv.takes, "the freed held lane takes within the server's width")
 }
 
 // The one notice: how many were taken, the briefs, and the server's finish verb for each
@@ -518,23 +537,80 @@ func TestTheNoticeNamesTheBriefsAndTheServersVerbs(t *testing.T) {
 func TestAnAnswerTheClientCannotReadHoldsNothing(t *testing.T) {
 	t.Parallel()
 	cards := `{"friend":"amy","cards":[]}`
-	c := &Client{Name: "amy", Fetch: (&row{width: 1}).fetch, Dir: t.TempDir(), Ask: func(_ context.Context, argv []string) (string, error) {
-		if argv[0] == "friend" {
-			return cards, nil
+	c := &Client{Name: "amy", Fetch: (&row{width: 1}).fetch, Dir: t.TempDir(), Ask: func(_ context.Context, argvs [][]string) ([]Reply, error) {
+		rs := make([]Reply, len(argvs))
+		for i, argv := range argvs {
+			if argv[0] == "friend" {
+				rs[i].Out = cards
+			} else {
+				rs[i].Out = "TAKE OK"
+			}
 		}
-		return "TAKE OK", nil
+		return rs, nil
 	}}
 	c.Apply(context.Background(), t0)
 	holds, _, errs := c.Round(context.Background(), true)
 	assert.Empty(t, holds)
 	require.Len(t, errs, 1)
-	c.Ask = func(_ context.Context, argv []string) (string, error) {
-		if argv[0] == "friend" {
-			return cards, nil
+	c.Ask = func(_ context.Context, argvs [][]string) ([]Reply, error) {
+		rs := make([]Reply, len(argvs))
+		for i, argv := range argvs {
+			if argv[0] == "friend" {
+				rs[i].Out = cards
+			} else {
+				rs[i].Out = `{"says":["LANE friend.amy lane=2 epoch=1 holds=s1-1.w1@1 kind=work job=s1-1.w1"]}`
+			}
 		}
-		return `{"says":["LANE friend.amy lane=2 epoch=1 holds=s1-1.w1@1 kind=work job=s1-1.w1"]}`, nil
+		return rs, nil
 	}
 	holds, _, errs = c.Round(context.Background(), true)
 	assert.Empty(t, holds)
 	require.Len(t, errs, 1)
+}
+
+// One request a round names friend cards, every held lane's renewal, and a take for each
+// free lane up to the width less the held count.
+func TestARoundRenewsAndTakesInOneAsk(t *testing.T) {
+	t.Parallel()
+	srv := newFake()
+	srv.held = map[int]string{1: "h1", 2: "h2", 3: "h3"}
+	c := client(t, srv, &row{width: 6})
+	holds, _, errs := c.Round(context.Background(), true)
+	require.Empty(t, errs)
+	require.Equal(t, 1, srv.batch, "one ask a round")
+	require.Len(t, srv.last, 7, "friend cards, three renewals and three free-lane takes")
+	assert.Equal(t, lane.FriendCardsArgv("amy"), srv.last[0])
+	for i, n := range []int{1, 2, 3, 4, 5, 6} {
+		assert.Equal(t, c.LaneArgv(n), srv.last[i+1], "verb %d names lane %d", i+1, n)
+	}
+	assert.Equal(t, []int{1, 2, 3, 4, 5, 6}, lanesOf(holds))
+}
+
+// A refusal on one held lane is that lane's alone: the others are renewed and the free lanes
+// are still taken in the same request.
+func TestOneFailedLaneNeverStopsTheOthers(t *testing.T) {
+	t.Parallel()
+	srv := newFake()
+	srv.held = map[int]string{1: "h1", 2: "h2", 3: "h3"}
+	srv.fail = map[int]bool{2: true}
+	c := client(t, srv, &row{width: 5})
+	holds, _, errs := c.Round(context.Background(), true)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), "lane 2")
+	assert.Subset(t, lanesOf(holds), []int{1, 3, 4, 5}, "lanes 1 and 3 renewed; free lanes 4 and 5 taken")
+	assert.Equal(t, 1, srv.batch)
+}
+
+// A hold the server's take answer announced with notice=sent is not noticed again by the
+// client; one without the fact is.
+func TestAHoldTheServerAnnouncedIsNotNoticedAgain(t *testing.T) {
+	t.Parallel()
+	srv := newFake()
+	srv.held = map[int]string{1: "h1", 2: "h2"}
+	srv.notice = map[int]bool{1: true}
+	c := client(t, srv, &row{width: 2})
+	_, fresh, errs := c.Round(context.Background(), true)
+	require.Empty(t, errs)
+	require.Len(t, fresh, 1)
+	assert.Equal(t, 2, fresh[0].Lane, "only the hold the server did not announce")
 }

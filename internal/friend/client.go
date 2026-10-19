@@ -36,8 +36,23 @@ import (
 // Subject is the subject prefix of the one notice a round's new holds make.
 const Subject = "SPRINT CARDS "
 
-// Ask sends one verb to the sprint server and answers what it printed, or its refusal.
-type Ask func(ctx context.Context, argv []string) (string, error)
+// Reply is one verb's answer in a round's one request: what it printed, or its refusal.
+type Reply struct {
+	Out string
+	Err error
+}
+
+// Ask sends a round's verbs to the sprint server in one request and answers one reply per
+// verb, in the request's order. An error is a request the server did not answer at all; every
+// reply in it is then unknown.
+type Ask func(ctx context.Context, argvs [][]string) ([]Reply, error)
+
+// Unanswered is a round the server did not answer at all (a transport error or the round's
+// bound): only such a round stops the round, and the next is asked again soon.
+type Unanswered struct{ Err error }
+
+func (u *Unanswered) Error() string { return u.Err.Error() }
+func (u *Unanswered) Unwrap() error { return u.Err }
 
 // Client is one friend's lane client. Name is her name (her row is friend.<name>), Ask the
 // server, Fetch her canonical nova-config row (config.go), Dir the brief cache (a directory
@@ -60,13 +75,14 @@ const MaxLanes = 1024
 
 // Hold is one lane's card as the server's answer names it, and where its brief is cached.
 type Hold struct {
-	Lane  int
-	Card  string
-	Gen   int
-	Epoch uint64
-	Kind  string
-	Job   string
-	Brief string // the cached BRIEF.md, "" when the server sent no brief
+	Lane   int
+	Card   string
+	Gen    int
+	Epoch  uint64
+	Kind   string
+	Job    string
+	Brief  string // the cached BRIEF.md, "" when the server sent no brief
+	Notice bool   // the server's take answer said notice=sent: the friend was told by the server
 }
 
 func (h Hold) key() string { return fmt.Sprintf("%d %s@%d %d", h.Lane, h.Card, h.Gen, h.Epoch) }
@@ -87,29 +103,27 @@ type answer struct {
 	} `json:"packets"`
 }
 
-// Round is one round of the lanes: every lane the server says holds a card of hers is asked
-// (and so renewed), whatever the width now; then, while her held cards are fewer than the
-// applied width (Intake), free lanes are asked in order, each taking her next ready card,
-// until one answers empty (the server had none to give, or its own width bound held). It
-// answers every hold the server names and, of them, the ones this client has not told the
-// model yet (fresh), lane order.
+// Round is one round of the lanes, in one ask: the request carries friend cards, a lane take
+// for every lane the last round found held (the server's, or when friend cards fails, the
+// client's own view), and a take for each free lane up to the applied width less the held
+// count. It answers every hold the server names and, of them, the ones this client has not
+// told the model yet (fresh), lane order.
 //
-// The held lanes are the server's answer to friend cards (each working card's lane). When it
-// does not answer the round is blind: the lane take is the only lane ask the server has (no
-// renew-only form: a free lane's ask is a take, and progress, the one verb that renews a lane
-// without dealing, also stamps the late rule's sign that the card moves, which the client
-// cannot say), so a blind round asks only the lanes the last round found held, and only
-// while their count is within the applied width (Intake above 0): a held lane that freed
-// since then takes at most into a lane she held, never past her width, never while her row
-// is unread. Otherwise it asks nothing and keeps what it last found. The bound: a held lane
-// the client does not know (a fresh client, or one restarted, has found none yet), or one
-// held while she drains past a lowered width or her row is unread, is not renewed while
-// friend cards keeps failing, and its lease (the server's 10m) returns the card if that
-// lasts. A lowered width drains: no lane takes until the held cards are under it, and the
-// held ones finish where they are. A raised width takes on the next round.
-// Not proven, it asks nothing: an ask renews a lease, and only a proving model's lanes are
-// renewed. A lane whose ask fails is skipped this round, its error kept, and takes stop for
-// the round; the server's record stands, and the next round asks again.
+// A lane's refusal or unreadable answer is that lane's alone: it is skipped, its error kept,
+// and every other lane in the request is still renewed or taken. Only a request that does not
+// answer at all (a transport error, or the round's bound) stops the round: its error is
+// Unanswered, and the next round is asked again soon. An empty answer on a free lane ends the
+// free-lane takes, as before; the server's own width bound still holds every take.
+//
+// A held lane the server answers with notice=sent has already been told to the friend by the
+// server (nova-sprint's take), so the client marks it told and sends no notice of its own. A
+// hold without the fact is noticed as before, so either side of that server card works.
+//
+// The bound: a held lane the client does not know (a fresh client, or one restarted, has found
+// none yet) is not renewed while friend cards keeps failing; its lease (the server's 10m)
+// returns the card if that lasts. A lowered width drains: the free-lane room is the width less
+// the held count, so no lane takes until the held cards are under it, and the held ones finish
+// where they are (the server's own take bound holds the rest). Not proven, it asks nothing.
 func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, errs []error) {
 	if !proven {
 		return nil, nil, nil
@@ -117,51 +131,53 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 	if c.told == nil {
 		c.told = map[string]bool{}
 	}
-	asked := map[int]bool{}
-	lanes, err := c.serverHolds(ctx)
-	blind := err != nil
-	if blind {
-		// friend cards did not answer: the lanes the last round found held are asked again,
-		// and only while they are within her width, so no blind ask takes past it (an ask of a
-		// held lane that finished since is a take, the server's lane ask having no renew-only
-		// form); else nothing is asked and the last view kept (tla/FriendLaneClient.tla
-		// RenewBlind, BlindAsk; witness MCFriendLaneClientBrokenBlindTakes.cfg)
-		errs = append(errs, err)
-		if w := c.Intake(); w == 0 || len(c.held) > w {
-			return nil, nil, errs
-		}
-		lanes = slices.Clone(c.held)
+	held := slices.Clone(c.held)
+	slices.Sort(held)
+	held = slices.Compact(held)
+	verbs := [][]string{lane.FriendCardsArgv(c.Name)}
+	lanes := []int{0}
+	for _, n := range held {
+		verbs = append(verbs, c.LaneArgv(n))
+		lanes = append(lanes, n)
 	}
-	slices.Sort(lanes)
-	lanes = slices.Compact(lanes)
-	failed := false
-	ask := func(n int) (Hold, bool) {
-		asked[n] = true
-		h, ok, err := c.ask(ctx, n)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("lane %d: %w", n, err))
-			failed = true
-			// the lane stays in the view either way: a held lane whose answer did not read still
-			// holds its card, and a free lane's take may have committed on the server with its
-			// answer lost, so c.held stays a superset of the lanes the server holds (a later
-			// blind round's width gate counts it; tla/FriendLaneClient.tla TakeAnswerLost)
-			holds = append(holds, Hold{Lane: n})
-			return Hold{}, false
-		}
-		return h, ok
-	}
-	for _, n := range lanes {
-		if h, ok := ask(n); ok {
-			holds = append(holds, h)
-		}
-	}
-	for n := 1; n <= MaxLanes && !blind && !failed && len(holds) < c.Intake(); n++ {
-		if asked[n] {
+	room := c.Intake() - len(held)
+	for n := 1; n <= MaxLanes && room > 0; n++ {
+		if slices.Contains(held, n) {
 			continue
 		}
-		h, ok := ask(n)
+		verbs = append(verbs, c.LaneArgv(n))
+		lanes = append(lanes, n)
+		room--
+	}
+	replies, err := c.Ask(ctx, verbs)
+	if err != nil {
+		errs = append(errs, &Unanswered{Err: fmt.Errorf("the lane round: %w", err)})
+		return nil, nil, errs
+	}
+	if len(replies) != len(verbs) {
+		errs = append(errs, &Unanswered{Err: fmt.Errorf("the lane round: the server answered %d results for %d verbs", len(replies), len(verbs))})
+		return nil, nil, errs
+	}
+	if replies[0].Err != nil {
+		errs = append(errs, fmt.Errorf("friend cards: %w", replies[0].Err))
+	} else if _, perr := lane.ParseHeld(c.Name, replies[0].Out); perr != nil {
+		errs = append(errs, perr)
+	}
+	for i := 1; i < len(replies); i++ {
+		n := lanes[i]
+		if replies[i].Err != nil {
+			errs = append(errs, fmt.Errorf("lane %d: %w", n, replies[i].Err))
+			holds = append(holds, Hold{Lane: n})
+			continue
+		}
+		h, ok, aerr := c.readLane(n, replies[i].Out)
+		if aerr != nil {
+			errs = append(errs, fmt.Errorf("lane %d: %w", n, aerr))
+			holds = append(holds, Hold{Lane: n})
+			continue
+		}
 		if !ok {
-			break
+			continue
 		}
 		holds = append(holds, h)
 	}
@@ -173,6 +189,10 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 			continue // a held lane whose ask failed: renewed again next round, told nothing
 		}
 		known = append(known, h)
+		if h.Notice {
+			c.told[h.key()] = true
+			continue
+		}
 		if !c.told[h.key()] {
 			fresh = append(fresh, h)
 		}
@@ -182,42 +202,8 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 	return known, fresh, errs
 }
 
-// serverHolds is the lanes of her row the server says hold a working card (friend cards, the
-// read verb the hook's heartbeat server already asks).
-func (c *Client) serverHolds(ctx context.Context) ([]int, error) {
-	out, err := c.Ask(ctx, lane.FriendCardsArgv(c.Name))
-	if err != nil {
-		return nil, fmt.Errorf("friend cards: %w", err)
-	}
-	cards, err := lane.ParseHeld(c.Name, out)
-	if err != nil {
-		return nil, err
-	}
-	var lanes []int
-	for _, h := range cards {
-		if h.Col == "working" && h.Lane > 0 {
-			lanes = append(lanes, h.Lane)
-		}
-	}
-	return lanes, nil
-}
-
-// Told marks holds as told to the model (the notice was sent).
-func (c *Client) Told(hs []Hold) {
-	if c.told == nil {
-		c.told = map[string]bool{}
-	}
-	for _, h := range hs {
-		c.told[h.key()] = true
-	}
-}
-
-// ask is lane n's ask: the server's answer read, the brief cached under Dir/<job>/BRIEF.md.
-func (c *Client) ask(ctx context.Context, n int) (Hold, bool, error) {
-	out, err := c.Ask(ctx, c.LaneArgv(n))
-	if err != nil {
-		return Hold{}, false, err
-	}
+// readLane reads lane n's answer: the card, whether it names one, or why it cannot be read.
+func (c *Client) readLane(n int, out string) (Hold, bool, error) {
 	var a answer
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &a); err != nil {
 		return Hold{}, false, fmt.Errorf("the server's answer is not the take verb's JSON: %w", err)
@@ -229,7 +215,7 @@ func (c *Client) ask(ctx context.Context, n int) (Hold, bool, error) {
 	if lh.Card == "" {
 		return Hold{}, false, nil
 	}
-	h := Hold{Lane: n, Card: lh.Card, Gen: lh.Gen, Epoch: lh.Epoch, Kind: lh.Kind, Job: lh.Job}
+	h := Hold{Lane: n, Card: lh.Card, Gen: lh.Gen, Epoch: lh.Epoch, Kind: lh.Kind, Job: lh.Job, Notice: lh.Notice}
 	for _, p := range a.Packets {
 		if p.Card == h.Card && strings.TrimSpace(p.Brief) != "" && c.Dir != "" {
 			path := filepath.Join(c.Dir, h.Job, "BRIEF.md")
@@ -243,6 +229,16 @@ func (c *Client) ask(ctx context.Context, n int) (Hold, bool, error) {
 		}
 	}
 	return h, true, nil
+}
+
+// Told marks holds as told to the model (the notice was sent).
+func (c *Client) Told(hs []Hold) {
+	if c.told == nil {
+		c.told = map[string]bool{}
+	}
+	for _, h := range hs {
+		c.told[h.key()] = true
+	}
 }
 
 // Notice is the one bus message for a round's fresh holds: its subject and body, the body

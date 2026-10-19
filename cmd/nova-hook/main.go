@@ -1142,12 +1142,13 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 		if lanes != nil && err == nil && !w.now().Before(nextLanes) {
 			// the lane client's round: asks (and so renews) only while the model proves
 			// (tla/FriendLaneClient.tla DeadModelReleases)
-			nextLanes = w.now().Add(LaneEvery)
 			lctx, lcancel := context.WithTimeout(ctx, laneRoundWait)
-			for _, o := range lanePass(lctx, lanes, proven(st[0]), sendSelf(s, w)) {
+			out, answered := lanePass(lctx, lanes, proven(st[0]), sendSelf(s, w))
+			for _, o := range out {
 				line(c, o)
 			}
 			lcancel()
+			nextLanes = laneNext(w.now(), answered)
 		}
 	}
 }

@@ -43,16 +43,45 @@ const (
 	// Bound, LiveHoldNeverExpires; nova-tools#5798 at 23aec479 paced it at the 30m challenge
 	// interval against the 10m lease, and live cards would have been returned mid-work).
 	LaneEvery = ServerLaneLease / 3
-	// laneAskWait bounds one ask of the sprint server, and laneRoundWait one whole round, so
-	// a hung sprint server never holds the hook loop past its own lease renewal (hook.RenewEvery).
-	laneAskWait   = 5 * time.Second
-	laneRoundWait = hook.RenewEvery / 2
+	// laneRoundWait bounds one whole round's one request, so a sprint server answering in
+	// 30 s is waited out; it stays well inside the renewal margin (LaneEvery plus this bound
+	// against the server's 10 m lease, tla/FriendLaneClient.tla RenewTicks < Bound).
+	laneRoundWait = 35 * time.Second
+	// laneAskWait bounds one single-verb ask where a caller has no batch (a fallback, never the
+	// production round).
+	laneAskWait = 5 * time.Second
 	// configWait bounds one read of her canonical nova-config row (friend.ConfigEvery apart),
 	// so a slow store never holds the loop's tick much past a second.
 	configWait = 2 * time.Second
 )
 
 // sprintAsk is one verb sent to the sprint server: what it printed, or its refusal.
+// sprintBatchAsk sends a round's verbs in one request: one reply a verb, its stdout or its
+// refusal. An error is a request the server did not answer at all.
+func sprintBatchAsk(ctx context.Context, addr string, argvs [][]string) ([]friend.Reply, error) {
+	res, err := sprintwire.Client{Addr: addr}.Do(ctx, argvs...)
+	if err != nil {
+		return nil, err
+	}
+	replies := make([]friend.Reply, len(res))
+	for i, r := range res {
+		if r.Code != 0 {
+			replies[i].Err = fmt.Errorf("%s refused: %s", argvVerb(argvs[i]), strings.TrimSpace(r.Stderr+" "+r.Stdout))
+			continue
+		}
+		replies[i].Out = r.Stdout
+	}
+	return replies, nil
+}
+
+// argvVerb is a verb's name for an error.
+func argvVerb(argv []string) string {
+	if len(argv) == 0 {
+		return "the verb"
+	}
+	return argv[0]
+}
+
 func sprintAsk(ctx context.Context, addr string, argv []string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, laneAskWait)
 	defer cancel()
@@ -98,7 +127,17 @@ func (w world) laneClient(c *tool.Call, as string, role hook.Role) *friend.Clien
 		}
 	}
 	return &friend.Client{Name: as, Dir: dir, Fetch: fetch,
-		Ask: func(ctx context.Context, argv []string) (string, error) { return w.sprint(ctx, addr, argv) }}
+		Ask: func(ctx context.Context, argvs [][]string) ([]friend.Reply, error) {
+			if w.sprintBatch != nil {
+				return sprintBatchAsk(ctx, addr, argvs)
+			}
+			// a world without a batch (a test seam): ask each verb on its own
+			replies := make([]friend.Reply, len(argvs))
+			for i, argv := range argvs {
+				replies[i].Out, replies[i].Err = w.sprint(ctx, addr, argv)
+			}
+			return replies, nil
+		}}
 }
 
 // laneRole is whether a role's service carries the friend lanes: a friend's, and the
@@ -166,22 +205,41 @@ func proven(st hook.Status) bool { return st.State == hook.StateProven && st.Dow
 // lanePass is one round of the lane client: every lane asked when the model proves, and one
 // message to her own name when the round found holds she has not been told of. It answers
 // the lines the loop prints: one STATE line a round that took or failed, nothing otherwise.
-func lanePass(ctx context.Context, lc *friend.Client, ok bool, send func(context.Context, bus.Message) error) []*tool.Out {
+// lanePass answers the lines the loop prints and whether the server answered the round's one
+// request. It is false only when the request did not answer at all (a transport error or the
+// round bound): then every lane is unknown and the next round is due one RenewEvery away.
+func lanePass(ctx context.Context, lc *friend.Client, ok bool, send func(context.Context, bus.Message) error) ([]*tool.Out, bool) {
 	holds, fresh, errs := lc.Round(ctx, ok)
 	var out []*tool.Out
+	answered := true
 	for _, err := range errs {
+		var u *friend.Unanswered
+		if errors.As(err, &u) {
+			answered = false
+			out = append(out, tool.Done().As("STATE").Fact("state", "lane-round-unanswered").Note(err.Error()+"; the server's record stands, and the round is asked again in "+hook.RenewEvery.String()))
+			continue
+		}
 		out = append(out, tool.Done().As("STATE").Fact("state", "lane-ask-failed").Note(err.Error()+"; the server's record stands, and the lane is asked again next round"))
 	}
 	if len(fresh) == 0 {
-		return out
+		return out, answered
 	}
 	subject, body := lc.Notice(fresh, holds)
 	m := bus.Message{From: lc.Name, To: []string{lc.Name}, Subject: subject, Body: body}
 	if err := send(ctx, m); err != nil {
-		return append(out, tool.Done().As("STATE").Fact("state", "lane-notice-unsent").Note("the notice of "+fmt.Sprint(len(fresh))+" held cards was not sent: "+err.Error()+"; it is sent again next round"))
+		return append(out, tool.Done().As("STATE").Fact("state", "lane-notice-unsent").Note("the notice of "+fmt.Sprint(len(fresh))+" held cards was not sent: "+err.Error()+"; it is sent again next round")), answered
 	}
 	lc.Told(fresh)
-	return append(out, tool.Done().As("STATE").Fact("state", "lanes-taken").Fact("taken", len(fresh)).Fact("held", len(holds)).Note("one notice sent: "+subject))
+	return append(out, tool.Done().As("STATE").Fact("state", "lanes-taken").Fact("taken", len(fresh)).Fact("held", len(holds)).Note("one notice sent: "+subject)), answered
+}
+
+// laneNext is when the next lane round is due: LaneEvery after a round the server answered,
+// RenewEvery after one that did not, so a slow server is asked again soon.
+func laneNext(now time.Time, answered bool) time.Time {
+	if !answered {
+		return now.Add(hook.RenewEvery)
+	}
+	return now.Add(LaneEvery)
 }
 
 // laneSelf says a message on her own stream is the lane client's notice, which the loop

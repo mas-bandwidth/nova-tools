@@ -19,15 +19,21 @@ import (
 
 // laneServer answers a lane's take for amy: lane 1 holds s1-1.w1, every other lane none.
 func laneServer(asks *int) friend.Ask {
-	return func(_ context.Context, argv []string) (string, error) {
-		if argv[0] == "friend" {
-			return `{"friend":"amy","cards":[]}`, nil
+	return func(_ context.Context, argvs [][]string) ([]friend.Reply, error) {
+		rs := make([]friend.Reply, len(argvs))
+		for i, argv := range argvs {
+			if argv[0] == "friend" {
+				rs[i].Out = `{"friend":"amy","cards":[]}`
+				continue
+			}
+			*asks++
+			if argv[4] == "1" {
+				rs[i].Out = `{"says":["LANE friend.amy lane=1 epoch=2 holds=s1-1.w1@1 kind=work job=s1-1.w1~2"],"packets":[{"card":"s1-1.w1","brief":"b"}]}`
+			} else {
+				rs[i].Out = fmt.Sprintf(`{"says":["LANE friend.amy lane=%s epoch=2 holds=-"]}`, argv[4])
+			}
 		}
-		*asks++
-		if argv[4] == "1" {
-			return `{"says":["LANE friend.amy lane=1 epoch=2 holds=s1-1.w1@1 kind=work job=s1-1.w1~2"],"packets":[{"card":"s1-1.w1","brief":"b"}]}`, nil
-		}
-		return fmt.Sprintf(`{"says":["LANE friend.amy lane=%s epoch=2 holds=-"]}`, argv[4]), nil
+		return rs, nil
 	}
 }
 
@@ -41,16 +47,17 @@ func TestTheLanePassSendsOneNoticeOnlyWhileTheModelProves(t *testing.T) {
 	var sent []bus.Message
 	send := func(_ context.Context, m bus.Message) error { sent = append(sent, m); return nil }
 
-	assert.Empty(t, lanePass(context.Background(), lc, false, send))
+	out, _ := lanePass(context.Background(), lc, false, send)
+	assert.Empty(t, out)
 	assert.Zero(t, asks, "an unproven model's lanes are not asked, so no lease is renewed")
 	assert.Empty(t, sent)
 
 	failing := func(context.Context, bus.Message) error { return errors.New("the bus is down") }
-	out := lanePass(context.Background(), lc, true, failing)
+	out, _ = lanePass(context.Background(), lc, true, failing)
 	require.Len(t, out, 1)
 	assert.Equal(t, "lane-notice-unsent", stateFact(out[0]))
 
-	out = lanePass(context.Background(), lc, true, send)
+	out, _ = lanePass(context.Background(), lc, true, send)
 	require.Len(t, sent, 1, "sent again on the next round")
 	assert.Equal(t, "lanes-taken", stateFact(out[len(out)-1]))
 	m := sent[0]
@@ -59,7 +66,7 @@ func TestTheLanePassSendsOneNoticeOnlyWhileTheModelProves(t *testing.T) {
 	assert.True(t, laneSelf(m, "amy"), "the loop hands its own notice to the core")
 	assert.True(t, strings.HasPrefix(m.Body, "1 card taken; briefs at "), m.Body)
 
-	lanePass(context.Background(), lc, true, send)
+	_, _ = lanePass(context.Background(), lc, true, send)
 	assert.Len(t, sent, 1, "told once: the next round sends nothing")
 	assert.False(t, laneSelf(bus.Message{From: "amy", Subject: "hello"}, "amy"))
 }
@@ -92,8 +99,8 @@ func TestLaneRenewalIsWellInsideTheLease(t *testing.T) {
 	t.Parallel()
 	assert.Less(t, LaneEvery+laneRoundWait, ServerLaneLease, "a round's renewal lands inside the lease")
 	assert.Less(t, 2*(LaneEvery+laneRoundWait), ServerLaneLease, "one late or failed round still renews inside the lease")
-	assert.Less(t, laneRoundWait, hook.RenewEvery, "a round never holds the hook loop past its own lease renewal")
-	assert.LessOrEqual(t, laneAskWait, laneRoundWait)
+	assert.GreaterOrEqual(t, laneRoundWait, 30*time.Second, "one request waits out a server answering in 30 s")
+	assert.Less(t, LaneEvery+laneRoundWait, ServerLaneLease, "one request's bound stays inside the lease margin")
 }
 
 // widthRow is a fake canonical nova-config read: amy's row at width, or err.
@@ -147,7 +154,7 @@ func TestTheConfigPassSaysEachChangeOnceAndClosesIntakeOnAFailedRead(t *testing.
 // loop, and a read that hangs ends with its context (closing intake), never holding the loop.
 func TestAHungConfigReadNeverHoldsTheLoop(t *testing.T) {
 	t.Parallel()
-	assert.Less(t, configWait+laneRoundWait, hook.RenewEvery, "a config read and a lane round together stay inside the hook's own renewal")
+	assert.Less(t, configWait+laneRoundWait, 2*hook.RenewEvery, "a config read and a lane round together stay inside two hook renewals")
 	assert.Less(t, configWait, hook.LeaseTTL/10)
 	hung := &friend.Client{Name: "amy", Fetch: func(ctx context.Context, _ string) (string, error) {
 		<-ctx.Done()
@@ -236,4 +243,34 @@ func TestAnInstallKeepsAnExplicitLanesZero(t *testing.T) {
 	assert.Contains(t, strings.Join(serviceArgsOf(t, "--lanes", "0"), " "), "--lanes 0")
 	assert.NotContains(t, serviceArgsOf(t), "--lanes")
 	assert.NotContains(t, serviceArgsOf(t, "--lanes", "3"), "--lanes")
+}
+
+// The round's one request may wait out a server answering in 30 s, and a round the server
+// did not answer at all is retried one RenewEvery away, not one LaneEvery away. Fake time
+// only: the clock starts at 1000.0 s and nothing waits.
+func TestTheLaneRoundBoundCoversASlowServer(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1000, 0)
+	assert.GreaterOrEqual(t, laneRoundWait, 30*time.Second, "one request waits out a server answering in 30 s")
+	assert.Equal(t, now.Add(LaneEvery), laneNext(now, true), "an answered round keeps the LaneEvery pace")
+	assert.Equal(t, now.Add(hook.RenewEvery), laneNext(now, false), "an unanswered round is asked again in RenewEvery")
+
+	slow := now.Add(20 * time.Second)
+	ask := func(_ context.Context, argvs [][]string) ([]friend.Reply, error) {
+		require.LessOrEqual(t, slow.Sub(now), laneRoundWait, "the fake server answers inside the round's bound")
+		rs := make([]friend.Reply, len(argvs))
+		for i, argv := range argvs {
+			if i == 0 {
+				rs[i].Out = `{"friend":"amy","cards":[]}`
+			} else {
+				rs[i].Out = fmt.Sprintf(`{"says":["LANE friend.amy lane=%s epoch=2 holds=-"]}`, argv[4])
+			}
+		}
+		return rs, nil
+	}
+	lc := &friend.Client{Name: "amy", Ask: ask, Dir: t.TempDir(), Fetch: widthRow(2, nil)}
+	lc.Apply(context.Background(), now)
+	out, answered := lanePass(context.Background(), lc, true, func(context.Context, bus.Message) error { return nil })
+	assert.True(t, answered)
+	assert.Empty(t, out)
 }
