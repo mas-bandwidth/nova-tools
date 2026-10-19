@@ -327,24 +327,32 @@ var seedDirectExcluded = map[string]bool{
 	"OLLAMA_API_KEY":    true,
 }
 
-// SeedDirectProvider returns the config with that provider declared direct as an
-// OpenAI-compatible provider: npm @ai-sdk/openai-compatible when the entry has none,
-// options.baseURL from the providers table when the entry has none, and options.apiKey as
-// the {env:<envVar>} reference when the entry has none. Anything the entry already carries
-// is kept, and the key is only the env reference text, never a value read from the
-// environment. A provider whose row has no base URL, or no envVar, or no row, gets the
-// config back byte for byte; ok is false then, as it is for a row seedDirectExcluded names
-// (their configs are pinned unchanged). It is called for every route before the proxy
-// decision, so a provider the pinned harness's catalog does not know (paperinstruments)
-// still runs; the Zen and openrouter providers are never used for such a route.
-func SeedDirectProvider(raw []byte, provider string) ([]byte, bool) {
-	table, err := readProvidersTable()
-	if err != nil {
+// DirectProvider is an uncatalogued provider's custom block: the API base, the NAME of the
+// environment variable holding its key, and the npm adapter the harness loads. It is the
+// provider row's fields (nova-config provider: base_url, key_env, npm), never a key value.
+type DirectProvider struct {
+	BaseURL    string
+	KeyEnv     string
+	NPMAdapter string
+}
+
+// DeclareDirectProvider returns the config with provider declared direct as an
+// OpenAI-compatible provider: npm (the adapter named, or @ai-sdk/openai-compatible when
+// empty), options.baseURL, and options.apiKey as the {env:<KeyEnv>} reference. Anything
+// the entry already carries is kept, and the key is only the env reference text, never a
+// value read from the environment. ok is false, and raw is returned unchanged, when the
+// base or the key's variable name is empty, the config is not a JSON object, or the
+// provider entry is not an object. It is called for a provider the pinned harness's
+// catalog does not know, so that provider still runs; the Zen and openrouter providers are
+// never used for such a route.
+func DeclareDirectProvider(raw []byte, provider string, p DirectProvider) ([]byte, bool) {
+	base, keyEnv := strings.TrimSpace(p.BaseURL), strings.TrimSpace(p.KeyEnv)
+	if provider == "" || base == "" || keyEnv == "" {
 		return raw, false
 	}
-	entry, ok := table[provider]
-	if !ok || entry.BaseURL == "" || entry.EnvVar == "" || seedDirectExcluded[entry.EnvVar] {
-		return raw, false
+	npm := strings.TrimSpace(p.NPMAdapter)
+	if npm == "" {
+		npm = "@ai-sdk/openai-compatible"
 	}
 	var cfg map[string]any
 	if json.Unmarshal(raw, &cfg) != nil || cfg == nil {
@@ -358,8 +366,8 @@ func SeedDirectProvider(raw []byte, provider string) ([]byte, bool) {
 	if providerMap == nil {
 		return raw, false
 	}
-	if npm, _ := providerMap["npm"].(string); strings.TrimSpace(npm) == "" {
-		providerMap["npm"] = "@ai-sdk/openai-compatible"
+	if cur, _ := providerMap["npm"].(string); strings.TrimSpace(cur) == "" {
+		providerMap["npm"] = npm
 	}
 	opts, _ := providerMap["options"].(map[string]any)
 	if opts == nil {
@@ -369,10 +377,10 @@ func SeedDirectProvider(raw []byte, provider string) ([]byte, bool) {
 		opts = map[string]any{}
 	}
 	if cur, _ := opts["baseURL"].(string); strings.TrimSpace(cur) == "" {
-		opts["baseURL"] = strings.TrimSpace(entry.BaseURL)
+		opts["baseURL"] = base
 	}
 	if _, has := opts["apiKey"]; !has {
-		opts["apiKey"] = "{env:" + entry.EnvVar + "}"
+		opts["apiKey"] = "{env:" + keyEnv + "}"
 	}
 	providerMap["options"] = opts
 	providers[provider] = providerMap
@@ -382,6 +390,28 @@ func SeedDirectProvider(raw []byte, provider string) ([]byte, bool) {
 		return raw, false
 	}
 	return append(out, '\n'), true
+}
+
+// SeedDirectProvider returns the config with that provider declared direct as an
+// OpenAI-compatible provider from its providers-table row: npm
+// @ai-sdk/openai-compatible, the row's base URL, and options.apiKey as the
+// {env:<envVar>} reference. Anything the entry already carries is kept, and the key is only
+// the env reference text, never a value read from the environment. A provider whose row has
+// no base URL, or no envVar, or no row, gets the config back byte for byte; ok is false
+// then, as it is for a row seedDirectExcluded names (their configs are pinned unchanged).
+// It is called for every route before the proxy decision, so a provider the pinned
+// harness's catalog does not know (paperinstruments) still runs; the Zen and openrouter
+// providers are never used for such a route.
+func SeedDirectProvider(raw []byte, provider string) ([]byte, bool) {
+	table, err := readProvidersTable()
+	if err != nil {
+		return raw, false
+	}
+	entry, ok := table[provider]
+	if !ok || entry.BaseURL == "" || entry.EnvVar == "" || seedDirectExcluded[entry.EnvVar] {
+		return raw, false
+	}
+	return DeclareDirectProvider(raw, provider, DirectProvider{BaseURL: entry.BaseURL, KeyEnv: entry.EnvVar})
 }
 
 // LetTheHarnessWaitOutAStall returns the config with that provider's harness-side request

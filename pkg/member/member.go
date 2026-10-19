@@ -417,6 +417,13 @@ type Packet struct {
 	USD      string `json:"usd,omitempty"`     // the dollar budget per card, a decimal; "" for none (#5094)
 	Harness  string `json:"harness,omitempty"` // the harness the route names (pkg/harness); "" is the member's --harness
 	Deadline int    `json:"deadline,omitempty"`
+	// The route's provider row as nova-sprint read it from nova-config, when the provider
+	// is not in the pinned harness's catalog: its OpenAI-compatible base URL, the NAME of
+	// the environment variable holding its key (never the value), and the npm adapter.
+	// Empty for a catalogued provider, and then the providers table decides as before.
+	ProviderBaseURL    string `json:"provider_base_url,omitempty"`
+	ProviderKeyEnv     string `json:"provider_key_env,omitempty"`
+	ProviderNPMAdapter string `json:"provider_npm_adapter,omitempty"`
 	// RateRPM and RateConcurrent are the route's global limits when the coordinator set
 	// them (nova-sprint routes limit): the runner's provider proxy then takes the budget from
 	// the sprint's server before every model request; 0 is unlimited and nothing changes.

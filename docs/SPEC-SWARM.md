@@ -222,7 +222,9 @@ A provider whose providers-table row carries a base URL is declared direct in th
 config as an OpenAI-compatible provider (npm `@ai-sdk/openai-compatible`, the table's
 `baseURL`, and `apiKey` as the `{env:<envVar>}` reference), for every route before the
 proxy decision, so a provider the pinned opencode catalog does not know (paperinstruments)
-still runs. The Zen and openrouter providers are never used for such a route.
+still runs. A route that names its block explicitly (`swarm.DirectProvider`: the provider
+row's `base_url`, `key_env` and `npm_adapter`) is written as it is, base URL included, and opens
+no read proxy over it. The Zen and openrouter providers are never used for such a route.
 
 | harness | the child | the usage |
 |---|---|---|
