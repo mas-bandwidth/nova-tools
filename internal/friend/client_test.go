@@ -586,6 +586,23 @@ func TestARoundRenewsAndTakesInOneAsk(t *testing.T) {
 	assert.Equal(t, []int{1, 2, 3, 4, 5, 6}, lanesOf(holds))
 }
 
+// A fresh client whose server holds a card on a lane above the applied width still renews it:
+// the friend-cards answer names it, so the client folds it into its view and the next round
+// asks it (the lease never runs out; the model AllHeldRenewedEachAnsweredRound).
+func TestAFreshClientRenewsAHeldLaneAboveWidth(t *testing.T) {
+	t.Parallel()
+	srv := newFake()
+	srv.held = map[int]string{1: "h1", 7: "h7"}
+	c := client(t, srv, &row{width: 3})
+	holds, _, errs := c.Round(context.Background(), true)
+	require.Empty(t, errs)
+	assert.Equal(t, []int{1, 2, 3}, lanesOf(holds), "lanes 1-3 took; lane 7 is above width so no free lane reached it")
+	assert.Equal(t, []int{1, 2, 3}, srv.renewed(), "the first round asks the width's lanes only")
+	_, _, errs = c.Round(context.Background(), true)
+	require.Empty(t, errs)
+	assert.Contains(t, srv.renewed(), 7, "the held lane above width is renewed the next round")
+}
+
 // A refusal on one held lane is that lane's alone: the others are renewed and the free lanes
 // are still taken in the same request.
 func TestOneFailedLaneNeverStopsTheOthers(t *testing.T) {

@@ -57,9 +57,10 @@ const (
 
 // sprintAsk is one verb sent to the sprint server: what it printed, or its refusal.
 // sprintBatchAsk sends a round's verbs in one request: one reply a verb, its stdout or its
-// refusal. An error is a request the server did not answer at all.
-func sprintBatchAsk(ctx context.Context, addr string, argvs [][]string) ([]friend.Reply, error) {
-	res, err := sprintwire.Client{Addr: addr}.Do(ctx, argvs...)
+// refusal. An error is a request the server did not answer at all. batch is the world's
+// sprintBatch seam: the one batch of verbs to the sprint server, real or a test's.
+func sprintBatchAsk(batch func(context.Context, string, ...[]string) ([]sprintwire.Result, error), ctx context.Context, addr string, argvs [][]string) ([]friend.Reply, error) {
+	res, err := batch(ctx, addr, argvs...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +130,7 @@ func (w world) laneClient(c *tool.Call, as string, role hook.Role) *friend.Clien
 	return &friend.Client{Name: as, Dir: dir, Fetch: fetch,
 		Ask: func(ctx context.Context, argvs [][]string) ([]friend.Reply, error) {
 			if w.sprintBatch != nil {
-				return sprintBatchAsk(ctx, addr, argvs)
+				return sprintBatchAsk(w.sprintBatch, ctx, addr, argvs)
 			}
 			// a world without a batch (a test seam): ask each verb on its own
 			replies := make([]friend.Reply, len(argvs))

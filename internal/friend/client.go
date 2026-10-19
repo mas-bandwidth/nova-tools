@@ -160,10 +160,13 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 		errs = append(errs, &Unanswered{Err: fmt.Errorf("the lane round: the server answered %d results for %d verbs", len(replies), len(verbs))})
 		return nil, nil, errs
 	}
+	var heldCard []lane.HeldCard
 	if replies[0].Err != nil {
 		errs = append(errs, fmt.Errorf("friend cards: %w", replies[0].Err))
-	} else if _, perr := lane.ParseHeld(c.Name, replies[0].Out); perr != nil {
+	} else if hc, perr := lane.ParseHeld(c.Name, replies[0].Out); perr != nil {
 		errs = append(errs, perr)
+	} else {
+		heldCard = hc
 	}
 	for i := 1; i < len(replies); i++ {
 		n := lanes[i]
@@ -204,6 +207,15 @@ func (c *Client) Round(ctx context.Context, proven bool) (holds, fresh []Hold, e
 			fresh = append(fresh, h)
 		}
 	}
+	// a held lane the friend-cards answer named that no take covered (a fresh client, or
+	// one above the applied width) is folded into the view so the next round renews it and
+	// its lease never runs out (the model AllHeldRenewedEachAnsweredRound)
+	for _, h := range heldCard {
+		if h.Col == "working" && h.Lane > 0 && !slices.Contains(c.held, h.Lane) {
+			c.held = append(c.held, h.Lane)
+		}
+	}
+	slices.Sort(c.held)
 	slices.SortFunc(known, func(x, y Hold) int { return x.Lane - y.Lane })
 	slices.SortFunc(fresh, func(x, y Hold) int { return x.Lane - y.Lane })
 	return known, fresh, errs
