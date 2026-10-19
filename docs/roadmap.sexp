@@ -1892,4 +1892,8 @@ The report starts with `Verdict: LAND|HOLD` on line 1 and `Head: <sha>` on line 
 Schema-table bounds: a bound is declared only if every writer and reader path enforces it; otherwise the field stays open (*string, []T).
 \"Not done\" is a welcome report; a green claim you did not run is not.
 
-"))))
+"))
+  (item "v17-friend-lane-client-takes-and-renews-in-one-ask" :group "friends" :date "2026-10-19"
+   :title "The friend lane client asks once a round: friend cards, every held lane's renewal and the free-lane takes in one sprintwire request, with failures per lane"
+   :text "Carried: branch sprint/v17-friend-lane-client-takes-and-renews-in-one-ask.w6.g1.e21 head f71444a88405c74f37ed8b12d91e106fa34f9077 (attempt 6, ready). The friend lane client asks once a round: friend cards, every held lane's renewal and the free-lane takes in one sprintwire request, with failures per lane."
+   :origin "sprint card v17-friend-lane-client-takes-and-renews-in-one-ask, moved out of the sprint 2026-10-19 (Glenn: not for the rocketnet v1.0.0 release)")))

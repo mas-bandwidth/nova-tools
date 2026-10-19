@@ -23,7 +23,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (24)
+- [Friends](#friends) (25)
 - [Setup, release and operations](#setup-release-and-operations) (97)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
@@ -330,6 +330,12 @@ A friend's harness runs at the pinned version in the daemon as well as in the la
 Target: v1.3
 
 From: card from the sprint store (2026-10-10)
+
+### The friend lane client asks once a round: friend cards, every held lane's renewal and the free-lane takes in one sprintwire request, with failures per lane
+
+Carried: branch sprint/v17-friend-lane-client-takes-and-renews-in-one-ask.w6.g1.e21 head f71444a88405c74f37ed8b12d91e106fa34f9077 (attempt 6, ready). The friend lane client asks once a round: friend cards, every held lane's renewal and the free-lane takes in one sprintwire request, with failures per lane.
+
+From: sprint card v17-friend-lane-client-takes-and-renews-in-one-ask, moved out of the sprint 2026-10-19 (Glenn: not for the rocketnet v1.0.0 release)
 
 ## Setup, release and operations
 
