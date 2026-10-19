@@ -80,3 +80,4 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `tty/` | whether a file is a terminal and how large its screen is | `go test ./pkg/tty` | `go test ./pkg/tty` |
 | `typedrec/` | typed RESULT record contract, its format and the disposition line | `go test ./pkg/typedrec` | `go test ./pkg/typedrec` |
 | `units/` | the text and install of every unit a running sprint needs: a launchd agent or systemd user unit per kind, written by a verb and loaded through the caller's loader | `go test ./pkg/units` | `go test ./pkg/units` |
+| `winacl/` | whether a Windows file is private to this user by its access list (the POSIX mode is no evidence there) | `go test ./pkg/winacl` | `go test ./pkg/winacl` |

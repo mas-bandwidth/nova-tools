@@ -146,6 +146,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/tool", "the one shape of a command: verbs, banner, help, version, refusals, and the output envelope rendered as lines or JSON", "go test ./pkg/tool", "go test ./pkg/tool"),
 	E("internal/tokens", "token counter and budget tracker", "go test ./internal/tokens", "go test ./internal/tokens"),
 	E("pkg/tty", "whether a file is a terminal and how large its screen is", "go test ./pkg/tty", "go test ./pkg/tty"),
+	E("pkg/winacl", "whether a Windows file is private to this user by its access list (the POSIX mode is no evidence there)", "go test ./pkg/winacl", "go test ./pkg/winacl"),
 	E("pkg/typedrec", "typed RESULT record contract, its format and the disposition line", "go test ./pkg/typedrec", "go test ./pkg/typedrec"),
 	E("pkg/units", "the text and install of every unit a running sprint needs: a launchd agent or systemd user unit per kind, written by a verb and loaded through the caller's loader", "go test ./pkg/units", "go test ./pkg/units"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
