@@ -64,6 +64,14 @@ func TestJobConfigWritesCustomProviderBlockForUncataloguedProvider(t *testing.T)
 	assert.Equal(t, base, pp.Options["baseURL"], "the provider's base URL is written")
 	assert.Equal(t, "{env:"+keyEnv+"}", pp.Options["apiKey"], "the apiKey is the env reference, the variable name only")
 	assert.Contains(t, pp.Models, model, "the route's model is declared under the provider")
+	var declared struct {
+		Limit struct {
+			Output  int `json:"output"`
+			Context int `json:"context"`
+		} `json:"limit"`
+	}
+	require.NoError(t, json.Unmarshal(pp.Models[model], &declared))
+	assert.Equal(t, swarm.DefaultDirectOutputLimit, declared.Limit.Output, "a row with no output limit gets the default, never the harness's own maximum")
 	assert.NotContains(t, string(body), keyValue, "the key's value appears nowhere in the file")
 }
 
