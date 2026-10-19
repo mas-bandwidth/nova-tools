@@ -617,9 +617,6 @@ type nativeFlags struct {
 	auth            *string
 	config          *string
 	workerFile      *string
-	providerBaseURL *string
-	providerKeyEnv  *string
-	providerNPM     *string
 	sandbox         *string
 	maxMem          *string
 	noWall          *bool
@@ -667,9 +664,6 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 		auth:            f.fs.String("auth", "", "the harness's auth `file`, one entry of it copied into the child's data home (not with a --worker naming a secret)"),
 		config:          f.fs.String("config", "", "the harness's provider config `file` (opencode.json), copied beside the auth (not with a --worker naming a secret)"),
 		workerFile:      f.fs.String("worker", "", "the worker description `file` (JSON) that names the model, the key and the read roots; nova-swarm worker check checks it"),
-		providerBaseURL: f.fs.String("provider-base-url", "", "the route provider row's `base_url` (nova-config provider: the OpenAI-compatible API base) when the pinned harness's catalog does not know it; empty when catalogued"),
-		providerKeyEnv:  f.fs.String("provider-key-env", "", "the route provider row's `key_env`: the NAME of the environment variable that holds its key, never the value; empty when catalogued"),
-		providerNPM:     f.fs.String("provider-npm-adapter", "", "the route provider row's `npm_adapter` (normally @ai-sdk/openai-compatible), written in the job's opencode.json for an uncatalogued provider; empty means @ai-sdk/openai-compatible"),
 		sandbox:         f.fs.String("sandbox", "", "the nova-sandbox binary `path` that builds the wall (default: nova-sandbox on PATH); not with --no-wall"),
 		maxMem:          f.fs.String("max-mem", "", "the wall's memory cap for the child's tree, a positive `size` such as 16g (default: one eighth of RAM, limited to a quarter of visible slice MemoryMax, with an 8g floor and half-RAM ceiling; the ceiling can make it less than 8g; 8g if RAM is unreadable; this overrides the default); not with --no-wall"),
 		noWall:          f.fs.Bool("no-wall", false, "run the child with no nova-sandbox wall: the caller owns every read and write it makes"),
@@ -905,41 +899,38 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		frame = &fr
 	}
 	cfg := nativeRunConfig{
-		billing:         *nf.billing,
-		outputTokenMax:  *nf.outputTokenMax,
-		frame:           frame,
-		binary:          *harnessBin,
-		model:           effectiveModel,
-		label:           lbl,
-		card:            cardRaw,
-		prompt:          identityPrompt,
-		slotDir:         *slot,
-		root:            *root,
-		authFile:        *auth,
-		configFile:      *config,
-		providerBaseURL: *nf.providerBaseURL,
-		providerKeyEnv:  *nf.providerKeyEnv,
-		providerNPM:     *nf.providerNPM,
-		deadline:        d,
-		idle:            idleDur,
-		repos:           repos,
-		recipients:      recipients,
-		sandbox:         *sandbox,
-		maxMem:          *nf.maxMem,
-		noWall:          *noWall,
-		noSharedCaches:  *noSharedCaches,
-		resultsRoot:     resultsRootOf(*resultsRootFlag, *root),
-		tokens:          budgetTokens,
-		usd:             budgetUSD,
-		unmetered:       budgetUnmetered,
-		usageInterval:   usageInterval.d,
-		benchName:       *benchFlag,
-		stageTimeout:    stageDur,
-		identity:        identity,
-		budgetServer:    *nf.budgetServer,
-		budgetAs:        *nf.budgetAs,
-		budgetHolder:    *nf.budgetHolder,
-		budgetSlots:     *nf.budgetSlots,
+		billing:        *nf.billing,
+		outputTokenMax: *nf.outputTokenMax,
+		frame:          frame,
+		binary:         *harnessBin,
+		model:          effectiveModel,
+		label:          lbl,
+		card:           cardRaw,
+		prompt:         identityPrompt,
+		slotDir:        *slot,
+		root:           *root,
+		authFile:       *auth,
+		configFile:     *config,
+		deadline:       d,
+		idle:           idleDur,
+		repos:          repos,
+		recipients:     recipients,
+		sandbox:        *sandbox,
+		maxMem:         *nf.maxMem,
+		noWall:         *noWall,
+		noSharedCaches: *noSharedCaches,
+		resultsRoot:    resultsRootOf(*resultsRootFlag, *root),
+		tokens:         budgetTokens,
+		usd:            budgetUSD,
+		unmetered:      budgetUnmetered,
+		usageInterval:  usageInterval.d,
+		benchName:      *benchFlag,
+		stageTimeout:   stageDur,
+		identity:       identity,
+		budgetServer:   *nf.budgetServer,
+		budgetAs:       *nf.budgetAs,
+		budgetHolder:   *nf.budgetHolder,
+		budgetSlots:    *nf.budgetSlots,
 	}
 	if workerGiven {
 		cfg.worker = &w

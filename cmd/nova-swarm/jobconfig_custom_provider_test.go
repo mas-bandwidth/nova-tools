@@ -67,11 +67,9 @@ func TestJobConfigWritesCustomProviderBlockForUncataloguedProvider(t *testing.T)
 	assert.NotContains(t, string(body), keyValue, "the key's value appears nowhere in the file")
 }
 
-// The route's provider row reaches the job writer in production: nova-sprint reads the
-// row from nova-config and the member hands its three fields to native, which resolves
-// them into the custom block before writeJobConfig. A worker description naming the same
-// provider is the other real source of the same block. Both are pure: no socket, no key
-// value.
+// The route's provider fields reach the job writer: a caller may resolve the row's three
+// fields before writeJobConfig, and a worker description naming the same provider is the
+// other real source of the same block. Both are pure: no socket, no key value.
 func TestRouteProviderDirectFromTheProvidersRow(t *testing.T) {
 	t.Parallel()
 	const (
