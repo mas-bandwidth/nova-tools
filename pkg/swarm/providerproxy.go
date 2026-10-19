@@ -8,11 +8,9 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -58,8 +56,16 @@ type ProviderProxyConfig struct {
 	HeaderWait time.Duration
 	// Budget is a limited route's global budget (providerbudget.go): every request takes
 	// it first and a limit refusal is sent again after a backoff. Nil is an unlimited
-	// route, and the proxy is exactly as it was.
+	// route: no budget is taken, and only the bounded retry below applies.
 	Budget *ProxyBudget
+	// Retry is the bounded retry of a transient refusal (providerretry.go): nil is the
+	// production policy, RefusalRetryAttempts sends on the real clock.
+	Retry *RefusalRetry
+	// Log receives one line per transient refusal sent again; nil logs nothing.
+	Log func(string)
+	// Transport is the client's transport in place of the proxy's own (a test's
+	// in-process RoundTripper); nil is the real one.
+	Transport http.RoundTripper
 }
 
 // ProviderProxy is the localhost client the harness dials instead of the
@@ -89,6 +95,14 @@ type ProviderProxy struct {
 
 	budget *ProxyBudget
 	bstate budgetState
+	retry  *RefusalRetry
+	log    func(string)
+}
+
+func (p *ProviderProxy) logf(format string, args ...any) {
+	if p.log != nil {
+		p.log(fmt.Sprintf(format, args...))
+	}
 }
 
 // ListenProviderProxy listens on 127.0.0.1 and forwards to upstream.
@@ -98,11 +112,31 @@ func ListenProviderProxy(cfg ProviderProxyConfig) (*ProviderProxy, error) {
 	if !ProviderProxyEligible(cfg.Upstream) {
 		return nil, fmt.Errorf("not an http provider base url")
 	}
-	u, err := url.Parse(cfg.Upstream)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	p, err := NewProviderProxy(cfg, ln.Addr().String())
+	if err != nil {
+		_ = ln.Close() // ignored: the refusal above is the one reported
+		return nil, err
+	}
+	p.srv = &http.Server{Handler: p}
+	go func() {
+		_ = p.srv.Serve(ln) // ignored: the run ends the card; a failed accept is a dial error, not a silent body
+	}()
+	return p, nil
+}
+
+// NewProviderProxy is the proxy ListenProviderProxy serves, built without a listener: its
+// HarnessURL names harnessHost, and the caller serves it or drives ServeHTTP itself (a
+// test's in-process proxy, never a socket). Close on it cancels its run and stops nothing
+// else.
+func NewProviderProxy(cfg ProviderProxyConfig, harnessHost string) (*ProviderProxy, error) {
+	if !ProviderProxyEligible(cfg.Upstream) {
+		return nil, fmt.Errorf("not an http provider base url")
+	}
+	u, err := url.Parse(cfg.Upstream)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +148,14 @@ func ListenProviderProxy(cfg ProviderProxyConfig) (*ProviderProxy, error) {
 	if headerWait <= 0 {
 		headerWait = ProviderHeaderTimeout
 	}
+	transport := cfg.Transport
+	if transport == nil {
+		transport = &http.Transport{
+			Proxy:                 nil,
+			DisableCompression:    true,
+			ResponseHeaderTimeout: headerWait,
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &ProviderProxy{
 		upstream: u,
@@ -124,12 +166,10 @@ func ListenProviderProxy(cfg ProviderProxyConfig) (*ProviderProxy, error) {
 		ctx:      ctx,
 		cancel:   cancel,
 		budget:   cfg.Budget,
+		retry:    cfg.Retry,
+		log:      cfg.Log,
 		client: &http.Client{
-			Transport: &http.Transport{
-				Proxy:                 nil,
-				DisableCompression:    true,
-				ResponseHeaderTimeout: headerWait,
-			},
+			Transport: transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -137,13 +177,9 @@ func ListenProviderProxy(cfg ProviderProxyConfig) (*ProviderProxy, error) {
 	}
 	harness := *u
 	harness.Scheme = "http"
-	harness.Host = ln.Addr().String()
+	harness.Host = harnessHost
 	harness.User = nil
 	p.harness = harness.String()
-	p.srv = &http.Server{Handler: p}
-	go func() {
-		_ = p.srv.Serve(ln) // ignored: the run ends the card; a failed accept is a dial error, not a silent body
-	}()
 	return p, nil
 }
 
@@ -208,6 +244,9 @@ func (p *ProviderProxy) Close() error {
 	var err error
 	p.closeOnce.Do(func() {
 		p.cancel()
+		if p.srv == nil {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		err = p.srv.Shutdown(ctx)
@@ -546,76 +585,7 @@ func headerWaitExpired(ctx context.Context, err error, sent bool) bool {
 }
 
 func (p *ProviderProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if p.budget != nil {
-		p.serveBudgeted(w, r)
-		return
-	}
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	stop := context.AfterFunc(p.ctx, cancel)
-	defer stop()
-
-	target := url.URL{
-		Scheme:   p.upstream.Scheme,
-		Host:     p.upstream.Host,
-		User:     p.upstream.User,
-		Path:     r.URL.Path,
-		RawQuery: r.URL.RawQuery,
-	}
-	if target.Path == "" {
-		target.Path = "/"
-	}
-	var wrote atomic.Bool
-	traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
-		WroteRequest: func(info httptrace.WroteRequestInfo) {
-			if info.Err == nil {
-				wrote.Store(true)
-				p.sent()
-			}
-		},
-	})
-	out, err := http.NewRequestWithContext(traced, r.Method, target.String(), r.Body)
-	// ignored: the client is answered 502 on the line above; the proxy has no other reader
-	if err != nil {
-		http.Error(w, "upstream", http.StatusBadGateway)
-		return
-	}
-	out.Header = r.Header.Clone()
-	dropHop(out.Header)
-	// Count only a request that is about to be forwarded. A request after the
-	// body gap is refused here and does not touch the upstream.
-	if !p.begin() {
-		http.Error(w, "lost", http.StatusBadGateway)
-		return
-	}
-	resp, err := p.client.Do(out)
-	if err != nil {
-		if headerWaitExpired(ctx, err, wrote.Load()) {
-			// The request was written and no headers came back inside the
-			// owned wait. It may have been accepted: the same UNKNOWN as a
-			// silent body, signalled before the abort, and no second
-			// upstream request after it.
-			p.lose(true)
-			panic(http.ErrAbortHandler)
-		}
-		http.Error(w, "upstream", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	p.sawHeaders()
-	copyProxyHeader(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-	if err := copyWithinSilence(ctx, w, resp.Body, p.silence, p.after); errors.Is(err, errBodySilence) {
-		// A normal return would finish a chunked body and the harness would
-		// read a clean EOF. Abort the connection so the stall is a broken
-		// read, and signal the run. The signal is sent before the panic so
-		// it is not lost when the server recovers ErrAbortHandler.
-		p.markLost()
-		panic(http.ErrAbortHandler)
-	}
+	p.serveRetried(w, r)
 }
 
 // readWithinSilence reads one chunk or returns errBodySilence when no bytes
