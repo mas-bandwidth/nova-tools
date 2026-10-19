@@ -26,7 +26,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
-	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -303,10 +302,10 @@ var judgmentRecOps = ops[JudgmentRec]{
 // The count bounds of the unbounded arrays, held by the reader because an
 // unbounded array declares none (schemas/answer/answer.schema).
 const (
-	maxVerbs      = sprintwire.MaxVerbs // pkg/sprintwire MaxVerbs: the verbs of one batch
-	maxWords      = 4096                // the words of one verb, a ceiling pkg/sprintwire MaxRequest (1 MiB) makes unreachable
-	maxWord       = sprintwire.MaxRequest
-	maxCards      = 1024 // a friend's row, the worker view, a take
+	maxVerbs      = 256     // pkg/sprintwire MaxVerbs, the verbs of one batch
+	maxWords      = 4096    // the words of one verb, a ceiling pkg/sprintwire MaxRequest (1 MiB) makes unreachable
+	maxWord       = 1 << 20 // pkg/sprintwire MaxRequest
+	maxCards      = 1024    // a friend's row, the worker view, a take
 	maxHolders    = 4096
 	maxQueueCards = 4096
 	maxRoutes     = 256
