@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/winacl"
 )
 
 // ExtractPublicKeyFromKeyFile parses '# public key: (age1...)' from an age private key file.
@@ -357,8 +359,13 @@ func unreadableFailure(kind, storeDir, path string, err error) CheckFailure {
 	}
 }
 
-// CheckInvariant6 verifies that the key file mode is 0600 and directory is 0700.
+// CheckInvariant6 verifies that the key file mode is 0600 and directory is 0700. On
+// Windows, where every file reports mode 0666, it verifies the same thing by the access
+// list instead: the file and its directory are private to this user (winacl.OwnerOnly).
 func CheckInvariant6(keyPath string) error {
+	if runtime.GOOS == "windows" {
+		return checkInvariant6ACL(keyPath)
+	}
 	fi, err := os.Stat(keyPath)
 	if err != nil {
 		return fmt.Errorf("key file %s: %w", keyPath, err)
@@ -616,4 +623,20 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 	summaryLine = fmt.Sprintf("SECRETS CHECK FAIL as=%s files=%d failed=%d shown=%d",
 		oneline.Field(asName), len(yamlFiles), len(allFailures), totalShown)
 	return "", failLines, moreLines, summaryLine, 1, nil
+}
+
+// checkInvariant6ACL is invariant 6 on Windows: the key file and its directory are each
+// private to this user by their access lists (winacl.OwnerOnly), the POSIX mode being no
+// evidence there.
+func checkInvariant6ACL(keyPath string) error {
+	if _, err := os.Stat(keyPath); err != nil {
+		return fmt.Errorf("key file %s: %w", keyPath, err)
+	}
+	if err := winacl.OwnerOnly(keyPath); err != nil {
+		return fmt.Errorf("key file %s is not private to this user: %w", keyPath, err)
+	}
+	if err := winacl.OwnerOnly(filepath.Dir(keyPath)); err != nil {
+		return fmt.Errorf("key directory %s is not private to this user: %w", filepath.Dir(keyPath), err)
+	}
+	return nil
 }
