@@ -9,3 +9,5 @@ Install: download the assets for your platform from this release, then run `nova
 - A limited route keeps its stall for limit refusals, with the provider's hint now a floor under its backoff. Its other transient refusals take the bounded retry. (#6017)
 - The harness's own header and request clocks are off for every proxied provider; the proxy's header wait and body silence still bound each send, and a backoff counts as a stall for the idle watch. (#6017)
 - `tla/ProviderRetry.tla` models the bounded retry, with reversed witnesses for the old hand-it-on-first behaviour and for an unbounded retry. (#6017)
+
+Measured before the fix (2026-10-19): one Ultramarine read made about 7 to 12 model requests a minute (18 to 29 requests per read), and three benches running about 8 reads each met the organisation's requests-per-minute limit, so most reads ended with no verdict. A fleet-wide cap on the provider's requests in flight is `nova-sprint routes limit <route> --concurrent <n>`, which this release makes apply per request on a direct route.
