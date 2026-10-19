@@ -219,10 +219,7 @@ func (p *ProviderProxy) serveRetried(w http.ResponseWriter, r *http.Request) {
 		// a limited route's limit refusal is never final; every other transient refusal
 		// is final on the last send
 		final := func(k refusalKind) bool { return sends >= attempts && !(b != nil && k == refusalLimit) }
-		kind, status, hint := p.forward(ctx, w, r, body, holder, final)
-		if b != nil && b.Release != nil {
-			b.Release(holder)
-		}
+		kind, status, hint := p.sendOnce(ctx, w, r, body, holder, final)
 		if kind == refusalNone {
 			return
 		}
@@ -249,6 +246,15 @@ func (p *ProviderProxy) serveRetried(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// sendOnce is one forward, its limited route's slot freed when it ends, however it ends (an
+// abort for a lost response included: the slot is not left to its lease).
+func (p *ProviderProxy) sendOnce(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte, holder string, final func(refusalKind) bool) (refusalKind, int, time.Duration) {
+	if b := p.budget; b != nil && b.Release != nil {
+		defer b.Release(holder)
+	}
+	return p.forward(ctx, w, r, body, holder, final)
 }
 
 // forward is one send of the request upstream, renewing a limited route's holder slot while
@@ -320,7 +326,7 @@ func (p *ProviderProxy) forward(ctx context.Context, w http.ResponseWriter, r *h
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			p.logf("PROVIDER NOTE %s: the provider's body did not close: %s", holder, oneLineErr(err))
+			p.logf("PROVIDER NOTE holder=%s: the provider's body did not close: %s", dash(holder), oneLineErr(err))
 		}
 	}()
 	p.sawHeaders()
@@ -328,7 +334,12 @@ func (p *ProviderProxy) forward(ctx context.Context, w http.ResponseWriter, r *h
 	if resp.StatusCode >= 400 {
 		// a refusal's body is read to tell a transient refusal from any other; what is not
 		// sent again is handed to the harness whole, the part read and then the rest
-		head, _ := io.ReadAll(io.LimitReader(resp.Body, budgetErrorBody))
+		head, err := readHeadWithinSilence(ctx, resp.Body, budgetErrorBody, p.silence, p.after)
+		if errors.Is(err, errBodySilence) {
+			// a refusal's body that goes silent is the same lost response as any other
+			p.markLost()
+			panic(http.ErrAbortHandler)
+		}
 		if kind := classifyRefusal(resp.StatusCode, head); kind != refusalNone && !final(kind) {
 			return kind, resp.StatusCode, refusalHint(resp.Header, head, p.retry.now())
 		}
@@ -348,4 +359,30 @@ func (p *ProviderProxy) forward(ctx context.Context, w http.ResponseWriter, r *h
 		panic(http.ErrAbortHandler)
 	}
 	return refusalNone, 0, 0
+}
+
+// readHeadWithinSilence reads at most limit bytes of src, each read bounded by the body
+// silence (readWithinSilence); errBodySilence when a gap ends it, nil at EOF or the limit.
+// Any other read error ends the head where it is, as io.ReadAll's would.
+func readHeadWithinSilence(ctx context.Context, src io.Reader, limit int, silence time.Duration, after func(time.Duration) <-chan time.Time) ([]byte, error) {
+	head := make([]byte, 0, min(limit, 4096))
+	buf := make([]byte, 4096)
+	for len(head) < limit {
+		n, err := readWithinSilence(ctx, src, buf[:min(len(buf), limit-len(head))], silence, after)
+		head = append(head, buf[:n]...)
+		if errors.Is(err, errBodySilence) {
+			return head, err
+		}
+		if err != nil {
+			return head, nil
+		}
+	}
+	return head, nil
+}
+
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

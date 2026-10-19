@@ -1,7 +1,7 @@
 ----------------------------- MODULE ProviderRetry -----------------------------
 \* A provider's transient refusal is sent again, never handed to the harness first,
 \* and a request is sent at most MaxAttempts times (pkg/swarm/providerretry.go;
-\* pkg/swarm/providerbudget.go serveRetried and forward; Glenn 2026-10-19, "fix
+\* pkg/swarm/providerbudget.go serveRetried and forward; the owner 2026-10-19, "fix
 \* ultramarine so it stops failing").
 \*
 \* The state the proxy owns for one harness request: sends, how many times it was sent

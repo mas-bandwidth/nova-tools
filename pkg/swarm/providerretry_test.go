@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -305,4 +306,31 @@ func TestTheDefaultJitterIsAtMostAQuarter(t *testing.T) {
 		assert.LessOrEqual(t, d, 5*time.Second)
 	}
 	assert.Equal(t, RefusalRetryAttempts, r.attempts())
+}
+
+// A refusal whose body goes silent after its headers is the same lost response as a silent
+// success: the proxy marks the run lost and aborts, and a limited route's slot is freed then,
+// not left to its lease.
+func TestASilentRefusalBodyIsLostAndFreesItsSlot(t *testing.T) {
+	t.Parallel()
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+	rt := unitRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}, Body: pr}, nil
+	})
+	u := newUnitBudget()
+	fired := make(chan time.Time)
+	close(fired)
+	p, err := NewProviderProxy(ProviderProxyConfig{
+		Upstream: "https://api.provider.invalid/v1", Silence: time.Minute,
+		After:     func(time.Duration) <-chan time.Time { return fired },
+		Transport: rt, Budget: u.b,
+	}, "127.0.0.1:1")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	assert.PanicsWithValue(t, http.ErrAbortHandler, func() { serveOne(p, "q") })
+	assert.True(t, p.Lost(), "the silent refusal is a lost response")
+	_, released, _, _, _ := u.got()
+	assert.Equal(t, []string{"card.g1.r1"}, released, "the slot is freed on the abort")
 }

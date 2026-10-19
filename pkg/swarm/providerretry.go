@@ -11,7 +11,7 @@ import (
 )
 
 // A PROVIDER'S TRANSIENT REFUSAL IS SENT AGAIN, NEVER HANDED TO THE HARNESS FIRST
-// (tla/ProviderRetry.tla; Glenn 2026-10-19, "fix ultramarine so it stops failing").
+// (tla/ProviderRetry.tla; the owner 2026-10-19, "fix ultramarine so it stops failing").
 //
 // A provider answers a request it will take later with a 429 (its requests-per-minute or
 // concurrency limit: Ultramarine's "The request exceeds your organization's requests per
