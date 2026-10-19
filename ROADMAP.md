@@ -828,6 +828,8 @@ From: issue #4183; issue #4184
 
 Whole-tree, nightly, certification and release jobs are split into parallel matrix legs or functional programs, each under two minutes.
 
+Already in the code: The hosted test shards' setup is held lean (TestHostedTestShardSetupIsLean, internal/ci/hosted_setup_class_test.go; card v17-hosted-ci-setup-under-75s, land fc2cbea57, sprint/v17). The gap is splitting the whole-tree, nightly, certification and release jobs into legs under two minutes.
+
 Target: v1.5
 
 From: issue #4216; issue #4218; issue #4219; issue #4220
@@ -995,6 +997,8 @@ From: issue #2231
 ### CI and cards share a machine without starving CI
 
 Cards run in the idle CPU class and yield to CI shards, runner capacity is reserved, and dealing goes by load per core.
+
+Already in the code: Card work started by nova-swarm runs at one named nice level, above the lander's gate (TestCardWorkNiceIsOneConstantAboveTheGates, cmd/nova-swarm/card_nice_test.go; card v17-swarm-card-work-nice-is-one-constant, land 711c0f98b, sprint/v17). The gap is cards yielding to CI shards, reserved runner capacity, and dealing by load per core.
 
 Target: v1.5
 
@@ -1452,6 +1456,8 @@ From: PR #5073
 
 Darwin-only packages selected for functional tests are routed to the configured Mac pool instead of dropping out of the Linux matrix. Functional fixtures are repaired.
 
+Already in the code: A nightly and by-hand functional-darwin job on a hosted macOS runner runs the darwin sandbox functional tests (TestTheDarwinSandboxFunctionalTestsHaveANightlyRunner, internal/ci/darwin_functional_workflow_test.go; card v17-tools-darwin-sandbox-tests-run-nightly, land e1aa25664, sprint/v17). The gap is routing darwin-only packages to the configured Mac pool in the functional matrix, and the fixture repairs.
+
 Target: v1.5
 
 From: PR #5272; PR #5503
@@ -1548,6 +1554,8 @@ From: issue #3391
 
 Class tests and a testutil guard stop tests from writing into the repository, reaching the real fleet store, or leaving serial-only environment edits.
 
+Already in the code: The internal/up and cmd/nova-up suites run with HOME a read-only empty directory and write nothing under it (TestTheSuiteRunsWithATempHome, internal/up/temp_home_test.go and cmd/nova-up/temp_home_test.go; card v17-tools-unit-tests-run-with-a-temp-home, land a0c4ff8cc, sprint/v17). The gap is the class guard over every package, and the tree-write and real-store checks.
+
 Target: v1.5
 
 From: issue #4137; issue #4193; issue #4194
@@ -1555,6 +1563,8 @@ From: issue #4137; issue #4193; issue #4194
 ### Two suites: mocked parallel unit tests and isolated functional programs
 
 Unit tests mock all services and run in parallel under a minute. Functional tests are a few isolated long-lived programs safe to run in parallel.
+
+Already in the code: The unit tier opens no real socket: the unit-sockets ledger is empty and held empty (TestTheUnitSocketsLedgerHoldsNoRow, internal/ci/unitsockets_ledger_empty_test.go; card v17-tools-unit-tier-opens-no-socket, land dd804e735), the rule sees a networked exec and every dial shape (TestUnitSocketsSeesANetworkedExecAndEveryDialShape, internal/ci/unitsockets_exec_test.go; card v17-tools-unit-lint-sees-networked-execs, land 418261835), and the sandbox net-deny test is functional (TestTheNetDenyRulesetHandlesTCPConnectAndBind, pkg/sandbox/ruleset_netdeny_linux_test.go; card v17-wall-net-deny-connect-is-functional, land c21cff939), all on sprint/v17. The gap is the rest: every service mocked, the unit suite under a minute, and the functional tier as a few isolated programs.
 
 Target: v1.5
 
