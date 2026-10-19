@@ -24,6 +24,7 @@ func TestCardWorkNiceIsOneConstantAboveTheGates(t *testing.T) {
 	t.Parallel()
 	assert.GreaterOrEqual(t, cardWorkNice, 10, "card work sits at least ten steps behind the lander's gate")
 	assert.Greater(t, cardWorkNice, 0, "card work is strictly below the lander's gate, which runs at nice 0")
+	assert.Equal(t, cardWorkNice, childNice, "the darwin shim's childNice is the same card-work level, not a second one")
 
 	level := strconv.Itoa(cardWorkNice)
 
