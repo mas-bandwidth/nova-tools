@@ -29,7 +29,7 @@ func TestCardWorkNiceIsOneConstantAboveTheGates(t *testing.T) {
 
 	// THE GATE LINE THE MEMBER HANDS A READ. The contract writes the read's gate as commands;
 	// the first one is the vet, and it begins with the one level.
-	read := cardcontract.Frame{Kind: "read", Card: "c1.r1.x", Attempt: 1, Repo: "https://github.com/mas-bandwidth/nova-tools.git", ReviewBase: "sprint/v17", Branch: "sprint/c1"}
+	read := cardcontract.Frame{Kind: "read", Card: "c1.r1.x", Attempt: 1, Repo: "https://example.com/Example-Owner/example-repo.git", ReviewBase: "sprint/v17", Branch: "sprint/c1"}
 	readStaged := cardcontract.Staged{
 		Job: "/j", Repo: "/j/repo", Head: strings.Repeat("a", 40), Start: strings.Repeat("b", 40),
 		Gate: &cardcontract.Gate{Packages: []string{"./internal/sprint"}},
@@ -45,7 +45,7 @@ func TestCardWorkNiceIsOneConstantAboveTheGates(t *testing.T) {
 	assert.True(t, strings.HasPrefix(gate, "nice -n "+level+" "), "the gate line %q begins with nice -n %s", gate, level)
 
 	// AND THE WORK CARD'S OWN TEST INSTRUCTION names the same level.
-	work := cardcontract.Frame{Kind: "work", Card: "c1", Attempt: 1, Repo: "https://github.com/mas-bandwidth/nova-tools.git", BaseRef: "sprint/v17", Branch: "sprint/c1"}
+	work := cardcontract.Frame{Kind: "work", Card: "c1", Attempt: 1, Repo: "https://example.com/Example-Owner/example-repo.git", BaseRef: "sprint/v17", Branch: "sprint/c1"}
 	workStaged := cardcontract.Staged{Job: "/j", Repo: "/j/repo", Head: strings.Repeat("a", 40)}
 	assert.Contains(t, cardcontract.For("plain").JobText(work, workStaged), "`nice -n "+level+"`",
 		"the work card's test instruction names the one card-work level")
