@@ -124,7 +124,7 @@ func TestA429Then200SucceedsAfterOneRetry(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code, "the 429 never reached the harness")
 	assert.Equal(t, "done", rec.Body.String())
 	assert.Equal(t, []string{`{"model":"ultramarine-1-flash"}`, `{"model":"ultramarine-1-flash"}`}, up.sends(), "the same request went twice")
-	assert.Equal(t, []time.Duration{time.Second}, rr.got(), "one wait, the provider's hint as its floor")
+	assert.Equal(t, []time.Duration{time.Second}, rr.got(), "one wait, the provider's hint as its floor") // wall-ok: a recorded fake sleep; no clock runs
 	require.Len(t, *lines, 1, "one line for the refusal sent again")
 	assert.Contains(t, (*lines)[0], "PROVIDER REFUSED status=429 send=1/8")
 	assert.False(t, p.Stalling(), "no stall is left once the request ends")
@@ -145,7 +145,7 @@ func TestAPersistent429FailsAfterTheCap(t *testing.T) {
 	assert.Equal(t, ultramarine429, rec.Body.String(), "its body whole")
 	assert.Equal(t, "req_1", rec.Header().Get("X-Request-Id"), "its headers")
 	assert.Len(t, up.sends(), 4, "exactly the cap's sends")
-	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, rr.got(), "a doubling backoff between them")
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, rr.got(), "a doubling backoff between them") // wall-ok: a recorded fake sleep; no clock runs
 }
 
 // The backoff doubles to its cap and stays there; a 503 and a 529 are transient too.
@@ -165,7 +165,7 @@ func TestTheBackoffIsCapped(t *testing.T) {
 	rec := serveOne(p, "q")
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 4 * time.Second, 4 * time.Second}, rr.got(), "never past the cap")
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 4 * time.Second, 4 * time.Second}, rr.got(), "never past the cap") // wall-ok: a recorded fake sleep; no clock runs
 }
 
 // The provider's own wait is a floor under the backoff, from Retry-After seconds, an HTTP
@@ -202,7 +202,7 @@ func TestTheProvidersHintIsAFloor(t *testing.T) {
 	rr := newRetryRecorder(0, time.Second, time.Minute)
 	p, _ := retryProxy(t, up, rr.r, nil)
 	assert.Equal(t, http.StatusOK, serveOne(p, "q").Code)
-	assert.Equal(t, []time.Duration{9 * time.Second}, rr.got(), "the proxy waited the provider's 9 s, not its 1 s")
+	assert.Equal(t, []time.Duration{9 * time.Second}, rr.got(), "the proxy waited the provider's 9 s, not its 1 s") // wall-ok: a recorded fake sleep; no clock runs
 }
 
 // What is not transient goes to the harness on the first answer: a 400, an auth refusal,
@@ -276,8 +276,8 @@ func TestALimitedRouteHonoursTheHintAndBoundsA503(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, "the 503 is handed on after the bounded retry's two sends")
 	_, released, _, _, budgetSleeps := u.got()
-	assert.Equal(t, []time.Duration{5 * time.Second, 2 * time.Second}, budgetSleeps, "the limit backoff: the 5 s hint over 1 s, then 2 s over the 1 s hint")
-	assert.Equal(t, []time.Duration{3 * time.Second}, rr.got(), "one bounded wait for the 503")
+	assert.Equal(t, []time.Duration{5 * time.Second, 2 * time.Second}, budgetSleeps, "the limit backoff: the 5 s hint over 1 s, then 2 s over the 1 s hint") // wall-ok: a recorded fake sleep; no clock runs
+	assert.Equal(t, []time.Duration{3 * time.Second}, rr.got(), "one bounded wait for the 503")                                                              // wall-ok: a recorded fake sleep; no clock runs
 	assert.Len(t, up.sends(), 4, "two limit refusals do not count against the two sends")
 	assert.Len(t, released, 4, "every send frees its slot")
 }
