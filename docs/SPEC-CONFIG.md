@@ -338,6 +338,11 @@ harness's catalog does not know (paperinstruments) is written with in the job's
 must be a variable name matching `^[A-Z][A-Z0-9_]*$` (a literal token is
 refused), and `npm_adapter` is one package name with no blanks. All three are
 empty for a catalogued provider; migration 0046 adds them with that default.
+Beside `base_url`, `max_output` is the model's output limit, empty or a whole
+number above 0 (0, a negative number and a non-number are refused): for an
+uncatalogued provider it is written as `models.<model>.limit.output` in the job's
+`opencode.json`, so the harness asks for no more than it (Paper Instruments refuses
+`max_tokens` above 65536). Empty is undeclared.
 Such a provider is never routed through openrouter or opencode Zen. Migration
 0041 seeds
 one row per existing route provider with `billing=metered`, `funded=false`

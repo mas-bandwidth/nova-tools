@@ -242,22 +242,27 @@ func fencePath(p string) string {
 // DirectProvider is an uncatalogued provider's custom block: the API base, the NAME of the
 // environment variable holding its key, and the npm adapter the harness loads. It is built
 // from the route's or the provider's own fields (nova-config provider: base_url, key_env
-// and npm_adapter), never from a key value.
+// and npm_adapter), never from a key value. Model and MaxOutput carry the route's model and
+// the provider row's max_output, the declared output limit written as models.<model>.limit.output.
 type DirectProvider struct {
 	BaseURL    string
 	KeyEnv     string
 	NPMAdapter string
+	Model      string
+	MaxOutput  int
 }
 
 // DeclareDirectProvider returns the config with provider declared direct as an
 // OpenAI-compatible provider: npm (the adapter named, or @ai-sdk/openai-compatible when
 // empty), options.baseURL, and options.apiKey as the {env:<KeyEnv>} reference. Anything the
 // entry already carries is kept, and the key is only the env reference text, never a value
-// read from the environment. ok is false, and raw is returned unchanged, when the base or
-// the key's variable name is empty, the config is not a JSON object, or the provider entry
-// is not an object. It is called for a provider the pinned harness's catalog does not know
-// (paperinstruments), so that provider still runs; the Zen and openrouter providers are
-// never used for such a route.
+// read from the environment. When MaxOutput is above 0 and Model is nonempty, the model's
+// limit.output is written as that number, keeping any limit the entry already carries (an
+// existing context limit stays; none is added). ok is false, and raw is returned unchanged,
+// when the base or the key's variable name is empty, the config is not a JSON object, or the
+// provider entry is not an object. It is called for a provider the pinned harness's catalog
+// does not know (paperinstruments), so that provider still runs; the Zen and openrouter
+// providers are never used for such a route.
 func DeclareDirectProvider(raw []byte, provider string, p DirectProvider) ([]byte, bool) {
 	base, keyEnv := strings.TrimSpace(p.BaseURL), strings.TrimSpace(p.KeyEnv)
 	if provider == "" || base == "" || keyEnv == "" {
@@ -296,6 +301,33 @@ func DeclareDirectProvider(raw []byte, provider string, p DirectProvider) ([]byt
 		opts["apiKey"] = "{env:" + keyEnv + "}"
 	}
 	providerMap["options"] = opts
+	if p.MaxOutput > 0 && strings.TrimSpace(p.Model) != "" {
+		models, _ := providerMap["models"].(map[string]any)
+		if models == nil {
+			if _, other := providerMap["models"]; other {
+				return raw, false
+			}
+			models = map[string]any{}
+		}
+		modelEntry, _ := models[p.Model].(map[string]any)
+		if modelEntry == nil {
+			if _, other := models[p.Model]; other {
+				return raw, false
+			}
+			modelEntry = map[string]any{}
+		}
+		limit, _ := modelEntry["limit"].(map[string]any)
+		if limit == nil {
+			if _, other := modelEntry["limit"]; other {
+				return raw, false
+			}
+			limit = map[string]any{}
+		}
+		limit["output"] = p.MaxOutput
+		modelEntry["limit"] = limit
+		models[p.Model] = modelEntry
+		providerMap["models"] = models
+	}
 	providers[provider] = providerMap
 	cfg["provider"] = providers
 	out, err := json.MarshalIndent(cfg, "", "  ")

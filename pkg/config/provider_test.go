@@ -195,7 +195,7 @@ func TestProviderDescriptorAndUnknownFacts(t *testing.T) {
 	require.True(t, ok)
 	assert.False(t, k.Singleton)
 	assert.Equal(t, "providers", k.Table)
-	assert.Equal(t, []string{"billing", "funded", "balance_usd", "balance_as_of", "console_url", "base_url", "key_env", "npm_adapter", "note"}, k.FieldNames())
+	assert.Equal(t, []string{"billing", "funded", "balance_usd", "balance_as_of", "console_url", "base_url", "key_env", "npm_adapter", "max_output", "note"}, k.FieldNames())
 	names := KindNames()
 	assert.Equal(t, []string{KindProvider, KindRoute, KindTier}, names[len(names)-3:])
 	route, _ := Lookup(KindRoute)
@@ -324,4 +324,38 @@ func TestProviderDirectFieldsMigration(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "the provider direct-fields migration is embedded")
+}
+
+// A provider row's max_output is empty, or a whole number above 0: 0, a negative number
+// and a non-number are refused, empty and a positive whole number are accepted.
+func TestProviderMaxOutputMustBePositive(t *testing.T) {
+	t.Parallel()
+	k, _ := Lookup(KindProvider)
+	for _, tc := range []struct {
+		name string
+		raw  map[string]string
+		want string
+	}{
+		{"zero refused", map[string]string{"billing": "metered", "funded": "true", "max_output": "0"}, "--max_output"},
+		{"negative refused", map[string]string{"billing": "metered", "funded": "true", "max_output": "-1"}, "--max_output"},
+		{"not a number refused", map[string]string{"billing": "metered", "funded": "true", "max_output": "x"}, "--max_output"},
+		{"empty accepted", map[string]string{"billing": "metered", "funded": "true"}, ""},
+		{"65536 accepted", map[string]string{"billing": "metered", "funded": "true", "max_output": "65536"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			row, err := k.NewRow("p", tc.raw)
+			if tc.want != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.want)
+			} else {
+				require.NoError(t, err)
+				if tc.raw["max_output"] != "" {
+					assert.Equal(t, tc.raw["max_output"], row.Fields["max_output"])
+				} else {
+					assert.Empty(t, row.Fields["max_output"])
+				}
+			}
+		})
+	}
 }

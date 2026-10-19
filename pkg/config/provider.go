@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -41,6 +42,11 @@ func checkProvider(r Row) error {
 	}
 	if raw := r.Fields["npm_adapter"]; raw != "" && strings.ContainsFunc(raw, func(c rune) bool { return c == ' ' || c == '\t' || c == '\n' }) {
 		problems = append(problems, "--npm_adapter wants one npm package name with no blank, or empty")
+	}
+	if raw := r.Fields["max_output"]; raw != "" {
+		if n, err := strconv.Atoi(raw); err != nil || n < 1 {
+			problems = append(problems, "--max_output wants a whole number above 0, or empty")
+		}
 	}
 	if len(problems) != 0 {
 		return fmt.Errorf("%s", strings.Join(problems, "; "))
