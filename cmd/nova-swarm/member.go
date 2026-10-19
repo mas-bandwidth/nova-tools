@@ -1273,6 +1273,12 @@ var nativeRefusedWhy = regexp.MustCompile(`(?m)^NATIVE REFUSED: (.+)$`)
 // as a staging refusal; every other one is the card's and stays a failed finish.
 var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: (yield to CI: .+)$`)
 
+// nativeNoWallRefused is native's refusal when this machine has no wall: neither
+// --sandbox named a file nor nova-sandbox was on PATH. Only this refusal and the
+// yield refusal end a launch as a staging refusal; every other one is the card's
+// and stays a failed finish.
+var nativeNoWallRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: [^\n]* no wall: .+$`)
+
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
@@ -1376,12 +1382,13 @@ func (c *nativeChild) Result() member.Result {
 				nativeSpendLine = string(s[1])
 			}
 			end = nativeEnd(b)
-			if refused != "" && noChild && end == "" {
-				// native refused the launch before any child ran, and the refusal is none of
-				// the stage, yield or harness-fault lines above: it is the member's failure
-				// and never the card's, so it ends as a staging refusal does and the sprint
-				// deals the card to another member (tla/CardContract.tla, StageRefused); the
-				// reason is the native refusal line itself
+			if refused != "" && noChild && end == "" && nativeNoWallRefused.Match(b) {
+				// native refused the launch before any child ran because this machine has no
+				// wall, and the refusal is none of the stage, yield or harness-fault lines
+				// above: it is the member's failure and never the card's, so it ends as a
+				// staging refusal does and the sprint deals the card to another member
+				// (tla/CardContract.tla, StageRefused); the reason is the native refusal line
+				// itself
 				end = member.EndStaging
 				staging = refused
 			}

@@ -67,12 +67,13 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>] [--prompt <file>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--max-mem <size>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>] [--prompt <file>]
-                        (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
-                         Each tick beats, reads the queue, reports ended children and takes cards to the
-                         fleet row's width; --width overrides it, and --pass names environment secrets to
-                         hand to children. A reader runs the reads of the readers table; this machine opens
-                         no store. --no-wall runs each child with no wall. nova-swarm member -h has the rest.)
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--max-mem <size>] [--no-wall | --sandbox <binary>] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>] [--prompt <file>]
+                         (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
+                          Each tick beats, reads the queue, reports ended children and takes cards to the
+                          fleet row's width; --width overrides it, and --pass names environment secrets to
+                          hand to children. A reader runs the reads of the readers table; this machine opens
+                          no store. --no-wall runs each child with no wall; --sandbox names the wall binary
+                          each child runs in. nova-swarm member -h has the rest.)
   nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--stop-floor <GiB>] [--dry-run]
                        (one pass over this machine, run every few minutes by the disk-guard loop row
                         fleet/loops.yml adds to every machine: it trims every Go build cache over
