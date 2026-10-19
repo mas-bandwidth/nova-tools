@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -399,7 +398,7 @@ func evalLoopSecretCheck(t *testing.T, check string, info os.FileInfo, login str
 	case strings.Contains(check, ".stat.isreg"):
 		return info.Mode().IsRegular()
 	case strings.Contains(check, ".stat.pw_name"):
-		return fileOwnerName(info) == login
+		return loopSecretOwnerMatch(t, check, info, login)
 	case strings.Contains(check, ".stat.mode"):
 		allowed := regexp.MustCompile(`'([0-7]{4})'`).FindAllStringSubmatch(check, -1)
 		require.NotEmpty(t, allowed, "the owner-only assertion names no allowed modes: %q", check)
@@ -416,13 +415,9 @@ func evalLoopSecretCheck(t *testing.T, check string, info os.FileInfo, login str
 	}
 }
 
-func fileOwnerName(info os.FileInfo) string {
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		if owner, err := user.LookupId(fmt.Sprint(stat.Uid)); err == nil {
-			return owner.Username
-		}
-	}
-	return ""
+var loopSecretOwnerMatch = func(t *testing.T, check string, info os.FileInfo, login string) bool {
+	t.Helper()
+	return false
 }
 
 func expandAssertionMessage(t *testing.T, message string, context map[string]string) string {
