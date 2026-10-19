@@ -637,6 +637,15 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
+  (item "friend-lane-takes-and-renews" :group "friends"
+   :title "Friend lanes take ready cards and renew held lanes automatically"
+   :text "A one-shot friend row is taken only by this lane client, which asks the server one verb per HTTP
+    request, lane by lane; the first failed ask stops every free-lane take for the round. One round sends
+    one request carrying friend cards plus a lane take for every held and free lane, failure is per-lane,
+    and the bounds fit a slow server. Deferred to the roadmap (Glenn 2026-10-19)."
+   :date "2026-10-19"
+   :release "after v1.4"
+   :origin "card v17-friend-lane-client-takes-and-renews-in-one-ask (work record, 2026-10-19), deferred to the roadmap (Glenn 2026-10-19)")
   (item "redisconn-adoption-in-tools" :group "quality"
    :title "Tools open Redis through the redisconn package"
    :text "nova-config and other tools open Redis through the shared connection package, which explains its

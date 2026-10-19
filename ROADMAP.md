@@ -23,7 +23,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (24)
+- [Friends](#friends) (25)
 - [Setup, release and operations](#setup-release-and-operations) (97)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
@@ -217,6 +217,14 @@ A lane child runs inside the wall, with writes allowed only to the friend's own 
 Target: after v1.4
 
 From: card moved out of the sprint (work record, 2026-10-04)
+
+### Friend lanes take ready cards and renew held lanes automatically
+
+A one-shot friend row is taken only by this lane client, which asks the server one verb per HTTP request, lane by lane; the first failed ask stops every free-lane take for the round. One round sends one request carrying friend cards plus a lane take for every held and free lane, failure is per-lane, and the bounds fit a slow server. Deferred to the roadmap (Glenn 2026-10-19).
+
+Target: after v1.4
+
+From: card v17-friend-lane-client-takes-and-renews-in-one-ask (work record, 2026-10-19), deferred to the roadmap (Glenn 2026-10-19)
 
 ### The harness prints its error lines so an unknown error records its cause
 
