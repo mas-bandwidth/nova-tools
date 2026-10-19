@@ -32,7 +32,7 @@ func checkRefuseFunding(ctx context.Context, st Store, k *Kind, before, next Row
 			return refuseOwnerFunds(ctx, st, next.Name, actor)
 		}
 	case KindRoute:
-		if next.Fields["enabled"] == "true" && before.Fields["enabled"] != "true" {
+		if next.Fields["enabled"] == "true" && (before.Fields["enabled"] != "true" || next.Fields["provider"] != before.Fields["provider"]) {
 			p, found, err := st.Get(ctx, KindProvider, next.Fields["provider"])
 			if err != nil {
 				return err

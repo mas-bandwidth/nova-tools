@@ -161,7 +161,7 @@ func TestClassifyProviderCreditShapes(t *testing.T) {
 		status     int
 		want       string
 	}{
-		{"openrouter 402", `{"error":{"code":402,"message":"Insufficient credits. Add more using https://openrouter.ai/settings/credits"}}`, 402, CauseCredit},
+		{"openrouter 402", `{"error":{"code":402,"message":"Insufficient credits. Add more using https://openrouter.test/settings/credits"}}`, 402, CauseCredit},
 		{"opencode Zen CreditsError", `"type":"CreditsError"`, 0, CauseCredit},
 		{"opencode Zen insufficient balance", `"message":"Insufficient balance"`, 0, CauseCredit},
 		{"opencode Zen no payment method", `"message":"no payment method"`, 0, CauseCredit},

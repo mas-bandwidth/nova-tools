@@ -95,6 +95,19 @@ func TestFundingRefusesAnEnabledRouteOnAnUnfundedProvider(t *testing.T) {
 	_, found, err := m.Get(ctx, KindRoute, "r1")
 	require.NoError(t, err)
 	assert.False(t, found, "the refused route was not written")
+
+	fundingOwner(t, m)
+	fundingProvider(t, m, "p2")
+	_, _, err = m.Update(ctx, KindProvider, "p2", map[string]string{"funded": "true"}, "glenn")
+	require.NoError(t, err)
+	route2, err := kk.NewRow("r2", map[string]string{"tier": "pro", "provider": "p2", "model": "m", "deadline": "60", "enabled": "true"})
+	require.NoError(t, err)
+	_, err = m.Insert(ctx, KindRoute, route2, "machine")
+	require.NoError(t, err)
+	_, _, err = m.Update(ctx, KindRoute, "r2", map[string]string{"provider": "p1"}, "machine")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOwnerOnly)
+	assert.Contains(t, err.Error(), "p1")
 }
 
 // TestFundingFlipIsOneWritePerProvider pins the flip: funded=false is accepted from any
