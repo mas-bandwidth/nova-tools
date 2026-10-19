@@ -107,6 +107,16 @@
           and 'disk-guard' not in (nova_loops | map(attribute='name') | list) else []) -%}
       {{ (with_guard | selectattr('name', 'in', loop_only) | list) if loop_only else with_guard }}
     loop_names: "{{ loop_records | map(attribute='name') | list }}"
+    # Secret-file records carry only the expanded path; this play never opens the file.
+    loop_secret_file_entries: >-
+      {%- set out = [] -%}
+      {%- for r in loop_records -%}
+      {%- for f in (r.secret_files | default({}) | dict2items) -%}
+      {%- set path = f.value | regex_replace('^~/', nova_home ~ '/') -%}
+      {%- set _ = out.append({'record': r.name, 'name': f.key, 'path': path}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
     loop_scope: "{{ 'system' if loop_system else 'user' }}"
     loop_runtime: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}" }
     # The records that run a member or a reader (nova-swarm member, after any
@@ -131,6 +141,51 @@
           {{ inventory_hostname }} has no nova_loops: the loop kind was never applied to the store, and an absent
           list is not an empty one; run: nova-config apply --kind loop, then print the inventory again
         quiet: true
+
+    - name: a loop record cannot mix keys and secret files
+      ansible.builtin.assert:
+        that: >-
+          not ((item['keys'] | default([]) | length > 0) and item.secret_files is defined)
+        fail_msg: >-
+          loop record {{ item.name }} carries both keys and secret_files; choose one secret source before writing any unit
+        quiet: true
+      loop: "{{ loop_records }}"
+      loop_control: { label: "{{ item.name }}" }
+
+    - name: every loop secret file path is absolute or home-relative
+      ansible.builtin.assert:
+        that:
+          - item.name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - item.path is string
+          - item.path.startswith('/') or item.path.startswith('~/')
+          - "'\n' not in item.path and '\r' not in item.path"
+        fail_msg: >-
+          {{ item.record }} has invalid secret_files entry {{ item.name }}; use an environment NAME and an absolute or ~/ path
+        quiet: true
+      loop: "{{ loop_secret_file_entries }}"
+      loop_control: { label: "{{ item.path }}" }
+
+    - name: stat every loop secret file without reading it
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+        get_checksum: false
+        get_mime: false
+      loop: "{{ loop_secret_file_entries }}"
+      loop_control: { label: "{{ item.path }}" }
+      register: loop_secret_file_stats
+
+    - name: a loop secret file is a regular owner-only file
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists | default(false)
+          - item.stat.isreg | default(false)
+          - item.stat.pw_name | default('') == ansible_user_id
+          - item.stat.mode | default('') in ['0600', '0400']
+        fail_msg: >-
+          {{ item.item.record }} secret file {{ item.item.path }} must be a regular file owned by {{ ansible_user_id }} with mode 0600 or 0400; run nova-secrets place, then chmod 600
+        quiet: true
+      loop: "{{ loop_secret_file_stats.results }}"
+      loop_control: { label: "{{ item.item.path }}" }
 
     - name: the installed version on this host (what --check compares)
       ansible.builtin.slurp: { src: "{{ nova_build_file }}" }
@@ -228,6 +283,9 @@
         mode: "0644"
       vars:
         l: "{{ item }}"
+        # The record's placed secret files: the play expanded each path once;
+        # the template writes the name and path, never the file's content.
+        loop_secret_files: "{{ loop_secret_file_entries | selectattr('record', 'equalto', item.name) | list }}"
         # The command the unit runs: the record's argv, a bare program being the
         # installed tool and ~/ the login's home, behind nova-secrets exec when
         # the record names keys (the seat opens them; their values never reach

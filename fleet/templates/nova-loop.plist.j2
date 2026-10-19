@@ -33,6 +33,10 @@
 <key>NOVA_BUS_REDIS</key>
 <string>{{ nova_bus_addr | e }}</string>
 {% endif %}
+{% for secret_file in loop_secret_files %}
+<key>{{ secret_file.name | e }}</key>
+<string>{{ secret_file.path | e }}</string>
+{% endfor %}
 </dict>
 <key>WorkingDirectory</key>
 <string>{{ nova_home | e }}</string>
