@@ -164,6 +164,11 @@ var swarmAudit = audit.Config{
 		// this verb hands it, and every argument it prints is a card id, a count or a
 		// verb name from the sprint's own JSON.
 		`"bufio"`, `"github.com/mas-bandwidth/nova-tools/pkg/member"`,
+		// main.go, member.go and native.go take only ParseGPUMode, a pure function that
+		// returns a GPUMode and a Refusal value, and the GPUMode type and its constants from
+		// pkg/sandbox, for the --gpu opt-in each child's wall carries. Nothing taken holds a
+		// writer; a refused value is printed here through oneline.Field.
+		`"github.com/mas-bandwidth/nova-tools/pkg/sandbox"`,
 		// member.go calls only log.Redact, a pure string transformer, on what a failed
 		// sprint verb printed, as the server answered it, before it reaches the member's
 		// writer. It holds no writer here; the transformed value is escaped and bounded by

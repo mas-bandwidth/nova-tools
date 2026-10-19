@@ -35,6 +35,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
@@ -71,6 +72,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	config := fs.String("config", "", "the harness's provider config `file`, handed to each child's native --config")
 	workerFile := fs.String("worker", "", "the worker description `file` (JSON), handed to each child's native --worker; the secret it names is handed through too")
 	noWall := fs.Bool("no-wall", false, "run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes")
+	gpu := fs.String("gpu", "", "the local GPU capability each child's wall opens, `none|metal` (native --gpu, nova-sandbox --gpu): metal on a bench with an Apple GPU, so a card can run Metal, compile shaders and record video inside the wall (default none)")
 	ghBin := fs.String("gh", "gh", "the gh `path` the member opens a work card's pull request with, outside the wall (default gh)")
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
 	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
@@ -228,10 +230,15 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// decide read with it, a worker's the gate decision of a red gate, and neither
 	// hands it to the harness (nativedecide.go, nativegate.go, nativeChildEnv)
 	nativePass := append(append([]string{}, pass...), decide.JevSecret)
+	gpuMode, gpuRefusal := sandbox.ParseGPUMode(*gpu)
+	if gpuRefusal != nil {
+		fmt.Fprintf(stderr, "nova-swarm member: %s\n", oneline.WithRemedy("--gpu wants none or metal and got "+oneline.Field(*gpu), "nova-swarm member -h"))
+		return 2
+	}
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity, prompt: *prompt,
+		worker: *workerFile, noWall: *noWall, gpu: gpuMode, stderr: stderr, out: stdout, pass: nativePass, held: held, identity: *identity, prompt: *prompt,
 		server: *server, as: *as,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
@@ -564,6 +571,7 @@ type nativeRunner struct {
 	tokens, auth, config, worker, identity         string
 	prompt                                         string // the identity prompt file handed to each launch (native --prompt); "" for none
 	noWall                                         bool
+	gpu                                            sandbox.GPUMode // --gpu: each child's wall GPU capability (native --gpu); none passes nothing
 	// server and as are the sprint's server and this worker's name: a limited route's
 	// child takes its global rate budget there (--budget-server, nativebudget.go)
 	server, as        string
@@ -819,6 +827,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if r.noWall {
 		args = append(args, "--no-wall")
 	}
+	args = append(args, gpuArgs(r.gpu)...)
 	if r.identity != "" {
 		args = append(args, "--identity", r.identity)
 	}
@@ -1919,4 +1928,13 @@ func machineOfWorker(as string, reader bool) string {
 		return "<m>"
 	}
 	return as
+}
+
+// gpuArgs is the native flag a member's --gpu becomes on each child's argv: --gpu metal for
+// metal, nothing for none, so a member that asked for no GPU hands its children none.
+func gpuArgs(mode sandbox.GPUMode) []string {
+	if mode == sandbox.GPUMetal {
+		return []string{"--gpu", string(mode)}
+	}
+	return nil
 }
