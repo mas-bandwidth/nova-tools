@@ -126,7 +126,7 @@ ASSUME ShrinkStopsRenew \in BOOLEAN /\ ShrinkMoves \in BOOLEAN /\ TakeOverWidth 
 ASSUME MaxCardFails \in Nat /\ BlindTakes \in BOOLEAN /\ LostDrops \in BOOLEAN
 
 (* W2 witness selectors use combinations absent from every existing config, so
-   legacy TLC cases keep their prior state space without new required constants. *)
+   legacy TLC cases keep their prior states without new required constants. *)
 StopOnFirstFail == BlindTakes /\ LostDrops
 BrokenDoubleNotice == BlindTakes /\ ShrinkStopsRenew
 NormalBatchModel ==
@@ -357,7 +357,7 @@ AnswerRound ==
        /\ cache' = [l \in Lanes |-> IF l \in renewed /\ srv[l] # None THEN <<srv[l], gen[srv[l]]>> ELSE cache[l]]
        /\ told' = told \cup serverTold
        /\ seen' = seen \cup asked
-       /\ roundMissed' = roundMissed \/ ~(target \subseteq asked)
+       /\ roundMissed' = (roundMissed \/ ~(target \subseteq asked))
        /\ UNCHANGED <<srv, col, gen, up, proven, finished, returned, lostLive, restarts, deaths,
                       width, cfgOk, resizes, losses, overTake, held, cardsOk, cardFails>>
 
