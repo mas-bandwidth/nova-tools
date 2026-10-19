@@ -199,6 +199,15 @@ func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 // gains one naming the directories alone, because a child that resolves no shell at all is
 // better than one that resolves an unscrubbed shell. No dirs leaves it as it was.
 func pathWithDirsFirst(env []string, dirs ...string) []string {
+	return pathWithDirsFirstFor(runtime.GOOS, env, dirs...)
+}
+
+// pathWithDirsFirstFor is pathWithDirsFirst for one operating system's environment. On
+// Windows the name is matched without case -- the process environment there spells it
+// `Path`, and a case-sensitive match left a native Windows child with a PATH of the
+// toolchain directories alone (captain, 2026-10-19) -- every spelling is folded into one
+// PATH entry, and the separator is `;`.
+func pathWithDirsFirstFor(goos string, env []string, dirs ...string) []string {
 	var head []string
 	for _, d := range dirs {
 		if d != "" {
@@ -208,14 +217,21 @@ func pathWithDirsFirst(env []string, dirs ...string) []string {
 	if len(head) == 0 {
 		return env
 	}
-	sep := string(os.PathListSeparator)
+	sep := ":"
+	if goos == "windows" {
+		sep = ";"
+	}
 	prefix := strings.Join(head, sep)
 	out := make([]string, 0, len(env)+1)
 	found := false
 	for _, kv := range env {
 		name, val, _ := strings.Cut(kv, "=")
-		if name != "PATH" {
+		if !envNameIs(goos, name, "PATH") {
 			out = append(out, kv)
+			continue
+		}
+		if found {
+			// a second spelling of the one name (Windows only): the first one stands
 			continue
 		}
 		found = true

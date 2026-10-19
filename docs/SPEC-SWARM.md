@@ -36,6 +36,7 @@ A command that runs outside the wall and dies inside it is missing a `read_roots
 The wall grants the platform toolchain roots where a reader looks for them:
 - Darwin: `~/sdk`, `~/go/pkg/mod`, `/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`, `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`, `/usr/local/share/dotnet`.
 - Linux: `~/sdk`, `~/go/pkg/mod`.
+- Windows (a native Windows member; Windows has no wall body yet, so these are what makes the toolchain findable on the child's `PATH`): `~/sdk` and `~/go/pkg/mod` under `%USERPROFILE%`, `C:/Program Files/Git` (its `cmd` and `bin`), `C:/Program Files/CMake` (`bin`), `C:/Program Files/Go` (`bin`), and `C:/Program Files (x86)/Microsoft Visual Studio/Installer` (vswhere). Native also runs the newest Visual Studio install's `vcvars64.bat` once per launch and hands the child what it adds (`cl`, `link` and the Windows SDK on `PATH`; `INCLUDE`, `LIB`, `LIBPATH`; pkg/swarm/msvc.go).
 
 The darwin wall denies `setpriority` (its `system-sched` operation), so on darwin a walled child cannot lower its own priority and a card's `nice -n 19` printed `nice: setpriority: Operation not permitted`. There native lowers the child's whole process group to nice 19 itself, from outside the wall, right after the start, and writes a `nice` beside the shell wrappers that drops the adjustment and runs the command, so a gate line's `nice -n 19` runs at 19 and says nothing. Linux's wall leaves `setpriority` alone, and a card's own `nice` works there as written.
 

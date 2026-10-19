@@ -2396,6 +2396,7 @@ own Go must be reachable inside the wall. `nova-swarm native` names the provisio
 toolchain roots on the wall's argv, read-only and skipped when one is not there:
 - On every bench: `~/sdk` (Go and sbcl) as `--read` (carries execute), and `~/go/pkg/mod` as `--read-noexec` (read without execute).
 - On Darwin: `/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`, `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`, and `/usr/local/share/dotnet`.
+- On Windows: `C:/Program Files/Git` (`cmd`, `bin`), `C:/Program Files/CMake` (`bin`), `C:/Program Files/Go` (`bin`), and `C:/Program Files (x86)/Microsoft Visual Studio/Installer` go on the child's `PATH` after `~/sdk/bin`, then what the Visual Studio install's `vcvars64.bat` adds (`cl`, `link`, the Windows SDK), with its `INCLUDE`, `LIB` and `LIBPATH` set.
 - Launcher directories (`~/go/bin`, `/opt/homebrew/bin`) are never granted as toolchain roots.
 
 **Output ceiling.** `native --output-token-max <tokens>` sets the opencode
