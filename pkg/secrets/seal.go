@@ -273,16 +273,34 @@ type sealCarry struct {
 	ghPath   string
 	ghEnv    []string
 	seatFile string // the seat file the commit touches
-	rules    []byte // .sops.yaml as it is to be committed beside it, or nil to leave it alone
-	branch   string // seal/<seat>-<NAMES>-<stamp>
-	message  string // the commit message
-	title    string // the pull request title
-	body     string // the pull request body
-	noPR     bool
-	say      func(format string, a ...interface{})
-	check    func() error // runs after the merge and the pull
-	now      func() time.Time
-	sleep    func(time.Duration)
+	// files are the seat files the one commit touches: the source seat and every
+	// route seat (provider-key add). seal and seat inject name one, in seatFile.
+	files   []carryFile
+	rules   []byte // .sops.yaml as it is to be committed beside it, or nil to leave it alone
+	branch  string // seal/<seat>-<NAMES>-<stamp>
+	message string // the commit message
+	title   string // the pull request title
+	body    string // the pull request body
+	noPR    bool
+	say     func(format string, a ...interface{})
+	check   func() error // runs after the merge and the pull
+	now     func() time.Time
+	sleep   func(time.Duration)
+
+	// waitForMerge makes the carry wait for the forge to merge the pull request
+	// instead of merging it itself: the merge is the forge's action, not the
+	// tool's (tla/ProviderKey.tla, Merge).
+	waitForMerge bool
+	mergeWait    time.Duration // the bound on the wait
+	mergePoll    time.Duration // how often the forge is asked
+	mergeSay     time.Duration // how often the wait says it is waiting
+	resumeName   string        // the key name the refusal names, so the reader can resume
+}
+
+// carryFile is one seat file the one commit touches and its sealed bytes.
+type carryFile struct {
+	name    string
+	content []byte
 }
 
 // carry writes the ciphertext into place on a fresh branch and carries it to
@@ -333,12 +351,19 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 		}
 	}()
 
-	targetFile := filepath.Join(c.storeDir, c.seatFile)
-	if err := atomicWriteFile(targetFile, ciphertext, 0600); err != nil {
-		return "", false, err
+	// The one commit touches every file the carry names: the source seat and, for
+	// a provider key, every route seat (tla/ProviderKey.tla, Seal).
+	files := c.files
+	if len(files) == 0 {
+		files = []carryFile{{name: c.seatFile, content: ciphertext}}
 	}
-	if err := sealGit(c.run, c.storeDir, c.gitPath, "add", c.seatFile); err != nil {
-		return "", false, err
+	for _, f := range files {
+		if err := atomicWriteFile(filepath.Join(c.storeDir, f.name), f.content, 0600); err != nil {
+			return "", false, err
+		}
+		if err := sealGit(c.run, c.storeDir, c.gitPath, "add", f.name); err != nil {
+			return "", false, err
+		}
 	}
 	// The rule that admits the mark, in the same commit, so the gate reviews it with the file.
 	if c.rules != nil {
@@ -375,6 +400,31 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	}
 	if prNum == "" {
 		return "", false, fmt.Errorf("gh pr create did not return a pull request number")
+	}
+
+	// The provider-key add waits for the forge to merge its pull request: the merge
+	// is the forge's action, outside the tool (tla/ProviderKey.tla, Merge).
+	if c.waitForMerge {
+		merged, err := c.waitForTheMerge(prNum, say, nowFn, sleepFn)
+		if err != nil {
+			return prNum, false, err
+		}
+		if !merged {
+			return prNum, false, nil
+		}
+		say("merged; returning the store to its branch and pulling")
+		if err := restore(); err != nil {
+			return prNum, false, err
+		}
+		if err := sealGit(c.run, c.storeDir, c.gitPath, "pull", "--ff-only"); err != nil {
+			return prNum, false, err
+		}
+		if c.check != nil {
+			if err := c.check(); err != nil {
+				return prNum, false, err
+			}
+		}
+		return prNum, true, nil
 	}
 
 	approved := false
@@ -433,6 +483,64 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 		}
 	}
 	return prNum, true, nil
+}
+
+// waitForTheMerge waits for the forge to merge the pull request the verb opened.
+// The wait is bounded (thirty minutes by default), the forge is asked every fifteen
+// seconds and the wait says so once a minute. A pull request still open at the
+// bound leaves the verb refusing with the pull request open and the way to resume
+// (tla/ProviderKey.tla, Merge: the forge's action, outside the tool).
+func (c sealCarry) waitForTheMerge(prNum string, say func(format string, a ...interface{}), nowFn func() time.Time, sleepFn func(time.Duration)) (bool, error) {
+	wait := c.mergeWait
+	if wait <= 0 {
+		wait = 30 * time.Minute
+	}
+	poll := c.mergePoll
+	if poll <= 0 {
+		poll = 15 * time.Second
+	}
+	sayEvery := c.mergeSay
+	if sayEvery <= 0 {
+		sayEvery = time.Minute
+	}
+	started := nowFn()
+	deadline := started.Add(wait)
+	lastSaid := started
+	say("pull request #%s is open; waiting for the merge (up to %s)", prNum, wait)
+	for {
+		view, err := sealGH(c.run, c.ghPath, c.storeDir, c.ghEnv, "pr", "view", prNum, "--json", "state")
+		if err != nil {
+			return false, fmt.Errorf("pull request #%s could not be read: %s; it stays open; run: nova-secrets provider-key resume %s", prNum, oneline.Err(err), c.resumeName)
+		}
+		switch sealPRState(view) {
+		case "MERGED":
+			return true, nil
+		case "CLOSED":
+			return false, fmt.Errorf("pull request #%s was closed without merging; it stays closed; run: nova-secrets provider-key add %s again", prNum, c.resumeName)
+		}
+		if !nowFn().Before(deadline) {
+			return false, fmt.Errorf("pull request #%s was still open after %s, so the key is not yet on main; it stays open; run: nova-secrets provider-key resume %s", prNum, wait, c.resumeName)
+		}
+		if nowFn().Sub(lastSaid) >= sayEvery {
+			say("still waiting for the merge of #%s (%ds)", prNum, int(nowFn().Sub(started).Seconds()))
+			lastSaid = nowFn()
+		}
+		sleepFn(poll)
+	}
+}
+
+// sealPRState is the state a pull request view names: MERGED, OPEN or CLOSED, and
+// "" when the view says neither.
+func sealPRState(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if strings.HasPrefix(trimmed, "{") {
+		var view sealPRView
+		if err := json.Unmarshal([]byte(trimmed), &view); err != nil {
+			return ""
+		}
+		return strings.ToUpper(strings.TrimSpace(view.State))
+	}
+	return strings.ToUpper(trimmed)
 }
 
 // preflight is the two git reads the road opens with: the branch the store stands on and
@@ -731,7 +839,7 @@ const SeatMarkKey = "NOVA_SECRETS_WRITTEN_BY"
 // file and the tool's version. Any other cleartext under the mark key is a plain value,
 // refused by the gate, check and seat inject whatever the rule's unencrypted_regex says
 // (SPEC-SECRETS "gate", the mark).
-var seatMarkValue = regexp.MustCompile(`^(seal|seat add|seat inject) ` + markVersionPattern + `$`)
+var seatMarkValue = regexp.MustCompile(`^(seal|seat add|seat inject|provider-key add) ` + markVersionPattern + `$`)
 
 // markVersionPattern is a release tag or "dev", and nothing a value could ride in: a
 // shape check alone let 256 bits of hex pass as a version, an unbounded suffix did the

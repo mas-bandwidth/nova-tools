@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // storeGit is how every git against the store runs: in the store, and never in the
@@ -22,6 +23,36 @@ import (
 // GIT_DIR, and the helper's nova-secrets would otherwise read that repository).
 func storeGit(storeDir string) gitrun.Options {
 	return gitrun.Options{C: storeDir, OwnRepo: true}
+}
+
+// FetchFirst brings the store's checkout to its remote before a verb reads it: the
+// store is fetched and fast-forwarded, so a checkout that is merely behind is
+// brought forward and never refuses (tla/ProviderKey.tla, Fetch and Pull; the
+// "stalerefuses" witness is the defect). A checkout with local commits cannot
+// fast-forward and is refused, naming them: they are a local edit nobody reviewed.
+//
+// The verb reads the store at HEAD, so this is its first step.
+func FetchFirst(run execCommand, storeDir, gitPath string) error {
+	if err := sealGit(run, storeDir, gitPath, "fetch"); err != nil {
+		return fmt.Errorf("store %s could not be fetched: %s; run: git -C %s fetch", storeDir, oneline.Err(err), storeDir)
+	}
+	if err := sealGit(run, storeDir, gitPath, "merge", "--ff-only", "@{upstream}"); err == nil {
+		return nil
+	}
+	// The fast-forward did not happen: the checkout is behind with local commits on
+	// top, or it has no upstream to compare against. The count tells which.
+	behind, berr := sealGitOutput(run, storeDir, gitPath, "rev-list", "--count", "HEAD..@{upstream}")
+	if berr != nil {
+		return fmt.Errorf("store %s could not be fast-forwarded: %s; its branch needs an upstream tracking ref; run: git -C %s branch --set-upstream-to=<remote>/<branch> <branch>", storeDir, oneline.Err(berr), storeDir)
+	}
+	if strings.TrimSpace(behind) == "0" {
+		return fmt.Errorf("store %s could not be fast-forwarded to its upstream; run: git -C %s status", storeDir, storeDir)
+	}
+	commits, _ := sealGitOutput(run, storeDir, gitPath, "log", "--oneline", "@{upstream}..HEAD")
+	if strings.TrimSpace(commits) == "" {
+		commits = "the local commits are not named by git log"
+	}
+	return fmt.Errorf("store %s has local commits nobody reviewed, so it cannot be fast-forwarded: %s; run: git -C %s log --oneline @{upstream}..HEAD, then push them or reset them", storeDir, commits, storeDir)
 }
 
 // GitRefStatus holds the result of verifying invariant 8 against a git working copy.

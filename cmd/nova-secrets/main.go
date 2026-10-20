@@ -49,6 +49,9 @@ usage:
   nova-secrets seat inject --store <dir> --as <seat> --from <source seat>
                       --only <NAME,...> --key <path> --sops <path> [--no-pr]
                       [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets provider-key add NAME --store <dir> --as <seat> --key <path>
+                      --sops <path> [--provider <word>] [--stdin] [--no-pr]
+                      [--gh <path>] [--git <path>] [--nova-config <path>]
   nova-secrets help
 
 flags:
@@ -89,8 +92,12 @@ flags:
                        seal and seat inject read the store at HEAD, so their store must be
                        committed; a store with no commit yet is refused with the commit
                        that starts it
-  --gh <path>          path to the gh executable (seal, seat inject; default: gh)
-  --git <path>         path to the git executable (seal, seat inject; default: git)
+  --gh <path>          path to the gh executable (seal, seat inject, provider-key add; default: gh)
+  --git <path>         path to the git executable (seal, seat inject, provider-key add; default: git)
+  --provider <word>    the provider whose key_env the NAME must be (provider-key add); the row is
+                        read live from nova-config and nothing is set
+  --nova-config <path> path to the nova-config program the provider rows and the loop rows are read
+                        from (provider-key add; default nova-config)
 
 exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
 gate verdict, one line per failure), 2 could not run or refused (one line naming
@@ -156,17 +163,18 @@ const storeUpstreamHelp = `store prerequisite:
 // verbEffects is each verb's effect (STANDARD §2: an inspection, a local write, a store
 // write or a delivery), printed in its own help above its flags.
 var verbEffects = map[string]string{
-	"exec":        "effect: delivery. Decrypts <store>/<as>.yaml with --key and becomes <cmd>, with only the --only values in its environment; writes nothing, prints no value.",
-	"names":       "effect: inspection. Reads the key names in <store>/<as>.yaml without decrypting it; writes nothing.",
-	"check":       "effect: inspection. Reads the store's files and git state and decrypts this seat's file with --key to prove it opens; writes nothing, prints no value.",
-	"gate":        "effect: inspection. Diffs --base..--head in the store with git and judges every seat rule change; writes nothing, calls no network.",
-	"keygen":      "effect: local write. Makes one age key file at --key (mode 0600) with --age-keygen, never over an existing file, and prints the .sops.yaml rule block for it.",
-	"place":       "effect: delivery. Copies one value over ssh to --machine (on ssh's stdin, never in an argument) and writes a receipt under --receipts naming the sealed bytes it decrypted (file, blob) and the store's HEAD (head), never a hash of the value; it reads the seat file once and decrypts a private copy; --dry-run still decrypts that file to find --secret, prints no value, writes nothing and runs no ssh.",
-	"placed":      "effect: inspection. Lists the receipts under --receipts for --machine, never a hash of a value: per secret its remote path, file (the seat file it was sealed in), blob (the git blob id of the sealed bytes place decrypted), head (the store's HEAD commit when place started, which need not hold that blob) and stamp; writes nothing.",
-	"seal":        "effect: store write. Reads one value at a hidden prompt (or --stdin), seals it into <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run reads no new value, decrypts the existing <as>.yaml (when there is one) to say whether NAME is added or replaced, prints no value and writes nothing.",
-	"seat add":    "effect: local write. Writes the new seat's rule into .sops.yaml and its <as>.yaml, re-sealed from --from; commits nothing.",
-	"seat inject": "effect: store write. Re-seals the --only values from --from into the existing <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run decrypts the --from seat's file to find the names, prints no value and writes nothing.",
-	"version":     "effect: inspection. Prints this build's identity; opens no store, key or program.",
+	"exec":             "effect: delivery. Decrypts <store>/<as>.yaml with --key and becomes <cmd>, with only the --only values in its environment; writes nothing, prints no value.",
+	"names":            "effect: inspection. Reads the key names in <store>/<as>.yaml without decrypting it; writes nothing.",
+	"check":            "effect: inspection. Reads the store's files and git state and decrypts this seat's file with --key to prove it opens; writes nothing, prints no value.",
+	"gate":             "effect: inspection. Diffs --base..--head in the store with git and judges every seat rule change; writes nothing, calls no network.",
+	"keygen":           "effect: local write. Makes one age key file at --key (mode 0600) with --age-keygen, never over an existing file, and prints the .sops.yaml rule block for it.",
+	"place":            "effect: delivery. Copies one value over ssh to --machine (on ssh's stdin, never in an argument) and writes a receipt under --receipts naming the sealed bytes it decrypted (file, blob) and the store's HEAD (head), never a hash of the value; it reads the seat file once and decrypts a private copy; --dry-run still decrypts that file to find --secret, prints no value, writes nothing and runs no ssh.",
+	"placed":           "effect: inspection. Lists the receipts under --receipts for --machine, never a hash of a value: per secret its remote path, file (the seat file it was sealed in), blob (the git blob id of the sealed bytes place decrypted), head (the store's HEAD commit when place started, which need not hold that blob) and stamp; writes nothing.",
+	"seal":             "effect: store write. Reads one value at a hidden prompt (or --stdin), seals it into <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run reads no new value, decrypts the existing <as>.yaml (when there is one) to say whether NAME is added or replaced, prints no value and writes nothing.",
+	"seat add":         "effect: local write. Writes the new seat's rule into .sops.yaml and its <as>.yaml, re-sealed from --from; commits nothing.",
+	"provider-key add": "effect: store write. Reads one provider key's value at a hidden prompt (or --stdin), seals it into the source seat and into every seat that runs a provider route (the seats of nova-config's loop rows, read live) in one commit and one pull request, waits for that pull request's merge and fast-forwards the checkout to the merged main; the value reaches no argv, no environment and no output.",
+	"seat inject":      "effect: store write. Re-seals the --only values from --from into the existing <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run decrypts the --from seat's file to find the names, prints no value and writes nothing.",
+	"version":          "effect: inspection. Prints this build's identity; opens no store, key or program.",
 }
 
 // verbHelp is the lines a verb's help carries beyond its usage and flags: its effect,
@@ -180,7 +188,7 @@ func verbHelp(verb string) string {
 }
 
 // verbs is every verb, in the banner's order, for the refusal of one that is not.
-const verbs = "exec, names, check, gate, keygen, place, placed, seal, seat add, seat inject, version, help"
+const verbs = "exec, names, check, gate, keygen, place, placed, seal, seat add, seat inject, version, provider-key add, help"
 
 // dryRunHelp is the one sentence --dry-run carries on every verb that takes it.
 const dryRunHelp = "prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed"
@@ -338,6 +346,8 @@ func dispatch(args []string, s streams) int {
 		return runSealCLI(args[1:], s)
 	case "seat":
 		return runSeatCLI(args[1:], s)
+	case "provider-key":
+		return runProviderKeyCLI(args[1:], s)
 	default:
 		fmt.Fprintf(s.stderr, "SECRETS REFUSED: unknown verb %s; the verbs are %s; run: nova-secrets help\n", oneline.Quote(verb), verbs)
 		return 2
