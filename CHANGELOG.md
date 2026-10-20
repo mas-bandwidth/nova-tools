@@ -1,5 +1,25 @@
 # nova-tools changelog
 
+## v1.6.11 — 2026-10-20
+
+Cut from c6e29c46d6190eb4047b5a51355f63152b2d271b. 3 pull requests since v1.6.10.
+
+Recovery journeys incomplete, gate waived: tiny surgical tools point release: dotnet inside the Linux job wall (#6025) and the loops play's restart gate under ansible-core 2.19+ (#6032); neither the hook journeys nor spend accounting are in this range
+
+- TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce: not-run (no --journeys evidence)
+- TestNoServerOrNoAnswerIsNoEvidence: not-run (no --journeys evidence)
+- TestTheGateRefusesEveryoneWhileTheServerIsStale: not-run (no --journeys evidence)
+- TestAStaleAnswerIsDownWithAFreshServer: not-run (no --journeys evidence)
+- TestALostAnswerIsNeverToldTwice: not-run (no --journeys evidence)
+
+Spend gate waived: tiny surgical tools point release: dotnet inside the Linux job wall (#6025) and the loops play's restart gate under ansible-core 2.19+ (#6032); neither the hook journeys nor spend accounting are in this range (window 2026-10-20T00:00:00Z..2026-10-20T02:38:49Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #6032 fleet/loops.yml: the restart gate defaults failed/skipped before testing them
+- #6025 swarm: a card's dotnet runs inside the wall (/tmp/.dotnet granted, CLI home in the job) (v1.6.11)
+- #6038 CHANGELOG: the v1.6.10 cut's record; v1.6.11 notes name #6032
+  - members: #6032
+
 ## v1.6.10 — 2026-10-20
 
 Cut from 5bbbcc62f459688c50d133c44e55558be800fef0. 13 pull requests since v1.6.9.
