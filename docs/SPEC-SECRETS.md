@@ -121,6 +121,7 @@ nova-secrets placed --machine <name> [--receipts <dir>]
 nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
 nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
 nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+nova-secrets provider-key add NAME --store <dir> --as <seat> --key <path> --sops <path> [--provider <word>] [--stdin] [--no-pr] [--gh <path>] [--git <path>] [--nova-config <path>]
 nova-secrets help
 ```
 
@@ -761,6 +762,43 @@ equal to `--as`. A refused run leaves the store byte for byte and runs no git.
 **The gate.** An inject pull request changes one existing seat file, still encrypted, its rule
 unchanged: the shape `seal` opens, which the gate approves with no rule of its own —
 `TestGateApprovesAnInjectPullRequest` measures it.
+
+### `provider-key add`
+
+```
+nova-secrets provider-key add MINIMAX_API_KEY --store ~/secrets --as <source seat> \
+  --key ~/.config/nova-secrets/<source seat>.key --sops /opt/homebrew/bin/sops
+SECRETS PROVIDER-KEY ADD OK name=MINIMAX_API_KEY seats=4 pr=#<n> merged
+```
+
+**The one verb.** The model is [tla/ProviderKey.tla](../tla/ProviderKey.tla): the actions are
+`Prompt` (the one hidden read), `Seal` (one commit on one branch into the source seat and every
+route seat), `OpenPR` (the one pull request), `Merge` (the forge's action, which the verb waits
+for), and `Fetch` and `Pull` (every store verb's first step). The invariant is `OnePromptOnePR`:
+one key add makes one prompt and one pull request, whatever the number of seats it reaches. The
+owner's bar (2026-10-20): "I should have to only enter the key and press enter. Rest just
+happens."
+
+**What it does, in order.** Reads the live nova-config rows: the provider rows (a name and its
+`key_env`) and the loop rows (the seat and the argv). A NAME that is no provider row's `key_env`
+is refused before anything is read, naming the rows; with `--provider <word>` the row of that
+provider is the one that holds it, and nothing is set. Fetches the store and fast-forwards it, so
+a checkout that is merely behind never refuses; a checkout with local commits is refused, naming
+them. Reads the value once, at a hidden prompt (or `--stdin`), and it reaches nothing but the
+encrypt child's stdin: never argv, never a file in the clear, never an environment, never an
+output line. Seals it into the source seat and re-seals it into every seat that runs a provider
+route — the seats of the loop rows whose argv runs a `nova-swarm member` or a `nova-swarm reader`,
+de-duplicated, derived from the rows and never from a hand list — in ONE commit on one
+`seal/<seat>-<NAME>-<stamp>` branch and ONE pull request. It then waits for that pull request's
+merge (the forge's action, not the tool's: every fifteen seconds, up to thirty minutes, saying so
+once a minute), pulls the checkout to the merged main, and exits 0 only when the key is on main in
+every seat it touched.
+
+**What it refuses, at exit 2, before anything is written.** A NAME that is no provider row's
+`key_env`; a `--provider` that holds another `key_env`, naming the row to set; a checkout with
+local commits; a source seat the store does not hold; a route seat with no seat file; a name
+outside `[A-Z][A-Z0-9_]*`. A pull request still open at the bound leaves the verb refusing with
+the pull request open and the way to resume.
 
 ### A tool's store login
 

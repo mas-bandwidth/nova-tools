@@ -3210,6 +3210,26 @@ target holds a sealed name the source does not, or when the target's recipients
 cannot be read from its metadata or differ from its rule. It prints no value on
 any line.
 
+### Add a provider key to every seat that runs a route
+
+```sh
+nova-secrets provider-key add MINIMAX_API_KEY --store ./secrets --as ada \
+  --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
+```
+
+One prompt, one commit, one pull request. The value is read once, at a hidden prompt (or with
+`--stdin`), and reaches nothing but the encrypt child's stdin. It is sealed into the source seat
+`--as` names and re-sealed into every seat that runs a provider route — the seats of nova-config's
+loop rows whose argv runs a `nova-swarm member` or a `nova-swarm reader`, read live from
+nova-config and never from a hand list — in one commit on one `seal/` branch and one pull
+request. The verb waits for that pull request's merge and fast-forwards the checkout to the merged
+main, and exits 0 only when the key is on main in every seat it touched.
+
+The name must be the `key_env` of a nova-config provider row: a name that is none is refused
+before anything is read, naming the rows; `--provider <word>` says which row to set, and sets
+nothing. The store is fetched and fast-forwarded first, so a checkout that is merely behind never
+refuses; a checkout with local commits is refused, naming them. It prints no value on any line.
+
 ### Reading a `keygen` receipt
 
 `keygen` prints the `.sops.yaml` rule block first, then a `SECRETS RULE NEXT:` line

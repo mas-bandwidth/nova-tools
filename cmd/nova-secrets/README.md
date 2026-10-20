@@ -66,6 +66,7 @@ The [nova-secrets section of the command reference](../../docs/CLI.md#nova-secre
 - `placed`
 - `seal`
 - `seat`
+- `provider-key`
 - `help`
 
 ## Spec

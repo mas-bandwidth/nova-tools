@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // THE MODEL. tla/ProviderKey.tla is the design this verb carries: Prompt (the one
@@ -435,7 +435,10 @@ func providerKeyRows(path, kind string) ([]map[string]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	args := []string{kind, "list", "--json"}
-	cmd := exec.CommandContext(ctx, path, args...)
+	// The one door a child process goes through: a named deadline and a WaitDelay,
+	// so a killed child cannot hang its caller on a pipe (pkg/subproc).
+	cmd, cancel := subproc.CommandFor(ctx, subproc.BudgetOf(path, args), path, args...)
+	defer cancel()
 	cmd.Env = os.Environ()
 	out, err := cmd.Output()
 	if err != nil {
