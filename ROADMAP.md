@@ -29,7 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
-- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (37)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (38)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -2287,9 +2287,19 @@ Target: v1.9
 
 From: the owner, 2026-10-20 ('Is there something broken with your prioritization? ... Fix this in v1.9.')
 
+### Fix first, then reads: the ladder becomes fix > blocker > critical > reader > high > normal > low
+
+nova-sprint already has reads as a priority level: docs/SPEC-SPRINT.md (nova-sprint), section 'Priority: reads are a card priority (reads-are-a-card-priority-b)', 2026-10-06. Its ladder is blocker > critical > fix > high > reader > normal > low; every read card is reader, or its primary's level when that is higher (sprint.ReadPriority), never set by hand, and the deal goes level by level, reads before work at each level (friendDealByLadder, friendReadsFirst). The owner's 2026-10-20 rulings change the ladder to fix > blocker > critical > reader > high > normal > low: fix is the highest level of all, and reader moves above high, below critical and blocker. Done when: that spec section and the ladder in the code say fix > blocker > critical > reader > high > normal > low; a test shows a ready fix card dealt before blocker work; a test shows a reader read dealt before high work and after critical work; tla/SprintPriority.tla (priority-proven-in-tla) models the whole order.
+
+Why it waits: Fix first: a fix is the card closest to landed. Its work is done and paid for, usually already read, and only a repair stands between it and base. Every minute it waits its head goes stale (re-merge, conflicts, re-deal; on 2026-10-20 rocketnet-example-ack-receipts-debug-assert failed its landing twice on conflict while it waited), its worker's and reader's context goes cold, and any card or red base it blocks holds up everything behind it. Finishing nearly-finished work drains the pipe fastest. Reads next, because reads are the drain: with reader below high, reads queued behind ordinary work and 16 cards sat in review on 2026-10-20 while readers took work. Finished work is worth nothing until it is read and landed, so a read outranks starting new work; when reads queue behind work every new deal adds to review instead of emptying it; a waiting card's head goes stale (re-merges, conflicts, re-deals and bounced finishes, all on 2026-10-20); a late BROKEN verdict arrives after the worker has moved on, so rework pays to rebuild context; the board misleads, working growing while landed stays flat. With fixes and reads first, work in flight stays small, base moves in small steps, and landed per hour tracks finished per hour (Little's law). The spec section carries the full rationale.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('The design was that reads are a priority, and they are above all work, except critical and higher!'; later the same day, 'fix is the highest priority of all')
+
 ### nova-sprint view priority shows, per priority class, what is landed, in flight and blocked
 
-nova-sprint view priority prints one line per priority class (blocker, critical, fix, read, high, normal, low) with its landed, in-flight and blocked counts, and under each blocked card the chain of dependencies that blocks it, each link marked hard, soft or sentinel, lowest-priority blocker first. The coordinator sees in one line that critical work is blocked. Done when: the view on a sprint with a blocked critical card prints the critical line with a nonzero blocked count and the chain with its kinds, tested against a fixed sprint; the counts per class sum to the sprint's open and landed cards, tested.
+nova-sprint view priority prints one line per priority level, in the ladder of docs/SPEC-SPRINT.md (nova-sprint) section 'Priority: reads are a card priority' as changed by fix-first-then-reads (fix, blocker, critical, reader, high, normal, low) with its landed, in-flight and blocked counts, and under each blocked card the chain of dependencies that blocks it, each link marked hard, soft or sentinel, lowest-priority blocker first. The coordinator sees in one line that critical work is blocked. Done when: the view on a sprint with a blocked critical card prints the critical line with a nonzero blocked count and the chain with its kinds, tested against a fixed sprint; the counts per class sum to the sprint's open and landed cards, tested.
 
 Why it waits: On 2026-10-20 no view showed that the critical API cards were blocked, or by what; the coordinator worked out the chain by hand.
 
@@ -2299,7 +2309,7 @@ From: the owner, 2026-10-20 ('Is there something broken with your prioritization
 
 ### TLA+ proves the sprint's prioritization, every class and every dependency kind
 
-tla/SprintPriority.tla models the deal and the lander with every priority class (low, normal, high, read, critical, blocker, fix) and the rules designed around them, the read and fix rules included, and all three dependency kinds: hard (DEPENDS-ON, needs), soft (LAND-AFTER) and sentinel. A Current config models today's rules; a Fixed config adds priority inheritance (priority-inherits-through-needs), the soft-dependency lander rule (land-after-never-stalls-the-lander) and the alarm (priority-inversion-alarm). Done when: TLC on the Current config gives a counterexample that reproduces the 2026-10-20 sentinel inversion, checked against the code by hand; TLC on the Fixed config passes every invariant (no higher-priority ready or merging card waits on lower work without an alarm, the lander never stalls on a lower-priority LAND-AFTER) and the liveness that a critical card's blockers deal; every priority class and the read and fix rules are modelled; the code change that implements the fix cites the model.
+tla/SprintPriority.tla models the deal and the lander with every priority level in the ladder of docs/SPEC-SPRINT.md (nova-sprint) section 'Priority: reads are a card priority', as changed by fix-first-then-reads (fix > blocker > critical > reader > high > normal > low) and the rules designed around them, the read and fix rules included, and all three dependency kinds: hard (DEPENDS-ON, needs), soft (LAND-AFTER) and sentinel. A Current config models today's rules; a Fixed config adds priority inheritance (priority-inherits-through-needs), the soft-dependency lander rule (land-after-never-stalls-the-lander) and the alarm (priority-inversion-alarm). Done when: TLC on the Current config gives a counterexample that reproduces the 2026-10-20 sentinel inversion, checked against the code by hand; TLC on the Fixed config passes every invariant (no higher-priority ready or merging card waits on lower work without an alarm, the lander never stalls on a lower-priority LAND-AFTER) and the liveness that a critical card's blockers deal; every priority level and the read and fix rules are modelled, in the order of fix-first-then-reads; the code change that implements the fix cites the model.
 
 Why it waits: On 2026-10-20 prioritization did not work and nothing showed it; the owner wants a proof, not a belief, that it works.
 
