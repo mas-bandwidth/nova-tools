@@ -69,7 +69,7 @@ func TestAStaleRevertVerdictIsSetAsideWhenCIsLatestAttemptIsGreen(t *testing.T) 
 // A revert-on-red verdict stays live when ci's latest attempt is red, and when
 // ci is green but completed before the revert run was created: only a later
 // green attempt replaces the verdict (docs/SPEC-RELEASE.md section 19).
-func TestALiveRevertVerdictStillRefuses(t *testing.T) {
+func TestALiveRevertVerdictIsNotStaleAndStillRefuses(t *testing.T) {
 	t.Parallel()
 	checks := strings.Join([]string{
 		checkJSON("revert-on-red", 300, "completed", "failure"),

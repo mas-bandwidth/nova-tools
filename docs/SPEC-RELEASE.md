@@ -807,7 +807,7 @@ flag is the cut's and no other verb's, and certification is not waived by it: `-
 `TestACancelledCertificationSuiteSupersededByAGreenOneIsSetAside`, `TestAFailedSuiteIsNeverSetAside`,
 `TestACancelledSuiteWithNoGreenSuccessorStillRefuses`, `TestAGreenSuccessorMissingAJobDoesNotSupersede`,
 `TestAnEarlierGreenSuiteDoesNotSupersedeALaterCancelledOne`,
-`TestAStaleRevertVerdictIsSetAsideWhenCIsLatestAttemptIsGreen`, `TestALiveRevertVerdictStillRefuses`,
+`TestAStaleRevertVerdictIsSetAsideWhenCIsLatestAttemptIsGreen`, `TestALiveRevertVerdictIsNotStaleAndStillRefuses`,
 `TestAnEarlierAttemptIsSupersededByTheLatestGreenAttempt`, `TestAnotherWorkflowsFailureIsNeverSetAside`,
 `TestTheStaleSetAsideIsInTheAnnotation`.*
 
