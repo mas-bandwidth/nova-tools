@@ -96,6 +96,12 @@ func TestIdleWatchNamesAStoppedTree(t *testing.T) {
 	require.Contains(t, line, "pid=99", "the CARD IDLE line names the stopped pid")
 	require.Contains(t, line, "cmd=leaks", "the CARD IDLE line names the stopped command")
 	require.NotContains(t, line, "WALL", "a stopped tree is not a wall refusal")
+	// The NATIVE line carries the cause as one safe token, tree-stopped:<pid>:<cmd>,
+	// because a cause field holds no blanks; the CARD IDLE line spells it back out.
+	tokenLine := CardIdleLine("c", IdleEnd{Idle: 300 * time.Second, Cause: "tree-stopped:99:leaks"})
+	require.Contains(t, tokenLine, "cause=tree-stopped", "the token's cause is the cause")
+	require.Contains(t, tokenLine, "pid=99", "the token's pid is named")
+	require.Contains(t, tokenLine, "cmd=leaks", "the token's command is named")
 }
 
 // TestIdleWatchStoppedTreeNeedsTheWholeIdleWindow: a stop shorter than the window changes

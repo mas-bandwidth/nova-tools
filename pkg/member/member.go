@@ -288,6 +288,27 @@ const (
 	FinishReaped Finish = "reaped" // never reported: the claim moved, or the card left the queue
 )
 
+// idleCauseWords spells an idle reap's cause for a finish's reason. The NATIVE line
+// carries a stopped tree's cause as one safe token, tree-stopped:<pid>:<cmd> (a cause=
+// field holds no blanks), and the reason names the process in words; every other cause is
+// already its own words.
+func idleCauseWords(cause string) string {
+	const stopped = "tree-stopped"
+	rest, ok := strings.CutPrefix(cause, stopped+":")
+	if !ok {
+		return cause
+	}
+	pidText, cmd, ok := strings.Cut(rest, ":")
+	if !ok {
+		return cause
+	}
+	pid, err := strconv.Atoi(pidText)
+	if err != nil || pid <= 0 {
+		return cause
+	}
+	return fmt.Sprintf("%s pid=%d cmd=%s", stopped, pid, cmd)
+}
+
 // Judge is a work card's finish from its result and its push, in one place
 // (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, Judge): ok only
 // when the result has the shape, its verdict is ok, and the member pushed a
@@ -359,7 +380,7 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// the idle watch ended the run because its environment blocked it (a harness that
 		// never started, a stopped tree): the cause is named after the no-result kind, so
 		// no attempt is spent
-		return FinishFailed, EndNoResult + ": " + r.EndCause + ": no RESULT.md shape"
+		return FinishFailed, EndNoResult + ": " + idleCauseWords(r.EndCause) + ": no RESULT.md shape"
 	case !r.Shaped:
 		return FinishFailed, "no RESULT.md shape"
 	case r.Step != "":

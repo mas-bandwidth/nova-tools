@@ -295,7 +295,7 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure: no work came
   back, so there is nothing to judge (the owner, 2026-10-01: "that's fine with me."). An
   idle-reap that left no RESULT.md is the same kind whatever its cause, its reason naming the
-  cause when there is one (`no result: tree-stopped: no RESULT.md shape`); an idle-reap that
+  cause when there is one, naming the stopped process (`no result: tree-stopped pid=<n> cmd=<c>: no RESULT.md shape`); an idle-reap that
   left a shaped RESULT.md is judged like any other run. A run
   that ends under two minutes having written only its first RESULT.md — verdict `not-done`,
   nothing committed and no gate — is the same kind, with the reason

@@ -1687,6 +1687,11 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 			}
 		}
 	}
+	// THE STOPPED PROCESS TRAVELS INSIDE THE CAUSE TOKEN: a cause= field holds no blanks,
+	// so the pid and command ride with it to the member's read of the NATIVE line.
+	if s.res.idled && s.res.idleEnd.Cause == swarm.IdleCauseTreeStopped {
+		s.res.idleEnd.Cause = swarm.StoppedCauseToken(s.res.idleEnd.StoppedPID, s.res.idleEnd.StoppedCmd)
+	}
 	if !harnessFault && !s.res.lost && s.res.idled && !idleCredit {
 		s.res.end = swarm.EndWall
 		reason := fmt.Sprintf("the card's log and its process tree were both still for %.0fs; the run ended it rather than holding the slot to its deadline", s.res.idleEnd.Idle.Seconds())

@@ -18,6 +18,7 @@ package swarm
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,6 +123,32 @@ const IdleCauseNeverStarted = "harness-never-started"
 // stall and the run is not the card's.
 const IdleCauseTreeStopped = "tree-stopped"
 
+// StoppedCauseToken is the one safe token an idle reap's cause carries on the NATIVE line
+// when a stopped tree ended it: the cause, the stopped pid and its command joined by
+// colons. A cause= field holds no blanks, so the pid and command travel inside the token;
+// CardIdleLine and the member's Judge split them back out, and the token is how they reach
+// the finish's reason.
+func StoppedCauseToken(pid int, cmd string) string {
+	return fmt.Sprintf("%s:%d:%s", IdleCauseTreeStopped, pid, cmd)
+}
+
+// parseStoppedCauseToken reads a token StoppedCauseToken wrote.
+func parseStoppedCauseToken(token string) (int, string, bool) {
+	rest, ok := strings.CutPrefix(token, IdleCauseTreeStopped+":")
+	if !ok {
+		return 0, "", false
+	}
+	pidText, cmd, ok := strings.Cut(rest, ":")
+	if !ok {
+		return 0, "", false
+	}
+	pid, err := strconv.Atoi(pidText)
+	if err != nil || pid <= 0 {
+		return 0, "", false
+	}
+	return pid, cmd, true
+}
+
 // WallRefusal is this end's refusal as a wall death, and whether it is one: it is one
 // only when the refusal NAMES a path (docs/roadmap.sexp, swarm-idle-reap-verdict). A
 // refusal that names nothing -- a `SANDBOX REFUSED` line with no path in it -- is no
@@ -144,13 +171,19 @@ func (e IdleEnd) WallRefusal() (WallRefusal, bool) {
 // reported `WALL task=... path=/var/db/xcode_select_link`, and a shift went looking at the
 // wall for it.
 func CardIdleLine(task string, e IdleEnd) string {
+	cause, pid, cmd := e.Cause, e.StoppedPID, e.StoppedCmd
+	// A cause that arrived from the NATIVE line carries the stopped process inside its
+	// one token; the line spells the cause and the process apart again.
+	if tokenPID, tokenCmd, ok := parseStoppedCauseToken(cause); ok {
+		cause, pid, cmd = IdleCauseTreeStopped, tokenPID, tokenCmd
+	}
 	line := fmt.Sprintf("CARD IDLE task=%s step=%s idle=%.0fs",
 		oneline.Field(task), oneline.Field(dashOr(e.Step)), e.Idle.Seconds())
-	if e.Cause != "" {
-		line += " cause=" + oneline.Field(e.Cause)
+	if cause != "" {
+		line += " cause=" + oneline.Field(cause)
 	}
-	if e.Cause == IdleCauseTreeStopped {
-		line += fmt.Sprintf(" pid=%d cmd=%s", e.StoppedPID, oneline.Field(dashOr(e.StoppedCmd)))
+	if cause == IdleCauseTreeStopped {
+		line += fmt.Sprintf(" pid=%d cmd=%s", pid, oneline.Field(dashOr(cmd)))
 	}
 	return line
 }
@@ -252,6 +285,8 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 			if stopped, ok := s.(stoppedSnapshot); ok {
 				if pid, cmd, isStopped := stopped.TreeStopped(w.Pid); isStopped {
 					if stoppedSince.IsZero() {
+						// The stop is measured from the last reading that saw the tree
+						// running, and from the still-clock's start when no reading has.
 						stoppedSince = lastAt
 						if stoppedSince.IsZero() {
 							stoppedSince = lastGrow
@@ -259,7 +294,7 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 					}
 					stoppedPID, stoppedCmd = pid, cmd
 				} else {
-					stoppedSince, stoppedPID, stoppedCmd = at, 0, ""
+					stoppedSince, stoppedPID, stoppedCmd = time.Time{}, 0, ""
 				}
 			}
 			got, ok := s.TreeCPU(w.Pid)

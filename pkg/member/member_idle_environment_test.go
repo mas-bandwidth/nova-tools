@@ -23,10 +23,10 @@ func TestIdleReapWithNoResultSpendsNoAttempt(t *testing.T) {
 func TestIdleReapStoppedTreeNamesTheEnvironment(t *testing.T) {
 	t.Parallel()
 
-	fin, why := Judge(Result{End: EndIdleReap, EndCause: "tree-stopped", Ran: true}, Push{None: "the child committed nothing"})
+	fin, why := Judge(Result{End: EndIdleReap, EndCause: "tree-stopped:99:leaks", Ran: true}, Push{None: "the child committed nothing"})
 	require.Equal(t, FinishFailed, fin)
-	require.Equal(t, EndNoResult+": tree-stopped: no RESULT.md shape", why,
-		"the no-result finish names the stopped tree that ended the run")
+	require.Equal(t, EndNoResult+": tree-stopped pid=99 cmd=leaks: no RESULT.md shape", why,
+		"the no-result finish names the stopped process the environment left")
 }
 
 func TestIdleReapWithAShapedResultStaysTheCards(t *testing.T) {
