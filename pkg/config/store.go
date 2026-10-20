@@ -160,22 +160,60 @@ func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 		}
 	}
 	for _, f := range k.Fields {
-		if f.Type != TypeRef || (row.Fields[f.Name] == "" && !f.Required) {
+		checkRef := f.Type == TypeRef && (row.Fields[f.Name] != "" || f.Required)
+		listRef := (f.Type == TypeSeq || f.Type == TypeNames) && f.Ref != ""
+		if !checkRef && !listRef {
 			continue
 		}
-		if _, found, err := st.Get(ctx, f.Ref, row.Fields[f.Name]); err != nil {
-			return err
-		} else if !found {
-			refusal := &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--%s %s names no %s row", f.Name, row.Fields[f.Name], f.Ref)}
-			if f.Ref == KindProvider {
-				refusal.MissingRefKind, refusal.MissingRefName = f.Ref, row.Fields[f.Name]
-				refusal.Remedy = fmt.Sprintf("nova-config provider add %s --billing metered --funded false", row.Fields[f.Name])
+		names := []string{row.Fields[f.Name]}
+		if listRef {
+			names = strings.Split(row.Fields[f.Name], ",")
+		}
+		for _, name := range names {
+			if name = strings.TrimSpace(name); name == "" {
+				continue
 			}
-			return refusal
+			if _, found, err := st.Get(ctx, f.Ref, name); err != nil {
+				return err
+			} else if !found {
+				refusal := &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--%s %s names no %s row", f.Name, name, f.Ref)}
+				if f.Ref == KindProvider {
+					refusal.MissingRefKind, refusal.MissingRefName = f.Ref, name
+					refusal.Remedy = fmt.Sprintf("nova-config provider add %s --billing metered --funded false", name)
+				}
+				return refusal
+			}
 		}
 	}
 	if k.Name == KindTier {
 		return checkTierRoutes(ctx, st, row)
+	}
+	if k.Name == KindMachine {
+		return checkMachineGates(ctx, st, row)
+	}
+	return nil
+}
+
+// checkMachineGates refuses a machine's exclusive tags (gates_only) that are
+// neither one of its own tags nor a probed tag the member proves on its
+// heartbeat (tla/Tags.tla, ExclusiveTags; docs/SPEC-CONFIG.md, "The tag
+// registry").
+func checkMachineGates(ctx context.Context, st Store, row Row) error {
+	tags := strings.Split(row.Fields["tags"], ",")
+	for _, word := range strings.Split(row.Fields["gates_only"], ",") {
+		if word = strings.TrimSpace(word); word == "" || slices.Contains(tags, word) {
+			continue
+		}
+		t, found, err := st.Get(ctx, KindTag, word)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--gates_only %s names no tag row", word)}
+		}
+		if t.Fields["source"] != "probed" {
+			return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--gates_only %s is not one of machine %s's tags and is not a probed tag; declare it on --tags or make its tag probed", word, row.Name)}
+		}
 	}
 	return nil
 }
@@ -211,7 +249,7 @@ func checkReferenced(ctx context.Context, st Store, kind, name string) error {
 	}
 	for _, other := range Kinds {
 		for _, f := range other.Fields {
-			if (f.Type != TypeRef && f.Type != TypeSeq) || f.Ref != kind {
+			if (f.Type != TypeRef && f.Type != TypeSeq && f.Type != TypeNames) || f.Ref != kind {
 				continue
 			}
 			rows, err := st.List(ctx, other.Name)
@@ -220,12 +258,13 @@ func checkReferenced(ctx context.Context, st Store, kind, name string) error {
 			}
 			var names []string
 			for _, r := range rows {
-				// a ref names one row; a seq (a tier's routes) is a comma list of them
-				if r.Fields[f.Name] == name || (f.Type == TypeSeq && slices.Contains(strings.Split(r.Fields[f.Name], ","), name)) {
+				// a ref names one row; a seq (a tier's routes) and a names
+				// list (a machine's exclusive tags) are comma lists
+				if r.Fields[f.Name] == name || ((f.Type == TypeSeq || f.Type == TypeNames) && slices.Contains(strings.Split(r.Fields[f.Name], ","), name)) {
 					names = append(names, r.Name)
 				}
 			}
-			if len(names) > 0 && f.Type == TypeSeq {
+			if len(names) > 0 && (f.Type == TypeSeq || f.Type == TypeNames) {
 				return &RefusedError{Err: ErrReferenced, Detail: fmt.Sprintf("%s %s is in the --%s of %s %s; set it out of the list first (%s set %s --%s <the rest>)", kind, name, f.Name, other.Name, strings.Join(names, ","), other.Name, names[0], f.Name)}
 			}
 			if len(names) > 0 && other.Singleton {
@@ -322,6 +361,13 @@ func NewMem() *Mem {
 			row := Row{Name: name, Fields: map[string]string{}, CreatedAt: m.stamp(), UpdatedAt: m.stamp()}
 			for _, f := range k.Fields {
 				row.Fields[f.Name] = f.Default
+			}
+			for _, sr := range k.SeedRows {
+				if sr.Name == name {
+					for f, v := range sr.Fields {
+						row.Fields[f] = v
+					}
+				}
 			}
 			if m.rows[k.Name] == nil {
 				m.rows[k.Name] = map[string]Row{}

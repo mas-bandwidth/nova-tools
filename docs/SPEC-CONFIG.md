@@ -139,6 +139,8 @@ nothing invented.
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `roles` | list | (`bench`) | inventory membership: `bench`, `services`, `coordination`, `runner`; empty is an intentional no-role list | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
+| `tags` | seq of tag names | (empty) | the tags the machine row declares; the member also proves the registry's probed tags on its heartbeat. Postgres-only: the sprint reads it live and no copy exists | none |
+| `gates_only` | names of tags | (empty) | the machine's exclusive tags: the tags that alone bring work to the sprint's member on it; a word must be one of the row's `tags` or a probed tag. Postgres-only: the sprint reads it live and no copy exists | none |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
 
@@ -529,6 +531,69 @@ another tier (the store's check beside the kind's), and `remove` refuses
 both rows: the deal reads them. A route disabled or removed after the array
 is set is skipped by the deal. `tier list` prints the arrays.
 
+### The tag registry
+
+A **tag** (`config.tags`, the kind `tag`) is a word a card may require and a
+machine may carry. It is data, not a compiled list: a new tag is
+`nova-config tag add` + `nova-config apply`, never a nova-sprint build (the
+owner, 2026-10-19: "Make it so you can add new tags without a new nova-sprint
+build"; "a new tag for some new tool you install with ansible"). `tla/Tags.tla`
+is the model.
+
+A machine's tags have exactly two sources:
+
+- the tags its nova-config machine row declares on `tags`, and
+- the tags its sprint member **proves** on its heartbeat by running the
+  registry's probes.
+
+A probed tag wins over a declared one when they disagree. A card names its
+required tags on one `TAGS:` line; `GATE-NEEDS` is the compatibility alias
+(nova-sprint's `GateNeeds`). A tag's `terms` are the words a brief may use for
+it, replacing the compiled toolchain terms. A machine's exclusive tags
+(today's `gates_only`) take it out of every card that names none of them. One
+eligibility rule serves every deal, move, take and read.
+
+The sprint server keeps **no copy** of a tag or of a machine's tags: it reads
+them from Postgres on the tick's inventory read (the same live read that
+builds the inventory) and the declared tags with the live beat. This is the
+owner's one-source rule: "the tags are stored in only one place. nova-config.
+*or* come from the heartbeat the machine gives." The Redis writer for `tag`
+writes nothing, and a machine's `tags` and `gates_only` are `Local` fields
+that apply never sends to Redis; `tag` is `PostgresOnly`, so apply plans
+nothing for it.
+
+| field | type | required | meaning |
+| --- | --- | --- | --- |
+| `description` | text | | what the tag means, one sentence |
+| `source` | enum | yes | `declared` (a machine row names it) or `probed` (the member proves it) |
+| `terms` | names | | words a brief maps to this tag; empty maps none |
+| `probe` | enum | for a probed tag | one closed shape: `path`, `command`, `limit` or `builtin` |
+| `probe_os` | list | | comma list of `linux`, `darwin`, `windows`; empty is every OS |
+| `probe_path` | text | | `path`: a file or directory that must exist; `~` is the member user's home |
+| `probe_argv` | text | | `command`: the argv, space separated, run with no shell (`jq --version`) |
+| `probe_match` | text | | `command`: a Go regexp with at most one group, the version |
+| `probe_min` | text | | `command`: the least version, dotted numbers; `limit`: the least integer |
+| `probe_limit` | enum | | `limit`: the resource limit, `nofile` |
+| `builtin` | enum | | `builtin`: a fact the member measures itself: `os`, `isa`, `landlock`, `kvm` |
+
+`tag add` refuses a probed row with no probe, a probe field that does not
+belong to its shape, a `probe_match` that does not compile or has two groups,
+a `probe_min` that is not dotted numbers, and a declared row carrying probe
+fields. A machine row naming an unknown tag is refused at add and set;
+`tag remove` of a tag a machine names is refused naming the machines. A tag
+names a fact word (letters, digits, `_` and `-`); the comparison suffix form
+`<name>>=<n>` is refused, because thresholds live in the probe (the tag is
+`maxfiles-65536`).
+
+Migration 0048 seeds the rows of the compiled facts so adoption changes
+nothing: `linux`, `darwin`, `windows` (builtin `os`); `amd64`, `arm64`
+(builtin `isa`); `landlock`, `kvm` (builtin); `tla` (path
+`/opt/tla/tla2tools.jar`); `go`, `dotnet`, `java` (command, match any);
+`avx2`, `avx512f` and `xdp` declared, because `machineFacts` does not measure
+them today. Migration 0049 adds `config.machines.tags`. A card no up machine
+can take is one judgment with a deadline that resolves itself when a machine
+gains the tag.
+
 ## The schema
 
 Migrations are numbered SQL files compiled into the binary
@@ -756,7 +821,9 @@ each machine running its ceiling check before its write transaction).
 **machine:** `ns_capacity_machine(m, slots)` for the ceiling (never
 refused because of friends: no machine caps a friend; cores and memory are never declared, so the call carries none and
 derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
-roles, width, tla, note, rev, at; the set `machines`. slots is read back from the ceiling, the key the
+roles, width, tla, note, rev, at; the set `machines`. The row's `tags` and
+`gates_only` are Postgres-only and are never written to Redis: the sprint
+reads them live (docs/SPEC-CONFIG.md, "The tag registry"). slots is read back from the ceiling, the key the
 runtime guards on, so a ceiling moved by hand is put back by the next apply.
 Remove: refused while any friend or bench desired hash names the machine;
 else `machine:<m>`, `machine:<m>:ceiling` and `machine:<m>:budget` are
@@ -819,6 +886,10 @@ the hash lacks or holds out of shape reads back as the type's zero, so a
 hash changed by hand is put back by the next apply. Remove: the hash and the
 name in `loops` go in one transaction, with a `config-remove` receipt in
 `cap:log`.
+
+**tag:** nothing. The tag registry is `PostgresOnly`: apply plans no op and
+stamps nothing, because the registry has no Redis copy (docs/SPEC-CONFIG.md,
+"The tag registry", the one-source rule).
 
 **provider:** the hash `provider:<name>` with name, billing, funded,
 balance_usd, balance_as_of, console_url, note, rev and at; the set `providers`.

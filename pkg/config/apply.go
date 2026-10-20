@@ -70,6 +70,9 @@ func Plan(k *Kind, rows []Row, views map[string]View) []Op {
 		}
 		var changed []string
 		for _, f := range k.Fields {
+			if f.Local {
+				continue
+			}
 			if row.Fields[f.Name] != prev[f.Name] {
 				changed = append(changed, f.Name)
 			}
@@ -307,6 +310,12 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 			return Result{}, err
 		}
 	}
+	// A Postgres-only kind (the tag registry) has no Redis copy at all: it
+	// is read live from Postgres, so apply writes and stamps nothing
+	// (docs/SPEC-CONFIG.md, "The tag registry", the one-source rule).
+	if k.PostgresOnly {
+		return Result{Kind: kind, Rev: rev, Check: check}, nil
+	}
 	views, redisRev, err := ap.Read(ctx, kind)
 	if err != nil {
 		return Result{}, err
@@ -382,7 +391,7 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 		}
 		switch op.Op {
 		case OpAdd, OpSet:
-			err = ap.Write(ctx, kind, row, op.Prev, actor, idem)
+			err = ap.Write(ctx, kind, redisRow(k, row), op.Prev, actor, idem)
 		case OpRemove:
 			err = ap.Remove(ctx, kind, op.Name, actor, idem)
 		}
@@ -412,6 +421,26 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 		res.Stamped = true
 	}
 	return res, nil
+}
+
+// redisRow is the row a Redis writer is given: a Local field (a machine's
+// tags and gates_only, the tag registry) is Postgres-only and never sent to
+// Redis, so no second copy exists (docs/SPEC-CONFIG.md, "The tag registry").
+func redisRow(k *Kind, row Row) Row {
+	var out Row
+	for _, f := range k.Fields {
+		if !f.Local {
+			continue
+		}
+		if out.Fields == nil {
+			out = row.Clone()
+		}
+		delete(out.Fields, f.Name)
+	}
+	if out.Fields == nil {
+		return row
+	}
+	return out
 }
 
 // knownRefusal is what --check already knows would be refused for one op:
