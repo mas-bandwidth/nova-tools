@@ -29,7 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
-- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (19)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (20)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -2126,3 +2126,13 @@ Why it waits: On 2026-10-20 a card dealt to a friend's row but not yet taken cou
 Target: v1.9
 
 From: the owner, 2026-10-20 ('This is a bug. Fix this in v1.9.')
+
+### a brief edit that changes only NOTE, CARRY or ROUTE lines never bounces a finish
+
+A brief edit that changes only NOTE, CARRY or ROUTE lines, or that only widens PATHS, never invalidates a running attempt's finish; only a change to the task (DONE-WHEN, THE TASK, a PATHS narrowing, the tier) does. When a finish is refused as made under the earlier brief, the sprint records the finished head as CARRY on the next attempt automatically and tells the next holder. --replace-in-flight takes an optional target friend, and moves the card to that friend instead of re-dealing it to the same row. Done when: one unit test per rule, each failing before the fix: a NOTE, CARRY or ROUTE edit or a PATHS widening leaves the finish valid; a DONE-WHEN, THE TASK, PATHS-narrowing or tier change still bounces it; a bounced finish's head appears as CARRY on the next attempt with a message to the next holder; --replace-in-flight with a target friend lands the card on that friend's row.
+
+Why it waits: On 2026-10-20 the coordinator appended a one-line NOTE, for routing only, to the briefs of 10 working cards. Each card's next finish was then refused as 'brief replaced: the head of attempt N was made under the earlier brief', though the work was complete and gated; the card bounced back to ready and was re-dealt, so a full attempt was spent to land the same head. It happened to two cards in 10 minutes (one with a 120/120 gate, one with 8 green compiler builds), and the coordinator re-added each finished head by hand as CARRY. --replace-in-flight, used to move cards to another friend, re-dealt them to the same row instead.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 (fixed by hand during the rocketnet v1.0 sprint)
