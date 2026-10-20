@@ -1907,6 +1907,87 @@ Privacy: prompt bodies are logged only on the proxy machine, with a retention bo
 Done when: the fleet friends' API traffic flows through it; per-card tokens and cache-hit rate appear on the dashboard; the real provider keys are on the proxy host only; and turning the proxy off falls back to direct routing, which is tested."
    :why "Work starts after rocketnet v1.0.0 and after the v1.7 line; it does not join v1.7."
    :origin "the owner, 2026-10-19 (after an article on running your own LLM proxy: one endpoint you control, per-key, per-model and per-client logs, cache-miss diagnosis, virtual keys, fast provider switching)")
+  ; The owner, 2026-10-20: 'I want you to think about the problems we are fixing right now manually, and add solutions for them to v1.9 roadmap.' Each item below is a problem the coordinator fixed by hand on 2026-10-20 during the rocketnet v1.0 sprint.
+  (item "friend-progress-not-held-cards" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "The dashboard counts a friend's cards in progress, not the cards it holds"
+   :text "Each working job sends progress heartbeats: a pushed commit, a gate run, or an explicit progress verb. The dashboard shows a friend's progressing cards and its held cards separately, with the age of each card's last progress. A held card with no progress for N minutes raises a judgment, and after M minutes it is returned automatically, its pushed head recorded as CARRY. N and M are sprint settings. Done when: a held card with no progress raises the judgment at N and is returned at M, tested with time as an argument; the dashboard shows held and progressing as two numbers; TLA+ for the held, progressing, stalled and returned states."
+   :why "The dashboard's working count is the cards a friend holds, not the cards being worked. On 2026-10-20 Stella held 16 cards for more than 25 minutes with no progress, and the coordinator reported her as busy."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "friend-down-returns-its-cards" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "A friend whose hook misses K challenges is marked down and its working cards return"
+   :text "After K missed hook challenges in a row the friend is marked down, and every card it holds in working is returned to ready with its pushed head recorded as CARRY on the next attempt. A friend that answers again is marked up and takes new cards; it does not get the returned ones back by default. K is a sprint setting. Done when: a friend that misses K challenges is down and holds no working cards, each returned card carries its pushed head, tested with time as an argument; TLA+ for the hook state and the return, with a reversed witness where a down friend still holds a card."
+   :why "On 2026-10-20 Emma's hook dropped (state live, unhooked) while she held 16 working cards, and nothing returned them; the coordinator moved them by hand."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "move-running-attempt-to-head-holder" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "A working attempt can be moved to the friend who holds a better head"
+   :text "rework --to <friend> --carry-head <sha> works while the card is working: it withdraws the running attempt (the old worker is told to stop, see redeal-stops-old-worker) and deals the next attempt to the named friend with that head as CARRY. A plain withdraw of a working attempt is the same verb without --to. Done when: rework --to and --carry-head succeed on a working card, the old attempt is stopped and the new attempt's base is the carried head; refused for anyone but the coordinator; TLA+ for the working-to-working move."
+   :why "On 2026-10-20 the receive card's w1 reached its 2h deadline and was auto-redealt to a fleet member (intel), which restarted from base while Emma held a finished head (3f87852d). No verb could pull the fleet attempt back or point it at that head."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "friend-give-any-ready-card" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "friend give works on any ready card, whoever held its last attempt"
+   :text "friend give deals any ready card to the named friend, whether its last attempt was on the fleet, on another friend, or never dealt. The friend take-back bookkeeping is not a precondition of a give. Done when: friend give of a ready card whose last attempt was on the fleet succeeds, with a test; the refusal 'was never taken back from friend ... taken from no friend' no longer exists for a ready card."
+   :why "On 2026-10-20 friend give refused a ready card whose last attempt was on the fleet ('was never taken back from friend ... taken from no friend'). Two critical API cards could not be routed to friends with free slots."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "stale-finish-carries-forward" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "A finish into a stale generation is carried to the live attempt, never thrown away"
+   :text "A finish whose generation is not the live one records its pushed head and report as CARRY on the live attempt, notifies the live holder that a carried head is there, and tells the old worker to stop. The finish still exits non-zero to the old worker, naming the live generation. Done when: a stale finish leaves its head and report on the live attempt and a notice in the live holder's channel, tested; TLA+ for finish against redeal, with a reversed witness where a stale finish's head is lost."
+   :why "On 2026-10-20 workers finished into a generation that had already been redealt ('generation 1 is not the live one (2)'). Their finished, pushed heads were thrown away and the coordinator forwarded them by hand: socket-test-binaries 168c9d3f, platform-nits 6a1c6a05, send-failures b5695b37."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "redeal-stops-old-worker" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "A redeal tells the old holder to stop"
+   :text "When an attempt is redealt, by deadline, rework or return, the sprint pushes a stop notice to the old holder's channel (the friend's hook, or the fleet member's job) naming the card and the live generation. A worker that gets it stops and finishes nothing further. Done when: a redeal produces exactly one stop notice to the old holder, tested; a fleet job that receives it exits; TLA+ for redeal with the notice."
+   :why "On 2026-10-20, after redeals, old workers kept running for hours on dead attempts, duplicating the new workers and loading the benches."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "late-read-verdict-kept" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "A read verdict that arrives after its read card is retired is kept as a finding"
+   :text "A read that finishes after its read card was retired (by rework, brief edit or primary change) is recorded as a finding on the primary card, and a BROKEN finding is carried into the next attempt's brief as a FIX item. It is never dropped. Done when: a late BROKEN verdict appears on the card and in the next attempt's brief, tested; a late OK verdict is recorded and changes nothing."
+   :why "On 2026-10-20 reads that finished after their read card was retired ('retired ... by rework/brief/primary') lost real BROKEN findings: the keyed-filter conformance pin, a tla-ring CASES row, Windows dual_stack=false making 34 functional FAILs, and the create-status NULL macro."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "take-loop-epoch-follows-sprint" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "A take loop follows the sprint's current epoch, and a loop's refusal is a judgment"
+   :text "take --epoch current takes at whatever the sprint's epoch is now, and the coordinator's take loop uses it. Any loop whose verb is refused raises a judgment naming the loop and the refusal, rather than retrying silently. Done when: after an epoch change, a take loop with --epoch current takes the next card, tested; a refused loop step raises one judgment, tested."
+   :why "On 2026-10-20 the sprint epoch changed from 21 to 0. The coordinator's take loop kept passing epoch 21, was refused silently, and 12 cards sat untaken on its row."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "finish-machine-checks" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "finish runs the machine-checkable CHECKLIST.md items and refuses a LAND that fails one"
+   :text "finish --head <sha> runs, before it records a LAND: the pushed remote SHA equals the head; the base tip is merged into the head and fresh; every changed file is in PATHS or listed under PATHS-PROPOSED; the repository's declared fast CI checks (conformance and TLA jobs included) pass at the head; the diff is not empty. A failure refuses the LAND and names the item, so the worker fixes it before a reader is spent. Done when: each item has a refusal test; a LAND that passes them all is unchanged."
+   :why "On 2026-10-20 friends' ok% was low (Emma 23%, Johnny 0/12). Reads kept breaking LANDs for machine-checkable reasons: base not merged at finish, gates not run at the finished head, the conformance or TLA CI jobs red, files outside PATHS without PATHS-PROPOSED, a no-op tree."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "attribution-per-friend-model" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "The card ATTRIBUTION rule takes the trailer from the friend's model"
+   :text "The ATTRIBUTION rule in a card brief takes the Co-Authored-By trailer from the model of the friend or fleet route that works the card, as nova-config records it, and the by-line from the worker. Readers check the trailer against that, never against a fixed Claude trailer. Done when: a brief dealt to a non-Claude friend names that friend's model's trailer, tested; the read brief checks the trailer the card names."
+   :why "The rule hardcodes a Claude Co-Authored-By trailer. On 2026-10-20 readers broke correct work by Johnny (Grok) for not carrying it, and a false trailer would violate honesty."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "citation-lint-no-line-numbers" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "Code comments cite symbols, not line numbers"
+   :text "A brief rule says code comments cite a file and a symbol, never a line number, and a lint refuses file:line citations in comments in the changed files. Done when: the lint is in the repository's fast checks, refuses a file:line comment and passes a file-and-symbol one, tested; the brief template carries the rule."
+   :why "Reads broke cards over file:line citations in code comments that went stale at the next merge (config-env-one-name r6, 2026-10-20)."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "owner-run-budget" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "A sprint-wide run-time budget, and an OWED section that readers do not fail"
+   :text "A sprint setting caps the run time of any single run a card may ask for. Cards are written within it; a run over the budget goes into the report schema's OWED section, naming the run and why it is owed. The read brief says an OWED run is not a fail. Done when: the setting exists and the brief generator applies it; the report schema has OWED; a read of a report with an OWED run does not break it for that run, tested."
+   :why "On 2026-10-20 the owner deferred all runs over 2 minutes until features land. Cards still asked for long soaks, and readers called the deferred runs failures."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "gate-needs-offers-friends" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "A card whose GATE-NEEDS no fleet member covers is offered to friends that cover it"
+   :text "When no fleet member up satisfies a card's GATE-NEEDS, the deal offers the card to friends whose declared platforms (in nova-config) cover it, before raising a judgment. Done when: a darwin or windows GATE-NEEDS card with no fleet member up is dealt to a friend that declares that platform and has room, tested; the judgment is raised only when no friend covers it."
+   :why "On 2026-10-20 cards with GATE-NEEDS darwin or windows sat ready with 'no member up satisfies GATE-NEEDS' while friends with mini-m5-1 and captain access had room."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "convergence-metric" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "nova-sprint stats prints the convergence ratio: primary cards added per primary card landed"
+   :text "nova-sprint stats prints, for primary cards, the cards added per card landed over the last 1h, 6h and 24h, and the dashboard shows the same. Done when: the ratio is computed from the store with time as an argument, tested; stats and the dashboard show it."
+   :why "On 2026-10-20 the owner asked whether the sprint is converging (cards added per primary card landed), and the coordinator computed it by hand."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "sentinel-needs-edit" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "A verb adds or removes one need on a sentinel"
+   :text "A verb adds or removes a single need on a sentinel card without restating the whole list, and refuses a need that names no card. Done when: add and remove of one need on a sentinel succeed and leave the other needs unchanged, tested; the edit changes exactly the need it names or refuses."
+   :why "On 2026-10-20 adding a new blocker to the v1-gate sentinel's needs was refused."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
+  (item "sandbox-kvm-and-short-tmp" :group "export-v19" :date "2026-10-20" :release "v1.9"
+   :title "The worker wall grants /dev/kvm to kvm cards and a short writable directory"
+   :text "pkg/sandbox (wrap_linux.go) grants /dev/kvm read-write to a card with the kvm fact, and cmd/nova-swarm (native.go, nativeSandboxArgv) gives the walled worker a short writable directory for socket paths under the 108-byte limit. Nothing else in the wall changes. Done when: vng inside the wall boots with KVM on a kvm bench, tested functionally; a unit test pins the kvm grant and the short directory in the argv; a card without the kvm fact gets no /dev/kvm."
+   :why "On 2026-10-20, inside the worker wall, /dev was read-only, so vng fell back to software emulation (17.8 s boots against 1.8 s, 'bare hardware'). The walled worker also could not create a short /tmp/rn-<x> for the 108-byte virtiofs socket path."
+   :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
   (item "revert-on-red-reads-the-latest-attempt" :group "ops" :date "2026-10-20"
    :title "v1.7 deadlock: revert-on-red reads the latest attempt of a run, never attempt 1"
    :text "On 2026-10-20 main's ci run 39346166100 was cancelled (a concurrency clash with the dev push) and its rerun went green, but revert-on-red read attempt 1, failed with 'cannot be rerun', filed needs-owner #6027 and left a failed check on the commit that refused the v1.6.10 cut. A deadlock class for the v1.7 list: a stale verdict that no later green clears."
