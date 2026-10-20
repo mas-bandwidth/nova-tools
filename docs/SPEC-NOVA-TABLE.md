@@ -595,8 +595,9 @@ ZADDed to that epoch's index, so the bound counts them and trims the oldest on t
 same record write. The migration therefore brings an existing ledger under
 `operation records` in bounded batches rather than in one unbounded step.
 
-Every change event is `XADD`ed with an exact `MAXLEN` of `change events`
-(`LimitChangeEvents`, 1000000). The code keeps no reader cursor for a table's change
+Every change event is `XADD`ed with `MAXLEN ~` of `change events`
+(`LimitChangeEvents`, 1000000), the approximate trim so the stream trims by
+whole nodes. The code keeps no reader cursor for a table's change
 stream, so the oldest event is trimmed when the stream passes the bound and no
 reader's position is consulted. `drop <table>` and `drop <table> --definition` treat
 the ledger alike: each removes the operation hash, its epoch indexes, the window and

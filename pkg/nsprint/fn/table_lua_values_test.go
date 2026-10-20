@@ -323,6 +323,7 @@ func TestTableLuaRowValuesOpaque(t *testing.T) {
 	}
 
 	s := newFakeStoreOf(t, "lua/table.lua")
+	installBoundedCommands(t, s)
 	const name, member = "demo", "table::member:m1"
 	opts := `{"epoch":"0","actor":"t"}`
 	ok := func(reply []any, what string) {

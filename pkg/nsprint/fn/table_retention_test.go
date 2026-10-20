@@ -22,15 +22,17 @@ const (
 	retentionStreamBound = 1000000
 )
 
-// newRetentionStore loads table.lua on the package's fake store and teaches it
-// XADD's MAXLEN form. The fake's XADD keeps every entry, as the store did
-// before the bound, so the wrapper drops the oldest entries exactly as an
-// untrimmed-by-approximation MAXLEN does. No server, socket or clock is used.
-func newRetentionStore(t *testing.T) *fakeStore {
+// installBoundedCommands teaches the package's fake store the forms table.lua
+// calls that it does not model: HSCAN's one-table reply {cursor, {field,
+// value, ...}}, as the store's own T.scan reads SCAN's batch[1]/batch[2], and
+// XADD's MAXLEN [~|=] threshold. The fake's XADD keeps every entry, as the
+// store did before the bound, so the wrapper drops the oldest entries exactly
+// as an untrimmed-by-approximation MAXLEN does. No server, socket or clock is
+// used.
+func installBoundedCommands(t *testing.T, s *fakeStore) {
 	t.Helper()
-	s := newFakeStoreOf(t, "lua/table.lua")
 	redis := s.L.GetGlobal("redis").(*lua.LTable)
-	scanFn := func(L *lua.LState) int {
+	scan := func(L *lua.LState) int {
 		key := L.CheckString(1)
 		cursor, err := strconv.Atoi(L.CheckString(2))
 		require.NoError(t, err)
@@ -59,25 +61,24 @@ func newRetentionStore(t *testing.T) *fakeStore {
 			flat.Append(lua.LString(f))
 			flat.Append(lua.LString(s.hashes[key][f]))
 		}
-		L.Push(lua.LString(strconv.Itoa(next)))
-		L.Push(flat)
-		return 2
+		reply := L.NewTable()
+		reply.Append(lua.LString(strconv.Itoa(next)))
+		reply.Append(flat)
+		L.Push(reply)
+		return 1
 	}
-	xadd := s.L.NewFunction(func(L *lua.LState) int {
-		cmd := strings.ToUpper(L.CheckString(1))
-		if cmd == "HSCAN" {
-			L.Remove(1)
-			return scanFn(L)
+	xadd := func(L *lua.LState) int {
+		maxAt, fieldAt := 4, 6
+		if sym := L.Get(4).String(); sym == "~" || sym == "=" {
+			require.GreaterOrEqual(t, L.GetTop(), 7, "XADD MAXLEN %s needs a threshold", sym)
+			maxAt, fieldAt = 5, 7
 		}
-		if cmd != "XADD" || L.GetTop() < 6 || !strings.EqualFold(L.Get(3).String(), "MAXLEN") {
-			return s.call(L)
-		}
-		maxlen, err := strconv.Atoi(L.Get(4).String())
+		maxlen, err := strconv.Atoi(L.Get(maxAt).String())
 		require.NoError(t, err)
 		key := L.CheckString(2)
 		s.lastID++
 		entry := []string{fmt.Sprintf("%d-0", s.lastID)}
-		for i := 6; i <= L.GetTop(); i++ {
+		for i := fieldAt; i <= L.GetTop(); i++ {
 			entry = append(entry, L.Get(i).String())
 		}
 		s.streams[key] = append(s.streams[key], entry)
@@ -86,9 +87,33 @@ func newRetentionStore(t *testing.T) *fakeStore {
 		}
 		L.Push(lua.LString(entry[0]))
 		return 1
-	})
-	redis.RawSetString("call", xadd)
-	redis.RawSetString("pcall", xadd)
+	}
+	wrap := func(protected bool) *lua.LFunction {
+		return s.L.NewFunction(func(L *lua.LState) int {
+			cmd := strings.ToUpper(L.CheckString(1))
+			if cmd == "HSCAN" {
+				L.Remove(1)
+				return scan(L)
+			}
+			if cmd == "XADD" && L.GetTop() >= 6 && strings.EqualFold(L.Get(3).String(), "MAXLEN") {
+				return xadd(L)
+			}
+			if protected {
+				return s.pcall(L)
+			}
+			return s.call(L)
+		})
+	}
+	redis.RawSetString("call", wrap(false))
+	redis.RawSetString("pcall", wrap(true))
+}
+
+// newRetentionStore loads table.lua on the package's fake store, with HSCAN
+// and XADD MAXLEN modelled.
+func newRetentionStore(t *testing.T) *fakeStore {
+	t.Helper()
+	s := newFakeStoreOf(t, "lua/table.lua")
+	installBoundedCommands(t, s)
 	return s
 }
 

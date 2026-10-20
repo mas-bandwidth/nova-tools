@@ -677,9 +677,12 @@ do
         redis.call('HSET', meta, 'scan_for', active, 'scan', '0')
       end
       local cursor = redis.call('HGET', meta, 'scan') or '0'
-      local ok, next, flat = pcall(redis.pcall, 'HSCAN', ops, cursor, 'COUNT', '512')
-      if ok and type(next) ~= 'table' then
-        next = tostring(next)
+      -- HSCAN answers one table, {cursor, {field, value, ...}}, as T.scan reads
+      -- SCAN's batch[1]/batch[2] (tla/TableRetention.tla, migration sweep).
+      local ok, reply = pcall(redis.pcall, 'HSCAN', ops, cursor, 'COUNT', '512')
+      if ok and type(reply) == 'table' and reply[1] ~= nil and type(reply[2]) == 'table' then
+        local next = tostring(reply[1])
+        local flat = reply[2]
         local gone, seqs, seen = {}, {}, {}
         for i = 1, #flat, 2 do
           local e = string.match(flat[i], '^(%d+):')
@@ -1242,7 +1245,7 @@ do
     -- own bytes (a row value in an argument is never parsed: schema-table
     -- adoption, Aspect 8).
     -- cjson (event): the call's arguments, each a string
-    local event = {'XADD', stream, 'MAXLEN', tostring(T.limits.change_events), '*', 'verb', verb, 'args', cjson.encode(wireargs),
+    local event = {'XADD', stream, 'MAXLEN', '~', tostring(T.limits.change_events), '*', 'verb', verb, 'args', cjson.encode(wireargs),
       'epoch', d.epoch, 'rev_before', d.revision, 'rev_after', after, 'actor', opts.actor or '',
       -- cjson (event): the names of the cells the call touched
       'fence', opts.fence or '', 'idem', opts.idem or '', 'cells', #cells == 0 and '[]' or cjson.encode(cells),
