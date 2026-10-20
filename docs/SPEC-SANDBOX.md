@@ -1418,7 +1418,7 @@ source, not a string built in three places, and `policy` prints them:
 |---|---|
 | darwin | `/`, `/etc`, `/tmp`, `/var` (each the directory or link itself, `(literal ...)`, not a subpath), `/var/db/xcode_select_link` and `/private/var/db/xcode_select_link` (literals on the Xcode-select link, not a subpath on `/private/var/db`), `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/opt/homebrew`, `/opt/local`, `/private/etc`, `/private/var/select`, `/dev` (read), the directory of the resolved command, and the directory `/var/db/xcode_select_link` points at when it exists and is not already a root (`Xcode.app/Contents` when Xcode is selected, not `Contents/Developer`); plus **write** on `/dev/null` and `/dev/tty` |
 | linux | `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`, `/run/systemd/resolve`, `/opt`, `/dev` (read), `/proc`, the directory of the resolved command, and the directory `/etc/resolv.conf` resolves to (its symlink target's parent: `/run/systemd/resolve` on a systemd machine, `/mnt/wsl` on WSL2); plus **write** on `/dev/null` and `/dev/tty` |
-| windows | Policy data only: `%WINDIR%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, the directory of the resolved command. The bare wrapper refuses; no Windows containment is enforced. |
+| windows | Policy data only: `%WINDIR%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, the directory of the resolved command. The windows body (`lowil-job`, below) confines writes and the tree, not reads, so these are a statement of the policy, not of the kernel. |
 
 **The TLA+ rule — two read-only grants, never a write.** The owner's standing
 rule is TLA+ for every state machine, checked with TLC on a record bench
@@ -1893,11 +1893,58 @@ that lives in a directory holding secrets makes that directory readable. Keep
 the tool and the commands it wraps in a `bin` directory, never in the job's
 parent or in a shared `/tmp`.
 
+## Windows: the low-integrity job body
+
+On Windows the bare wrapper is `backend=lowil-job` (pkg/sandbox wallwin.go and
+wrap_windows.go; the minimal body a native Windows member needs, captain 2026-10-20). It
+uses only what Windows gives an ordinary user:
+
+- **Writes.** The child runs under a copy of this process's token with every privilege
+  but SeChangeNotify removed, at **low integrity**. Mandatory integrity control refuses a
+  low-integrity write to any object labelled above low. Each `--write` root, the tmp and
+  HOME are labelled low (`S:(ML;OICI;NW;;;LW)`) entry by entry, through a handle opened on
+  the entry itself, and new files under them inherit it. The label walk NEVER follows a
+  reparse point: a junction or link under a root is skipped and not descended into, and a
+  root that is one is refused. A root that is a volume, the user's profile, its temp, the
+  Windows directory, Program Files, ProgramData or an ancestor of one of them is refused
+  (read from the token and the known folders, never from the environment).
+- **The tree.** This process joins a new kill-on-close Job Object before it starts the
+  child, so every process of the tree is in the job from its creation. The job carries the
+  wall's process cap (`ActiveProcessLimit`, the cap plus this process) and memory cap
+  (`JobMemoryLimit`).
+
+**What it does not do**, measured or read, so the OK line is never read as more:
+
+- **Reads are not confined.** An integrity level stops writes up, not reads. On an
+  elevated member the child keeps Administrators (it is not made deny-only: that crashed the
+  cmake configure step, 0xC0000005, CMake 4.3 and 4.4), so it can read most of the machine,
+  other users' profiles and ProgramData included, and the network is open.
+- **It writes every low-labelled object**, not only its roots: AppData\LocalLow,
+  HKCU\Software\AppDataLow, %TEMP%\Low, and every other card's labelled directories on
+  the same member. There is **no isolation between cards**, and a card can open another
+  card's low-integrity process.
+- **Services.** On an elevated member the low child can still open services whose DACL
+  grants Administrators for start and stop (measured on captain for Spooler, wuauserv,
+  W32Time, Tailscale, BITS; nothing was started). A dedicated non-admin member user removes
+  this, and is owed.
+- **The network** is not enforced; `--net-deny` is refused.
+- **Labels outlive the run.** The roots are the member's own per-slot scratch. The
+  bench-shared Go caches are not used on Windows (`nova-swarm native` keeps them per card,
+  under the data home), so no low-writable tree is shared with later medium-integrity
+  builds.
+
+Measured on captain 2026-10-20:
+- A write inside the `--write` root succeeds.
+- A write beside it, a write into the user profile, and a write through a junction planted inside the root all fail with `Access is denied`. The junction's target carries no label afterwards.
+- `whoami /groups` shows `Mandatory Label\Low Mandatory Level`, and `/priv` shows SeChangeNotify alone.
+- `cl`, cmake with the Visual Studio 18 and Ninja generators, MSBuild and git (init, add, commit) all work inside the wall.
+- `nova-swarm native` reports `sandbox=lowil-job` and NATIVE OK.
+
 ## Unsupported platforms
 
-The bare wrapper has no Windows containment backend. On Windows and other
-platforms without an implementation, `check` reports `backend=none`, and an
-attempt to wrap a command refuses with `reason=no_sandbox`. A parsed `--name`
+On platforms without an implementation (neither darwin, linux nor windows), `check`
+reports `backend=none`, and an attempt to wrap a command refuses with
+`reason=no_sandbox`. A parsed `--name`
 or `--acl` does not supply a backend or an ACL-management command.
 
 This is the bare wrapper's limit. The separate `run` verb has its own platform
