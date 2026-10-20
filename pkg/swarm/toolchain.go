@@ -453,7 +453,9 @@ func ThisOS() string { return runtime.GOOS }
 // never from TMPDIR, so no temp mapping moves it (measured on hetzner2, 2026-10-19: strace of
 // `dotnet build` with TMPDIR set opens /tmp/.dotnet/shm/session<n>/NuGet-Migrations; inside
 // the wall the open fails EACCES and the restore dies). It is a machine-wide rendezvous by
-// design, mode 0777, and it is the only part of /tmp the wall grants.
+// design, mode 0777, and it is the only part of /tmp the wall grants. Every job on the bench
+// shares it, so one job can see or remove another's mutex files there; that is the price of
+// a path the runtime will not move.
 const DotnetSharedDir = "/tmp/.dotnet"
 
 // RuntimeSharedDirs is the fixed directories outside the job a toolchain's runtime must write
@@ -466,18 +468,32 @@ func RuntimeSharedDirs(goos string) []string {
 }
 
 // EnsureRuntimeSharedDirs makes each of RuntimeSharedDirs(goos) that is absent, mode 0777 as
-// the .NET runtime makes it itself, and returns the ones that are directories: the wall
-// refuses a --write naming a path that is not there, so only those reach the argv. It runs
-// outside the wall, before the launch.
+// the .NET runtime makes it itself, and returns the ones that are real directories, never a
+// symlink: the wall refuses a --write naming a path that is not there, so only those reach
+// the argv. It runs outside the wall, before the launch.
 func EnsureRuntimeSharedDirs(goos string) []string {
 	var out []string
 	for _, d := range RuntimeSharedDirs(goos) {
 		if err := os.Mkdir(d, 0o777); err == nil {
 			_ = os.Chmod(d, 0o777) // ignored: a umask-narrowed mode the runtime widens itself when it owns the directory
 		}
-		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+		// Lstat, never Stat: a link planted at the name (or at its shm, which a job before
+		// this one could have swapped) would hand the wall, or a dotnet outside it, its target.
+		if realDir(d) && !isLink(filepath.Join(d, "shm")) {
 			out = append(out, d)
 		}
 	}
 	return out
+}
+
+// realDir is a directory at path itself, never one reached through a link.
+func realDir(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.IsDir()
+}
+
+// isLink is a symlink at path.
+func isLink(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.Mode()&os.ModeSymlink != 0
 }

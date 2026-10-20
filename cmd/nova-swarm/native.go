@@ -700,7 +700,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	// The runtime's fixed shared directories (swarm.RuntimeSharedDirs: /tmp/.dotnet on linux,
 	// which no TMPDIR moves) are made here, outside the wall, and granted by name.
 	if cfg.runtimeShared == nil {
-		cfg.runtimeShared = swarm.EnsureRuntimeSharedDirs(benchOS(cfg))
+		cfg.runtimeShared = nativeRuntimeShared(benchOS(cfg))
 	}
 	// THE SHARED PER-BENCH CACHE. The Go toolchain and every module are the
 	// same for every card under one root, but each card left to itself downloads them
@@ -1986,6 +1986,11 @@ func sandboxHostRules(sandbox string) bool {
 	}
 	return strings.Contains(string(out), "hosts=enforceable")
 }
+
+// nativeRuntimeShared makes and names the runtime's fixed shared directories
+// (swarm.EnsureRuntimeSharedDirs); the package's TestMain stubs it, so no unit test makes
+// /tmp/.dotnet on its host.
+var nativeRuntimeShared = swarm.EnsureRuntimeSharedDirs
 
 // nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the
 // harness verbatim (SPEC-SANDBOX rule 12) -- launch, the one launcher's argv, binary first. The job directory is the first --write and the

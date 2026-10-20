@@ -123,6 +123,8 @@ func TestMain(m *testing.M) {
 	// a no-op here, set once before any test runs; the built binary the launch tests start
 	// keeps the real step (TestACardsLaunchRunsBehindCI reads it).
 	nativeToCI = func() error { return nil }
+	// nor does a unit test make /tmp/.dotnet on its host (swarm.EnsureRuntimeSharedDirs)
+	nativeRuntimeShared = func(string) []string { return []string{} }
 	code := m.Run()
 	if leftover := leftoverChildPIDs(); len(leftover) > 0 {
 		for _, pid := range leftover {
