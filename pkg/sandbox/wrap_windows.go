@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"syscall"
 	"unsafe"
 
@@ -39,7 +39,7 @@ func NetEnforceable() bool { return false }
 
 // Note is the one clause the check verb prints about this backend.
 func Note() string {
-	return "windows: writes are confined to the write roots (low integrity) and the tree to a kill-on-close job; reads and the network are NOT confined"
+	return "windows: a low-integrity child in a kill-on-close job; it writes only low-labelled places (its roots, and every other low object: LocalLow, AppDataLow, other cards' roots), and reads and the network are NOT confined"
 }
 
 // winOps is the real winWallOps.
@@ -56,7 +56,7 @@ const disableMaxPrivilege = 0x1 // DISABLE_MAX_PRIVILEGE
 // directories, no write up.
 const lowLabelSDDL = "S:(ML;OICI;NW;;;LW)"
 
-func (winOps) LabelLow(dir string) error {
+func (winOps) LabelLow(root string) error {
 	sd, err := windows.SecurityDescriptorFromString(lowLabelSDDL)
 	if err != nil {
 		return fmt.Errorf("the low label: %w", err)
@@ -65,7 +65,61 @@ func (winOps) LabelLow(dir string) error {
 	if err != nil {
 		return fmt.Errorf("the low label's SACL: %w", err)
 	}
-	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.LABEL_SECURITY_INFORMATION, nil, nil, nil, sacl)
+	_, err = labelLowTree(root, isReparsePoint, func(path string) error { return labelOne(path, sacl) })
+	return err
+}
+
+// isReparsePoint reads path's attributes without following it.
+func isReparsePoint(path string) (bool, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return false, err
+	}
+	attrs, err := windows.GetFileAttributes(p)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
+	return attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0, nil
+}
+
+// labelOne sets the low label on path itself: through a handle opened on the entry (never
+// what a reparse point names), and with a handle-based set, which propagates to nothing.
+func labelOne(path string, sacl *windows.ACL) error {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	h, err := windows.CreateFile(p, windows.WRITE_OWNER|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	defer windows.CloseHandle(h) // ignored: closing our own handle after the set
+	if err := windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.LABEL_SECURITY_INFORMATION, nil, nil, nil, sacl); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
+}
+
+// windowsGuard is what no write root may be or hold: the user's profile and its temp, and
+// the system's own directories. Each is read from the token and the known folders, never
+// from the environment: the caller hands this process the CHILD's environment, whose
+// USERPROFILE and TMP are the job's own data home and tmp.
+func windowsGuard() winGuard {
+	var g winGuard
+	if prof, err := windows.GetCurrentProcessToken().GetUserProfileDirectory(); err == nil && prof != "" {
+		g.Protected = append(g.Protected, prof, filepath.Join(prof, "AppData", "Local", "Temp"))
+	}
+	if win, err := windows.GetSystemWindowsDirectory(); err == nil && win != "" {
+		g.Protected = append(g.Protected, win)
+	}
+	for _, id := range []*windows.KNOWNFOLDERID{windows.FOLDERID_ProgramFiles, windows.FOLDERID_ProgramFilesX86, windows.FOLDERID_ProgramData} {
+		if dir, err := windows.KnownFolderPath(id, 0); err == nil && dir != "" {
+			g.Protected = append(g.Protected, dir)
+		}
+	}
+	return g
 }
 
 func (winOps) LowToken() (uintptr, func(), error) {
@@ -143,7 +197,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	if p.NetDeny {
 		return ExitRefused, refuse("sandbox_failed", "the windows wall cannot enforce a network denial; run without --net-deny or on a body that enforces it")
 	}
-	tok, release, ref := prepareWinWall(wallOps, p)
+	tok, release, ref := prepareWinWall(wallOps, p, windowsGuard())
 	if ref != nil {
 		return ExitRefused, *ref
 	}
@@ -183,5 +237,3 @@ func statusOf(waitErr error, st *os.ProcessState) int {
 func GroupUsage(pgid int) (Usage, error) {
 	return Usage{}, fmt.Errorf("windows has no process groups; the job object carries the caps")
 }
-
-var _ = exec.ErrNotFound

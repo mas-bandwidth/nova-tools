@@ -1901,24 +1901,44 @@ uses only what Windows gives an ordinary user:
 
 - **Writes.** The child runs under a copy of this process's token with every privilege
   but SeChangeNotify removed, at **low integrity**. Mandatory integrity control refuses a
-  low-integrity write to any object labelled above low, which by default is every file and
-  directory. Each `--write` root, the tmp and HOME are labelled low (`S:(ML;OICI;NW;;;LW)`,
-  inherited by what is made under them), and they are the only places the child can write.
-  Administrators is not made deny-only: measured on captain, a deny-only Administrators SID
-  crashed the cmake configure step (0xC0000005, CMake 4.3 and 4.4).
+  low-integrity write to any object labelled above low. Each `--write` root, the tmp and
+  HOME are labelled low (`S:(ML;OICI;NW;;;LW)`) entry by entry, through a handle opened on
+  the entry itself, and new files under them inherit it. The label walk NEVER follows a
+  reparse point: a junction or link under a root is skipped and not descended into, and a
+  root that is one is refused. A root that is a volume, the user's profile, its temp, the
+  Windows directory, Program Files, ProgramData or an ancestor of one of them is refused
+  (read from the token and the known folders, never from the environment).
 - **The tree.** This process joins a new kill-on-close Job Object before it starts the
   child, so every process of the tree is in the job from its creation. The job carries the
   wall's process cap (`ActiveProcessLimit`, the cap plus this process) and memory cap
   (`JobMemoryLimit`).
-- **What it does not do.** Reads are NOT confined: an integrity level stops writes up, not
-  reads. The network is not enforced (`NetEnforceable` is false, and `--net-deny` is
-  refused).
 
-Measured on captain 2026-10-20: a write inside the `--write` root succeeds; a write beside
-it and a write into the user profile are `Access is denied`; `whoami /groups` shows
-`Mandatory Label\Low Mandatory Level`; `cl`, cmake with the Visual Studio 18 and Ninja
-generators, MSBuild and git (init, add, commit) all work inside the wall; and
-`nova-swarm native` reports `sandbox=lowil-job` and NATIVE OK.
+**What it does not do**, measured or read, so the OK line is never read as more:
+
+- **Reads are not confined.** An integrity level stops writes up, not reads. On an
+  elevated member the child keeps Administrators (made deny-only, it crashed the cmake
+  configure step, 0xC0000005, CMake 4.3 and 4.4), so it can read most of the machine,
+  other users' profiles and ProgramData included, and the network is open.
+- **It writes every low-labelled object**, not only its roots: AppData\LocalLow,
+  HKCU\Software\AppDataLow, %TEMP%\Low, and every other card's labelled directories on
+  the same member. There is **no isolation between cards**, and a card can open another
+  card's low-integrity process.
+- **Services.** On an elevated member the low child can still open services whose DACL
+  grants Administrators for start and stop (measured on captain for Spooler, wuauserv,
+  W32Time, Tailscale, BITS; nothing was started). A dedicated non-admin member user removes
+  this, and is owed.
+- **The network** is not enforced; `--net-deny` is refused.
+- **Labels outlive the run.** The roots are the member's own per-slot scratch. The
+  bench-shared Go caches are not used on Windows (`nova-swarm native` keeps them per card,
+  under the data home), so no low-writable tree is shared with later medium-integrity
+  builds.
+
+Measured on captain 2026-10-20:
+- A write inside the `--write` root succeeds.
+- A write beside it, a write into the user profile, and a write through a junction planted inside the root all fail with `Access is denied`. The junction's target carries no label afterwards.
+- `whoami /groups` shows `Mandatory Label\Low Mandatory Level`, and `/priv` shows SeChangeNotify alone.
+- `cl`, cmake with the Visual Studio 18 and Ninja generators, MSBuild and git (init, add, commit) all work inside the wall.
+- `nova-swarm native` reports `sandbox=lowil-job` and NATIVE OK.
 
 ## Unsupported platforms
 
