@@ -1,5 +1,34 @@
 # nova-tools changelog
 
+## v1.6.10 — 2026-10-20
+
+Cut from 5bbbcc62f459688c50d133c44e55558be800fef0. 13 pull requests since v1.6.9.
+
+Recovery journeys incomplete, gate waived: tools point release for captain's native Windows member (#6024, #6031) and the toolchains dry-run fix (#6035); neither the hook journeys nor spend accounting are in this range
+
+- TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce: not-run (no --journeys evidence)
+- TestNoServerOrNoAnswerIsNoEvidence: not-run (no --journeys evidence)
+- TestTheGateRefusesEveryoneWhileTheServerIsStale: not-run (no --journeys evidence)
+- TestAStaleAnswerIsDownWithAFreshServer: not-run (no --journeys evidence)
+- TestALostAnswerIsNeverToldTwice: not-run (no --journeys evidence)
+
+Spend gate waived: tools point release for captain's native Windows member (#6024, #6031) and the toolchains dry-run fix (#6035); neither the hook journeys nor spend accounting are in this range (window 2026-10-19T00:00:00Z..2026-10-20T02:16:52Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #5992 toolchains: Linux uses the distro sbcl
+- #5993 tools.yml: default nova_adopt_canary in the adopt play's serial
+- #5994 Merge main into dev (reconcile #5990/#5991 with #5992/#5993)
+- #6001 Merge main into dev (the v1.6.4 Ultramarine backport #5998)
+- #6003 Release notes for v1.6.4 (to dev, beside #6002 to main)
+- #6007 Merge main into dev (v1.6.5: --gpu metal, release notes)
+- #6013 Merge main into dev (v1.6.6: direct provider output limit, release notes)
+- #6019 Merge main into dev (v1.6.7: provider transient-refusal retry, release notes)
+- #6024 swarm: a native Windows card gets its PATH, Windows names and the toolchain (v1.6.10)
+- #6028 CHANGELOG v1.6.9 record; v1.7 roadmap item; pathWithDirsFirst takes the goos (TestDeadCode)
+- #6031 swarm: windows launch argv takes the named harness; Windows lease release frees the slot (v1.6.10)
+- #6030 Promote dev to main (v1.6.10 cut)
+- #6035 toolchains: a dry run names a missing distro sbcl, never fails on it (main red: TestToolchainsPlayRendersEveryPinnedToolchain on hosted ubuntu)
+
 ## v1.6.9 — 2026-10-19
 
 Cut from 4826539f09912d9ce27a62e3bb289c3a010bfbff. 1 pull request since v1.6.8.
