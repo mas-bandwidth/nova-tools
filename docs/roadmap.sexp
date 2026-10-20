@@ -1911,17 +1911,17 @@ Done when: the fleet friends' API traffic flows through it; per-card tokens and 
   (item "friend-progress-not-held-cards" :group "export-v19" :date "2026-10-20" :release "v1.9"
    :title "The dashboard counts a friend's cards in progress, not the cards it holds"
    :text "Each working job sends progress heartbeats: a pushed commit, a gate run, or an explicit progress verb. The dashboard shows a friend's progressing cards and its held cards separately, with the age of each card's last progress. A held card with no progress for N minutes raises a judgment, and after M minutes it is returned automatically, its pushed head recorded as CARRY. N and M are sprint settings. Done when: a held card with no progress raises the judgment at N and is returned at M, tested with time as an argument; the dashboard shows held and progressing as two numbers; TLA+ for the held, progressing, stalled and returned states."
-   :why "The dashboard's working count is the cards a friend holds, not the cards being worked. On 2026-10-20 Stella held 16 cards for more than 25 minutes with no progress, and the coordinator reported her as busy."
+   :why "The dashboard's working count is the cards a friend holds, not the cards being worked. On 2026-10-20 one friend held 16 cards for more than 25 minutes with no progress, and the coordinator reported that friend as busy."
    :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
   (item "friend-down-returns-its-cards" :group "export-v19" :date "2026-10-20" :release "v1.9"
    :title "A friend whose hook misses K challenges is marked down and its working cards return"
    :text "After K missed hook challenges in a row the friend is marked down, and every card it holds in working is returned to ready with its pushed head recorded as CARRY on the next attempt. A friend that answers again is marked up and takes new cards; it does not get the returned ones back by default. K is a sprint setting. Done when: a friend that misses K challenges is down and holds no working cards, each returned card carries its pushed head, tested with time as an argument; TLA+ for the hook state and the return, with a reversed witness where a down friend still holds a card."
-   :why "On 2026-10-20 Emma's hook dropped (state live, unhooked) while she held 16 working cards, and nothing returned them; the coordinator moved them by hand."
+   :why "On 2026-10-20 a friend's hook dropped (state live, unhooked) while it held 16 working cards, and nothing returned them; the coordinator moved them by hand."
    :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
   (item "move-running-attempt-to-head-holder" :group "export-v19" :date "2026-10-20" :release "v1.9"
    :title "A working attempt can be moved to the friend who holds a better head"
    :text "rework --to <friend> --carry-head <sha> works while the card is working: it withdraws the running attempt (the old worker is told to stop, see redeal-stops-old-worker) and deals the next attempt to the named friend with that head as CARRY. A plain withdraw of a working attempt is the same verb without --to. Done when: rework --to and --carry-head succeed on a working card, the old attempt is stopped and the new attempt's base is the carried head; refused for anyone but the coordinator; TLA+ for the working-to-working move."
-   :why "On 2026-10-20 the receive card's w1 reached its 2h deadline and was auto-redealt to a fleet member (intel), which restarted from base while Emma held a finished head (3f87852d). No verb could pull the fleet attempt back or point it at that head."
+   :why "On 2026-10-20 the receive card's w1 reached its 2h deadline and was auto-redealt to a fleet member, which restarted from base while a friend held a finished head (3f87852d). No verb could pull the fleet attempt back or point it at that head."
    :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
   (item "friend-give-any-ready-card" :group "export-v19" :date "2026-10-20" :release "v1.9"
    :title "friend give works on any ready card, whoever held its last attempt"
@@ -1951,12 +1951,12 @@ Done when: the fleet friends' API traffic flows through it; per-card tokens and 
   (item "finish-machine-checks" :group "export-v19" :date "2026-10-20" :release "v1.9"
    :title "finish runs the machine-checkable CHECKLIST.md items and refuses a LAND that fails one"
    :text "finish --head <sha> runs, before it records a LAND: the pushed remote SHA equals the head; the base tip is merged into the head and fresh; every changed file is in PATHS or listed under PATHS-PROPOSED; the repository's declared fast CI checks (conformance and TLA jobs included) pass at the head; the diff is not empty. A failure refuses the LAND and names the item, so the worker fixes it before a reader is spent. Done when: each item has a refusal test; a LAND that passes them all is unchanged."
-   :why "On 2026-10-20 friends' ok% was low (Emma 23%, Johnny 0/12). Reads kept breaking LANDs for machine-checkable reasons: base not merged at finish, gates not run at the finished head, the conformance or TLA CI jobs red, files outside PATHS without PATHS-PROPOSED, a no-op tree."
+   :why "On 2026-10-20 friends' ok% was low (one friend at 23%, another at 0 of 12). Reads kept breaking LANDs for machine-checkable reasons: base not merged at finish, gates not run at the finished head, the conformance or TLA CI jobs red, files outside PATHS without PATHS-PROPOSED, a no-op tree."
    :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
   (item "attribution-per-friend-model" :group "export-v19" :date "2026-10-20" :release "v1.9"
    :title "The card ATTRIBUTION rule takes the trailer from the friend's model"
    :text "The ATTRIBUTION rule in a card brief takes the Co-Authored-By trailer from the model of the friend or fleet route that works the card, as nova-config records it, and the by-line from the worker. Readers check the trailer against that, never against a fixed Claude trailer. Done when: a brief dealt to a non-Claude friend names that friend's model's trailer, tested; the read brief checks the trailer the card names."
-   :why "The rule hardcodes a Claude Co-Authored-By trailer. On 2026-10-20 readers broke correct work by Johnny (Grok) for not carrying it, and a false trailer would violate honesty."
+   :why "The rule hardcodes a Claude Co-Authored-By trailer. On 2026-10-20 readers broke correct work by a friend on a Grok model for not carrying it, and a false trailer would violate honesty."
    :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
   (item "citation-lint-no-line-numbers" :group "export-v19" :date "2026-10-20" :release "v1.9"
    :title "Code comments cite symbols, not line numbers"
@@ -1971,7 +1971,7 @@ Done when: the fleet friends' API traffic flows through it; per-card tokens and 
   (item "gate-needs-offers-friends" :group "export-v19" :date "2026-10-20" :release "v1.9"
    :title "A card whose GATE-NEEDS no fleet member covers is offered to friends that cover it"
    :text "When no fleet member up satisfies a card's GATE-NEEDS, the deal offers the card to friends whose declared platforms (in nova-config) cover it, before raising a judgment. Done when: a darwin or windows GATE-NEEDS card with no fleet member up is dealt to a friend that declares that platform and has room, tested; the judgment is raised only when no friend covers it."
-   :why "On 2026-10-20 cards with GATE-NEEDS darwin or windows sat ready with 'no member up satisfies GATE-NEEDS' while friends with mini-m5-1 and captain access had room."
+   :why "On 2026-10-20 cards with GATE-NEEDS darwin or windows sat ready with 'no member up satisfies GATE-NEEDS' while friends with access to Mac and Windows benches had room."
    :origin "the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)")
   (item "convergence-metric" :group "export-v19" :date "2026-10-20" :release "v1.9"
    :title "nova-sprint stats prints the convergence ratio: primary cards added per primary card landed"
