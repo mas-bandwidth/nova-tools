@@ -18,7 +18,6 @@ cmd/nova-swarm/member_test.go:eventually 1 allowed until moved, v1.3 (2026-10-12
 cmd/nova-swarm/slots_run_test.go:eventually 2 allowed until moved, v1.3 (2026-10-12): require.Eventually
 cmd/nova-tokens/token_ledger_test.go:socket 1 allowed until moved, v1.3 (2026-10-12): miniredis.RunT
 fleet/toolchains_play_test.go:service 1 allowed until moved, v1.3 (2026-10-12): exec.LookPath("ansible-playbook")
-hook/redis_test.go:clock 1 allowed until moved, v1.3 (2026-10-12): assert.Less over the wall clock
 internal/update/timing_logic_test.go:clock 1 allowed until moved, v1.3 (2026-10-12): require.Equal over the wall clock
 pkg/config/redis_cover_test.go:socket 1 allowed until moved, v1.3 (2026-10-12): miniredis.RunT
 pkg/delayproxy/rig_test.go:deadline 4 allowed until moved, v1.3 (2026-10-12): c.SetDeadline(time.Now()...); c.SetReadDeadline(time.Now()...); client.SetDeadline(time.Now()...); watch.SetReadDeadline(time.Now()...)

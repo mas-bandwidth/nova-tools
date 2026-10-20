@@ -3,13 +3,14 @@ package hook_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/alicebob/miniredis/v2/server"
 	"github.com/mas-bandwidth/nova-tools/hook"
 	"github.com/mas-bandwidth/nova-tools/hook/hooktest"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -338,29 +339,121 @@ func TestAHolderOfAnotherRoleWritesNothingAfterALoss(t *testing.T) {
 	assert.ErrorIs(t, seat.Beat(ctx, map[hook.Push]bool{hook.Bus: true}), hook.ErrNotHooked, "the seat's holder never rejoins a record of another role")
 }
 
-// TestEachRoundTripHasItsOwnTimeout pins Store.Timeout: a store that does not
-// answer refuses each call within its own bound, not the caller's whole
-// context.
+// deadlines is a redis hook recording the deadline of every round trip's
+// context, so a test reads the bound a call carried instead of waiting for it
+// to expire.
+type deadlines struct {
+	mu  sync.Mutex
+	got []time.Time // zero for a round trip whose context had no deadline
+}
+
+func (d *deadlines) note(ctx context.Context) {
+	at, _ := ctx.Deadline()
+	d.mu.Lock()
+	d.got = append(d.got, at)
+	d.mu.Unlock()
+}
+
+func (d *deadlines) take() []time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	got := d.got
+	d.got = nil
+	return got
+}
+
+func (d *deadlines) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (d *deadlines) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		d.note(ctx)
+		return next(ctx, cmd)
+	}
+}
+
+func (d *deadlines) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		d.note(ctx)
+		return next(ctx, cmds)
+	}
+}
+
+// TestEachRoundTripHasItsOwnTimeout pins Store.Timeout: each round trip
+// carries a deadline of its own, at most Timeout from when it began, inside
+// the caller's context and never beyond it. It reads the deadline the call's
+// context carried (a recording hook on the fake client) and waits for nothing:
+// no stalled server, no elapsed-time assertion, so load cannot move it.
 func TestEachRoundTripHasItsOwnTimeout(t *testing.T) {
 	t.Parallel()
-	r := newRig(t)
-	s := hook.Store{C: r.Client, Timeout: 50 * time.Millisecond}
-	ctx := context.Background()
-	_, _, err := s.Arm(ctx, "ada", hook.Comms, "test", false)
-	require.NoError(t, err)
-	blocked := make(chan struct{})
-	t.Cleanup(func() { close(blocked) })
-	r.mr.Server().SetPreHook(func(c *server.Peer, cmd string, args ...string) bool {
-		if cmd == "EVALSHA" || cmd == "EVAL" {
-			<-blocked
+	const bound = time.Hour // far from any test-run duration; never waited out
+	// renewed is the deadline of every round trip of n Renews under ctx, on a
+	// rig of its own, by a store with the given Timeout.
+	renewed := func(t *testing.T, timeout time.Duration, ctx context.Context, n int) []time.Time {
+		t.Helper()
+		r := newRig(t)
+		s := hook.Store{C: r.Client, Timeout: timeout}
+		_, _, err := s.Arm(context.Background(), "ada", hook.Comms, "test", false)
+		require.NoError(t, err)
+		rec := &deadlines{}
+		r.Client.AddHook(rec)
+		for range n {
+			require.NoError(t, s.Renew(ctx, "ada", hook.Comms, hook.Bus, 1, "test"))
 		}
-		return false
+		got := rec.take()
+		require.GreaterOrEqual(t, len(got), n, "at least one round trip a verb")
+		return got
+	}
+	later := func(t *testing.T, d time.Duration) (context.Context, time.Time) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), d)
+		t.Cleanup(cancel)
+		at, ok := ctx.Deadline()
+		require.True(t, ok)
+		return ctx, at
+	}
+
+	t.Run("a caller with no deadline gets the round trip's own", func(t *testing.T) {
+		t.Parallel()
+		before := time.Now()
+		for _, at := range renewed(t, bound, context.Background(), 1) {
+			require.False(t, at.IsZero(), "the round trip carried a deadline")
+			assert.False(t, at.Before(before.Add(bound)), "the bound starts when the call does")
+			assert.False(t, at.After(time.Now().Add(bound)), "and is no more than Timeout from now")
+		}
 	})
-	start := time.Now()
-	err = s.Renew(ctx, "ada", hook.Comms, hook.Bus, 1, "test")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Less(t, time.Since(start), 5*time.Second, "the call's own bound, not the caller's")
+
+	t.Run("a caller with a later deadline is bounded sooner", func(t *testing.T) {
+		t.Parallel()
+		ctx, callerAt := later(t, 48*bound)
+		for _, at := range renewed(t, bound, ctx, 1) {
+			assert.True(t, at.Before(callerAt), "the call's own bound, not the caller's whole context")
+		}
+	})
+
+	t.Run("a caller with an earlier deadline keeps it", func(t *testing.T) {
+		t.Parallel()
+		ctx, callerAt := later(t, bound/2)
+		for _, at := range renewed(t, bound, ctx, 1) {
+			assert.True(t, at.Equal(callerAt), "a bound never extends the caller's")
+		}
+	})
+
+	t.Run("each round trip is bounded on its own", func(t *testing.T) {
+		t.Parallel()
+		ctx, callerAt := later(t, 48*bound)
+		got := renewed(t, bound, ctx, 2)
+		require.GreaterOrEqual(t, len(got), 2)
+		for _, at := range got {
+			assert.True(t, at.Before(callerAt), "no round trip spends the caller's whole context")
+		}
+	})
+
+	t.Run("no Timeout adds no deadline", func(t *testing.T) {
+		t.Parallel()
+		for _, at := range renewed(t, 0, context.Background(), 1) {
+			assert.True(t, at.IsZero(), "a store without a Timeout leaves the caller's context alone")
+		}
+	})
 }
 
 // TestBootstrapPreservesHeartbeatOwnership pins Bootstrap in tla/HookBeat.tla:
