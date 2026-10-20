@@ -29,7 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
-- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (20)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (30)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -1959,9 +1959,9 @@ From: sprint card v19-friend-set-reaches-the-store (stream v19, column waiting, 
 
 ### The dashboard counts a friend's cards in progress, not the cards it holds
 
-Each working job sends progress heartbeats: a pushed commit, a gate run, or an explicit progress verb. The dashboard shows a friend's progressing cards and its held cards separately, with the age of each card's last progress. A held card with no progress for N minutes raises a judgment, and after M minutes it is returned automatically, its pushed head recorded as CARRY. N and M are sprint settings. Done when: a held card with no progress raises the judgment at N and is returned at M, tested with time as an argument; the dashboard shows held and progressing as two numbers; TLA+ for the held, progressing, stalled and returned states.
+Each working job sends progress heartbeats: a pushed commit, a gate run, or an explicit progress verb. The dashboard shows a friend's progressing cards and its held cards separately, with the age of each card's last progress. A held card with no progress for N minutes raises a judgment, and after M minutes it is returned automatically, its pushed head recorded as CARRY. N and M are sprint settings. The same progress drives the attempt deadline (progress-aware-deadline): at its deadline an attempt with progress since the last check (a pushed commit, a gate run, or waiting on a shared-box lock such as the Windows box gate lock) is not redealt and its deadline moves on; only an attempt with no progress is redealt. Done when: a held card with no progress raises the judgment at N and is returned at M, tested with time as an argument; at its deadline an attempt with a commit, a gate run or a lock wait since the last check is kept and one with none is redealt, one unit test each with time as an argument; the dashboard shows held and progressing as two numbers; TLA+ for the held, progressing, stalled and returned states.
 
-Why it waits: The dashboard's working count is the cards a friend holds, not the cards being worked. On 2026-10-20 one friend held 16 cards for more than 25 minutes with no progress, and the coordinator reported that friend as busy.
+Why it waits: The dashboard's working count is the cards a friend holds, not the cards being worked. On 2026-10-20 one friend held 16 cards for more than 25 minutes with no progress, and the coordinator reported that friend as busy. The same day attempts with progress were redealt at their deadline mid-work, which made stale finishes, duplicate workers and lost work.
 
 Target: v1.9
 
@@ -2039,7 +2039,7 @@ From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
 
 ### finish runs the machine-checkable CHECKLIST.md items and refuses a LAND that fails one
 
-finish --head <sha> runs, before it records a LAND: the pushed remote SHA equals the head; the base tip is merged into the head and fresh; every changed file is in PATHS or listed under PATHS-PROPOSED; the repository's declared fast CI checks (conformance and TLA jobs included) pass at the head; the diff is not empty. A failure refuses the LAND and names the item, so the worker fixes it before a reader is spent. Done when: each item has a refusal test; a LAND that passes them all is unchanged.
+finish --head <sha> runs, before it records a LAND: the pushed remote SHA equals the head; the head merges onto the base tip without a conflict (a fresh base is never required, see gate-once-no-tip-chase); every changed file is in PATHS or listed under PATHS-PROPOSED; the repository's declared fast CI checks (conformance and TLA jobs included) pass at the head; the diff is not empty. A failure refuses the LAND and names the item, so the worker fixes it before a reader is spent. Done when: each item has a refusal test; a LAND that passes them all is unchanged.
 
 Why it waits: On 2026-10-20 friends' ok% was low (one friend at 23%, another at 0 of 12). Reads kept breaking LANDs for machine-checkable reasons: base not merged at finish, gates not run at the finished head, the conformance or TLA CI jobs red, files outside PATHS without PATHS-PROPOSED, a no-op tree.
 
@@ -2129,10 +2129,110 @@ From: the owner, 2026-10-20 ('This is a bug. Fix this in v1.9.')
 
 ### a brief edit that changes only NOTE, CARRY or ROUTE lines never bounces a finish
 
-A brief edit that changes only NOTE, CARRY or ROUTE lines, or that only widens PATHS, never invalidates a running attempt's finish; only a change to the task (DONE-WHEN, THE TASK, a PATHS narrowing, the tier) does. When a finish is refused as made under the earlier brief, the sprint records the finished head as CARRY on the next attempt automatically and tells the next holder. --replace-in-flight takes an optional target friend, and moves the card to that friend instead of re-dealing it to the same row. Done when: one unit test per rule, each failing before the fix: a NOTE, CARRY or ROUTE edit or a PATHS widening leaves the finish valid; a DONE-WHEN, THE TASK, PATHS-narrowing or tier change still bounces it; a bounced finish's head appears as CARRY on the next attempt with a message to the next holder; --replace-in-flight with a target friend lands the card on that friend's row.
+A brief edit that changes only NOTE, CARRY or ROUTE lines, or that only widens PATHS, never invalidates a running attempt's finish; only a change to the task (DONE-WHEN, THE TASK, a PATHS narrowing, the tier) does. When a finish is refused as made under the earlier brief, the sprint records the finished head as CARRY on the next attempt automatically and tells the next holder. --replace-in-flight takes an optional target friend, and moves the card to that friend instead of re-dealing it to the same row. A coordinator note to a working card never edits its brief (coordinator-never-edits-working-briefs): nova-sprint note <card> <text> sends it to the holder by message (the friend's hook or the fleet member's job) and records it on the card, and brief edit of a working card from the coordinator is refused with a pointer to note. Done when: note delivers one message to the holder and records it on the card without changing the brief or the attempt, tested; a coordinator brief edit of a working card is refused naming the note verb, tested; one unit test per rule, each failing before the fix: a NOTE, CARRY or ROUTE edit or a PATHS widening leaves the finish valid; a DONE-WHEN, THE TASK, PATHS-narrowing or tier change still bounces it; a bounced finish's head appears as CARRY on the next attempt with a message to the next holder; --replace-in-flight with a target friend lands the card on that friend's row.
 
-Why it waits: On 2026-10-20 the coordinator appended a one-line NOTE, for routing only, to the briefs of 10 working cards. Each card's next finish was then refused as 'brief replaced: the head of attempt N was made under the earlier brief', though the work was complete and gated; the card bounced back to ready and was re-dealt, so a full attempt was spent to land the same head. It happened to two cards in 10 minutes (one with a 120/120 gate, one with 8 green compiler builds), and the coordinator re-added each finished head by hand as CARRY. --replace-in-flight, used to move cards to another friend, re-dealt them to the same row instead.
+Why it waits: On 2026-10-20 the coordinator appended a one-line NOTE, for routing only, to the briefs of 10 working cards. Each card's next finish was then refused as 'brief replaced: the head of attempt N was made under the earlier brief', though the work was complete and gated; the card bounced back to ready and was re-dealt, so a full attempt was spent to land the same head. It happened to two cards in 10 minutes (one with a 120/120 gate, one with 8 green compiler builds), and the coordinator re-added each finished head by hand as CARRY. --replace-in-flight, used to move cards to another friend, re-dealt them to the same row instead. No verb delivers a note to a working holder, so a brief edit was the only channel.
 
 Target: v1.9
 
 From: the owner, 2026-10-20 (fixed by hand during the rocketnet v1.0 sprint)
+
+### The default read mix is one friend read
+
+A card's reads default to friends=1, fleet=0: one read by a friend, no fleet reads. A card or the sprint can set a different mix, and the dashboard shows the mix in force. Done when: a card with no read mix set is dealt exactly one friend read and no fleet read, tested; an explicit mix on the card or the sprint overrides it, tested.
+
+Why it waits: On 2026-10-20 the coordinator set every card's read mix to one friend read by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### A read says BROKEN only with a defect class
+
+The reader brief and the read verb accept a BROKEN verdict only with one defect class: DONE-WHEN unmet, regression against base, an owner ruling broken, a build break, or a test that cannot fail. The read verb refuses a BROKEN without a class, and anything else a reader finds is recorded as a note on an OK. Done when: the read verb refuses a BROKEN with no class or an unknown class, and accepts each of the five, tested; the reader brief template lists the five; notes on an OK are carried into the card's record, tested.
+
+Why it waits: On 2026-10-20 one card went through 162 reads. The coordinator judged each BROKEN by hand against the five classes and recorded the rest as notes.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### A card ready to accept is accepted by the machine once
+
+When a card reaches ready to accept, the sprint accepts it once without the coordinator. If a refused landing brings the card back to ready to accept, it is not accepted again: a judgment is raised naming the card and the refusal. Done when: a ready-to-accept card is accepted with no coordinator verb, tested; a card returned by a refused landing raises one judgment and is not re-accepted, tested; TLA+ for accept, refused landing and the judgment, with a reversed witness where a card is accepted twice.
+
+Why it waits: On 2026-10-20 cards sat at ready to accept until the coordinator accepted each one by hand
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### A finish gates once at its head and never chases the base tip
+
+A finish never requires a fresh base. finish records the SHA it gated; the lander re-merges onto the current base and its CI tests the tip. A re-merge by the worker is asked for only when the lander's merge conflicts. Done when: a finish whose head is behind the base tip but merges cleanly is accepted and lands with its gated SHA recorded, tested; a conflicting merge sends the card back with a re-merge ask, tested; TLA+ for finish, merge and conflict, with a reversed witness where a finish is refused only for being behind.
+
+Why it waits: On 2026-10-20 finishes were asked for a fresh base after other cards landed, and the coordinator accepted gated heads by hand and let the lander's merge and CI cover the tip.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### GATE-NEEDS for each OS is derived from the paths a card changes
+
+GATE-NEEDS for windows, darwin and each other OS is derived from the paths a card changes, by a per-repository map of OS-specific paths. A card that touches no Windows code does not gate on the Windows box; the lander's CI covers it. An explicit GATE-NEEDS on the card still wins. Done when: a card whose PATHS touch no Windows path gets no windows GATE-NEEDS and one touching a Windows source does, tested for each OS in the map; the brief shows the derived GATE-NEEDS.
+
+Why it waits: On 2026-10-20 the single Windows box queued gates for 30 minutes and more, with cards that touched no Windows code. The coordinator removed their windows GATE-NEEDS by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### The attempt after a failed or broken fleet pass goes to friends
+
+After a failed or broken first pass by the fleet, the next attempt is routed to friends automatically, with no tier trick, and carries the last pushed head as CARRY. Reads still use the card's own tier, so fleet readers can read it. A sprint setting rework-to friends|any chooses this (friends is the default). Done when: a card whose fleet attempt fails or is read broken is dealt next to a friend with the last pushed head as CARRY, tested; its reads are dealt at the card's tier, tested; rework-to any restores the old routing, tested.
+
+Why it waits: On 2026-10-20 the coordinator routed reworks after failed or broken fleet passes to friends by hand, copying the last pushed head into CARRY.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### Before merging, the lander builds every OS and runs the examples, TLA and conformance checks
+
+Before it merges, the lander builds on macOS and Windows as well as Linux and runs the examples, the TLA coverage check and the conformance check on the merged tree. A failure refuses the landing, names the check, and leaves the base untouched. Done when: a merge that breaks the macOS or the Windows build, an example, TLA coverage or conformance is refused before the base moves, one test each; a clean merge lands unchanged.
+
+Why it waits: On 2026-10-20 three reds landed on base and stalled every card behind them: an XDP-only constant broke the macOS and Windows builds, receive-weather counters, and a test crash after a sequence change.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### Harmless PATHS-PROPOSED files are approved automatically
+
+At review, before the lander's E12 check, test files, docs, TLA cfg and record files and CI-comment files listed on a finish's PATHS-PROPOSED line are approved automatically and added to PATHS. SDK and source files on that line still need a decision. Done when: each harmless class on PATHS-PROPOSED is added to PATHS and the landing passes E12, tested; an SDK or source file on PATHS-PROPOSED still raises a decision, tested.
+
+Why it waits: On 2026-10-20 the lander refused finished cards for test and cfg files outside PATHS that the worker had listed under PATHS-PROPOSED. The coordinator approved each by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### The sprint knows every gate host per OS and spreads gates across them
+
+The sprint holds the gate hosts for each OS (more than one Mac gate host, for example), deals each gate to a free host of the needed OS, and the dashboard shows each OS's queue and each host's load. Done when: two hosts of one OS take gates in parallel and a gate waits only when all are busy, tested with fakes; the dashboard shows the queue per OS.
+
+Why it waits: On 2026-10-20 the coordinator spread gates across hosts by hand and worked out each OS's queue by hand; the sprint knew one gate host per OS.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### Brief lint warns when DONE-WHEN bundles independent problems
+
+Brief lint warns when a card's DONE-WHEN bundles problems that are independent (different files, subsystems or checks with no shared cause) and suggests a split into one card per problem. Done when: a DONE-WHEN with two independent problems gets the warning and a suggested split, and one with a single problem does not, tested.
+
+Why it waits: On 2026-10-20 bundled cards cycled for many rounds. The coordinator split them by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
