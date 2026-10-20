@@ -54,7 +54,7 @@ func TestKindsApplyInDependencyOrder(t *testing.T) {
 	t.Parallel()
 
 	names := KindNames()
-	require.Equal(t, "machine,fleet,friend,sprint,loop,provider,route,tier", strings.Join(names, ","), "kinds %v: machines first (ceilings), the fleet next (a friend with no beat is recorded with its coordinator machine), friends, the sprint row (it names a friend), loops (each names a machine), routes, tiers last (each names routes)", names)
+	require.Equal(t, "machine,fleet,friend,sprint,loop,provider,route,tier", strings.Join(names, ","), "kinds %v: the tag registry is hidden (read live, never applied), machines first (ceilings), the fleet next (a friend with no beat is recorded with its coordinator machine), friends, the sprint row (it names a friend), loops (each names a machine), routes, tiers last (each names routes)", names)
 }
 
 // TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I
@@ -71,10 +71,10 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 
 	machine, _ := Lookup(KindMachine)
 	scopedGot70 := strings.Join(machine.FieldNames(), ",")
-	require.Equal(t, "user,seat,slots,runners,roles,width,gates_only,tla,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,roles,width,gates_only,tla,note", scopedGot70)
+	require.Equal(t, "user,seat,slots,runners,roles,width,tags,gates_only,tla,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,roles,width,tags,gates_only,tla,note", scopedGot70)
 	for _, f := range machine.Fields {
-		scopedWant75 := f.Name != "runners" && f.Name != "roles" && f.Name != "width" && f.Name != "gates_only" && f.Name != "tla" && f.Name != "note"
-		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, roles to bench, tla to false and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
+		scopedWant75 := f.Name != "runners" && f.Name != "roles" && f.Name != "width" && f.Name != "tags" && f.Name != "gates_only" && f.Name != "tla" && f.Name != "note"
+		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, roles to bench, tags and gates_only to empty, tla to false and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
 	}
 	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "store", "coordinator", "machine", "harness", "logins", "wake"} {
 		_, scopedOk81 := machine.Field(invented)
