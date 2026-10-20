@@ -82,6 +82,8 @@
    :text "Test tiers, test speed and flaky tests.")
   (group "quality" :title "Cleanup, dead code and debt"
    :text "Shrinking, dead code removal, lint and debt work that waits for the code under it to settle.")
+  (group "workers" :title "Workers and providers"
+   :text "The member, its wall and children, and the provider routes and keys it runs on.")
   (group "export-v19" :title "Moved out of the sprint on 2026-10-18: v19, target v1.9"
    :text "The open cards of sprint stream v19, moved out of the sprint when the owner said v19 and v111 live in roadmaps only (2026-10-18), one item per card. Each item keeps the card's whole brief under :kept :brief, with its column, tier, base and needs; none had a pushed head."))
 
@@ -1911,4 +1913,42 @@ Done when: the fleet friends' API traffic flows through it; per-card tokens and 
    :title "v1.7 deadlock: revert-on-red reads the latest attempt of a run, never attempt 1"
    :text "On 2026-10-20 main's ci run 39346166100 was cancelled (a concurrency clash with the dev push) and its rerun went green, but revert-on-red read attempt 1, failed with 'cannot be rerun', filed needs-owner #6027 and left a failed check on the commit that refused the v1.6.10 cut. A deadlock class for the v1.7 list: a stale verdict that no later green clears."
    :why "a failed check that no green rerun clears blocks every cut of that commit"
-   :origin "the coordinator, 2026-10-20 (v1.7 deadlock list)")))
+   :origin "the coordinator, 2026-10-20 (v1.7 deadlock list)")
+  ; Moved out of the sprint at the pit stop of 2026-10-20 (streams v17 and v19): one item per feature.
+  (item "provider-output-limit" :group "workers" :date "2026-10-20" :release "v1.7"
+   :title "A direct provider declares its model output limit"
+   :text "A provider row's max_output is validated and written into the harness's model limit."
+   :origin "sprint cards v17-direct-provider-declares-model-output-limit (stream v17), archived to the roadmap at the owner's word, pit stop 2026-10-20"
+   :cards 1
+   :kept (:sprint-cards "v17-direct-provider-declares-model-output-limit" :archive "~/rowan-working/sprint-archive-2026-10-20/v17/v17-direct-provider-declares-model-output-limit.md" :pushed-heads "sprint/v17-direct-provider-declares-model-output-limit.w9.g1.e21@290a5c8048cb"))
+  (item "unfunded-provider-flips-itself" :group "workers" :date "2026-10-20" :release "v1.7"
+   :title "An unfunded provider flips to unfunded by itself"
+   :text "A provider that answers out of funds is set unfunded in the config automatically; only the owner can mark it funded again."
+   :origin "sprint cards v17-provider-funding-config-refuser (stream v17), archived to the roadmap at the owner's word, pit stop 2026-10-20"
+   :cards 1
+   :kept (:sprint-cards "v17-provider-funding-config-refuser" :archive "~/rowan-working/sprint-archive-2026-10-20/v17/v17-provider-funding-config-refuser.md" :pushed-heads "sprint/v17-provider-funding-config-refuser.w4.g1.e21@579530cc5ac0"))
+  (item "worker-faults-spend-no-attempt" :group "workers" :date "2026-10-20" :release "v1.7"
+   :title "A member's own faults spend no attempt"
+   :text "A member with no wall takes nothing, and a child stopped for the whole idle window ends with its own cause; neither counts against the card."
+   :origin "sprint cards v17-member-without-a-wall-spends-no-attempt, v17-silent-stopped-child-spends-no-attempt (stream v17), archived to the roadmap at the owner's word, pit stop 2026-10-20"
+   :cards 2
+   :kept (:sprint-cards "v17-member-without-a-wall-spends-no-attempt v17-silent-stopped-child-spends-no-attempt" :archive "~/rowan-working/sprint-archive-2026-10-20/v17/v17-member-without-a-wall-spends-no-attempt.md ~/rowan-working/sprint-archive-2026-10-20/v17/v17-silent-stopped-child-spends-no-attempt.md" :pushed-heads "sprint/v17-member-without-a-wall-spends-no-attempt.w6.g2.e21@cd6ff36c34ae sprint/v17-silent-stopped-child-spends-no-attempt.w2.g2.e21@f028fcaa7090"))
+  (item "provider-key-one-verb" :group "workers" :date "2026-10-20" :release "v1.9"
+   :title "A provider key is added with one verb"
+   :text "nova-secrets provider-key add seals the key to every route-running seat, units load keys by env name, and routes wait until every seat carries the key."
+   :origin "sprint cards v19-secrets-provider-key-add-one-verb, v19-secrets-units-load-by-key-env, v19-secrets-routes-wait-for-every-seat (stream v19), archived to the roadmap at the owner's word, pit stop 2026-10-20"
+   :cards 3
+   :kept (:sprint-cards "v19-secrets-provider-key-add-one-verb v19-secrets-units-load-by-key-env v19-secrets-routes-wait-for-every-seat" :archive "~/rowan-working/sprint-archive-2026-10-20/v19/v19-secrets-provider-key-add-one-verb.md ~/rowan-working/sprint-archive-2026-10-20/v19/v19-secrets-units-load-by-key-env.md ~/rowan-working/sprint-archive-2026-10-20/v19/v19-secrets-routes-wait-for-every-seat.md" :pushed-heads "sprint/v19-secrets-provider-key-add-one-verb.w1.g1.e21@bf06911eaf3a sprint/v19-secrets-units-load-by-key-env.w2.g1.e21@107c996799f8"))
+  (item "tag-registry" :group "workers" :date "2026-10-20" :release "v1.9"
+   :title "Tags live in a config registry and members prove them"
+   :text "nova-config holds the tag registry with probes; a member runs the probes on its beat and picks up a new probe with no rebuild or restart."
+   :origin "sprint cards v19-tags-config-registry, v19-tags-member-proves-on-its-beat (stream v19), archived to the roadmap at the owner's word, pit stop 2026-10-20"
+   :cards 2
+   :kept (:sprint-cards "v19-tags-config-registry v19-tags-member-proves-on-its-beat" :archive "~/rowan-working/sprint-archive-2026-10-20/v19/v19-tags-config-registry.md ~/rowan-working/sprint-archive-2026-10-20/v19/v19-tags-member-proves-on-its-beat.md" :pushed-heads "sprint/v19-tags-config-registry.w5.g1.e21@41002712ca37"))
+  (item "cut-sets-aside-stale-verdicts" :group "ops" :date "2026-10-20" :release "v1.9"
+   :title "A release cut sets aside stale verdicts"
+   :text "A cut ignores read verdicts given at an older head."
+   :origin "sprint cards v19-train-cut-sets-aside-stale-verdicts (stream v19), archived to the roadmap at the owner's word, pit stop 2026-10-20"
+   :cards 1
+   :kept (:sprint-cards "v19-train-cut-sets-aside-stale-verdicts" :archive "~/rowan-working/sprint-archive-2026-10-20/v19/v19-train-cut-sets-aside-stale-verdicts.md" :pushed-heads "sprint/v19-train-cut-sets-aside-stale-verdicts.w3.g1.e21@6c2d149458bc"))
+))
