@@ -446,3 +446,38 @@ func BenchPath(goos, home, pathEnv string) []string {
 // ThisOS is the operating system whose list the wall is built from: this process's own,
 // because the wall contains a card on THIS bench.
 func ThisOS() string { return runtime.GOOS }
+
+// DotnetSharedDir is the one directory outside a card's write root that the .NET runtime
+// writes on Linux. Its named mutexes (NuGet's "NuGet-Migrations" on every restore of a fresh
+// HOME) are files under /tmp/.dotnet/shm, a path the runtime builds from a fixed /tmp and
+// never from TMPDIR, so no temp mapping moves it (measured on hetzner2, 2026-10-19: strace of
+// `dotnet build` with TMPDIR set opens /tmp/.dotnet/shm/session<n>/NuGet-Migrations; inside
+// the wall the open fails EACCES and the restore dies). It is a machine-wide rendezvous by
+// design, mode 0777, and it is the only part of /tmp the wall grants.
+const DotnetSharedDir = "/tmp/.dotnet"
+
+// RuntimeSharedDirs is the fixed directories outside the job a toolchain's runtime must write
+// on goos: DotnetSharedDir on linux, nothing elsewhere (darwin's runtime is not measured).
+func RuntimeSharedDirs(goos string) []string {
+	if goos == "linux" {
+		return []string{DotnetSharedDir}
+	}
+	return nil
+}
+
+// EnsureRuntimeSharedDirs makes each of RuntimeSharedDirs(goos) that is absent, mode 0777 as
+// the .NET runtime makes it itself, and returns the ones that are directories: the wall
+// refuses a --write naming a path that is not there, so only those reach the argv. It runs
+// outside the wall, before the launch.
+func EnsureRuntimeSharedDirs(goos string) []string {
+	var out []string
+	for _, d := range RuntimeSharedDirs(goos) {
+		if err := os.Mkdir(d, 0o777); err == nil {
+			_ = os.Chmod(d, 0o777) // ignored: a umask-narrowed mode the runtime widens itself when it owns the directory
+		}
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			out = append(out, d)
+		}
+	}
+	return out
+}
