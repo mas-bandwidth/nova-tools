@@ -93,7 +93,6 @@ func hasFlagPair(argv []string, flag, val string) bool {
 	return false
 }
 
-// aSlot returns a slot dir and the root it is under, both fresh.
 // sameTmp is whether got, the TMPDIR a child was handed, names the tmp directory want:
 // want itself, or the short link nativeShortTmp makes for it in base (removed when the run
 // ends, so compared by name).
@@ -108,6 +107,7 @@ func sameTmp(got, want, base string) bool {
 	return short && got == name
 }
 
+// aSlot returns a slot dir and the root it is under, both fresh.
 func aSlot(t *testing.T) (root, slot string) {
 	t.Helper()
 	root = t.TempDir()

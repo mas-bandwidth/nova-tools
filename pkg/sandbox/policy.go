@@ -1013,8 +1013,8 @@ func lookPathIn(name, path string) (string, error) {
 // to a value the caller set rather than replacing it, with the tool's own option last so it
 // wins the JVM's last-option-wins.
 //
-// A caller's TMPDIR that is another name of tmp (a link that resolves to it) is the name
-// the four variables carry: a short link leaves room below it for a unix socket, whose path
+// A caller's TMPDIR that is another absolute name of tmp (a link that resolves to it) is
+// the name the temporary-directory variables carry: a short link leaves room below it for a unix socket, whose path
 // holds 108 bytes, where a long tmp does not. The directory, and every rule the wall holds
 // on it, is the same one.
 func ChildEnv(env []string, tmp string) []string {
@@ -1046,7 +1046,9 @@ func ChildEnv(env []string, tmp string) []string {
 }
 
 // tmpName is the name the child's temporary-directory variables carry for tmp: the
-// caller's last TMPDIR when it resolves to tmp itself, else tmp.
+// caller's last TMPDIR when it is absolute and resolves to tmp itself, else tmp. A relative
+// name is never kept: it was resolved from the caller's directory, and the child runs in
+// another.
 func tmpName(env []string, tmp string) string {
 	name := ""
 	for _, kv := range env {
@@ -1054,7 +1056,7 @@ func tmpName(env []string, tmp string) string {
 			name = v
 		}
 	}
-	if name == "" || name == tmp {
+	if name == "" || name == tmp || !filepath.IsAbs(name) {
 		return tmp
 	}
 	if real, err := filepath.EvalSymlinks(name); err == nil && real == tmp {

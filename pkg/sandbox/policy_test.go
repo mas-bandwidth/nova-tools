@@ -314,6 +314,7 @@ func TestChildEnvKeepsAShortNameOfItsTmp(t *testing.T) {
 		{"another directory is replaced", elsewhere, tmp},
 		{"a name that does not resolve is replaced", filepath.Join(dir, "gone"), tmp},
 		{"the tmp itself", tmp, tmp},
+		{"a relative name is replaced", "nv-1", tmp},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
