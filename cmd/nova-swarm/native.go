@@ -349,6 +349,7 @@ type nativePrepared struct {
 	shimShell    string
 	goBin        string
 	toolPath     []string
+	toolEnv      []string // NAME=VALUE the toolchain needs set (the MSVC developer environment on Windows)
 	configSHA    string
 	proxy        *swarm.ProviderProxy
 	binaryHash   string
@@ -738,6 +739,14 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	// and the card's gate does not compile the repository again (shellshim.go).
 	goBin := swarm.BenchGoBin(benchOS(cfg), benchHome(cfg), os.Getenv("PATH"))
 	toolPath := swarm.BenchPath(benchOS(cfg), benchHome(cfg), os.Getenv("PATH"))
+	// (3d') THE MSVC DEVELOPER ENVIRONMENT, on Windows only (msvc_windows.go; elsewhere it is
+	// empty): what vcvars64.bat adds goes after the bench toolchain, so a card's `cl`, `link`
+	// and the Windows SDK resolve and find their headers and libraries.
+	msvc, msvcNote := benchMSVCEnv(os.Getenv("PATH"))
+	if msvcNote != "" {
+		fmt.Fprintf(errOut, "NATIVE NOTE: %s the MSVC developer environment is not on the child's PATH: %s\n", oneline.Field(cfg.label), oneline.Escape(msvcNote))
+	}
+	toolPath = append(toolPath, msvc.PathDirs...)
 	if cacheDir != "" {
 		if err := writeNativeGoShim(shimDir, goBin); err != nil {
 			releaseSlot()
@@ -1010,6 +1019,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		shimShell:    shimShell,
 		goBin:        goBin,
 		toolPath:     toolPath,
+		toolEnv:      msvc.Vars,
 		configSHA:    configSHA,
 		proxy:        proxy,
 		binaryHash:   binaryHash,
@@ -1102,6 +1112,7 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 		}
 	}
 	childEnv := withOutputTokenMax(nativeChildEnv(p.dataHome, p.jobDir, p.tmpDir, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath), p.cfg.outputMax())
+	childEnv = withEnvSet(childEnv, p.toolEnv)
 	if p.cfg.headless() == harness.Muse {
 		key := os.Getenv(harness.MuseKeyEnv)
 		if strings.TrimSpace(key) == "" {
@@ -2124,6 +2135,13 @@ func benchOS(cfg nativeRunConfig) string {
 // `cargo` resolves to the toolchain the wall grants whatever PATH the loop unit started the
 // member with. Empty names nothing and leaves PATH as it was.
 func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string, toolPath []string) []string {
+	if runtime.GOOS == "windows" {
+		// the profile folders nativeChildEnvOS points a Windows child at, inside its data home
+		for _, d := range windowsChildProfileDirs(dataHome) {
+			// ignored: a folder that cannot be made is one the child's own tool reports by name
+			_ = os.MkdirAll(d, 0o755)
+		}
+	}
 	return nativeChildEnvFrom(os.Environ(), dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, toolPath)
 }
 
@@ -2175,10 +2193,18 @@ func harnessFaultLine(label string, wall float64, model, why string) string {
 
 // nativeChildEnvFrom is nativeChildEnv over environ, native's own environment.
 func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string, toolPath []string) []string {
+	return nativeChildEnvOS(runtime.GOOS, environ, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, toolPath)
+}
+
+// nativeChildEnvOS is nativeChildEnvFrom for one operating system. On Windows the names are
+// matched without case, Windows' own names are kept (keepNativeEnv), and the user-profile
+// names point into the data home as HOME does (windowsChildProfile), so the harness's state
+// and a build tool's per-user files stay in the job's data home.
+func nativeChildEnvOS(goos string, environ []string, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string, toolPath []string) []string {
 	var kept []string
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
-		if keepNativeEnv(name) {
+		if keepNativeEnv(goos, name) {
 			kept = append(kept, kv)
 		}
 	}
@@ -2186,6 +2212,7 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 		"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR", "TMP", "TEMP",
 		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "ASDF_OUTPUT_TRANSLATIONS",
 		"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX",
+		"USERPROFILE", "APPDATA", "LOCALAPPDATA",
 	}
 	if shimShell != "" {
 		remove = append(remove, "SHELL")
@@ -2196,7 +2223,7 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 	// the decide read's key is native's own (nativedecide.go), never the child's
 	remove = append(remove, decide.JevSecret)
 	for _, name := range remove {
-		kept = environWithoutName(kept, name)
+		kept = environWithoutNameFor(goos, kept, name)
 	}
 	// Git config isolation is unconditionally enforced so the bench's own config
 	// cannot leak into what the worker commits.
@@ -2219,6 +2246,9 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 		// bench needs no wrapper exporting it outside version control
 		"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX="+strconv.Itoa(opencodeOutputTokenMax),
 	)
+	if goos == "windows" {
+		out = append(out, windowsChildProfile(dataHome)...)
+	}
 	// The build parallelism every card starts with (nativeBuildParallelism); the inherited
 	// names are already dropped by keepNativeEnv, so each is here exactly once.
 	out = append(out, nativeBuildParallelism...)
@@ -2232,7 +2262,7 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 	}
 	// The wrappers go on before the secret is re-added, so the ONE process that keeps the
 	// key is the harness itself and every shell it spawns by name is scrubbed (#1814).
-	out = pathWithDirsFirst(out, append([]string{shimDir}, toolPath...)...)
+	out = pathWithDirsFirstFor(goos, out, append([]string{shimDir}, toolPath...)...)
 	if shimShell != "" {
 		out = append(out, "SHELL="+shimShell)
 	}
@@ -2289,7 +2319,15 @@ func nativeReadRoots(cfg nativeRunConfig) []string {
 // any harness configuration whose name starts with OPENCODE_, and any provider credential whose
 // name carries KEY, TOKEN or SECRET. Everything else is the caller's own noise and is dropped,
 // so no path the caller happened to export reaches the child.
-func keepNativeEnv(name string) bool {
+//
+// On Windows a name is matched without case (`Path`) and the names Windows needs to run any
+// program at all (windowsSystemEnv: SystemRoot, ComSpec, PATHEXT, the Program Files
+// locations) are kept; goos is the operating system whose environment this is.
+func keepNativeEnv(goos, name string) bool {
+	name = envName(goos, name)
+	if goos == "windows" && windowsSystemEnv[name] {
+		return true
+	}
 	switch name {
 	case "PATH", "LANG", "TERM":
 		return true
@@ -2306,9 +2344,15 @@ func keepNativeEnv(name string) bool {
 // environWithoutName is the environment minus one name, so a name this run sets itself is
 // certain to appear exactly once.
 func environWithoutName(env []string, name string) []string {
+	return environWithoutNameFor(runtime.GOOS, env, name)
+}
+
+// environWithoutNameFor is environWithoutName for one operating system: on Windows every
+// spelling of the name goes, since Windows reads `Tmp` and `TMP` as one variable.
+func environWithoutNameFor(goos string, env []string, name string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
-		if n, _, _ := strings.Cut(kv, "="); n == name {
+		if n, _, _ := strings.Cut(kv, "="); envNameIs(goos, n, name) {
 			continue
 		}
 		out = append(out, kv)

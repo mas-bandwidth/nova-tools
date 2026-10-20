@@ -91,7 +91,8 @@ func TestToolchainRootsAreOneListPerOS(t *testing.T) {
 				assert.False(t, strings.HasPrefix(r.Name, "/"), "%s: %s is a home root and an absolute path at once", goos, r.Name)
 				continue
 			}
-			assert.True(t, strings.HasPrefix(r.Name, "/"), "%s: the system root %s is not absolute", goos, r.Name)
+			assert.True(t, absRootName(r.Name), "%s: the system root %s is not absolute", goos, r.Name)
+			assert.NotContains(t, r.Name, `\`, "%s: the system root %s is not in slash form", goos, r.Name)
 		}
 		assert.NotZero(t, home, "%s: no root is under HOME; the module cache always is", goos)
 	}
@@ -246,4 +247,110 @@ func TestBenchPathIsTheWallsExecRootsMadeFindable(t *testing.T) {
 	assert.Equal(t, []string{staleReal}, BenchPath(runtime.GOOS, bare, stale))
 	assert.Nil(t, BenchPath(runtime.GOOS, bare, "/nonexistent"))
 	assert.Nil(t, BenchPath(runtime.GOOS, "", "/nonexistent"), "no home names no home-relative root")
+}
+
+// TestToolchainRootsPerGOOS is the one list as a table, GOOS by GOOS: every root, its kind and
+// the directories of it a card searches. The windows row is captain's (2026-10-19): a native
+// Windows member's card had Go's bin alone on its PATH, so no git, cmake or sqlite3, because the
+// list had no windows entry at all.
+func TestToolchainRootsPerGOOS(t *testing.T) {
+	t.Parallel()
+
+	type row struct {
+		name string
+		exec bool
+		dirs []string
+	}
+	want := map[string][]row{
+		"linux": {{"sdk", true, nil}, {"go/pkg/mod", false, nil}},
+		"darwin": {
+			{"sdk", true, nil}, {"go/pkg/mod", false, nil},
+			{"/opt/homebrew/Cellar/go", true, nil}, {"/opt/homebrew/Cellar/sbcl", true, nil},
+			{"/opt/homebrew/opt/openjdk", true, nil}, {"/Library/Java/JavaVirtualMachines", true, nil},
+			{"/usr/local/share/dotnet", true, nil},
+		},
+		"windows": {
+			{"sdk", true, nil}, {"go/pkg/mod", false, nil},
+			{"C:/Program Files/Git", true, []string{"cmd", "bin"}},
+			{"C:/Program Files/CMake", true, []string{"bin"}},
+			{"C:/Program Files/Go", true, []string{"bin"}},
+			{"C:/Program Files (x86)/Microsoft Visual Studio/Installer", true, []string{"."}},
+		},
+	}
+	assert.Equal(t, []string{"darwin", "linux", "windows"}, ToolchainRootOSes())
+	for goos, rows := range want {
+		var got []row
+		for _, r := range ToolchainRootList(goos) {
+			got = append(got, row{r.Name, r.Exec, r.PathDirs})
+		}
+		assert.Equal(t, rows, got, "%s: the toolchain roots", goos)
+	}
+	// A windows home root is under %USERPROFILE%, and its drive-letter roots are system roots.
+	for _, r := range ToolchainRootList("windows") {
+		assert.Equal(t, r.Name == "sdk" || r.Name == "go/pkg/mod", r.Home(), "windows: %s home=%v", r.Name, r.Home())
+	}
+	// The list is handed out as a copy: a caller editing a root's PathDirs edits its own.
+	l := ToolchainRootList("windows")
+	l[2].PathDirs[0] = "edited"
+	assert.Equal(t, "cmd", ToolchainRootList("windows")[2].PathDirs[0])
+}
+
+// TestAbsRootNameReadsBothSpellings: "/..." and a drive letter are absolute; a home-relative
+// name, a bare drive and a backslashed path are not (the list is in slash form).
+func TestAbsRootNameReadsBothSpellings(t *testing.T) {
+	t.Parallel()
+
+	for name, abs := range map[string]bool{
+		"/opt/homebrew/Cellar/go": true, "C:/Program Files/Git": true, "d:/tools": true,
+		"sdk": false, "go/pkg/mod": false, "C:": false, `C:\Program Files`: false, "1:/x": false, "": false,
+	} {
+		assert.Equal(t, abs, absRootName(name), "absRootName(%q)", name)
+	}
+}
+
+// TestBenchToolBinsSearchesEachSystemRootsPathDirs: a system root's PathDirs go on the card's
+// PATH after the home roots' bins, in the list's order, each skipped when it is not there, "."
+// is the root itself, and a root that is not executed names nothing. The roots are the test's
+// own directories, so nothing of the machine it runs on is read.
+func TestBenchToolBinsSearchesEachSystemRootsPathDirs(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	sys := t.TempDir()
+	for _, d := range []string{"sdk/bin", "Git/cmd", "Git/bin", "CMake/bin", "Installer", "NoExec/bin"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(home, filepath.FromSlash(d)), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(sys, filepath.FromSlash(d)), 0o755))
+	}
+	root := func(n string) string { return filepath.ToSlash(filepath.Join(sys, n)) }
+	decl := []ToolchainRoot{
+		{Name: "sdk", Exec: true},
+		{Name: "go/pkg/mod", Exec: false},
+		{Name: root("Git"), Exec: true, PathDirs: []string{"cmd", "bin", "usr/bin"}},
+		{Name: root("CMake"), Exec: true, PathDirs: []string{"bin"}},
+		{Name: root("Absent"), Exec: true, PathDirs: []string{"bin"}},
+		{Name: root("Installer"), Exec: true, PathDirs: []string{"."}},
+		{Name: root("NoExec"), Exec: false, PathDirs: []string{"bin"}},
+	}
+	if runtime.GOOS != "windows" {
+		for _, r := range decl[2:] {
+			require.False(t, r.Home(), "%s is a system root", r.Name)
+		}
+	}
+	assert.Equal(t, []string{
+		filepath.Join(home, "sdk", "bin"),
+		filepath.Join(sys, "Git", "cmd"), filepath.Join(sys, "Git", "bin"),
+		filepath.Join(sys, "CMake", "bin"),
+		filepath.Join(sys, "Installer"),
+	}, benchToolBinsIn(decl, home))
+	// no home: the system roots alone
+	assert.Equal(t, []string{
+		filepath.Join(sys, "Git", "cmd"), filepath.Join(sys, "Git", "bin"),
+		filepath.Join(sys, "CMake", "bin"), filepath.Join(sys, "Installer"),
+	}, benchToolBinsIn(decl, ""))
+	// the linux and darwin lists name no PathDirs, so a bench's PATH there is what it was
+	for _, goos := range []string{"linux", "darwin"} {
+		for _, r := range ToolchainRootList(goos) {
+			assert.Empty(t, r.PathDirs, "%s: %s names PathDirs", goos, r.Name)
+		}
+	}
 }

@@ -104,6 +104,11 @@ var ignoredCompoundWords = map[string]bool{
 	// (cmd/nova-swarm/diskfree_windows.go)
 	"getdiskfreespaceex":  true,
 	"getdiskfreespaceexw": true,
+	// the identifiers of Microsoft Visual Studio itself: the vswhere component id
+	// Microsoft.VisualStudio.Component.VC.Tools.x86.x64 and the VisualStudioVersion variable
+	// vcvars sets (pkg/swarm/msvc.go)
+	"visualstudio":        true,
+	"visualstudioversion": true,
 }
 
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)
@@ -123,6 +128,9 @@ var englishPhrases = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(?:leave|leaves|leaving|left|disk|free|frees|freeing|freed|enough|more|no|blank|white|trailing|leading|single|double|extra|some|much|little|of)\s+(space)\b`),
 	regexp.MustCompile(`(?i)\buntil\s+(space)\s+exists\b`),
 	regexp.MustCompile(`\bDO NOT REMOVE THIS WITHOUT (GLENN)'S EXPLICIT PERMISSION\b`), // the owner's own words, verbatim (2026-10-16)
+	// the product, never the host: Microsoft Visual Studio, whose compiler a native Windows
+	// member finds through vswhere (pkg/swarm/msvc.go, the windows toolchain roots)
+	regexp.MustCompile(`(?i)\bvisual\s+(studio)\b`),
 	regexp.MustCompile(`(?i)\b(space)(?:\s+(?:for|between|left|after|before|around|bar|character|characters|than|on\s+disk|to\s+spare)\b|-separated|-delimited)`),
 }
 
@@ -607,6 +615,8 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 		{"rowan@mas-bandwidth.com", []string{"mas-bandwidth", "rowan"}},
 		{"// bench name (e.g. \"hulk\", \"space\")", nil},
 		{"return fmt.Errorf(\"for example --seat studio\")", []string{"studio"}},
+		{"C:/Program Files (x86)/Microsoft Visual Studio/Installer", nil},
+		{"Visual Studio 18 and the studio row", []string{"studio"}},
 		// Adjacent spaces and slashes, repeated occurrences on one line
 		{"const owner = \"mas-bandwidth mas-bandwidth\"", []string{"mas-bandwidth", "mas-bandwidth"}},
 		{"const owner = \"mas-bandwidth/mas-bandwidth\"", []string{"mas-bandwidth", "mas-bandwidth"}},
