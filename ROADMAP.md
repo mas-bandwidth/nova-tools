@@ -29,7 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
-- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (30)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (37)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -2236,3 +2236,73 @@ Why it waits: On 2026-10-20 bundled cards cycled for many rounds. The coordinato
 Target: v1.9
 
 From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### Fixed, hard and sentinel: a card's blockers deal at the card's priority
+
+A card's effective priority is the highest of its own priority and the priority of every card that transitively depends on it through hard dependencies (DEPENDS-ON, needs) and through sentinels: priority inheritance. The deal orders ready cards by effective priority, so the low cards a critical card waits on, directly or behind a sentinel, deal as critical ahead of unrelated lower work. Effective priority is recomputed whenever a dependency or a priority changes. The dashboard and the card view show both the set and the effective priority. Done when: a low card that a critical card needs directly deals before an unrelated high card, tested; the same through a sentinel, tested; removing the dependency or lowering the dependent drops the card back to its own priority, tested; TLA+ in priority-proven-in-tla, with a reversed witness where a critical card's blocker deals behind lower work.
+
+Why it waits: Priority only ordered the deal among ready cards, and nothing carried it through dependencies. On 2026-10-20 the critical and blocker API cards rocketnet-driver-renamed-transport and rocketnet-config-packets-per-update-name sat in waiting all day: they needed the sentinels rocketnet-quiet-for-reformat and rocketnet-v1-gate, which needed about 45 low-priority soak, stress and matrix cards to land first, and those cards dealt at low priority.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Is there something broken with your prioritization? ... Fix this in v1.9.')
+
+### Fixed, soft: a LAND-AFTER on a lower-priority unlanded card never stalls the lander
+
+A soft dependency (LAND-AFTER) orders landing, it never blocks it. When a merging card's LAND-AFTER names cards of lower priority that have not landed, the lander lands the higher-priority card without waiting on them, records the skipped order on the card, and lands the rest in priority order. A LAND-AFTER on cards of equal or higher priority is kept. The lander never reports nothing-landable while a merging card's only wait is a lower-priority LAND-AFTER. Done when: a merging critical card with a LAND-AFTER on an unlanded low card lands on the next lander pass, with the skip recorded, tested; a LAND-AFTER on an equal-priority unlanded card still waits, tested; the lander queue lands in effective-priority order, tested; TLA+ in priority-proven-in-tla.
+
+Why it waits: On 2026-10-20 a merging card's LAND-AFTER on lower-priority unlanded cards made the lander report nothing-landable, which stalled the landing queue behind low work.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Hard, soft and sentinel. Card this all for v1.9.')
+
+### Caught, hard, soft and sentinel: a dependency that inverts priority is refused or warned at write time
+
+add, brief (including --needs-from-brief), needs set (--needs and --land-after) and priority check every change against the dependency graph. A change that would make a higher-priority card wait on a lower-priority one, through a hard dependency, a LAND-AFTER, or a sentinel's needs, is warned, naming the higher card, the lower card, the kind and the chain; with --strict it is refused. Lowering a card's priority below a card that waits on it is checked the same way. Adding a need to a sentinel warns when the needed card's priority is lower than that of any card that needs the sentinel. Done when: one test per kind and per verb (add, brief, needs set, priority) that the inverting change warns with the chain and --strict refuses it; a change that inverts nothing is silent, tested.
+
+Why it waits: On 2026-10-20 the inversions that held the critical API cards for a day (hard needs on sentinels, the sentinels' needs on about 45 low cards, and a LAND-AFTER on lower-priority unlanded cards) were each written without a word from any verb.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('we need to make sure that dependencies that break this priority are caught and fixed. Hard, soft and sentinel.')
+
+### Caught, hard, soft and sentinel: a tick judgment flags every priority inversion that exists
+
+Each tick checks the whole sprint for a card waiting, by any dependency kind (hard, LAND-AFTER, or through a sentinel), on an unlanded card of lower priority. A judgment fires within one tick naming the waiting card, the chain down to each lower card, the dependency kind of each link, and the cheapest cut: drop or defer the low cards, or remove the dependency. It fires once per chain and again only when the chain changes, and clears when the inversion is gone, whether by a cut or by inheritance landing the blockers. Done when: one test per kind that the inversion raises the judgment within one tick, naming the chain, the kinds and the cut, with time as an argument; a sprint with no inversion raises none, tested; an unchanged chain raises it once, tested.
+
+Why it waits: On 2026-10-20 two critical API cards waited all day behind about 45 low-priority cards through two sentinels, and nothing alarmed; the owner found it.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Is there something broken with your prioritization? ... Fix this in v1.9.')
+
+### needs set and brief --needs-from-brief can remove a sentinel need
+
+needs set and brief --needs-from-brief can remove a sentinel need from a waiting card, the same as any other need, and the card is re-evaluated for ready at once. Done when: needs set without the sentinel, and brief --needs-from-brief with a brief that omits it, each remove the sentinel need from a waiting card, which then goes ready if nothing else blocks it, tested.
+
+Why it waits: On 2026-10-20 neither needs set nor brief --needs-from-brief could remove the sentinel needs rocketnet-quiet-for-reformat and rocketnet-v1-gate from the critical API cards; the coordinator dropped the sentinels by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Is there something broken with your prioritization? ... Fix this in v1.9.')
+
+### nova-sprint view priority shows, per priority class, what is landed, in flight and blocked
+
+nova-sprint view priority prints one line per priority class (blocker, critical, fix, read, high, normal, low) with its landed, in-flight and blocked counts, and under each blocked card the chain of dependencies that blocks it, each link marked hard, soft or sentinel, lowest-priority blocker first. The coordinator sees in one line that critical work is blocked. Done when: the view on a sprint with a blocked critical card prints the critical line with a nonzero blocked count and the chain with its kinds, tested against a fixed sprint; the counts per class sum to the sprint's open and landed cards, tested.
+
+Why it waits: On 2026-10-20 no view showed that the critical API cards were blocked, or by what; the coordinator worked out the chain by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Is there something broken with your prioritization? ... Fix this in v1.9.')
+
+### TLA+ proves the sprint's prioritization, every class and every dependency kind
+
+tla/SprintPriority.tla models the deal and the lander with every priority class (low, normal, high, read, critical, blocker, fix) and the rules designed around them, the read and fix rules included, and all three dependency kinds: hard (DEPENDS-ON, needs), soft (LAND-AFTER) and sentinel. A Current config models today's rules; a Fixed config adds priority inheritance (priority-inherits-through-needs), the soft-dependency lander rule (land-after-never-stalls-the-lander) and the alarm (priority-inversion-alarm). Done when: TLC on the Current config gives a counterexample that reproduces the 2026-10-20 sentinel inversion, checked against the code by hand; TLC on the Fixed config passes every invariant (no higher-priority ready or merging card waits on lower work without an alarm, the lander never stalls on a lower-priority LAND-AFTER) and the liveness that a critical card's blockers deal; every priority class and the read and fix rules are modelled; the code change that implements the fix cites the model.
+
+Why it waits: On 2026-10-20 prioritization did not work and nothing showed it; the owner wants a proof, not a belief, that it works.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('I want TLA+ tests proving that we have working prioritization, including all the rules we designed around low, normal, high, read, critical, blocker, fix.')
