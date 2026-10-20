@@ -1916,8 +1916,8 @@ uses only what Windows gives an ordinary user:
 **What it does not do**, measured or read, so the OK line is never read as more:
 
 - **Reads are not confined.** An integrity level stops writes up, not reads. On an
-  elevated member the child keeps Administrators (made deny-only, it crashed the cmake
-  configure step, 0xC0000005, CMake 4.3 and 4.4), so it can read most of the machine,
+  elevated member the child keeps Administrators (it is not made deny-only: that crashed the
+  cmake configure step, 0xC0000005, CMake 4.3 and 4.4), so it can read most of the machine,
   other users' profiles and ProgramData included, and the network is open.
 - **It writes every low-labelled object**, not only its roots: AppData\LocalLow,
   HKCU\Software\AppDataLow, %TEMP%\Low, and every other card's labelled directories on

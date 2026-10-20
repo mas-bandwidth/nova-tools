@@ -65,8 +65,42 @@ func (winOps) LabelLow(root string) error {
 	if err != nil {
 		return fmt.Errorf("the low label's SACL: %w", err)
 	}
-	_, err = labelLowTree(root, isReparsePoint, func(path string) error { return labelOne(path, sacl) })
+	rootFinal, err := finalPath(root)
+	if err != nil {
+		return err
+	}
+	_, err = labelLowTree(root, isReparsePoint, func(path string) error { return labelOne(path, rootFinal, sacl) })
 	return err
+}
+
+// finalPath is the path the kernel resolved an open of path to, every junction along it
+// followed: the root's own, against which every labelled entry is checked.
+func finalPath(path string) (string, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return "", err
+	}
+	h, err := windows.CreateFile(p, windows.READ_CONTROL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	defer windows.CloseHandle(h) // ignored: closing our own handle after the read
+	return handleFinalPath(h)
+}
+
+// handleFinalPath is GetFinalPathNameByHandle of an open handle.
+func handleFinalPath(h windows.Handle) (string, error) {
+	buf := make([]uint16, 1024)
+	for {
+		n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0)
+		if err != nil {
+			return "", fmt.Errorf("GetFinalPathNameByHandle: %w", err)
+		}
+		if int(n) < len(buf) {
+			return windows.UTF16ToString(buf[:n]), nil
+		}
+		buf = make([]uint16, n+1)
+	}
 }
 
 // isReparsePoint reads path's attributes without following it.
@@ -84,7 +118,13 @@ func isReparsePoint(path string) (bool, error) {
 
 // labelOne sets the low label on path itself: through a handle opened on the entry (never
 // what a reparse point names), and with a handle-based set, which propagates to nothing.
-func labelOne(path string, sacl *windows.ACL) error {
+//
+// AND WHAT THE HANDLE OPENED MUST BE INSIDE THE ROOT (the second security read of #6037).
+// The walk checks a path and opens it later by its whole string; a folder along it swapped
+// for a junction in that gap -- another card's low child can do it -- would send the open,
+// and the label, outside. So the handle's own final path is read back and the label is set
+// only when it is the root or under it.
+func labelOne(path, rootFinal string, sacl *windows.ACL) error {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return err
@@ -96,6 +136,13 @@ func labelOne(path string, sacl *windows.ACL) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	defer windows.CloseHandle(h) // ignored: closing our own handle after the set
+	got, err := handleFinalPath(h)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if !coversPath(rootFinal, got) {
+		return fmt.Errorf("%s opened %s, outside the write root %s: a junction was swapped in along the path; nothing was labelled", path, got, rootFinal)
+	}
 	if err := windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.LABEL_SECURITY_INFORMATION, nil, nil, nil, sacl); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
