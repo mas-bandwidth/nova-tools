@@ -988,9 +988,13 @@ func deriveCoordinator(ctx context.Context, st Store, rows []Row) ([]Row, error)
 // deriveLoopLog is the loop kind's Derive: each row apply writes carries its
 // log, LoopLog of the store's fleet row's loops_dir and the loop's name, so
 // the path is the stored row's even when Redis holds no applied fleet row (a
-// store that applies the loop kind first). A fleet row that carries no
-// directory is refused with the set that declares one (docs/SPEC-CONFIG.md,
-// "fleet").
+// store that applies the loop kind first). It also writes the row's effective
+// keys, EffectiveKeys of the row and the store's provider rows: a member or
+// reader loads every enabled provider's key_env, so the loops play's
+// nova-secrets exec --only carries a new provider's key with no loop or play
+// edit (tla/ProviderKey.tla AddLoop, UnitsLoadEveryEnabledKey;
+// docs/SPEC-CONFIG.md, "loop"). A fleet row that carries no directory is
+// refused with the set that declares one (docs/SPEC-CONFIG.md, "fleet").
 func deriveLoopLog(ctx context.Context, st Store, rows []Row) ([]Row, error) {
 	fleet, _, err := st.Get(ctx, KindFleet, KindFleet)
 	if err != nil {
@@ -1000,10 +1004,15 @@ func deriveLoopLog(ctx context.Context, st Store, rows []Row) ([]Row, error) {
 	if len(rows) > 0 && strings.TrimSpace(dir) == "" {
 		return nil, &RefusedError{Err: ErrInvalid, Detail: "the fleet row carries no loops_dir, the directory every loop's log path is derived from; run: nova-config fleet set --loops_dir <path>, then apply --kind loop"}
 	}
+	providers, err := st.List(ctx, KindProvider)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Row, 0, len(rows))
 	for _, r := range rows {
 		r = r.Clone()
 		r.Fields["log"] = LoopLog(dir, r.Name)
+		r.Fields["keys"] = strings.Join(EffectiveKeys(r, providers), ",")
 		out = append(out, r)
 	}
 	return out, nil

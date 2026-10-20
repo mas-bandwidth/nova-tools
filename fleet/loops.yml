@@ -231,7 +231,10 @@
         # The command the unit runs: the record's argv, a bare program being the
         # installed tool and ~/ the login's home, behind nova-secrets exec when
         # the record names keys (the seat opens them; their values never reach
-        # the unit file).
+        # the unit file). item['keys'] is the applied effective list, a member
+        # or reader's own keys plus every enabled provider's key_env
+        # (pkg/config EffectiveKeys, tla/ProviderKey.tla UnitsLoadEveryEnabledKey),
+        # so a new provider needs no edit here.
         loop_argv: >-
           {{ [((nova_bin_dir ~ '/' ~ item.argv[0]) if '/' not in item.argv[0] else item.argv[0]) | regex_replace('^~/', nova_home ~ '/')]
              + (item.argv[1:] | map('regex_replace', '^~/', nova_home ~ '/') | list) }}

@@ -3,8 +3,13 @@ package fleet
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // childRulesSHA256 is the sha256 of child-rules.txt. nova-sprint embeds the same file as
@@ -44,4 +49,35 @@ func TestChildRulesNeverRewriteHistory(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("want the history rule exactly once in child-rules.txt, got %d", n)
 	}
+}
+
+// TestTheLeakGuardRefusesSudoPreserveEnvWithKeys pins the 2026-10-19 novadog
+// auth.log leak (tla/ProviderKey.tla NoValueOutsideTheStore): no play or
+// template passes a key name through sudo's preserved environment, sudo -E, or
+// an environment dump. Every real file of fleet/ keeps the guard's silence.
+func TestTheLeakGuardRefusesSudoPreserveEnvWithKeys(t *testing.T) {
+	t.Parallel()
+	for _, src := range []string{
+		"- command: sudo --preserve-env=OPENROUTER_API_KEY nova-secrets exec -- gh api user\n",
+		"- command: sudo -E nova-secrets exec -- gh api user\n",
+		"- shell: printenv OPENROUTER_API_KEY\n",
+		"- shell: env | grep OPENROUTER_API_KEY\n",
+	} {
+		assert.Error(t, LeakGuard("fixture.yml", []byte(src)), "%q was not refused", src)
+	}
+
+	require.NoError(t, filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		assert.NoError(t, LeakGuard(path, body), "%s passes a key through sudo, argv or an environment dump", path)
+		return nil
+	}))
 }

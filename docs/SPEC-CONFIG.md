@@ -273,12 +273,23 @@ it needs in `keys`, and the unit opens them from `seat` on that machine
 (`nova-secrets exec --only <keys>`), so they reach the process's environment
 only. The plays render one unit per row from the Redis view apply writes.
 
+A loop's *effective* keys are its own `keys` plus, when its argv runs a
+`nova-swarm member` or reader, the `key_env` of every enabled provider row
+(`EffectiveKeys`, tla/ProviderKey.tla `AddLoop` and `UnitsLoadEveryEnabledKey`).
+Apply writes the effective list into the loop's Redis view, so the loops play
+renders the unit's `--only` from it: a new provider row is picked up by the
+next apply and loops play with no edit of `fleet/loops.yml`, a template or a
+loop row. Never hand-add a provider key to a loop row's `keys`; the provider
+row's `key_env` is its one declaration. To drop a hand-added copy:
+`nova-config loop set <loop> --keys <the loop's own keys, without the provider names>`
+(docs/SPEC-SECRETS.md, `provider-key add`).
+
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `machine` | ref machine | yes | the plays: the machine the unit is installed on | `loop:<l>` |
 | `argv` | argv | yes | the plays: the unit's command, word for word; a `nova-swarm member` argv spells no `--width`, its width is its machine row's (`Check`) | `loop:<l>` |
 | `seat` | text | | the plays: the nova-secrets seat on that machine the unit opens its secrets from; empty when it needs none | `loop:<l>` |
-| `keys` | keys | | the plays: the names of the secrets the unit opens from the seat; empty when none, and a non-empty list needs a seat | `loop:<l>` |
+| `keys` | keys | | the plays: the names of the secrets the unit opens from the seat; empty when none, and a non-empty list needs a seat; apply writes the effective list, a member or reader's plus every enabled provider's `key_env` (`EffectiveKeys`) | `loop:<l>` |
 | `every` | int | (0) | the plays: seconds between runs of a periodic unit | `loop:<l>` |
 | `keepalive` | bool | (false) | the plays: a long-running unit, restarted when it exits | `loop:<l>` |
 | `enabled` | bool | (true) | the plays: false writes the unit and does not start it | `loop:<l>` |
