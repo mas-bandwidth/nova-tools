@@ -84,13 +84,15 @@ type nativeRunConfig struct {
 	// writeJobConfig declares it instead of reading the providers table, and opens no read
 	// proxy over it. Nil is the ordinary case: the table's row decides.
 	providerDirect *swarm.DirectProvider
-	// providerBaseURL, providerKeyEnv and providerNPM are the route's provider row (its
-	// base_url, key_env and npm_adapter) when a caller resolves it before the job is
-	// written. A nonempty base URL and key env name are resolved into providerDirect;
-	// the key env is the NAME only, and its value is never read here.
-	providerBaseURL string
-	providerKeyEnv  string
-	providerNPM     string
+	// providerBaseURL, providerKeyEnv, providerNPM and providerMaxOutput are the route's
+	// provider row (its base_url, key_env, npm_adapter and max_output) when a caller resolves
+	// it before the job is written. A nonempty base URL and key env name are resolved into
+	// providerDirect, whose model then declares max_output as its output limit; the key env
+	// is the NAME only, and its value is never read here.
+	providerBaseURL   string
+	providerKeyEnv    string
+	providerNPM       string
+	providerMaxOutput int
 	// benchHome is the BENCH's home -- this process's own, never the child's -- and it is
 	// where the provisioning standard puts the toolchain (swarm.ToolchainRoots). Empty is
 	// the ordinary case and means "ask the OS"; a test names a home of its own, because the
@@ -2976,11 +2978,12 @@ func sweepNativeJob(root, job string) error {
 }
 
 // routeProviderDirect is the custom block one launch writes for its route's provider: the
-// provider row's base_url, key_env and npm_adapter as the caller resolved them
-// (cfg.providerDirect, or the three provider fields), else a worker description's own
-// provider declaration when it names this route's provider. A base URL and a key variable
-// name are both required: empty means the provider is catalogued and the providers table
-// decides, as before.
+// provider row's base_url, key_env, npm_adapter and max_output as the caller resolved them
+// (cfg.providerDirect, or the provider fields), else a worker description's own provider
+// declaration when it names this route's provider. The route's model is carried so the
+// model's output limit is declared: the row's max_output, or the harness-safe default when a
+// worker description has no row. A base URL and a key variable name are both required: empty
+// means the provider is catalogued and the providers table decides, as before.
 func routeProviderDirect(cfg nativeRunConfig, provider string) *swarm.DirectProvider {
 	if cfg.providerDirect != nil {
 		if strings.TrimSpace(cfg.providerDirect.BaseURL) != "" && strings.TrimSpace(cfg.providerDirect.KeyEnv) != "" {
@@ -2988,9 +2991,13 @@ func routeProviderDirect(cfg nativeRunConfig, provider string) *swarm.DirectProv
 		}
 		return nil
 	}
+	model := strings.TrimPrefix(cfg.model, provider+"/")
+	if model == cfg.model {
+		model = ""
+	}
 	base, keyEnv := strings.TrimSpace(cfg.providerBaseURL), strings.TrimSpace(cfg.providerKeyEnv)
 	if base != "" && keyEnv != "" {
-		return &swarm.DirectProvider{BaseURL: base, KeyEnv: keyEnv, NPMAdapter: strings.TrimSpace(cfg.providerNPM)}
+		return &swarm.DirectProvider{BaseURL: base, KeyEnv: keyEnv, NPMAdapter: strings.TrimSpace(cfg.providerNPM), Model: model, MaxOutput: cfg.providerMaxOutput}
 	}
 	if w := cfg.worker; w != nil && w.Provider == provider {
 		key := w.Secret
@@ -2998,7 +3005,7 @@ func routeProviderDirect(cfg nativeRunConfig, provider string) *swarm.DirectProv
 			key = w.EnvVar
 		}
 		if strings.TrimSpace(w.BaseURL) != "" && strings.TrimSpace(key) != "" {
-			return &swarm.DirectProvider{BaseURL: w.BaseURL, KeyEnv: key}
+			return &swarm.DirectProvider{BaseURL: w.BaseURL, KeyEnv: key, Model: model}
 		}
 	}
 	return nil

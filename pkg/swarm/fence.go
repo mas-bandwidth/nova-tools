@@ -239,6 +239,13 @@ func fencePath(p string) string {
 	return strings.ReplaceAll(filepath.Clean(p), "\\", "/")
 }
 
+// DefaultDirectOutputLimit is the output limit written for a direct provider's model when
+// none is declared. A model the harness's catalog does not know otherwise has no output
+// limit, and the harness then asks for its own output maximum, which a provider capped lower
+// refuses with a 400 on every request (Ultramarine 1 Flash, 2026-10-19: "max_tokens must be
+// between 1 and 65536"). 65536 is the common cap of the OpenAI-compatible providers we run.
+const DefaultDirectOutputLimit = 65536
+
 // DirectProvider is an uncatalogued provider's custom block: the API base, the NAME of the
 // environment variable holding its key, and the npm adapter the harness loads. It is built
 // from the route's or the provider's own fields (nova-config provider: base_url, key_env
@@ -256,11 +263,13 @@ type DirectProvider struct {
 // OpenAI-compatible provider: npm (the adapter named, or @ai-sdk/openai-compatible when
 // empty), options.baseURL, and options.apiKey as the {env:<KeyEnv>} reference. Anything the
 // entry already carries is kept, and the key is only the env reference text, never a value
-// read from the environment. When MaxOutput is above 0 and Model is nonempty, the model's
-// limit.output is written as that number, keeping any limit the entry already carries (an
-// existing context limit stays; none is added). ok is false, and raw is returned unchanged,
-// when the base or the key's variable name is empty, the config is not a JSON object, or the
-// provider entry is not an object. It is called for a provider the pinned harness's catalog
+// read from the environment. When Model is nonempty, the model's limit is declared: output
+// is MaxOutput, or DefaultDirectOutputLimit when MaxOutput is not above 0, and context is 0
+// when none is declared. Both keys are written because opencode v1.18.20 refuses a limit
+// missing either, and a limit the entry already carries is kept. ok is false, and raw is
+// returned unchanged, when the base or the key's variable name is empty, the config is not a
+// JSON object, or the provider entry is not an object. It is called for a provider the pinned
+// harness's catalog
 // does not know (paperinstruments), so that provider still runs; the Zen and openrouter
 // providers are never used for such a route.
 func DeclareDirectProvider(raw []byte, provider string, p DirectProvider) ([]byte, bool) {
@@ -301,7 +310,7 @@ func DeclareDirectProvider(raw []byte, provider string, p DirectProvider) ([]byt
 		opts["apiKey"] = "{env:" + keyEnv + "}"
 	}
 	providerMap["options"] = opts
-	if p.MaxOutput > 0 && strings.TrimSpace(p.Model) != "" {
+	if strings.TrimSpace(p.Model) != "" {
 		models, _ := providerMap["models"].(map[string]any)
 		if models == nil {
 			if _, other := providerMap["models"]; other {
@@ -323,7 +332,16 @@ func DeclareDirectProvider(raw []byte, provider string, p DirectProvider) ([]byt
 			}
 			limit = map[string]any{}
 		}
-		limit["output"] = p.MaxOutput
+		if _, has := limit["output"]; !has {
+			out := p.MaxOutput
+			if out <= 0 {
+				out = DefaultDirectOutputLimit
+			}
+			limit["output"] = out
+		}
+		if _, has := limit["context"]; !has {
+			limit["context"] = 0
+		}
 		modelEntry["limit"] = limit
 		models[p.Model] = modelEntry
 		providerMap["models"] = models

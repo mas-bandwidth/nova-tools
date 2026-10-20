@@ -342,7 +342,10 @@ Beside `base_url`, `max_output` is the model's output limit, empty or a whole
 number above 0 (0, a negative number and a non-number are refused): for an
 uncatalogued provider it is written as `models.<model>.limit.output` in the job's
 `opencode.json`, so the harness asks for no more than it (Paper Instruments refuses
-`max_tokens` above 65536). Empty is undeclared.
+`max_tokens` above 65536). Empty is undeclared and the job config writes the
+harness-safe default 65536; a model's limit always carries `output` and `context`
+(0 when no context is declared), because opencode v1.18.20 refuses a limit missing
+either key.
 Such a provider is never routed through openrouter or opencode Zen. Migration
 0041 seeds
 one row per existing route provider with `billing=metered`, `funded=false`

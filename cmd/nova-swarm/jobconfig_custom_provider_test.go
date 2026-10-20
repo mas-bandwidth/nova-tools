@@ -96,3 +96,69 @@ func TestRouteProviderDirectFromTheProvidersRow(t *testing.T) {
 	assert.Nil(t, routeProviderDirect(nativeRunConfig{}, provider), "a catalogued provider keeps the providers table")
 	assert.Nil(t, routeProviderDirect(nativeRunConfig{providerBaseURL: base}, provider), "a base with no key variable is not a block")
 }
+
+// The declared output limit reaches the job config from both sources of a direct provider:
+// a worker description names no row, so its model gets DefaultDirectOutputLimit; a provider
+// row's max_output is carried through nativeRunConfig. The limit carries both keys because
+// opencode v1.18.20 refuses one missing either, and a context none declared is 0.
+func TestJobConfigDirectProviderCarriesTheOutputLimit(t *testing.T) {
+	t.Parallel()
+	const (
+		provider = "paperinstruments"
+		model    = "ultramarine-1-flash"
+		keyEnv   = "PAPERINSTRUMENTS_API_KEY"
+		base     = "https://api.paper.invalid/v1"
+	)
+	limitOf := func(t *testing.T, dataHome string) map[string]any {
+		t.Helper()
+		var parsed struct {
+			Provider map[string]struct {
+				Models map[string]struct {
+					Limit map[string]any `json:"limit"`
+				} `json:"models"`
+			} `json:"provider"`
+		}
+		require.NoError(t, json.Unmarshal(writtenJobConfig(t, dataHome), &parsed), "the written config is JSON")
+		return parsed.Provider[provider].Models[model].Limit
+	}
+
+	t.Run("worker description", func(t *testing.T) {
+		t.Parallel()
+		dataHome := t.TempDir()
+		cfg := nativeRunConfig{
+			model:  provider + "/" + model,
+			label:  "c1",
+			worker: &swarm.Worker{Provider: provider, Model: model, BaseURL: base, EnvVar: keyEnv},
+		}
+		cfg.providerDirect = routeProviderDirect(cfg, provider)
+		require.NotNil(t, cfg.providerDirect, "the worker description declares the provider direct")
+		var notes bytes.Buffer
+		_, reason, proxy := writeJobConfig(cfg, provider, dataHome, t.TempDir(), nil, &notes)
+		require.Empty(t, reason, "the config is written")
+		assert.Nil(t, proxy, "an explicit provider block opens no proxy and no socket")
+		limit := limitOf(t, dataHome)
+		assert.Equal(t, float64(65536), limit["output"], "a worker description with no row gets the default output limit")
+		assert.Equal(t, float64(0), limit["context"], "a missing context limit is written as 0")
+	})
+
+	t.Run("provider row", func(t *testing.T) {
+		t.Parallel()
+		dataHome := t.TempDir()
+		cfg := nativeRunConfig{
+			model:             provider + "/" + model,
+			label:             "c1",
+			providerBaseURL:   base,
+			providerKeyEnv:    keyEnv,
+			providerMaxOutput: 32000,
+		}
+		cfg.providerDirect = routeProviderDirect(cfg, provider)
+		require.NotNil(t, cfg.providerDirect, "the provider row declares the provider direct")
+		var notes bytes.Buffer
+		_, reason, proxy := writeJobConfig(cfg, provider, dataHome, t.TempDir(), nil, &notes)
+		require.Empty(t, reason, "the config is written")
+		assert.Nil(t, proxy, "an explicit provider block opens no proxy and no socket")
+		limit := limitOf(t, dataHome)
+		assert.Equal(t, float64(32000), limit["output"], "the row's max_output is the model's output limit")
+		assert.Equal(t, float64(0), limit["context"], "a missing context limit is written as 0")
+	})
+}
