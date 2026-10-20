@@ -276,3 +276,11 @@ func TestAPipeIntoTheShimReachesTheCommand(t *testing.T) {
 	require.Equal(t, "into the shim, through the wrapper, to the command\n", string(out),
 		"what was piped into the shim did not reach the command: the backgrounded shell lost its stdin")
 }
+
+// TestPathWithDirsFirstTakesTheGoos pins the one function's signature: the wrapper that
+// took no goos was unreachable in production, so pathWithDirsFirst takes the goos it is
+// building the environment for (TestDeadCode).
+func TestPathWithDirsFirstTakesTheGoos(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []string{"PATH=/t:/a"}, pathWithDirsFirst("linux", []string{"PATH=/a"}, "/t"))
+}
