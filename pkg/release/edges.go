@@ -155,14 +155,25 @@ func (g *GH) checkRunsWithSuites(ctx context.Context, repo, sha string) ([]check
 // is the workflow run's own conclusion (an aggregate job such as certification-ok
 // reports failure only because its needs were cancelled, while the run concluded
 // cancelled); UpdatedAt is when the run last updated (a green suite supersedes a
-// cancelled one only when it completed later); SupersededBy names the later green
-// suite that set this run aside, or zero for a release-tag set-aside.
+// cancelled one only when it completed later); RunAttempt is the workflow run's
+// attempt, and CreatedAt is when that attempt was created, which the stale
+// verdict of a revert-on-red check is read against; SupersededBy names the
+// later green suite that set this run aside, or zero for a release-tag
+// set-aside; SupersededAttempt names the latest green attempt that superseded
+// this earlier one; StaleVerdictOf names the ci run whose later green attempt
+// made this revert-on-red verdict stale, and StaleVerdictAttempt is that
+// attempt (docs/SPEC-RELEASE.md section 19).
 type checkRun struct {
 	CheckRun
-	SuiteID            int64
-	WorkflowConclusion string
-	UpdatedAt          time.Time
-	SupersededBy       int64
+	SuiteID             int64
+	WorkflowConclusion  string
+	UpdatedAt           time.Time
+	RunAttempt          int
+	CreatedAt           time.Time
+	SupersededBy        int64
+	SupersededAttempt   int
+	StaleVerdictOf      int64
+	StaleVerdictAttempt int
 }
 
 // checkRuns joins by suite and exact commit, never by a job's display name
@@ -198,7 +209,10 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		if r.SuiteID > 0 && r.HeadSHA == sha {
 			allSuites[r.SuiteID] = true
 		}
-		if r.Status == "completed" && r.Conclusion == "cancelled" && r.SuiteID > 0 && r.HeadSHA == sha {
+		// A completed check that is not green may be a stale verdict or a
+		// superseded attempt, so its suite's workflow run is read. A green
+		// check needs no provenance to be judged.
+		if r.Status == "completed" && r.Conclusion != "success" && r.Conclusion != "skipped" && r.Conclusion != "neutral" && r.SuiteID > 0 && r.HeadSHA == sha {
 			suites[r.SuiteID] = append(suites[r.SuiteID], len(runs))
 		}
 		runs = append(runs, r.checkRun)
@@ -207,14 +221,15 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		return runs, nil
 	}
 	out, err = api(ctx, "api", "--paginate", "repos/"+repo+"/actions/runs?head_sha="+url.QueryEscape(sha)+"&per_page=100",
-		"--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event, Conclusion:.conclusion, UpdatedAt:.updated_at}")
+		"--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event, Conclusion:.conclusion, UpdatedAt:.updated_at, RunAttempt:.run_attempt, CreatedAt:.created_at}")
 	if err != nil {
 		return nil, fmt.Errorf("cannot read check provenance: %w", err)
 	}
 	type provenance struct {
 		SuiteID, ID                                          int64
 		HeadSHA, WorkflowPath, HeadBranch, Event, Conclusion string
-		UpdatedAt                                            string
+		UpdatedAt, CreatedAt                                 string
+		RunAttempt                                           int
 	}
 	bySuite := map[int64]provenance{}
 	ambiguous := map[int64]bool{}
@@ -257,6 +272,8 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		runs[i].WorkflowPath, runs[i].HeadBranch, runs[i].Event = r.WorkflowPath, r.HeadBranch, r.Event
 		runs[i].WorkflowConclusion = r.Conclusion
 		runs[i].UpdatedAt = parseUpdatedAt(r.UpdatedAt)
+		runs[i].RunAttempt = r.RunAttempt
+		runs[i].CreatedAt = parseUpdatedAt(r.CreatedAt)
 		runs[i].TagPush = tagPush && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push"
 	}
 	return runs, nil
