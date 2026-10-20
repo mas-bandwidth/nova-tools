@@ -640,6 +640,9 @@ func machineView(reg map[string]string, ceiling string) View {
 	v := View{"slots": intText(ceiling)}
 	for _, f := range k.Fields {
 		switch {
+		case f.Local:
+			// Postgres-only: the tag registry and a machine's tags and
+			// gates_only are read live and never copied to Redis.
 		case f.Name == "slots":
 		case f.Name == "roles" && f.Type == TypeList:
 			if roles, ok := reg[f.Name]; ok {
@@ -743,11 +746,20 @@ func (a *RedisApplier) writeMachine(ctx context.Context, row Row, prev View, act
 	k, _ := Lookup(KindMachine)
 	rev, _ := strings.CutPrefix(idem, "config:"+KindMachine+":")
 	fields := []any{"rev", rev, "at", strconv.FormatInt(a.now(), 10)}
+	var local []string
 	for _, f := range k.Fields {
+		if f.Local {
+			local = append(local, f.Name)
+			continue
+		}
 		fields = append(fields, f.Name, row.Fields[f.Name])
 	}
 	pipe := a.Client.TxPipeline()
 	pipe.SAdd(ctx, MachinesKey, m)
+	if len(local) > 0 {
+		// Postgres-only fields are read live; drop a copy an older apply left.
+		pipe.HDel(ctx, MachineKey(m), local...)
+	}
 	pipe.HSet(ctx, MachineKey(m), fields...)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis: machine %s registry: %w", m, err)

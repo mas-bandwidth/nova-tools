@@ -102,6 +102,10 @@ type Field struct {
 	// characters (ListLine), so one row stays one short line; show, --json and
 	// the history keep it whole.
 	Cut bool
+	// Local is a field Postgres holds and Redis never does: the tag registry
+	// and a machine's tags and gates_only are read live from Postgres, so no
+	// second copy exists (docs/SPEC-CONFIG.md, "The tag registry").
+	Local bool
 }
 
 // Kind is one kind of configuration. See the package comment.
@@ -148,6 +152,16 @@ type Kind struct {
 	// same set). Changes runs it on the canonical values before any store is
 	// opened. nil checks nothing.
 	CheckChanges func(changes map[string]string) error
+	// PostgresOnly is a kind that is never applied to Redis: the tag registry
+	// is read live from Postgres (docs/SPEC-CONFIG.md, "The tag registry").
+	// Apply writes and stamps nothing for it.
+	PostgresOnly bool
+	// NameRE, when set, is the shape of this kind's row key instead of
+	// NamePattern; a tag's name is a fact word (letters, digits, _ and -).
+	NameRE *regexp.Regexp
+	// SeedRows are rows a migration makes, field by field. It is used instead
+	// of Seed when a seed's fields differ from the descriptor's defaults.
+	SeedRows []Row
 }
 
 // NamePattern is the shape of a row key: lower-case, digits and dashes, the
@@ -156,7 +170,12 @@ var NamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // namesPattern is a word of a TypeNames list: letters, digits and dashes,
 // any case.
-var namesPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
+var namesPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+// tagPattern is a tag row's name: a fact word of letters, digits, _ and -.
+// The comparison suffix form <name>>=<n> is refused by the pattern and by
+// checkTag: thresholds live in the probe, the tag is maxfiles-65536.
+var tagPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 // keyPattern is a word of a TypeKeys list: an environment variable's name.
 var keyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -191,6 +210,7 @@ const (
 
 // The kinds of this cut (docs/SPEC-CONFIG.md, "The kinds of this cut").
 const (
+	KindTag      = "tag"
 	KindMachine  = "machine"
 	KindFleet    = "fleet"
 	KindFriend   = "friend"
@@ -534,6 +554,38 @@ const CoordinatorRole = "coordinator"
 // the tailnet. This is a hard requirement."). Measured facts (os, arch,
 // cores, memory) are never typed: they come live from the machine's own
 // beat (Beat, docs/SPEC-CONFIG.md, "Declared and measured").
+// tagKind is the tag registry's descriptor. It is not in Kinds because it is
+// Postgres-only: no CLI every-kind pass or Redis apply walks it, but Lookup,
+// the stores and migrations seed and validate it (docs/SPEC-CONFIG.md, "The
+// tag registry"; tla/Tags.tla).
+var tagKind = &Kind{
+	// The tag registry is data, not a compiled list: a new tag is one
+	// config row and an apply, never a build (docs/SPEC-CONFIG.md, "The
+	// tag registry"; tla/Tags.tla). A tag is declared by a machine row
+	// or proved by the member's heartbeat, and the sprint keeps no copy.
+	Name:         KindTag,
+	Table:        "tags",
+	NameRE:       tagPattern,
+	PostgresOnly: true,
+	Seed:         tagSeedNames,
+	SeedRows:     tagSeedRows,
+	Doc:          "a tag a card may require and a machine may carry: its description, whether it is declared or proved by a probe, the words a brief names it by, and one closed-shape probe for a proved tag",
+	Fields: []Field{
+		{Name: "description", Type: TypeText, Help: "what the tag means, in one sentence"},
+		{Name: "source", Type: TypeEnum, Enum: []string{"declared", "probed"}, Required: true, Help: "declared (a machine row names it) or probed (the member proves it on its heartbeat by running this probe)"},
+		{Name: "terms", Type: TypeNames, Help: "optional comma list of words a brief maps to this tag, replacing the compiled toolchain terms; empty maps none"},
+		{Name: "probe", Type: TypeEnum, Enum: []string{"path", "command", "limit", "builtin"}, Help: "the one shape a probed tag proves: path (a file or directory exists), command (argv runs and its version matches), limit (a resource limit is at least a number), builtin (a fact the member measures itself: os, isa, landlock, kvm)"},
+		{Name: "probe_os", Type: TypeList, Enum: []string{"darwin", "linux", "windows"}, Help: "comma list of OSes the probe runs on; empty is every OS"},
+		{Name: "probe_path", Type: TypeText, Help: "path: the file or directory that must exist; ~ is the member user's home"},
+		{Name: "probe_argv", Type: TypeText, Help: "command: the argv, one argument per word, run with no shell, e.g. jq --version"},
+		{Name: "probe_match", Type: TypeText, Help: "command: a Go regexp with at most one group, the version"},
+		{Name: "probe_min", Type: TypeText, Help: "command: the least version, dotted numbers; limit: the least integer"},
+		{Name: "probe_limit", Type: TypeEnum, Enum: []string{"nofile"}, Help: "limit: the resource limit, nofile today"},
+		{Name: "builtin", Type: TypeEnum, Enum: []string{"isa", "kvm", "landlock", "os"}, Help: "builtin: the fact the member measures itself (os, isa, landlock, kvm)"},
+	},
+	Check: checkTag,
+}
+
 var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
@@ -546,7 +598,8 @@ var Kinds = []*Kind{
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "roles", Type: TypeList, Enum: MachineRoles, Default: DefaultMachineRoles, Help: "comma list of explicit inventory roles: " + strings.Join(MachineRoles, ", ") + "; bench by default, other roles are never inferred"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
-			{Name: "gates_only", Type: TypeNames, Help: "comma list of gate words (GATE-NEEDS words such as windows) that alone bring work to the sprint's member on it: set, the deal gives it only the cards whose GATE-NEEDS names one of them, never a generic card and never a read; empty (the default) is a member dealt any card its facts satisfy; nova-sprint fleet sync writes it onto the member's control card, where the deal reads it"},
+			{Name: "tags", Type: TypeSeq, Ref: KindTag, Local: true, Help: "comma list of the tags the machine row declares (tag rows); the member also proves the registry's probed tags on its heartbeat; the sprint reads both live and keeps no copy"},
+			{Name: "gates_only", Type: TypeNames, Ref: KindTag, Local: true, Help: "the machine's exclusive tags (today's gates_only): comma list of tag words that alone bring work to the sprint's member on it; set, the deal gives it only the cards whose required tags name one of them, never a generic card and never a read; empty (the default) is a member dealt any card its facts satisfy; a word is a tag the machine declares or a probed tag"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
@@ -1011,7 +1064,7 @@ func deriveLoopLog(ctx context.Context, st Store, rows []Row) ([]Row, error) {
 
 // Lookup finds a kind by name.
 func Lookup(name string) (*Kind, bool) {
-	for _, k := range Kinds {
+	for _, k := range AllKinds() {
 		if k.Name == name {
 			return k, true
 		}
@@ -1026,6 +1079,12 @@ func KindNames() []string {
 		out = append(out, k.Name)
 	}
 	return out
+}
+
+// AllKinds is Kinds plus the Postgres-only tag registry, for Lookup, the
+// stores and the seed: no CLI every-kind pass or Redis apply walks it.
+func AllKinds() []*Kind {
+	return append([]*Kind{tagKind}, Kinds...)
 }
 
 // Field finds a field by name.
@@ -1073,16 +1132,33 @@ func (r Row) Int(field string) int {
 
 // ValidateName checks a row key.
 func ValidateName(name string) error {
+	return validateName(name, NamePattern)
+}
+
+// validateName is the row-key check with one kind's shape (Kind.NameRE).
+func validateName(name string, re *regexp.Regexp) error {
 	if name == "" {
 		return fmt.Errorf("the name is required: the first argument after the verb")
 	}
 	if len(name) > MaxName {
 		return fmt.Errorf("name of %d bytes: over the maximum of %d bytes (MaxName)", len(name), MaxName)
 	}
-	if !NamePattern.MatchString(name) {
+	if strings.Contains(name, ">=") {
+		return fmt.Errorf("name %q: a comparison suffix is not a tag; thresholds live in the probe, the tag is maxfiles-65536", name)
+	}
+	if !re.MatchString(name) {
 		return fmt.Errorf("name %q: want lower-case letters, digits and dashes, starting with a letter or digit", name)
 	}
 	return nil
+}
+
+// ValidateName checks a row key against the kind's own shape.
+func (k *Kind) ValidateName(name string) error {
+	re := k.NameRE
+	if re == nil {
+		re = NamePattern
+	}
+	return validateName(name, re)
 }
 
 // Canonical validates one field's raw value and returns its canonical text:
@@ -1182,8 +1258,12 @@ func (f Field) canonical(raw string) (string, error) {
 		return c, nil
 	case TypeSeq:
 		var words []string
+		pattern := NamePattern
+		if f.Ref == KindTag {
+			pattern = tagPattern
+		}
 		for _, w := range strings.Split(raw, ",") {
-			if w = strings.TrimSpace(w); w == "" && raw != "" || w != "" && !NamePattern.MatchString(w) {
+			if w = strings.TrimSpace(w); w == "" && raw != "" || w != "" && !pattern.MatchString(w) {
 				return "", fmt.Errorf("--%s %q: want a comma list of %s names in order", f.Name, raw, f.Ref)
 			} else if w != "" {
 				words = append(words, w)
@@ -1200,7 +1280,11 @@ func (f Field) canonical(raw string) (string, error) {
 			}
 			return "", nil
 		}
-		if err := ValidateName(raw); err != nil {
+		re := NamePattern
+		if f.Ref == KindTag {
+			re = tagPattern
+		}
+		if err := validateName(raw, re); err != nil {
 			return "", fmt.Errorf("--%s: %v", f.Name, err)
 		}
 		return raw, nil
@@ -1299,7 +1383,7 @@ func hasWord(list, word string) bool {
 // (docs/ONBOARDING.md point 2). Fields not named are "" (an int, 0).
 func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 	var problems []string
-	if err := ValidateName(name); err != nil {
+	if err := k.ValidateName(name); err != nil {
 		problems = append(problems, err.Error())
 	}
 	row := Row{Name: name, Fields: map[string]string{}}

@@ -3392,6 +3392,7 @@ nova-config route set <name> --price_input <usd> --price_cache_read <usd> --pric
 nova-config route prices --refresh [--provider openrouter|opencode] [--from <path>] [--dry-run] --as <name>   # set each enabled route's prices from its provider's published list (OpenRouter's models endpoint; opencode rows assumed from it, a NOTE says so), price_as_of today and price_source the URL; a price that moved past 2x is a JUDGMENT line, left as it is, exit 1; a row more than 10 percent off the list is named STALE
 nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the tier's route array: the deal takes routes[index mod len] for each card of the tier, the index a uint64 counter on the fleet table; a route named twice takes two turns
 nova-config route set|remove|list|show|history                            # the one grammar, as for every kind
+nova-config tag add <name> --description <text> --source declared|probed [--terms <word,...>] [--probe path|command|limit|builtin] [--probe_os <os,...>] [--probe_path <path>] [--probe_argv <argv>] [--probe_match <regexp>] [--probe_min <version>] [--probe_limit nofile] [--builtin os|isa|landlock|kvm] --as <name>   # a tag in the registry: a card names it in TAGS:, a machine declares it on its row or its member proves it on its heartbeat; a new tag is a row and an apply, never a build
 ```
 
 Route `add`, `set` and `remove` commit the permanent write and its history,
