@@ -162,10 +162,6 @@ type Kind struct {
 	// SeedRows are rows a migration makes, field by field. It is used instead
 	// of Seed when a seed's fields differ from the descriptor's defaults.
 	SeedRows []Row
-	// Hidden keeps the kind out of KindNames (the CLI's every-kind apply and
-	// its banners) while Lookup still finds it. The tag registry is read live
-	// by the sprint, never applied as a kind.
-	Hidden bool
 }
 
 // NamePattern is the shape of a row key: lower-case, digits and dashes, the
@@ -558,35 +554,39 @@ const CoordinatorRole = "coordinator"
 // the tailnet. This is a hard requirement."). Measured facts (os, arch,
 // cores, memory) are never typed: they come live from the machine's own
 // beat (Beat, docs/SPEC-CONFIG.md, "Declared and measured").
-var Kinds = []*Kind{
-	{
-		// The tag registry is data, not a compiled list: a new tag is one
-		// config row and an apply, never a build (docs/SPEC-CONFIG.md, "The
-		// tag registry"; tla/Tags.tla). A tag is declared by a machine row
-		// or proved by the member's heartbeat, and the sprint keeps no copy.
-		Name:         KindTag,
-		Table:        "tags",
-		NameRE:       tagPattern,
-		PostgresOnly: true,
-		Hidden:       true,
-		Seed:         tagSeedNames,
-		SeedRows:     tagSeedRows,
-		Doc:          "a tag a card may require and a machine may carry: its description, whether it is declared or proved by a probe, the words a brief names it by, and one closed-shape probe for a proved tag",
-		Fields: []Field{
-			{Name: "description", Type: TypeText, Help: "what the tag means, in one sentence"},
-			{Name: "source", Type: TypeEnum, Enum: []string{"declared", "probed"}, Required: true, Help: "declared (a machine row names it) or probed (the member proves it on its heartbeat by running this probe)"},
-			{Name: "terms", Type: TypeNames, Help: "optional comma list of words a brief maps to this tag, replacing the compiled toolchain terms; empty maps none"},
-			{Name: "probe", Type: TypeEnum, Enum: []string{"path", "command", "limit", "builtin"}, Help: "the one shape a probed tag proves: path (a file or directory exists), command (argv runs and its version matches), limit (a resource limit is at least a number), builtin (a fact the member measures itself: os, isa, landlock, kvm)"},
-			{Name: "probe_os", Type: TypeList, Enum: []string{"darwin", "linux", "windows"}, Help: "comma list of OSes the probe runs on; empty is every OS"},
-			{Name: "probe_path", Type: TypeText, Help: "path: the file or directory that must exist; ~ is the member user's home"},
-			{Name: "probe_argv", Type: TypeText, Help: "command: the argv, space separated, run with no shell, e.g. jq --version"},
-			{Name: "probe_match", Type: TypeText, Help: "command: a Go regexp with at most one group, the version"},
-			{Name: "probe_min", Type: TypeText, Help: "command: the least version, dotted numbers; limit: the least integer"},
-			{Name: "probe_limit", Type: TypeEnum, Enum: []string{"nofile"}, Help: "limit: the resource limit, nofile today"},
-			{Name: "builtin", Type: TypeEnum, Enum: []string{"isa", "kvm", "landlock", "os"}, Help: "builtin: the fact the member measures itself (os, isa, landlock, kvm)"},
-		},
-		Check: checkTag,
+// tagKind is the tag registry's descriptor. It is not in Kinds because it is
+// Postgres-only: no CLI every-kind pass or Redis apply walks it, but Lookup,
+// the stores and migrations seed and validate it (docs/SPEC-CONFIG.md, "The
+// tag registry"; tla/Tags.tla).
+var tagKind = &Kind{
+	// The tag registry is data, not a compiled list: a new tag is one
+	// config row and an apply, never a build (docs/SPEC-CONFIG.md, "The
+	// tag registry"; tla/Tags.tla). A tag is declared by a machine row
+	// or proved by the member's heartbeat, and the sprint keeps no copy.
+	Name:         KindTag,
+	Table:        "tags",
+	NameRE:       tagPattern,
+	PostgresOnly: true,
+	Seed:         tagSeedNames,
+	SeedRows:     tagSeedRows,
+	Doc:          "a tag a card may require and a machine may carry: its description, whether it is declared or proved by a probe, the words a brief names it by, and one closed-shape probe for a proved tag",
+	Fields: []Field{
+		{Name: "description", Type: TypeText, Help: "what the tag means, in one sentence"},
+		{Name: "source", Type: TypeEnum, Enum: []string{"declared", "probed"}, Required: true, Help: "declared (a machine row names it) or probed (the member proves it on its heartbeat by running this probe)"},
+		{Name: "terms", Type: TypeNames, Help: "optional comma list of words a brief maps to this tag, replacing the compiled toolchain terms; empty maps none"},
+		{Name: "probe", Type: TypeEnum, Enum: []string{"path", "command", "limit", "builtin"}, Help: "the one shape a probed tag proves: path (a file or directory exists), command (argv runs and its version matches), limit (a resource limit is at least a number), builtin (a fact the member measures itself: os, isa, landlock, kvm)"},
+		{Name: "probe_os", Type: TypeList, Enum: []string{"darwin", "linux", "windows"}, Help: "comma list of OSes the probe runs on; empty is every OS"},
+		{Name: "probe_path", Type: TypeText, Help: "path: the file or directory that must exist; ~ is the member user's home"},
+		{Name: "probe_argv", Type: TypeText, Help: "command: the argv, space separated, run with no shell, e.g. jq --version"},
+		{Name: "probe_match", Type: TypeText, Help: "command: a Go regexp with at most one group, the version"},
+		{Name: "probe_min", Type: TypeText, Help: "command: the least version, dotted numbers; limit: the least integer"},
+		{Name: "probe_limit", Type: TypeEnum, Enum: []string{"nofile"}, Help: "limit: the resource limit, nofile today"},
+		{Name: "builtin", Type: TypeEnum, Enum: []string{"isa", "kvm", "landlock", "os"}, Help: "builtin: the fact the member measures itself (os, isa, landlock, kvm)"},
 	},
+	Check: checkTag,
+}
+
+var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
@@ -1064,7 +1064,7 @@ func deriveLoopLog(ctx context.Context, st Store, rows []Row) ([]Row, error) {
 
 // Lookup finds a kind by name.
 func Lookup(name string) (*Kind, bool) {
-	for _, k := range Kinds {
+	for _, k := range AllKinds() {
 		if k.Name == name {
 			return k, true
 		}
@@ -1076,12 +1076,15 @@ func Lookup(name string) (*Kind, bool) {
 func KindNames() []string {
 	out := make([]string, 0, len(Kinds))
 	for _, k := range Kinds {
-		if k.Hidden {
-			continue
-		}
 		out = append(out, k.Name)
 	}
 	return out
+}
+
+// AllKinds is Kinds plus the Postgres-only tag registry, for Lookup, the
+// stores and the seed: no CLI every-kind pass or Redis apply walks it.
+func AllKinds() []*Kind {
+	return append([]*Kind{tagKind}, Kinds...)
 }
 
 // Field finds a field by name.

@@ -247,7 +247,7 @@ func checkReferenced(ctx context.Context, st Store, kind, name string) error {
 	if k, ok := Lookup(kind); ok && hasWord(strings.Join(k.Seed, ","), name) {
 		return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("%s %s is made by migrate and the deal reads it; it is never removed: set its fields instead (%s set %s --<field> <value>)", kind, name, kind, name)}
 	}
-	for _, other := range Kinds {
+	for _, other := range AllKinds() {
 		for _, f := range other.Fields {
 			if (f.Type != TypeRef && f.Type != TypeSeq && f.Type != TypeNames) || f.Ref != kind {
 				continue
@@ -352,7 +352,7 @@ const memRole = "nova_config"
 func NewMem() *Mem {
 	m := &Mem{rows: map[string]map[string]Row{}, Now: func() time.Time { return time.Unix(1700000000, 0).UTC() },
 		Catalog: Ownership{Role: memRole, SchemaOwner: memRole, Create: true, Tables: catalogTables(memRole)}}
-	for _, k := range Kinds {
+	for _, k := range AllKinds() {
 		names := k.Seed
 		if k.Singleton {
 			names = []string{k.Name}
