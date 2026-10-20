@@ -2262,7 +2262,7 @@ func nativeChildEnvOS(goos string, environ []string, dataHome, jobDir, tmpDir, c
 	}
 	// The wrappers go on before the secret is re-added, so the ONE process that keeps the
 	// key is the harness itself and every shell it spawns by name is scrubbed (#1814).
-	out = pathWithDirsFirstFor(goos, out, append([]string{shimDir}, toolPath...)...)
+	out = pathWithDirsFirst(goos, out, append([]string{shimDir}, toolPath...)...)
 	if shimShell != "" {
 		out = append(out, "SHELL="+shimShell)
 	}

@@ -24,7 +24,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (25)
-- [Setup, release and operations](#setup-release-and-operations) (98)
+- [Setup, release and operations](#setup-release-and-operations) (99)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -1128,6 +1128,14 @@ Why it waits: Work starts after rocketnet v1.0.0 and after the v1.7 line; it doe
 Target: after v1.7
 
 From: the owner, 2026-10-19 (after an article on running your own LLM proxy: one endpoint you control, per-key, per-model and per-client logs, cache-miss diagnosis, virtual keys, fast provider switching)
+
+### v1.7 deadlock: revert-on-red reads the latest attempt of a run, never attempt 1
+
+On 2026-10-20 main's ci run 39346166100 was cancelled (a concurrency clash with the dev push) and its rerun went green, but revert-on-red read attempt 1, failed with 'cannot be rerun', filed needs-owner #6027 and left a failed check on the commit that refused the v1.6.10 cut. A deadlock class for the v1.7 list: a stale verdict that no later green clears.
+
+Why it waits: a failed check that no green rerun clears blocks every cut of that commit
+
+From: the coordinator, 2026-10-20 (v1.7 deadlock list)
 
 ## Docs, models and the repository
 

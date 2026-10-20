@@ -1,5 +1,22 @@
 # nova-tools changelog
 
+## v1.6.9 — 2026-10-19
+
+Cut from 4826539f09912d9ce27a62e3bb289c3a010bfbff. 1 pull request since v1.6.8.
+
+Recovery journeys incomplete, gate waived: urgent point release by the owner live (2026-10-19): captain native Windows member blockers, to prove out rocketnet
+
+- TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce: not-run (no --journeys evidence)
+- TestNoServerOrNoAnswerIsNoEvidence: not-run (no --journeys evidence)
+- TestTheGateRefusesEveryoneWhileTheServerIsStale: not-run (no --journeys evidence)
+- TestAStaleAnswerIsDownWithAFreshServer: not-run (no --journeys evidence)
+- TestALostAnswerIsNeverToldTwice: not-run (no --journeys evidence)
+
+Spend gate waived: urgent point release by the owner live (2026-10-19): captain native Windows member blockers, to prove out rocketnet (window 2026-10-19T00:00:00Z..2026-10-19T22:09:33Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #6023 yield, secrets: a native Windows member starts (BELOW_NORMAL; key ACL, not mode) (v1.6.9)
+
 ## v1.6.6 — 2026-10-19
 
 Cut from 6efa3b16394a609f318c9e7ed69f055f6025e9fd. 5 pull requests since v1.6.5.
