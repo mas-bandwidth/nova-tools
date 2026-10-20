@@ -301,7 +301,13 @@
   ansible.builtin.assert:
     that: nova_toolchains_distro_sbcl.stat.exists
     fail_msg: "/usr/bin/sbcl is missing: apt-get install sbcl (the Homebrew bottle is not used on Linux)"
-  when: nova_toolchains_platform == 'linux-x86_64'
+  when: nova_toolchains_platform == 'linux-x86_64' and not ansible_check_mode
+
+# A dry run names the missing prerequisite instead of failing on it, as it names each archive it would install.
+- name: the distro sbcl a dry run would need (Linux)
+  ansible.builtin.debug:
+    msg: "TOOLCHAINS WOULD-NEED host={{ inventory_hostname }} /usr/bin/sbcl: apt-get install sbcl"
+  when: nova_toolchains_platform == 'linux-x86_64' and ansible_check_mode and not nova_toolchains_distro_sbcl.stat.exists
 
 - name: bin/sbcl runs the distro sbcl (Linux)
   ansible.builtin.copy:
