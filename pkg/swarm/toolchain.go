@@ -472,8 +472,13 @@ func RuntimeSharedDirs(goos string) []string {
 // symlink: the wall refuses a --write naming a path that is not there, so only those reach
 // the argv. It runs outside the wall, before the launch.
 func EnsureRuntimeSharedDirs(goos string) []string {
+	return ensureSharedDirs(RuntimeSharedDirs(goos))
+}
+
+// ensureSharedDirs is EnsureRuntimeSharedDirs over the directories named.
+func ensureSharedDirs(dirs []string) []string {
 	var out []string
-	for _, d := range RuntimeSharedDirs(goos) {
+	for _, d := range dirs {
 		if err := os.Mkdir(d, 0o777); err == nil {
 			_ = os.Chmod(d, 0o777) // ignored: a umask-narrowed mode the runtime widens itself when it owns the directory
 		}
