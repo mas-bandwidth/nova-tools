@@ -300,3 +300,6 @@ MCTypedFramesBrokenWritersFirst.cfg	MCTypedFrames.tla	invariant	ReadersBeforeWri
 MCTypedFramesBrokenClampAccepted.cfg	MCTypedFrames.tla	invariant	NoClampAccepted	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenAbsentIsZero.cfg	MCTypedFrames.tla	invariant	AbsentIsNotZero	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenWriterLooser.cfg	MCTypedFrames.tla	invariant	WriterRefusesWhatReaderRefuses	ignore-terminal	typed-frames	required	-
+MCTableRetention.cfg	MCTableRetention.tla	pass	-	check	tableretention	required	-
+MCTableRetentionBrokenUnbounded.cfg	MCTableRetention.tla	invariant	Bounded	check	tableretention	required	-
+MCTableRetentionBrokenReplayRerun.cfg	MCTableRetention.tla	invariant	NeverRerun	check	tableretention	required	-

@@ -323,6 +323,7 @@ func TestTableLuaRowValuesOpaque(t *testing.T) {
 	}
 
 	s := newFakeStoreOf(t, "lua/table.lua")
+	installBoundedCommands(t, s)
 	const name, member = "demo", "table::member:m1"
 	opts := `{"epoch":"0","actor":"t"}`
 	ok := func(reply []any, what string) {
@@ -409,14 +410,13 @@ func TestTableLuaRowValuesOpaque(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(ev["members"]), &evMembers))
 	require.Equal(t, []map[string]string{{"id": "m1", "from": "", "to": "r1:todo", "score": "1"}}, evMembers, "the event's members")
 
-	// The operation record holds the request and the result as they were,
-	// and a replay answers the original result with REPLAY.
+	// The operation record holds the result as it was; a replay answers the
+	// original result with REPLAY. Its request is only a digest now, which
+	// table_retention_test.go checks.
 	var record struct {
-		Request string `json:"request"`
-		Result  string `json:"result"`
+		Result string `json:"result"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(s.hashes["table:demo:ops"]["0:op1"]), &record))
-	require.Equal(t, raw, record.Request, "the operation record's request, byte for byte")
 	var result []any
 	require.NoError(t, json.Unmarshal([]byte(record.Result), &result))
 	recorded, _ := receipt(result)

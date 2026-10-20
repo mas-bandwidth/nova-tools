@@ -71,6 +71,8 @@ func TestBatchBoundsAgreeAcrossServerValidatorAndSpec(t *testing.T) {
 		limitNameTableProps:   LimitTableProps,
 		limitNameReceipt:      LimitReceiptBytes,
 		limitNameBatchValues:  LimitBatchValueBytes,
+		limitNameOpsRecords:   LimitOpsRecords,
+		limitNameChangeEvents: LimitChangeEvents,
 	}
 	for label, side := range map[string]map[string]int{"table.lua": luaLimits(t), "SPEC-NOVA-TABLE.md": specLimits(t)} {
 		assert.Len(t, side, len(goSide), "%s states %d bounds, the validator %d: %v", label, len(side), len(goSide), side)
@@ -79,6 +81,15 @@ func TestBatchBoundsAgreeAcrossServerValidatorAndSpec(t *testing.T) {
 			assert.Equal(t, want, side[name], "%s: %s, the validator holds %d", label, name, want)
 		}
 	}
+}
+
+// The operation ledger and the change stream are bounded by one number each in
+// the library, the server and the specification (TestBatchBoundsAgreeAcrossServerValidatorAndSpec
+// compares the three).
+func TestTableRetentionLimits(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, 200000, LimitOpsRecords, "operation records held for one table epoch")
+	assert.Equal(t, 1000000, LimitChangeEvents, "change events held on one table's stream")
 }
 
 // The receipt's value bound is one number in the server and in the library.

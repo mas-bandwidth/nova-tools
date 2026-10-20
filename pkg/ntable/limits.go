@@ -22,6 +22,8 @@ const (
 	LimitTableProps       = 1024               // properties a table holds at an epoch
 	LimitReceiptBytes     = LimitManifestBytes // the encoded batch delta of one receipt
 	LimitBatchValueBytes  = 16 << 20           // bytes of the field values a batch's entries name, before and after
+	LimitOpsRecords       = 200000             // operation records held for one table epoch
+	LimitChangeEvents     = 1000000            // change events held on one table's stream
 	limitNameManifest     = "manifest bytes"
 	limitNameChanged      = "entries with changes"
 	limitNameGuardEntries = "guard-only entries"
@@ -38,12 +40,15 @@ const (
 	limitNameTableProps   = "properties per table"
 	limitNameReceipt      = "receipt bytes"
 	limitNameBatchValues  = "value bytes per batch"
+	limitNameOpsRecords   = "operation records"
+	limitNameChangeEvents = "change events"
 )
 
 // ReceiptValueBytes is the longest field value a receipt, the change event and
 // the operation record's result hold in full; a longer one is recorded as its
-// length and SHA-1 (FieldChange.BeforeBytes, BeforeSHA1). The record's request is
-// the manifest as sent, in full, because replay compares bytes. table.lua holds
+// length and SHA-1 (FieldChange.BeforeBytes, BeforeSHA1). The record keeps the
+// request's SHA-1 digest, never its bytes, so replay compares digests and a
+// record stays a few hundred bytes whatever the request size. table.lua holds
 // the same number (T.receipt_value_bytes); a test compares them.
 const ReceiptValueBytes = 64
 
