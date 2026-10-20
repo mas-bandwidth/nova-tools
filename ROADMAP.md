@@ -29,7 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
-- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (60)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (62)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -2536,3 +2536,23 @@ Why it waits: On 2026-10-20 the lander refused rocketnet-a1-uring-rearm-and-dest
 Target: v1.9
 
 From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, a landing refused for a ledger-only conflict)
+
+### A card dealt to a friend row that does not take it moves to a row that will
+
+A card dealt to a friend row and not taken within a short take deadline (minutes, configurable per sprint) returns to ready and is re-dealt to whichever eligible row takes fastest; the 6-hour deadline no longer governs a dealt-but-untaken card. The deal weights each row by its recent take latency and its untaken count, not only its width: a row holding any dealt-but-untaken card gets no new deal until it takes. friend give and rebalance move a dealt-but-untaken card, as friend-give-moves-dealt-cards describes. A judgment fires, once per row, when any row holds an untaken card past the take deadline, naming the row and its untaken cards. Done when: a test deals cards to a friend row that never takes them, and each moves to another row within the take deadline; a test shows a row with an untaken card gets no new deal while another eligible row has room; a test shows the judgment fires once when a card passes the take deadline; tests take time as an argument, with no real time.
+
+Why it waits: On 2026-10-20 five cards sat dealt-but-untaken on one friend row while that friend worked three other cards. A dealt-but-untaken card waits in ready under the 6-hour deadline, the deal kept adding to the widest row though that friend was not taking, and friend give refused a dealt-but-untaken card. So rework and merge-only cards, the fastest work there is, waited behind one busy friend while another row had free workers.
+
+Target: v1.9
+
+From: the owner, 2026-10-20, on five cards sitting dealt-but-untaken on one friend row ('We would have waited forever on them, wouldn't we?')
+
+### The machine pushes the coordinator the moment any open card stalls past its bound
+
+The sprint watches every open card's age in its current state and pushes the coordinator the moment a card exceeds the bound for that state. The watched states are ready-untaken, working with no heartbeat or commit, review with no reader dealt, read-ok-not-merging, merging-not-landed and land-refused-not-reworked; each bound is configurable, in minutes. The push names the card, the state, its age and the owner row, with the one verb that fixes it, and fires once per card per stall. nova-sprint where shows a single stalled-cards line at the top. The coordinator's helpers (routers and monitors) report their own liveness, and a helper that stops reporting is a stall too, pushed the same way. dealt-cards-never-wait-on-a-busy-friend covers the ready-untaken case's own remedy. Done when: a test leaves a card in each watched state past its bound, and each produces exactly one push within one tick, then clears when the card moves; a test stops a helper's liveness reports and the stall is pushed once; tests take time as an argument, with no real time.
+
+Why it waits: On 2026-10-20 the coordinator learned card state only from the reports it happened to receive. Nothing told it that five cards sat dealt-but-untaken, so it reported all cards as being worked and the owner had to ask why only four of eight were moving. The same blind spot hid stale reads, re-deals made by brief edits and the fix router lapsing.
+
+Target: v1.9
+
+From: the owner, 2026-10-20, after five cards sat untaken while the coordinator reported them all being worked ('You need to stop this bullshit. Card this up for v1.9')
