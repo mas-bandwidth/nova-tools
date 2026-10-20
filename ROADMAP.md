@@ -2441,7 +2441,7 @@ From: the owner, 2026-10-20 ('In v1.9, please make this process of starting a cl
 
 nova-sprint limits [--card <id>] [--machine <m>] prints every setting that limits who may work or read a card, with its source: machine rows (tla, gates_only, width), sprint settings (go-lanes, dealt-max, fleet and friends tiers, read mix), nova-config sprint and friend rows (max_attempts, width, mode, token caps), brief lines (WHO, BENCH, GATE-NEEDS, tier), stream settings, fleet hold and route state. With --card it names every reason each machine and friend cannot take that card now. The list is then reviewed with the owner, keep, change or remove. Done when: limits prints each source, tested on fakes; limits --card names the blocking rule for a card held off a machine by tla=false, gates_only and WHO, one test each.
 
-Why it waits: On 2026-10-20 the owner did not know which settings restricted dealing: tla=false on every machine blocked TLA-gated cards everywhere, WHO lines kept cards off captain, and the coordinator wrongly claimed a per-machine tier setting.
+Why it waits: On 2026-10-20 the owner did not know which settings restricted dealing: tla=false on every machine blocked TLA-gated cards everywhere, WHO lines kept cards off the Windows bench, and the coordinator wrongly claimed a per-machine tier setting.
 
 Target: v1.9
 
@@ -2451,7 +2451,7 @@ From: the owner, 2026-10-20 ('Are there any other settings that I don't know abo
 
 providers loads route keys through the seat or reports 'key not loaded', never a provider 401; self knows the play-installed binaries and does not tell anyone to move them; dashboard gives a fix that works end to end; gosdk names the go.mod it judged; and the loops play renders exactly nova-config's loop rows for the host and refuses to retire a unit nova-config declares. Done when: one red-first test on fakes per check (a fake provider endpoint, a fake bin directory, a fake loops table), and a loops-play test that a declared unit is never retired.
 
-Why it waits: On 2026-10-20 three nova-doctor checks gave false or contradictory fixes on the studio, and following the dashboard fix ran the loops play, which retired the sprint server and studio member units that nova-config declares.
+Why it waits: On 2026-10-20 three nova-doctor checks gave false or contradictory fixes on the coordinator's machine, and following the dashboard fix ran the loops play, which retired the sprint server and fleet member units that nova-config declares there.
 
 Target: v1.9
 
@@ -2459,9 +2459,9 @@ From: the owner, 2026-10-20 ('fix all the dr issues then re-run to verify'; 'fix
 
 ### nova-run runs a job in a counted slot on a chosen host
 
-nova-run [--host <h>|--os linux|darwin|windows] [--exclusive] [--card <id>] [--max-wait 30m] -- <cmd> runs a job in a slot counted from nova-config's machine row, with kernel-held locks so a dead holder frees its slot, shared and exclusive modes without starvation, a bounded wait that exits 75 naming the holders, and a fresh internal-disk work directory per job. nova-run pick --os linux prints the least-loaded host with a free slot; nova-run status lists holders. It replaces the coordinator's studio-slot.sh, pick-bench.sh and winlock wrappers. Done when: on fakes (fake clock, fake lock backend), slots never exceed the count, exclusive is alone and not starved, a dead holder's slot is reclaimed, max-wait exits 75, pick skips held machines, each tested; TLA+ slots model with reversed witnesses.
+nova-run [--host <h>|--os linux|darwin|windows] [--exclusive] [--card <id>] [--max-wait 30m] -- <cmd> runs a job in a slot counted from nova-config's machine row, with kernel-held locks so a dead holder frees its slot, shared and exclusive modes without starvation, a bounded wait that exits 75 naming the holders, and a fresh internal-disk work directory per job. nova-run pick --os linux prints the least-loaded host with a free slot; nova-run status lists holders. It replaces the coordinator's hand-written slot, bench-picking and Windows-lock scripts. Done when: on fakes (fake clock, fake lock backend), slots never exceed the count, exclusive is alone and not starved, a dead holder's slot is reclaimed, max-wait exits 75, pick skips held machines, each tested; TLA+ slots model with reversed witnesses.
 
-Why it waits: On 2026-10-20 workers chose benches by hand through bash scripts with mkdir locks, an orphaned sleep held mini-m5-1 for over an hour, and captain's lock was installed by hand.
+Why it waits: On 2026-10-20 workers chose benches by hand through bash scripts with mkdir locks, an orphaned sleep held the macOS bench for over an hour, and the Windows bench's lock was installed by hand.
 
 Target: v1.9
 
@@ -2469,7 +2469,7 @@ From: the owner, 2026-10-20 ('in v1.9 please convert this to a real golang tool 
 
 ### nova-sprint roadmap import adds a deliverable's cards in one fast step
 
-nova-sprint roadmap import --repo <r> [--release <tag>] reads each roadmap row's notes, creates missing streams, keeps each card's last head, needs and routing lines, and lints and checks the whole batch once. It is the reverse of the one-command export (nova-sprint roadmap, cards-carry-their-roadmap-row). Done when: an import of 50 rows into a fake store runs once through lint and check and creates the cards with heads and needs, tested; running it twice changes nothing, tested; the import of tens of cards takes under a minute on the studio.
+nova-sprint roadmap import --repo <r> [--release <tag>] reads each roadmap row's notes, creates missing streams, keeps each card's last head, needs and routing lines, and lints and checks the whole batch once. It is the reverse of the one-command export (nova-sprint roadmap, cards-carry-their-roadmap-row). Done when: an import of 50 rows into a fake store runs once through lint and check and creates the cards with heads and needs, tested; running it twice changes nothing, tested; the import of tens of cards takes under a minute.
 
 Why it waits: On 2026-10-20 importing about 48 rocketnet cards from the roadmap took an agent over 20 minutes.
 
@@ -2491,7 +2491,7 @@ From: the coordinator, 2026-10-20 (overnight notes); the owner's rule that finis
 
 nova-sprint friend stage resolves origin/<BASE> for a BASE that is not the repository's default branch and resumes or cleans its own incomplete stage directory on retry. Done when: staging a card with BASE a non-default branch into a clean clone checks out that base, tested on a fake repository; a retry after a failed stage succeeds, tested.
 
-Why it waits: On 2026-10-20 friend stage refused cards on sprint/rocketnet-proof (exit 128, the clean clone had no local BASE) and refused its own half-made clone on retry; Aurora's card went to HOLD because no checkout was staged.
+Why it waits: On 2026-10-20 friend stage refused cards on sprint/rocketnet-proof (exit 128, the clean clone had no local BASE) and refused its own half-made clone on retry; a friend's card went to HOLD because no checkout was staged.
 
 Target: v1.9
 
