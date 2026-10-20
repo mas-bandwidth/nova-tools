@@ -1,4 +1,4 @@
-The stable tools point release after v1.6.11. It gives the native Windows member a wall and a shared lock count. nova-sandbox gains a Windows body, `lowil-job`, so a card on captain can run inside a wall instead of `--no-wall`. `nova-swarm member --lane-lock` lets each lane hold a slot of a machine-wide count for its whole life. nova-sprint is released on its own line.
+The stable tools point release after v1.6.11. It gives the native Windows member a wall and a shared lock count. nova-sandbox gains a Windows body, `lowil-job`, so a card on a native Windows member can run inside a wall instead of `--no-wall`. `nova-swarm member --lane-lock` lets each lane hold a slot of a machine-wide count for its whole life. nova-sprint is released on its own line.
 
 Install: download the assets for your platform from this release, then run `nova-update release install --from <release root> --version v1.6.12 --bin <dir>` with the nova-sprint release staged beside them (see docs/SPEC-RELEASE.md). Of the tools, nova-sandbox and nova-swarm changed, and nova-friend's Windows binary picks up the new wall through pkg/sandbox.
 
@@ -13,4 +13,4 @@ Install: download the assets for your platform from this release, then run `nova
 - **`nova-swarm member --lane-lock <argv>` (#6039).** Each lane starts the holder before native, and begins only once the holder's first line starts with `HELD`; any other first line refuses the lane. The wait is bounded at 2h, after which the holder is ended and the card goes back. The lane closes the holder's stdin when it ends, which releases the slot.
   - `{card}` in the argv becomes the card id.
   - A timing-gate card gets `--exclusive`. That is a card with soak, stress, repeat or load as a word of its id, or `exclusive` in its GATE-NEEDS.
-  - On captain the holder is rowan-tools' `winlock.exe hold`, so the native lanes and the WSL jobs share one count of four slots.
+  - On a Windows bench the holder can be a `winlock.exe hold` that takes one of the machine's named-mutex slots, so the native lanes and the bench's WSL jobs share one count.
