@@ -1906,9 +1906,4 @@ Use: per-card and per-friend token, cost and cache-hit-rate panels in the sprint
 Privacy: prompt bodies are logged only on the proxy machine, with a retention bound, never uploaded and never on the keeper machine. Metadata goes to the dashboard. The owner's privacy is absolute.
 Done when: the fleet friends' API traffic flows through it; per-card tokens and cache-hit rate appear on the dashboard; the real provider keys are on the proxy host only; and turning the proxy off falls back to direct routing, which is tested."
    :why "Work starts after rocketnet v1.0.0 and after the v1.7 line; it does not join v1.7."
-   :origin "the owner, 2026-10-19 (after an article on running your own LLM proxy: one endpoint you control, per-key, per-model and per-client logs, cache-miss diagnosis, virtual keys, fast provider switching)")
-  (item "revert-on-red-reads-the-latest-attempt" :group "ops" :date "2026-10-20"
-   :title "v1.7 deadlock: revert-on-red reads the latest attempt of a run, never attempt 1"
-   :text "On 2026-10-20 main's ci run 39346166100 was cancelled (a concurrency clash with the dev push) and its rerun went green, but revert-on-red read attempt 1, failed with 'cannot be rerun', filed needs-owner #6027 and left a failed check on the commit that refused the v1.6.10 cut. A deadlock class for the v1.7 list: a stale verdict that no later green clears."
-   :why "a failed check that no green rerun clears blocks every cut of that commit"
-   :origin "the coordinator, 2026-10-20 (v1.7 deadlock list)")))
+   :origin "the owner, 2026-10-19 (after an article on running your own LLM proxy: one endpoint you control, per-key, per-model and per-client logs, cache-miss diagnosis, virtual keys, fast provider switching)")))

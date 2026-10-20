@@ -138,14 +138,6 @@ func LaunchArgvFor(provider, goos string, req LaunchRequest) ([]string, error) {
 		harness = entry.DarwinHarness
 	case "linux":
 		harness = entry.LinuxHarness
-	case "windows":
-		// The table has no windows column: a native Windows member names its harness
-		// itself (`--harness C:\\...\\opencode.exe`, the member play's install), and
-		// that is the one harness a windows argv is built from. With none named there
-		// is nothing to launch, and the run is refused rather than handed a unix path.
-		if req.Harness == "" {
-			return nil, fmt.Errorf("GOOS windows has no harness column in the providers table; name the harness (--harness)")
-		}
 	default:
 		return nil, fmt.Errorf("unsupported GOOS %q", goos)
 	}

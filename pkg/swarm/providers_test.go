@@ -120,21 +120,6 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 		}
 	})
 
-	// windows has no table column: the member's own --harness is the harness, and with
-	// none named the run is refused (captain, 2026-10-20: every card was refused
-	// `unsupported GOOS "windows"` once its PATH was right).
-	t.Run("windows-takes-the-named-harness", func(t *testing.T) {
-		exe := `C:\nova-swarm\harness-v1.18.20\opencode.exe`
-		argv, err := LaunchArgvFor(providers[0].Name, "windows", LaunchRequest{Harness: exe, Model: "p/m", Title: "t", Prompt: "card"})
-		require.NoError(t, err)
-		assert.Equal(t, exe, argv[0])
-		linux, err := LaunchArgvFor(providers[0].Name, "linux", LaunchRequest{Harness: exe, Model: "p/m", Title: "t", Prompt: "card"})
-		require.NoError(t, err)
-		assert.Equal(t, linux, argv, "the windows argv is the linux shape with the named harness")
-		_, err = LaunchArgvFor(providers[0].Name, "windows", LaunchRequest{})
-		assert.Error(t, err, "windows with no named harness is refused")
-	})
-
 	// Every provider in the table is actually reachable.
 	t.Run("table-not-empty", func(t *testing.T) {
 		assert.NotEmpty(t, providers, "providers table is empty")
