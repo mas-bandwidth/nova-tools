@@ -198,16 +198,13 @@ func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 // toolchain directories (nativeChildEnv, swarm.BenchPath). An environment carrying no PATH
 // gains one naming the directories alone, because a child that resolves no shell at all is
 // better than one that resolves an unscrubbed shell. No dirs leaves it as it was.
-func pathWithDirsFirst(env []string, dirs ...string) []string {
-	return pathWithDirsFirstFor(runtime.GOOS, env, dirs...)
-}
-
-// pathWithDirsFirstFor is pathWithDirsFirst for one operating system's environment. On
+//
+// goos is the operating system whose environment this is. On
 // Windows the name is matched without case -- the process environment there spells it
 // `Path`, and a case-sensitive match left a native Windows child with a PATH of the
 // toolchain directories alone (captain, 2026-10-19) -- every spelling is folded into one
 // PATH entry, and the separator is `;`.
-func pathWithDirsFirstFor(goos string, env []string, dirs ...string) []string {
+func pathWithDirsFirst(goos string, env []string, dirs ...string) []string {
 	var head []string
 	for _, d := range dirs {
 		if d != "" {
