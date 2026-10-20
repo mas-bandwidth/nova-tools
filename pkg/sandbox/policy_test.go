@@ -287,6 +287,44 @@ func TestChildEnv(t *testing.T) {
 	require.Len(t, d, 2, "DroppedEnv = %v, want the two agent variables", d)
 }
 
+// TestChildEnvKeepsAShortNameOfItsTmp: a caller's TMPDIR that is a link resolving to the
+// wall's tmp is the name the child's temp variables carry, so a unix socket fits below it
+// (ChildEnv, tmpName); a TMPDIR naming anything else, a link to elsewhere included, is
+// replaced by the tmp itself.
+func TestChildEnvKeepsAShortNameOfItsTmp(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symbolic links need a privilege on windows; the short name is a unix one")
+	}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	tmp := filepath.Join(dir, "a-long-slot", "tmp")
+	elsewhere := filepath.Join(dir, "elsewhere")
+	for _, d := range []string{tmp, elsewhere} {
+		require.NoError(t, os.MkdirAll(d, 0o755))
+	}
+	link, other := filepath.Join(dir, "nv-1"), filepath.Join(dir, "nv-2")
+	require.NoError(t, os.Symlink(tmp, link))
+	require.NoError(t, os.Symlink(elsewhere, other))
+	for _, tc := range []struct {
+		name, tmpdir, want string
+	}{
+		{"a link to the tmp is kept", link, link},
+		{"a link to elsewhere is replaced", other, tmp},
+		{"another directory is replaced", elsewhere, tmp},
+		{"a name that does not resolve is replaced", filepath.Join(dir, "gone"), tmp},
+		{"the tmp itself", tmp, tmp},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ChildEnv([]string{"PATH=/bin", "TMPDIR=" + tc.tmpdir}, tmp)
+			for _, want := range []string{"TMPDIR=" + tc.want, "TMP=" + tc.want, "TEMP=" + tc.want, "TMPPREFIX=" + tc.want + "/zsh", "JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=" + tc.want} {
+				assert.Contains(t, got, want, "the child's environment is missing %q: %v", want, got)
+			}
+		})
+	}
+}
+
 // The ancestor literals of the darwin profile: every proper ancestor, "/" excluded.
 func TestAncestors(t *testing.T) {
 	t.Parallel()

@@ -224,7 +224,7 @@ func TestAReaderScratchIsInsideTheWallAndTmpIsRefused(t *testing.T) {
 	base := t.TempDir()
 	link := filepath.Join(base, "nv-link")
 	require.NoError(t, linkShortTmp(link, tmp))
-	script := `echo hi > "$TMPDIR/scratch"; echo tmp=$?
+	script := `echo "tmpdir=$TMPDIR"; echo hi > "$TMPDIR/scratch"; echo tmp=$?
 if ( : > /tmp/nova-swarm-outside ) 2>/dev/null; then echo deny=unexpected; else echo deny=denied; fi
 if ( : > "$1/beside" ) 2>/dev/null; then echo beside=unexpected; else echo beside=denied; fi`
 	cfg := nativeRunConfig{slotDir: slot, benchHome: t.TempDir(), benchOS: runtime.GOOS}
@@ -237,6 +237,7 @@ if ( : > "$1/beside" ) 2>/dev/null; then echo beside=unexpected; else echo besid
 	_ = cmd.Run()
 	got := out.String()
 	t.Logf("walled read child:\n%s%s", got, errb.String())
+	assert.Contains(t, got, "tmpdir="+link+"\n", "the wall hands the child its tmp by the short link it was given")
 	assert.Contains(t, got, "tmp=0", "writing the read's scratch inside its job is allowed by the wall")
 	assert.FileExists(t, filepath.Join(tmp, "scratch"), "the read's scratch landed in its job's tmp")
 	assert.Contains(t, got, "deny=denied", "a write to /tmp outside the job is refused by the wall")
