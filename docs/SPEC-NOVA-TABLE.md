@@ -96,7 +96,10 @@ backed by Redis data structures.
 | `table:<name>:identity` | Hash | Table identity: `epoch_key`, `epoch_field`, `member_prefix`; fixed while the table exists, removed by `drop --definition` |
 | `table:<name>:revision` | Hash | Revision counter tracking mutations |
 | `table:<name>:changes` | Stream | Audit stream of table mutations |
-| `table:<name>:ops` | Hash | Batch operation records across epochs, keyed by epoch and operation id |
+| `table:<name>:ops` | Hash | Batch operation records across epochs, keyed by epoch and operation id, at most `operation records` per epoch |
+| `table:<name>:ops:idx:<epoch>` | Sorted Set | The epoch's operation ids oldest first; a trimmed id stays here for its `OPEXPIRED` refusal |
+| `table:<name>:ops:meta` | Hash | The retained epoch window and each epoch's trim cursor |
+| `table:<name>:ops:epochs` | Set | The epochs whose operation index exists, so a drop removes them all |
 | `table:<name>:rows` | Sorted Set | Row keys in display order with ordinal scores (epoch 0) |
 | `table:<name>:<epoch>:rows` | Sorted Set | Row keys in display order for `<epoch>` |
 | `table:<name>:row:<row>` | Hash | Row labels, external column bindings (`key:<col>`), text cell contents (epoch 0) |
@@ -441,6 +444,8 @@ A test compares the shared constants with this table:
 | properties per table | 1024 |
 | receipt bytes | 1048576 |
 | value bytes per batch | 16777216 |
+| operation records | 200000 |
+| change events | 1000000 |
 
 The 128 set-fields and 1000 unset-fields limits are intentionally different.
 The field-value byte limit applies to each value in `set`.
@@ -542,11 +547,13 @@ those of the configured store; a transport error is uncertain, not evidence of
 rollback. No stronger crash guarantee is asserted because the function is one FCALL.
 
 Operation identity is table plus epoch plus operation_id. The record holds the
-canonical request bytes and the result, with the request's digest as evidence. A
-caller-provided digest is not enough to establish identical requests: the bytes are
-compared. An identical recorded request returns the original receipt/result without writes, even when its old
-expected revisions no longer match; operation lookup precedes those checks. A
-changed request with an existing operation ID refuses. An unrecorded operation at
+request's SHA-1 digest and the result; it never holds the request's bytes. The
+server computes the digest over the exact bytes it received and compares digests,
+so an identical recorded request returns the original receipt/result without
+writes, even when its old expected revisions no longer match; operation lookup
+precedes those checks. A changed request under an existing operation ID refuses
+`OPCONFLICT` with that id. A caller-provided digest does not establish anything:
+the server's digest of the received bytes is the one compared. An unrecorded operation at
 a stale epoch refuses. Original result epoch/revisions remain visible, so retry
 cannot masquerade as a new current-epoch action. No retry loop in transport may
 silently invent a new operation ID.
@@ -559,28 +566,43 @@ checked before sending, that this call changed nothing and that it says nothing 
 earlier call with the same operation id; the store, asked directly, returns the recorded
 receipt.
 
-Operation records do not expire. A table's operation records, of every epoch, are
-one hash, `table:<t>:ops`, whose fields are `<epoch>:<operation id>` and whose values
-are the records (the request bytes, at most 1 MiB, and the result, which holds the
-receipt). The record holds the result's delta escaped a second time inside the record's
-own encoding, and the change event holds the actor twice (its own field and inside the
-delta), so both exceed the receipt bound. Measured at the largest batches the bounds
-allow: the change event at most 2 MiB (2,096,969 bytes, an actor of 1,048,232 bytes),
-the record at most 5 MiB (5,242,119 bytes, an actor of 524,116 `/` characters, which
-JSON escapes; 4,175,647 bytes for 128 members each setting 26 fields of 64 `/`
-characters). Records do not expire, so a record holds that much for as long as the
-table exists. One key keeps the
-work of removing them bounded. `drop <table>` and `drop <table> --definition` treat
-them alike: each removes the whole hash in the same atomic call as the drop, so no
-operation of the dropped table replays against a table created again under the name; the
-two verbs differ in what else they remove: `--definition` takes the saved column
-definition, the identity hash and the rows of every epoch too, and the revision
-counter and the change log continue across a drop and a create. `clear <table>` removes no record and does not itself
-advance the configured external epoch. If that epoch advances separately, an
-earlier operation still replays with its original receipt, epoch and revisions.
-Epoch snapshots that a drop keeps readable are not operation records and stay. A
-replay is guaranteed for as long as the table exists; nothing else removes a record.
-The layout is new with the batch, so there is no earlier layout to migrate or to sweep.
+A table's operation records, of every epoch, are one hash, `table:<t>:ops`, whose
+fields are `<epoch>:<operation id>` and whose values are the records (the request's
+digest and the result, which holds the receipt). Because the request bytes are not
+kept, a record is a few hundred bytes whatever the request size; the result still
+holds the receipt whole, with the result's delta escaped a second time inside the
+record's own encoding. The change event holds the actor twice (its own field and
+inside the delta), so it still exceeds the receipt bound: measured at the largest
+batches the bounds allow it is at most 2 MiB (2,096,969 bytes, an actor of 1,048,232
+bytes).
+
+The ledger is bounded. Within an epoch the hash holds at most `operation records`
+records (`LimitOpsRecords`, 200000). A per-epoch sorted set,
+`table:<t>:ops:idx:<epoch>`, orders the epoch's ids oldest first by the sequence the
+store assigned; when the hash passes the bound its oldest records are removed in
+bounded batches. A trimmed id stays in that index, so a replay of it is refused
+`OPEXPIRED <id>`, by name, and is never applied again. On an epoch advance the fields
+and index of every epoch older than the previous one are removed in bounded HDEL
+batches, and a bounded HSCAN whose cursor lives in the metadata hash finds records
+written before the index existed; the current and previous epochs are the retained
+window. A replay whose
+epoch is older than that window is refused `OPEXPIRED <id>` too. A replay is
+guaranteed only while the record is in the window; the index and the window are what
+make an expired operation a refusal rather than a new operation.
+
+Every change event is `XADD`ed with an exact `MAXLEN` of `change events`
+(`LimitChangeEvents`, 1000000). The code keeps no reader cursor for a table's change
+stream, so the oldest event is trimmed when the stream passes the bound and no
+reader's position is consulted. `drop <table>` and `drop <table> --definition` treat
+the ledger alike: each removes the operation hash, its epoch indexes, the window and
+the epoch set in the same atomic call as the drop, so no operation of the dropped
+table replays against a table created again under the name. The two verbs differ in
+what else they remove: `--definition` takes the saved column definition, the identity
+hash and the rows of every epoch too, and the revision counter and the change log
+continue across a drop and a create. `clear <table>` removes no record and does not
+itself advance the configured external epoch. Epoch snapshots that a drop keeps
+readable are not operation records and stay. The layout is new with the batch, so
+there is no earlier layout to migrate or to sweep.
 
 The ordinary --fence/--idem fields remain receipt metadata on existing table verbs;
 they do not acquire false historical deduplication semantics through this extension.
@@ -603,9 +625,9 @@ store or a value the manifest sets, is recorded as its length and its SHA-1
 (`before_bytes`, `before_sha1`, `after_bytes`, `after_sha1`, with the value's own side
 null; a null side with no length is an absent field), in the receipt, in the change
 event's `batch_delta` and in the operation record's result alike, never in full. The
-record's request is the full manifest payload received by the server (the Go
-re-encoding for a CLI call), because replay compares those bytes; a
-value a manifest sets is in the manifest, so the record holds it in full there. And the
+record holds only the request's digest, over the manifest payload the server
+received (the Go re-encoding for a CLI call), because replay compares digests; a
+value a manifest sets is never in the record. And the
 receipt's size, the byte length of its encoded batch delta, is at most `receipt bytes`,
 which is the manifest bound, 1 MiB. The size is computed before the first write, with
 each score the call reads back after its writes counted at its longest form (24 bytes),

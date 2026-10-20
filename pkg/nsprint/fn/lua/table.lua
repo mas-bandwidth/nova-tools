@@ -125,6 +125,19 @@ do
     if carry == 1 then out = '1' .. out end
     return out
   end
+  -- T.prev(n): n - 1 as a decimal string; nil for zero or a non-uint.
+  function T.prev(n)
+    if not T.uint(n) or n == '0' then return nil end
+    local out, borrow = '', 1
+    for i = #n, 1, -1 do
+      local v = tonumber(string.sub(n, i, i)) - borrow
+      if v < 0 then v = 9; borrow = 1 else borrow = 0 end
+      out = tostring(v) .. out
+    end
+    out = string.gsub(out, '^0+', '')
+    if out == '' then out = '0' end
+    return out
+  end
   -- T.uintgt(a, b): decimal uint64 strings, a > b.
   function T.uintgt(a, b)
     if #a ~= #b then return #a > #b end
@@ -141,6 +154,7 @@ do
     columns = 1000, rows = 100000,
     manifest_props = 64, table_props = 1024,
     receipt_bytes = 1048576, batch_value_bytes = 16777216,
+    ops_records = 200000, change_events = 1000000,
   }
   T.limit_names = {
     manifest_bytes = 'manifest bytes', changed_entries = 'entries with changes', guard_entries = 'guard-only entries',
@@ -150,6 +164,7 @@ do
     columns = 'columns per table', rows = 'rows per table',
     manifest_props = 'properties per manifest', table_props = 'properties per table',
     receipt_bytes = 'receipt bytes', batch_value_bytes = 'value bytes per batch',
+    ops_records = 'operation records', change_events = 'change events',
   }
   -- T.over(key, observed, member): a LIMIT refusal when observed exceeds the bound.
   function T.over(key, observed, member)
@@ -591,6 +606,94 @@ do
   -- key so that a drop removes them all in one bounded step. Its fields are
   -- <epoch>:<operation id>, its values the records (JSON).
   function T.opskey(name) return 'table:' .. name .. ':ops' end
+  -- T.opsindexkey(name, epoch): the epoch's oldest-first index of operation
+  -- ids. It keeps an expired id after its record is trimmed, so a replay of
+  -- that operation is refused OPEXPIRED by name and never applied again.
+  -- T.opsmetakey(name): the retained epoch window and each epoch's trim cursor.
+  -- T.opsepochskey(name): the epochs whose index exists, so a drop removes them.
+  function T.opsindexkey(ops, epoch) return ops .. ':idx:' .. epoch end
+  function T.opsmetakey(ops) return ops .. ':meta' end
+  function T.opsepochskey(ops) return ops .. ':epochs' end
+  -- T.trimops(ops, epoch): keep at most T.limits.ops_records records of the
+  -- epoch (tla/TableRetention.tla, Bounded). The index is oldest first by the sequence the store assigned; the
+  -- cursor says how many of its oldest entries were trimmed already. Their
+  -- records go in one bounded HDEL, their index entries stay for OPEXPIRED.
+  function T.trimops(ops, epoch)
+    local idx = T.opsindexkey(ops, epoch)
+    local meta = T.opsmetakey(ops)
+    local cursor = tonumber(redis.call('HGET', meta, 'trim:' .. epoch) or '0') or 0
+    local over = redis.call('ZCARD', idx) - cursor - T.limits.ops_records
+    if over <= 0 then return end
+    local ids = redis.call('ZRANGE', idx, cursor, cursor + over - 1)
+    if #ids == 0 then return end
+    local fields = {}
+    for _, id in ipairs(ids) do fields[#fields + 1] = epoch .. ':' .. id end
+    redis.call('HDEL', ops, unpack(fields))
+    redis.call('HSET', meta, 'trim:' .. epoch, tostring(cursor + #ids))
+  end
+  -- T.sweepops(ops, active): on an epoch advance, remove the records of every
+  -- epoch older than the previous one (tla/TableRetention.tla, Advance). Their index is deleted whole, so the
+  -- retained window is the current and previous epochs.
+  function T.sweepops(ops, active)
+    local prev = T.prev(active) or '0'
+    local meta = T.opsmetakey(ops)
+    redis.call('HSET', meta, 'window', prev)
+    local epochs = redis.call('SMEMBERS', T.opsepochskey(ops))
+    for _, e in ipairs(epochs) do
+      if T.uintgt(prev, e) then
+        local idx = T.opsindexkey(ops, e)
+        while true do
+          local ids = redis.call('ZRANGE', idx, 0, 999)
+          if #ids == 0 then break end
+          local fields = {}
+          for _, id in ipairs(ids) do fields[#fields + 1] = e .. ':' .. id end
+          redis.call('HDEL', ops, unpack(fields))
+          redis.call('ZREM', idx, unpack(ids))
+        end
+        redis.call('DEL', idx)
+        redis.call('SREM', T.opsepochskey(ops), e)
+      end
+    end
+    -- Records written before the index existed are found by a bounded HSCAN,
+    -- one batch per call, until the epoch's pass reaches the end. The cursor
+    -- and the pass's epoch are in the meta hash, so no call scans the whole
+    -- ledger.
+    if redis.call('HGET', meta, 'swept') ~= active then
+      if redis.call('HGET', meta, 'scan_for') ~= active then
+        redis.call('HSET', meta, 'scan_for', active, 'scan', '0')
+      end
+      local cursor = redis.call('HGET', meta, 'scan') or '0'
+      local ok, res = pcall(redis.call, 'HSCAN', ops, cursor, 'COUNT', '512')
+      if ok and type(res) == 'table' then
+        local next, flat = tostring(res[1]), res[2]
+        local gone = {}
+        for i = 1, #flat, 2 do
+          local e = string.match(flat[i], '^(%d+):')
+          if e and T.uintgt(prev, e) then gone[#gone + 1] = flat[i] end
+        end
+        if #gone > 0 then redis.call('HDEL', ops, unpack(gone)) end
+        if next == '0' then
+          redis.call('HSET', meta, 'swept', active, 'scan', '0')
+        else
+          redis.call('HSET', meta, 'scan', next)
+        end
+      end
+    end
+  end
+  -- T.recordops(ops, op_field, record): the operation record, then its index
+  -- entry and any trim the bound requires. Called after the commit, as the
+  -- last write, like the record it replaces.
+  function T.recordops(ops, op_field, record)
+    local epoch = record.epoch
+    T.sweepops(ops, epoch)
+    redis.call('SADD', T.opsepochskey(ops), epoch)
+    -- cjson (op record): the record whole; the request is kept as its digest
+    redis.call('HSET', ops, op_field, cjson.encode(record))
+    local idx = T.opsindexkey(ops, epoch)
+    local seq = redis.call('ZCARD', idx) + 1
+    redis.call('ZADD', idx, tostring(seq), record.operation_id)
+    T.trimops(ops, epoch)
+  end
   function T.rowkey(d, row) return d.prefix .. ':row:' .. row end
   function T.cellkey(d, row, col) return d.prefix .. ':cell:' .. row .. ':' .. col end
   function T.rowskey(d) return d.prefix .. ':rows' end
@@ -1110,7 +1213,7 @@ do
     -- own bytes (a row value in an argument is never parsed: schema-table
     -- adoption, Aspect 8).
     -- cjson (event): the call's arguments, each a string
-    local event = {'XADD', stream, '*', 'verb', verb, 'args', cjson.encode(wireargs),
+    local event = {'XADD', stream, 'MAXLEN', tostring(T.limits.change_events), '*', 'verb', verb, 'args', cjson.encode(wireargs),
       'epoch', d.epoch, 'rev_before', d.revision, 'rev_after', after, 'actor', opts.actor or '',
       -- cjson (event): the names of the cells the call touched
       'fence', opts.fence or '', 'idem', opts.idem or '', 'cells', #cells == 0 and '[]' or cjson.encode(cells),
@@ -1600,7 +1703,12 @@ do
       -- The table's operation records, of every epoch, are one key (T.opskey):
       -- a table created again under the name is a new table, and no operation
       -- of the old one replays against it.
-      T.stage(d, 'DEL', T.opskey(d.name))
+      local ops = T.opskey(d.name)
+      local epochs = redis.call('SMEMBERS', T.opsepochskey(ops))
+      T.stage(d, 'DEL', ops)
+      T.stage(d, 'DEL', T.opsmetakey(ops))
+      T.stage(d, 'DEL', T.opsepochskey(ops))
+      for _, e in ipairs(epochs) do T.stage(d, 'DEL', T.opsindexkey(ops, e)) end
     end
     if op == 'drop_definition' then
       local swept = T.sweep(d)
@@ -2558,14 +2666,18 @@ do
     -- identical recorded request returns its original result whatever rule a
     -- newer server applies to it; a different one under the same id is a conflict.
     local ops_key, op_field = T.opskey(table_name), nil
+    local digest = redis.sha1hex(raw_json)
     local peek = T.decode(raw_json)
     if peek and peek.table == table_name and T.word(peek.operation_id) and T.uint(peek.epoch) then
       op_field = peek.epoch .. ':' .. peek.operation_id
       local recorded = redis.call('HGET', ops_key, op_field)
       if recorded then
-        -- cjson (op record): the record whole; its request is compared as bytes
+        -- cjson (op record): the record whole; its request is compared by digest
+        -- (tla/TableRetention.tla, ReplayAnswered)
         local record = cjson.decode(recorded)
-        if record.request ~= raw_json then
+        local held = record.digest
+        if held == nil and record.request ~= nil then held = redis.sha1hex(record.request) end
+        if held ~= digest then
           return T.refuse('OPCONFLICT', peek.operation_id)
         end
         -- the original result, and a third element saying it is a replay
@@ -2574,13 +2686,21 @@ do
         original[3] = 'REPLAY'
         return original
       end
+      -- An id whose record was trimmed is refused by name; one from an epoch
+      -- older than the retained window is named the same way. tla/TableRetention.tla
+      local window = redis.call('HGET', T.opsmetakey(ops_key), 'window')
+      if window and T.uint(window) and T.uintgt(window, peek.epoch) then
+        return T.refuse('OPEXPIRED', peek.operation_id)
+      end
+      if redis.call('ZSCORE', T.opsindexkey(ops_key, peek.epoch), peek.operation_id) then
+        return T.refuse('OPEXPIRED', peek.operation_id)
+      end
     end
 
     -- Then the request is judged: the manifest's own rules, before the store is read.
     if not T.utf8(raw_json) then return T.refuse('MANIFEST', 'manifest is not valid UTF-8') end
     local manifest_err = T.validate_manifest_json(raw_json)
     if manifest_err then return manifest_err end
-    local digest = redis.sha1hex(raw_json)
     local manifest = T.decode(raw_json)
     if not manifest or type(manifest) ~= 'table' then return T.refuse('MANIFEST', 'invalid json') end
     if manifest.schema ~= 1 then return T.refuse('SCHEMA', tostring(manifest.schema)) end
@@ -3095,11 +3215,10 @@ do
         return encode_delta()
       end,
       record = function(reply, stream_id, before, after)
-        -- cjson (op record): the record whole; the request is kept as its bytes
-        redis.call('HSET', ops_key, op_field, cjson.encode({
+        -- cjson (op record): the record whole; the request is kept as its digest
+        T.recordops(ops_key, op_field, {
           operation_id = manifest.operation_id,
           digest = digest,
-          request = raw_json,
           stream_id = stream_id,
           epoch = d.epoch,
           rev_before = before,
@@ -3107,7 +3226,7 @@ do
           outcome = outcome,
           -- cjson (op record): the result as the call answered it
           result = cjson.encode(reply),
-        }))
+        })
       end,
     }, {'OK'})
   end
