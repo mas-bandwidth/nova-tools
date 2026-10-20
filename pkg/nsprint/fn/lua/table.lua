@@ -614,22 +614,35 @@ do
   function T.opsindexkey(ops, epoch) return ops .. ':idx:' .. epoch end
   function T.opsmetakey(ops) return ops .. ':meta' end
   function T.opsepochskey(ops) return ops .. ':epochs' end
+  -- T.nextindex(idx): the next oldest-first sequence for an epoch's index. It
+  -- follows the highest score, so a record a migration scan indexed still
+  -- sorts before the record written now.
+  function T.nextindex(idx)
+    local last = redis.call('ZRANGE', idx, '-1', '-1', 'WITHSCORES')
+    if type(last) == 'table' and last[2] then return (tonumber(last[2]) or 0) + 1 end
+    return 1
+  end
   -- T.trimops(ops, epoch): keep at most T.limits.ops_records records of the
   -- epoch (tla/TableRetention.tla, Bounded). The index is oldest first by the sequence the store assigned; the
   -- cursor says how many of its oldest entries were trimmed already. Their
-  -- records go in one bounded HDEL, their index entries stay for OPEXPIRED.
+  -- records go in bounded HDEL batches, their index entries stay for OPEXPIRED.
   function T.trimops(ops, epoch)
     local idx = T.opsindexkey(ops, epoch)
     local meta = T.opsmetakey(ops)
     local cursor = tonumber(redis.call('HGET', meta, 'trim:' .. epoch) or '0') or 0
     local over = redis.call('ZCARD', idx) - cursor - T.limits.ops_records
-    if over <= 0 then return end
-    local ids = redis.call('ZRANGE', idx, cursor, cursor + over - 1)
-    if #ids == 0 then return end
-    local fields = {}
-    for _, id in ipairs(ids) do fields[#fields + 1] = epoch .. ':' .. id end
-    redis.call('HDEL', ops, unpack(fields))
-    redis.call('HSET', meta, 'trim:' .. epoch, tostring(cursor + #ids))
+    while over > 0 do
+      local take = over
+      if take > 512 then take = 512 end
+      local ids = redis.call('ZRANGE', idx, cursor, cursor + take - 1)
+      if #ids == 0 then break end
+      local fields = {}
+      for _, id in ipairs(ids) do fields[#fields + 1] = epoch .. ':' .. id end
+      redis.call('HDEL', ops, unpack(fields))
+      cursor = cursor + #ids
+      redis.call('HSET', meta, 'trim:' .. epoch, tostring(cursor))
+      over = over - #ids
+    end
   end
   -- T.sweepops(ops, active): on an epoch advance, remove the records of every
   -- epoch older than the previous one (tla/TableRetention.tla, Advance). Their index is deleted whole, so the
@@ -657,21 +670,37 @@ do
     -- Records written before the index existed are found by a bounded HSCAN,
     -- one batch per call, until the epoch's pass reaches the end. The cursor
     -- and the pass's epoch are in the meta hash, so no call scans the whole
-    -- ledger.
+    -- ledger. A retained epoch's records are ZADDed to its index here, so a
+    -- ledger from before this code is counted by T.trimops on rollout.
     if redis.call('HGET', meta, 'swept') ~= active then
       if redis.call('HGET', meta, 'scan_for') ~= active then
         redis.call('HSET', meta, 'scan_for', active, 'scan', '0')
       end
       local cursor = redis.call('HGET', meta, 'scan') or '0'
-      local ok, res = pcall(redis.call, 'HSCAN', ops, cursor, 'COUNT', '512')
-      if ok and type(res) == 'table' then
-        local next, flat = tostring(res[1]), res[2]
-        local gone = {}
+      local ok, next, flat = pcall(redis.pcall, 'HSCAN', ops, cursor, 'COUNT', '512')
+      if ok and type(next) ~= 'table' then
+        next = tostring(next)
+        local gone, seqs, seen = {}, {}, {}
         for i = 1, #flat, 2 do
           local e = string.match(flat[i], '^(%d+):')
-          if e and T.uintgt(prev, e) then gone[#gone + 1] = flat[i] end
+          if e and T.uintgt(prev, e) then
+            gone[#gone + 1] = flat[i]
+          elseif e then
+            seen[e] = true
+            local id = string.sub(flat[i], #e + 2)
+            local idx = T.opsindexkey(ops, e)
+            if not redis.call('ZSCORE', idx, id) then
+              seqs[e] = seqs[e] or T.nextindex(idx)
+              redis.call('ZADD', idx, tostring(seqs[e]), id)
+              seqs[e] = seqs[e] + 1
+            end
+          end
         end
         if #gone > 0 then redis.call('HDEL', ops, unpack(gone)) end
+        for e in pairs(seen) do
+          redis.call('SADD', T.opsepochskey(ops), e)
+          T.trimops(ops, e)
+        end
         if next == '0' then
           redis.call('HSET', meta, 'swept', active, 'scan', '0')
         else
@@ -690,7 +719,7 @@ do
     -- cjson (op record): the record whole; the request is kept as its digest
     redis.call('HSET', ops, op_field, cjson.encode(record))
     local idx = T.opsindexkey(ops, epoch)
-    local seq = redis.call('ZCARD', idx) + 1
+    local seq = T.nextindex(idx)
     redis.call('ZADD', idx, tostring(seq), record.operation_id)
     T.trimops(ops, epoch)
   end
@@ -2672,8 +2701,7 @@ do
       op_field = peek.epoch .. ':' .. peek.operation_id
       local recorded = redis.call('HGET', ops_key, op_field)
       if recorded then
-        -- cjson (op record): the record whole; its request is compared by digest
-        -- (tla/TableRetention.tla, ReplayAnswered)
+        -- cjson (op record): the record whole; its request is compared by digest (tla/TableRetention.tla, ReplayAnswered)
         local record = cjson.decode(recorded)
         local held = record.digest
         if held == nil and record.request ~= nil then held = redis.sha1hex(record.request) end

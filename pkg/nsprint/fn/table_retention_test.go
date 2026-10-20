@@ -153,6 +153,32 @@ func TestTableOpsAndChangesAreBounded(t *testing.T) {
 	require.Len(t, s.streams["table:"+name+":changes"], retentionStreamBound, "the change stream is at its bound")
 	require.NotContains(t, s.hashes[opsKey], "0:old0", "the oldest record is the one dropped")
 
+	// Rollout: records already in the current epoch's hash but not in its
+	// index are indexed by the bounded HSCAN sweep and then counted by the
+	// bound. The apply above scanned the first batch; take the next batch out
+	// of the index and let the next apply find it.
+	scan, err := strconv.Atoi(s.hashes[opsKey+":meta"]["scan"])
+	require.NoError(t, err)
+	present := make([]string, 0, len(s.hashes[opsKey]))
+	for f := range s.hashes[opsKey] {
+		present = append(present, f)
+	}
+	sort.Strings(present)
+	require.Greater(t, len(present), scan+512)
+	unindexed := present[scan : scan+512]
+	for _, f := range unindexed {
+		delete(s.zsets[opsKey+":idx:0"], strings.TrimPrefix(f, "0:"))
+	}
+	mig := retentionManifest(t, s, name, retentionRevision(s), "mig", "mig")
+	migReply := s.fcallReply(t, "ns_table_apply", name, mig)
+	require.Equal(t, "OK", migReply[0], "the migrating record: %v", migReply)
+	require.LessOrEqual(t, len(s.hashes[opsKey]), retentionOpsBound, "the existing ledger is brought to its bound")
+	for _, f := range unindexed {
+		if _, held := s.hashes[opsKey][f]; held {
+			require.Contains(t, s.zsets[opsKey+":idx:0"], strings.TrimPrefix(f, "0:"), "the sweep indexes an existing record")
+		}
+	}
+
 	// The bound is measured; the epoch sweep is exercised on a small epoch 0
 	// so the test does not spend minutes deleting a stand-in for days of beats.
 	s.hashes[opsKey] = map[string]string{"0:old0": `{"operation_id":"old0","digest":"x","result":"[]"}`}

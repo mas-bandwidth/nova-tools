@@ -96,7 +96,7 @@ backed by Redis data structures.
 | `table:<name>:identity` | Hash | Table identity: `epoch_key`, `epoch_field`, `member_prefix`; fixed while the table exists, removed by `drop --definition` |
 | `table:<name>:revision` | Hash | Revision counter tracking mutations |
 | `table:<name>:changes` | Stream | Audit stream of table mutations |
-| `table:<name>:ops` | Hash | Batch operation records across epochs, keyed by epoch and operation id, at most `operation records` per epoch |
+| `table:<name>:ops` | Hash | Batch operation records across epochs, keyed by epoch and operation id, at most `operation records` per epoch once its bounded migration sweep has indexed it |
 | `table:<name>:ops:idx:<epoch>` | Sorted Set | The epoch's operation ids oldest first; a trimmed id stays here for its `OPEXPIRED` refusal |
 | `table:<name>:ops:meta` | Hash | The retained epoch window and each epoch's trim cursor |
 | `table:<name>:ops:epochs` | Set | The epochs whose operation index exists, so a drop removes them all |
@@ -577,18 +577,23 @@ batches the bounds allow it is at most 2 MiB (2,096,969 bytes, an actor of 1,048
 bytes).
 
 The ledger is bounded. Within an epoch the hash holds at most `operation records`
-records (`LimitOpsRecords`, 200000). A per-epoch sorted set,
-`table:<t>:ops:idx:<epoch>`, orders the epoch's ids oldest first by the sequence the
-store assigned; when the hash passes the bound its oldest records are removed in
-bounded batches. A trimmed id stays in that index, so a replay of it is refused
-`OPEXPIRED <id>`, by name, and is never applied again. On an epoch advance the fields
-and index of every epoch older than the previous one are removed in bounded HDEL
-batches, and a bounded HSCAN whose cursor lives in the metadata hash finds records
-written before the index existed; the current and previous epochs are the retained
-window. A replay whose
+records (`LimitOpsRecords`, 200000) once the epoch's index is complete. A per-epoch
+sorted set, `table:<t>:ops:idx:<epoch>`, orders the epoch's ids oldest first by the
+sequence the store assigned; when the hash passes the bound its oldest records are
+removed in bounded batches. A trimmed id stays in that index, so a replay of it is
+refused `OPEXPIRED <id>`, by name, and is never applied again. On an epoch advance the
+fields and index of every epoch older than the previous one are removed in bounded
+HDEL batches; the current and previous epochs are the retained window. A replay whose
 epoch is older than that window is refused `OPEXPIRED <id>` too. A replay is
 guaranteed only while the record is in the window; the index and the window are what
 make an expired operation a refusal rather than a new operation.
+
+A ledger written before this layout has records in an epoch but no index for them. A
+bounded HSCAN, whose cursor and pass epoch live in the metadata hash, finds them in
+batches: records of a dropped epoch are removed and records of a retained epoch are
+ZADDed to that epoch's index, so the bound counts them and trims the oldest on the
+same record write. The migration therefore brings an existing ledger under
+`operation records` in bounded batches rather than in one unbounded step.
 
 Every change event is `XADD`ed with an exact `MAXLEN` of `change events`
 (`LimitChangeEvents`, 1000000). The code keeps no reader cursor for a table's change

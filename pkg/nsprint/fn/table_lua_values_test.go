@@ -409,14 +409,13 @@ func TestTableLuaRowValuesOpaque(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(ev["members"]), &evMembers))
 	require.Equal(t, []map[string]string{{"id": "m1", "from": "", "to": "r1:todo", "score": "1"}}, evMembers, "the event's members")
 
-	// The operation record holds the request's digest, never its bytes, and
-	// the result as it was; a replay answers the original result with REPLAY.
+	// The operation record holds the result as it was; a replay answers the
+	// original result with REPLAY. Its request is only a digest now, which
+	// table_retention_test.go checks.
 	var record struct {
-		Digest string `json:"digest"`
 		Result string `json:"result"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(s.hashes["table:demo:ops"]["0:op1"]), &record))
-	require.Equal(t, sha(raw), record.Digest, "the operation record's request digest")
 	var result []any
 	require.NoError(t, json.Unmarshal([]byte(record.Result), &result))
 	recorded, _ := receipt(result)
