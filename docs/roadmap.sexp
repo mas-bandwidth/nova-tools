@@ -1911,4 +1911,9 @@ Done when: the fleet friends' API traffic flows through it; per-card tokens and 
    :title "v1.7 deadlock: revert-on-red reads the latest attempt of a run, never attempt 1"
    :text "On 2026-10-20 main's ci run 39346166100 was cancelled (a concurrency clash with the dev push) and its rerun went green, but revert-on-red read attempt 1, failed with 'cannot be rerun', filed needs-owner #6027 and left a failed check on the commit that refused the v1.6.10 cut. A deadlock class for the v1.7 list: a stale verdict that no later green clears."
    :why "a failed check that no green rerun clears blocks every cut of that commit"
-   :origin "the coordinator, 2026-10-20 (v1.7 deadlock list)")))
+   :origin "the coordinator, 2026-10-20 (v1.7 deadlock list)")
+  (item "coordinator-reaches-down-friend" :group "export-v19" :date "2026-10-20"
+   :title "Coordinator can reach a friend whose hook is marked down"
+   :text "The coordinator, and only the coordinator, can deliver to a friend marked down. Either nova-bus send --force queues the message in the friend's inbox for delivery at its next hook arm, or nova-hook can re-challenge the friend and mark them up on a fresh answer. A message from a down friend counts as liveness evidence that triggers that re-challenge at once. Refused for anyone who is not the proven coordinator; logged; TLA+ for the hook state change; red-first test that a send to a down-but-live friend is delivered."
+   :why "A friend whose hook missed one challenge is marked down and nova-bus send refuses every message to them (SEND FAILED reason=unhooked), even while the friend is live and sending to the coordinator. On 2026-10-20 a joining friend could message the coordinator but could not be briefed, and the owner had to paste the brief by hand. Owner: as coordinator you should be able to fix this yourself; add a --force or whatever you need."
+   :origin "owner, 2026-10-20")))
