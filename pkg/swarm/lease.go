@@ -211,6 +211,15 @@ func ReadJobLease(jobDir string) (JobLease, error) {
 // parseJobLease reads the record. A pid line that is not a positive number leaves Known
 // false, and an unknown record is never read as a dead owner (rule 2).
 func parseJobLease(path string, raw []byte, st os.FileInfo) JobLease {
+	// PIN THE FILE'S IDENTITY NOW, while path still names it. On Windows a FileInfo from
+	// Lstat carries no file id: os.SameFile opens the SAVED PATH to read one, the first time
+	// it is asked. takeJobLeaseRecord renames the record to a tomb and then compares, so a
+	// lazy id was read from a path that no longer held the file, the compare said "not the
+	// record judged", and the release and every reclamation put the lease back: every slot
+	// of a native Windows member stayed leased after its first card (captain, 2026-10-20).
+	// Asking once here loads the id; elsewhere the id is already in the FileInfo.
+	// ignored: the answer is always true; the call is made for its side effect, loading the id
+	_ = os.SameFile(st, st)
 	lease := JobLease{Path: path, Beat: st.ModTime(), info: st}
 	for _, line := range strings.Split(string(raw), "\n") {
 		key, value, ok := strings.Cut(line, "=")
