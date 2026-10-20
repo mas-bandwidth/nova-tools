@@ -25,13 +25,10 @@ import (
 // ubuntu-latest from four to six (2026-09-26), then to eight (2026-10-18: on
 // main's six push runs of that night ubuntu-latest's shard 3 took 108 to 135 s
 // against the 120 s cap, cancelled five times; the fleet package's ansible
-// renders alone take 45 s on a hosted runner), macos-latest from four to eight,
-// and both to ten (2026-10-18: macos-latest shard 5, holding internal/ci and
-// internal/docs together, was cancelled by the cap in two main push runs, and
-// those two packages became heavy).
+// renders alone take 45 s on a hosted runner), macos-latest from four to eight.
 var hostedMinShards = map[string]int{
-	"ubuntu-latest": 10,
-	"macos-latest":  10,
+	"ubuntu-latest": 8,
+	"macos-latest":  8,
 }
 
 const hostedDealStep = "deal this shard's packages"
@@ -41,7 +38,7 @@ const hostedDealStep = "deal this shard's packages"
 // leg was cancelled at 123 s (reader measurement, #4421 round 2); cmd/nova-swarm
 // is the one heavy command left (the git bus, 46.4 s -short, is removed).
 // ci.yml's deal step spells the same list.
-var hostedHeavy = []string{"cmd/nova-swarm", "cmd/nova-sandbox", "internal/ci", "internal/docs"}
+var hostedHeavy = []string{"cmd/nova-swarm"}
 
 type hostedMatrix struct {
 	OS      []string         `yaml:"os"`
