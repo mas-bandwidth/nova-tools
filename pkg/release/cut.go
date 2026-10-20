@@ -120,10 +120,13 @@ func green(runs []CheckRun) error {
 
 // sourceChecks excludes only a cancelled publication of an existing older
 // release tag (cmd/nova-update/README.md, release cut; docs/SPEC-RELEASE.md
-// section 19), and a whole cancelled suite superseded by a later green suite of
-// the same workflow path. All other checks, including unknown provenance,
-// remain evidence the ordinary CI gate must judge. It returns the set-aside
-// runs too, so the cut's record can name what it ignored and why.
+// section 19), a whole cancelled suite superseded by a later green suite of the
+// same workflow path, a stale revert-on-red verdict beside ci's later green
+// latest attempt, and the checks of an earlier attempt of a workflow run whose
+// latest attempt is green (nova-sprint tla/ReleaseTrain.tla StaleVerdict and
+// CutOnlyGreen). All other checks, including unknown provenance, remain evidence
+// the ordinary CI gate must judge. It returns the set-aside runs too, so the
+// cut's record can name what it ignored and why.
 func sourceChecks(runs []checkRun, tags []string, version string) (kept, setAside []checkRun) {
 	older := map[string]bool{}
 	for _, tag := range tags {
@@ -132,6 +135,8 @@ func sourceChecks(runs []checkRun, tags []string, version string) (kept, setAsid
 		}
 	}
 	aside := supersedingSuites(runs)
+	stale := staleRevertVerdicts(runs)
+	superseded := supersededAttempts(runs)
 	kept = make([]checkRun, 0, len(runs))
 	for i, r := range runs {
 		if r.Status == "completed" && r.Conclusion == "cancelled" && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push" && r.TagPush && older[r.HeadBranch] {
@@ -143,9 +148,147 @@ func sourceChecks(runs []checkRun, tags []string, version string) (kept, setAsid
 			setAside = append(setAside, r)
 			continue
 		}
+		if reason, ok := stale[i]; ok {
+			r.SetAsideReason = reason
+			setAside = append(setAside, r)
+			continue
+		}
+		if reason, ok := superseded[i]; ok {
+			r.SetAsideReason = reason
+			setAside = append(setAside, r)
+			continue
+		}
 		kept = append(kept, r)
 	}
 	return kept, setAside
+}
+
+// revertOnRedWorkflow and ciWorkflow are the two workflow paths the stale
+// verdict reads. A revert-on-red failure is judged beside ci's own latest
+// attempt at the same commit and no other workflow's (docs/SPEC-RELEASE.md
+// section 19; nova-sprint tla/ReleaseTrain.tla StaleVerdict).
+const (
+	revertOnRedWorkflow = ".github/workflows/revert-on-red.yml"
+	ciWorkflow          = ".github/workflows/ci.yml"
+)
+
+// staleRevertVerdicts finds every completed failed or cancelled revert-on-red
+// check whose verdict ci's latest attempt already replaced: a ci workflow run at
+// the same commit whose highest run_attempt concluded success and completed
+// after the revert run was created. It answers the run's index mapped to
+// `stale-verdict-of=<ci run id>@<attempt>` (nova-sprint tla/ReleaseTrain.tla
+// StaleVerdict; the train's revert step reads the same rule; docs/SPEC-RELEASE.md
+// section 19). A ci attempt that is red or pending, or green but completed before
+// the revert run was created, leaves the verdict live.
+func staleRevertVerdicts(runs []checkRun) map[int]string {
+	type attempt struct {
+		number int
+		run    checkRun
+	}
+	latest := map[int64]attempt{}
+	for _, r := range runs {
+		if r.WorkflowPath != ciWorkflow || r.ID == 0 {
+			continue
+		}
+		if a, ok := latest[r.ID]; !ok || r.RunAttempt > a.number {
+			latest[r.ID] = attempt{number: r.RunAttempt, run: r}
+		}
+	}
+	out := map[int]string{}
+	for i, r := range runs {
+		if r.WorkflowPath != revertOnRedWorkflow || r.Status != "completed" {
+			continue
+		}
+		if r.Conclusion != "failure" && r.Conclusion != "cancelled" {
+			continue
+		}
+		// Without the verdict's created time nothing proves ci came later.
+		if r.CreatedAt.IsZero() {
+			continue
+		}
+		// Several ci runs can answer for one commit; the one that completed
+		// last is the verdict's replacement, and the smaller id breaks a tie
+		// so the record does not depend on map order.
+		best, bestAt := attempt{}, time.Time{}
+		for _, a := range latest {
+			if a.run.WorkflowConclusion != "success" || a.run.UpdatedAt.IsZero() || !a.run.UpdatedAt.After(r.CreatedAt) {
+				continue
+			}
+			if best.run.ID == 0 || a.run.UpdatedAt.After(bestAt) || (a.run.UpdatedAt.Equal(bestAt) && a.run.ID < best.run.ID) {
+				best, bestAt = a, a.run.UpdatedAt
+			}
+		}
+		if best.run.ID != 0 {
+			out[i] = fmt.Sprintf("stale-verdict-of=%d@%d", best.run.ID, best.number)
+		}
+	}
+	return out
+}
+
+// supersededAttempts finds the checks of an earlier attempt of a workflow run
+// whose latest attempt (the same workflow run id, a higher run_attempt) completed
+// green and has every job name the earlier one had. It answers each earlier
+// check's index mapped to `superseded-attempt=<run id>@<latest attempt>`
+// (nova-sprint tla/ReleaseTrain.tla CutOnlyGreen; docs/SPEC-RELEASE.md section
+// 19). The latest attempt must have completed with every run success, skipped or
+// neutral and the workflow run concluded success; an attempt missing a job name
+// supersedes nothing.
+func supersededAttempts(runs []checkRun) map[int]string {
+	byRun := map[int64]map[int][]int{}
+	for i, r := range runs {
+		if r.ID == 0 {
+			continue
+		}
+		if byRun[r.ID] == nil {
+			byRun[r.ID] = map[int][]int{}
+		}
+		byRun[r.ID][r.RunAttempt] = append(byRun[r.ID][r.RunAttempt], i)
+	}
+	out := map[int]string{}
+	for runID, attempts := range byRun {
+		latest := -1
+		for number := range attempts {
+			if number > latest {
+				latest = number
+			}
+		}
+		if len(attempts) < 2 || !greenAttempt(runs, attempts[latest]) {
+			continue
+		}
+		newNames := jobNames(runs, attempts[latest])
+		for number, indexes := range attempts {
+			if number >= latest || !covers(newNames, jobNames(runs, indexes)) {
+				continue
+			}
+			for _, i := range indexes {
+				out[i] = fmt.Sprintf("superseded-attempt=%d@%d", runID, latest)
+			}
+		}
+	}
+	return out
+}
+
+// greenAttempt reports whether every run of an attempt is completed and green and
+// the workflow run itself concluded success.
+func greenAttempt(runs []checkRun, indexes []int) bool {
+	green := true
+	for _, i := range indexes {
+		r := runs[i]
+		if r.Status != "completed" || (r.Conclusion != "success" && r.Conclusion != "skipped" && r.Conclusion != "neutral") || r.WorkflowConclusion != "success" {
+			green = false
+		}
+	}
+	return green
+}
+
+// jobNames is the set of job names an attempt ran; matrix legs are part of the
+// name, so a missing leg is a missing name.
+func jobNames(runs []checkRun, indexes []int) map[string]bool {
+	names := map[string]bool{}
+	for _, i := range indexes {
+		names[runs[i].Name] = true
+	}
+	return names
 }
 
 // supersedingSuites finds every run that belongs to a cancelled suite S with a
@@ -232,9 +375,10 @@ func covers(t, s map[string]bool) bool {
 }
 
 // ciSetAside names the runs a cut set aside, each as its run id and the reason:
-// the older tag it published, or the later green suite's run id that superseded
-// it, for the RELEASE CUT line's ci-set-aside field (cmd/nova-update/README.md,
-// release cut).
+// the older tag it published, the later green suite's run id that superseded it,
+// the ci attempt that made its revert-on-red verdict stale, or the later attempt
+// that superseded it, for the RELEASE CUT line's ci-set-aside field
+// (cmd/nova-update/README.md, release cut; docs/SPEC-RELEASE.md section 19).
 func ciSetAside(runs []checkRun) string {
 	if len(runs) == 0 {
 		return ""
@@ -244,9 +388,12 @@ func ciSetAside(runs []checkRun) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		if r.SupersededBy != 0 {
+		switch {
+		case r.SetAsideReason != "":
+			fmt.Fprintf(&b, "%d:%s", r.ID, r.SetAsideReason)
+		case r.SupersededBy != 0:
 			fmt.Fprintf(&b, "%d:superseded-by=%d", r.ID, r.SupersededBy)
-		} else {
+		default:
 			fmt.Fprintf(&b, "%d@%s", r.ID, r.HeadBranch)
 		}
 	}

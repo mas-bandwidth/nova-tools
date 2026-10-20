@@ -154,15 +154,23 @@ func (g *GH) checkRunsWithSuites(ctx context.Context, repo, sha string) ([]check
 // and discarded by CheckRuns. SuiteID groups runs into suites; WorkflowConclusion
 // is the workflow run's own conclusion (an aggregate job such as certification-ok
 // reports failure only because its needs were cancelled, while the run concluded
-// cancelled); UpdatedAt is when the run last updated (a green suite supersedes a
-// cancelled one only when it completed later); SupersededBy names the later green
-// suite that set this run aside, or zero for a release-tag set-aside.
+// cancelled); RunAttempt is the workflow run's attempt (a later attempt of the
+// same run supersedes an earlier one, nova-sprint tla/ReleaseTrain.tla
+// CutOnlyGreen); CreatedAt is when the workflow run was created and UpdatedAt
+// when it last updated (a ci attempt completed after a revert-on-red run was
+// created sets that verdict aside, tla/ReleaseTrain.tla StaleVerdict);
+// SupersededBy names the later green suite that set this run aside, or zero for
+// a release-tag set-aside; SetAsideReason carries the stale-verdict or
+// superseded-attempt reason in ci-set-aside's own grammar.
 type checkRun struct {
 	CheckRun
 	SuiteID            int64
 	WorkflowConclusion string
+	RunAttempt         int
+	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	SupersededBy       int64
+	SetAsideReason     string
 }
 
 // checkRuns joins by suite and exact commit, never by a job's display name
@@ -198,7 +206,12 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		if r.SuiteID > 0 && r.HeadSHA == sha {
 			allSuites[r.SuiteID] = true
 		}
-		if r.Status == "completed" && r.Conclusion == "cancelled" && r.SuiteID > 0 && r.HeadSHA == sha {
+		// A cancelled or failed run is the one a later attempt or a later green
+		// ci run can set aside, so its provenance is what is read. The green
+		// run beside it is joined too (allSuites), because the set-aside names
+		// the run that superseded it (nova-sprint tla/ReleaseTrain.tla
+		// StaleVerdict and CutOnlyGreen).
+		if r.Status == "completed" && (r.Conclusion == "cancelled" || r.Conclusion == "failure") && r.SuiteID > 0 && r.HeadSHA == sha {
 			suites[r.SuiteID] = append(suites[r.SuiteID], len(runs))
 		}
 		runs = append(runs, r.checkRun)
@@ -207,14 +220,15 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		return runs, nil
 	}
 	out, err = api(ctx, "api", "--paginate", "repos/"+repo+"/actions/runs?head_sha="+url.QueryEscape(sha)+"&per_page=100",
-		"--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event, Conclusion:.conclusion, UpdatedAt:.updated_at}")
+		"--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event, Conclusion:.conclusion, RunAttempt:.run_attempt, CreatedAt:.created_at, UpdatedAt:.updated_at}")
 	if err != nil {
 		return nil, fmt.Errorf("cannot read check provenance: %w", err)
 	}
 	type provenance struct {
 		SuiteID, ID                                          int64
 		HeadSHA, WorkflowPath, HeadBranch, Event, Conclusion string
-		UpdatedAt                                            string
+		RunAttempt                                           int
+		CreatedAt, UpdatedAt                                 string
 	}
 	bySuite := map[int64]provenance{}
 	ambiguous := map[int64]bool{}
@@ -256,17 +270,20 @@ func checkRuns(ctx context.Context, repo, sha string, api func(context.Context, 
 		runs[i].ID = r.ID
 		runs[i].WorkflowPath, runs[i].HeadBranch, runs[i].Event = r.WorkflowPath, r.HeadBranch, r.Event
 		runs[i].WorkflowConclusion = r.Conclusion
+		runs[i].RunAttempt = r.RunAttempt
+		runs[i].CreatedAt = parseUpdatedAt(r.CreatedAt)
 		runs[i].UpdatedAt = parseUpdatedAt(r.UpdatedAt)
 		runs[i].TagPush = tagPush && r.WorkflowPath == ".github/workflows/release.yml" && r.Event == "push"
 	}
 	return runs, nil
 }
 
-// parseUpdatedAt reads a workflow run's updated_at as an RFC 3339 instant, and
-// a zero time when the field is absent or unparsable. A zero time sorts before
-// every real one, so a cancelled suite with no update time is never superseded
-// and a green suite with no update time supersedes nothing (docs/SPEC-RELEASE.md
-// section 19).
+// parseUpdatedAt reads a workflow run's created_at or updated_at as an RFC 3339
+// instant, and a zero time when the field is absent or unparsable. A zero time
+// sorts before every real one, so a cancelled suite with no update time is never
+// superseded, a green suite with no update time supersedes nothing, and a
+// revert-on-red verdict whose run has no created time is never set aside
+// (docs/SPEC-RELEASE.md section 19).
 func parseUpdatedAt(s string) time.Time {
 	if s == "" {
 		return time.Time{}

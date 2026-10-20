@@ -148,7 +148,7 @@ func TestCheckRunsJoinsProvenanceBySuiteAndSHAInOnePaginatedRead(t *testing.T) {
 	}, runs)
 	assert.Equal(t, [][]string{
 		{"api", "--paginate", "repos/o/n/commits/abc123/check-runs", "--jq", ".check_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion, SuiteID:.check_suite.id, HeadSHA:.head_sha}"},
-		{"api", "--paginate", "repos/o/n/actions/runs?head_sha=abc123&per_page=100", "--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event, Conclusion:.conclusion, UpdatedAt:.updated_at}"},
+		{"api", "--paginate", "repos/o/n/actions/runs?head_sha=abc123&per_page=100", "--jq", ".workflow_runs[] | {SuiteID:.check_suite_id, ID:.id, HeadSHA:.head_sha, WorkflowPath:.path, HeadBranch:.head_branch, Event:.event, Conclusion:.conclusion, RunAttempt:.run_attempt, CreatedAt:.created_at, UpdatedAt:.updated_at}"},
 	}, f.calls, "all checks share one paginated workflow-run query for the exact commit")
 }
 

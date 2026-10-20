@@ -762,6 +762,26 @@ missing a job name the cancelled suite had. Each set-aside run is named on the c
 `ci-set-aside=<run id>:superseded-by=<run id>`, and the set-aside is written into the tag
 annotation and the CHANGELOG section as `CI set aside: <run id>:superseded-by=<run id>, ...`.
 
+Two more verdicts are set aside, each named on the cut's line and carried into the tag
+annotation and the CHANGELOG with the same `CI set aside:` record:
+
+- A completed failed or cancelled check of `.github/workflows/revert-on-red.yml` is set
+  aside when a run of `.github/workflows/ci.yml` at the same exact commit has a latest
+  attempt concluded `success` that completed after the revert run was created. It is named
+  `ci-set-aside=<run id>:stale-verdict-of=<ci run id>@<attempt>`. This is the 2026-10-20
+  shape: ci run 39346166100's revert-on-red read an older attempt and left a failed check
+  that refused the cut while ci's latest attempt on the sha was green. A revert-on-red
+  verdict whose ci attempt is red, pending, or completed before the verdict's run was
+  created still refuses, as does any other workflow's failure. The workflow's own fix, to
+  read the latest attempt itself, is the v1.7 roadmap item
+  `revert-on-red-reads-the-latest-attempt`; until it lands the cut sets the stale verdict
+  aside and says so.
+- The checks of an earlier attempt of a workflow run are set aside when the latest attempt
+  (the same workflow run id, a higher `run_attempt`) completed green and has every job name
+  the earlier one had, matrix legs included. Each is named
+  `ci-set-aside=<run id>:superseded-attempt=<run id>@<latest attempt>`. A latest attempt
+  that is red, pending, or missing a job name the earlier attempt ran supersedes nothing.
+
 ```
 RELEASE CUT REFUSED: CI is not green on this commit: ci=failure; fix the red and cut again; a tag cannot be amended
 RELEASE CUT REFUSED: no check run has judged this commit; dispatch CI on this commit and cut again when it is green
@@ -786,7 +806,10 @@ flag is the cut's and no other verb's, and certification is not waived by it: `-
 *Tests: `TestACutWithAWaiverRecordsItInTheTag`, `TestACutIgnoresThePreviousTagsCancelledReleaseRun`,
 `TestACancelledCertificationSuiteSupersededByAGreenOneIsSetAside`, `TestAFailedSuiteIsNeverSetAside`,
 `TestACancelledSuiteWithNoGreenSuccessorStillRefuses`, `TestAGreenSuccessorMissingAJobDoesNotSupersede`,
-`TestAnEarlierGreenSuiteDoesNotSupersedeALaterCancelledOne`.*
+`TestAnEarlierGreenSuiteDoesNotSupersedeALaterCancelledOne`,
+`TestAStaleRevertVerdictIsSetAsideWhenCIsLatestAttemptIsGreen`, `TestALiveRevertVerdictStillRefuses`,
+`TestAnEarlierAttemptIsSupersededByTheLatestGreenAttempt`, `TestAnotherWorkflowsFailureIsNeverSetAside`,
+`TestTheStaleSetAsideIsInTheAnnotation`.*
 
 ## 20. A release requires a completed certification run on its sha
 A cut refuses until the commit it tags has a **completed** certification run. The sha must be vouched for by the
