@@ -1,7 +1,9 @@
 package tlc
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,6 +61,22 @@ func RunnerFiles() (map[string][]byte, error) {
 		out[RunnerDir+"/"+name] = raw
 	}
 	return out, nil
+}
+
+// RunnerDigest names a runner: the first 12 hex digits of the SHA-256 over its result
+// files (ResultFiles, by path under the checkout root as RunnerFiles returns them), each
+// as its path, its length and its bytes. The result files are what every fingerprint
+// holds of the runner, so two builds with one digest give every case one fingerprint
+// whichever repository built them, and two digests are two runners. tlacheck version
+// prints it (runner=), and the lander names a runner by it.
+func RunnerDigest(files map[string][]byte) string {
+	h := sha256.New()
+	for _, name := range ResultFiles {
+		p := RunnerDir + "/" + name
+		fmt.Fprintf(h, "%s\x00%d\x00", p, len(files[p]))
+		h.Write(files[p])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 // CheckedFiles are the files CheckRunner holds to the checkout: ResultFiles and

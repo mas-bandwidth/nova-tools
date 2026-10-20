@@ -1,18 +1,18 @@
-// Command tlacheck runs the TLA+ model checks of this repository: the declared
-// cases of tla/CASES.tsv with their run records, the table model's suites, the
-// replay of the table model's findings against a table.lua, and the execution
-// replay of table.lua receipts against EpochMemberTable.
+// Command tlacheck runs the TLA+ model checks of a repository: the declared cases
+// of tla/CASES.tsv with their run records (groups, inputs, run, merge), and, for
+// nova-tools' own table model, its suites, the replay of its findings against a
+// table.lua and the execution replay of table.lua receipts against EpochMemberTable.
 //
-// It is a bench tool: TLC needs java, the replays need redis-server, and the
-// runs are bounded (docs/SPEC-CI.md, the tlc job). Run it on a bench, never on
-// a working machine. The reading of TLC's results and the suites live in
-// pkg/tlc and internal/tablemodel; this file is the command line.
+// It is a bench tool: TLC needs java, the replays need redis-server, and the runs
+// are bounded (docs/SPEC-CI.md, the tlc job). Run it on a bench, never on a
+// working machine. The reading of TLC's results and the suites live in pkg/tlc
+// and internal/tablemodel; this package is the command line.
 //
-// It is the one tlacheck. nova-sprint had its own copy (four verbs over its own
-// pkg/tlc); it runs this command instead (go run on this module's
-// tools/tlacheck, at the version its go.mod names), so the case verbs (run, groups, merge, inputs) take any checkout with a tla/CASES.tsv
-// under --root. The table, member, replay and witnesses verbs check this
-// repository's table model.
+// It is the one TLA+ runner. nova-sprint had its own copy, over its own copy of
+// pkg/tlc, until 2026-10-18; it now runs this command at the nova-tools version
+// its go.mod names (go tool tlacheck, from a tool line). One program serves every
+// repository, so which runner a tree's records are measured with is decided by
+// the tree, never by who built the binary (runner.go, tlacheck help runner).
 //
 //	example:
 //	  tlacheck groups --root .
@@ -51,13 +51,14 @@ type env struct {
 	goarch         string
 	tmpDir         string    // where a disposable store's directory goes; the system default when empty
 	bench          benchDeps // run --bench: the bench machines, the fleet's rows, the build
+	built          string    // the nova-tools this binary was built from (buildModule); the tests name their own
 }
 
 func main() {
 	os.Exit(run(os.Args[1:], env{
 		stdout: os.Stdout, stderr: os.Stderr,
 		getenv: os.Getenv, lookPath: tlc.LookPath, cpus: runtime.NumCPU, javaVersion: javaVersion,
-		exec: tlc.Execute, goos: hostOS, goarch: hostArch, bench: realBench(),
+		exec: tlc.Execute, goos: hostOS, goarch: hostArch, bench: realBench(), built: buildModule(),
 	}))
 }
 
@@ -86,6 +87,7 @@ func verbs() []verb {
 		{"member", "check the member and epoch protocol and its mutation controls", helpMember, cmdMember},
 		{"replay", "replay table.lua receipts and check them against EpochMemberTable", helpReplay, cmdReplay},
 		{"witnesses", "replay the table model's findings against a table.lua", helpWitnesses, cmdWitnesses},
+		{"version", "print which build is running, and its runner", helpVersion, cmdVersion},
 	}
 }
 
@@ -95,6 +97,8 @@ func run(args []string, e env) int {
 		return 2
 	}
 	switch args[0] {
+	case "--version":
+		return cmdVersion(e, args[1:])
 	case "help", "-h", "--help":
 		if len(args) > 1 && args[0] == "help" {
 			return helpVerb(e, args[1])
@@ -116,6 +120,10 @@ func run(args []string, e env) int {
 }
 
 func helpVerb(e env, name string) int {
+	if name == "runner" {
+		fmt.Fprint(e.stdout, "tlacheck help runner: which runner a tree's records are measured with.\n\n"+helpRunner+"first run: tlacheck version\n")
+		return 0
+	}
 	for _, v := range verbs() {
 		if v.name == name {
 			fmt.Fprint(e.stdout, v.help)
@@ -128,10 +136,13 @@ func helpVerb(e env, name string) int {
 
 func banner() string {
 	var b strings.Builder
-	b.WriteString(`tlacheck: run the TLA+ model checks of this repository.
+	b.WriteString(`tlacheck: run the TLA+ model checks of a repository: the declared cases of
+tla/CASES.tsv and their run records tla/RUNS.tsv, in any checkout, and the table
+model's suites of nova-tools.
 
 usage: tlacheck <verb> [flags]      flags come before positionals
        tlacheck help <verb>         the help of one verb (also: tlacheck <verb> -h)
+       tlacheck help runner         which runner a tree's records are measured with
 
 verbs:
 `)
