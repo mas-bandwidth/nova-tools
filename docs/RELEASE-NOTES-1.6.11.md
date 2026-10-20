@@ -1,6 +1,6 @@
-The stable tools point release after v1.6.10. It lets a card's dotnet run inside the job wall on Linux. nova-sprint stays at v1.6.6.
+The stable tools point release after v1.6.10. It lets a card's dotnet run inside the job wall on Linux. nova-sprint is unchanged.
 
-Install: download the assets for your platform from this release, then run `nova-update release install --from <release root> --version v1.6.11 --bin <dir>` with the nova-sprint v1.6.6 binaries staged beside them (see docs/SPEC-RELEASE.md).
+Install: download the assets for your platform from this release, then run `nova-update release install --from <release root> --version v1.6.11 --bin <dir>` with the nova-sprint release staged beside them (see docs/SPEC-RELEASE.md). Only nova-swarm changed.
 
 ## What changed in v1.6.11
 
