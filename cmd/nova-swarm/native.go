@@ -2197,14 +2197,14 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 }
 
 // nativeChildEnvOS is nativeChildEnvFrom for one operating system. On Windows the names are
-// matched without case, Windows' own names are kept (keepNativeEnvFor), and the user-profile
+// matched without case, Windows' own names are kept (keepNativeEnv), and the user-profile
 // names point into the data home as HOME does (windowsChildProfile), so the harness's state
 // and a build tool's per-user files stay in the job's data home.
 func nativeChildEnvOS(goos string, environ []string, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string, toolPath []string) []string {
 	var kept []string
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
-		if keepNativeEnvFor(goos, name) {
+		if keepNativeEnv(goos, name) {
 			kept = append(kept, kv)
 		}
 	}
@@ -2319,12 +2319,11 @@ func nativeReadRoots(cfg nativeRunConfig) []string {
 // any harness configuration whose name starts with OPENCODE_, and any provider credential whose
 // name carries KEY, TOKEN or SECRET. Everything else is the caller's own noise and is dropped,
 // so no path the caller happened to export reaches the child.
-func keepNativeEnv(name string) bool { return keepNativeEnvFor(runtime.GOOS, name) }
-
-// keepNativeEnvFor is keepNativeEnv for one operating system: on Windows a name is matched
-// without case (`Path`) and the names Windows needs to run any program at all
-// (windowsSystemEnv: SystemRoot, ComSpec, PATHEXT, the Program Files locations) are kept.
-func keepNativeEnvFor(goos, name string) bool {
+//
+// On Windows a name is matched without case (`Path`) and the names Windows needs to run any
+// program at all (windowsSystemEnv: SystemRoot, ComSpec, PATHEXT, the Program Files
+// locations) are kept; goos is the operating system whose environment this is.
+func keepNativeEnv(goos, name string) bool {
 	name = envName(goos, name)
 	if goos == "windows" && windowsSystemEnv[name] {
 		return true
