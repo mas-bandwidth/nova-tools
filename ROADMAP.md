@@ -29,7 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
-- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (58)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (60)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -2209,7 +2209,7 @@ From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coord
 
 ### Harmless PATHS-PROPOSED files are approved automatically
 
-At review, before the lander's E12 check, test files, docs, TLA cfg and record files and CI-comment files listed on a finish's PATHS-PROPOSED line are approved automatically and added to PATHS. SDK and source files on that line still need a decision. Done when: each harmless class on PATHS-PROPOSED is added to PATHS and the landing passes E12, tested; an SDK or source file on PATHS-PROPOSED still raises a decision, tested.
+At review, before the lander's E12 check, test files, docs, TLA cfg and record files and CI-comment files listed on a finish's PATHS-PROPOSED line are approved automatically and added to PATHS. SDK and source files on that line still need a decision. Done when: each harmless class on PATHS-PROPOSED is added to PATHS and the landing passes E12, tested; an SDK or source file on PATHS-PROPOSED still raises a decision, tested. An approval, automatic or by hand, widens PATHS for the lander as paths-approval-reaches-the-lander describes.
 
 Why it waits: On 2026-10-20 the lander refused finished cards for test and cfg files outside PATHS that the worker had listed under PATHS-PROPOSED. The coordinator approved each by hand.
 
@@ -2299,7 +2299,7 @@ From: the owner, 2026-10-20 ('The design was that reads are a priority, and they
 
 ### One merging card the lander cannot land never stalls the cards behind it
 
-When the lander refuses the card at the head of a stream's merge queue for a fault of that card (its brief has no REPO, BASE or KIND line, its brief does not parse, its head is missing), it sets that card aside with one judgment naming the card and the fault and lands the rest of the queue in priority order. It never reports nothing-landable while any other merging card can land. Done when: a merge queue whose head card has no BASE line lands the card behind it on the same lander pass and raises one judgment for the first, tested; the same for a missing REPO and an unparsable brief, tested; TLA+ in priority-proven-in-tla, with a reversed witness where one bad card blocks the queue.
+When the lander refuses the card at the head of a stream's merge queue for a fault of that card (its brief has no REPO, BASE or KIND line, its brief does not parse, its head is missing), it sets that card aside with one judgment naming the card and the fault and lands the rest of the queue in priority order. It never reports nothing-landable while any other merging card can land. Done when: a merge queue whose head card has no BASE line lands the card behind it on the same lander pass and raises one judgment for the first, tested; the same for a missing REPO and an unparsable brief, tested; TLA+ in priority-proven-in-tla, with a reversed witness where one bad card blocks the queue. A scope-only E12 refusal is not such a fault: paths-approval-reaches-the-lander re-queues the same head once PATHS is widened.
 
 Why it waits: On 2026-10-20 a router bug dropped the first line of five briefs, removing REPO, BASE and KIND. One of them, loopback-rtt, sat at the head of the merge queue, the lander refused it for having no BASE, and nothing behind it landed until the coordinator pulled it out by hand.
 
@@ -2516,3 +2516,23 @@ Why it waits: On 2026-10-20 prioritization did not work and nothing showed it; t
 Target: v1.9
 
 From: the owner, 2026-10-20 ('I want TLA+ tests proving that we have working prioritization, including all the rules we designed around low, normal, high, read, critical, blocker, fix.')
+
+### An approved PATHS-PROPOSED file widens PATHS, and the lander checks against the widened set
+
+An approved PATHS-PROPOSED file widens the card's PATHS mechanically, whether approved by the coordinator (nova-sprint paths approve <card> <file>...) or by a standing auto-approval class (harmless-paths-auto-approved). The approval is recorded with its actor and reason, and widening never bounces a finish or retires a read. The finish's diff is checked against PATHS at finish time: unapproved extra files are listed on the finish reply and raised as a judgment then, never first at landing. Readers and the lander's E12 check use one rule set, so no read can pass what the lander refuses. An E12 refusal of an otherwise accepted head re-queues the same head once PATHS is widened, with no new attempt, no twin and no re-read while the head is unchanged, and the 'brief is wrong' bound never counts a scope-only refusal. Done when: a test plays one card through a finish with an extra test file, then the coordinator's approval, then the lander, and it lands with no new attempt; a second test shows a finish with an unapproved file is flagged at finish; tla/SprintPriority.tla (priority-proven-in-tla) or a sibling module models the landing with PATHS approval, with a reversed witness where the E12 refusal loop returns.
+
+Why it waits: On 2026-10-20 the lander's E12 check refused every changed file outside a card's PATHS and NEW, test files included, ignoring the PATHS-PROPOSED approvals workers wrote and the coordinator granted. Readers, following their prompt, judged out-of-PATHS test files always allowed and passed the cards, so the refusal arrived only at landing. After two E12 refusals a card hit the 'brief is wrong' bound, where rework was refused and a brief edit at review re-dealt a new attempt and retired the reads. The only way out was to drop and re-add the card as a twin, recreate its branch at the same head, finish it by hand and read it again. That happened for loopback-rtt, handshake, win-socket-error-paths and others, each a full cycle with no code change.
+
+Target: v1.9
+
+From: the owner, 2026-10-20, on the coordinator's report that four cards had each needed a re-cut twin for E12 ('this sucks. card a fix for this in v1.9')
+
+### A conflict only in a shared append-only ledger never refuses a landing
+
+The lander merges shared append-only ledgers (tla/RUNS.tsv, tla/CASES.tsv, COVERAGE rows and the like) with their own merge driver: a row union, or tlacheck merge --keep. A conflict confined to those ledgers is resolved by that driver and never refuses a head; a conflict in any other file still refuses as today. Done when: a test lands two cards that both add tla/RUNS.tsv rows, one after the other, with no refusal and both rows kept; a conflict in a non-ledger file is still refused, tested.
+
+Why it waits: On 2026-10-20 the lander refused rocketnet-a1-uring-rearm-and-destroy-bounded, already read OK, for 'a conflict in the shared ledgers only (tla/RUNS.tsv)'. A row union would have merged it; instead it cost a full rework attempt.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, a landing refused for a ledger-only conflict)
