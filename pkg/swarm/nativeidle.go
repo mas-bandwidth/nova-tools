@@ -102,15 +102,25 @@ type IdleEnd struct {
 	Path    string
 	Refused bool
 	// Cause names why a card with no refusal went still, when the run can tell: today only
-	// IdleCauseNeverStarted. "" is a card that worked and then went still, whose end is
-	// the plain idle reaping.
+	// IdleCauseNeverStarted and IdleCauseTreeStopped. "" is a card that worked and then went
+	// still, whose end is the plain idle reaping.
 	Cause string
+	// StoppedPID and StoppedCmd name the stopped process a tree held when Cause is
+	// IdleCauseTreeStopped, so the end says which process the environment stopped.
+	StoppedPID int
+	StoppedCmd string
 }
 
 // IdleCauseNeverStarted is the cause of a card the idle watch ended whose harness never
 // started work: no harness store, nothing printed and no tokens spent. It is the harness
 // (or the provider behind it) that failed the card, not the card going still after work.
 const IdleCauseNeverStarted = "harness-never-started"
+
+// IdleCauseTreeStopped is the cause of a card the idle watch ended while a process in its
+// tree had been stopped for the whole window: the environment blocked the child (a stopped
+// target waiting for an authorization it will never get), so the card's own work did not
+// stall and the run is not the card's.
+const IdleCauseTreeStopped = "tree-stopped"
 
 // WallRefusal is this end's refusal as a wall death, and whether it is one: it is one
 // only when the refusal NAMES a path (docs/roadmap.sexp, swarm-idle-reap-verdict). A
@@ -138,6 +148,9 @@ func CardIdleLine(task string, e IdleEnd) string {
 		oneline.Field(task), oneline.Field(dashOr(e.Step)), e.Idle.Seconds())
 	if e.Cause != "" {
 		line += " cause=" + oneline.Field(e.Cause)
+	}
+	if e.Cause == IdleCauseTreeStopped {
+		line += fmt.Sprintf(" pid=%d cmd=%s", e.StoppedPID, oneline.Field(dashOr(e.StoppedCmd)))
 	}
 	return line
 }
@@ -211,6 +224,12 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 		var lastSample time.Time
 		var cpu uint64
 		var haveCPU bool
+		// stoppedSince is when the stopped process now in the tree was first read as
+		// stopped, bounded by the last reading that saw the tree running; zero is a tree
+		// with no stop in hand. The pid and command are the process the end names.
+		var stoppedSince time.Time
+		var stoppedPID int
+		var stoppedCmd string
 		// treeMoved reads the process table at at and says whether the tree worked since the
 		// last reading: it lost a process, or it spent a tenth (nativeBusyShare) of the span
 		// or of batch's poll (activityInterval), whichever is shorter. The bar stays what it
@@ -219,11 +238,29 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 		// `gh pr checks` every 10 s at ~0.6 s of CPU each never showed it, and was reaped
 		// while it worked (the cold read of PR 5953).
 		treeMoved := func(at time.Time) bool {
+			lastAt := lastSample
 			span := at.Sub(lastSample)
 			lastSample = at
 			s := snap()
 			if s == nil || w.Pid <= 0 {
 				return false
+			}
+			// A STOPPED PROCESS BURNS NO CPU: the state beside the CPU reading says the
+			// environment stopped it. The stop is measured from the last reading that saw
+			// the tree running (or from the still-clock's start), so the window the card is
+			// held for is the window the stop is watched for.
+			if stopped, ok := s.(stoppedSnapshot); ok {
+				if pid, cmd, isStopped := stopped.TreeStopped(w.Pid); isStopped {
+					if stoppedSince.IsZero() {
+						stoppedSince = lastAt
+						if stoppedSince.IsZero() {
+							stoppedSince = lastGrow
+						}
+					}
+					stoppedPID, stoppedCmd = pid, cmd
+				} else {
+					stoppedSince, stoppedPID, stoppedCmd = at, 0, ""
+				}
 			}
 			got, ok := s.TreeCPU(w.Pid)
 			if !ok {
@@ -312,6 +349,11 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 					continue
 				}
 				end := IdleEnd{Idle: at.Sub(lastGrow), Step: w.Reader.Step()}
+				// A STOP HELD FOR THE WHOLE WINDOW IS THE ENVIRONMENT'S: the tree spent no
+				// CPU because a process in it was stopped, not because the card stalled.
+				if !stoppedSince.IsZero() && at.Sub(stoppedSince) >= w.Idle {
+					end.Cause, end.StoppedPID, end.StoppedCmd = IdleCauseTreeStopped, stoppedPID, stoppedCmd
+				}
 				if refusal, kind, ok := w.Reader.Stopped(); ok {
 					end.Refused, end.Kind, end.Path, end.Step = true, kind, refusal.Path, refusal.Step
 					if end.Step == "" {

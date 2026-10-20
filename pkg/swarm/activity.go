@@ -39,6 +39,13 @@ type activitySnapshot interface {
 	TreeCPU(pid int) (uint64, bool)
 }
 
+// stoppedSnapshot is the half of a process snapshot that answers whether a tree holds a
+// process stopped by a signal. It is asked of the same snapshot activitySnapshot hands
+// back, so a fake that knows only CPU still reads and a real one answers both.
+type stoppedSnapshot interface {
+	TreeStopped(pid int) (int, string, bool)
+}
+
 // procSnapshot is one reading of this machine's process table, taken once and asked about
 // each card in turn. A platform that cannot read the table hands back a snapshot that knows
 // nothing, and TreeCPU's second return says so rather than pretending a zero: the monitor
@@ -48,7 +55,11 @@ type procSnapshot struct {
 	// so a tree is walked without ever reading a command line.
 	live     map[int]bool
 	children map[int][]int
-	known    bool
+	// stopped marks a pid the kernel reports stopped, and command keeps the name it runs
+	// under, so an end can say which process the environment stopped.
+	stopped map[int]bool
+	command map[int]string
+	known   bool
 }
 
 // TreeCPU sums the CPU time of pid and every descendant of it in this snapshot, in
@@ -82,4 +93,30 @@ func (s *procSnapshot) TreeCPU(pid int) (uint64, bool) {
 		stack = append(stack, s.children[p]...)
 	}
 	return total, live
+}
+
+// TreeStopped names a stopped process in pid's tree, or reports none. It walks the same
+// tree TreeCPU reads, and the stopped set is empty on a platform that cannot read it.
+func (s *procSnapshot) TreeStopped(pid int) (int, string, bool) {
+	if s == nil || !s.known || pid <= 0 {
+		return 0, "", false
+	}
+	seen := map[int]bool{}
+	stack := []int{pid}
+	for len(stack) > 0 {
+		p := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		if !s.live[p] {
+			continue
+		}
+		if s.stopped[p] {
+			return p, s.command[p], true
+		}
+		stack = append(stack, s.children[p]...)
+	}
+	return 0, "", false
 }

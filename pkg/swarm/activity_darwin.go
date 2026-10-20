@@ -4,26 +4,25 @@ package swarm
 
 import (
 	"encoding/binary"
+	"strings"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // The process table on a system whose standard library will not hand it over.
 //
-// kern.proc.all is an array of kinfo_proc, the call ps makes. Two fields of each record are read here and no other: the pid, and the parent pid.
+// kern.proc.all is an array of kinfo_proc, the call ps makes. Four fields of each record are read here and no other: the pid, the parent pid, the state and the command name.
 // The CPU time is NOT in that record -- the kernel leaves p_cpticks, p_uticks and p_pctcpu
 // zero on this system, which a probe against a spinning child and a sleeping one shows at
 // once -- so the time itself comes from proc_info(PROC_PIDTASKINFO), the call libproc makes,
 // asked only about the pids of the tree in hand.
 
 const (
-	// kinfoProcSize is sizeof(kinfo_proc) on 64-bit Darwin, and the two offsets are p_pid in
-	// struct extern_proc and e_ppid in struct eproc. They are in no standard-library type, so
-	// they are NAMED CONSTANTS here -- a test cannot be written from words that leave them
-	// unstated.
-	kinfoProcSize = 648
-	kinfoPIDOff   = 40
-	kinfoPPIDOff  = 560
+	// darwinStopped is SSTOP, kinfo_proc's p_stat of a process stopped by a signal (a
+	// stopped target, as `leaks --atExit` leaves one waiting for an authorization).
+	darwinStopped = 4
 
 	// procInfoCallPIDInfo and procPIDTaskInfo are proc_info(2)'s call number and flavor, and
 	// procTaskInfoSize is sizeof(struct proc_taskinfo). pti_total_user and pti_total_system
@@ -36,48 +35,31 @@ const (
 	ptiTotalSystemOff   = 24
 )
 
-// newProcSnapshot reads the whole table once: every live pid and the pid that fathered it.
+// newProcSnapshot reads the whole table once: every live pid, the pid that fathered it, and
+// the state and command name of a stopped one.
 func newProcSnapshot() *procSnapshot {
-	raw, ok := kernProcAll()
-	if !ok {
+	procs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
 		return &procSnapshot{}
 	}
-	s := &procSnapshot{live: map[int]bool{}, children: map[int][]int{}, known: true}
-	for off := 0; off+kinfoProcSize <= len(raw); off += kinfoProcSize {
-		rec := raw[off : off+kinfoProcSize]
-		pid := int(int32(binary.LittleEndian.Uint32(rec[kinfoPIDOff : kinfoPIDOff+4])))
-		ppid := int(int32(binary.LittleEndian.Uint32(rec[kinfoPPIDOff : kinfoPPIDOff+4])))
+	s := &procSnapshot{live: map[int]bool{}, children: map[int][]int{}, stopped: map[int]bool{}, command: map[int]string{}, known: true}
+	for i := range procs {
+		p := &procs[i]
+		pid := int(p.Proc.P_pid)
+		ppid := int(p.Eproc.Ppid)
 		if pid <= 0 {
 			continue
 		}
 		s.live[pid] = true
+		if p.Proc.P_stat == darwinStopped {
+			s.stopped[pid] = true
+			s.command[pid] = strings.TrimRight(string(p.Proc.P_comm[:]), "\x00")
+		}
 		if ppid > 0 {
 			s.children[ppid] = append(s.children[ppid], pid)
 		}
 	}
 	return s
-}
-
-// kernProcAll asks sysctl for the table twice, as the call requires: once with a nil buffer
-// for the length, once for the bytes.
-func kernProcAll() ([]byte, bool) {
-	mib := [3]int32{1, 14, 0} // CTL_KERN, KERN_PROC, KERN_PROC_ALL
-	var n uintptr
-	_, _, errno := syscall.Syscall6(syscall.SYS___SYSCTL,
-		uintptr(unsafe.Pointer(&mib[0])), 3, 0, uintptr(unsafe.Pointer(&n)), 0, 0)
-	if errno != 0 || n == 0 {
-		return nil, false
-	}
-	buf := make([]byte, n)
-	_, _, errno = syscall.Syscall6(syscall.SYS___SYSCTL,
-		uintptr(unsafe.Pointer(&mib[0])), 3, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n)), 0, 0)
-	if errno != 0 {
-		return nil, false
-	}
-	if n < uintptr(len(buf)) {
-		buf = buf[:n]
-	}
-	return buf, true
 }
 
 // cpuOf is one process's user plus system time in nanoseconds, or false when the process is

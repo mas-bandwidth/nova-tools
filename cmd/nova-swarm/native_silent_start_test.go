@@ -93,7 +93,7 @@ func TestASilentHarnessIdleReapNamesItsCause(t *testing.T) {
 		require.NotContains(t, log, "NATIVE PROVIDER-", "no provider refusal was recorded, so this is not a provider end")
 		require.Equal(t, member.EndIdleReap, result.End)
 		require.Equal(t, swarm.IdleCauseNeverStarted, result.EndCause)
-		require.Equal(t, "idle-reap: harness-never-started: no RESULT.md shape", why, "the member's finish carries the cause, never only the shape")
+		require.Equal(t, "no result: harness-never-started: no RESULT.md shape", why, "the member's finish carries the cause, never only the shape")
 	})
 
 	t.Run("a refusal for credit makes the killed run a provider end", func(t *testing.T) {
@@ -123,7 +123,7 @@ func TestASilentHarnessIdleReapNamesItsCause(t *testing.T) {
 		require.NotContains(t, log, "cause=", "an idle reap after work began names no cause")
 		require.Equal(t, member.EndIdleReap, result.End)
 		require.Empty(t, result.EndCause)
-		require.Equal(t, "idle-reap: no RESULT.md shape", why)
+		require.Equal(t, "no result: no RESULT.md shape", why)
 	})
 }
 

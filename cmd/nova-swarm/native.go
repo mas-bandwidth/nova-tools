@@ -1679,8 +1679,12 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 			s.res.end = swarm.EndProvider
 			idleCredit = true
 		} else {
-			// else a harness that never started work says so: the end names its cause
-			s.res.idleEnd.Cause = idleCauseOf(s.prep.cfg.headless(), s.res.harness, s.prep.dataHome, s.res.spent, s.res.observed)
+			// else a harness that never started work says so, unless the watch already
+			// named the stopped tree the environment left (the more specific cause): the
+			// end names its cause
+			if cause := idleCauseOf(s.prep.cfg.headless(), s.res.harness, s.prep.dataHome, s.res.spent, s.res.observed); cause != "" && s.res.idleEnd.Cause == "" {
+				s.res.idleEnd.Cause = cause
+			}
 		}
 	}
 	if !harnessFault && !s.res.lost && s.res.idled && !idleCredit {

@@ -21,7 +21,7 @@ func newProcSnapshot() *procSnapshot {
 	if err != nil {
 		return &procSnapshot{}
 	}
-	s := &procSnapshot{live: map[int]bool{}, children: map[int][]int{}, known: true}
+	s := &procSnapshot{live: map[int]bool{}, children: map[int][]int{}, stopped: map[int]bool{}, command: map[int]string{}, known: true}
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil || pid <= 0 {
@@ -30,12 +30,25 @@ func newProcSnapshot() *procSnapshot {
 		s.live[pid] = true
 		if fields, ok := statFields(pid); ok && len(fields) >= 2 {
 			// fields[0] is state, which is field 3; field 4 -- the parent pid -- is fields[1].
+			if fields[0] == "T" || fields[0] == "t" {
+				s.stopped[pid] = true
+				s.command[pid] = statCommand(pid)
+			}
 			if ppid, err := strconv.Atoi(fields[1]); err == nil && ppid > 0 {
 				s.children[ppid] = append(s.children[ppid], pid)
 			}
 		}
 	}
 	return s
+}
+
+// statCommand is one process's command name, the kernel's own comm record.
+func statCommand(pid int) string {
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/comm")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 // cpuOf is one process's user plus system time in nanoseconds, or false when the process is

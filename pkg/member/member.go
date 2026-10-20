@@ -187,10 +187,10 @@ type Result struct {
 	Usage string
 	// EndCause names why End is EndIdleReap when native could tell: the NATIVE line's
 	// `cause=` beside `reason=idle-reap` (swarm.IdleCauseNeverStarted, a harness that
-	// never started work). Judge says it after the end, so a finish never reads as the
-	// bare `idle-reap: no RESULT.md shape`, which the sprint counts as the card's own
-	// harness fault. "" for a card that worked and then went still, and for every
-	// other end.
+	// never started work; swarm.IdleCauseTreeStopped, a process the environment stopped).
+	// Judge says an idle reap that left no result as the no-result kind, so the sprint
+	// deals the card again and spends no attempt. "" for a card that worked and then went
+	// still, and for every other end.
 	EndCause string
 	// Provider is why End is EndProvider, as native read it from the harness's own log
 	// or transcript: the cause, `provider: class=<c> status=<n|-> msg=<words>`
@@ -304,8 +304,11 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 	defer func() {
 		// a budget or a deadline names how the run ended first; the provider's kind is
 		// the provider case's own (below), never a prefix on another reason, and nor is
-		// the staging kind (the stage's own case, and the usage source's)
-		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging && !strings.HasPrefix(why, EndStaging) {
+		// the staging kind (the stage's own case, and the usage source's). An idle reap
+		// that left no result is the no-result kind, so its reason names that and never
+		// the reaping.
+		unshapedIdle := r.End == EndIdleReap && !r.Shaped
+		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging && !strings.HasPrefix(why, EndStaging) && !unshapedIdle {
 			end := r.End
 			if end == EndUnverifiable {
 				end = EndBudget // the budget's words say which: "budget: unverifiable: ..."
@@ -347,10 +350,16 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// deals the card again on another route (cardhdr.EndNoResult). A run its budget or
 		// its deadline ended is the card's to be judged (below: the end is said first)
 		return FinishFailed, EndNoResult + ": no RESULT.md shape"
-	case !r.Shaped && r.End == EndIdleReap && r.EndCause != "":
-		// the idle watch ended a run whose harness never started work: the cause is
-		// the finish's reason, never only that the child left no shape
-		return FinishFailed, r.EndCause + ": no RESULT.md shape"
+	case !r.Shaped && r.End == EndIdleReap && r.EndCause == "":
+		// the idle watch ended the run and it left no result: no work came back, so the
+		// finish is the no-result kind the sprint deals again, never the card's own
+		// failed work (cardhdr.EndNoResult)
+		return FinishFailed, EndNoResult + ": no RESULT.md shape"
+	case !r.Shaped && r.End == EndIdleReap:
+		// the idle watch ended the run because its environment blocked it (a harness that
+		// never started, a stopped tree): the cause is named after the no-result kind, so
+		// no attempt is spent
+		return FinishFailed, EndNoResult + ": " + r.EndCause + ": no RESULT.md shape"
 	case !r.Shaped:
 		return FinishFailed, "no RESULT.md shape"
 	case r.Step != "":
