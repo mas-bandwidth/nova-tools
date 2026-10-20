@@ -170,7 +170,7 @@ func TestTheCardsShellReachesNoGh(t *testing.T) {
 	dir, _, err := writeNativeShellShims(t.TempDir())
 	require.NoError(t, err, "the shims could not be written: %q, %v", dir, err)
 	require.NotEmpty(t, dir, "the shims could not be written: %q, %v", dir, err)
-	env := pathWithDirsFirst(runtime.GOOS, []string{"PATH=" + fake + string(os.PathListSeparator) + os.Getenv("PATH")}, dir)
+	env := pathWithDirsFirst([]string{"PATH=" + fake + string(os.PathListSeparator) + os.Getenv("PATH")}, dir)
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skipf("no sh on PATH: %v", err)

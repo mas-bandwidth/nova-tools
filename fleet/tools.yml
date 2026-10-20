@@ -133,7 +133,7 @@
 - name: the build in ~/.local/bin on every machine
   hosts: adopt
   gather_facts: false
-  serial: "{{ [1, '100%'] if (nova_adopt_canary | default('none')) != 'none' else '100%' }}"
+  serial: "{{ [1, '100%'] if nova_adopt_canary != 'none' else '100%' }}"
   max_fail_percentage: 0
   vars:
     tools_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
