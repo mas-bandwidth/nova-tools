@@ -29,7 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
-- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (18)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (19)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -2116,3 +2116,13 @@ Why it waits: On 2026-10-20, inside the worker wall, /dev was read-only, so vng 
 Target: v1.9
 
 From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### friend give moves a dealt-but-untaken card, and the deal rebalances away from full rows
+
+friend give <friend> <card> accepts a card that is dealt to another friend's row but not yet taken (ready on that row) and moves it directly to the named friend. The deal never deals to a row at or over its width while another eligible friend has a free slot, and it rebalances dealt-but-untaken cards from a row at or over its width to friends with room. Done when: one unit test per rule, each failing before the fix: friend give of a dealt-but-untaken card moves it; the deal sends no card to a row at its width while another eligible friend has room; a dealt-but-untaken card on a full row is rebalanced to a friend with room.
+
+Why it waits: On 2026-10-20 a card dealt to a friend's row but not yet taken counted as working, so friend give to another friend refused it ('is working, not ready or waiting'). The deal also kept handing cards to a friend at 16 of 16, with a ready card waiting on that row, while another friend had 10 free slots. The coordinator moved the card by editing its brief with --replace-in-flight, and the deal then re-dealt it to the friend with room.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('This is a bug. Fix this in v1.9.')
