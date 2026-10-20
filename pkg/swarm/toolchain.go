@@ -88,10 +88,28 @@ type ToolchainRoot struct {
 	// are reported and never drifted on -- a Mac with no .NET is a Mac with no .NET, and the
 	// bench still has to have a Go, which the standard's own `go` check is what asserts.
 	Optional bool
+	// PathDirs are the directories under a SYSTEM root, in slash form ("." for the root
+	// itself), that go on a card's PATH (BenchToolBins). A home root's PATH entry is always its
+	// `bin` and names none here. Only the windows list sets it: a Windows toolchain is
+	// installed under Program Files, never linked into ~/sdk/bin, and a bin directory is never
+	// a root of its own (the grant is on the tree), so the tree names the directories of it a
+	// card searches.
+	PathDirs []string
 }
 
 // Home says whether this root is found under a bench home rather than at an absolute path.
-func (r ToolchainRoot) Home() bool { return !strings.HasPrefix(r.Name, "/") }
+// An absolute path is "/..." or, on Windows, a drive-letter path in slash form ("C:/...").
+func (r ToolchainRoot) Home() bool { return !absRootName(r.Name) }
+
+// absRootName says whether a root's name is an absolute path, in either spelling the list
+// uses: "/opt/..." or a drive letter, "C:/Program Files/Git".
+func absRootName(name string) bool {
+	if strings.HasPrefix(name, "/") {
+		return true
+	}
+	return len(name) >= 3 && name[1] == ':' && name[2] == '/' &&
+		(name[0] >= 'A' && name[0] <= 'Z' || name[0] >= 'a' && name[0] <= 'z')
+}
 
 // toolchainRoots is the standard's toolchain directories PER GOOS, one list with two kinds.
 //
@@ -148,6 +166,30 @@ func (r ToolchainRoot) Home() bool { return !strings.HasPrefix(r.Name, "/") }
 // The same rule is why no bin directory appears on the darwin side either: every grant there
 // is on a toolchain TREE (`/opt/homebrew/Cellar/go/<ver>`) and never on `/opt/homebrew/bin`,
 // which is a writable directory holding a launcher for every formula on the machine.
+//
+// WINDOWS is a native Windows member (captain, titan: the members that take only GATE-NEEDS
+// windows cards). It keeps both home roots, under %USERPROFILE% -- `~/sdk/bin` is where the
+// member play puts the tools it installs for cards (sqlite3, which native reads a card's
+// token budget with) -- and adds the installed toolchains the rocketnet Windows cards build
+// with, each a TREE whose PathDirs name what a card searches, because Windows has no wall
+// body yet (pkg/sandbox, wrap_other.go) and these roots are, for now, what makes the
+// toolchain FINDABLE (BenchPath) rather than what a wall grants:
+//
+//	C:/Program Files/Git        Git for Windows: cmd/ holds git.exe, bin/ holds git, bash and
+//	                            sh, so a card's bare `bash` is Git's and never the WSL launcher
+//	                            in System32.
+//	C:/Program Files/CMake      cmake, ctest, cpack in bin/; the Visual Studio generator finds
+//	                            MSVC itself through the Visual Studio setup API.
+//	C:/Program Files/Go         the installed Go (go.exe, gofmt.exe in bin/).
+//	C:/Program Files (x86)/Microsoft Visual Studio/Installer
+//	                            vswhere.exe, at its documented fixed location, so a card can
+//	                            find Visual Studio; native itself runs it and vcvars64.bat to
+//	                            put cl, link and the Windows SDK on the child's PATH, INCLUDE and
+//	                            LIB (msvc.go, MSVCEnv).
+//
+// The member's own `C:/nova-swarm/bin` (nova-swarm, sqlite3, sops) is NOT a root: the tree
+// above it holds the seat's key and the secrets store, and the member's supervisor already
+// puts that bin first on the member's PATH, which a card inherits.
 var toolchainRoots = map[string][]ToolchainRoot{
 	"linux": {
 		{Name: "sdk", Exec: true},
@@ -162,6 +204,14 @@ var toolchainRoots = map[string][]ToolchainRoot{
 		{Name: "/Library/Java/JavaVirtualMachines", Exec: true, Optional: true},
 		{Name: "/usr/local/share/dotnet", Exec: true, Optional: true},
 	},
+	"windows": {
+		{Name: "sdk", Exec: true, Optional: true},
+		{Name: "go/pkg/mod", Exec: false, Optional: true},
+		{Name: "C:/Program Files/Git", Exec: true, Optional: true, PathDirs: []string{"cmd", "bin"}},
+		{Name: "C:/Program Files/CMake", Exec: true, Optional: true, PathDirs: []string{"bin"}},
+		{Name: "C:/Program Files/Go", Exec: true, Optional: true, PathDirs: []string{"bin"}},
+		{Name: "C:/Program Files (x86)/Microsoft Visual Studio/Installer", Exec: true, Optional: true, PathDirs: []string{"."}},
+	},
 }
 
 // ToolchainRootList is the declaration itself for one operating system, kinds and all: what
@@ -173,6 +223,9 @@ func ToolchainRootList(goos string) []ToolchainRoot {
 	decl := toolchainRoots[goos]
 	out := make([]ToolchainRoot, len(decl))
 	copy(out, decl)
+	for i := range out {
+		out[i].PathDirs = slices.Clone(decl[i].PathDirs)
+	}
 	return out
 }
 
@@ -308,21 +361,39 @@ func toolchainVersionDir(prefix, tool string, lookPath func(string) (string, err
 const goPathBin = "go/bin"
 
 // BenchToolBins is the `bin` of each home root the wall grants EXECUTE on, under home and in
-// the list's order, skipped if absent: on a provisioned bench `~/sdk/bin`, the standard's
+// the list's order, then each system root's PathDirs (the windows list's installed
+// toolchains), all skipped if absent: on a provisioned bench `~/sdk/bin`, the standard's
 // links to every sdk tool. It reads the filesystem only and runs nothing.
 func BenchToolBins(goos, home string) []string {
+	return benchToolBinsIn(toolchainRoots[goos], home)
+}
+
+// benchToolBinsIn is BenchToolBins over one declaration, so a test can hand it system roots
+// that exist under its own temporary directory.
+func benchToolBinsIn(decl []ToolchainRoot, home string) []string {
 	var out []string
-	if home == "" {
-		return nil
-	}
-	for _, r := range toolchainRoots[goos] {
-		if !r.Exec || !r.Home() {
+	for _, r := range decl {
+		if !r.Exec {
 			continue
 		}
-		dir := filepath.Join(home, filepath.FromSlash(r.Name), "bin")
-		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-			out = append(out, dir)
+		if r.Home() {
+			if home == "" {
+				continue
+			}
+			out = appendDir(out, filepath.Join(home, filepath.FromSlash(r.Name), "bin"))
+			continue
 		}
+		for _, d := range r.PathDirs {
+			out = appendDir(out, filepath.Clean(filepath.Join(filepath.FromSlash(r.Name), filepath.FromSlash(d))))
+		}
+	}
+	return out
+}
+
+// appendDir appends dir when it is a directory on this machine.
+func appendDir(out []string, dir string) []string {
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		return append(out, dir)
 	}
 	return out
 }

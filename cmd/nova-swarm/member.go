@@ -1670,18 +1670,28 @@ var secretNameRE = regexp.MustCompile(`(?i)TOKEN|SECRET|PASSWORD|PASSWD|KEY|CRED
 // childKeptPrefixes and carries no credential, or when it is a secret pass
 // names (the loop record's nova-secrets keys); everything else is dropped.
 func childEnviron(env, pass []string) []string {
+	return childEnvironFor(runtime.GOOS, env, pass)
+}
+
+// childEnvironFor is childEnviron for one operating system. On Windows a name is matched
+// without case (the environment spells PATH `Path`, and the case-sensitive match started every
+// native child on captain with no PATH at all, so `sqlite3` was "on no PATH entry" beside the
+// sqlite3.exe in the member's own bin, 2026-10-19), and the names Windows itself needs to run
+// a program are kept too (windowsSystemEnv, windowsMemberEnv). Every other OS is unchanged.
+func childEnvironFor(goos string, env, pass []string) []string {
 	passed := map[string]bool{}
 	for _, n := range pass {
-		passed[n] = true
+		passed[envName(goos, n)] = true
 	}
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
-		kept := childKept[name]
+		key := envName(goos, name)
+		kept := childKept[key] || (goos == "windows" && (windowsSystemEnv[key] || windowsMemberEnv[key]))
 		for _, p := range childKeptPrefixes {
-			kept = kept || strings.HasPrefix(name, p)
+			kept = kept || strings.HasPrefix(key, p)
 		}
-		if passed[name] || (kept && !secretNameRE.MatchString(name)) {
+		if passed[key] || (kept && !secretNameRE.MatchString(name)) {
 			out = append(out, kv)
 		}
 	}
