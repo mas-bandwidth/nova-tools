@@ -62,7 +62,7 @@ func TestAReadsScratchIsInsideItsJob(t *testing.T) {
 	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
 		got := argvEnv(t, cfg.slotDir, name)
 		require.Len(t, got, 1, "the child has %d %s entries, want 1: %v", len(got), name, got)
-		assert.True(t, sameDir(got[0], want), "%s is %q, want the job's scratch %q", name, got[0], want)
+		assert.True(t, sameTmp(got[0], want, ""), "%s is %q, want the job's scratch %q", name, got[0], want)
 	}
 }
 
@@ -78,6 +78,80 @@ func TestAWorkCardsScratchIsTheSlotsTmp(t *testing.T) {
 	assert.Equal(t, filepath.Join(slot, "tmp", "c.w1"), work)
 	bare := nativeTmpDir(nativeRunConfig{slotDir: slot, label: "a-label"}, filepath.Join(slot, "jobs", "a-label"))
 	assert.Equal(t, filepath.Join(slot, "tmp", "a-label"), bare)
+}
+
+// TestALongTmpLeavesRoomForASocket: a linux child's TMPDIR leaves room for a unix socket
+// below it (nativeShortTmp). vng makes its virtiofs socket at $TMPDIR/virtme<8 random>, and
+// a slot path of about 190 bytes put it past the 108 bytes a socket path holds, so the
+// guest never started. The run hands the child a short link to its tmp, every one of
+// TMPDIR, TMP and TEMP names it, and the run removes it when it ends.
+func TestALongTmpLeavesRoomForASocket(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "linux" {
+		t.Skip("the short tmp name is linux's, where vng runs")
+	}
+	require.NoError(t, buildShared(), "building the binaries these tests run")
+	root, _ := aSlot(t)
+	slot := filepath.Join(root, strings.Repeat("rocketnet-linux-hard-killed-peer-never-stalls-receive.", 3)+"slot")
+	require.NoError(t, os.MkdirAll(slot, 0o755))
+	base := t.TempDir()
+	label := "long-tmp"
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{binary: builtHarness, sandbox: builtFakeSandbox, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second, shortTmpBase: base}, &errOut)
+	require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
+	want := filepath.Join(slot, "tmp", label)
+	socket := "/virtme" + strings.Repeat("x", 8) // vng's socket name below TMPDIR
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		got := argvEnv(t, slot, name)
+		require.Len(t, got, 1, "the child has %d %s entries, want 1: %v", len(got), name, got)
+		assert.Less(t, len(got[0]+socket), unixSocketPathMax, "%s is %q (%d bytes): a socket below it is past the 108 bytes a socket path holds", name, got[0], len(got[0]))
+		assert.True(t, sameTmp(got[0], want, base), "%s is %q, want the short link to the slot's tmp %q", name, got[0], want)
+	}
+	_, err := os.Lstat(argvEnv(t, slot, "TMPDIR")[0])
+	assert.ErrorIs(t, err, os.ErrNotExist, "the short link outlived the run")
+}
+
+// TestTheShortTmpLinkIsOnlyEverItsOwn pins the link nativeShortTmp names: a tmp path with
+// room for a socket is named as it is; a long one gets a link that resolves to it; a stale
+// link to the same directory is made again; anything else at the name is refused and left
+// as it is; and the link is removed only while it still names the run's directory.
+func TestTheShortTmpLinkIsOnlyEverItsOwn(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	short := filepath.Join(base, "tmp")
+	got, isShort := nativeShortTmp(base, short)
+	assert.False(t, isShort, "a tmp path with room for a socket gets no link")
+	assert.Equal(t, short, got)
+
+	tmp := filepath.Join(base, strings.Repeat("a-long-slot-directory-name.", 8), "tmp", "label")
+	require.NoError(t, os.MkdirAll(tmp, 0o755))
+	name, isShort := nativeShortTmp(base, tmp)
+	require.True(t, isShort, "a %d-byte tmp path gets a short link", len(tmp))
+	assert.Equal(t, base, filepath.Dir(name), "the link is made in its base")
+	other, _ := nativeShortTmp(base, tmp+"2")
+	assert.NotEqual(t, name, other, "two tmp directories get two links")
+	def, _ := nativeShortTmp("", tmp)
+	assert.Equal(t, "/tmp", filepath.Dir(def), "an empty base is /tmp")
+	assert.Less(t, len(def)+tmpSocketRoom, unixSocketPathMax, "the default link leaves room for a socket")
+
+	require.NoError(t, linkShortTmp(name, tmp), "the link is made")
+	assert.True(t, sameDir(name, tmp), "the link resolves to the tmp directory")
+	require.NoError(t, linkShortTmp(name, tmp), "a stale link to the same directory is made again")
+
+	unlinkShortTmp(name, tmp+"2")
+	_, err := os.Lstat(name)
+	require.NoError(t, err, "a link naming another directory is not this run's to remove")
+	unlinkShortTmp(name, tmp)
+	_, err = os.Lstat(name)
+	assert.ErrorIs(t, err, os.ErrNotExist, "the run's own link is removed")
+
+	write(t, name, "someone else's file")
+	assert.Error(t, linkShortTmp(name, tmp), "a name taken by anything else is refused")
+	unlinkShortTmp(name, tmp)
+	raw, err := os.ReadFile(name)
+	require.NoError(t, err)
+	assert.Equal(t, "someone else's file", string(raw), "what was at the name is left as it is")
 }
 
 // TestTheChildEnvNamesOneScratch: TMPDIR, TMP and TEMP all name the one directory the run
@@ -144,13 +218,20 @@ func TestAReaderScratchIsInsideTheWallAndTmpIsRefused(t *testing.T) {
 		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
 
+	// The child is handed its tmp by a short link (nativeShortTmp), as a long slot's is: a
+	// write through the link lands in the tmp, and a write beside the link, outside both the
+	// job and its tmp, is refused like /tmp.
+	base := t.TempDir()
+	link := filepath.Join(base, "nv-link")
+	require.NoError(t, linkShortTmp(link, tmp))
 	script := `echo hi > "$TMPDIR/scratch"; echo tmp=$?
-if ( : > /tmp/nova-swarm-outside ) 2>/dev/null; then echo deny=unexpected; else echo deny=denied; fi`
+if ( : > /tmp/nova-swarm-outside ) 2>/dev/null; then echo deny=unexpected; else echo deny=denied; fi
+if ( : > "$1/beside" ) 2>/dev/null; then echo beside=unexpected; else echo beside=denied; fi`
 	cfg := nativeRunConfig{slotDir: slot, benchHome: t.TempDir(), benchOS: runtime.GOOS}
-	argv := nativeSandboxArgv([]string{"/bin/sh", "-c", script, "sh", tmp}, cfg, data, jobDir, tmp)
+	argv := nativeSandboxArgv([]string{"/bin/sh", "-c", script, "sh", base}, cfg, data, jobDir, tmp)
 
 	cmd := exec.Command(builtSandbox, argv...)
-	cmd.Env = nativeChildEnvFrom([]string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}, data, jobDir, tmp, "", "", "", "", nil)
+	cmd.Env = nativeChildEnvFrom([]string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}, data, jobDir, link, "", "", "", "", nil)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	_ = cmd.Run()
@@ -159,4 +240,6 @@ if ( : > /tmp/nova-swarm-outside ) 2>/dev/null; then echo deny=unexpected; else 
 	assert.Contains(t, got, "tmp=0", "writing the read's scratch inside its job is allowed by the wall")
 	assert.FileExists(t, filepath.Join(tmp, "scratch"), "the read's scratch landed in its job's tmp")
 	assert.Contains(t, got, "deny=denied", "a write to /tmp outside the job is refused by the wall")
+	assert.Contains(t, got, "beside=denied", "a write beside the short link, outside the job and its tmp, is refused by the wall")
+	assert.NoFileExists(t, filepath.Join(base, "beside"))
 }

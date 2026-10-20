@@ -2719,7 +2719,7 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	// The run symlink-resolves the slot it was handed (#586), so the two spellings of one
 	// directory are compared as directories, not as strings.
 	want := filepath.Join(slot, "tmp", label)
-	assert.True(t, sameDir(tmp[0], want), "TMPDIR is %q, want the slot's own tmp dir %q", tmp[0], want)
+	assert.True(t, sameTmp(tmp[0], want, ""), "TMPDIR is %q, want the slot's own tmp dir %q", tmp[0], want)
 	got := env["FAKE_KEY"]
 	assert.Equal(t, []string{"<redacted>"}, got, "the secret's value is not redacted in the log: %v", got)
 }
