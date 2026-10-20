@@ -98,6 +98,10 @@ type nativeRunConfig struct {
 	// case and means runtime.GOOS; a test names one, so the linux list is assertable from a
 	// Mac and the darwin list from a linux runner.
 	benchOS string
+	// runtimeShared is the runtime's fixed shared directories that exist on this bench
+	// (swarm.EnsureRuntimeSharedDirs), each a --write of the wall: .NET's named mutexes live
+	// under /tmp/.dotnet whatever TMPDIR says. nil is filled at the launch; a test names its own.
+	runtimeShared []string
 	// WORKER: the worker description `--worker <file>` names, when one is
 	// given. It is the source of the model -- a key is authorized for one model only, and
 	// the description pins it -- and when it carries "secret": "<NAME>" it is the source of
@@ -692,6 +696,11 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		releaseLease()
 		refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be made: %s", oneline.Field(tmpDir), oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
+	}
+	// The runtime's fixed shared directories (swarm.RuntimeSharedDirs: /tmp/.dotnet on linux,
+	// which no TMPDIR moves) are made here, outside the wall, and granted by name.
+	if cfg.runtimeShared == nil {
+		cfg.runtimeShared = nativeRuntimeShared(benchOS(cfg))
 	}
 	// THE SHARED PER-BENCH CACHE. The Go toolchain and every module are the
 	// same for every card under one root, but each card left to itself downloads them
@@ -1978,6 +1987,11 @@ func sandboxHostRules(sandbox string) bool {
 	return strings.Contains(string(out), "hosts=enforceable")
 }
 
+// nativeRuntimeShared makes and names the runtime's fixed shared directories
+// (swarm.EnsureRuntimeSharedDirs); the package's TestMain stubs it, so no unit test makes
+// /tmp/.dotnet on its host.
+var nativeRuntimeShared = swarm.EnsureRuntimeSharedDirs
+
 // nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the
 // harness verbatim (SPEC-SANDBOX rule 12) -- launch, the one launcher's argv, binary first. The job directory is the first --write and the
 // --cwd (rule 13); the data home is the second --write and the child's HOME (rule 9); the
@@ -1999,6 +2013,11 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	// bench, so the write is shared, not per-card, and it is named once.
 	if cacheDir := nativeCacheDir(cfg); cacheDir != "" {
 		argv = append(argv, "--write", cacheDir)
+	}
+	// The runtime's fixed shared directories, by name and never their parent: a card's dotnet
+	// restore takes a named mutex under /tmp/.dotnet/shm, which the wall denied (EACCES).
+	for _, d := range cfg.runtimeShared {
+		argv = append(argv, "--write", d)
 	}
 	// --tmp names the slot's temp directory as the child's TMPDIR. Without it the wall made
 	// its default, <first --write>/.nova-sandbox-tmp, inside the job directory's repo, and
@@ -2210,6 +2229,7 @@ func nativeChildEnvOS(goos string, environ []string, dataHome, jobDir, tmpDir, c
 	}
 	remove := []string{
 		"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR", "TMP", "TEMP",
+		"DOTNET_CLI_HOME", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE", "DOTNET_NOLOGO", "DOTNET_CLI_TELEMETRY_OPTOUT",
 		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "ASDF_OUTPUT_TRANSLATIONS",
 		"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX",
 		"USERPROFILE", "APPDATA", "LOCALAPPDATA",
@@ -2238,6 +2258,13 @@ func nativeChildEnvOS(goos string, environ []string, dataHome, jobDir, tmpDir, c
 		"TMPDIR="+tmpDir,
 		"TMP="+tmpDir,
 		"TEMP="+tmpDir,
+		// dotnet's first-use sentinels and its CLI home go in the data home inside the wall,
+		// never a DOTNET_CLI_HOME the bench exported outside it, and its first run prints and
+		// phones nothing
+		"DOTNET_CLI_HOME="+dataHome,
+		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1",
+		"DOTNET_NOLOGO=1",
+		"DOTNET_CLI_TELEMETRY_OPTOUT=1",
 		// the harness prints its ERROR lines into the capture, so a start it refuses names
 		// why (`error="ProviderModelNotFoundError: ..."`), not only its UnknownError envelope
 		"OPENCODE_PRINT_LOGS=1",
