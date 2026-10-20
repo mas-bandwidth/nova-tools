@@ -29,7 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
-- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (38)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (58)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -2089,7 +2089,7 @@ From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
 
 ### nova-sprint stats prints the convergence ratio: primary cards added per primary card landed
 
-nova-sprint stats prints, for primary cards, the cards added per card landed over the last 1h, 6h and 24h, and the dashboard shows the same. Done when: the ratio is computed from the store with time as an argument, tested; stats and the dashboard show it.
+nova-sprint stats prints, for primary cards, the convergence ratio as the owner defined it: over the cards landed in the last 1h, 6h and 24h, the new primary cards their work created, per landed card (below one is converging). It also prints primary cards landed per hour. where and the dashboard show both. Done when: the ratio counts only cards created from landed cards' work, computed from the store with time as an argument, tested; landed per hour is computed the same way, tested; stats, where and the dashboard show both.
 
 Why it waits: On 2026-10-20 the owner asked whether the sprint is converging (cards added per primary card landed), and the coordinator computed it by hand.
 
@@ -2129,7 +2129,7 @@ From: the owner, 2026-10-20 ('This is a bug. Fix this in v1.9.')
 
 ### a brief edit that changes only NOTE, CARRY or ROUTE lines never bounces a finish
 
-A brief edit that changes only NOTE, CARRY or ROUTE lines, or that only widens PATHS, never invalidates a running attempt's finish; only a change to the task (DONE-WHEN, THE TASK, a PATHS narrowing, the tier) does. When a finish is refused as made under the earlier brief, the sprint records the finished head as CARRY on the next attempt automatically and tells the next holder. --replace-in-flight takes an optional target friend, and moves the card to that friend instead of re-dealing it to the same row. A coordinator note to a working card never edits its brief (coordinator-never-edits-working-briefs): nova-sprint note <card> <text> sends it to the holder by message (the friend's hook or the fleet member's job) and records it on the card, and brief edit of a working card from the coordinator is refused with a pointer to note. Done when: note delivers one message to the holder and records it on the card without changing the brief or the attempt, tested; a coordinator brief edit of a working card is refused naming the note verb, tested; one unit test per rule, each failing before the fix: a NOTE, CARRY or ROUTE edit or a PATHS widening leaves the finish valid; a DONE-WHEN, THE TASK, PATHS-narrowing or tier change still bounces it; a bounced finish's head appears as CARRY on the next attempt with a message to the next holder; --replace-in-flight with a target friend lands the card on that friend's row.
+A brief edit that changes only NOTE, CARRY, ROUTE, tier or PRIORITY lines, or that only widens PATHS, never invalidates a running attempt's finish; only a change to the task (DONE-WHEN, THE TASK, a PATHS narrowing) does (the owner, 2026-10-20: a note or tier change never bounces; brief-edit-at-review-keeps-reads covers cards in review). When a finish is refused as made under the earlier brief, the sprint records the finished head as CARRY on the next attempt automatically and tells the next holder. --replace-in-flight takes an optional target friend, and moves the card to that friend instead of re-dealing it to the same row. A coordinator note to a working card never edits its brief (coordinator-never-edits-working-briefs): nova-sprint note <card> <text> sends it to the holder by message (the friend's hook or the fleet member's job) and records it on the card, and brief edit of a working card from the coordinator is refused with a pointer to note. Done when: note delivers one message to the holder and records it on the card without changing the brief or the attempt, tested; a coordinator brief edit of a working card is refused naming the note verb, tested; one unit test per rule, each failing before the fix: a NOTE, CARRY or ROUTE edit or a PATHS widening leaves the finish valid; a DONE-WHEN, THE TASK, PATHS-narrowing or tier change still bounces it; a bounced finish's head appears as CARRY on the next attempt with a message to the next holder; --replace-in-flight with a target friend lands the card on that friend's row.
 
 Why it waits: On 2026-10-20 the coordinator appended a one-line NOTE, for routing only, to the briefs of 10 working cards. Each card's next finish was then refused as 'brief replaced: the head of attempt N was made under the earlier brief', though the work was complete and gated; the card bounced back to ready and was re-dealt, so a full attempt was spent to land the same head. It happened to two cards in 10 minutes (one with a 120/120 gate, one with 8 green compiler builds), and the coordinator re-added each finished head by hand as CARRY. --replace-in-flight, used to move cards to another friend, re-dealt them to the same row instead. No verb delivers a note to a working holder, so a brief edit was the only channel.
 
@@ -2296,6 +2296,206 @@ Why it waits: Fix first: a fix is the card closest to landed. Its work is done a
 Target: v1.9
 
 From: the owner, 2026-10-20 ('The design was that reads are a priority, and they are above all work, except critical and higher!'; later the same day, 'fix is the highest priority of all')
+
+### One merging card the lander cannot land never stalls the cards behind it
+
+When the lander refuses the card at the head of a stream's merge queue for a fault of that card (its brief has no REPO, BASE or KIND line, its brief does not parse, its head is missing), it sets that card aside with one judgment naming the card and the fault and lands the rest of the queue in priority order. It never reports nothing-landable while any other merging card can land. Done when: a merge queue whose head card has no BASE line lands the card behind it on the same lander pass and raises one judgment for the first, tested; the same for a missing REPO and an unparsable brief, tested; TLA+ in priority-proven-in-tla, with a reversed witness where one bad card blocks the queue.
+
+Why it waits: On 2026-10-20 a router bug dropped the first line of five briefs, removing REPO, BASE and KIND. One of them, loopback-rtt, sat at the head of the merge queue, the lander refused it for having no BASE, and nothing behind it landed until the coordinator pulled it out by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Land some cards dude! Feels like we are treading water here. Land shit!')
+
+### A merging card's brief is repaired in place, without return and without a new attempt
+
+nova-sprint brief on a card in merging that changes only header lines the lander reads (REPO, BASE, KIND, LAND-AFTER, NOTE) updates the brief in place: the card stays in merging at the same head, keeps its reads and its accept, and the lander takes it on its next pass. A change to the task (DONE-WHEN, THE TASK, a PATHS narrowing) still sends it back. Done when: restoring a missing BASE line on a merging card leaves it merging at the same head with its reads, and the next lander pass lands it, tested; a DONE-WHEN change on a merging card still sends it back, tested.
+
+Why it waits: On 2026-10-20 the only way to repair loopback-rtt's brief was to return the card out of merging, fix the brief and finish the same head again, which cost a re-deal and a fresh read.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Land shit!'); the coordinator's repair of loopback-rtt the same day
+
+### The coordinator can land a named card through the lander, never around it
+
+nova-sprint land --card <id> --reason <text> asks the lander that holds the fence to land that card next, ahead of the queue, with the same merge, gate and record steps as any landing. The landing is recorded with the actor and the reason. It never bypasses the fence or the lander's checks. Done when: land --card on an accepted merging card while the server lander holds the fence lands that card on the lander's next pass with the actor and reason recorded, tested; land --card on a card that fails a lander check is refused with that check named, tested.
+
+Why it waits: On 2026-10-20 the server lander held the fence, so the coordinator had no verb to land a ready card by hand while one bad card blocked the queue.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Please land cards.')
+
+### A brief edit on a card in review never re-deals it and never retires its reads
+
+A brief edit on a card in review or ready to accept that does not change the task (NOTE, CARRY, ROUTE, tier, PRIORITY, a PATHS widening) keeps the card in review at the same head and generation: its open reads stay live and any recorded verdicts stand. A PATHS widening at review is how a PATHS-PROPOSED file is approved, with no re-deal. Only a change to the task (DONE-WHEN, THE TASK, a PATHS narrowing) retires the reads and opens a new attempt. Done when: a NOTE, tier, PRIORITY and PATHS-widen edit on a review card each leave it in review with the same generation and its reads live, and a later OK verdict is accepted, tested; a DONE-WHEN edit retires the reads, tested; TLA+ for edit against read, with a reversed witness where an OK read is lost to a note.
+
+Why it waits: On 2026-10-20 brief edits on cards in review re-dealt them as new attempts and retired their in-flight reads, so OK verdicts were refused as 'generation not live' and lost, and socket-test-binaries went to a new worker for a PATHS widening.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('card this for v1.9', of a brief edit bouncing a LAND finish)
+
+### nova-sprint refinish records a finished head again on the live attempt
+
+nova-sprint refinish <card> --head <sha> --report <file> takes the live attempt and records the finish of a head that an earlier attempt already finished and pushed, without a worker and without a hand-made branch ref. It checks the head is pushed and belongs to the card's branches. Done when: refinish of a head finished by a bounced attempt records the finish on the live attempt and the card moves to review, tested; refinish of a head not pushed or not on the card's branches is refused, tested.
+
+Why it waits: On 2026-10-20 each bounced finish made the coordinator re-finish the same head by creating the live attempt's branch through gh api and finishing again by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('card this for v1.9')
+
+### A card can deal N reads in parallel and accept after K agree
+
+The read mix takes a count needed: nova-sprint set --read-mix friends=<n>,fleet=<m> --reads-needed <k> deals n+m reads at once and decides the card when k verdicts are in; the remaining reads are retired and their late verdicts kept as findings (late-read-verdict-kept). Done when: a mix of 3 reads needing 2 deals 3 reads at once and accepts on the second OK, retiring the third, tested; a BROKEN among the first k is handled as today, tested.
+
+Why it waits: On 2026-10-20 the owner asked for three reads in parallel with two needed; nova-sprint could not deal three and decide on the first two, so the coordinator set the mix by hand to two.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('we can send off 3 reads, but we need only 2. One read goes to fleet... All in ||')
+
+### The OWED runs are a list the sprint keeps, never a note in a report
+
+Every run a finish lists as OWED (owner-run-budget) is recorded as an owed-run row on its card: the run, the host kind it needs, and the card. nova-sprint view owed lists every owed run in the sprint, and a sentinel or a stream can be set to take the owed runs as cards when long runs start. An owed run is cleared only by a recorded run. Done when: a LAND finish with an OWED run creates one owed-run row, listed by view owed, tested; clearing it needs a recorded run, tested; turning the owed list into cards makes one card per row, tested.
+
+Why it waits: On 2026-10-20 the two-minute rule made every long soak, load and stress run OWED. The list lived only in reports and the coordinator's notes, deferred long-run cards cycled HOLD and re-deal, and landing-stall alarms fired on cards parked on purpose.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('hold off on longer soaks and tests that take more than 2 minutes until we have all the features and bugs landed. Then we can do long soaks')
+
+### defer and drop take a card from any column into its repository's own roadmap format
+
+nova-sprint defer <card> works from any column (ready, working, review, waiting), writes the card into its repository's roadmap in that repository's own format (the nova-roadmap sexp of that repo), with the whole brief and the latest pushed head, and handles its dependents: each card or sentinel that needs it has the need removed and is told, or the defer is refused naming them unless --with-dependents. drop of a card other cards need does the same with --with-dependents instead of refusing outright. Done when: defer of a working card writes a row with the brief and head into a repo roadmap in that repo's form and stops the worker, tested; defer of a card a sentinel needs removes the need with --with-dependents and refuses without it, naming the sentinel, tested; drop of a needed card behaves the same, tested.
+
+Why it waits: On 2026-10-20 defer refused to write rocketnet's roadmap.sexp format and took only waiting cards, and drop refused the macOS nightly-soak card because the v1 gate needed it. Moving the final-deliverable cards to the roadmap took hand drops and sentinel surgery.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Please review the sprint. Are all cards in it still for v1.0.0?'), moving the final-deliverable cards to the roadmap
+
+### The coordinator can hold one card and return one working card
+
+nova-sprint hold <card> --reason parks one card (any column but landed) so it is not dealt until unhold, without a held sentinel; nova-sprint return <card> --reason takes a working card back to ready, records its pushed head as CARRY and tells the holder to stop (redeal-stops-old-worker). Done when: a held card is never dealt and unhold makes it ready, tested; return of a working card puts it in ready with its head as CARRY and one stop notice to the holder, tested.
+
+Why it waits: On 2026-10-20 deferred long-run cards cycled HOLD and re-deal and could only be parked behind a new held sentinel, because a single card cannot be held; and no coordinator verb could return a working card, so a friend's idle soak card held a slot.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('hold off on longer soaks ... until we have all the features and bugs landed')
+
+### add writes the brief's required boilerplate itself
+
+nova-sprint add fills every line the card lint requires that is not the author's to choose: the RULES paragraph verbatim, the tier on line 1 from --tier, the TEST files in PATHS from the test lines, the ATTRIBUTION block, and dropped-card names rewritten to their live successors. The author writes only the task, DONE-WHEN, PATHS and the choices. Done when: a brief with only the task, DONE-WHEN, PATHS and a tier passes add with the boilerplate written in, tested; a brief naming a dropped card gets its successor or a refusal naming it, tested.
+
+Why it waits: On 2026-10-20 card writing kept failing lint on boilerplate: the RULES paragraph not quoted verbatim, the tier not on line 1, a TEST file missing from PATHS, dropped-card names; the LAN 1000-client soak card's brief failed lint the same way.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('move smoothly and quickly')
+
+### Judgments for the coordinator always reach it, whatever its filters
+
+A judgment the sprint raises for the coordinator is delivered on the coordinator's hook channel past any client-side filter, and every overdue judgment raises one reminder; no filter setting can hide a judgment. The coordinator's take loop takes the epoch from the server on every step (take-loop-epoch-follows-sprint), never a remembered one. Done when: a coordinator hook with a filter that drops every other notice still delivers a judgment, tested; an overdue judgment raises one reminder, tested with time as an argument; a take loop started at an old epoch takes at the server's epoch, tested.
+
+Why it waits: On 2026-10-20 the coordinator's hook filter hid the judgments the sprint raised, 13 went overdue and the server's default parked their cards; and the take loop ran at epoch 21 against a sprint at epoch 0, stranding 12 cards.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Land shit!'); the coordinator, the same day
+
+### One verb scopes the sprint to a milestone
+
+nova-sprint scope --release <tag> [--dry-run] moves every open card not tagged for the release into its repository's roadmap (defer-any-card-into-its-repo-roadmap), removes needs on the moved cards from the cards and sentinels that stay, and prints what moved and what stays. Done when: scope on a sprint with in-scope and out-of-scope cards leaves only in-scope cards, each moved card a roadmap row with its head, and no remaining card needing a moved one, tested; --dry-run changes nothing, tested.
+
+Why it waits: On 2026-10-20 scoping rocketnet to what could land in the next hour took hand drops, hand roadmap rows and sentinel surgery.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('we need to urgently scope down to something we can land in the next hour for rocketnet')
+
+### Durable sprint data lives in nova-config's Postgres; Redis holds only what can be lost
+
+Redis holds only ephemeral sprint state (cards in flight, leases, beats, timers, inbox, caches). Sprint identity, stream definitions, friends' rows and sprint history are nova-config kinds in Postgres, applied into Redis, never written there first, and nova-config's own Postgres address is in its config file, never a Redis key. A registry declares every Redis key family ephemeral or applied, and a lint refuses an undeclared one. Done when: FLUSHALL then nova-config apply then init rebuilds identity, streams and history equal to before, tested on fakes; a durable write with Postgres down is refused, never Redis-only, tested; the lint refuses an undeclared key family, tested; TLA+ store model with a reversed witness where a flush loses durable data.
+
+Why it waits: On 2026-10-20 the sprint store was dropped and nova-config could not find its own Postgres (its DSN was the Redis key fleet:pg_dsn), and the sprint's identity and settings had to be read back out of a backup.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('I dislike this non-ephemeral data being stored in redis. Redis is for ephemeral data. Move this data to nova-config please.'; 'Do it in v1.9')
+
+### Starting a clean sprint store is one command
+
+nova-sprint reset --confirm sprint --approved-by <owner> backs up the store, stops the server, flushes only the sprint's keys, re-applies nova-config, creates epoch 0 from nova-config's sprint row, restarts the server and proves the coordinator's hook. init on a store with no sprint, as nova-config's coordinator, needs no hook (the bootstrap case). Done when: reset on a fake store rebuilds epoch 0 from a fake nova-config row, tested; init on an empty store as the configured coordinator succeeds with no hook and still requires one when a sprint exists, tested; a failing backup refuses the reset, tested; TLA+ hook model with an EmptyStore state and a reversed witness of the init deadlock.
+
+Why it waits: On 2026-10-20 after the store was dropped, init refused 'You must hook in first' while the hook could not prove without a sprint: a deadlock no verb broke, and init's arguments had to be read back from a backup.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('In v1.9, please make this process of starting a clean sprint db not suck.')
+
+### nova-sprint limits shows every limit on dealing and reading, and why a card is not dealt
+
+nova-sprint limits [--card <id>] [--machine <m>] prints every setting that limits who may work or read a card, with its source: machine rows (tla, gates_only, width), sprint settings (go-lanes, dealt-max, fleet and friends tiers, read mix), nova-config sprint and friend rows (max_attempts, width, mode, token caps), brief lines (WHO, BENCH, GATE-NEEDS, tier), stream settings, fleet hold and route state. With --card it names every reason each machine and friend cannot take that card now. The list is then reviewed with the owner, keep, change or remove. Done when: limits prints each source, tested on fakes; limits --card names the blocking rule for a card held off a machine by tla=false, gates_only and WHO, one test each.
+
+Why it waits: On 2026-10-20 the owner did not know which settings restricted dealing: tla=false on every machine blocked TLA-gated cards everywhere, WHO lines kept cards off captain, and the coordinator wrongly claimed a per-machine tier setting.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Are there any other settings that I don't know about that will restrict how cards get worked on or read?'; 'add all these things to a v1.9 card for future review')
+
+### nova-doctor's checks give true verdicts and fixes that work
+
+providers loads route keys through the seat or reports 'key not loaded', never a provider 401; self knows the play-installed binaries and does not tell anyone to move them; dashboard gives a fix that works end to end; gosdk names the go.mod it judged; and the loops play renders exactly nova-config's loop rows for the host and refuses to retire a unit nova-config declares. Done when: one red-first test on fakes per check (a fake provider endpoint, a fake bin directory, a fake loops table), and a loops-play test that a declared unit is never retired.
+
+Why it waits: On 2026-10-20 three nova-doctor checks gave false or contradictory fixes on the studio, and following the dashboard fix ran the loops play, which retired the sprint server and studio member units that nova-config declares.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('fix all the dr issues then re-run to verify'; 'fix this now', of the loops play reading loops.tsv)
+
+### nova-run runs a job in a counted slot on a chosen host
+
+nova-run [--host <h>|--os linux|darwin|windows] [--exclusive] [--card <id>] [--max-wait 30m] -- <cmd> runs a job in a slot counted from nova-config's machine row, with kernel-held locks so a dead holder frees its slot, shared and exclusive modes without starvation, a bounded wait that exits 75 naming the holders, and a fresh internal-disk work directory per job. nova-run pick --os linux prints the least-loaded host with a free slot; nova-run status lists holders. It replaces the coordinator's studio-slot.sh, pick-bench.sh and winlock wrappers. Done when: on fakes (fake clock, fake lock backend), slots never exceed the count, exclusive is alone and not starved, a dead holder's slot is reclaimed, max-wait exits 75, pick skips held machines, each tested; TLA+ slots model with reversed witnesses.
+
+Why it waits: On 2026-10-20 workers chose benches by hand through bash scripts with mkdir locks, an orphaned sleep held mini-m5-1 for over an hour, and captain's lock was installed by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('in v1.9 please convert this to a real golang tool and verb. nova-cast? nova-run?')
+
+### nova-sprint roadmap import adds a deliverable's cards in one fast step
+
+nova-sprint roadmap import --repo <r> [--release <tag>] reads each roadmap row's notes, creates missing streams, keeps each card's last head, needs and routing lines, and lints and checks the whole batch once. It is the reverse of the one-command export (nova-sprint roadmap, cards-carry-their-roadmap-row). Done when: an import of 50 rows into a fake store runs once through lint and check and creates the cards with heads and needs, tested; running it twice changes nothing, tested; the import of tens of cards takes under a minute on the studio.
+
+Why it waits: On 2026-10-20 importing about 48 rocketnet cards from the roadmap took an agent over 20 minutes.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('The import from the roadmap to sprint is also much slower than I would like for just a few cards. Please add a task to v1.9 to make this faster.')
+
+### A lost coordinator hook record never re-deals working cards
+
+When the coordinator's hook record is lost and re-armed, cards working on friends and the fleet stay with their holders at the same generation; nothing is re-dealt and no attempt is spent. Only a friend's own missed challenges return its cards (friend-down-returns-its-cards). Done when: losing and re-arming the coordinator hook leaves every working card at its generation, tested; TLA+ for the hook record against the deal, with a reversed witness where a hook loss re-deals a card.
+
+Why it waits: On 2026-10-20 the coordinator's hook record was lost four times in a night; the fourth time the sprint push went down and six working jobs were re-dealt as new attempts, burning attempts against the bound, and workers had to look up their new job and generation before finishing.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (overnight notes); the owner's rule that finished work is never thrown away ('set this as blocker', 2026-10-20)
+
+### friend stage checks out a card whose BASE is not the default branch
+
+nova-sprint friend stage resolves origin/<BASE> for a BASE that is not the repository's default branch and resumes or cleans its own incomplete stage directory on retry. Done when: staging a card with BASE a non-default branch into a clean clone checks out that base, tested on a fake repository; a retry after a failed stage succeeds, tested.
+
+Why it waits: On 2026-10-20 friend stage refused cards on sprint/rocketnet-proof (exit 128, the clean clone had no local BASE) and refused its own half-made clone on retry; Aurora's card went to HOLD because no checkout was staged.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (carry notes, 15:00Z)
 
 ### nova-sprint view priority shows, per priority class, what is landed, in flight and blocked
 
