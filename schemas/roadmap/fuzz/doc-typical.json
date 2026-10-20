@@ -1,0 +1,75 @@
+{
+  "title": "A roadmap",
+  "text": "The opening.",
+  "scheduled": [
+    {
+      "id": "sched-one",
+      "release": "v1.5",
+      "title": "Scheduled",
+      "text": "In a release.",
+      "date": "2026-10-09",
+      "kept": []
+    }
+  ],
+  "done": [
+    {
+      "id": "done-one",
+      "release": null,
+      "title": "Done",
+      "text": "In place.",
+      "date": "2026-10-10",
+      "kept": [
+        {
+          "key": "item-why",
+          "value": "w"
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "id": "group-one",
+      "title": "Group",
+      "text": "A heading."
+    }
+  ],
+  "items": [
+    {
+      "id": "item-one",
+      "group": "group-one",
+      "title": "An item",
+      "text": "What it is.",
+      "why": null,
+      "date": "2026-10-17",
+      "area": null,
+      "exists": null,
+      "cards": 0,
+      "origin": null,
+      "release": null,
+      "kept": []
+    },
+    {
+      "id": "item-two",
+      "group": "group-one",
+      "title": "A full item",
+      "text": "What it is.",
+      "why": "Why it waits.",
+      "date": "2026-10-09",
+      "area": "an area",
+      "exists": "What the code has.",
+      "cards": 1048576,
+      "origin": "issue #1",
+      "release": "v1.5",
+      "kept": [
+        {
+          "key": "fix-status",
+          "value": "planned"
+        },
+        {
+          "key": "fix-text",
+          "value": ""
+        }
+      ]
+    }
+  ]
+}

@@ -129,6 +129,7 @@ pkg/redisconn	0.6	@run37411066588	self-hosted
 pkg/redisfn	0.3	@run37411066588	self-hosted
 pkg/release	0.1	@run37411066588	self-hosted
 pkg/releasewire	0.5	@local	-
+pkg/roadmapwire	0.8	@local	-
 pkg/safepath	0.0	@run37411066588	self-hosted
 pkg/sandbox	0.3	@local	-
 pkg/sandbox/darwincheck	0.2	@local	-

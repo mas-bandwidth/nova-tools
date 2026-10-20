@@ -1,0 +1,140 @@
+// roadmap.schema: the roadmap area's records, as binary wire, padded
+// standard base64 of that wire, the schema JSON text form and the
+// hand-editable text form. Its Go is generated into pkg/roadmapwire
+// (go generate ./pkg/roadmapwire).
+//
+// The records are the two data files pkg/roadmap reads: the roadmap
+// (docs/roadmap.sexp, pkg/roadmap/roadmap.go Doc) and the fixes ledger
+// (docs/fixes.sexp, pkg/roadmap/fixes.go Fixes). Every field is a field of
+// the Go struct it replaces and keeps its meaning.
+//
+// Every table here is VARIABLE (schema owner rule S1, by the coordinator's
+// form ruling of 2026-10-17: a record is a FIXED table only where every one
+// of its bounds is a bound the code enforces; otherwise it is a VARIABLE
+// table with open lists and unbounded text). Each record holds text the
+// code does not bound (decoder.str accepts any non-empty string; only the
+// whole file is bounded, at 10 MiB, by roadmap.Limits) and lists the code
+// does not count, so no record is fixed and the area has no schema.lock. A
+// list is []T and text with no bound in the code is *string. A bound is
+// declared only where the code enforces one, and the comment names the
+// code. A value past a declared bound is refused by name on save and on
+// load; nothing is clamped.
+//
+// A variable table reads an absent field as zero, so a field the code
+// requires is required by the reader's constraints (the golden test of
+// pkg/roadmapwire states them), never by a bound here. The format string of
+// each file ("v1", roadmap.Format and roadmap.FixesFormat) is a constant
+// the decoder checks, not a field of either struct: the table wire's form
+// byte versions the record.
+package roadmapwire
+
+// ReleaseStatus is a point release's status: the closed list
+// pkg/roadmap/fixes.go statuses names and decoder.status refuses any other
+// of. The file spells "in-progress" with a dash; the enum name is
+// in_progress.
+enum ReleaseStatus { shipped, in_progress, planned }
+
+// FixStatus is a fix's status: the closed list pkg/roadmap/fixes.go
+// fixStatuses names (statuses and done) and decoder.fixStatus refuses any
+// other of.
+enum FixStatus { shipped, in_progress, planned, done }
+
+// Pair is one field a move carried under :kept (roadmap.go Pair): its key,
+// a keyword name (decoder.kept), and its value, which may be empty. The
+// code bounds neither.
+table Pair
+{
+    key   *string
+    value *string
+}
+
+// Note is one record of work that is not on the roadmap (roadmap.go Note):
+// a (scheduled ...) record with its release, or a (done ...) record with
+// its kept fields. id, title, text and date are required non-empty
+// (decoder.doc); date is YYYY-MM-DD, exactly 10 bytes (roadmap.go
+// datePattern), so string(10) is the bound the code enforces.
+table Note
+{
+    id      *string
+    release *string
+    title   *string
+    text    *string
+    date    string(10)
+    kept    []Pair
+}
+
+// Group is one heading of the roadmap (roadmap.go Group): id, title and
+// text, each required non-empty and unbounded (decoder.doc).
+table Group
+{
+    id    *string
+    title *string
+    text  *string
+}
+
+// Item is one piece of work after the last scheduled release (roadmap.go
+// Item). id, group, title, text and date are required (decoder.doc); date
+// is YYYY-MM-DD (datePattern); cards is absent (0) or a positive integer of
+// at most 1<<20 (decoder.count), so min 0 and max 1048576 are the range the code
+// enforces. Every text is unbounded.
+table Item
+{
+    id      *string
+    group   *string
+    title   *string
+    text    *string
+    why     *string
+    date    string(10)
+    area    *string
+    exists  *string
+    cards   int32 | min = 0, max = 1048576
+    origin  *string
+    release *string
+    kept    []Pair
+}
+
+// Doc is a decoded roadmap (roadmap.go Doc): the page title and opening
+// text, required non-empty, then the scheduled and done notes, the groups
+// and the items, each list counted nowhere.
+table Doc
+{
+    title     *string
+    text      *string
+    scheduled []Note
+    done      []Note
+    groups    []Group
+    items     []Item
+}
+
+// Release is one point release of the fixes ledger (fixes.go Release): id,
+// status and text required, date optional (YYYY-MM-DD when present).
+table Release
+{
+    id     *string
+    status ReleaseStatus
+    text   *string
+    date   string(10)
+}
+
+// Fix is one item of a point release (fixes.go Fix): id, release, title,
+// origin and status required, text and kept optional.
+table Fix
+{
+    id      *string
+    release *string
+    title   *string
+    text    *string
+    origin  *string
+    status  FixStatus
+    kept    []Pair
+}
+
+// Fixes is a decoded fixes file (fixes.go Fixes): title and text required,
+// then the releases and the fixes, each list counted nowhere.
+table Fixes
+{
+    title    *string
+    text     *string
+    releases []Release
+    items    []Fix
+}
