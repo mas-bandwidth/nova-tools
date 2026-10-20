@@ -577,7 +577,7 @@ var tagKind = &Kind{
 		{Name: "probe", Type: TypeEnum, Enum: []string{"path", "command", "limit", "builtin"}, Help: "the one shape a probed tag proves: path (a file or directory exists), command (argv runs and its version matches), limit (a resource limit is at least a number), builtin (a fact the member measures itself: os, isa, landlock, kvm)"},
 		{Name: "probe_os", Type: TypeList, Enum: []string{"darwin", "linux", "windows"}, Help: "comma list of OSes the probe runs on; empty is every OS"},
 		{Name: "probe_path", Type: TypeText, Help: "path: the file or directory that must exist; ~ is the member user's home"},
-		{Name: "probe_argv", Type: TypeText, Help: "command: the argv, space separated, run with no shell, e.g. jq --version"},
+		{Name: "probe_argv", Type: TypeText, Help: "command: the argv, one argument per word, run with no shell, e.g. jq --version"},
 		{Name: "probe_match", Type: TypeText, Help: "command: a Go regexp with at most one group, the version"},
 		{Name: "probe_min", Type: TypeText, Help: "command: the least version, dotted numbers; limit: the least integer"},
 		{Name: "probe_limit", Type: TypeEnum, Enum: []string{"nofile"}, Help: "limit: the resource limit, nofile today"},

@@ -570,7 +570,7 @@ nothing for it.
 | `probe` | enum | for a probed tag | one closed shape: `path`, `command`, `limit` or `builtin` |
 | `probe_os` | list | | comma list of `linux`, `darwin`, `windows`; empty is every OS |
 | `probe_path` | text | | `path`: a file or directory that must exist; `~` is the member user's home |
-| `probe_argv` | text | | `command`: the argv, space separated, run with no shell (`jq --version`) |
+| `probe_argv` | text | | `command`: the argv, one argument per word, run with no shell (`jq --version`) |
 | `probe_match` | text | | `command`: a Go regexp with at most one group, the version |
 | `probe_min` | text | | `command`: the least version, dotted numbers; `limit`: the least integer |
 | `probe_limit` | enum | | `limit`: the resource limit, `nofile` |

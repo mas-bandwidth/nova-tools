@@ -84,7 +84,7 @@ func checkTag(r Row) error {
 	case "command":
 		allowed["probe_argv"], allowed["probe_match"], allowed["probe_min"] = true, true, true
 		if r.Fields["probe_argv"] == "" {
-			return fmt.Errorf("tag %s has --probe command and no --probe_argv; want --probe_argv <argv, space separated>", r.Name)
+			return fmt.Errorf("tag %s has --probe command and no --probe_argv; want --probe_argv <the argv, one argument per word>", r.Name)
 		}
 		if match := r.Fields["probe_match"]; match != "" {
 			re, err := regexp.Compile(match)

@@ -57,10 +57,12 @@ func TestATagIsAConfigRowAndAMachineNamesOnlyKnownTags(t *testing.T) {
 	require.Error(t, err, "a declared row with probe fields is refused")
 }
 
-// TestTheSeedRowsCoverEveryCompiledFact: migration 0048 seeds every word the
-// member's machineFacts can emit (cmd/nova-swarm/facts.go): the OS, the ISA,
-// landlock, kvm, tla and the three toolchains. Adoption changes no card.
-func TestTheSeedRowsCoverEveryCompiledFact(t *testing.T) {
+// TestTheSeedRowsCoverEveryCompiledFactInTheTagRegistry: migration 0048 seeds
+// every word the member's machineFacts can emit (cmd/nova-swarm/facts.go): the
+// OS, the ISA, landlock, kvm, tla and the three toolchains. Adoption changes no
+// card. The name carries the card's gate word, so the card's `-run 'Tag'`
+// selects it.
+func TestTheSeedRowsCoverEveryCompiledFactInTheTagRegistry(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
