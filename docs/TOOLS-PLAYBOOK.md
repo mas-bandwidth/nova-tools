@@ -175,7 +175,7 @@ warn by editing the files doctor reads.
 
 **The verbs, in order.**
 
-1. usage: `nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gpu none|metal] [--lane-lock <argv>] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>] [--prompt <file>]`.
+1. usage: `nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gpu none|metal] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>] [--prompt <file>]`.
    `--server` is the address of nova-sprint run --listen, and this machine opens no store. Each
    tick beats, reads the queue, reports ended children and takes cards up to the fleet row's
    width. `--reader` runs reads instead of work cards. `--pass <NAME,...>` names the environment

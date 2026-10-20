@@ -2321,11 +2321,7 @@ var nativeBuildParallelism = []string{"GOFLAGS=-p=4", "MAKEFLAGS=-j8", "CMAKE_BU
 // --no-shared-caches, which restores the old per-card caches under HOME, and while the root
 // is unset (a unit test of the argv builder), when there is nothing to share.
 func nativeCacheDir(cfg nativeRunConfig) string {
-	// On Windows the caches are per card, under the data home. The windows wall labels every
-	// write root low, so a bench-shared cache root would be a tree every card -- and every
-	// low process on the machine -- could poison for every later build, the member's own
-	// medium-integrity work included (the security read of #6037).
-	if cfg.noSharedCaches || cfg.root == "" || benchOS(cfg) == "windows" {
+	if cfg.noSharedCaches || cfg.root == "" {
 		return ""
 	}
 	return swarm.CacheRoot(cfg.root)

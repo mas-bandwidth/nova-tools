@@ -1,4 +1,4 @@
-//go:build !darwin && !linux && !windows
+//go:build !darwin && !linux
 
 // Every platform whose body is not built yet REFUSES, and this file is that refusal.
 // OS-enforced or refused: a stub that proceeded would be the silent sandbox
