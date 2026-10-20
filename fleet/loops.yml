@@ -446,14 +446,16 @@
     # The gate: a host whose unit file changed and whose restart did not run is
     # a failed play, not a green one. The release checklist reads this recap per
     # host, never the exit code alone: the file on disk may be new while the host
-    # still runs the old argv.
+    # still runs the old argv. A result carries `skipped` only when it was skipped (and `failed` only when it
+    # ran): each is defaulted to false before the test, since ansible-core 2.19+ errors on the missing attribute
+    # (intel's join, 2026-10-19: "object of type 'dict' has no attribute 'skipped'" on every real Linux run).
     - name: every changed unit was restarted or started (linux)
       vars:
         loop_changed_units: >-
           {{ ((loop_units.results | default([])) + (loop_timers.results | default([])))
              | selectattr('changed') | map(attribute='item.name') | unique | list }}
         loop_restarted_units: >-
-          {{ loop_states.results | default([])
+          {{ [{'failed': false, 'skipped': false}] | product(loop_states.results | default([])) | map('combine') | list
              | rejectattr('failed', 'equalto', true) | rejectattr('skipped', 'equalto', true)
              | map(attribute='item.name') | list }}
         loop_unrestarted: "{{ loop_changed_units | reject('in', loop_restarted_units) | list }}"
