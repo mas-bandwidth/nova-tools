@@ -170,7 +170,7 @@ func TestTheCardsShellReachesNoGh(t *testing.T) {
 	dir, _, err := writeNativeShellShims(t.TempDir())
 	require.NoError(t, err, "the shims could not be written: %q, %v", dir, err)
 	require.NotEmpty(t, dir, "the shims could not be written: %q, %v", dir, err)
-	env := pathWithDirsFirst([]string{"PATH=" + fake + string(os.PathListSeparator) + os.Getenv("PATH")}, dir)
+	env := pathWithDirsFirst(runtime.GOOS, []string{"PATH=" + fake + string(os.PathListSeparator) + os.Getenv("PATH")}, dir)
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skipf("no sh on PATH: %v", err)
@@ -275,4 +275,12 @@ func TestAPipeIntoTheShimReachesTheCommand(t *testing.T) {
 	require.NoError(t, err, "the shim did not run the command: %q", out)
 	require.Equal(t, "into the shim, through the wrapper, to the command\n", string(out),
 		"what was piped into the shim did not reach the command: the backgrounded shell lost its stdin")
+}
+
+// TestPathWithDirsFirstTakesTheGoos pins the one function's signature: the wrapper that
+// took no goos was unreachable in production, so pathWithDirsFirst takes the goos it is
+// building the environment for (TestDeadCode).
+func TestPathWithDirsFirstTakesTheGoos(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []string{"PATH=/t:/a"}, pathWithDirsFirst("linux", []string{"PATH=/a"}, "/t"))
 }

@@ -99,9 +99,9 @@ func TestANativeWindowsCardFindsTheToolchainAndKeepsItsProfileInTheDataHome(t *t
 func TestPathWithDirsFirstForWindowsFoldsTheSpellings(t *testing.T) {
 	t.Parallel()
 
-	got := pathWithDirsFirstFor("windows", []string{`Path=C:\a`, `PATH=C:\dup`, `X=1`}, `C:\t`, "")
+	got := pathWithDirsFirst("windows", []string{`Path=C:\a`, `PATH=C:\dup`, `X=1`}, `C:\t`, "")
 	assert.Equal(t, []string{`PATH=C:\t;C:\a`, `X=1`}, got)
-	assert.Equal(t, []string{`Path=C:\a`, `PATH=/t`}, pathWithDirsFirstFor("linux", []string{`Path=C:\a`}, "/t"))
+	assert.Equal(t, []string{`Path=C:\a`, `PATH=/t`}, pathWithDirsFirst("linux", []string{`Path=C:\a`}, "/t"))
 }
 
 func TestWithEnvSetReplacesByName(t *testing.T) {
