@@ -28,8 +28,12 @@ import (
 //
 // Three invariants:
 //   (a) every job in every workflow file (.yml and .yaml) declares a literal
-//       `timeout-minutes` of at most 2 at job level, on every event: there is
-//       no schedule, push-to-main or release exemption (twoMinuteCap below).
+//       `timeout-minutes` at job level, of at most 2 in every workflow that any
+//       change can trigger (twoMinuteCap below). A NIGHTLY, a workflow whose only
+//       triggers are schedule and workflow_dispatch, is exempt from the cap
+//       (Glenn 2026-10-21: "nightly runs are ALL exempt from the 2 minute rule!",
+//       "that's the whole point of a nightly run!"); its jobs still declare a
+//       literal, positive timeout so a hang cannot run for GitHub's six hours.
 //       A scheduled run executes the DEFAULT BRANCH's copy of the workflow, not
 //       this tree's: the nightly of 2026-09-27 (run 36292578789) ran main's
 //       ci.yml from 2026-09-18, whose test-hosted still said 15 and still had
@@ -76,12 +80,17 @@ func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
 			continue
 		}
 		timeouts := jobTimeouts(src)
+		nightly := isNightlyWorkflow(src)
 		for _, name := range names {
 			mins, ok := timeouts[name]
-			if !assert.True(t, ok, "%s: job %q declares no literal timeout-minutes; every job is `timeout-minutes: %d`, no expression, no per-leg ceiling", filepath.Base(file), name, twoMinuteCap) {
+			if !assert.True(t, ok, "%s: job %q declares no literal timeout-minutes; every job declares a literal timeout-minutes, no expression", filepath.Base(file), name) {
 				continue
 			}
-			assert.LessOrEqual(t, mins, twoMinuteCap, "%s: job %q has timeout-minutes %d, want %d: the cap is permanent and platform-wide; split the work into parallel functional programs instead of raising it", filepath.Base(file), name, mins, twoMinuteCap)
+			if nightly {
+				assert.Greater(t, mins, 0, "%s: nightly job %q has timeout-minutes %d; a nightly is exempt from the %d-minute cap but still needs a positive literal timeout", filepath.Base(file), name, mins, twoMinuteCap)
+				continue
+			}
+			assert.LessOrEqual(t, mins, twoMinuteCap, "%s: job %q has timeout-minutes %d, want %d: the cap holds on every workflow a change can trigger; split the work into parallel functional programs instead of raising it (only a schedule-only nightly is exempt)", filepath.Base(file), name, mins, twoMinuteCap)
 		}
 		assert.NotContains(t, src, "timeout-minutes: ${{", "%s: a timeout-minutes is an expression; the cap is the literal %d on every job", filepath.Base(file), twoMinuteCap)
 	}
@@ -731,4 +740,51 @@ func TestRunnerWorkspacesAreCleanedInPlace(t *testing.T) {
 	inPlace := strings.Count(ci, `clean -ffdxq; then`)
 	require.NotZero(t, sweeps, "%d workspace sweeps, %d of them clean in place first; every sweep resets and cleans the checkout before it may empty the tree", sweeps, inPlace)
 	require.Equal(t, inPlace, sweeps, "%d workspace sweeps, %d of them clean in place first; every sweep resets and cleans the checkout before it may empty the tree", sweeps, inPlace)
+}
+
+// onTriggerRe matches a trigger key at exactly two spaces under the top-level `on:`.
+var onTriggerRe = regexp.MustCompile(`^  ([a-z_]+):`)
+
+// isNightlyWorkflow reports whether a workflow's only triggers are schedule and
+// workflow_dispatch: a nightly, which no change can trigger, so the per-change
+// two-minute cap does not apply to it (Glenn 2026-10-21). A workflow with any
+// other trigger (push, pull_request, merge_group, workflow_run, ...) is not a nightly.
+func isNightlyWorkflow(src string) bool {
+	in := false
+	triggers := map[string]bool{}
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(line, "on:") {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if line != "" && line[0] != ' ' && line[0] != '#' {
+			break
+		}
+		if m := onTriggerRe.FindStringSubmatch(line); m != nil {
+			triggers[m[1]] = true
+		}
+	}
+	if !triggers["schedule"] {
+		return false
+	}
+	for k := range triggers {
+		if k != "schedule" && k != "workflow_dispatch" {
+			return false
+		}
+	}
+	return true
+}
+
+func TestIsNightlyWorkflow(t *testing.T) {
+	t.Parallel()
+	nightly := "name: n\non:\n  schedule:\n    - cron: \"0 5 * * *\"\n  workflow_dispatch:\n\njobs:\n"
+	assert.True(t, isNightlyWorkflow(nightly), "schedule + workflow_dispatch is a nightly")
+	assert.True(t, isNightlyWorkflow("on:\n  schedule:\n    - cron: \"1 2 * * *\"\njobs:\n"), "schedule alone is a nightly")
+	assert.False(t, isNightlyWorkflow("on:\n  push:\n  schedule:\n    - cron: \"1 2 * * *\"\njobs:\n"), "a push trigger makes it a per-change workflow")
+	assert.False(t, isNightlyWorkflow("on:\n  pull_request:\njobs:\n"), "a PR workflow is capped")
+	assert.False(t, isNightlyWorkflow("on:\n  workflow_dispatch:\njobs:\n"), "dispatch alone is not a nightly")
+	assert.False(t, isNightlyWorkflow("on:\n  workflow_run:\n    workflows: [ci]\njobs:\n"), "workflow_run is triggered by a change")
 }
