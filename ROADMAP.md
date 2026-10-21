@@ -24,7 +24,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (25)
-- [Setup, release and operations](#setup-release-and-operations) (99)
+- [Setup, release and operations](#setup-release-and-operations) (100)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -1136,6 +1136,14 @@ On 2026-10-20 main's ci run 39346166100 was cancelled (a concurrency clash with 
 Why it waits: a failed check that no green rerun clears blocks every cut of that commit
 
 From: the coordinator, 2026-10-20 (v1.7 deadlock list)
+
+### Coordinator sessions that run child agents take the sprint's strengths: cheap tiers, a scheduler, durable resume, independent reads, metrics
+
+Observed 2026-10-21: a live coordinator session ran 19 Opus child agents (landing virtualgo, moo and schema; rocketnet analysis and builds). It landed far faster than the sprint (goal-shaped briefs, live steering, one coordinator merging continuously) but showed five weaknesses the sprint already solves. Glenn: "we want to do both. Improve here, with lessons learned from the sprint when we work outside it, and improve sprint with lessons learned from outside it." Build, as nova-tools commands a session can call: (1) TIERS: a child's model follows its work's tier (mechanical/landing-script work on cheaper models, judgement and design on frontier), the way nova-sprint picks by card tier; today every child ran Opus. (2) SCHEDULER: one machine-wide slot and width scheduler for children (studio-slot.sh and pick-bench.sh grown into a real tool): per-machine widths, load per core, memory, reservations for a friend (hetzner2 for Stella), -j caps, refusing to overload; today the studio hit load 220 and hulk/vision 368/410 on 64 cores. (3) DURABLE RESUME: a child registry (goal, branch, clone path, last report, state) that survives an OS hang or restart, plus one command that lists and resumes every interrupted child from its own state; today 19 children died with the OS and were resumed by hand. (4) INDEPENDENT READS: high-blast landings (public repos, wire/spec changes, security) get one cold read by a different model before merge, not only the coordinator's spot check of hashes/CI/files. (5) METRICS: per-child tokens, wall time, machine time and landed commits, visible on the sprint dashboard beside the cards. (6) COORDINATOR LOAD: the coordinator's context is the bottleneck; integration lanes may merge their own PRs once CI and the read pass, reporting after, under the landing law (main's newer decisions win; one version of each thing). Keep what is good here: goal-shaped briefs, briefs written from the conversation's rulings, mid-task steering by message, merging as soon as each lane is green. Durable state lives on the internal disk, never /private/tmp (a reboot wiped the scratch picker and logs).
+
+Why it waits: The session landed in hours what the sprint scattered, but cost more, overloaded machines and lost all its children to one OS hang
+
+From: the owner, 2026-10-21
 
 ## Docs, models and the repository
 
