@@ -78,12 +78,6 @@ type Options struct {
 	beforeCopy func() // a test's seam: runs between the digest and the copy
 }
 
-// Selection is a choice of cases from the plan, as Select takes it.
-type Selection struct {
-	Group         string
-	Shards, Shard int
-}
-
 // selectionDiffers says how two selections differ, or "" when they are the
 // same cases in the same order with the same fields.
 func selectionDiffers(read, digested []Case) string {
@@ -158,11 +152,7 @@ func RunSuite(o Options) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("the case plan is refused: %v", err)
 	}
-	sel := o.Selection
-	if sel.Shards == 0 {
-		sel.Shards = 1
-	}
-	chosen, err := Select(current, sel.Group, sel.Shards, sel.Shard)
+	chosen, err := o.Selection.Choose(current)
 	if err != nil {
 		return res, fmt.Errorf("the selection no longer fits the case plan: %v", err)
 	}

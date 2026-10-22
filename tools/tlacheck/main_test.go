@@ -230,6 +230,39 @@ func TestGroupsPrintsTheRequiredGroupsAsOneLineOfJSON(t *testing.T) {
 	if r.code != 0 || json.Unmarshal([]byte(r.stdout), &groups) != nil || len(groups) < 5 {
 		t.Fatalf("the repository's groups: %+v", r)
 	}
+	// --shard-seconds deals each group into run's shards; the fixture has no
+	// records, so every case counts as the whole bound and runs alone.
+	r = call(t, nil, "groups", "--root", root, "--shard-seconds", "45")
+	var entries []struct {
+		Group         string
+		Shards, Shard int
+	}
+	if r.code != 0 || r.stderr != "" || json.Unmarshal([]byte(r.stdout), &entries) != nil || len(entries) == 0 {
+		t.Fatalf("--shard-seconds: %+v", r)
+	}
+	seen := map[string]int{}
+	for _, en := range entries {
+		if en.Shards < 1 || en.Shard < 0 || en.Shard >= en.Shards {
+			t.Fatalf("a shard outside its count: %+v", en)
+		}
+		seen[en.Group]++
+	}
+	for g, n := range seen {
+		for _, en := range entries {
+			if en.Group == g && en.Shards != n {
+				t.Fatalf("group %s lists %d shards of %d", g, n, en.Shards)
+			}
+		}
+	}
+	if len(seen) != 2 || seen["alpha"] == 0 || seen["beta"] == 0 {
+		t.Fatalf("--shard-seconds groups: %v", seen)
+	}
+	for _, bad := range [][]string{{"--shard-seconds", "-1"}, {"--shard-seconds", "45", "--stale"}} {
+		r = call(t, nil, append([]string{"groups", "--root", root}, bad...)...)
+		if r.code != 2 || r.stdout != "" {
+			t.Fatalf("groups %v: %+v", bad, r)
+		}
+	}
 	// A root with no plan is a refusal and prints no payload.
 	r = call(t, nil, "groups", "--root", t.TempDir())
 	if r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, "the case plan is refused") {
@@ -362,6 +395,8 @@ func TestRunRefusesWhatItCannotRunAndRunsNothing(t *testing.T) {
 	}{
 		{"an unknown group", []string{"--group", "nope"}, nil, "unknown group: nope"},
 		{"more shards than the group has cases", []string{"--group", "alpha", "--shards", "3"}, nil, "shard count exceeds the 2 cases of group alpha"},
+		{"a balanced deal with no group", []string{"--balanced", "--shards", "2"}, nil, "--balanced deals one group's cases"},
+		{"more balanced shards than the group has cases", []string{"--balanced", "--group", "alpha", "--shards", "3"}, nil, "use a shard count from 1 to the 2 cases of group alpha"},
 		{"a timeout over the cap", []string{"--timeout", "111s"}, nil, "at most 1m50s"},
 		{"a zero timeout", []string{"--timeout", "0s"}, nil, "must be positive"},
 		{"three workers", []string{"--workers", "3"}, nil, "workers must be 1 or 2"},

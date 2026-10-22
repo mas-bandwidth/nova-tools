@@ -333,6 +333,39 @@ func TestRunSuiteRunsCasesTheEditedPlanStillHolds(t *testing.T) {
 	require.Len(t, seen, 2, "suite = %+v, ran %d, %v", res, len(seen), err)
 }
 
+func TestRunSuiteDealsABalancedShardAgainFromTheSameRecords(t *testing.T) {
+	t.Parallel()
+	root, _ := suiteTree(t)
+	plan := header +
+		row("MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-") +
+		row("MCABroken.cfg", "MCA.tla", "invariant", "OnePlacePerTable", "ignore-terminal", "alpha", "required", "-") +
+		row("MCATerm.cfg", "MCA.tla", "temporal", "TermEnds", "check", "alpha", "required", "-")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", CasesFile), []byte(plan), 0o644))
+	all, err := LoadCases(root)
+	require.NoError(t, err)
+	// The last case is the long one: a balanced deal puts it alone on shard 0,
+	// where every second case of Select would have put MCA.cfg beside it.
+	records := []Record{{Config: "MCA.cfg", Seconds: "1"}, {Config: "MCABroken.cfg", Seconds: "1"}, {Config: "MCATerm.cfg", Seconds: "9"}}
+	selected, err := SelectBalanced(all, records, "alpha", 2, 0)
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, "MCATerm.cfg", selected[0].Config)
+	var seen []Run
+	o := suiteOptions(root, selected, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
+	o.Selection = Selection{Group: "alpha", Shards: 2, Shard: 0, Balanced: true, Records: records}
+	res, err := RunSuite(o)
+	require.NoError(t, err)
+	assert.False(t, res.Failed, "suite = %+v", res)
+	assert.Empty(t, res.Refused)
+	assert.Len(t, res.Records, 1)
+	// The same shard named without Balanced is Select's, another selection: refused.
+	o = suiteOptions(root, selected, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
+	o.Selection = Selection{Group: "alpha", Shards: 2, Shard: 0}
+	res, err = RunSuite(o)
+	require.NoError(t, err)
+	assert.Contains(t, res.Refused, "CASES.tsv changed after the cases were read")
+}
+
 func TestRunSuiteNeverExecutesTheFieldsItWasHanded(t *testing.T) {
 	t.Parallel()
 	alphaTree := func(t *testing.T) (string, []Case) {

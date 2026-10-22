@@ -54,6 +54,7 @@ func cmdGroups(e env, args []string) int {
 	fs := flags("groups")
 	root := fs.String("root", ".", "")
 	stale := fs.Bool("stale", false, "")
+	shardSeconds := fs.Float64("shard-seconds", 0, "")
 	if done, code := parse(e, "groups", fs, args, helpGroups); done {
 		return code
 	}
@@ -78,7 +79,36 @@ func cmdGroups(e env, args []string) int {
 			return refuse(e, "groups", err.Error(), tool+" groups -h")
 		}
 	}
-	raw, err := json.Marshal(groups)
+	var payload any = groups
+	if *shardSeconds != 0 {
+		if *stale {
+			return refuse(e, "groups", "--shard-seconds and --stale are not taken together", tool+" groups -h")
+		}
+		if !(*shardSeconds > 0) {
+			return refuse(e, "groups", "--shard-seconds takes seconds above 0", tool+" groups -h")
+		}
+		records, err := readRuns(*root)
+		if err != nil {
+			return refuse(e, "groups", "cannot read the records: "+err.Error()+layoutHint(err), tool+" groups -h")
+		}
+		type entry struct {
+			Group  string `json:"group"`
+			Shards int    `json:"shards"`
+			Shard  int    `json:"shard"`
+		}
+		entries := []entry{}
+		for _, g := range groups {
+			n, err := tlc.GroupShards(cases, records, g, *shardSeconds)
+			if err != nil {
+				return refuse(e, "groups", err.Error(), tool+" groups -h")
+			}
+			for i := 0; i < n; i++ {
+				entries = append(entries, entry{Group: g, Shards: n, Shard: i})
+			}
+		}
+		payload = entries
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		return refuse(e, "groups", err.Error(), tool+" groups -h")
 	}
@@ -95,6 +125,7 @@ func cmdRun(e env, args []string) int {
 	group := fs.String("group", "", "")
 	shards := fs.Int("shards", 1, "")
 	shard := fs.Int("shard", 0, "")
+	balanced := fs.Bool("balanced", false, "")
 	timeout := fs.Duration("timeout", tlc.BoundedCap, "")
 	workers := fs.Int("workers", 2, "")
 	manual := fs.Bool("manual", false, "")
@@ -108,7 +139,7 @@ func cmdRun(e env, args []string) int {
 	if *bench != "" {
 		set := map[string]bool{}
 		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-		for _, n := range []string{"shards", "shard"} {
+		for _, n := range []string{"shards", "shard", "balanced"} {
 			if set[n] {
 				return refuse(e, "run", "--"+n+" is not taken with --bench: it runs a group's cases one at a time itself", tool+" run --bench <machine> --group <group> ...")
 			}
@@ -155,9 +186,25 @@ func cmdRun(e env, args []string) int {
 	if e.goos != "linux" {
 		return refuse(e, "run", "TLC runs on a Linux bench, and this is "+e.goos+"; nothing was run", tool+" run --bench any ... (a record machine runs it), or the Linux CI job")
 	}
-	chosen, err := tlc.Select(cases, *group, *shards, *shard)
-	if err != nil {
-		return refuse(e, "run", err.Error(), tool+" groups --root "+*root)
+	var chosen []tlc.Case
+	var dealt []tlc.Record
+	if *balanced {
+		if *group == "" {
+			return refuse(e, "run", "--balanced deals one group's cases; name it with --group", tool+" groups --root "+*root+" --shard-seconds <seconds>")
+		}
+		records, err := readRuns(*root)
+		if err != nil {
+			return refuse(e, "run", "cannot read the records: "+err.Error()+layoutHint(err), tool+" run -h")
+		}
+		dealt = records
+		if chosen, err = tlc.SelectBalanced(cases, records, *group, *shards, *shard); err != nil {
+			return refuse(e, "run", err.Error(), tool+" groups --root "+*root+" --shard-seconds <seconds>")
+		}
+	} else {
+		var err error
+		if chosen, err = tlc.Select(cases, *group, *shards, *shard); err != nil {
+			return refuse(e, "run", err.Error(), tool+" groups --root "+*root)
+		}
 	}
 	jar, java, code, stop := findTLC(e, "run", *jarFlag, *javaFlag)
 	if stop {
@@ -174,7 +221,7 @@ func cmdRun(e env, args []string) int {
 	event(e.stdout, "HELPER", "OK", "name", "java-version", "version", javaVer)
 	res, err := tlc.RunSuite(tlc.Options{
 		Root: *root, Cases: chosen, Jar: jar, Java: java, JavaVer: javaVer, Out: *dir,
-		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard},
+		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard, Balanced: *balanced, Records: dealt},
 		Budget:    *timeout, Workers: *workers, Manual: *manual, Platform: platform, CPUs: e.cpus(), Exec: e.exec,
 		OnCase: func(r tlc.Record) {
 			status, w := "OK", e.stdout
