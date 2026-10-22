@@ -256,6 +256,38 @@ func TestRunSuiteRecordsAManualRun(t *testing.T) {
 	require.Equal(t, "1.5", res.Records[0].Budget, "records = %+v, %v", res.Records, err)
 }
 
+// A nightly run has no wall bound: a clock an hour a tick past a budget of
+// zero still runs every case, under a context with no deadline, and its
+// records say mode=nightly with no budget.
+func TestRunSuiteRunsANightlyWithNoWallBound(t *testing.T) {
+	t.Parallel()
+	s := openSuite(t)
+	s.opt.Clock = testClock(time.Hour).Now
+	s.opt.Nightly, s.opt.Budget = true, 0
+	inner := s.opt.Exec
+	var deadlines []bool
+	s.opt.Exec = func(ctx context.Context, r Run, log string) int {
+		_, has := ctx.Deadline()
+		deadlines = append(deadlines, has)
+		return inner(ctx, r, log)
+	}
+	res, err := RunSuite(s.opt)
+	require.NoError(t, err)
+	assert.False(t, res.Failed, "suite = %+v", res)
+	require.Len(t, s.seen, len(s.cases), "a nightly case was not started: %+v", res)
+	assert.Equal(t, []bool{false, false, false}, deadlines, "a nightly case ran under a deadline")
+	for _, r := range res.Records {
+		assert.Equal(t, NightlyMode, r.Mode, "record = %+v", r)
+		assert.Equal(t, NightlyBudget, r.Budget, "record = %+v", r)
+		assert.Equal(t, "PASS", r.Result, "record = %+v", r)
+	}
+	s = openSuite(t)
+	s.opt.Nightly, s.opt.Manual = true, true
+	_, err = RunSuite(s.opt)
+	assert.ErrorContains(t, err, "nightly or manual, not both")
+	assert.Empty(t, s.seen, "a nightly manual run ran cases")
+}
+
 func TestRunSuiteRefusesModelsEditedBetweenTheDigestAndTheCopy(t *testing.T) {
 	t.Parallel()
 	s := openSuite(t)

@@ -13,7 +13,7 @@ const helpRun = `tlacheck run: run the declared cases of tla/CASES.tsv under one
 
 usage: tlacheck run --dir <dir> [--root <checkout>] [--jar <tla2tools.jar>] [--java <java>]
                     [--group <group>] [--shards <n> --shard <i> [--balanced]] [--timeout <duration>]
-                    [--workers 1|2] [--manual]
+                    [--workers 1|2] [--manual | --nightly]
        tlacheck run --dir <dir> --bench <machine>|any [--root <checkout>] [--group <group>]
                     [--jar <path on the bench>] [--java <java on the bench>] [--timeout <duration>]
                     [--workers 1|2] [--load-below <load>] [--trough-wait <duration>]
@@ -34,6 +34,9 @@ usage: tlacheck run --dir <dir> [--root <checkout>] [--jar <tla2tools.jar>] [--j
   --workers  TLC workers for a case expected to pass, 1 or 2 (default 2); a counterexample
              case always uses one
   --manual   an explicit bench experiment: mode=manual in the records; refused in CI
+  --nightly  the scheduled repeat of the models: no wall bound at all (no --timeout), mode=nightly
+             and budget - in the records, which merge refuses: never committed; taken only in a
+             GitHub Actions run whose event is schedule or workflow_dispatch
   --bench    run on a TLC record machine from here, the record refresh in one command: the
              machine named (ssh <machine>), or any: of the machine rows with tla=true
              (nova-config machine list, with NOVA_PG_DSN), the one with the lowest load per

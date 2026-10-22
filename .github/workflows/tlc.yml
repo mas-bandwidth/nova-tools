@@ -13,7 +13,9 @@ jobs:
   groups:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 2
+    # A nightly (schedule and dispatch only) has no time limit (the owner,
+    # 2026-10-22); 360 is GitHub's maximum, kept only as a hang guard.
+    timeout-minutes: 360
     outputs:
       groups: ${{ steps.plan.outputs.groups }}
     steps:
@@ -48,11 +50,11 @@ jobs:
     name: models (${{ matrix.entry.group }} ${{ matrix.entry.shard }}/${{ matrix.entry.shards }})
     needs: groups
     runs-on: [self-hosted, linux, x64]
-    # A nightly (schedule and dispatch only) is exempt from the two-minute cap
-    # (the owner, 2026-10-21). TLC itself stays bounded at TLC_BUDGET=110 s a shard;
-    # the job's checkout and `go run` build sit on top of it, which put whole
-    # groups at the old two-minute job cap.
-    timeout-minutes: 5
+    # A nightly (schedule and dispatch only) has no time limit (the owner,
+    # 2026-10-22): TLC runs with no wall bound (make tlc-nightly), and 360 is
+    # GitHub's maximum, kept only as a hang guard. Its records are measurements;
+    # the committed records stay bounded runs from a record machine.
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -91,7 +93,7 @@ jobs:
             echo 'TLC_JAR must name an installed TLC jar on the Linux runner; configure the repository variable' >&2
             exit 2
           }
-          make tlc TLC_JAR="$TLC_JAR" TLC_GROUP="$TLC_GROUP" TLC_SHARDS="$TLC_SHARDS" TLC_SHARD="$TLC_SHARD" TLC_OUT="$RUNNER_TEMP/tlc-$TLC_GROUP-$TLC_SHARD" TLC_BUDGET=110
+          make tlc-nightly TLC_JAR="$TLC_JAR" TLC_GROUP="$TLC_GROUP" TLC_SHARDS="$TLC_SHARDS" TLC_SHARD="$TLC_SHARD" TLC_OUT="$RUNNER_TEMP/tlc-$TLC_GROUP-$TLC_SHARD"
       - name: Retain measured records and logs, including failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

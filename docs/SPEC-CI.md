@@ -2999,8 +2999,15 @@ must be named by exactly one row's module column, so a module no row names is re
 
 
 The scheduled/on-demand `.github/workflows/tlc.yml` derives its required matrix
-from the case plan and runs only on self-hosted Linux runners, with two-minute
-job timeouts and a 110-second group limit. The repository's `TLC_JAR` variable
+from the case plan and runs only on self-hosted Linux runners. A nightly has no
+time limit (the owner, 2026-10-22): each shard runs `make tlc-nightly`
+(`tlacheck run --nightly`, which tlacheck takes only in a scheduled or
+dispatched GitHub Actions run) with no wall bound, and every job's
+`timeout-minutes: 360` is GitHub's maximum, kept only as a hang guard
+(`TestTLCNightlyHasNoWallBound`). Its records carry `mode=nightly` and budget `-`;
+they are measurements, never committed records: `tlacheck merge` refuses them and
+the records rule refuses a committed one. The committed records stay bounded
+110-second runs from a record machine (`tlacheck run --bench`). The repository's `TLC_JAR` variable
 names the preinstalled jar; Java and Go must already be on PATH. Logs and
 TSV records are uploaded even on failure. This workflow does not accept PR events.
 The ordinary change gate checks the committed records; the nightly repeats the

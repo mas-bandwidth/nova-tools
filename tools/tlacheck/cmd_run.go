@@ -129,6 +129,7 @@ func cmdRun(e env, args []string) int {
 	timeout := fs.Duration("timeout", tlc.BoundedCap, "")
 	workers := fs.Int("workers", 2, "")
 	manual := fs.Bool("manual", false, "")
+	nightly := fs.Bool("nightly", false, "")
 	bench := fs.String("bench", "", "")
 	loadBelow := fs.Float64("load-below", 0, "")
 	troughWait := fs.Duration("trough-wait", 30*time.Minute, "")
@@ -163,10 +164,19 @@ func cmdRun(e env, args []string) int {
 	if code, stop := checkRunner(e, "run", *root); stop {
 		return code
 	}
+	if *nightly {
+		if why := nightlyRefusal(e, fs); why != "" {
+			return refuse(e, "run", why, tool+" run -h")
+		}
+	}
 	if *manual && (e.getenv("GITHUB_ACTIONS") == "true" || e.getenv("NOVA_CI") == "1") {
 		return refuse(e, "run", "--manual is forbidden in CI; every workflow job stays under two minutes", tool+" run --group <group> ... without --manual")
 	}
-	if err := tlc.CheckLimits(*timeout, *workers, *manual); err != nil {
+	if *nightly {
+		if err := tlc.CheckWorkers(*workers); err != nil {
+			return refuse(e, "run", err.Error(), tool+" run -h")
+		}
+	} else if err := tlc.CheckLimits(*timeout, *workers, *manual); err != nil {
 		return refuse(e, "run", err.Error(), tool+" run -h")
 	}
 	if *bench != "" {
@@ -222,7 +232,7 @@ func cmdRun(e env, args []string) int {
 	res, err := tlc.RunSuite(tlc.Options{
 		Root: *root, Cases: chosen, Jar: jar, Java: java, JavaVer: javaVer, Out: *dir,
 		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard, Balanced: *balanced, Records: dealt},
-		Budget:    *timeout, Workers: *workers, Manual: *manual, Platform: platform, CPUs: e.cpus(), Exec: e.exec,
+		Budget:    *timeout, Nightly: *nightly, Workers: *workers, Manual: *manual, Platform: platform, CPUs: e.cpus(), Exec: e.exec,
 		OnCase: func(r tlc.Record) {
 			status, w := "OK", e.stdout
 			if r.Result != "PASS" {
@@ -249,6 +259,29 @@ func cmdRun(e env, args []string) int {
 	}
 	event(e.stdout, "RUN", "OK", "cases", fmt.Sprint(len(res.Records)), "records", records)
 	return 0
+}
+
+// nightlyEvents are the workflow events a nightly run is taken for: the
+// schedule, and a dispatch that runs the scheduled job by hand. Every event a
+// change triggers keeps the bounded run.
+var nightlyEvents = map[string]bool{"schedule": true, "workflow_dispatch": true}
+
+// nightlyRefusal is why --nightly is not taken here, or "". A nightly run has
+// no wall bound, so it is taken only in a GitHub Actions run of a scheduled or
+// dispatched workflow, never with a budget, --manual or --bench (a bench run
+// writes committed records, and a nightly record is never one).
+func nightlyRefusal(e env, fs *flag.FlagSet) string {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	for _, n := range []string{"timeout", "manual", "bench"} {
+		if set[n] {
+			return "--" + n + " is not taken with --nightly: a nightly run has no wall bound and its records are never committed"
+		}
+	}
+	if e.getenv("GITHUB_ACTIONS") != "true" || !nightlyEvents[e.getenv("GITHUB_EVENT_NAME")] {
+		return "--nightly is taken only in a scheduled or dispatched GitHub Actions run (GITHUB_EVENT_NAME schedule or workflow_dispatch); a change's run stays bounded"
+	}
+	return ""
 }
 
 func cmdMerge(e env, args []string) int {
