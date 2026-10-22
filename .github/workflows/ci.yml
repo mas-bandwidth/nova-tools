@@ -1001,19 +1001,28 @@ jobs:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
       - name: use the installed Go toolchain
+        # The same toolchain pick as the unit legs, verbatim (see the test job).
         shell: bash
         run: |
           set -euo pipefail
+          # The bench's own Go wins over a distro Go on the system path: on a Linux bench,
+          # /usr/bin/go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain.
+          # The newest Go under ~/sdk is preferred over a stale root-owned /usr/local/go 1.22
+          # on macOS runners that keep 1.27 in ~/sdk.
+          # The toolchain go.mod names wins when ~/sdk holds it (a runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
           want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
           [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
           sdk=
           if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
-          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true)
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
       - name: build tools/ci once
         shell: bash
