@@ -179,52 +179,45 @@ func TestGroupShardsKeepsEveryShardWithinItsRecordedSeconds(t *testing.T) {
 	}{
 		{"the whole group fits one shard", 70, records, 1},
 		// Longest first to the emptiest shard: A+B and C+D, 35 s each. Every
-		// third case of a plain Select would have put A and C together.
+		// second case of a plain Select would have put A and C together.
 		{"the two heavy cases are dealt apart", 40, records, 2},
 		{"cases over the bound run alone", 1, records, 4},
 		// D unrecorded counts as the whole bounded budget and runs alone.
 		{"an unrecorded case is never dealt beside another", 40, records[:3], 3},
 	} {
 		got, err := GroupShards(cases, tc.records, "g", tc.max)
-		if err != nil || got != tc.want {
-			t.Errorf("%s: GroupShards = %d, %v; want %d", tc.name, got, err, tc.want)
-			continue
-		}
+		require.NoError(t, err, tc.name)
+		assert.Equal(t, tc.want, got, tc.name)
 		seen := map[string]int{}
 		for shard := 0; shard < got; shard++ {
 			chosen, err := SelectBalanced(cases, tc.records, "g", got, shard)
-			if err != nil || len(chosen) == 0 {
-				t.Fatalf("%s: shard %d of %d: %v, %v", tc.name, shard, got, chosen, err)
-			}
+			require.NoError(t, err, "%s: shard %d of %d", tc.name, shard, got)
+			assert.NotEmpty(t, chosen, "%s: shard %d of %d", tc.name, shard, got)
 			var sum float64
 			for _, c := range chosen {
 				seen[c.Config]++
 				s := UnrecordedSeconds
 				for _, r := range tc.records {
 					if r.Config == c.Config {
-						s, _ = strconv.ParseFloat(r.Seconds, 64)
+						s, err = strconv.ParseFloat(r.Seconds, 64)
+						require.NoError(t, err)
 					}
 				}
 				sum += s
 			}
-			if sum > tc.max && len(chosen) > 1 {
-				t.Errorf("%s: shard %d of %d holds %.0f s", tc.name, shard, got, sum)
+			if len(chosen) > 1 {
+				assert.LessOrEqual(t, sum, tc.max, "%s: shard %d of %d", tc.name, shard, got)
 			}
 		}
 		// The shards partition the group: every case once, nothing from another group.
-		if len(seen) != 4 || seen["MCA.cfg"] != 1 || seen["MCB.cfg"] != 1 || seen["MCC.cfg"] != 1 || seen["MCD.cfg"] != 1 {
-			t.Errorf("%s: the shards cover %v", tc.name, seen)
-		}
+		assert.Equal(t, map[string]int{"MCA.cfg": 1, "MCB.cfg": 1, "MCC.cfg": 1, "MCD.cfg": 1}, seen, tc.name)
 	}
-	if _, err := GroupShards(cases, records, "nope", 40); err == nil {
-		t.Error("an unknown group was dealt")
-	}
-	if _, err := GroupShards(cases, records, "g", 0); err == nil {
-		t.Error("a zero bound was taken")
-	}
+	_, err := GroupShards(cases, records, "nope", 40)
+	require.Error(t, err, "an unknown group was dealt")
+	_, err = GroupShards(cases, records, "g", 0)
+	require.Error(t, err, "a zero bound was taken")
 	for _, bad := range [][2]int{{0, 0}, {5, 0}, {2, 2}, {2, -1}} {
-		if _, err := SelectBalanced(cases, records, "g", bad[0], bad[1]); err == nil {
-			t.Errorf("shard %d of %d was taken", bad[1], bad[0])
-		}
+		_, err := SelectBalanced(cases, records, "g", bad[0], bad[1])
+		assert.Error(t, err, "shard %d of %d was taken", bad[1], bad[0])
 	}
 }

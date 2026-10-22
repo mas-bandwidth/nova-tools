@@ -49,7 +49,7 @@ jobs:
     needs: groups
     runs-on: [self-hosted, linux, x64]
     # A nightly (schedule and dispatch only) is exempt from the two-minute cap
-    # (Glenn 2026-10-21). TLC itself stays bounded at TLC_BUDGET=110 s a shard;
+    # (the owner, 2026-10-21). TLC itself stays bounded at TLC_BUDGET=110 s a shard;
     # the job's checkout and `go run` build sit on top of it, which put whole
     # groups at the old two-minute job cap.
     timeout-minutes: 5
