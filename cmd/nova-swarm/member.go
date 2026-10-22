@@ -1867,7 +1867,7 @@ func scriptRun(base, sandbox string, noWall bool) func(context.Context, string, 
 		}
 		wall.Tmp = tmp
 		if wall.Bin != "" {
-			wall.Read = stepReads(dir, bin, benchPasswdHome())
+			wall.Read = stepReads(dir, bin, benchPasswdHome(), stepGoroot(os.Getenv, exec.LookPath))
 		}
 		run := argv
 		if wall.Bin != "" {
