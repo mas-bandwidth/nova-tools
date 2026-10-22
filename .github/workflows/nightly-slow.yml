@@ -104,22 +104,6 @@ jobs:
         run: |
           "$RUNNER_TEMP/ci" install-postgres
 
-      - name: install the tested Ansible for the fleet fixtures
-        # Every ubuntu leg runs ./..., so the fleet package's play test and, in the
-        # functional leg, the toolchain fixtures and fleet play tests run here. They
-        # are sized and certified for ansible-core 2.16.3 (certification.yml's step of
-        # this name; docs/TESTS.md). The hosted image's own ansible-core (2.21 on
-        # 2026-10-22) runs the same plays about twice as slowly: the fleet package's
-        # check play took 37-45 s against its 40 s bound (run 39812741141) where
-        # certification's 2.16.3 ran the whole package in 20.6 s (run 39387072169).
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          python3 -m venv "$RUNNER_TEMP/toolchains-ansible"
-          "$RUNNER_TEMP/toolchains-ansible/bin/python" -m pip install --disable-pip-version-check 'ansible-core==2.16.3'
-          "$RUNNER_TEMP/toolchains-ansible/bin/ansible-playbook" --version
-          echo "$RUNNER_TEMP/toolchains-ansible/bin" >> "$GITHUB_PATH"
-
       - name: tagged suite
         env:
           NOVA_CI: ${{ matrix.tag == 'functional' && '1' || '' }}

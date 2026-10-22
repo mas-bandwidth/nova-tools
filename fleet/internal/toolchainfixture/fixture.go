@@ -27,9 +27,13 @@ func Check(t *testing.T, fleetRoot, scenario string) {
 	t.Helper()
 	require.Contains(t, []string{"idempotent", "drift", "bad-digest"}, scenario)
 	// Each isolated verification package performs a real install of all nine
-	// tools and a second play. Measured Linux Ansible 2.16 runs can exceed 60s
-	// under load; stay within certification's 75-second package bound.
-	ctx, cancel := context.WithTimeout(context.Background(), 72*time.Second)
+	// tools and a second play. These are functional tests: certification runs no
+	// functional tag (its toolchainapply shards print "no test files"), so they
+	// run in nightly-slow's functional leg beside the whole tree, on the hosted
+	// image's ansible-core (2.21; the plays need 2.19+, e.g. find's
+	// checksum_algorithm). There the first play alone passed 45 s (run
+	// 39820349719). The bound catches a hung play, not a slow one.
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 	ansible, err := exec.LookPath("ansible-playbook")
 	if err != nil {
@@ -172,7 +176,7 @@ func writeToolchainFixtureVars(t *testing.T, path, tmp, sha string) {
 
 func runToolchainsFixturePlay(t *testing.T, parent context.Context, ansible, fleetRoot, tmp, varsPath string, check, wantError bool) string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(parent, 45*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 120*time.Second)
 	defer cancel()
 	args := []string{"tools.yml", "--tags", "toolchains", "-i", "testdata/toolchains-inventory.ini", "--limit", "fixture-linux", "-e", "@" + varsPath}
 	if check {
