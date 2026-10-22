@@ -1336,6 +1336,13 @@ is restored at the path Go uses on each OS (`~/Library/Caches/go-build` on
 macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
 `actions/cache/restore` before `build`, and written by `actions/cache/save`
 after `build` and before the test step, only when the key was not an exact hit.
+The key carries the commit (`<os>-go-<go.mod hash>-<sha>`) and restores the
+newest entry for this go.mod by prefix, so every run writes a fresh entry.
+**Why the commit in the key.** A key of go.mod alone was an exact hit for as
+long as go.mod was unchanged, so the save never ran and the entry aged with
+every change: main's entry of 2026-10-16 built the promotion of 2026-10-22
+nearly cold (build 41-88 s), and run 39838504538 was cancelled at the cap twice
+(`TestHostedCacheIsWhereGoKeepsIt`).
 **Why the per-OS path.** GOCACHE is `os.UserCacheDir()/go-build`, which is
 `~/Library/Caches/go-build` on macos-latest (the job's own `go env`), so the one
 Linux path cached no macOS build at all.

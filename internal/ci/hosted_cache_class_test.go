@@ -120,7 +120,16 @@ func TestHostedCacheIsWhereGoKeepsIt(t *testing.T) {
 	assert.Contains(t, steps[toolSave].With["key"], "steps."+tid+".outputs.cache-primary-key")
 	assert.Contains(t, steps[toolSave].If, "steps."+tid+".outputs.cache-hit != 'true'")
 	assert.NotContains(t, steps[restore].With["path"], "GO_TOOL_DIR", "adding the toolchain changes the cache version and prevents restoration of the established native cache")
-	assert.Equal(t, "${{ runner.os }}-go-${{ hashFiles('go.mod') }}", steps[restore].With["key"], "the native cache must retain its existing key on a cold toolchain-cache run")
+	// The native key carries the commit and restores by the go.mod key as a prefix:
+	// a key of go.mod alone is an exact hit for as long as go.mod is unchanged, the
+	// save (a miss only) never runs, and the entry ages with every change after it.
+	// Main's entry of 2026-10-16 built the promotion of 2026-10-22 nearly cold
+	// (build 41-88 s) and run 39838504538 was cancelled at the cap twice. The prefix
+	// keeps the entry written under the go.mod key alone restorable, and the paths
+	// (the cache version) are unchanged.
+	goModKey := "${{ runner.os }}-go-${{ hashFiles('go.mod') }}"
+	assert.Equal(t, goModKey+"-${{ github.sha }}", steps[restore].With["key"], "the native cache key must carry the commit, so every run saves a fresh entry")
+	assert.Contains(t, strings.Split(steps[restore].With["restore-keys"], "\n"), goModKey, "the native cache must restore the newest entry for this go.mod by prefix; restore-keys:\n%s", steps[restore].With["restore-keys"])
 	for _, i := range []int{restore, save} {
 		s := steps[i]
 		path := s.With["path"]
