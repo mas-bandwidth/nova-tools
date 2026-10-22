@@ -101,7 +101,9 @@ func newLaneFixture(t *testing.T, c laneEndCase) *laneFixture {
 	b.WriteString(": > '" + f.ready + "'\n")
 	if c.by != "" {
 		b.WriteString("trap 'echo \"NATIVE FAIL label=c1 rc=-1 wall=1.00s harness=killed budget=-/1 reason=terminated\"; exit 143' TERM\n")
-		b.WriteString("while :; do sleep 0.1; done\n")
+		// sh runs a trap only once the command in the foreground ends, so the step is
+		// how long the stop waits to be heard: short, so the test does not wait it out.
+		b.WriteString("while :; do sleep 0.01; done\n")
 	} else {
 		b.WriteString("echo '" + c.line + "'\nexit " + strconv.Itoa(c.code) + "\n")
 	}
