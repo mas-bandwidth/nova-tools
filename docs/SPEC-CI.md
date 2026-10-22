@@ -1337,7 +1337,11 @@ macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
 `actions/cache/restore` before `build`, and written by `actions/cache/save`
 after `build` and before the test step, only when the key was not an exact hit.
 The key carries the commit (`<os>-go-<go.mod hash>-<sha>`) and restores the
-newest entry for this go.mod by prefix, so every run writes a fresh entry.
+newest entry for this go.mod by the prefix `<os>-go-<go.mod hash>-`, so every
+run writes a fresh entry. The prefix ends in `-`: a restore key equal to an
+entry's whole key is an exact match and wins over every newer prefix match, and
+the bare go.mod key restored the entry of 2026-10-16 after the commit keys were
+written (run 39861035723).
 **Why the commit in the key.** A key of go.mod alone was an exact hit for as
 long as go.mod was unchanged, so the save never ran and the entry aged with
 every change: main's entry of 2026-10-16 built the promotion of 2026-10-22

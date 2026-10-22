@@ -221,17 +221,25 @@ func (h installHost) runInstallStep(env []string, name string, args ...string) i
 }
 
 // aptInstall runs `apt-get update` and `apt-get install` for pkgs as the user,
-// and as root through `sudo -n` when either refuses. It returns the exit code
-// of the last command it ran.
+// and as root through `sudo -n` when either refuses. As root it installs from
+// the package lists the machine already holds first, and updates them only when
+// that install fails: on a hosted runner the image carries current lists, and
+// the update was 30-40 s of the two-minute cap (main push run 39861035723,
+// test-hosted ubuntu shard 7: cancelled with the build warm, the install 44 s).
+// It returns the exit code of the last command it ran.
 func (h installHost) aptInstall(pkgs ...string) int {
 	install := append([]string{"install", "-y", "-qq"}, pkgs...)
 	if h.runInstallStep(nil, "apt-get", "update", "-qq") == 0 && h.runInstallStep(nil, "apt-get", install...) == 0 {
 		return 0
 	}
+	asRoot := append([]string{"-n", "apt-get"}, install...)
+	if h.runInstallStep(nil, "sudo", asRoot...) == 0 {
+		return 0
+	}
 	if code := h.runInstallStep(nil, "sudo", "-n", "apt-get", "update", "-qq"); code != 0 {
 		return code
 	}
-	return h.runInstallStep(nil, "sudo", append([]string{"-n", "apt-get"}, install...)...)
+	return h.runInstallStep(nil, "sudo", asRoot...)
 }
 
 // brewEnv keeps Homebrew from updating itself or upgrading what is installed

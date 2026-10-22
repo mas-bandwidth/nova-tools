@@ -126,10 +126,14 @@ func TestHostedCacheIsWhereGoKeepsIt(t *testing.T) {
 	// Main's entry of 2026-10-16 built the promotion of 2026-10-22 nearly cold
 	// (build 41-88 s) and run 39838504538 was cancelled at the cap twice. The prefix
 	// keeps the entry written under the go.mod key alone restorable, and the paths
-	// (the cache version) are unchanged.
+	// (the cache version) are unchanged. The prefix ends in "-": a restore key equal
+	// to an entry's whole key is an exact match and beats every newer prefix match,
+	// so the bare go.mod key restored the entry of 2026-10-16 over the commit keys
+	// written since (run 39861035723).
 	goModKey := "${{ runner.os }}-go-${{ hashFiles('go.mod') }}"
 	assert.Equal(t, goModKey+"-${{ github.sha }}", steps[restore].With["key"], "the native cache key must carry the commit, so every run saves a fresh entry")
-	assert.Contains(t, strings.Split(steps[restore].With["restore-keys"], "\n"), goModKey, "the native cache must restore the newest entry for this go.mod by prefix; restore-keys:\n%s", steps[restore].With["restore-keys"])
+	assert.NotContains(t, strings.Split(steps[restore].With["restore-keys"], "\n"), goModKey, "a restore key equal to the go.mod key alone exactly matches the old entry and beats every newer commit entry")
+	assert.Contains(t, strings.Split(steps[restore].With["restore-keys"], "\n"), goModKey+"-", "the native cache must restore the newest entry for this go.mod by prefix; restore-keys:\n%s", steps[restore].With["restore-keys"])
 	for _, i := range []int{restore, save} {
 		s := steps[i]
 		path := s.With["path"]
