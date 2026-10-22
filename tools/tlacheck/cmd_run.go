@@ -187,6 +187,7 @@ func cmdRun(e env, args []string) int {
 		return refuse(e, "run", "TLC runs on a Linux bench, and this is "+e.goos+"; nothing was run", tool+" run --bench any ... (a record machine runs it), or the Linux CI job")
 	}
 	var chosen []tlc.Case
+	var dealt []tlc.Record
 	if *balanced {
 		if *group == "" {
 			return refuse(e, "run", "--balanced deals one group's cases; name it with --group", tool+" groups --root "+*root+" --shard-seconds <seconds>")
@@ -195,6 +196,7 @@ func cmdRun(e env, args []string) int {
 		if err != nil {
 			return refuse(e, "run", "cannot read the records: "+err.Error()+layoutHint(err), tool+" run -h")
 		}
+		dealt = records
 		if chosen, err = tlc.SelectBalanced(cases, records, *group, *shards, *shard); err != nil {
 			return refuse(e, "run", err.Error(), tool+" groups --root "+*root+" --shard-seconds <seconds>")
 		}
@@ -219,7 +221,7 @@ func cmdRun(e env, args []string) int {
 	event(e.stdout, "HELPER", "OK", "name", "java-version", "version", javaVer)
 	res, err := tlc.RunSuite(tlc.Options{
 		Root: *root, Cases: chosen, Jar: jar, Java: java, JavaVer: javaVer, Out: *dir,
-		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard},
+		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard, Balanced: *balanced, Records: dealt},
 		Budget:    *timeout, Workers: *workers, Manual: *manual, Platform: platform, CPUs: e.cpus(), Exec: e.exec,
 		OnCase: func(r tlc.Record) {
 			status, w := "OK", e.stdout

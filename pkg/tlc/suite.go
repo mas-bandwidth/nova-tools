@@ -78,10 +78,14 @@ type Options struct {
 	beforeCopy func() // a test's seam: runs between the digest and the copy
 }
 
-// Selection is a choice of cases from the plan, as Select takes it.
+// Selection is a choice of cases from the plan, as Select takes it, or with
+// Balanced as SelectBalanced takes it over Records (the records the deal was
+// read from, so the suite deals the same shard again).
 type Selection struct {
 	Group         string
 	Shards, Shard int
+	Balanced      bool
+	Records       []Record
 }
 
 // selectionDiffers says how two selections differ, or "" when they are the
@@ -162,7 +166,12 @@ func RunSuite(o Options) (Result, error) {
 	if sel.Shards == 0 {
 		sel.Shards = 1
 	}
-	chosen, err := Select(current, sel.Group, sel.Shards, sel.Shard)
+	var chosen []Case
+	if sel.Balanced {
+		chosen, err = SelectBalanced(current, sel.Records, sel.Group, sel.Shards, sel.Shard)
+	} else {
+		chosen, err = Select(current, sel.Group, sel.Shards, sel.Shard)
+	}
 	if err != nil {
 		return res, fmt.Errorf("the selection no longer fits the case plan: %v", err)
 	}
