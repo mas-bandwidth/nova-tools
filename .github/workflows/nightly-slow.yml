@@ -23,11 +23,13 @@
 #                             do). They have a leg before they have a file, so the
 #                             first such test that lands runs the same night rather
 #                             than never.
-#   functional ubuntu         the tests that start a redis-server: run as
-#                             whole streams land, and here every night. Its leg
-#                             installs redis-server and sets NOVA_CI=1 so a missing
-#                             binary fails instead of skipping, and passes `slow`
-#                             too for the four files that are both.
+#   functional                MOVED to ci.yml's `functional-slow` job (schedule
+#                             only, on the bench runners ci.yml's functional job
+#                             uses; the owner, 2026-10-22): `go test -tags
+#                             functional,slow ./...` there. A hosted runner's apt
+#                             carries Redis 7 where the code needs Redis 8, and
+#                             its two cores ran the tier's analysis deadlines out
+#                             (run 39864084844).
 #   novadisk  macos           cmd/nova-sandbox's one real end-to-end run: a real APFS
 #                             volume made and destroyed. It is tagged off because
 #                             EIGHT CI runners share the Mac this tree is built on —
@@ -69,9 +71,6 @@ jobs:
             tag: soak
           - os: ubuntu-latest
             tag: nightly
-          - os: ubuntu-latest
-            tag: functional
-            tags: functional,slow
           - os: macos-latest
             tag: novadisk
     name: ${{ matrix.tag }} (${{ matrix.os }})
@@ -109,25 +108,11 @@ jobs:
         run: |
           "$RUNNER_TEMP/ci" fetch-ancestry --promotion sprint/foundation
 
-      - name: install redis-server
-        if: matrix.tag == 'functional'
-        run: |
-          "$RUNNER_TEMP/ci" install-redis-server
-
-      - name: install postgres
-        if: matrix.tag == 'functional'
-        # nova-config's functional tests spawn a throwaway Postgres
-        # (pkg/nsprint/testutil/pg); a missing binary fails them.
-        run: |
-          "$RUNNER_TEMP/ci" install-postgres
-
       - name: tagged suite
         # -timeout 355m and not Go's 10-minute default: a nightly has no time limit
         # (the owner, 2026-10-22). 355m sits under the 360-minute job ceiling only so a
         # hang still ends with a Go stack naming the test.
-        env:
-          NOVA_CI: ${{ matrix.tag == 'functional' && '1' || '' }}
-        run: go test -tags ${{ matrix.tags || matrix.tag }} -count=1 -timeout 355m ./...
+        run: go test -tags ${{ matrix.tag }} -count=1 -timeout 355m ./...
 
   report:
     # ONE ISSUE PER DAY, not one per leg. The matrix jobs above are `failure()`

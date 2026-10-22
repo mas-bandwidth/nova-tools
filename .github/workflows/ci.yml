@@ -968,6 +968,102 @@ jobs:
           NIGHTLY_MAKE: ${{ github.event_name == 'schedule' && 'FUNCTIONAL_TIMEOUT=355m' || '' }}
         run: make test-functional PKGS="${{ matrix.entry.packages }}" $NIGHTLY_MAKE
 
+  functional-slow:
+    # THE FUNCTIONAL TIER WITH `slow`, on the nightly schedule only: every test behind
+    # //go:build functional (and the files that are both functional and slow), the whole
+    # tree, on the bench runners the functional job above uses. It moved here from
+    # nightly-slow.yml's hosted leg (the owner, 2026-10-22): a hosted runner's apt
+    # carries Redis 7 where the code needs Redis 8, and its two cores ran the
+    # tier's own analysis deadlines out (run 39864084844). Schedule only: a dispatch
+    # keeps the two-minute cap, which this job does not fit. A red here blocks nothing
+    # (ci-ok does not run on schedule); it is evidence.
+    name: functional-slow
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: ${{ github.event_name == 'schedule' && 360 || 2 }}
+    steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs.
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+
+      - name: use the installed Go toolchain
+        # The same toolchain pick as the unit legs, verbatim (see the test job).
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The bench's own Go wins over a distro Go on the system path: on a Linux bench,
+          # /usr/bin/go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain.
+          # The newest Go under ~/sdk is preferred over a stale root-owned /usr/local/go 1.22
+          # on macOS runners that keep 1.27 in ~/sdk.
+          # The toolchain go.mod names wins when ~/sdk holds it (a runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: build tools/ci once
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: take this runner's share of the machine, not all of it
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" runner-share
+
+      - name: fetch dev's ancestry for the laws
+        # `./...` builds internal/ci, whose laws read git: dev's ancestry for a main run
+        # at a merge commit and for the shrink-only ratchets.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry dev
+
+      - name: install redis-server
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
+
+      - name: install postgres
+        # nova-config's functional tests spawn a throwaway Postgres
+        # (pkg/nsprint/testutil/pg); a missing binary fails them.
+        run: |
+          "$RUNNER_TEMP/ci" install-postgres
+
+      - name: keep this job's temporary files in the runner's own temp
+        shell: bash
+        run: |
+          [ -d "${RUNNER_TEMP:?}" ] || exit 1
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: functional and slow suite
+        # make test-functional-slow: go test -tags functional,slow ./... under the 355m
+        # hang guard (a nightly has no time limit; the guard sits under the 360-minute
+        # job ceiling). NOVA_CI=1: a missing binary fails instead of skipping.
+        env:
+          NOVA_CI: '1'
+        run: make test-functional-slow FUNCTIONAL_SLOW_TIMEOUT=355m
+
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest and
     # macos-latest — on every push (dev and main), on the nightly schedule and on
@@ -1548,7 +1644,7 @@ jobs:
     # exactly the jobs that event actually ran.
     needs: [lint, test, functional, e2e, test-hosted, test-hosted-pr]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
-    # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
+    # the nightly schedule. ci-ok aggregates on the Linux bench runner either way.
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     steps:
