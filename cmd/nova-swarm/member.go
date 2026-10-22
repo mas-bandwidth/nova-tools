@@ -592,6 +592,7 @@ type nativeRunner struct {
 	benchHome         string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
 	load              hostload.Source
 	maxLoad, warnLoad float64
+	adoptPoll         time.Duration // how often an adopted lane is looked at until it ends; 0 is adoptPoll
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -665,6 +666,11 @@ func (r *nativeRunner) endLane(c *nativeChild, name, mark string, sid int) {
 	}
 	r.mu.Unlock()
 }
+
+// adoptPoll is how often the member looks at a lane it adopted (a live child a previous
+// member started) until that lane ends: it is no child of this process, so there is no wait
+// to block in.
+const adoptPoll = time.Second
 
 // LaneEndGrace is how long the member's own stop gives each running native to end by itself
 // after its terminate (native reaps its harness's group within swarm.TerminateGrace, then
@@ -749,8 +755,12 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		r.addLane(name, c)
 		go func() {
 			defer proc.Release() // ignored: the adopted process handle, after its final observation
+			poll := r.adoptPoll
+			if poll <= 0 {
+				poll = adoptPoll
+			}
 			for c.adoptedAlive() {
-				time.Sleep(time.Second)
+				time.Sleep(poll)
 			}
 			// an adopted lane ends as one this member started: its session (native led one
 			// when a member of this build started it) and its mark
