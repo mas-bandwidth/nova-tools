@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -20,9 +20,9 @@ import (
 // example (ONBOARDING point 1). SCOPE, said out loud: this covers nova-tokens's own block and nothing else.
 //
 // The usage banner is read AS SOURCE -- the `usage` constant beside this test -- rather than by
-// running `help`, because the lines under test are the ones a reader pastes; the binary is built
-// only so the lines can be RUN, with that binary on PATH and stdin closed, exactly as a stranger
-// would. The block reads ./repos.tsv, ./transcripts, ./session.jsonl and ./out, so the setup
+// running `help`, because the lines under test are the ones a reader pastes; the tool is placed
+// on PATH (exampleToolOnPath) only so the lines can be RUN, with stdin closed, exactly as a
+// stranger would. The block reads ./repos.tsv, ./transcripts, ./session.jsonl and ./out, so the setup
 // block creates its inputs directly in an otherwise empty temporary directory.
 //
 // No example line here pushes, publishes, contacts a forge, acts on a machine or needs a key:
@@ -43,17 +43,17 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 		assert.NotContains(t, setup, "cmd/nova-tokens/testdata", "the setup still depends on a source checkout")
 	}
 
-	bin := buildExampleBinary(t)
+	env := exampleToolOnPath(t)
 
 	root := t.TempDir()
 	for _, setup := range setupLines {
-		exit, out := runExampleLine(t, root, filepath.Dir(bin), setup)
+		exit, out := runExampleLine(t, root, env, setup)
 		require.Equal(t, 0, exit, "the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
 			exit, setup, exampleFirstLine(out))
 	}
 
 	for _, line := range lines {
-		exit, out := runExampleLine(t, root, filepath.Dir(bin), line)
+		exit, out := runExampleLine(t, root, env, line)
 		assert.Equal(t, 0, exit, "the example `%s` exits %d, want 0 -- a line a stranger pastes must run as printed:\nfirst output line: %s",
 			line, exit, exampleFirstLine(out))
 		// The setup block writes ./repos.tsv and a transcript carrying a tool_use whose
@@ -116,33 +116,34 @@ func exampleBlockLines(usage string) []string {
 	return out
 }
 
-// buildExampleBinary builds this command into a temp dir and returns its path. It builds rather
-// than calls the package because the question is what a stranger meets at a shell prompt; the
-// environment is sanitized with goenv.Clean because the parent's GOFLAGS can reshape a go
-// command's output under the parser that reads it (pkg/goenv, the `goenv` class test).
-func buildExampleBinary(t *testing.T) string {
+// exampleToolOnPath places this test binary at <tmp>/bin/nova-tokens[.exe] (by link, a copy
+// only where a link is not possible) and returns the environment a child
+// needs to run it as nova-tokens itself: the binary is the tool through TestMain's asToolEnv
+// dispatch, which calls the same run() main calls, with the fixed foldStamp clock in place of
+// the machine's. The lines under test are still run at a shell prompt, by name, from PATH,
+// with stdin closed, exactly as a stranger would; only `go build` is gone, which cost a
+// second a test (the nightly's unit budget, CI-SLOW 2026-10-22).
+func exampleToolOnPath(t *testing.T) []string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "nova-tokens")
+	self, err := os.Executable()
+	require.NoError(t, err)
+	binDir := mkdir(t, filepath.Join(t.TempDir(), "bin"))
+	name := "nova-tokens"
 	if runtime.GOOS == "windows" {
-		bin += ".exe"
+		name += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", bin, ".")
-	cmd.Env = goenv.Clean(os.Environ())
-	cmd.Dir = "."
-	{
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "building nova-tokens: %v\n%s", err, out)
-	}
-	return bin
+	require.NoError(t, testbin.Place(self, filepath.Join(binDir, name)))
+	return childEnv(asToolEnv+"=1", "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// runExampleLine runs one line through `sh -c` with the built binary first on PATH, from dir,
-// with stdin closed. It returns the exit code and the combined output.
-func runExampleLine(t *testing.T, dir, binDir, line string) (int, string) {
+// runExampleLine runs one line through `sh -c` with env (exampleToolOnPath's, which puts the
+// tool first on PATH), from dir, with stdin closed. It returns the exit code and the combined
+// output.
+func runExampleLine(t *testing.T, dir string, env []string, line string) (int, string) {
 	t.Helper()
 	cmd := exec.Command("sh", "-c", line)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = env
 	cmd.Stdin = nil
 	var out strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &out

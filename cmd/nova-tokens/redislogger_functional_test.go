@@ -1,3 +1,8 @@
+//go:build functional
+
+// A real socket refused and the tool as its own process: by the house rule (a unit test
+// uses no sockets and no network) this is a functional test, never a unit one.
+
 package main
 
 import (
@@ -11,14 +16,12 @@ import (
 	"testing"
 )
 
-// asToolEnv makes the test binary run as nova-tokens (TestMain).
-const asToolEnv = "NOVA_TOKENS_AS_TOOL"
-
 // #3463: `report --redis` at an address nothing listens on exited 1 with the right typed
 // line, but go-redis's own logger wrote four untyped, local-time "connection pool: failed
 // to dial after 5 attempts" lines to the process's stderr ahead of it. run's stderr is an
 // injected writer and the library writes to os.Stderr, so an in-process test cannot see the
 // leak: this runs the tool as its own process and holds the WHOLE stderr to the one line.
+// go-redis's dial retries on the refused port cost it 1.7 s, over the unit tier's budget.
 func TestReportRedisDialFailureStderrIsTheOneFailedLine(t *testing.T) {
 	t.Parallel()
 
