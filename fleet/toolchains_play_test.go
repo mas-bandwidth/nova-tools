@@ -83,7 +83,10 @@ func TestToolchainsPlayRendersEveryPinnedToolchain(t *testing.T) {
 	listCancel()
 	require.NoError(t, listErr, "ansible-playbook tools.yml --list-tasks failed:\n%s", listOutput)
 	assert.NotContains(t, string(listOutput), "the host has a pinned language-toolchain archive set", "normal tools runs must skip the opt-in role")
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	// A hang bound, not a speed claim: two hosts' check play took 41-45 s on
+	// hosted ubuntu beside the rest of ./... (nightly-slow runs 39812741141 and
+	// 39820349719), 20 s alone (certification run 39387072169).
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, ansible,
 		"tools.yml", "--tags", "toolchains", "--check", "--diff",

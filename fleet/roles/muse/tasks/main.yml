@@ -11,13 +11,18 @@
     path: "{{ nova_bin_dir }}"
     state: directory
     mode: "0755"
+  register: nova_muse_bin_dir
 
+# A dry run on a machine with no binary directory yet only reports the
+# directory: get_url refuses a destination whose directory does not exist, and a
+# binary in a directory the run would create is new by that fact.
 - name: the pinned Muse Code binary
   ansible.builtin.get_url:
     url: "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version={{ nova_muse_version }}&file={{ nova_muse_artifacts[nova_platform].file }}"
     dest: "{{ nova_bin_dir }}/muse"
     checksum: "sha256:{{ nova_muse_artifacts[nova_platform].sha256 }}"
     mode: "0755"
+  when: not (ansible_check_mode and nova_muse_bin_dir is changed)
 
 # names reads only vault field names; it never decrypts a provider key.
 - name: the member seat's provider-key names
@@ -30,8 +35,9 @@
 
 - name: Muse key adoption status
   ansible.builtin.set_fact:
+    # A seat whose names read exits 0 without a JSON object is as unreadable as one that fails.
     nova_muse_key_status: >-
-      {{ 'unreadable' if nova_muse_names.rc != 0 else
+      {{ 'unreadable' if nova_muse_names.rc != 0 or not ((nova_muse_names.stdout | default('')) is match('[{]')) else
          'present' if ('META_API_KEY' in ((nova_muse_names.stdout | from_json)['items'] | default([]) | map(attribute='fields.key') | list)) else 'missing' }}
 
 - name: the member names-login directory
