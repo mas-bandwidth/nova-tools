@@ -217,7 +217,10 @@ The test requirements are listed under **Tests this spec demands**.
    directory the tool creates, inside the write set, its name chosen by the
    tool and never by a caller; **what it deliberately does not do** is about
    the paths it is *handed* — and sets `TMPDIR`, `TMP` and `TEMP` to that
-   directory. It also sets zsh's `TMPPREFIX` to `<temp>/zsh`: this is a
+   directory, by the caller's own `TMPDIR` when that is another absolute name
+   of it, such as a link resolving to it
+   (a short name leaves room below it for a unix socket, whose path holds 108
+   bytes). It also sets zsh's `TMPPREFIX` to `<temp>/zsh`: this is a
    **prefix** for zsh-created temporary files, not another directory. A
    deny-by-default policy makes the inherited per-user temp directory
    unwritable, and a toolchain whose first scratch write fails looks like a

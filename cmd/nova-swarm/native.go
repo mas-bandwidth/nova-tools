@@ -102,6 +102,9 @@ type nativeRunConfig struct {
 	// (swarm.EnsureRuntimeSharedDirs), each a --write of the wall: .NET's named mutexes live
 	// under /tmp/.dotnet whatever TMPDIR says. nil is filled at the launch; a test names its own.
 	runtimeShared []string
+	// shortTmpBase is the directory a linux child's short tmp name is made in
+	// (nativeShortTmp); empty is /tmp. A test names its own.
+	shortTmpBase string
 	// WORKER: the worker description `--worker <file>` names, when one is
 	// given. It is the source of the model -- a key is authorized for one model only, and
 	// the description pins it -- and when it carries "secret": "<NAME>" it is the source of
@@ -348,6 +351,7 @@ type nativePrepared struct {
 	releaseSlot  func()
 	dataHome     string
 	tmpDir       string
+	tmpEnv       string // the name TMPDIR, TMP and TEMP carry: tmpDir, or its short link (nativeShortTmp)
 	cacheDir     string
 	shimDir      string
 	shimShell    string
@@ -436,6 +440,57 @@ func nativeTmpDir(cfg nativeRunConfig, jobDir string) string {
 		return filepath.Join(jobDir, "tmp")
 	}
 	return filepath.Join(cfg.slotDir, "tmp", cfg.label)
+}
+
+// unixSocketPathMax is the bytes a unix socket path holds on linux, its NUL included
+// (sun_path); qemu refuses a longer one with "Path must be less than 108 bytes".
+const unixSocketPathMax = 108
+
+// tmpSocketRoom is the bytes a socket under the child's TMPDIR is given: vng's virtiofs
+// socket is $TMPDIR/virtme<8 random>, and a tool that makes a directory for its socket
+// first (ssh-agent's ssh-<10>/agent.<pid>) needs about 30.
+const tmpSocketRoom = 40
+
+// nativeShortTmp is the name a linux child's TMPDIR, TMP and TEMP carry for tmpDir, and
+// whether it is a short link: a tmpDir that leaves less than tmpSocketRoom below
+// unixSocketPathMax is named by <base>/nv-<12 hex of its sha256>, a symbolic link to it,
+// and any other is named as it is. A slot path of about 190 bytes put vng's socket at 220
+// and the guest never started. The link names the same directory: the wall's write set,
+// which holds tmpDir itself, and the directory's place in the slot are unchanged, and a
+// write through the link is checked by the wall on the directory it resolves to.
+func nativeShortTmp(base, tmpDir string) (string, bool) {
+	if len(tmpDir)+tmpSocketRoom < unixSocketPathMax {
+		return tmpDir, false
+	}
+	if base == "" {
+		base = "/tmp"
+	}
+	sum := sha256.Sum256([]byte(tmpDir))
+	return filepath.Join(base, "nv-"+hex.EncodeToString(sum[:6])), true
+}
+
+// linkShortTmp makes the short link name -> tmpDir. A link already at name that names
+// tmpDir (a run of the same slot and label that ended without removing it) is made again;
+// anything else at name is left as it is and refused, so the child is never pointed at a
+// directory this run did not make.
+func linkShortTmp(name, tmpDir string) error {
+	err := os.Symlink(tmpDir, name)
+	if errors.Is(err, fs.ErrExist) {
+		if target, rerr := os.Readlink(name); rerr == nil && target == tmpDir {
+			if err = os.Remove(name); err == nil {
+				err = os.Symlink(tmpDir, name)
+			}
+		}
+	}
+	return err
+}
+
+// unlinkShortTmp removes the short link name when it still names tmpDir, and leaves
+// anything else at name.
+func unlinkShortTmp(name, tmpDir string) {
+	if target, err := os.Readlink(name); err == nil && target == tmpDir {
+		_ = os.Remove(name) // ignored: a link that cannot be removed names a directory the slot's cleanup removes
+	}
 }
 
 func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunResult, int) {
@@ -1120,7 +1175,7 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 			}
 		}
 	}
-	childEnv := withOutputTokenMax(nativeChildEnv(p.dataHome, p.jobDir, p.tmpDir, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath), p.cfg.outputMax())
+	childEnv := withOutputTokenMax(nativeChildEnv(p.dataHome, p.jobDir, p.tmpEnv, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath), p.cfg.outputMax())
 	childEnv = withEnvSet(childEnv, p.toolEnv)
 	if p.cfg.headless() == harness.Muse {
 		key := os.Getenv(harness.MuseKeyEnv)
@@ -1706,6 +1761,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 	defer p.releaseLease()
 	defer p.releaseSlot()
+	// THE CHILD'S TMP LEAVES ROOM FOR A SOCKET (nativeShortTmp): on linux a long tmpDir is
+	// handed to the child by a short link, removed when the run ends. A link that cannot be
+	// made leaves the child the long name, said on a NOTE.
+	p.tmpEnv = p.tmpDir
+	if name, short := nativeShortTmp(p.cfg.shortTmpBase, p.tmpDir); short && runtime.GOOS == "linux" {
+		if err := linkShortTmp(name, p.tmpDir); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the short tmp name %s could not be made, so the child's TMPDIR is the long one: %s\n", oneline.Field(name), oneline.Escape(err.Error()))
+		} else {
+			p.tmpEnv = name
+			defer unlinkShortTmp(name, p.tmpDir)
+		}
+	}
 	if p.proxy != nil {
 		defer p.proxy.Close()
 	}
