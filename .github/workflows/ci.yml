@@ -1067,7 +1067,10 @@ jobs:
         # entry for this go.mod and saves a fresh one: a key of go.mod alone was an
         # exact hit forever, the entry was never rewritten, and main's build cache of
         # 2026-10-16 built the promotion of 2026-10-22 nearly cold (build 41-88 s, run
-        # 39838504538 cancelled at the cap twice).
+        # 39838504538 cancelled at the cap twice). The restore key ends in "-": a
+        # restore key that equals an entry's whole key is an exact match and wins over
+        # every newer prefix match, so the key of go.mod alone kept restoring the entry
+        # of 2026-10-16 after the commit keys were written (run 39861035723).
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -1075,7 +1078,7 @@ jobs:
             ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+            ${{ runner.os }}-go-${{ hashFiles('go.mod') }}-
             ${{ runner.os }}-go-
 
       - name: restore Go toolchain cache
