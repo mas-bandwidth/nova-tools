@@ -220,6 +220,15 @@ tlc-full:
 	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc-full: set TLC_JAR, TLC_OUT, TLC_GROUP and an explicit TLC_BUDGET' >&2; exit 2; }
 	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s" --manual
 
+# The functional tier with `slow`, the whole tree: ci.yml's schedule-only
+# functional-slow job passes FUNCTIONAL_SLOW_TIMEOUT=355m (a nightly has no time
+# limit; 355m is the hang guard). The default stays under the two-minute cap, as
+# every recipe's -timeout does (TestEveryMakeTimeoutIsUnderTheJobCap).
+FUNCTIONAL_SLOW_TIMEOUT ?= 100s
+.PHONY: test-functional-slow
+test-functional-slow:
+	$(GO) test -tags functional,slow -count=1 -timeout $(FUNCTIONAL_SLOW_TIMEOUT) ./...
+
 tlc-test:
 	$(GO) test -count=1 ./pkg/tlc ./internal/tablemodel ./tools/tlacheck
 
