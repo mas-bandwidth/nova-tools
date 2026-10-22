@@ -46,7 +46,7 @@ func TestTokenCapFakeHarness(t *testing.T) {
 	// so the fifo pairing is the signal that this run is up; the fd is kept open
 	// until this process exits so the test never misses it.
 	if ready := os.Getenv(tokenCapReady); ready != "" {
-		if fd, err := syscall.Open(ready, syscall.O_WRONLY, 0); err == nil {
+		if fd, err := openFifo(ready, syscall.O_WRONLY); err == nil {
 			_ = fd
 		}
 	}
@@ -72,6 +72,22 @@ func TestTokenCapFakeHarness(t *testing.T) {
 	}
 	fmt.Println(`{"type":"result","total_cost_usd":0.5}`)
 	os.Exit(0)
+}
+
+// openFifo opens one end of a fifo, which blocks until the other end opens, and
+// opens it again when a signal interrupts the wait. The Go runtime preempts with
+// signals (SIGURG), more often under -race, and syscall.Open does not retry
+// EINTR: an end that gave up left the other blocked in open(2) for good, the
+// child never exited, and pkg/friend hung under -race on macOS
+// (TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason/opencode_under_the_cap,
+// certification run 39842536500, macos-latest shard 17; 1 in 16 runs on the studio).
+func openFifo(path string, mode int) (int, error) {
+	for {
+		fd, err := syscall.Open(path, mode, 0)
+		if err != syscall.EINTR {
+			return fd, err
+		}
+	}
 }
 
 // fakeHarnessExec runs this test binary as the fake harness through RealExec (the
@@ -175,7 +191,7 @@ func TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason(t *testing.T) {
 				const tokenCapTicks = 8
 				go func() {
 					<-started // the clock ticks once the turn's harness runs
-					if fd, err := syscall.Open(ready, syscall.O_RDONLY, 0); err == nil {
+					if fd, err := openFifo(ready, syscall.O_RDONLY); err == nil {
 						// paired with the child's write end: its run has started, and
 						// the fd stays open there until it is stopped or finishes
 						_ = syscall.Close(fd)
