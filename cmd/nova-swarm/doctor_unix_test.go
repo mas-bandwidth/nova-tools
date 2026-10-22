@@ -53,7 +53,9 @@ func reapRecordedChildren(t *testing.T, pidFile string) {
 // pipe has answered: the wait for the pipe gives up after the grace and the stamp is read.
 // The stub runs once for the preflight and once for the doctor verb, and each run appends
 // its child's pid, so the cleanup ends every child, not the last; the child's own sleep is
-// short, so a test process that dies before its cleanup leaves nothing for long.
+// short, so a test process that dies before its cleanup leaves nothing for long. The two
+// reads run at the same time, as in TestPreflightRefusesAnUnreadableBinary, so the grace is
+// waited out once.
 func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 	t.Parallel()
 	pidFile := filepath.Join(t.TempDir(), "children.pid")
@@ -61,12 +63,18 @@ func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 		"echo 'nova-swarm good-stamp'; sleep 5 & echo $! >> "+pidFile,
 		"echo 'nova-swarm good-stamp'", "", doctorPipeGrace)
 	t.Cleanup(func() { reapRecordedChildren(t, pidFile) })
-	var errOut bytes.Buffer
+	var out, derr, errOut bytes.Buffer
+	var dcode int
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		dcode = env.cmdDoctor(nil, &out, &derr)
+	}()
 	code, stop := env.preflight([]string{"native", "--card", "c"}, &errOut)
+	<-done
 	require.False(t, stop, "preflight(exit=%d, stop=%v), want (0, false)\n%s", code, stop, errOut.String())
 	require.Equal(t, 0, code, "preflight(exit=%d, stop=%v), want (0, false)\n%s", code, stop, errOut.String())
-	var out, derr bytes.Buffer
-	code = env.cmdDoctor(nil, &out, &derr)
+	code = dcode
 	assert.Equal(t, 0, code, "doctor: exit %d, stdout %q, stderr %q", code, out.String(), derr.String())
 	assert.Equal(t, "DOCTOR OK stamp=nova-swarm good-stamp\n", out.String(), "doctor: exit %d, stdout %q, stderr %q", code, out.String(), derr.String())
 	raw, err := os.ReadFile(pidFile)
