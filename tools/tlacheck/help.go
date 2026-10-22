@@ -12,7 +12,7 @@ var hostArch = runtime.GOARCH
 const helpRun = `tlacheck run: run the declared cases of tla/CASES.tsv under one budget and write the run records.
 
 usage: tlacheck run --dir <dir> [--root <checkout>] [--jar <tla2tools.jar>] [--java <java>]
-                    [--group <group>] [--shards <n> --shard <i>] [--timeout <duration>]
+                    [--group <group>] [--shards <n> --shard <i> [--balanced]] [--timeout <duration>]
                     [--workers 1|2] [--manual]
        tlacheck run --dir <dir> --bench <machine>|any [--root <checkout>] [--group <group>]
                     [--jar <path on the bench>] [--java <java on the bench>] [--timeout <duration>]
@@ -27,6 +27,9 @@ usage: tlacheck run --dir <dir> [--root <checkout>] [--jar <tla2tools.jar>] [--j
   --group    run one declared group (tlacheck groups lists the required ones)
   --shards   split the cases over this many runs, and --shard picks one (zero-based);
              with --group, the group's cases (its own size runs them one at a time)
+  --balanced with --group and --shards: deal the group's cases by their recorded seconds in
+             tla/RUNS.tsv, longest first to the shard with the least so far, instead of every
+             n'th case; the deal tlacheck groups --shard-seconds sizes
   --timeout  the whole run's limit, a Go duration (default 110s; at most 110s, or 1h with --manual)
   --workers  TLC workers for a case expected to pass, 1 or 2 (default 2); a counterexample
              case always uses one
@@ -79,13 +82,18 @@ first run: tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out
 
 const helpGroups = `tlacheck groups: print the case groups as a JSON array.
 
-usage: tlacheck groups [--root <checkout>] [--stale]
+usage: tlacheck groups [--root <checkout>] [--stale | --shard-seconds <seconds>]
 
   --root   the checkout whose tla/CASES.tsv is read (default .)
   --stale  the groups to run again instead: those that hold a declared case whose record in
            tla/RUNS.tsv is missing, or is not the fingerprint its case has now (tlacheck
            inputs prints what a case's fingerprint covers); a checkout with no tla/RUNS.tsv
            has measured nothing, so every required group is stale
+  --shard-seconds  the matrix as {"group","shards","shard"} objects instead: each required
+           group dealt (run --balanced --shards/--shard) into the fewest shards whose recorded
+           seconds in tla/RUNS.tsv stay within this many each, a shard of one case excepted; a
+           case with no record counts as the whole 110 s. A bounded run has 110 s, so a group
+           whose cases sum past it is split rather than given more time.
 
 Payload: exactly one line of JSON on stdout, the sorted groups that hold a required case (the
 matrix a CI run derives), or with --stale the groups that need a run. Nothing else is printed

@@ -196,10 +196,16 @@ TLC_JAR ?=
 TLC_OUT ?=
 TLC_GROUP ?=
 TLC_BUDGET ?= 110
-.PHONY: tlc tlc-full tlc-groups tlc-test
+# A group whose cases sum past one bounded run is split: tlc-groups-sharded
+# deals it by recorded seconds (tlacheck run --balanced) into the fewest shards
+# that stay within TLC_SHARD_SECONDS each, and make tlc runs one shard of it.
+TLC_SHARDS ?= 1
+TLC_SHARD ?= 0
+TLC_SHARD_SECONDS ?= 40
+.PHONY: tlc tlc-full tlc-groups tlc-groups-sharded tlc-test
 tlc:
 	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc: set TLC_JAR, TLC_OUT and TLC_GROUP' >&2; exit 2; }
-	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s"
+	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --shards "$(TLC_SHARDS)" --shard "$(TLC_SHARD)" --balanced --timeout "$(TLC_BUDGET)s"
 
 tlc-full:
 	@test "$(origin TLC_BUDGET)" != "file" || { echo 'make tlc-full: supply TLC_BUDGET explicitly' >&2; exit 2; }
@@ -211,6 +217,9 @@ tlc-test:
 
 tlc-groups:
 	@$(GO) run ./tools/tlacheck groups --root .
+
+tlc-groups-sharded:
+	@$(GO) run ./tools/tlacheck groups --root . --shard-seconds $(TLC_SHARD_SECONDS)
 
 new-rule:
 	$(GO) run ./tools/newrule $(ARGS)
