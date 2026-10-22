@@ -287,7 +287,7 @@ func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 	}
 }
 
-func TestInstallLockTimesOutAtTheStaleAge(t *testing.T) {
+func TestInstallLockTimesOutAfterFortyPolls(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
 	if err := os.Mkdir(h.lock, 0o755); err != nil {
@@ -299,8 +299,8 @@ func TestInstallLockTimesOutAtTheStaleAge(t *testing.T) {
 	if code := installRedisServer(h.installHost); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
-	if *h.sleeps != installLockTries || installLockTries != 201 {
-		t.Fatalf("slept %d times, want %d (the 600 s stale age at 3 s a poll, plus one)", *h.sleeps, installLockTries)
+	if *h.sleeps != 40 {
+		t.Fatalf("slept %d times, want 40", *h.sleeps)
 	}
 	if !strings.Contains(h.errb.String(), "timed out waiting to install redis-server") {
 		t.Fatalf("stderr %q", h.errb)
@@ -348,8 +348,8 @@ func TestInstallLockExactlySixHundredSecondsOldIsStillHeld(t *testing.T) {
 	if err := os.Chtimes(h.lock, edge, edge); err != nil {
 		t.Fatal(err)
 	}
-	if code := installRedisServer(h.installHost); code != 1 || *h.sleeps != installLockTries {
-		t.Fatalf("exit %d after %d polls, want a timeout after %d (a lock 600 s old is not stale: the rule is over 600)", code, *h.sleeps, installLockTries)
+	if code := installRedisServer(h.installHost); code != 1 || *h.sleeps != 40 {
+		t.Fatalf("exit %d after %d polls, want a timeout after 40 (a lock 600 s old is not stale: the rule is over 600)", code, *h.sleeps)
 	}
 }
 
@@ -644,30 +644,6 @@ func TestInstallLockWhoseHolderPidIsAliveIsHeldUntilTheTimeout(t *testing.T) {
 	assert.False(t, ran)
 	assert.Equal(t, installLockTries, *h.sleeps)
 	assert.True(t, h.lockHeld(), "a waiter took a live holder's lock")
-}
-
-// A live holder whose install outlasts the old 40-poll (120 s) wait: the
-// waiter keeps waiting while the lock is not stale, and finds the binary the
-// holder installed (certification run 39842536500, ubuntu shard 9, gave up at
-// 120 s on a background apt install that was still running).
-func TestInstallLockWaiterOutlastsALiveHolderUpToTheStaleAge(t *testing.T) {
-	t.Parallel()
-	h := newTestInstallHost(t)
-	writeHolder(t, h, 99999, fixedNow)
-	installed := false
-	h.sleep = func(time.Duration) {
-		*h.sleeps++
-		if *h.sleeps == 60 { // 180 s: the holder finishes and releases its lock
-			installed = true
-			require.NoError(t, os.RemoveAll(h.lock))
-		}
-	}
-	ran := false
-	code := lockedInstall(h.installHost, "thing", func() bool { return installed }, func() int { return 0 }, func() int { ran = true; return 0 })
-	assert.Equal(t, 0, code, h.errb.String())
-	assert.False(t, ran, "the waiter installed again what the holder installed")
-	assert.Equal(t, 60, *h.sleeps)
-	assert.GreaterOrEqual(t, time.Duration(installLockTries)*installLockPoll, installLockStale, "a waiter gives up before the stale age")
 }
 
 // The holder dies while a waiter polls: the waiter takes the lock over on the

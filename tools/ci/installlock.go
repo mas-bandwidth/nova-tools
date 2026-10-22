@@ -22,16 +22,11 @@ import (
 // running process (a holder killed outright leaves the lock behind; the pid says
 // so at once, where the age would take ten minutes). A holder that is told to
 // stop (SIGTERM or SIGINT) releases its lock before it exits. A waiter polls
-// every installLockPoll and gives up after installLockTries polls: as long as
-// the stale age, so a waiter never gives up on a live holder the stale rule
-// still honours. At 40 polls (120 s) the waiter gave up on a background apt
-// install that was still running (certification run 39842536500, ubuntu shard
-// 9: "timed out waiting to install redis-server" while the holder's sudo
-// apt-get went on).
+// every installLockPoll and gives up after installLockTries polls.
 const (
 	installLockStale = 600 * time.Second
 	installLockPoll  = 3 * time.Second
-	installLockTries = int(installLockStale/installLockPoll) + 1
+	installLockTries = 40
 	// installLockPidFile is the file in the lock directory naming the holder.
 	installLockPidFile = "pid"
 )

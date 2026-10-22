@@ -88,26 +88,9 @@ jobs:
       - name: build tools/ci once
         # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
         # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        if: matrix.tag == 'functional'
         shell: bash
         run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
-
-      - name: fetch dev's ancestry for a main run
-        # Every leg's `./...` builds internal/ci, whose untagged laws read git: on main
-        # (the default branch, where the schedule runs) at a merge commit, the landed
-        # promotion, the classtests rule excuses a deletion only when dev's ancestry
-        # shows it, and the shrink-only ratchets read their merge base with origin/dev on
-        # any ref. The depth-2 checkout has neither, and every leg was red on it (run
-        # 39842540461 at 04ab80621). Run on every ref: the ratchets need it off main too.
-        shell: bash
-        run: |
-          "$RUNNER_TEMP/ci" fetch-ancestry dev
-      - name: fetch sprint/foundation's ancestry for a promotion
-        # A dispatch on dev at a merge commit reads a promotion of sprint/foundation the
-        # same way; the verb fetches nothing when the commit has one parent or origin has
-        # no such branch (internal/ci foundationHistoryFetch).
-        shell: bash
-        run: |
-          "$RUNNER_TEMP/ci" fetch-ancestry --promotion sprint/foundation
 
       - name: install redis-server
         if: matrix.tag == 'functional'

@@ -29,7 +29,7 @@ unchanged. Linux uses apt-get (then sudo -n), macOS uses Homebrew, and a machine
 with neither builds the pinned source release (` + redisSourceVersion + `) into $HOME/.local/bin,
 which persists on a self-hosted runner. Several runners share one machine, so the
 install takes the lock directory ` + redisInstallLock + ` (a lock older than 600 s is taken over,
-a waiter polls every 3 s while the holder lives, up to the 600 s stale age).
+a waiter polls every 3 s and gives up after 40 polls).
 
 The directory holding the binary is appended to the file GITHUB_PATH names, for
 the steps after this one, and "redis-server <path>" is printed.
