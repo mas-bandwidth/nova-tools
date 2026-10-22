@@ -469,7 +469,12 @@ func TestFriendFilesGolden(t *testing.T) {
 			tasks[i] = map[string]any{"gen": i, "job": fmt.Sprintf("job-%03d", i), "id": fmt.Sprintf("t%03d", i), "state": "queued", "deliverable": long(500)}
 			cards[i] = map[string]any{"card": fmt.Sprintf("c%03d", i), "job": fmt.Sprintf("c%03d.w1~21.g1", i), "epoch": 21, "brief": long(2000)}
 		}
-		recovery := make([]any, 200)
+		// recovery_messages holds 2 entries, not 200: a NoticeMessage carries its Body
+		// (string(1048576)) inline, so each entry is 1 MiB of arena and every 64 entries
+		// one 64 MiB container chunk, in every load; 200 of them cost 2 GiB of zeroed
+		// memory a round trip, a second on the nightly bench (over the unit budget). The
+		// 200-entry list of tables in this envelope is senders, which spans four chunks.
+		recovery := make([]any, 2)
 		for i := range recovery {
 			recovery[i] = message("aurora", "", long(300), 2)
 		}
