@@ -155,7 +155,7 @@ func laneProcAlive(pid int) bool {
 
 func waitForLaneReady(t *testing.T, path string) {
 	t.Helper()
-	require.Eventually(t, func() bool { _, err := os.Stat(path); return err == nil }, 30*time.Second, 10*time.Millisecond, "the fake native never started its sleepers")
+	require.Eventually(t, func() bool { _, err := os.Stat(path); return err == nil }, 30*time.Second, time.Millisecond, "the fake native never started its sleepers")
 }
 
 var laneEndLine = regexp.MustCompile(`(?m)^LANE END card=c1 .*\breaped=(\d+)\b.*$`)
@@ -191,7 +191,7 @@ func TestALaneEndLeavesNoProcessOfItsCardAlive(t *testing.T) {
 				require.True(t, ok, "the member's stop has no way to end its lanes: native and every process its card started outlive the member")
 				require.Equal(t, 1, ender.endLanes(), "the member's stop ends the one lane it runs")
 			}
-			require.Eventually(t, child.Done, 60*time.Second, 10*time.Millisecond, "the lane ends")
+			require.Eventually(t, child.Done, 60*time.Second, time.Millisecond, "the lane ends")
 			if c.end != "" {
 				require.Equal(t, c.end, child.Result().End, "the fixture is the end it names")
 			}
@@ -204,7 +204,7 @@ func TestALaneEndLeavesNoProcessOfItsCardAlive(t *testing.T) {
 					}
 				}
 				return true
-			}, 2*time.Second, 20*time.Millisecond, "a process the lane's card started (%v) is alive 2s after the lane ended (%s)", pids, c.name)
+			}, 2*time.Second, time.Millisecond, "a process the lane's card started (%v) is alive 2s after the lane ended (%s)", pids, c.name)
 			m := laneEndLine.FindStringSubmatch(out.String())
 			require.NotNil(t, m, "the lane's end says what it reaped: %q", out.String())
 			require.Equal(t, strconv.Itoa(f.sleepers), m[1], "reaped= counts the processes the lane found alive and killed")
@@ -242,7 +242,7 @@ func TestAQuietLaneEndReapsNothing(t *testing.T) {
 	require.NoError(t, os.MkdirAll(r.slots, 0o755))
 	ch, err := r.Start(member.Packet{Card: "c1", Kind: "work", Gen: 1, Epoch: 1})
 	require.NoError(t, err)
-	require.Eventually(t, ch.Done, 30*time.Second, 10*time.Millisecond)
+	require.Eventually(t, ch.Done, 30*time.Second, time.Millisecond)
 	m := laneEndLine.FindStringSubmatch(out.String())
 	require.NotNil(t, m, "every lane end says what it reaped: %q", out.String())
 	require.Equal(t, "0", m[1])
