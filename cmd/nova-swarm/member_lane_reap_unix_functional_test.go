@@ -1,4 +1,8 @@
-//go:build unix
+//go:build unix && functional
+
+// The lane-end tests start a fake native and the sleepers its card leaves behind, real
+// processes in sessions of their own, and ask the kernel whether the lane's reap ended them:
+// functional by the house rule (docs/TESTING.md, "The two tiers").
 
 package main
 

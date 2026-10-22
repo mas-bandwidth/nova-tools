@@ -354,12 +354,9 @@ const doctorHungDeadline = 10 * time.Millisecond
 
 // doctorGoodGrace is the grace a stub that leaves no child behind is read under: the copy of
 // its output gets that long to finish after it exits, so a stall of the machine cannot drop a
-// stamp that was printed. doctorPipeGrace is the grace for the one stub that leaves a child
-// holding the output pipe, which the reader must wait out.
-const (
-	doctorGoodGrace = 5 * time.Second
-	doctorPipeGrace = 250 * time.Millisecond
-)
+// stamp that was printed. (doctorPipeGrace, for the one stub that leaves a child holding the
+// output pipe, is in doctor_pipe_unix_functional_test.go.)
+const doctorGoodGrace = 5 * time.Second
 
 // doctorStubs lays out a PATH binary and a ~/.local/bin copy as real scripts and returns an
 // environment that reads them with the real reader under a short injected deadline. An empty
