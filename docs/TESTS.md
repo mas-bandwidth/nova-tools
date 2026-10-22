@@ -68,7 +68,7 @@ A test binary that runs itself (`os.Executable()` or `os.Args[0]`) with words it
 
 `TestEveryReexecOfTheTestBinaryHasTheGuard` (`internal/ci/reexec_guard_class_test.go`, docs/SPEC-CI.md) refuses a `_test.go` under `cmd/` that runs its own binary in a package with no such call, naming the file and the line. The guard itself is proved by `TestDecideRunsTheSuiteHandlesItsOwnWordsOrRefuses` and `TestEnterRefusesARecursionAndAChainTooDeepInAChild` (`pkg/testbin`).
 
-Ubuntu certification runs the fleet play fixtures with `ansible-core==2.16.3` in an isolated virtual environment, preserving the 75-second race-package limit.
+Ubuntu certification runs the fleet play fixtures with `ansible-core==2.16.3` in an isolated virtual environment, preserving the 75-second race-package limit. Every ubuntu leg of `.github/workflows/nightly-slow.yml` installs the same version the same way, since its `./...` runs the same fleet tests (and, in the functional leg, the toolchain fixtures and the fleet play tests); the hosted image's own ansible-core runs them about twice as slowly.
 
 ### The CL shards fit two minutes
 

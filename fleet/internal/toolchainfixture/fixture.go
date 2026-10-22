@@ -148,7 +148,13 @@ func writeToolchainFixtureVars(t *testing.T, path, tmp, sha string) {
 			}},
 		}
 	}
+	// Linux runs the distro sbcl through a bin/sbcl launcher, never the archive's
+	// (fleet/roles/toolchains); the fixture's distro sbcl is a script of its own.
+	distroSBCL := filepath.Join(tmp, "distro", "sbcl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(distroSBCL), 0o755))
+	require.NoError(t, os.WriteFile(distroSBCL, []byte("#!/bin/sh\nprintf 'distro-sbcl %s\\n' \"$*\"\n"), 0o755))
 	vars := map[string]any{
+		"nova_toolchains_distro_sbcl":          distroSBCL,
 		"nova_home":                            filepath.Join(tmp, "home"),
 		"nova_sdk_home":                        filepath.Join(tmp, "sdk"),
 		"nova_toolchains_fact_file":            filepath.Join(tmp, "home", ".config", "nova", "toolchains.json"),
@@ -205,10 +211,23 @@ func assertToolchainFixtureInstall(t *testing.T, tmp string) {
 			require.NoError(t, err, "%s executable missing", rel)
 			assert.NotZero(t, info.Mode()&0o111, "%s is not executable", rel)
 		}
+		if name == "sbcl" {
+			// The fixture host is linux-x86_64: bin/sbcl is the launcher of the
+			// distro sbcl, not a link into the archive.
+			continue
+		}
 		link, err := os.Readlink(filepath.Join(tmp, "sdk", "bin", filepath.Base(spec.paths[0])))
 		require.NoError(t, err, "link missing for %s", name)
 		assert.Equal(t, filepath.Join(prefix, spec.paths[0]), link)
 	}
+	launcher := filepath.Join(tmp, "sdk", "bin", "sbcl")
+	info, err := os.Lstat(launcher)
+	require.NoError(t, err, "bin/sbcl missing")
+	require.True(t, info.Mode().IsRegular(), "bin/sbcl must be the distro launcher, not a link into the archive")
+	assert.NotZero(t, info.Mode()&0o111, "bin/sbcl is not executable")
+	ran, err := exec.Command(launcher, "--version").CombinedOutput()
+	require.NoError(t, err, string(ran))
+	assert.Equal(t, "distro-sbcl --version\n", string(ran), "bin/sbcl must exec the distro sbcl")
 	var facts struct {
 		Toolchains map[string]struct {
 			Path    string `json:"path"`
