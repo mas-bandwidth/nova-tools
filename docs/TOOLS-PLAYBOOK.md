@@ -7,10 +7,10 @@ which covers the sprint seat; this page covers the tools under it.
 
 Each step quotes the verb's usage line as the tool's own help prints it, then the line to run,
 then the spec section it comes from (or says that the help is the only source). Where this page
-and a tool's help disagree, the help is right and this page has the defect. A test
-(`internal/docs/tools_playbook_test.go`) builds the tools and holds every usage line quoted here to
-their help, and every verb and flag named here to `<tool> <verb> -h`, so a renamed or removed verb
-fails the build. nova-card, nova-work and nova-sprint are built in nova-sprint, and its own test
+and a tool's help disagree, the help is right and this page has the defect. A functional test
+(`internal/docs/tools_playbook_functional_test.go`) builds the tools and holds every usage line
+quoted here to their help, and every verb and flag named here to `<tool> <verb> -h`, so a renamed or
+removed verb fails the merge queue. nova-card, nova-work and nova-sprint are built in nova-sprint, and its own test
 holds their lines there.
 
 `<tool> <verb> -h` prints a verb's usage, every flag and its effect, and runs nothing, so it is
