@@ -13,9 +13,7 @@ jobs:
   groups:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, linux, x64]
-    # A nightly (schedule and dispatch only) has no time limit (the owner,
-    # 2026-10-22); 360 is GitHub's maximum, kept only as a hang guard.
-    timeout-minutes: 360
+    timeout-minutes: 2
     outputs:
       groups: ${{ steps.plan.outputs.groups }}
     steps:
@@ -41,31 +39,20 @@ jobs:
         run: make tlc-test
       - id: plan
         shell: bash
-        # One matrix entry per shard: a group whose recorded seconds sum past one
-        # bounded run (110 s) is dealt into shards of at most TLC_SHARD_SECONDS
-        # each (hookbeat, friendlane and friendlaneclient overran it whole on
-        # 2026-10-18..22 and failed every night with exit 124).
-        run: echo "groups=$(make tlc-groups-sharded)" >> "$GITHUB_OUTPUT"
+        run: echo "groups=$(make tlc-groups)" >> "$GITHUB_OUTPUT"
   models:
-    name: models (${{ matrix.entry.group }} ${{ matrix.entry.shard }}/${{ matrix.entry.shards }})
     needs: groups
     runs-on: [self-hosted, linux, x64]
-    # A nightly (schedule and dispatch only) has no time limit (the owner,
-    # 2026-10-22): TLC runs with no wall bound (make tlc-nightly), and 360 is
-    # GitHub's maximum, kept only as a hang guard. Its records are measurements;
-    # the committed records stay bounded runs from a record machine.
-    timeout-minutes: 360
+    timeout-minutes: 2
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        entry: ${{ fromJSON(needs.groups.outputs.groups) }}
+        group: ${{ fromJSON(needs.groups.outputs.groups) }}
     env:
       NOVA_CI: '1'
       TLC_JAR: ${{ vars.TLC_JAR }}
-      TLC_GROUP: ${{ matrix.entry.group }}
-      TLC_SHARDS: ${{ matrix.entry.shards }}
-      TLC_SHARD: ${{ matrix.entry.shard }}
+      TLC_GROUP: ${{ matrix.group }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: use the installed Go toolchain
@@ -93,12 +80,12 @@ jobs:
             echo 'TLC_JAR must name an installed TLC jar on the Linux runner; configure the repository variable' >&2
             exit 2
           }
-          make tlc-nightly TLC_JAR="$TLC_JAR" TLC_GROUP="$TLC_GROUP" TLC_SHARDS="$TLC_SHARDS" TLC_SHARD="$TLC_SHARD" TLC_OUT="$RUNNER_TEMP/tlc-$TLC_GROUP-$TLC_SHARD"
+          make tlc TLC_JAR="$TLC_JAR" TLC_GROUP="$TLC_GROUP" TLC_OUT="$RUNNER_TEMP/tlc-$TLC_GROUP" TLC_BUDGET=110
       - name: Retain measured records and logs, including failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: tlc-${{ matrix.entry.group }}-${{ matrix.entry.shard }}
-          path: ${{ runner.temp }}/tlc-${{ matrix.entry.group }}-${{ matrix.entry.shard }}
+          name: tlc-${{ matrix.group }}
+          path: ${{ runner.temp }}/tlc-${{ matrix.group }}
           if-no-files-found: error
           retention-days: 14

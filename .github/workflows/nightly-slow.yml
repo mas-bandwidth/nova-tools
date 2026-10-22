@@ -76,7 +76,7 @@ jobs:
             tag: novadisk
     name: ${{ matrix.tag }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 360
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -105,12 +105,9 @@ jobs:
           "$RUNNER_TEMP/ci" install-postgres
 
       - name: tagged suite
-        # -timeout 355m and not Go's 10-minute default: a nightly has no time limit
-        # (the owner, 2026-10-22). 355m sits under the 360-minute job ceiling only so a
-        # hang still ends with a Go stack naming the test.
         env:
           NOVA_CI: ${{ matrix.tag == 'functional' && '1' || '' }}
-        run: go test -tags ${{ matrix.tags || matrix.tag }} -count=1 -timeout 355m ./...
+        run: go test -tags ${{ matrix.tags || matrix.tag }} -count=1 ./...
 
   report:
     # ONE ISSUE PER DAY, not one per leg. The matrix jobs above are `failure()`
@@ -121,7 +118,7 @@ jobs:
     needs: [test]
     if: failure()
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 2
     permissions:
       # contents: read, because a job-level permissions block replaces the workflow's and
       # the checkout below needs it; issues: write for the one issue.

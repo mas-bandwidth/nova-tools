@@ -256,38 +256,6 @@ func TestRunSuiteRecordsAManualRun(t *testing.T) {
 	require.Equal(t, "1.5", res.Records[0].Budget, "records = %+v, %v", res.Records, err)
 }
 
-// A nightly run has no wall bound: a clock an hour a tick past a budget of
-// zero still runs every case, under a context with no deadline, and its
-// records say mode=nightly with no budget.
-func TestRunSuiteRunsANightlyWithNoWallBound(t *testing.T) {
-	t.Parallel()
-	s := openSuite(t)
-	s.opt.Clock = testClock(time.Hour).Now
-	s.opt.Nightly, s.opt.Budget = true, 0
-	inner := s.opt.Exec
-	var deadlines []bool
-	s.opt.Exec = func(ctx context.Context, r Run, log string) int {
-		_, has := ctx.Deadline()
-		deadlines = append(deadlines, has)
-		return inner(ctx, r, log)
-	}
-	res, err := RunSuite(s.opt)
-	require.NoError(t, err)
-	assert.False(t, res.Failed, "suite = %+v", res)
-	require.Len(t, s.seen, len(s.cases), "a nightly case was not started: %+v", res)
-	assert.Equal(t, []bool{false, false, false}, deadlines, "a nightly case ran under a deadline")
-	for _, r := range res.Records {
-		assert.Equal(t, NightlyMode, r.Mode, "record = %+v", r)
-		assert.Equal(t, NightlyBudget, r.Budget, "record = %+v", r)
-		assert.Equal(t, "PASS", r.Result, "record = %+v", r)
-	}
-	s = openSuite(t)
-	s.opt.Nightly, s.opt.Manual = true, true
-	_, err = RunSuite(s.opt)
-	assert.ErrorContains(t, err, "nightly or manual, not both")
-	assert.Empty(t, s.seen, "a nightly manual run ran cases")
-}
-
 func TestRunSuiteRefusesModelsEditedBetweenTheDigestAndTheCopy(t *testing.T) {
 	t.Parallel()
 	s := openSuite(t)
@@ -363,39 +331,6 @@ func TestRunSuiteRunsCasesTheEditedPlanStillHolds(t *testing.T) {
 	require.False(t, res.Failed, "suite = %+v, ran %d, %v", res, len(seen), err)
 	require.Len(t, res.Records, 2, "suite = %+v, ran %d, %v", res, len(seen), err)
 	require.Len(t, seen, 2, "suite = %+v, ran %d, %v", res, len(seen), err)
-}
-
-func TestRunSuiteDealsABalancedShardAgainFromTheSameRecords(t *testing.T) {
-	t.Parallel()
-	root, _ := suiteTree(t)
-	plan := header +
-		row("MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-") +
-		row("MCABroken.cfg", "MCA.tla", "invariant", "OnePlacePerTable", "ignore-terminal", "alpha", "required", "-") +
-		row("MCATerm.cfg", "MCA.tla", "temporal", "TermEnds", "check", "alpha", "required", "-")
-	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", CasesFile), []byte(plan), 0o644))
-	all, err := LoadCases(root)
-	require.NoError(t, err)
-	// The last case is the long one: a balanced deal puts it alone on shard 0,
-	// where every second case of Select would have put MCA.cfg beside it.
-	records := []Record{{Config: "MCA.cfg", Seconds: "1"}, {Config: "MCABroken.cfg", Seconds: "1"}, {Config: "MCATerm.cfg", Seconds: "9"}}
-	selected, err := SelectBalanced(all, records, "alpha", 2, 0)
-	require.NoError(t, err)
-	require.Len(t, selected, 1)
-	require.Equal(t, "MCATerm.cfg", selected[0].Config)
-	var seen []Run
-	o := suiteOptions(root, selected, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
-	o.Selection = Selection{Group: "alpha", Shards: 2, Shard: 0, Balanced: true, Records: records}
-	res, err := RunSuite(o)
-	require.NoError(t, err)
-	assert.False(t, res.Failed, "suite = %+v", res)
-	assert.Empty(t, res.Refused)
-	assert.Len(t, res.Records, 1)
-	// The same shard named without Balanced is Select's, another selection: refused.
-	o = suiteOptions(root, selected, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
-	o.Selection = Selection{Group: "alpha", Shards: 2, Shard: 0}
-	res, err = RunSuite(o)
-	require.NoError(t, err)
-	assert.Contains(t, res.Refused, "CASES.tsv changed after the cases were read")
 }
 
 func TestRunSuiteNeverExecutesTheFieldsItWasHanded(t *testing.T) {

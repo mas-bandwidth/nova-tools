@@ -46,10 +46,8 @@ const fakeSopsScript = `#!/bin/sh
 # symlink, so no test writes an executable while another test forks: a child
 # between fork and exec still holds the writer's descriptor, and the exec then
 # fails with ETXTBSY ("text file busy", space shard 1/4 of run 36206780711).
-# $0 is the symlink's own path, so the fixture's files sit beside it; the
-# shell's own expansions stand in for dirname and basename, one process fewer
-# a call.
-here=${0%/*}
+# $0 is the symlink's own path, so the fixture's files sit beside it.
+here=$(dirname "$0")
 ARGS="$here/sops.args"
 STDIN="$here/sops.stdin"
 if [ "$1" = "--version" ]; then echo "sops 3.13.3"; exit 0; fi
@@ -81,8 +79,7 @@ for a in "$@"; do
 done
 if [ -z "$fn" ]; then echo "error: no file specified" >&2; exit 100; fi
 if [ ! -f .sops.yaml ]; then echo "config file not found" >&2; exit 1; fi
-base=${fn##*/}
-base=${base%.yaml}
+base=$(basename "$fn" .yaml)
 rec=$(awk -v base="$base" '
   index($0, "path_regex:") > 0 { hit = index($0, "path_regex: ^" base "\\.yaml$") > 0; next }
   hit && index($0, "age:") > 0 { line = $0; sub(/^ *age: */, "", line); print line; exit }

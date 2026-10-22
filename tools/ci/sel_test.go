@@ -688,9 +688,8 @@ func TestUnitTestRunsMakeTestOnceThePathHoldsTheShim(t *testing.T) {
 	}{
 		{"a pull request or merge group", nil, "make test PKGS=./cmd/a ./cmd/b GOTEST_TIMEOUT=110s GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w"},
 		{"a whole-tree push", map[string]string{"WHOLE_TREE_SLOWTESTS": "--budget 60 --sleeps ledger.txt"}, "make test PKGS=./cmd/a ./cmd/b GOTEST_TIMEOUT=110s GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS=--budget 60 --sleeps ledger.txt"},
-		{"the nightly", map[string]string{"NIGHTLY": "1"}, "make test PKGS=./cmd/a ./cmd/b GOTEST_TIMEOUT=355m GOTEST_COUNT_FLAG=-count=1 GOTEST_LDFLAGS=-ldflags=-w"},
-		{"a non-nightly leg says 0", map[string]string{"NIGHTLY": "0"}, "make test PKGS=./cmd/a ./cmd/b GOTEST_TIMEOUT=110s GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w"},
-		{"the old enforcing variable is not read", map[string]string{"NIGHTLY_ENFORCE": "1"}, "make test PKGS=./cmd/a ./cmd/b GOTEST_TIMEOUT=110s GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w"},
+		{"the nightly leg", map[string]string{"NIGHTLY_ENFORCE": "1"}, "make test PKGS=./cmd/a ./cmd/b GOTEST_TIMEOUT=110s GOTEST_COUNT_FLAG=-count=1 GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_ENFORCE=1"},
+		{"a non-nightly leg says 0", map[string]string{"NIGHTLY_ENFORCE": "0"}, "make test PKGS=./cmd/a ./cmd/b GOTEST_TIMEOUT=110s GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

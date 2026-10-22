@@ -1,5 +1,3 @@
-//go:build functional
-
 package main
 
 import (

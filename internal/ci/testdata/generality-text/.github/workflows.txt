@@ -3,7 +3,7 @@
 .github/workflows/ci.yml:batman 1
 .github/workflows/ci.yml:hulk 1
 .github/workflows/ci.yml:mini 1
-.github/workflows/ci.yml:space 18
+.github/workflows/ci.yml:space 20
 .github/workflows/ci.yml:studio 6
 .github/workflows/ci.yml:superman 2
 .github/workflows/ci.yml:vision 1

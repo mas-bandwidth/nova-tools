@@ -22,6 +22,12 @@ import (
 // truth. These tests run the same fake harness the dispatcher tests run, so the child that
 // starts is the one whose argv, sleep and exit the machinery already trusts.
 
+func nativeHarness(t *testing.T) string {
+	t.Helper()
+	require.NoError(t, buildShared(), "building the binaries these tests run")
+	return builtHarness
+}
+
 // TestNativeArgvSkipsAToolchainRootThatIsNotThere: rule 5 of the wall REFUSES a --read
 // naming a path that does not exist, so a bench without the standard's layout -- a darwin
 // bench has no ~/sdk -- loses the root rather than refusing the run.
@@ -52,9 +58,7 @@ func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
 	if len(system) == 0 {
 		t.Skip("this Mac has none of the darwin system toolchains installed")
 	}
-	// The argv is only computed here, never run, so the harness is a path, not a build: the
-	// wall grants the harness's directory by name and nothing reads the file.
-	bin := filepath.Join(t.TempDir(), "bin", "fake-harness")
+	bin := nativeHarness(t)
 	_, slot := aSlot(t)
 	jobDir := filepath.Join(slot, "jobs", "a-label")
 	require.NoError(t, os.MkdirAll(jobDir, 0o755))

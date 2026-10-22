@@ -54,7 +54,6 @@ func cmdGroups(e env, args []string) int {
 	fs := flags("groups")
 	root := fs.String("root", ".", "")
 	stale := fs.Bool("stale", false, "")
-	shardSeconds := fs.Float64("shard-seconds", 0, "")
 	if done, code := parse(e, "groups", fs, args, helpGroups); done {
 		return code
 	}
@@ -79,36 +78,7 @@ func cmdGroups(e env, args []string) int {
 			return refuse(e, "groups", err.Error(), tool+" groups -h")
 		}
 	}
-	var payload any = groups
-	if *shardSeconds != 0 {
-		if *stale {
-			return refuse(e, "groups", "--shard-seconds and --stale are not taken together", tool+" groups -h")
-		}
-		if !(*shardSeconds > 0) {
-			return refuse(e, "groups", "--shard-seconds takes seconds above 0", tool+" groups -h")
-		}
-		records, err := readRuns(*root)
-		if err != nil {
-			return refuse(e, "groups", "cannot read the records: "+err.Error()+layoutHint(err), tool+" groups -h")
-		}
-		type entry struct {
-			Group  string `json:"group"`
-			Shards int    `json:"shards"`
-			Shard  int    `json:"shard"`
-		}
-		entries := []entry{}
-		for _, g := range groups {
-			n, err := tlc.GroupShards(cases, records, g, *shardSeconds)
-			if err != nil {
-				return refuse(e, "groups", err.Error(), tool+" groups -h")
-			}
-			for i := 0; i < n; i++ {
-				entries = append(entries, entry{Group: g, Shards: n, Shard: i})
-			}
-		}
-		payload = entries
-	}
-	raw, err := json.Marshal(payload)
+	raw, err := json.Marshal(groups)
 	if err != nil {
 		return refuse(e, "groups", err.Error(), tool+" groups -h")
 	}
@@ -125,11 +95,9 @@ func cmdRun(e env, args []string) int {
 	group := fs.String("group", "", "")
 	shards := fs.Int("shards", 1, "")
 	shard := fs.Int("shard", 0, "")
-	balanced := fs.Bool("balanced", false, "")
 	timeout := fs.Duration("timeout", tlc.BoundedCap, "")
 	workers := fs.Int("workers", 2, "")
 	manual := fs.Bool("manual", false, "")
-	nightly := fs.Bool("nightly", false, "")
 	bench := fs.String("bench", "", "")
 	loadBelow := fs.Float64("load-below", 0, "")
 	troughWait := fs.Duration("trough-wait", 30*time.Minute, "")
@@ -140,7 +108,7 @@ func cmdRun(e env, args []string) int {
 	if *bench != "" {
 		set := map[string]bool{}
 		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-		for _, n := range []string{"shards", "shard", "balanced"} {
+		for _, n := range []string{"shards", "shard"} {
 			if set[n] {
 				return refuse(e, "run", "--"+n+" is not taken with --bench: it runs a group's cases one at a time itself", tool+" run --bench <machine> --group <group> ...")
 			}
@@ -164,19 +132,10 @@ func cmdRun(e env, args []string) int {
 	if code, stop := checkRunner(e, "run", *root); stop {
 		return code
 	}
-	if *nightly {
-		if why := nightlyRefusal(e, fs); why != "" {
-			return refuse(e, "run", why, tool+" run -h")
-		}
-	}
 	if *manual && (e.getenv("GITHUB_ACTIONS") == "true" || e.getenv("NOVA_CI") == "1") {
 		return refuse(e, "run", "--manual is forbidden in CI; every workflow job stays under two minutes", tool+" run --group <group> ... without --manual")
 	}
-	if *nightly {
-		if err := tlc.CheckWorkers(*workers); err != nil {
-			return refuse(e, "run", err.Error(), tool+" run -h")
-		}
-	} else if err := tlc.CheckLimits(*timeout, *workers, *manual); err != nil {
+	if err := tlc.CheckLimits(*timeout, *workers, *manual); err != nil {
 		return refuse(e, "run", err.Error(), tool+" run -h")
 	}
 	if *bench != "" {
@@ -196,25 +155,9 @@ func cmdRun(e env, args []string) int {
 	if e.goos != "linux" {
 		return refuse(e, "run", "TLC runs on a Linux bench, and this is "+e.goos+"; nothing was run", tool+" run --bench any ... (a record machine runs it), or the Linux CI job")
 	}
-	var chosen []tlc.Case
-	var dealt []tlc.Record
-	if *balanced {
-		if *group == "" {
-			return refuse(e, "run", "--balanced deals one group's cases; name it with --group", tool+" groups --root "+*root+" --shard-seconds <seconds>")
-		}
-		records, err := readRuns(*root)
-		if err != nil {
-			return refuse(e, "run", "cannot read the records: "+err.Error()+layoutHint(err), tool+" run -h")
-		}
-		dealt = records
-		if chosen, err = tlc.SelectBalanced(cases, records, *group, *shards, *shard); err != nil {
-			return refuse(e, "run", err.Error(), tool+" groups --root "+*root+" --shard-seconds <seconds>")
-		}
-	} else {
-		var err error
-		if chosen, err = tlc.Select(cases, *group, *shards, *shard); err != nil {
-			return refuse(e, "run", err.Error(), tool+" groups --root "+*root)
-		}
+	chosen, err := tlc.Select(cases, *group, *shards, *shard)
+	if err != nil {
+		return refuse(e, "run", err.Error(), tool+" groups --root "+*root)
 	}
 	jar, java, code, stop := findTLC(e, "run", *jarFlag, *javaFlag)
 	if stop {
@@ -231,8 +174,8 @@ func cmdRun(e env, args []string) int {
 	event(e.stdout, "HELPER", "OK", "name", "java-version", "version", javaVer)
 	res, err := tlc.RunSuite(tlc.Options{
 		Root: *root, Cases: chosen, Jar: jar, Java: java, JavaVer: javaVer, Out: *dir,
-		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard, Balanced: *balanced, Records: dealt},
-		Budget:    *timeout, Nightly: *nightly, Workers: *workers, Manual: *manual, Platform: platform, CPUs: e.cpus(), Exec: e.exec,
+		Selection: tlc.Selection{Group: *group, Shards: *shards, Shard: *shard},
+		Budget:    *timeout, Workers: *workers, Manual: *manual, Platform: platform, CPUs: e.cpus(), Exec: e.exec,
 		OnCase: func(r tlc.Record) {
 			status, w := "OK", e.stdout
 			if r.Result != "PASS" {
@@ -259,29 +202,6 @@ func cmdRun(e env, args []string) int {
 	}
 	event(e.stdout, "RUN", "OK", "cases", fmt.Sprint(len(res.Records)), "records", records)
 	return 0
-}
-
-// nightlyEvents are the workflow events a nightly run is taken for: the
-// schedule, and a dispatch that runs the scheduled job by hand. Every event a
-// change triggers keeps the bounded run.
-var nightlyEvents = map[string]bool{"schedule": true, "workflow_dispatch": true}
-
-// nightlyRefusal is why --nightly is not taken here, or "". A nightly run has
-// no wall bound, so it is taken only in a GitHub Actions run of a scheduled or
-// dispatched workflow, never with a budget, --manual or --bench (a bench run
-// writes committed records, and a nightly record is never one).
-func nightlyRefusal(e env, fs *flag.FlagSet) string {
-	set := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	for _, n := range []string{"timeout", "manual", "bench"} {
-		if set[n] {
-			return "--" + n + " is not taken with --nightly: a nightly run has no wall bound and its records are never committed"
-		}
-	}
-	if e.getenv("GITHUB_ACTIONS") != "true" || !nightlyEvents[e.getenv("GITHUB_EVENT_NAME")] {
-		return "--nightly is taken only in a scheduled or dispatched GitHub Actions run (GITHUB_EVENT_NAME schedule or workflow_dispatch); a change's run stays bounded"
-	}
-	return ""
 }
 
 func cmdMerge(e env, args []string) int {

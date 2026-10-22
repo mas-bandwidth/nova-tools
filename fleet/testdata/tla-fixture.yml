@@ -4,6 +4,4 @@
 # directory, a sum file and a java of its own under its temp dir.
 machines:
   localhost: {user: nova, seat: seat-local, slots: 1, roles: "", tla: true, os: linux, arch: amd64, cores: 2}
-# The fleet row carries every field nova-config inventory requires (loops_dir
-# since 2026-10-04), though no loop runs here.
-fleet: {store: "", coordinator: "", redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova, loops_dir: "~/nova-bench/loops"}
+fleet: {store: "", coordinator: "", redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}

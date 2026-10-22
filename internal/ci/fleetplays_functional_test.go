@@ -46,23 +46,6 @@ func newFleetPlayRig(t *testing.T, fixture string) *fleetPlayRig {
 	return r
 }
 
-// liveMemberOnTheInstalledBuild puts in the fixture's bin directory the
-// nova-sprint a fleet host has (it ships from its own repository, not this
-// one): its live lists the fixture's one member, loaded and on the installed
-// build. A real tools.yml run that installs a tool reads it in its loops step
-// (docs/SPEC-RELEASE.md, "Adopting a build"), finds nothing stale and restarts
-// nothing. It returns the extra vars a real run of the one-host fixture
-// passes: no canary, as an operator adopting one machine names none.
-func (r *fleetPlayRig) liveMemberOnTheInstalledBuild(t *testing.T) []string {
-	t.Helper()
-	bin := filepath.Join(r.home, ".local", "bin")
-	require.NoError(t, os.MkdirAll(bin, 0o755))
-	manifest := `{"agents":[{"label":"nova-loop-member-local","role":"agent","disabled":false,"loaded":true,"stale":false,"why":""}]}`
-	script := "#!/bin/sh\n[ \"$1\" = live ] || { echo \"fixture nova-sprint: only live\" >&2; exit 2; }\necho '" + manifest + "'\n"
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "nova-sprint"), []byte(script), 0o755))
-	return []string{"-e", "nova_adopt_canary=none"}
-}
-
 // build compiles packages of the checkout to out, stamped with version when
 // it is not empty.
 func (r *fleetPlayRig) build(t *testing.T, out, version string, pkgs ...string) {
@@ -230,8 +213,7 @@ func TestToolsPlayAppliesAndReappliesOnTheFixture(t *testing.T) {
 	_, err = os.Stat(filepath.Join(r.home, ".config"))
 	require.True(t, os.IsNotExist(err), "the fixture's home starts with no .config")
 
-	vars := append([]string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"), "-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out},
-		r.liveMemberOnTheInstalledBuild(t)...)
+	vars := []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"), "-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
 	first := r.play(t, "tools.yml", vars...)
 	assert.Contains(t, first, "built="+platform+" missing=none")
 	assert.Contains(t, first, "was=none removed=1 INSTALLED RELEASE INSTALLED version="+version+" tools=1 ")
@@ -498,10 +480,9 @@ func TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks(t *testing.T) {
 	require.NoError(t, err)
 	stage("v0.0.0-one", "v0.0.0-one", update)
 	stage("v0.0.0-two", "v0.0.0-two", update)
-	live := r.liveMemberOnTheInstalledBuild(t)
 	vars := func(version string) []string {
-		return append([]string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"),
-			"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}, live...)
+		return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"),
+			"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
 	}
 
 	first := r.play(t, "tools.yml", vars("v0.0.0-one")...)
@@ -570,10 +551,9 @@ func TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer(t *testing.T) {
 				}
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o644))
 			}
-			live := r.liveMemberOnTheInstalledBuild(t)
 			vars := func(version string) []string {
-				return append([]string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"),
-					"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}, live...)
+				return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"),
+					"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
 			}
 			r.play(t, "tools.yml", vars("v0.0.0-one")...)
 			seed := filepath.Join(r.home, "nova-bench", "release", "v0.0.0-one", platform, corrupt)

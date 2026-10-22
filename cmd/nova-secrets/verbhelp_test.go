@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 
@@ -186,18 +185,6 @@ func TestTheHelpSetupBlockRunsAsPrinted(t *testing.T) {
 		shell, shellArgs = bash, []string{"-o", "pipefail", "-c"}
 	}
 	for _, line := range lines {
-		// keygen refuses a --store with no .sops.yaml (SPEC-SECRETS, test 14). A line
-		// that passes --store to keygen and writes that .sops.yaml through its own
-		// pipeline ran only when the shell's redirection happened to create the file
-		// before keygen looked (ubuntu-latest, nightly-slow run 39812741141, lost the
-		// race); so the store a keygen line names must hold its .sops.yaml before the
-		// line starts, never by the line's own redirection.
-		if fields := strings.Fields(line); slices.Contains(fields, "keygen") {
-			if i := slices.Index(fields, "--store"); i >= 0 && i+1 < len(fields) {
-				_, err := os.Stat(filepath.Join(home, fields[i+1], ".sops.yaml"))
-				require.NoErrorf(t, err, "the setup line passes keygen a --store whose .sops.yaml it has not written yet, so it runs only when its own redirection wins a race: %s", line)
-			}
-		}
 		var stdout, stderr bytes.Buffer
 		cmd := exec.Command(shell, append(shellArgs, line)...)
 		cmd.Dir, cmd.Env = home, env

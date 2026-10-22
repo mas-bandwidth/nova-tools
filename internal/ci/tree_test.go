@@ -1,15 +1,12 @@
 package ci
 
 import (
-	"errors"
-	"fmt"
 	"go/ast"
-	"go/build"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
-	"path"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -18,7 +15,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/mod/modfile"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 )
 
 // tree_test.go is the shared repository tree the class tests read: ONE walk and
@@ -470,87 +468,21 @@ type treeParse struct {
 
 var (
 	repoGoListOnce sync.Once
-	repoGoListOut  []string
+	repoGoListOut  []byte
 	repoGoListErr  error
 )
 
-// repoGoList returns the import paths `go list ./...` prints over the
-// repository root, once per test process. The tests in this package are
-// read-only over the tree, so package membership never changes between tests.
-//
-// It is answered in process from the shared tree and go/build, the rules `go
-// list` itself applies to a pattern: a directory is a package when go/build
-// finds a buildable non-test .go file in it for this platform (build
-// constraints and file-name suffixes honoured), and the walk leaves out
-// testdata and every directory whose name starts with . or _. A `go list`
-// subprocess loaded the whole module to print the same list and cost the one
-// test that reads it most of a second.
-func repoGoList(t *testing.T) []string {
+// repoGoList runs `go list ./...` over the repository root once per test process
+// and returns its output. The tests in this package are read-only over the tree,
+// so package membership never changes between tests.
+func repoGoList(t *testing.T) []byte {
 	t.Helper()
 	repoGoListOnce.Do(func() {
-		repoGoListOut, repoGoListErr = treeGoPackages(repoTree(t))
+		cmd := exec.Command("go", "list", "./...")
+		cmd.Dir = repoRoot(t)
+		cmd.Env = goenv.Clean(os.Environ())
+		repoGoListOut, repoGoListErr = cmd.Output()
 	})
 	require.NoError(t, repoGoListErr)
 	return repoGoListOut
-}
-
-// treeGoPackages is repoGoList's reading of the tree at idx: the module path
-// from the root's go.mod, then every directory holding a non-test .go file that
-// go/build accepts for this platform, sorted as `go list` sorts.
-func treeGoPackages(idx *repoTreeIndex) ([]string, error) {
-	mod, err := os.ReadFile(filepath.Join(idx.Root, "go.mod"))
-	if err != nil {
-		return nil, err
-	}
-	module := modfile.ModulePath(mod)
-	if module == "" {
-		return nil, fmt.Errorf("%s/go.mod names no module", idx.Root)
-	}
-	dirs := map[string]bool{}
-	for _, f := range idx.Files {
-		if f.Rel == "go.mod" || strings.HasSuffix(f.Rel, "/go.mod") {
-			if dir := path.Dir(f.Rel); dir != "." {
-				return nil, fmt.Errorf("%s is a nested module; repoGoList reads one module", f.Rel)
-			}
-		}
-		if !f.Go || f.Test {
-			continue
-		}
-		dir := path.Dir(f.Rel)
-		if goListSkipsDir(dir) {
-			continue
-		}
-		dirs[dir] = true
-	}
-	var out []string
-	for dir := range dirs {
-		if _, err := build.Default.ImportDir(filepath.Join(idx.Root, filepath.FromSlash(dir)), 0); err != nil {
-			var none *build.NoGoError
-			if errors.As(err, &none) {
-				continue // every .go file is excluded on this platform
-			}
-			return nil, fmt.Errorf("%s: %w", dir, err)
-		}
-		if dir == "." {
-			out = append(out, module)
-		} else {
-			out = append(out, module+"/"+dir)
-		}
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-// goListSkipsDir reports whether `go list ./...` leaves the slash-separated
-// directory out: any component named testdata or starting with . or _.
-func goListSkipsDir(dir string) bool {
-	if dir == "." {
-		return false
-	}
-	for _, part := range strings.Split(dir, "/") {
-		if part == "testdata" || strings.HasPrefix(part, ".") || strings.HasPrefix(part, "_") {
-			return true
-		}
-	}
-	return false
 }

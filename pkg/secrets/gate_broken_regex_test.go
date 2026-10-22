@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,7 +54,7 @@ func TestFirstPlainValueNamesABrokenRegex(t *testing.T) {
 	t.Run("the gate refuses the seat on the line naming the invalid unencrypted_regex", func(t *testing.T) {
 		t.Parallel()
 		dir := gateStart(t)
-		base := gateHead(t, dir)
+		base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 		head := gateCommit(t, dir, map[string]string{
 			".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateRecoveryKey) + "    unencrypted_regex: " + broken + "\n"),
 			"rowan.yaml": gateSealedFile() + "space_user: rowan\n",

@@ -39,28 +39,9 @@ type ciJob struct {
 	If             string            `yaml:"if"`
 	Needs          any               `yaml:"needs"`
 	RunsOn         any               `yaml:"runs-on"`
-	TimeoutMinutes jobTimeout        `yaml:"timeout-minutes"`
+	TimeoutMinutes int               `yaml:"timeout-minutes"`
 	Outputs        map[string]string `yaml:"outputs"`
 	Steps          []ciStep          `yaml:"steps"`
-}
-
-// jobTimeout is a job's timeout-minutes as a run a change triggers sees it: a
-// literal, or scheduleTimeoutExpr read as twoMinuteCap (the nightly schedule's
-// 360 is held by TestCIScheduleRunsHaveNoTimeLimit). Any other expression is
-// refused at unmarshal.
-type jobTimeout int
-
-func (j *jobTimeout) UnmarshalYAML(n *yaml.Node) error {
-	if n.Value == scheduleTimeoutExpr {
-		*j = twoMinuteCap
-		return nil
-	}
-	var v int
-	if err := n.Decode(&v); err != nil {
-		return err
-	}
-	*j = jobTimeout(v)
-	return nil
 }
 
 func ciJobs(t *testing.T) map[string]ciJob {
@@ -193,7 +174,7 @@ func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 		assert.Containsf(t, job.If, "github.event_name == '"+ev+"'", "functional's if does not run on %s: %s", ev, job.If)
 	}
 	assert.Falsef(t, strings.Contains(job.If, "pull_request") || strings.Contains(job.If, "!=") && strings.Contains(job.If, "event_name !="), "functional's if must name the events it runs on, never pull_request: %s", job.If)
-	assert.Equalf(t, 2, int(job.TimeoutMinutes), "functional timeout-minutes = %d, want 2 on every run a change triggers", job.TimeoutMinutes)
+	assert.Equalf(t, 2, job.TimeoutMinutes, "functional timeout-minutes = %d, want 2", job.TimeoutMinutes)
 	runsOn, _ := yaml.Marshal(job.RunsOn)
 	assert.Containsf(t, string(runsOn), "space", "functional runs-on %s, want the space pool", runsOn)
 	assert.Contains(t, jobs["test-packages"].Outputs["functional"], "steps.list.outputs.functional", "test-packages does not output the functional list")
@@ -270,7 +251,7 @@ const sleepsLedger = "internal/ci/sleeps-skips_allowlist.txt"
 // The fixture is go test -json as a leg writes it: a test that runs 1.4 s
 // prints its CI-SLOW line and a CI-LOAD line and exits 0 at load 2, at load 20
 // and with the load unread, because the Makefile passes --enforce only under
-// SLOWTESTS_ENFORCE=1, which it defaults to 0; with enforce (a run by hand) it
+// SLOWTESTS_ENFORCE=1, which it defaults to 0; with enforce (the nightly leg) it
 // is red at all three. A SLEEPS skip the ledger does not name is red at all
 // three on both legs.
 func TestUnitBudgetsJudgeTheTestNotTheLoad(t *testing.T) {
@@ -278,7 +259,7 @@ func TestUnitBudgetsJudgeTheTestNotTheLoad(t *testing.T) {
 
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
 	got := strings.TrimSpace(mk.vars["SLOWTESTS_ENFORCE"])
-	assert.Equalf(t, "0", got, "Makefile SLOWTESTS_ENFORCE = %q, want 0: a budget is enforced only where a run by hand asks", got)
+	assert.Equalf(t, "0", got, "Makefile SLOWTESTS_ENFORCE = %q, want 0: a budget is enforced only where a caller asks (the nightly leg)", got)
 	assert.Falsef(t, strings.Contains(mk.vars["SLOWTESTS_FLAGS"], "--enforce") || strings.Contains(mk.vars["SLOWTESTS_FLAGS"], "--max-load-per-cpu"), "Makefile SLOWTESTS_FLAGS = %q carries --enforce or a load gate; the verdict never reads the load", mk.vars["SLOWTESTS_FLAGS"])
 	budgets := slowtests.Budgets{Package: 2, Test: 1}
 	slow := `{"Action":"run","Package":"example.com/busy","Test":"TestTakesOnePointFour"}
@@ -369,17 +350,15 @@ func sleepsSkippers(f *ast.File) []string {
 	return names
 }
 
-// TestNoLegEnforcesATimeBudget: NO run of the unit tier fails on a CI-SLOW
-// line. The nightly whole-tree run on the space shards used to be the one leg
-// that enforced the budgets (the #4413 ruling); since 2026-10-22 a nightly has
-// no time limit of any kind (Glenn: "please, for the last time. nightly tests
-// don't have a time limit"). ci.yml's `test` job still runs on schedule, and the
-// schedule's leg (NIGHTLY=1) runs the whole tree uncached under the hang guard
-// pkgselect.NightlyGoTestTimeout, so its CI-SLOW lines are that night's
-// measurements and never a verdict. Nothing in CI spells SLOWTESTS_ENFORCE
-// (either value); the Makefile reads it only to pass --enforce for a run by
-// hand, and carries the slowtests exit through whatever it says.
-func TestNoLegEnforcesATimeBudget(t *testing.T) {
+// TestNightlyIsTheOnlyEnforcingLeg: a CI-SLOW line fails exactly one
+// leg, the nightly whole-tree run on the space shards (the #4413 ruling).
+// ci.yml's `test` job runs on schedule; test-packages deals the schedule's tree
+// onto space only; the test step passes SLOWTESTS_ENFORCE=1 only from its
+// schedule branch, gated on the space group, and nowhere spells
+// SLOWTESTS_ENFORCE=0 (the push leg's old swallow of the CI-SLEEPS exit). The
+// Makefile reads SLOWTESTS_ENFORCE only to pass --enforce, and carries the
+// slowtests exit through whatever it says.
+func TestNightlyIsTheOnlyEnforcingLeg(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
@@ -387,30 +366,36 @@ func TestNoLegEnforcesATimeBudget(t *testing.T) {
 	test := jobBody(src, "test")
 	require.NotEmpty(t, test, "no test job in ci.yml")
 	for _, line := range strings.Split(test, "\n") {
-		assert.Falsef(t, strings.HasPrefix(strings.TrimSpace(line), "if:") && strings.Contains(line, "!= 'schedule'"), "the test job's if excludes schedule (%s); the nightly whole-tree run is where the measurements come from", strings.TrimSpace(line))
+		assert.Falsef(t, strings.HasPrefix(strings.TrimSpace(line), "if:") && strings.Contains(line, "!= 'schedule'"), "the test job's if excludes schedule (%s); the nightly space legs are where the budgets are enforced", strings.TrimSpace(line))
 	}
-	assert.Contains(t, test, "NIGHTLY: ${{ github.event_name == 'schedule' && '1' || '0' }}", "the test step's NIGHTLY is not 1 exactly on a schedule run")
-	assert.NotContains(t, test, "NIGHTLY_ENFORCE", "the test step spells NIGHTLY_ENFORCE; no run enforces a time budget")
+	assert.Contains(t, test, "NIGHTLY_ENFORCE: ${{ github.event_name == 'schedule' && matrix.entry.group == 'space' && '1' || '0' }}", "the test step's NIGHTLY_ENFORCE is not 1 exactly on a schedule run's space legs")
 	var code []string
 	for _, line := range strings.Split(src, "\n") {
 		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
 			code = append(code, line)
 		}
 	}
-	assert.NotContains(t, strings.Join(code, "\n"), "SLOWTESTS_ENFORCE", "ci.yml spells SLOWTESTS_ENFORCE; no CI run enforces a time budget")
+	// The workflow never spells either value: `ci unit-test` passes
+	// SLOWTESTS_ENFORCE=1 from its nightly branch alone (pkgselect.UnitMakeArgs).
+	assert.NotContains(t, strings.Join(code, "\n"), "SLOWTESTS_ENFORCE", "ci.yml spells SLOWTESTS_ENFORCE; the one place it is passed is the nightly branch of pkgselect.UnitMakeArgs")
 	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_unittest.go"))
-	assert.Contains(t, verb, `e.getenv("NIGHTLY") == "1"`, "tools/ci/sel_unittest.go does not turn NIGHTLY=1 into the nightly run")
+	assert.Contains(t, verb, `e.getenv("NIGHTLY_ENFORCE") == "1"`, "tools/ci/sel_unittest.go does not turn NIGHTLY_ENFORCE=1 into the nightly run")
+	enforcing := 0
 	for name, args := range map[string][]string{
 		"the default leg":  pkgselect.UnitMakeArgs("./cmd/a", "", false),
 		"a whole-tree run": pkgselect.UnitMakeArgs("./cmd/a", "--budget 60", false),
-		"the nightly":      pkgselect.UnitMakeArgs("./cmd/a", "", true),
+		"the nightly leg":  pkgselect.UnitMakeArgs("./cmd/a", "", true),
 	} {
 		joined := strings.Join(args, " ")
-		assert.NotContainsf(t, joined, "SLOWTESTS_ENFORCE", "%s passes SLOWTESTS_ENFORCE; no CI run enforces a time budget, and the push leg's CI-SLEEPS exit stays red", name)
+		assert.NotContainsf(t, joined, "SLOWTESTS_ENFORCE=0", "%s passes SLOWTESTS_ENFORCE=0; the push leg's CI-SLEEPS exit is red and nothing spells the old swallow", name)
+		if strings.Contains(joined, "SLOWTESTS_ENFORCE=1") {
+			enforcing++
+			assert.Equalf(t, "the nightly leg", name, "%s enforces the budgets; only the nightly whole-tree run on the Linux shards does", name)
+		}
 	}
-	assert.Contains(t, strings.Join(pkgselect.UnitMakeArgs("./cmd/a", "", true), " "), "GOTEST_TIMEOUT="+pkgselect.NightlyGoTestTimeout, "the nightly runs under the shard's go test timeout; a nightly has no time limit, only the hang guard")
+	assert.Equalf(t, 1, enforcing, "%d runs pass SLOWTESTS_ENFORCE=1, want exactly the nightly leg", enforcing)
 	// The nightly run deals the whole tree onto the Linux legs alone, where the
-	// measurements are comparable night to night.
+	// budgets are enforced.
 	nightly := pkgselect.Fanout("schedule", []string{"./cmd/a", "./cmd/nova-sandbox", "./internal/b"}, pkgselect.DarwinSensitive{}, pkgselect.Groups{Linux: "linux-legs", Mac: "mac-legs"}, true)
 	assert.NotEmpty(t, nightly, "the nightly fan-out is empty")
 	for _, leg := range nightly {

@@ -897,13 +897,6 @@ var toolsShared struct {
 }
 
 func TestMain(m *testing.M) {
-	// The shared repository tree (tree_test.go) is the package's fixture: one
-	// walk and one parse that nearly every class test reads. Loaded here, its
-	// cost is the package's, paid once before the tests start, rather than
-	// landing on whichever parallel test happens to ask first and timing that
-	// test at the whole load. A load that fails is cached with its error, and
-	// every test that reads the tree fails on it as before.
-	_, _ = sharedRepoTree() // the error is each reader's to report, through repoTree
 	code := m.Run()
 	for _, dir := range []string{promotionShared.dir, toolsShared.dir} {
 		if dir != "" {

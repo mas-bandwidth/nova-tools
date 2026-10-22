@@ -4,11 +4,11 @@
 # over 1 s, or a package over 2 s, is a CI-SLOW line unless its row here names a
 # higher budget (a person 2026-09-26 11:20 AM ET: "unit tests be < 2s (ideally <1)").
 #
-# A CI-SLOW LINE IS A MEASUREMENT ON EVERY LEG (a ruling on nova-tools#4413,
-# 2026-09-26: a budget verdict is the same on any machine; and 2026-10-22: a
-# nightly has no time limit). Every leg prints it and exits 0, the nightly
-# whole-tree run included; only a run by hand with `make test
-# SLOWTESTS_ENFORCE=1` fails on it.
+# A CI-SLOW LINE IS A MEASUREMENT ON EVERY LEG BUT ONE (a ruling on
+# nova-tools#4413, 2026-09-26: a budget verdict is the same on any machine). A pull
+# request, merge-group or push leg prints it and exits 0; only the nightly
+# whole-tree run on the linux legs (ci.yml, the test step's schedule branch,
+# `make test SLOWTESTS_ENFORCE=1`) fails on it.
 #
 # EVERY ROW NAMES ITS MEASUREMENT: the fourth column is the time the row was cut
 # from and where: `run<id>` (a CI run) or a bench (slowtests.Benches), never free

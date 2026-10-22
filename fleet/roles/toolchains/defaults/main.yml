@@ -20,9 +20,6 @@ nova_toolchains_platform_map:
     x86_64: darwin-x86_64
 nova_toolchains_platform: >-
   {{ nova_toolchains_platform_map.get(ansible_facts['system'], {}).get(ansible_facts['architecture'], 'unsupported') }}
-# Linux runs the distro's sbcl (apt-get install sbcl), never the Homebrew bottle;
-# bin/sbcl is a launcher that execs this path (tasks/main.yml).
-nova_toolchains_distro_sbcl: /usr/bin/sbcl
 nova_toolchains_registry_token_url: https://ghcr.io/token?scope=repository:homebrew/core/sbcl:pull
 nova_toolchains:
   node:

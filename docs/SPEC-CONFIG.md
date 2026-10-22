@@ -139,7 +139,6 @@ nothing invented.
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `roles` | list | (`bench`) | inventory membership: `bench`, `services`, `coordination`, `runner`; empty is an intentional no-role list | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
-| `gates_only` | list | (empty) | `nova-sprint fleet sync`: the GATE-NEEDS words (such as `windows`) that alone bring work to the sprint's member on it; set, the deal gives that member only the cards whose GATE-NEEDS names one of them, never a generic card or a read; empty is a member dealt any card its facts satisfy (migration 0047) | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
 
@@ -757,7 +756,7 @@ each machine running its ceiling check before its write transaction).
 **machine:** `ns_capacity_machine(m, slots)` for the ceiling (never
 refused because of friends: no machine caps a friend; cores and memory are never declared, so the call carries none and
 derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
-roles, width, gates_only, tla, note, rev, at; the set `machines`. slots is read back from the ceiling, the key the
+roles, width, tla, note, rev, at; the set `machines`. slots is read back from the ceiling, the key the
 runtime guards on, so a ceiling moved by hand is put back by the next apply.
 Remove: refused while any friend or bench desired hash names the machine;
 else `machine:<m>`, `machine:<m>:ceiling` and `machine:<m>:budget` are

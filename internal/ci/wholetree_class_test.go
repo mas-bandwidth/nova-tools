@@ -51,9 +51,7 @@ const wholeTreeRemedy = "run `nova-ci local` (the unit tier CI runs for this dif
 func wholeTreeViolations(src []byte) []string {
 	var out []string
 	for i, line := range strings.Split(string(src), "\n") {
-		// The pattern opens with the literal "go test", so a line without it
-		// cannot match; the substring test spares the regexp nearly every line.
-		if strings.Contains(line, "go test") && wholeTreeGoTestRe.MatchString(line) {
+		if wholeTreeGoTestRe.MatchString(line) {
 			out = append(out, strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
 		}
 	}

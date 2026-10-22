@@ -348,10 +348,7 @@ jobs:
     # for the unit `test` job's nightly whole-tree Linux shards.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, space]
-    # 2 on every run a change triggers; 360 (GitHub's hosted maximum, a hang
-    # guard only) on the nightly schedule, which has no time limit (the owner,
-    # 2026-10-22). internal/ci: TestEveryCIJobIsCappedAtTwoMinutes.
-    timeout-minutes: ${{ github.event_name == 'schedule' && 360 || 2 }}
+    timeout-minutes: 2
     outputs:
       packages: ${{ steps.list.outputs.packages }}
       functional: ${{ steps.list.outputs.functional }}
@@ -494,14 +491,12 @@ jobs:
     # carry the packages the change touched, not the whole tree; a change that
     # touched no Go package gets one leg with an empty package list that prints
     # and exits 0.
-    # ON SCHEDULE TOO: the nightly whole-tree run on the space legs, uncached
-    # (-count=1), and with NO TIME LIMIT of any kind (the owner, 2026-10-22: "nightly
-    # tests don't have a time limit"): no job cap but GitHub's 360-minute
-    # maximum, a go test -timeout of 355m as the hang guard that names the test,
-    # and no budget enforced. Its CI-SLOW lines print as measurements, and its raw
-    # times are what an allowlist row is measured from; test-packages deals the
-    # schedule's tree onto space only. A red schedule run blocks nothing (ci-ok
-    # does not run on schedule, revert-on-red reads pushes only): it is evidence.
+    # ON SCHEDULE TOO: the nightly whole-tree run on the space
+    # legs is the one place a unit wall-time budget is ENFORCED (the test
+    # step's schedule branch passes SLOWTESTS_ENFORCE=1); test-packages deals
+    # the schedule's tree onto space only. A red schedule run blocks nothing
+    # (ci-ok does not run on schedule, revert-on-red reads pushes only): it is
+    # evidence, and its raw times are what an allowlist row is measured from.
     name: test (${{ matrix.entry.name }})
     needs: test-packages
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -541,10 +536,7 @@ jobs:
     # shards were cancelled at 12.
     # The reason lives beside the number
     # in internal/ci/ci_budget_test.go.
-    # 2 on every run a change triggers; 360 (GitHub's hosted maximum, a hang
-    # guard only) on the nightly schedule, which has no time limit (the owner,
-    # 2026-10-22). internal/ci: TestEveryCIJobIsCappedAtTwoMinutes.
-    timeout-minutes: ${{ github.event_name == 'schedule' && 360 || 2 }}
+    timeout-minutes: 2
     steps:
       - name: nothing to test for this change
         # test-packages emits one leg with an empty package list when the change
@@ -805,14 +797,15 @@ jobs:
         # THE VERDICT IS THE SAME ON ANY MACHINE: on every leg the
         # CI-SLOW lines and a CI-LOAD line are printed and exit 0, and a
         # CI-SLEEPS line (a SLEEPS skip off the ledger) fails the leg, the push leg
-        # included. NO leg fails on a CI-SLOW line: the nightly (NIGHTLY=1, the
-        # schedule) runs the whole tree uncached with the hang guard
-        # pkgselect.NightlyGoTestTimeout in place of the shard timeout and
-        # enforces no budget, because a nightly has no time limit (the owner,
-        # 2026-10-22). internal/ci: TestNoLegEnforcesATimeBudget.
+        # included. The one leg that fails on a CI-SLOW line is the schedule
+        # branch below, the nightly whole tree on the space shards, with
+        # SLOWTESTS_ENFORCE=1. It is not test-hosted's ubuntu leg (a fresh VM,
+        # idle by construction): that job runs `make test-short`, whose -short
+        # skips are not the unit tier the budgets describe, on a two-core hosted
+        # runner no pull request leg runs on.
         env:
           WHOLE_TREE_SLOWTESTS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '--budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt' || '' }}
-          NIGHTLY: ${{ github.event_name == 'schedule' && '1' || '0' }}
+          NIGHTLY_ENFORCE: ${{ github.event_name == 'schedule' && matrix.entry.group == 'space' && '1' || '0' }}
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" unit-test --packages "${{ matrix.entry.packages }}"
@@ -835,10 +828,7 @@ jobs:
       matrix:
         entry: ${{ fromJSON(needs.test-packages.outputs.functional) }}
     runs-on: [self-hosted, linux, x64, space]
-    # 2 on every run a change triggers; 360 (GitHub's hosted maximum, a hang
-    # guard only) on the nightly schedule, which has no time limit (the owner,
-    # 2026-10-22). internal/ci: TestEveryCIJobIsCappedAtTwoMinutes.
-    timeout-minutes: ${{ github.event_name == 'schedule' && 360 || 2 }}
+    timeout-minutes: 2
     steps:
       - name: nothing to test for this change
         if: matrix.entry.packages == ''
@@ -962,11 +952,7 @@ jobs:
 
       - name: functional tests
         if: matrix.entry.packages != ''
-        # On the nightly schedule the per-binary go test -timeout is the 355m hang
-        # guard, not FUNCTIONAL_TIMEOUT: a nightly has no time limit.
-        env:
-          NIGHTLY_MAKE: ${{ github.event_name == 'schedule' && 'FUNCTIONAL_TIMEOUT=355m' || '' }}
-        run: make test-functional PKGS="${{ matrix.entry.packages }}" $NIGHTLY_MAKE
+        run: make test-functional PKGS="${{ matrix.entry.packages }}"
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest and
@@ -1025,10 +1011,7 @@ jobs:
           - os: macos-latest
             shards: 10
     runs-on: ${{ matrix.os }}
-    # 2 on every run a change triggers; 360 (GitHub's hosted maximum, a hang
-    # guard only) on the nightly schedule, which has no time limit (the owner,
-    # 2026-10-22). internal/ci: TestEveryCIJobIsCappedAtTwoMinutes.
-    timeout-minutes: ${{ github.event_name == 'schedule' && 360 || 2 }}
+    timeout-minutes: 2
     steps:
       # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
       # job. Attempt one tolerates its own failure ONLY so the retry below runs;
@@ -1184,11 +1167,7 @@ jobs:
         # the step before, so a hosted leg is a sixth or an eighth of the suite:
         # the whole suite on one hosted runner took ten minutes (run 35045469738)
         # for a tier whose budget is two. The shard count is the whole tuning.
-        # On the nightly schedule SHORT_TIMEOUT is the 355m hang guard: a nightly
-        # has no time limit.
         shell: bash
-        env:
-          NIGHTLY_MAKE: ${{ github.event_name == 'schedule' && 'SHORT_TIMEOUT=355m' || '' }}
         run: |
           # The hosted legs run -short: the multi-process and thousand-note fixture tests
           # in cmd/nova-swarm are gated
@@ -1200,7 +1179,7 @@ jobs:
           # test binary, so a hung package ends with a Go stack naming it before the
           # two-minute job cap kills the leg silently (internal/ci:
           # TestEveryMakeTimeoutIsUnderTheJobCap). The shard travels in PKGS.
-          make test-short PKGS="$HOSTED_PKGS" $NIGHTLY_MAKE
+          make test-short PKGS="$HOSTED_PKGS"
 
   # THERE IS NO HOSTED MERGE LEG. The merge group's gate is the same sharded
   # `test` legs the pull request ran on our own benches on the group commit

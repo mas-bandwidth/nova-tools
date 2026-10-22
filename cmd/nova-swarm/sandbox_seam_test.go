@@ -1,9 +1,3 @@
-//go:build functional
-
-// wallOnly's one caller, the wall test TestNativeProbeCardRunsNovaCheckByName, runs a real
-// child inside the real wall and so is functional (native_probe_functional_test.go); this
-// file sits behind the same tag, or the helper is dead code to the unit tier.
-
 package main
 
 import (

@@ -21,9 +21,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
-// asToolEnv makes the test binary run as nova-tokens (TestMain).
-const asToolEnv = "NOVA_TOKENS_AS_TOOL"
-
 // foldStamp is the clock every test hands run(), so that `at=` is a fixture and not a
 // reading of the machine the test happens to run on.
 var foldStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)

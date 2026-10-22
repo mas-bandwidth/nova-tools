@@ -82,10 +82,10 @@ func makeTest(t *testing.T, fixture string, vars ...string) (int, string) {
 // (ci.yml: SLOWTESTS_FLAGS="--budget 60 --sleeps <ledger>", and the old
 // SLOWTESTS_ENFORCE=0 spelled out) exit 2 on a SLEEPS skip off the ledger and
 // print its CI-SLEEPS line, while a package over the 60 s budget alone prints
-// its CI-SLOW line and exits 0. And SLOWTESTS_ENFORCE=1 (a run by hand; no CI
-// run passes it, a nightly has no time limit) at the Makefile's own flags makes
-// a 1.4 s test red that the default leaves green (PROBE 1 at the recipe).
-func TestMakeTestExitIsCISleepsOnEveryLegAndCISlowOnlyEnforced(t *testing.T) {
+// its CI-SLOW line and exits 0. And the nightly leg's SLOWTESTS_ENFORCE=1 at
+// the Makefile's own flags makes a 1.4 s test red that the default leaves
+// green (PROBE 1 at the recipe).
+func TestMakeTestExitIsCISleepsOnEveryLegAndCISlowOnlyNightly(t *testing.T) {
 	t.Parallel()
 
 	sleeps := `{"Action":"output","Package":"example.com/m/cmd/a","Test":"TestSleepsOffTheLedger","Output":"SLEEPS: waits\n"}

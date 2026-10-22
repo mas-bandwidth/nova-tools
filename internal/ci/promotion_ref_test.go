@@ -1,5 +1,3 @@
-//go:build functional
-
 package ci
 
 import (

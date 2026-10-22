@@ -1,14 +1,10 @@
-//go:build functional
-
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,9 +19,7 @@ import (
 // records each call and answers `route show` from a state file; the calls it
 // recorded are then replayed through the real grammar and the in-process store,
 // so every flag the script passes is the tool's own and every refusal the
-// tool's. Both programs are built by the Go toolchain and run as real
-// processes, so these tests are the functional tier (docs/TESTING.md); each
-// test builds the two once, side by side, and runs them as often as it needs.
+// tool's.
 
 const standIn = `package main
 
@@ -58,57 +52,33 @@ func main() {
 }
 `
 
-// goBuild builds the Go package or file at target into out, from the repository
-// root, and returns the build's error with its output.
-func goBuild(out, target string) error {
+// goBuild builds the Go package or file at target into out, from the repository root.
+func goBuild(t *testing.T, out, target string) {
+	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		return err
-	}
+	require.NoError(t, err)
 	cmd := exec.Command("go", "build", "-o", out, target)
 	cmd.Dir = root
 	cmd.Env = goenv.Clean(os.Environ())
 	if b, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("go build %s: %w\n%s", target, err, b)
+		require.NoError(t, err, string(b))
 	}
-	return nil
-}
-
-// seed is the program and its stand-in nova-config, built once for a test.
-type seed struct{ notes, standIn string }
-
-// buildSeed builds the stand-in and the program at once, into a directory of
-// the test's own.
-func buildSeed(t *testing.T) seed {
-	t.Helper()
-	bin := t.TempDir()
-	src := filepath.Join(t.TempDir(), "standin.go")
-	require.NoError(t, os.WriteFile(src, []byte(standIn), 0o644))
-	s := seed{notes: filepath.Join(bin, "notes20261002"), standIn: filepath.Join(bin, "nova-config")}
-	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	for i, b := range [][2]string{{s.standIn, src}, {s.notes, "./tools/notes20261002"}} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			errs[i] = goBuild(b[0], b[1])
-		}()
-	}
-	wg.Wait()
-	for _, err := range errs {
-		require.NoError(t, err)
-	}
-	return s
 }
 
 // runSeed runs the program in dir against the stand-in and returns its output,
 // its exit code and the calls it made, each as its arguments.
-func runSeed(t *testing.T, s seed, dir string, args ...string) (string, int, [][]string) {
+func runSeed(t *testing.T, dir string, args ...string) (string, int, [][]string) {
 	t.Helper()
+	src := filepath.Join(t.TempDir(), "standin.go")
+	require.NoError(t, os.WriteFile(src, []byte(standIn), 0o644))
+	standInBin := filepath.Join(dir, "nova-config")
+	goBuild(t, standInBin, src)
+	notes := filepath.Join(dir, "notes20261002")
+	goBuild(t, notes, "./tools/notes20261002")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "calls.log"), nil, 0o644))
-	cmd := exec.Command(s.notes, args...)
+	cmd := exec.Command(notes, args...)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "NOVA_CONFIG=" + s.standIn, "NOTES_CONN=--pg " + dsn, "NOTES_AS=a1"}
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "NOVA_CONFIG=" + standInBin, "NOTES_CONN=--pg " + dsn, "NOTES_AS=a1"}
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
@@ -141,7 +111,6 @@ func writes(calls [][]string) [][]string {
 func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testing.T) {
 	t.Parallel()
 
-	s := buildSeed(t)
 	h := newHarness()
 	addProviders(t, h.store, "p")
 	h.env["NOVA_FRIEND"] = "a1"
@@ -173,7 +142,7 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 	}
 
 	// a dry run: the same calls, each carrying --dry-run, and the store unchanged
-	out, code, calls := runSeed(t, s, dir, "m7", "--dry-run")
+	out, code, calls := runSeed(t, dir, "m7", "--dry-run")
 	assert.Equal(t, 1, code, "a route with no row ends the script 1: %s", out)
 	require.Len(t, writes(calls), 7, "six routes and the machine: %v", calls)
 	for _, c := range writes(calls) {
@@ -187,7 +156,7 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 	assert.Contains(t, shown, " note=by\\x20hand ", "the dry run wrote nothing")
 
 	// the real run
-	out, code, calls = runSeed(t, s, dir, "m7")
+	out, code, calls = runSeed(t, dir, "m7")
 	assert.Equal(t, 1, code, "one route is no row, so the script ends 1 after writing the rest: %s", out)
 	assert.Contains(t, out, "NOTES SKIP route=flash-mimo26-openrouter reason=enabled")
 	assert.Contains(t, out, "NOTES DONE routes_written=6 routes_skipped=1 routes_missing=1 machine=m7 dry_run=false")
@@ -237,15 +206,14 @@ func TestTheSeedScriptWritesTheDaysReasonsAsNotesAndTouchesNothingElse(t *testin
 func TestTheSeedScriptRefusesWithoutTheMachineOrWithAnUnknownArgument(t *testing.T) {
 	t.Parallel()
 
-	s := buildSeed(t)
 	dir := t.TempDir()
 	for args, want := range map[string]string{"": "want the held machine's name first", "--dry-run": "want the held machine's name first"} {
-		out, code, calls := runSeed(t, s, dir, strings.Fields(args)...)
+		out, code, calls := runSeed(t, dir, strings.Fields(args)...)
 		assert.Equal(t, 2, code, args)
 		assert.Contains(t, out, want)
 		assert.Empty(t, calls, "a refused run calls nothing")
 	}
-	out, code, calls := runSeed(t, s, dir, "m7", "--now")
+	out, code, calls := runSeed(t, dir, "m7", "--now")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, out, "REFUSED: unknown argument --now")
 	assert.Empty(t, calls)

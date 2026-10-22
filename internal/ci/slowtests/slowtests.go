@@ -656,9 +656,10 @@ func (l Load) LoadLine() string {
 //     fail or skip) is 1 on every leg: the finding is `truncated: <pkg> started
 //     and never ended`, because a stream cut by a pipe must not read as a
 //     clean run;
-//   - a CI-SLOW line is 1 only when enforce is set, which no CI run does (a
-//     nightly has no time limit): `make test SLOWTESTS_ENFORCE=1` by hand.
-//     Everywhere else it is a printed measurement and exit 0.
+//   - a CI-SLOW line is 1 only when enforce is set, which one caller does: the
+//     nightly whole-tree run on the idle reference leg (ci.yml's schedule
+//     branch of the test step, `make test SLOWTESTS_ENFORCE=1`). Everywhere
+//     else it is a printed measurement and exit 0.
 func Verdict(r Report, load Load, enforce bool, ledger string) ([]string, int) {
 	var lines []string
 	slow := r.OverLines()

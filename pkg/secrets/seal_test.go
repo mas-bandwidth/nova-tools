@@ -476,7 +476,7 @@ func TestGateRefusesAnOversizedMarkVersion(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, c.ok, isSeatMark(c.val), "isSeatMark(%q)", c.val)
 			dir := gateStart(t)
-			base := gateHead(t, dir)
+			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 			body := strings.Replace(gateSealedFile(), gateMarkLine, SeatMarkKey+": "+c.val+"\n", 1)
 			head := gateCommit(t, dir, map[string]string{
 				".sops.yaml": gateSops(gateRuleWith("rowan.yaml", "^NOVA_SECRETS_WRITTEN_BY$")),

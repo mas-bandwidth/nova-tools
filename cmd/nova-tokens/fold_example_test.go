@@ -19,11 +19,11 @@ func TestHelpFoldExampleIsComparedToOutput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, examples, line)
 
-	env := exampleToolOnPath(t)
+	bin := buildExampleBinary(t)
 	root := t.TempDir()
 	copyExampleTree(t, filepath.Join("testdata", "example-bench"), root)
 	mkdir(t, filepath.Join(root, "out"))
-	exit, output := runExampleLine(t, root, env, line)
+	exit, output := runExampleLine(t, root, filepath.Dir(bin), line)
 	step := onboarding.Step{Line: "$ " + line, Want: []string{
 		"TOKENS FOLD at=2026-09-11T23:55:02Z build=devel out=./out sources=1 days=2026-09-11 repos=./repos.tsv",
 		"TOKENS SOURCE label=claude:bench kind=claude path=./transcripts reports=input,output,cache_write,cache_read day_basis=utc files=1 unreadable=0 messages=3 dup=1 noid=0 nousage=- unparsed=- comments=- redated=- superseded=- rows=2",

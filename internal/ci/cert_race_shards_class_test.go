@@ -23,13 +23,12 @@ import (
 // certRaceMinShards is the shard count floor per hosted OS: at least one shard
 // for each certRaceHeavy package, and seven round-robin shards for the rest:
 // twenty-three with cmd/nova-ci heavy beside the three isolated toolchain
-// lifecycle packages, twenty-five with pkg/friend and pkg/releasewire heavy too.
-// Seven, because on run 38273976881 a round-robin shard of
+// lifecycle packages. Seven, because on run 38273976881 a round-robin shard of
 // 32 packages ran green on macos-latest and was still cancelled by the
 // two-minute job cap; about 23 packages a shard finishes with room.
 var certRaceMinShards = map[string]int{
-	"ubuntu-latest": 25,
-	"macos-latest":  25,
+	"ubuntu-latest": 23,
+	"macos-latest":  23,
 }
 
 // certRaceHeavy are the packages the race deal places first, one per shard:
@@ -52,11 +51,6 @@ var certRaceMinShards = map[string]int{
 // 73.441 s on 38277806324. Alone on its own hosted shard it is 42.466 s (run
 // 38277334996), 6 s at GOMAXPROCS=3 under -race on linux/amd64: heavy by its
 // need for the machine, not its own time.
-// pkg/friend 28.848 s and pkg/releasewire 26.407 s shared round-robin shard 18
-// with pkg/swarmwire 16.981 and pkg/decidewire 14.725: its test step ran 89 s
-// and the leg was cancelled at the two-minute cap on macos-latest in run
-// 39741236036 and on ubuntu-latest in 39562782109 (2026-10-21/22), the only
-// leg over 99 s; each now has a shard to itself.
 // certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
 	"internal/ci", "cmd/nova-tokens", "cmd/nova-sandbox", "cmd/nova-self-talk",
@@ -68,7 +62,6 @@ var certRaceHeavy = []string{
 	"nova-tools/fleet/toolchainapply/drift",
 	"nova-tools/fleet/toolchainapply/baddigest",
 	"cmd/nova-ci",
-	"pkg/friend", "pkg/releasewire",
 }
 
 const certRaceDealStep = "deal this shard's packages"
@@ -105,7 +98,7 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 	jobs, matrix := certJobs(t)
 	job, ok := jobs["test"]
 	require.True(t, ok, "certification.yml has no test job")
-	assert.Equal(t, nightlyJobCap, int(job.TimeoutMinutes), "certification.yml test: timeout-minutes %d, want %d: a nightly has no time limit, and GitHub's maximum is the hang guard", job.TimeoutMinutes, nightlyJobCap)
+	assert.Equal(t, twoMinuteCap, job.TimeoutMinutes, "certification.yml test: timeout-minutes %d, want %d", job.TimeoutMinutes, twoMinuteCap)
 	legs := hostedLegs(t, matrix)
 	assert.Len(t, legs, len(certRaceMinShards), "certification.yml test runs OSes %v, want exactly %v", legs, certRaceMinShards)
 	for runner, min := range certRaceMinShards {

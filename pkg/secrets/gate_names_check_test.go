@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,7 +18,7 @@ func TestGateRefusalNamesTheCheck(t *testing.T) {
 	t.Run("seat file with plain value is check 2", func(t *testing.T) {
 		t.Parallel()
 		dir := gateStart(t)
-		base := gateHead(t, dir)
+		base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 		head := gateCommit(t, dir, map[string]string{
 			".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateRecoveryKey)),
 			"rowan.yaml": gateSealedFile() + "GH_TOKEN: sk-live-notencrypted\n",
@@ -31,7 +32,7 @@ func TestGateRefusalNamesTheCheck(t *testing.T) {
 	t.Run("stray file is check 3", func(t *testing.T) {
 		t.Parallel()
 		dir := gateStart(t)
-		base := gateHead(t, dir)
+		base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 		head := gateCommit(t, dir, map[string]string{
 			".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateRecoveryKey)),
 			"rowan.yaml": gateSealedFile(),

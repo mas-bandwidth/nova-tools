@@ -15,18 +15,20 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // tools_playbook_test.go holds docs/TOOLS-PLAYBOOK.md to the tools it names, as
-// cli_generated_functional_test.go holds docs/CLI.md:
-// tools_playbook_functional_test.go builds each nova-tools tool the page names
-// and asks the binaries themselves, so the page cannot go stale. This file is
-// the checker, and its unit test holds it to canned help.
+// cli_generated_test.go holds docs/CLI.md: it builds each nova-tools tool the
+// page names and asks the binaries themselves, so the page cannot go stale.
 // Every usage line the page quotes is in the tool's help (`<tool> help` or
 // `<tool> <verb> -h`, compared with runs of spaces folded), every command it
 // names runs a verb whose `-h` exits 0, and every flag it gives is one that
 // verb's help names. nova-card, nova-work and nova-sprint are built in
 // nova-sprint, whose own playbook test holds their lines there.
+
+// toolsPlaybookPath is the page, relative to the repository root.
+const toolsPlaybookPath = "docs/TOOLS-PLAYBOOK.md"
 
 // builtElsewhere is the tools the page names that this repository does not
 // build.
@@ -65,7 +67,6 @@ func (h *playbookHelp) run(t *testing.T, tool string, args ...string) helpRun {
 	if r, ok := h.cache[key]; ok {
 		return r
 	}
-	require.NotEmpty(t, h.bin, "no canned help for %q and no built tools to ask", key)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, filepath.Join(h.bin, tool), args...)
@@ -168,34 +169,53 @@ func checkToolsPlaybook(t *testing.T, h *playbookHelp, text string) []string {
 	return problems
 }
 
-// cannedPlaybookHelp is help as the two witness tools print it, enough for
-// the checker's witnesses without a build: each key is a call the checker
-// makes, and a call with no key fails the test.
-func cannedPlaybookHelp() *playbookHelp {
-	friendHelp := "usage:\n  nova-friend lanes --as <me> [--clear-faults]\n      [--dir <d>] [--state-dir <d>]\n"
-	lanes := "usage: nova-friend lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]\n" +
-		"  --as string\n  --clear-faults\n  --dir string\n  --state-dir string\n"
-	doctorHelp := "usage:\n  nova-doctor run [--check <name>]\n  nova-doctor version\n"
-	return &playbookHelp{cache: map[string]helpRun{
-		"nova-friend help":         {out: friendHelp},
-		"nova-friend lanes -h":     {out: lanes},
-		"nova-friend help lanes":   {out: lanes},
-		"nova-friend fly -h":       {out: "nova-friend: unknown verb fly", code: 2},
-		"nova-doctor help":         {out: doctorHelp},
-		"nova-doctor run -h":       {out: "usage: nova-doctor run [--check <name>]\n  --check string\n"},
-		"nova-doctor version -h":   {out: "usage: nova-doctor version\n"},
-		"nova-doctor help version": {out: "usage: nova-doctor version\n"},
-	}}
-}
-
-// TestToolsPlaybookCheckerRefusesWhatTheHelpLacks holds the checker to canned
-// help: real usage lines, verbs and flags pass, and each witness is refused
-// for its own reason, so a check that passes everything is red at unit time
-// as well as against the built tools.
-func TestToolsPlaybookCheckerRefusesWhatTheHelpLacks(t *testing.T) {
+// TestToolsPlaybookNamesOnlyRealVerbsAndUsageLines builds the tools the page
+// names and holds the page to their help. The witnesses run the same check on
+// lines that must be refused, so a check that passes everything fails here.
+func TestToolsPlaybookNamesOnlyRealVerbsAndUsageLines(t *testing.T) {
 	t.Parallel()
 
-	h := cannedPlaybookHelp()
+	root := testRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, toolsPlaybookPath))
+	require.NoError(t, err, "reading %s: %v", toolsPlaybookPath, err)
+	page := string(raw)
+	require.Contains(t, page, "## Before you do anything by hand", "the playbook opens with the rule")
+
+	tools := map[string]bool{"nova-friend": true, "nova-doctor": true} // the witnesses' tools
+	for _, s := range playbookSpanRe.FindAllStringSubmatch(page, -1) {
+		if w := strings.Fields(s[1]); len(w) > 0 && strings.HasPrefix(w[0], "nova-") && !slices.Contains(builtElsewhere, w[0]) {
+			tools[w[0]] = true
+		}
+	}
+	stage := filepath.Join(t.TempDir(), "stage")
+	require.NoError(t, os.MkdirAll(stage, 0o755))
+	bin := t.TempDir()
+	// One go build for every tool: the compiles and links run in parallel and the
+	// toolchain starts once. Built one at a time, the eleven links took 8.6 s on a
+	// 16-core bench against 1.8 s together, and this was the slowest test of a
+	// two-core hosted shard.
+	pkgs := make([]string, 0, len(tools))
+	for tool := range tools {
+		_, err := os.Stat(filepath.Join(root, "cmd", tool))
+		require.NoError(t, err, "%s names %s, which is no ./cmd/%s here; add it to builtElsewhere if another repository builds it", toolsPlaybookPath, tool, tool)
+		pkgs = append(pkgs, "./cmd/"+tool)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	build := exec.CommandContext(ctx, "go", append([]string{"build", "-o", stage + string(filepath.Separator)}, pkgs...)...)
+	build.Dir = root
+	build.Env = goenv.Clean(os.Environ())
+	built, err := build.CombinedOutput()
+	cancel()
+	require.NoError(t, err, "go build %s: %s", strings.Join(pkgs, " "), built)
+	for tool := range tools {
+		require.NoError(t, testbin.Place(filepath.Join(stage, tool), filepath.Join(bin, tool)))
+	}
+	h := &playbookHelp{bin: bin, home: t.TempDir(), cache: map[string]helpRun{}}
+
+	for _, p := range checkToolsPlaybook(t, h, page) {
+		t.Errorf("%s %s", toolsPlaybookPath, p)
+	}
+
 	good := "usage: `nova-friend lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]`\n" +
 		"run `nova-friend lanes --as <me> --clear-faults` and `nova-doctor run --check harness`\n"
 	assert.Empty(t, checkToolsPlaybook(t, h, good), "real usage lines and verbs are refused")

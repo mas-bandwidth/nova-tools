@@ -332,8 +332,8 @@ func TestReadVersionLineWithinKillsAHungBinary(t *testing.T) {
 	hangs := filepath.Join(dir, "hangs")
 	require.NoError(t, testbin.WriteExecutable(hangs, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755))
 	line, err = readVersionLineWithin(hangs, doctorHungDeadline, 50*time.Millisecond, doctorVersionLineMax)
-	assert.EqualError(t, err, "timed out after 10ms", "a hung binary: got (%q, %v), want an empty line and \"timed out after 10ms\"", line, err)
-	assert.Equal(t, "", line, "a hung binary: got (%q, %v), want an empty line and \"timed out after 10ms\"", line, err)
+	assert.EqualError(t, err, "timed out after 100ms", "a hung binary: got (%q, %v), want an empty line and \"timed out after 100ms\"", line, err)
+	assert.Equal(t, "", line, "a hung binary: got (%q, %v), want an empty line and \"timed out after 100ms\"", line, err)
 }
 
 // Production's reader carries a bounded deadline.
@@ -347,16 +347,17 @@ func TestDoctorVersionDeadlineIsBounded(t *testing.T) {
 // child to produce output within a short one, so a loaded machine cannot fail it.
 const doctorGoodDeadline = 5 * time.Second
 
-// doctorHungDeadline is the injected deadline a stub that hangs is read under. The stub
-// hangs whatever the deadline, and the refusal is decided by the deadline's context, never by
-// what the stub managed to do first, so the deadline is only what the test pays to wait.
-const doctorHungDeadline = 10 * time.Millisecond
+// doctorHungDeadline is the injected deadline a stub that hangs is read under.
+const doctorHungDeadline = 100 * time.Millisecond
 
 // doctorGoodGrace is the grace a stub that leaves no child behind is read under: the copy of
 // its output gets that long to finish after it exits, so a stall of the machine cannot drop a
-// stamp that was printed. (doctorPipeGrace, for the one stub that leaves a child holding the
-// output pipe, is in doctor_pipe_unix_functional_test.go.)
-const doctorGoodGrace = 5 * time.Second
+// stamp that was printed. doctorPipeGrace is the grace for the one stub that leaves a child
+// holding the output pipe, which the reader must wait out.
+const (
+	doctorGoodGrace = 5 * time.Second
+	doctorPipeGrace = 250 * time.Millisecond
+)
 
 // doctorStubs lays out a PATH binary and a ~/.local/bin copy as real scripts and returns an
 // environment that reads them with the real reader under a short injected deadline. An empty
@@ -422,7 +423,7 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 		absent      []string
 	}{
 		{"hang", "exec sleep 30", good, "path", 2,
-			[]string{"DOCTOR UNREADABLE", "path=", "timed out after 10ms", "the other binary, ", ", reported stamp=nova-swarm good-stamp;", "by hand"},
+			[]string{"DOCTOR UNREADABLE", "path=", "timed out after 100ms", "the other binary, ", ", reported stamp=nova-swarm good-stamp;", "by hand"},
 			[]string{"DOCTOR DRIFT", "shadows"}},
 		{"print then exit 3: the stamp is compared and the exit reported", "echo 'nova-swarm stale-stamp'; exit 3", good, "", 2,
 			[]string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "exited 3"}, nil},
@@ -433,11 +434,11 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 		{"missing where PATH names it", "", good, "", 2,
 			[]string{"DOCTOR UNREADABLE", "not found", "stamp=nova-swarm good-stamp"}, nil},
 		{"the local copy hangs", good, "exec sleep 30", "local", 2,
-			[]string{"DOCTOR UNREADABLE", "local=", "timed out after 10ms", "stamp=nova-swarm good-stamp"}, []string{"DOCTOR DRIFT"}},
+			[]string{"DOCTOR UNREADABLE", "local=", "timed out after 100ms", "stamp=nova-swarm good-stamp"}, []string{"DOCTOR DRIFT"}},
 		{"both hang: each is named", "exec sleep 30", "exec sleep 30", "path,local", 2,
-			[]string{"DOCTOR UNREADABLE reading the version of path=", "DOCTOR UNREADABLE reading the version of local=", "timed out after 10ms", "could not be read either: timed out after 10ms"}, []string{"DOCTOR DRIFT", "reported nothing", "no other binary"}},
+			[]string{"DOCTOR UNREADABLE reading the version of path=", "DOCTOR UNREADABLE reading the version of local=", "timed out after 100ms", "could not be read either: timed out after 100ms"}, []string{"DOCTOR DRIFT", "reported nothing", "no other binary"}},
 		{"the PATH binary hangs and no local copy is installed", "exec sleep 30", "", "path", 2,
-			[]string{"DOCTOR UNREADABLE", "timed out after 10ms", "the other binary, ", "is not installed"}, []string{"reported nothing", "no other binary"}},
+			[]string{"DOCTOR UNREADABLE", "timed out after 100ms", "the other binary, ", "is not installed"}, []string{"reported nothing", "no other binary"}},
 		{"both answer and agree", good, good, "", 0, nil, []string{"DOCTOR"}},
 		{"no local copy is tolerated", good, "", "", 0, nil, []string{"DOCTOR"}},
 	}

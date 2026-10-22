@@ -16,9 +16,6 @@ import (
 
 // Bounds of a run. A bounded run is the only kind a required case can be
 // measured by; a manual run is an explicit bench experiment and CI refuses it.
-// A nightly run (Options.Nightly) has no wall bound at all: it is the scheduled
-// repeat of the models, its records are measurements and never committed
-// records (Merge refuses them), so no bound is owed to make them comparable.
 const (
 	BoundedCap = 110 * time.Second
 	ManualCap  = 3600 * time.Second
@@ -35,24 +32,11 @@ func CheckLimits(budget time.Duration, workers int, manual bool) error {
 	if budget <= 0 || budget > cap {
 		return fmt.Errorf("the timeout must be positive and at most %s", cap)
 	}
-	return CheckWorkers(workers)
-}
-
-// CheckWorkers refuses a TLC worker count other than one or two. A nightly run
-// takes no budget, so this is all of CheckLimits it is held to.
-func CheckWorkers(workers int) error {
 	if workers != 1 && workers != 2 {
 		return errors.New("workers must be 1 or 2")
 	}
 	return nil
 }
-
-// NightlyMode is the mode of a nightly run's records, and NightlyBudget the
-// budget column they carry: none.
-const (
-	NightlyMode   = "nightly"
-	NightlyBudget = "-"
-)
 
 // CheckParallel refuses a case-pool width outside the bench's CPU budget.
 // This enforces README.md's rule that width limits concurrent work.
@@ -75,8 +59,7 @@ type Options struct {
 	Java     string        // the java program
 	JavaVer  string        // the version java reported (JavaVersion); recorded
 	Out      string        // output directory: logs, RUNS.tsv and the private copy of the models
-	Budget   time.Duration // the whole suite's limit; ignored by a nightly run
-	Nightly  bool          // no wall bound; mode=nightly records, never committed
+	Budget   time.Duration // the whole suite's limit
 	Workers  int           // TLC workers for a case expected to pass; counterexample cases use one
 	Parallel int           // cases to run concurrently
 	Manual   bool          // mode=manual in the records
@@ -93,6 +76,12 @@ type Options struct {
 	Selection Selection
 
 	beforeCopy func() // a test's seam: runs between the digest and the copy
+}
+
+// Selection is a choice of cases from the plan, as Select takes it.
+type Selection struct {
+	Group         string
+	Shards, Shard int
 }
 
 // selectionDiffers says how two selections differ, or "" when they are the
@@ -140,9 +129,6 @@ func RunSuite(o Options) (Result, error) {
 		exec = Execute
 	}
 	var res Result
-	if o.Nightly && o.Manual {
-		return res, errors.New("a run is nightly or manual, not both")
-	}
 	if o.JavaVer == "" {
 		return res, errors.New("no java version to record")
 	}
@@ -172,7 +158,11 @@ func RunSuite(o Options) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("the case plan is refused: %v", err)
 	}
-	chosen, err := o.Selection.Choose(current)
+	sel := o.Selection
+	if sel.Shards == 0 {
+		sel.Shards = 1
+	}
+	chosen, err := Select(current, sel.Group, sel.Shards, sel.Shard)
 	if err != nil {
 		return res, fmt.Errorf("the selection no longer fits the case plan: %v", err)
 	}
@@ -204,11 +194,8 @@ func RunSuite(o Options) (Result, error) {
 	deadline := begin.Add(o.Budget)
 	budget := strconv.FormatFloat(o.Budget.Seconds(), 'g', -1, 64)
 	mode := "bounded"
-	switch {
-	case o.Manual:
+	if o.Manual {
 		mode = "manual"
-	case o.Nightly:
-		mode, budget = NightlyMode, NightlyBudget
 	}
 	// What runs is the selection of the digested plan, never the caller's slice.
 	// A zero value preserves the prior one-at-a-time behavior for library callers.
@@ -241,17 +228,13 @@ func RunSuite(o Options) (Result, error) {
 					workers = o.Workers
 				}
 				var runErr error
-				if remaining := deadline.Sub(started); remaining <= 0 && !o.Nightly {
+				if remaining := deadline.Sub(started); remaining <= 0 {
 					runErr = os.WriteFile(log, []byte("TLC suite budget exhausted before starting this case\n"), 0o644)
 				} else {
 					var scratch string
 					scratch, runErr = os.MkdirTemp(out, "tlc-")
 					if runErr == nil {
 						ctx, cancel := context.WithTimeout(context.Background(), remaining)
-						if o.Nightly {
-							cancel()
-							ctx, cancel = context.WithCancel(context.Background())
-						}
 						code = exec(ctx, Run{
 							Java: o.Java, Jar: o.Jar.Path, Dir: res.Work,
 							JVM:    []string{"-XX:+UseParallelGC", "-XX:ActiveProcessorCount=2", "-Xmx2g"},

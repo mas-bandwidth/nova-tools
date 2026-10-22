@@ -1,8 +1,4 @@
-//go:build unix && functional
-
-// The lane-end tests start a fake native and the sleepers its card leaves behind, real
-// processes in sessions of their own, and ask the kernel whether the lane's reap ended them:
-// functional by the house rule (docs/TESTING.md, "The two tiers").
+//go:build unix
 
 package main
 
@@ -105,9 +101,7 @@ func newLaneFixture(t *testing.T, c laneEndCase) *laneFixture {
 	b.WriteString(": > '" + f.ready + "'\n")
 	if c.by != "" {
 		b.WriteString("trap 'echo \"NATIVE FAIL label=c1 rc=-1 wall=1.00s harness=killed budget=-/1 reason=terminated\"; exit 143' TERM\n")
-		// sh runs a trap only once the command in the foreground ends, so the step is
-		// how long the stop waits to be heard: short, so the test does not wait it out.
-		b.WriteString("while :; do sleep 0.01; done\n")
+		b.WriteString("while :; do sleep 0.1; done\n")
 	} else {
 		b.WriteString("echo '" + c.line + "'\nexit " + strconv.Itoa(c.code) + "\n")
 	}
@@ -159,7 +153,7 @@ func laneProcAlive(pid int) bool {
 
 func waitForLaneReady(t *testing.T, path string) {
 	t.Helper()
-	require.Eventually(t, func() bool { _, err := os.Stat(path); return err == nil }, 30*time.Second, time.Millisecond, "the fake native never started its sleepers")
+	require.Eventually(t, func() bool { _, err := os.Stat(path); return err == nil }, 30*time.Second, 10*time.Millisecond, "the fake native never started its sleepers")
 }
 
 var laneEndLine = regexp.MustCompile(`(?m)^LANE END card=c1 .*\breaped=(\d+)\b.*$`)
@@ -195,7 +189,7 @@ func TestALaneEndLeavesNoProcessOfItsCardAlive(t *testing.T) {
 				require.True(t, ok, "the member's stop has no way to end its lanes: native and every process its card started outlive the member")
 				require.Equal(t, 1, ender.endLanes(), "the member's stop ends the one lane it runs")
 			}
-			require.Eventually(t, child.Done, 60*time.Second, time.Millisecond, "the lane ends")
+			require.Eventually(t, child.Done, 60*time.Second, 10*time.Millisecond, "the lane ends")
 			if c.end != "" {
 				require.Equal(t, c.end, child.Result().End, "the fixture is the end it names")
 			}
@@ -208,7 +202,7 @@ func TestALaneEndLeavesNoProcessOfItsCardAlive(t *testing.T) {
 					}
 				}
 				return true
-			}, 2*time.Second, time.Millisecond, "a process the lane's card started (%v) is alive 2s after the lane ended (%s)", pids, c.name)
+			}, 2*time.Second, 20*time.Millisecond, "a process the lane's card started (%v) is alive 2s after the lane ended (%s)", pids, c.name)
 			m := laneEndLine.FindStringSubmatch(out.String())
 			require.NotNil(t, m, "the lane's end says what it reaped: %q", out.String())
 			require.Equal(t, strconv.Itoa(f.sleepers), m[1], "reaped= counts the processes the lane found alive and killed")
@@ -246,7 +240,7 @@ func TestAQuietLaneEndReapsNothing(t *testing.T) {
 	require.NoError(t, os.MkdirAll(r.slots, 0o755))
 	ch, err := r.Start(member.Packet{Card: "c1", Kind: "work", Gen: 1, Epoch: 1})
 	require.NoError(t, err)
-	require.Eventually(t, ch.Done, 30*time.Second, time.Millisecond)
+	require.Eventually(t, ch.Done, 30*time.Second, 10*time.Millisecond)
 	m := laneEndLine.FindStringSubmatch(out.String())
 	require.NotNil(t, m, "every lane end says what it reaped: %q", out.String())
 	require.Equal(t, "0", m[1])

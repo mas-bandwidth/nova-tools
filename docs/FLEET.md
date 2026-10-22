@@ -377,11 +377,7 @@ or archive digest replaces that versioned install. The role verifies a replaceme
 archive before removing the old install, so a download or checksum failure leaves
 the current install intact. The play is opt-in: an untagged tools rollout skips it.
 The Linux x86_64 and Darwin arm64 archive pairs are explicit, and an unsupported
-host platform is refused before installation. On Linux `~/sdk/bin/sbcl` is a
-launcher of the distro's sbcl (`apt-get install sbcl`; its path is
-`nova_toolchains_distro_sbcl`, `/usr/bin/sbcl` by default), never the Homebrew
-bottle, which is not relocatable; the play refuses a Linux host without it, and a
-dry run names it as `TOOLCHAINS WOULD-NEED`.
+host platform is refused before installation.
 
 Run the toolchain install with this one command:
 

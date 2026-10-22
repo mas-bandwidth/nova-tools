@@ -47,7 +47,7 @@ func TestGateTellsAVerbMadeSealFromAHandSeal(t *testing.T) {
 	gate := func(t *testing.T, content string) (string, int) {
 		t.Helper()
 		dir := gateStart(t)
-		base := gateHead(t, dir)
+		base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 		head := gateCommit(t, dir, map[string]string{
 			".sops.yaml": gateSops(rule),
 			"rowan.yaml": content,

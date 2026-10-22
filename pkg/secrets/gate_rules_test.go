@@ -67,7 +67,7 @@ func TestGateRefusesEachShapeForItsOwnReason(t *testing.T) {
 			if c.before != nil {
 				gateCommit(t, dir, c.before)
 			}
-			base := gateHead(t, dir)
+			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 			head := base
 			if c.after != nil {
 				head = gateCommit(t, dir, c.after)

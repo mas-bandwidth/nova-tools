@@ -184,9 +184,8 @@ func fileMayContainGenerality(cleanSrc []byte) bool {
 	return false
 }
 
-// lowerMayContainGenerality is the line prefilter, over a line already lowered
-// with strings.ToLower: a line holding no candidate token has no finding.
-func lowerMayContainGenerality(lower string) bool {
+func lineMayContainGenerality(line string) bool {
+	lower := strings.ToLower(line)
 	for _, tok := range candidateTokens {
 		if strings.Contains(lower, tok) {
 			return true
@@ -249,13 +248,9 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 
 	// 2. Blank out the module path of a go:generate pin, which names the module
 	// it runs the way an import spec names the package it reads.
-	// Every match holds the literal "//go:generate go run ", so a file without
-	// it is not handed to the regexp.
-	if bytes.Contains(src, []byte("//go:generate go run ")) {
-		for _, m := range reGoGenerateRun.FindAllSubmatchIndex(src, -1) {
-			for i := m[2]; i < m[3]; i++ {
-				clean[i] = ' '
-			}
+	for _, m := range reGoGenerateRun.FindAllSubmatchIndex(src, -1) {
+		for i := m[2]; i < m[3]; i++ {
+			clean[i] = ' '
 		}
 	}
 
@@ -413,12 +408,8 @@ func scanGenerality(files []GeneralitySourceFile) []generalityHit {
 			continue
 		}
 		cleanSrc := cleanSourceForGenerality(f.Rel, f.Src)
-		// The file is lowered once and split beside the original: lowering
-		// never makes or removes a newline, so line i of each is the same line.
-		lines := strings.Split(string(cleanSrc), "\n")
-		lowers := strings.Split(strings.ToLower(string(cleanSrc)), "\n")
-		for lineNum, line := range lines {
-			if !lowerMayContainGenerality(lowers[lineNum]) {
+		for lineNum, line := range strings.Split(string(cleanSrc), "\n") {
+			if !lineMayContainGenerality(line) {
 				continue
 			}
 			for _, tok := range extractTokensFromText(line) {

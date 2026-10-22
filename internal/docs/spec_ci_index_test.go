@@ -204,7 +204,7 @@ func declaredTests(t *testing.T) map[string]string {
 				return nil
 			}
 			fset := token.NewFileSet()
-			f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+			f, err := parser.ParseFile(fset, path, nil, 0)
 			if !assert.NoError(t, err, "cannot parse %s: %v", rel, err) {
 				return nil
 			}
