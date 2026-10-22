@@ -84,6 +84,7 @@ MERGE_TIMEOUT ?= 100s
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
+	@echo "make tlc-nightly the scheduled TLC run of one shard: no wall bound (tlc.yml only)"
 	@echo "make tlc-full    manual Linux TLC experiment (also explicit TLC_BUDGET; forbidden in CI)"
 	@echo "make tlc-groups  JSON list of required model groups"
 	@echo "make tlc-test    the runner and checker tests: no Java, no Redis, no network"
@@ -196,10 +197,23 @@ TLC_JAR ?=
 TLC_OUT ?=
 TLC_GROUP ?=
 TLC_BUDGET ?= 110
-.PHONY: tlc tlc-full tlc-groups tlc-test
+# A group whose cases sum past one bounded run is split: tlc-groups-sharded
+# deals it by recorded seconds (tlacheck run --balanced) into the fewest shards
+# that stay within TLC_SHARD_SECONDS each, and make tlc runs one shard of it.
+TLC_SHARDS ?= 1
+TLC_SHARD ?= 0
+TLC_SHARD_SECONDS ?= 40
+.PHONY: tlc tlc-nightly tlc-full tlc-groups tlc-groups-sharded tlc-test
 tlc:
 	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc: set TLC_JAR, TLC_OUT and TLC_GROUP' >&2; exit 2; }
-	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s"
+	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --shards "$(TLC_SHARDS)" --shard "$(TLC_SHARD)" --balanced --timeout "$(TLC_BUDGET)s"
+
+# The scheduled run (tlc.yml, schedule and dispatch only): the same shard with
+# no wall bound at all (tlacheck run --nightly). Its records are measurements,
+# never committed records; tlacheck refuses it outside such a run.
+tlc-nightly:
+	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc-nightly: set TLC_JAR, TLC_OUT and TLC_GROUP' >&2; exit 2; }
+	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --shards "$(TLC_SHARDS)" --shard "$(TLC_SHARD)" --balanced --nightly
 
 tlc-full:
 	@test "$(origin TLC_BUDGET)" != "file" || { echo 'make tlc-full: supply TLC_BUDGET explicitly' >&2; exit 2; }
@@ -211,6 +225,9 @@ tlc-test:
 
 tlc-groups:
 	@$(GO) run ./tools/tlacheck groups --root .
+
+tlc-groups-sharded:
+	@$(GO) run ./tools/tlacheck groups --root . --shard-seconds $(TLC_SHARD_SECONDS)
 
 new-rule:
 	$(GO) run ./tools/newrule $(ARGS)
@@ -345,9 +362,9 @@ preflight:
 # whatever SLOWTESTS_ENFORCE says.
 # The wall times are MEASUREMENTS: slowtests prints every CI-SLOW line and a
 # CI-LOAD line (the host's load, never read by the verdict) and exits 0 on
-# them, unless SLOWTESTS_ENFORCE=1 passes --enforce, which one caller does: the
-# nightly whole-tree run on the bench legs (ci.yml, the test step's schedule
-# branch). SLOWTESTS_FLAGS is the whole slowtests invocation, so the push run
+# them, unless SLOWTESTS_ENFORCE=1 passes --enforce, which no CI run does (a
+# nightly has no time limit; internal/ci: TestNoLegEnforcesATimeBudget): it is
+# for a run by hand. SLOWTESTS_FLAGS is the whole slowtests invocation, so the push run
 # over the whole tree passes the old 60 s package budget instead (ci.yml).
 SLOWTESTS_FLAGS ?= --package-budget 2 --test-budget 1 --allowlist internal/ci/slow-tests_allowlist.txt --sleeps internal/ci/sleeps-skips_allowlist.txt
 SLOWTESTS_ENFORCE ?= 0

@@ -218,15 +218,37 @@ func RegisterPongWire[T, B, R, F, W, A any, PB pongBuilderPtr[T, B, A], PR pongR
 		dv.Field(iSent).SetInt(src.SentMs)
 		dv.Field(iSentPres).SetBool(src.SentMsPresent)
 	}
+	// A builder is a large value (its arena's segment table) whose first
+	// allocation is a whole arena segment, so a read that made both anew
+	// spent most of its time allocating and zeroing them. Both are kept for
+	// the next read: a builder is reused after its Shutdown, and the
+	// segments come from a pool through the builder's allocator pair, zeroed
+	// on their return as the pair's contract asks (Alloc supplies zeroed
+	// bytes).
+	builders := sync.Pool{New: func() any { return new(B) }}
+	var segments sync.Pool // *[]byte, zeroed
+	alloc := reflect.New(reflect.TypeFor[A]()).Elem()
+	alloc.FieldByName("Alloc").Set(reflect.ValueOf(func(n int64) []byte {
+		if p, ok := segments.Get().(*[]byte); ok && int64(len(*p)) == n {
+			return *p
+		}
+		return make([]byte, n)
+	}))
+	alloc.FieldByName("Free").Set(reflect.ValueOf(func(b []byte) {
+		clear(b)
+		segments.Put(&b)
+	}))
+	allocator := alloc.Interface().(A)
 	viaBuilder := func(v *pongTable, load func(*B, *R) bool) schemaread.Report {
-		var b B
-		pb := PB(&b)
-		if !pb.Init() {
+		b := builders.Get().(*B)
+		defer builders.Put(b)
+		pb := PB(b)
+		if !pb.Init(allocator) {
 			return schemaread.Report{Malformed: true}
 		}
 		defer pb.Shutdown()
 		var rep R
-		ok := load(&b, &rep)
+		ok := load(b, &rep)
 		if root := pb.GetRoot(); root != nil {
 			fromWire(v, root)
 		}

@@ -103,13 +103,12 @@ var (
 	reContact = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9._+-])((?:glenn|rowan)@mas-bandwidth\.com)(?:\.?(?:[^A-Za-z0-9.-]|$))`)
 )
 
-// lineMayContainText is the cheap prefilter: a line with none of these substrings has
-// no finding of any shape.
-func lineMayContainText(line string) bool {
-	if lineMayContainGenerality(line) {
+// lowerMayContainText is the cheap prefilter, over a line already lowered with
+// strings.ToLower: a line with none of these substrings has no finding of any shape.
+func lowerMayContainText(lower string) bool {
+	if lowerMayContainGenerality(lower) {
 		return true
 	}
-	lower := strings.ToLower(line)
 	for _, s := range []string{"100.", "fd7a", "ts.net", "/users/", "/home/", `\users\`} {
 		if strings.Contains(lower, s) {
 			return true
@@ -143,38 +142,63 @@ const contactDoc = "docs/SECURITY.md"
 // generalityTextFindings returns every finding of one line of a text file, as tokens:
 // forbidden names, and the pattern findings tailnet-address and home-path.
 func generalityTextFindings(rel, line string) []string {
-	if !lineMayContainText(line) {
+	return generalityTextFindingsLower(rel, line, strings.ToLower(line))
+}
+
+// generalityTextFindingsLower is generalityTextFindings of a line and the same
+// line lowered with strings.ToLower, for a caller that lowered its whole file
+// once.
+func generalityTextFindingsLower(rel, line, lower string) []string {
+	if !lowerMayContainText(lower) {
 		return nil
 	}
+	// Each pattern below is run only on a line holding a literal every one of
+	// its matches holds (lowered where the pattern ignores case), so a line
+	// that cannot match is never handed to the regexp.
 	var out []string
-	for _, m := range reTailnetV4.FindAllStringSubmatch(line, -1) {
-		if m[5] != "" {
-			continue // a CIDR: the concept of the range, not an address
+	if strings.Contains(line, "100.") {
+		for _, m := range reTailnetV4.FindAllStringSubmatch(line, -1) {
+			if m[5] != "" {
+				continue // a CIDR: the concept of the range, not an address
+			}
+			o2, _ := strconv.Atoi(m[2])
+			o3, _ := strconv.Atoi(m[3])
+			o4, _ := strconv.Atoi(m[4])
+			if o2 >= 64 && o2 <= 127 && o3 <= 255 && o4 <= 255 {
+				out = append(out, "tailnet-address")
+			}
 		}
-		o2, _ := strconv.Atoi(m[2])
-		o3, _ := strconv.Atoi(m[3])
-		o4, _ := strconv.Atoi(m[4])
-		if o2 >= 64 && o2 <= 127 && o3 <= 255 && o4 <= 255 {
+	}
+	if strings.Contains(lower, "fd7a:115c:a1e0") {
+		for _, m := range reTailnetV6.FindAllStringSubmatch(line, -1) {
+			if m[1] == "" { // the prefix written as a CIDR (fd7a:115c:a1e0::/48) is the concept
+				out = append(out, "tailnet-address")
+			}
+		}
+	}
+	if strings.Contains(lower, ".ts.net") {
+		for range reTailnetName.FindAllString(line, -1) {
 			out = append(out, "tailnet-address")
 		}
 	}
-	for _, m := range reTailnetV6.FindAllStringSubmatch(line, -1) {
-		if m[1] == "" { // the prefix written as a CIDR (fd7a:115c:a1e0::/48) is the concept
-			out = append(out, "tailnet-address")
+	if strings.Contains(line, "Users") || strings.Contains(line, "/home/") {
+		for _, m := range reHomePath.FindAllStringSubmatch(line, -1) {
+			if user := m[1] + m[2]; !genericHomeUsers[strings.ToLower(user)] {
+				out = append(out, "home-path")
+			}
 		}
 	}
-	for range reTailnetName.FindAllString(line, -1) {
-		out = append(out, "tailnet-address")
+	scrubbed := line
+	if strings.Contains(line, "[:space:]") {
+		scrubbed = rePosixClass.ReplaceAllString(scrubbed, "        ")
 	}
-	for _, m := range reHomePath.FindAllStringSubmatch(line, -1) {
-		if user := m[1] + m[2]; !genericHomeUsers[strings.ToLower(user)] {
-			out = append(out, "home-path")
-		}
+	if strings.Contains(lower, "white-space") {
+		scrubbed = blankGroup(scrubbed, reCSSWhiteSpace, 1)
 	}
-	scrubbed := rePosixClass.ReplaceAllString(line, "        ")
-	scrubbed = blankGroup(scrubbed, reCSSWhiteSpace, 1)
-	scrubbed = blankGroup(scrubbed, reOwnIdentity, 2)
-	if rel == contactDoc {
+	if strings.Contains(lower, "mas-bandwidth/") {
+		scrubbed = blankGroup(scrubbed, reOwnIdentity, 2)
+	}
+	if rel == contactDoc && strings.Contains(lower, "@mas-bandwidth.") {
 		scrubbed = blankGroup(scrubbed, reContact, 2)
 	}
 	out = append(out, extractTokensFromText(scrubbed)...)
@@ -207,8 +231,17 @@ func isTextScanned(rel string) bool {
 func measureTextGenerality(files []textScanFile) map[string]int {
 	counts := map[string]int{}
 	for _, f := range files {
-		for _, line := range strings.Split(string(f.Src), "\n") {
-			for _, tok := range generalityTextFindings(f.Rel, line) {
+		// The file is lowered once and split beside the original: lowering
+		// maps rune by rune and never makes or removes a newline, so line i of
+		// each is the same line, and a file whose lowered text holds no
+		// prefilter substring has no line that does.
+		lower := strings.ToLower(string(f.Src))
+		if !lowerMayContainText(lower) {
+			continue
+		}
+		lowers := strings.Split(lower, "\n")
+		for i, line := range strings.Split(string(f.Src), "\n") {
+			for _, tok := range generalityTextFindingsLower(f.Rel, line, lowers[i]) {
 				counts[f.Rel+":"+tok]++
 			}
 		}

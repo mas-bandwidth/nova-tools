@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
@@ -105,7 +106,7 @@ func cmdStep(args []string, stdout, stderr io.Writer) int {
 	if wall.Bin == "" {
 		fmt.Fprintln(stdout, "STEP NOTE no wall (--no-wall): the card's programs run unconfined, with this process's network, environment and files")
 	} else {
-		wall.Read = stepReads(*dir, bin, benchPasswdHome())
+		wall.Read = stepReads(*dir, bin, benchPasswdHome(), stepGoroot(os.Getenv, exec.LookPath))
 	}
 	done := cardtree.Walk(t, func(s cardtree.Step) cardtree.Result {
 		r := cardtree.RunScript(*dir, s, cardtree.OSSys(bin, wall))
@@ -167,12 +168,72 @@ func benchPasswdHome() string {
 	return u.HomeDir
 }
 
+// stepGoroot is the Go toolchain a step's `go` runs: GOROOT when the caller sets it (the go
+// command sets it, and puts its bin first on PATH, when it has switched toolchains under
+// GOTOOLCHAIN), else the distribution the go on PATH sits in, read through its symlinks; ""
+// when there is no go. The step's commands run with this process's environment
+// (cardtree.Wall.Env), so this is the go a POST's `go vet` starts and the tools it execs.
+func stepGoroot(getenv func(string) string, lookPath func(string) (string, error)) string {
+	if root := getenv("GOROOT"); root != "" {
+		return root
+	}
+	launcher, err := lookPath("go")
+	if err != nil {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(launcher); err == nil {
+		launcher = real
+	}
+	return filepath.Dir(filepath.Dir(launcher))
+}
+
+// stepGorootRead is the grant for goroot, the toolchain the step's go runs, with execute:
+// go execs vet, compile and link out of its pkg/tool, and the wall grants a command only its
+// own directory (bin). Only a real Go distribution is granted (absolute, holding bin/go and
+// pkg/tool, read through its symlinks), and only when no execute-granting --read already
+// covers it, so the bench sdk is named once. A toolchain the go command fetched lives under
+// the module cache, which stays --read-noexec: the grant is that one toolchain, checksummed
+// by the go command when it fetched it, and none of the module source beside it. A goroot
+// that is a home directory, or holds one, is never granted: a home is never a root.
+func stepGorootRead(goroot, home string, out []string) []string {
+	if !filepath.IsAbs(goroot) {
+		return nil
+	}
+	real, err := filepath.EvalSymlinks(goroot)
+	if err != nil {
+		return nil
+	}
+	for _, part := range []string{filepath.Join("bin", "go"), filepath.Join("pkg", "tool")} {
+		if _, err := os.Stat(filepath.Join(real, part)); err != nil {
+			return nil
+		}
+	}
+	for _, h := range []string{home, os.Getenv("HOME")} {
+		if h == "" {
+			continue
+		}
+		if r, err := filepath.EvalSymlinks(h); err == nil {
+			h = r
+		}
+		if sandbox.Inside(h, real) {
+			return nil
+		}
+	}
+	for i := 0; i+1 < len(out); i++ {
+		if out[i] == "--read" && sandbox.Inside(real, out[i+1]) {
+			return nil
+		}
+	}
+	return []string{"--read", real}
+}
+
 // stepReads is what a step's wall lets it read beside the system: the built programs, the
-// bench's toolchain (Go, sbcl) and /opt/homebrew where git and sbcl live, and, never
-// executable, the module cache GOMODCACHE names and the objects the checkout borrows (its
-// alternates). home is the bench user's password-database home, never this process's HOME:
-// a script step sets HOME to the slot, and a lookup there skips the bench sdk.
-func stepReads(dir, bin, home string) []string {
+// bench's toolchain (Go, sbcl) and /opt/homebrew where git and sbcl live, the Go toolchain
+// the step's go runs (goroot, stepGorootRead), and, never executable, the module cache
+// GOMODCACHE names and the objects the checkout borrows (its alternates). home is the bench
+// user's password-database home, never this process's HOME: a script step sets HOME to the
+// slot, and a lookup there skips the bench sdk.
+func stepReads(dir, bin, home, goroot string) []string {
 	out := []string{"--read", bin}
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
 		out = append(out, "--read", "/opt/homebrew")
@@ -189,6 +250,7 @@ func stepReads(dir, bin, home string) []string {
 		}
 		out = append(out, flag, r.Path)
 	}
+	out = append(out, stepGorootRead(goroot, home, out)...)
 	// the module cache the caller names (native names the bench's shared one): read, never
 	// written or run, so a POST's go vet or go test finds its modules and fetches none
 	if mod := os.Getenv("GOMODCACHE"); filepath.IsAbs(mod) && !named(out, mod) {

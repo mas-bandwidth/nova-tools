@@ -14,11 +14,15 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/scanner"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -130,9 +134,71 @@ func (pc *parserChecker) match(s string) (tok, form string) {
 	return "", ""
 }
 
+// mayHit reports whether src holds a string literal a hit could start from. Every string
+// fold yields (and so every string match reads) is a concatenation of the file's own
+// string literals, or a prefix of one (Sprintf's lead): a literal, a const or never-assigned
+// var folded from literals, a + of such, a Sprint or Sprintf of such. So a string that
+// matches a token begins with the first non-empty literal L it was built from: either L
+// starts with the token, or L is a proper prefix of it ("FL" + "OOR:"). A file with no
+// such literal holds no hit, and scanFile skips its parse: the tree walk tokenizes 1000+
+// files and parses only the few that pass, which keeps TestOneTypedParser inside the unit
+// tier's budget (CI-SLOW 2026-10-22). A file the scanner cannot read is parsed, so a broken
+// file still fails the walk as it did.
+func (pc *parserChecker) mayHit(p string, src []byte) bool {
+	var sc scanner.Scanner
+	fset := token.NewFileSet()
+	sc.Init(fset.AddFile(p, -1, len(src)), src, nil, 0)
+	for {
+		_, tok, lit := sc.Scan()
+		if tok == token.EOF {
+			break
+		}
+		if tok != token.STRING {
+			continue
+		}
+		v, err := strconv.Unquote(lit)
+		if err != nil {
+			return true
+		}
+		if v != "" && pc.couldStart(v) {
+			return true
+		}
+	}
+	return sc.ErrorCount > 0
+}
+
+// couldStart reports whether a string beginning with the literal v could match: v starts
+// with a token match reads, or is a proper prefix of one.
+func (pc *parserChecker) couldStart(v string) bool {
+	check := func(t string) bool { return strings.HasPrefix(v, t) || strings.HasPrefix(t, v) }
+	for _, k := range pc.keys {
+		if check(k) {
+			return true
+		}
+	}
+	for _, w := range pc.words {
+		if check(w) {
+			return true
+		}
+	}
+	for _, sec := range pc.sections {
+		if check("## " + sec) {
+			return true
+		}
+	}
+	return false
+}
+
 func (pc *parserChecker) scanFile(p, rel string) ([]hit, error) {
+	src, err := os.ReadFile(p)
+	if err != nil {
+		return nil, err
+	}
+	if !pc.mayHit(p, src) {
+		return nil, nil
+	}
 	fs := token.NewFileSet()
-	f, err := parser.ParseFile(fs, p, nil, 0)
+	f, err := parser.ParseFile(fs, p, src, parser.SkipObjectResolution)
 	if err != nil {
 		return nil, err
 	}
@@ -664,33 +730,58 @@ func TestOneTypedParser(t *testing.T) {
 			allowMap[a.file][a.fn] = 0
 		}
 
-		var unexpectedHits []hit
-		err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		// The files are listed first and scanned on every core, each into its own slot,
+		// so the hits are read back in walk order whatever order the scans finish in.
+		var paths []string
+		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			if info.IsDir() {
-				if info.Name() == "testdata" || info.Name() == ".git" || strings.HasSuffix(p, "pkg/typedrec") {
+			if d.IsDir() {
+				if d.Name() == "testdata" || d.Name() == ".git" || strings.HasSuffix(p, "pkg/typedrec") {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
-				return nil
+			if strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go") {
+				paths = append(paths, p)
 			}
+			return nil
+		})
+		require.NoError(t, err)
 
-			rel, err := filepath.Rel(root, p)
-			if err != nil {
-				return err
-			}
+		type scanned struct {
+			hits []hit
+			err  error
+		}
+		results := make([]scanned, len(paths))
+		next := make(chan int)
+		var wg sync.WaitGroup
+		for range runtime.GOMAXPROCS(0) {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range next {
+					rel, err := filepath.Rel(root, paths[i])
+					if err != nil {
+						results[i].err = err
+						continue
+					}
+					results[i].hits, results[i].err = pc.scanFile(paths[i], rel)
+				}
+			}()
+		}
+		for i := range paths {
+			next <- i
+		}
+		close(next)
+		wg.Wait()
 
-			hits, err := pc.scanFile(p, rel)
-			if err != nil {
-				return err
-			}
-
-			for _, h := range hits {
-				fns := allowMap[rel]
+		var unexpectedHits []hit
+		for i, r := range results {
+			require.NoError(t, r.err, paths[i])
+			for _, h := range r.hits {
+				fns := allowMap[h.file]
 				if fns != nil {
 					if _, ok := fns[h.fn]; ok {
 						fns[h.fn]++
@@ -701,9 +792,7 @@ func TestOneTypedParser(t *testing.T) {
 					unexpectedHits = append(unexpectedHits, h)
 				}
 			}
-			return nil
-		})
-		require.NoError(t, err)
+		}
 
 		if !assert.Empty(t, unexpectedHits, "found %d unexpected RESULT parser hit(s):", len(unexpectedHits)) {
 			for _, h := range unexpectedHits {

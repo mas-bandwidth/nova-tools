@@ -33,7 +33,7 @@ type Record struct {
 	Expected    string
 	Property    string
 	Budget      string // seconds, shortest form
-	Mode        string // bounded or manual
+	Mode        string // bounded, manual or nightly (NightlyMode: never merged)
 }
 
 // RecordsHeader is the header of tla/RUNS.tsv.
@@ -179,6 +179,9 @@ func Merge(src Source, cases []Case, runs ...[]Record) ([]Record, error) {
 		for _, r := range run {
 			if !declared[r.Config] {
 				return nil, fmt.Errorf("record for %s: no such case in the plan", r.Config)
+			}
+			if r.Mode == NightlyMode {
+				return nil, fmt.Errorf("record for %s is from a nightly run, which has no wall bound: a nightly record is a measurement, never a committed record; refresh it with a bounded run (tlacheck run --bench)", r.Config)
 			}
 			if _, dup := byConfig[r.Config]; dup {
 				return nil, fmt.Errorf("record for %s appears twice", r.Config)

@@ -114,7 +114,7 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 	t.Parallel()
 
 	for name, job := range ciJobs(t) {
-		assert.Equal(t, twoMinuteCap, job.TimeoutMinutes, "ci.yml job %s: timeout-minutes %d, want %d", name, job.TimeoutMinutes, twoMinuteCap)
+		assert.Equal(t, twoMinuteCap, int(job.TimeoutMinutes), "ci.yml job %s: timeout-minutes %d, want %d", name, job.TimeoutMinutes, twoMinuteCap)
 	}
 
 	legs := hostedWorkflowLegs(t)
@@ -172,7 +172,7 @@ func liveRepoPackages(t *testing.T) []string {
 	t.Helper()
 	dep, err := pkgselect.LoadDeprecated(repoRoot(t))
 	require.NoError(t, err)
-	live := dep.Live(strings.Fields(string(repoGoList(t))))
+	live := dep.Live(repoGoList(t))
 	require.NotEmpty(t, live, "the live tree is empty")
 	return live
 }

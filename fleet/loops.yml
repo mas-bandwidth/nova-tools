@@ -56,7 +56,12 @@
   gather_facts: true
   gather_subset: [min]
   vars:
-    loop_darwin: "{{ ansible_facts['system'] == 'Darwin' }}"
+    # The platform is the gathered fact, unless the run names one with -e
+    # ansible_system=<Linux|Darwin> (extra vars win), as every play of this
+    # directory takes it: the functional tests render both platforms' units on one
+    # machine that way. When ansible-core stops injecting top-level facts the
+    # name is undefined unless given, and the fact decides.
+    loop_darwin: "{{ (ansible_system | default(ansible_facts['system'])) == 'Darwin' }}"
     loop_user_dir: "{{ nova_home ~ ('/Library/LaunchAgents' if loop_darwin else '/.config/systemd/user') }}"
     loop_system_dir: "{{ '/Library/LaunchDaemons' if loop_darwin else '/etc/systemd/system' }}"
     loop_dir: "{{ loop_system_dir if loop_system else loop_user_dir }}"
@@ -132,9 +137,16 @@
           list is not an empty one; run: nova-config apply --kind loop, then print the inventory again
         quiet: true
 
+    # A machine the tools play never installed has no build fact: it has adopted
+    # no release, so there is no version to compare and the check below is skipped.
+    - name: the build fact on this host
+      ansible.builtin.stat: { path: "{{ nova_build_file }}" }
+      register: loop_build_fact
+
     - name: the installed version on this host (what --check compares)
       ansible.builtin.slurp: { src: "{{ nova_build_file }}" }
       register: loop_build
+      when: loop_build_fact.stat.exists
 
     - name: the installed version on this host
       ansible.builtin.set_fact:

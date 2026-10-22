@@ -3,6 +3,7 @@ package tlc
 import (
 	"maps"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -158,4 +159,65 @@ func TestTheRepositoryPlanLoads(t *testing.T) {
 	require.NoError(t, err, "tla/CASES.tsv is refused")
 	require.NotEmpty(t, cases, "the plan declares no case or no required group")
 	require.NotEmpty(t, RequiredGroups(cases), "the plan declares no case or no required group")
+}
+
+func TestGroupShardsKeepsEveryShardWithinItsRecordedSeconds(t *testing.T) {
+	t.Parallel()
+	cases := []Case{
+		{Config: "MCA.cfg", Group: "g", Gate: "required"},
+		{Config: "MCB.cfg", Group: "g", Gate: "required"},
+		{Config: "MCC.cfg", Group: "g", Gate: "required"},
+		{Config: "MCD.cfg", Group: "g", Gate: "required"},
+		{Config: "MCE.cfg", Group: "other", Gate: "required"},
+	}
+	records := []Record{{Config: "MCA.cfg", Seconds: "30.000"}, {Config: "MCB.cfg", Seconds: "5.000"}, {Config: "MCC.cfg", Seconds: "30.000"}, {Config: "MCD.cfg", Seconds: "5.000"}, {Config: "MCE.cfg", Seconds: "500.000"}}
+	for _, tc := range []struct {
+		name    string
+		max     float64
+		records []Record
+		want    int
+	}{
+		{"the whole group fits one shard", 70, records, 1},
+		// Longest first to the emptiest shard: A+B and C+D, 35 s each. Every
+		// second case of a plain Select would have put A and C together.
+		{"the two heavy cases are dealt apart", 40, records, 2},
+		{"cases over the bound run alone", 1, records, 4},
+		// D unrecorded counts as the whole bounded budget and runs alone.
+		{"an unrecorded case is never dealt beside another", 40, records[:3], 3},
+	} {
+		got, err := GroupShards(cases, tc.records, "g", tc.max)
+		require.NoError(t, err, tc.name)
+		assert.Equal(t, tc.want, got, tc.name)
+		seen := map[string]int{}
+		for shard := 0; shard < got; shard++ {
+			chosen, err := SelectBalanced(cases, tc.records, "g", got, shard)
+			require.NoError(t, err, "%s: shard %d of %d", tc.name, shard, got)
+			assert.NotEmpty(t, chosen, "%s: shard %d of %d", tc.name, shard, got)
+			var sum float64
+			for _, c := range chosen {
+				seen[c.Config]++
+				s := UnrecordedSeconds
+				for _, r := range tc.records {
+					if r.Config == c.Config {
+						s, err = strconv.ParseFloat(r.Seconds, 64)
+						require.NoError(t, err)
+					}
+				}
+				sum += s
+			}
+			if len(chosen) > 1 {
+				assert.LessOrEqual(t, sum, tc.max, "%s: shard %d of %d", tc.name, shard, got)
+			}
+		}
+		// The shards partition the group: every case once, nothing from another group.
+		assert.Equal(t, map[string]int{"MCA.cfg": 1, "MCB.cfg": 1, "MCC.cfg": 1, "MCD.cfg": 1}, seen, tc.name)
+	}
+	_, err := GroupShards(cases, records, "nope", 40)
+	require.Error(t, err, "an unknown group was dealt")
+	_, err = GroupShards(cases, records, "g", 0)
+	require.Error(t, err, "a zero bound was taken")
+	for _, bad := range [][2]int{{0, 0}, {5, 0}, {2, 2}, {2, -1}} {
+		_, err := SelectBalanced(cases, records, "g", bad[0], bad[1])
+		assert.Error(t, err, "shard %d of %d was taken", bad[1], bad[0])
+	}
 }

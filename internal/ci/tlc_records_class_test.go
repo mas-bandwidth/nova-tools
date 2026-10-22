@@ -641,7 +641,7 @@ func TestTLCRecordFileHoldsOneJar(t *testing.T) {
 // record's result, budget and mode, and about a case's gate and debt.
 func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 	t.Parallel()
-	for _, mutation := range []string{"none", "failed-record", "wrong-exit", "waived-required", "manual-required", "declared-debt"} {
+	for _, mutation := range []string{"none", "failed-record", "wrong-exit", "waived-required", "manual-required", "nightly-record", "declared-debt"} {
 		t.Run(mutation, func(t *testing.T) {
 			t.Parallel()
 			f := newTLCFixture(t)
@@ -653,6 +653,9 @@ func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 				edit = func(row []string) []string { row[tc["exit"]] = "124"; return row }
 			case "manual-required":
 				edit = func(row []string) []string { row[tc["mode"]] = "manual"; return row }
+			case "nightly-record":
+				// A nightly run has no wall bound; its records are measurements.
+				edit = func(row []string) []string { row[tc["mode"]], row[tc["budget"]] = "nightly", "-"; return row }
 			case "waived-required":
 				f.write("tla/CASES.tsv", strings.Replace(f.read("tla/CASES.tsv"), "required\t-\n", "bench\twaiver\n", 1))
 			case "declared-debt":
@@ -716,4 +719,25 @@ func TestTLCRecordsNameThePinnedJar(t *testing.T) {
 	other := strings.Repeat("b", 64)
 	assert.Contains(t, pinnedJarProblem(other+"  tla2tools.jar\n", jars), "pins "+other)
 	assert.Contains(t, pinnedJarProblem("", jars), "holds no SHA-256")
+}
+
+// TestTLCNightlyHasNoWallBound: the scheduled TLC run has no time limit (the
+// owner, 2026-10-22: nightly tests don't have a time limit). tlc.yml runs only
+// on the schedule and by dispatch, every job's timeout is 360 (GitHub's
+// maximum, a hang guard only), and the models run with tlacheck's nightly mode
+// (make tlc-nightly), never under a TLC budget; the committed records stay
+// bounded runs (the nightly-record witness above).
+func TestTLCNightlyHasNoWallBound(t *testing.T) {
+	t.Parallel()
+	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "tlc.yml"))
+	require.True(t, isNightlyWorkflow(src), "tlc.yml runs on an event a change triggers; it is the schedule's and dispatch's only")
+	names := jobNames(src)
+	require.NotEmpty(t, names, "tlc.yml: no jobs parsed")
+	timeouts := jobTimeouts(src)
+	for _, name := range names {
+		assert.Equal(t, 360, timeouts[name], "tlc.yml: job %q has timeout-minutes %d; a nightly has no time limit, and 360 is only the hang guard", name, timeouts[name])
+	}
+	assert.Contains(t, src, "make tlc-nightly ", "tlc.yml does not run the models with make tlc-nightly (tlacheck run --nightly)")
+	assert.NotContains(t, src, "TLC_BUDGET", "tlc.yml bounds the nightly's TLC run with a budget")
+	assert.NotRegexp(t, `(?m)^\s*make tlc `, src, "tlc.yml runs the bounded make tlc on the schedule")
 }

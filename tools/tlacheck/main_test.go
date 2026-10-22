@@ -230,6 +230,39 @@ func TestGroupsPrintsTheRequiredGroupsAsOneLineOfJSON(t *testing.T) {
 	if r.code != 0 || json.Unmarshal([]byte(r.stdout), &groups) != nil || len(groups) < 5 {
 		t.Fatalf("the repository's groups: %+v", r)
 	}
+	// --shard-seconds deals each group into run's shards; the fixture has no
+	// records, so every case counts as the whole bound and runs alone.
+	r = call(t, nil, "groups", "--root", root, "--shard-seconds", "45")
+	var entries []struct {
+		Group         string
+		Shards, Shard int
+	}
+	if r.code != 0 || r.stderr != "" || json.Unmarshal([]byte(r.stdout), &entries) != nil || len(entries) == 0 {
+		t.Fatalf("--shard-seconds: %+v", r)
+	}
+	seen := map[string]int{}
+	for _, en := range entries {
+		if en.Shards < 1 || en.Shard < 0 || en.Shard >= en.Shards {
+			t.Fatalf("a shard outside its count: %+v", en)
+		}
+		seen[en.Group]++
+	}
+	for g, n := range seen {
+		for _, en := range entries {
+			if en.Group == g && en.Shards != n {
+				t.Fatalf("group %s lists %d shards of %d", g, n, en.Shards)
+			}
+		}
+	}
+	if len(seen) != 2 || seen["alpha"] == 0 || seen["beta"] == 0 {
+		t.Fatalf("--shard-seconds groups: %v", seen)
+	}
+	for _, bad := range [][]string{{"--shard-seconds", "-1"}, {"--shard-seconds", "45", "--stale"}} {
+		r = call(t, nil, append([]string{"groups", "--root", root}, bad...)...)
+		if r.code != 2 || r.stdout != "" {
+			t.Fatalf("groups %v: %+v", bad, r)
+		}
+	}
 	// A root with no plan is a refusal and prints no payload.
 	r = call(t, nil, "groups", "--root", t.TempDir())
 	if r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, "the case plan is refused") {
@@ -354,6 +387,11 @@ func TestRunRefusesWhatItCannotRunAndRunsNothing(t *testing.T) {
 		}
 		return ""
 	}
+	actions := func(event string) func(string) string {
+		return func(k string) string {
+			return map[string]string{"GITHUB_ACTIONS": "true", "NOVA_CI": "1", "GITHUB_EVENT_NAME": event}[k]
+		}
+	}
 	tests := []struct {
 		name  string
 		args  []string
@@ -362,11 +400,20 @@ func TestRunRefusesWhatItCannotRunAndRunsNothing(t *testing.T) {
 	}{
 		{"an unknown group", []string{"--group", "nope"}, nil, "unknown group: nope"},
 		{"more shards than the group has cases", []string{"--group", "alpha", "--shards", "3"}, nil, "shard count exceeds the 2 cases of group alpha"},
+		{"a balanced deal with no group", []string{"--balanced", "--shards", "2"}, nil, "--balanced deals one group's cases"},
+		{"more balanced shards than the group has cases", []string{"--balanced", "--group", "alpha", "--shards", "3"}, nil, "use a shard count from 1 to the 2 cases of group alpha"},
 		{"a timeout over the cap", []string{"--timeout", "111s"}, nil, "at most 1m50s"},
 		{"a zero timeout", []string{"--timeout", "0s"}, nil, "must be positive"},
 		{"three workers", []string{"--workers", "3"}, nil, "workers must be 1 or 2"},
 		{"a trough flag without --bench", []string{"--group", "alpha", "--trough-poll", "5s"}, nil, "--trough-poll is taken only with --bench"},
 		{"a manual run in CI", []string{"--manual", "--group", "alpha"}, func(e *env) { e.getenv = ci }, "--manual is forbidden in CI"},
+		{"a nightly run outside CI", []string{"--nightly", "--group", "alpha"}, nil, "--nightly is taken only in a scheduled or dispatched GitHub Actions run"},
+		{"a nightly run a pull request triggered", []string{"--nightly", "--group", "alpha"}, func(e *env) { e.getenv = actions("pull_request") }, "--nightly is taken only in a scheduled or dispatched"},
+		{"a nightly run a push triggered", []string{"--nightly", "--group", "alpha"}, func(e *env) { e.getenv = actions("push") }, "--nightly is taken only in a scheduled or dispatched"},
+		{"a nightly run with a budget", []string{"--nightly", "--timeout", "100s", "--group", "alpha"}, func(e *env) { e.getenv = actions("schedule") }, "--timeout is not taken with --nightly"},
+		{"a nightly manual run", []string{"--nightly", "--manual", "--group", "alpha"}, func(e *env) { e.getenv = actions("schedule") }, "is not taken with --nightly"},
+		{"a nightly run on a bench", []string{"--nightly", "--bench", "b", "--group", "alpha"}, func(e *env) { e.getenv = actions("workflow_dispatch") }, "--bench is not taken with --nightly"},
+		{"a nightly run with three workers", []string{"--nightly", "--workers", "3", "--group", "alpha"}, func(e *env) { e.getenv = actions("schedule") }, "workers must be 1 or 2"},
 		{"a platform that is not Linux", []string{"--group", "alpha"}, func(e *env) { e.goos = "darwin" }, "TLC runs on a Linux bench, and this is darwin"},
 		{"no java", []string{"--group", "alpha"}, func(e *env) { e.lookPath = func(string) (string, error) { return "", errors.New("no") } }, "java is not on PATH"},
 	}
@@ -397,6 +444,27 @@ func TestRunRefusesWhatItCannotRunAndRunsNothing(t *testing.T) {
 	r = do(e, out, errs, "run", "--root", root, "--dir", dir(), "--group", "alpha")
 	if r.code != 0 || !strings.Contains(r.stdout, "source=env:TLC_JAR") {
 		t.Errorf("jar from the environment: %+v", r)
+	}
+	// A scheduled run takes --nightly: no budget, mode=nightly in its records.
+	for _, event := range []string{"schedule", "workflow_dispatch"} {
+		e, out, errs = testEnv(t, scriptedTLC(t, map[string]int{"MCA": 0, "MCABroken": 12}, nil))
+		e.getenv = actions(event)
+		nightlyDir := dir()
+		r = do(e, out, errs, "run", "--root", root, "--jar", jar, "--dir", nightlyDir, "--group", "alpha", "--nightly")
+		if r.code != 0 {
+			t.Errorf("a %s nightly run: %+v", event, r)
+			continue
+		}
+		recs, err := tlc.ReadRecordsFile(filepath.Join(nightlyDir, tlc.RunsFile))
+		if err != nil || len(recs) != 2 {
+			t.Errorf("a %s nightly run's records: %v, %v", event, recs, err)
+			continue
+		}
+		for _, rec := range recs {
+			if rec.Mode != tlc.NightlyMode || rec.Budget != tlc.NightlyBudget {
+				t.Errorf("a %s nightly record: %+v", event, rec)
+			}
+		}
 	}
 }
 

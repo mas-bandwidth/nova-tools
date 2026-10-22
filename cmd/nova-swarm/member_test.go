@@ -637,6 +637,9 @@ func TestALiveChildIsAdoptedNotRunTwice(t *testing.T) {
 	write(t, pidPath, record)
 	r.maxLoad = 32
 	r.load = hostload.Source{Load1: func() (float64, bool) { require.Fail(t, "load read while adopting an existing child"); return 35, true }}
+	// the adopted lane is looked at each millisecond, so its end below is seen at once and
+	// never after the production second
+	r.adoptPoll = time.Millisecond
 	ch, err := r.Start(p)
 	require.NoError(t, err)
 	require.False(t, ch.Done())
@@ -648,7 +651,7 @@ func TestALiveChildIsAdoptedNotRunTwice(t *testing.T) {
 	}
 	assert.NoFileExists(t, marker)
 	require.NoError(t, lane.Process.Kill())
-	require.Eventually(t, ch.Done, 10*time.Second, 10*time.Millisecond)
+	require.Eventually(t, ch.Done, 10*time.Second, time.Millisecond)
 }
 
 // TestADeadPidFileIsIgnored pins the other half: a pid file that names a

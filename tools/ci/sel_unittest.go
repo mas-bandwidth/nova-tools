@@ -23,7 +23,8 @@ would start a real server fails closed instead; then it runs make test over the 
 Which run it is comes from the environment:
   WHOLE_TREE_SLOWTESTS  slowtests' flags for a run of the whole tree (a push or a manual
                         run); non-empty replaces the Makefile's default budgets
-  NIGHTLY_ENFORCE       1 on the nightly reference leg: -count=1 and the budgets enforced
+  NIGHTLY               1 on the nightly (the schedule): -count=1 and the 355m hang guard
+                        in place of the shard timeout; no run enforces a time budget
 
 Exit 0 passed, 1 the shim is not first on PATH, else make's own exit status, 2 bad usage.
 
@@ -52,7 +53,7 @@ func unitTestVerb(e env, args []string, h selHost) int {
 		fmt.Fprintf(e.stdout, "unit tier: redis-server on PATH is %s, not the refusing shim\n", found)
 		return 1
 	}
-	argv := pkgselect.UnitMakeArgs(*packages, e.getenv("WHOLE_TREE_SLOWTESTS"), e.getenv("NIGHTLY_ENFORCE") == "1")
+	argv := pkgselect.UnitMakeArgs(*packages, e.getenv("WHOLE_TREE_SLOWTESTS"), e.getenv("NIGHTLY") == "1")
 	code, err := h.stream(selRoot(e), nil, e.stdout, e.stderr, argv...)
 	if err != nil {
 		fmt.Fprintf(e.stderr, "unit-test: cannot run make: %v\n", err)

@@ -274,15 +274,19 @@ budgets makes the verdict depend on the load instead. So:
   cpus=<n> per-cpu=<n>: measured, not a verdict` line (the host's load
   average, the larger of its 1- and 5-minute figures; `load=unknown` with the
   reason when it cannot be read) are printed, and the exit is 0 on them.
-- **Enforced only on the nightly whole-tree run on the nightly Linux legs:**
-  ci.yml's `test` job runs on `schedule` too, test-packages deals that tree
-  onto the Linux shards only, and `ci unit-test` on the nightly leg runs `make test
-  GOTEST_COUNT_FLAG=-count=1 SLOWTESTS_ENFORCE=1`, which passes `--enforce`: a
-  CI-SLOW line fails the run there (slowtests exits 1) and nowhere else. A red schedule run blocks
-  nothing (ci-ok does not run on schedule); it is evidence, and its raw times
-  are what a row is measured from. test-hosted's ubuntu leg was the other
-  candidate (a fresh VM, idle by construction) and was not used: it runs `make
-  test-short`, whose `-short` skips are not the unit tier the budgets describe.
+- **Enforced on no CI run.** A nightly has no time limit of any kind (the
+  owner, 2026-10-22: "nightly tests don't have a time limit"). ci.yml's `test`
+  job runs on `schedule` too, test-packages deals that tree onto the Linux
+  shards only, and `ci unit-test` on the nightly (`NIGHTLY=1`) runs `make test
+  GOTEST_TIMEOUT=355m GOTEST_COUNT_FLAG=-count=1`: uncached, so every time is
+  that night's, under a hang guard (`pkgselect.NightlyGoTestTimeout`) and no
+  budget. Its CI-SLOW lines are measurements, and its raw times are what a row
+  is measured from. Every ci.yml job that runs on the schedule declares
+  `timeout-minutes: ${{ github.event_name == 'schedule' && 360 || 2 }}` (the
+  two-minute cap on every run a change triggers, GitHub's six-hour maximum on
+  the schedule), and the schedule's functional and hosted legs pass
+  `FUNCTIONAL_TIMEOUT=355m` and `SHORT_TIMEOUT=355m`. `make test
+  SLOWTESTS_ENFORCE=1` still passes `--enforce` for a run by hand.
 
 (`TestUnitBudgetsJudgeTheTestNotTheLoad`, `TestSlowTestsVerdictIsTheSameAtAnyLoad`,
 `TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd`.) A push or manual run over the
@@ -1295,11 +1299,11 @@ function, `pkgselect.RunnerShare`, with one runner on any box), `TestFunctionalT
 `TestUnitBudgetsJudgeTheTestNotTheLoad` (a 1.4 s test is exit 0 with its
 CI-SLOW and CI-LOAD lines at load 2, at load 20 and unread, and exit 2 at all
 three under enforce; an unledgered SLEEPS skip is red at all three on both
-legs), `TestNightlyIsTheOnlyEnforcingLeg` (ci.yml's test job runs on
-schedule, the fan-out deals it onto the Linux legs only and
-`pkgselect.UnitMakeArgs` passes SLOWTESTS_ENFORCE=1 only for that leg; nothing
-spells SLOWTESTS_ENFORCE=0; the Makefile reads it only to
-pass --enforce and carries slowtests' exit through) and
+legs), `TestNoLegEnforcesATimeBudget` (ci.yml's test job runs on
+schedule, the fan-out deals it onto the Linux legs only, and the nightly
+(`NIGHTLY=1`) runs uncached under the 355m hang guard; no run passes
+SLOWTESTS_ENFORCE, either value; the Makefile reads it only to pass --enforce
+for a run by hand and carries slowtests' exit through) and
 `TestMeasuredBenchesAreCIRunners` (every bench a row may name is one ci.yml
 names) (`internal/ci/unit_tier_class_test.go`);
 `TestUnitLegsEnsureNodeBeforeTheTests` (the `test` and `test-hosted` jobs run
@@ -1307,7 +1311,7 @@ names) (`internal/ci/unit_tier_class_test.go`);
 shim in `test`, and the verb looks on PATH, then `$HOME/sdk/bin`, then installs
 under `RUNNER_TEMP`, never publishing `~/.local/bin`;
 `internal/ci/ensure_node_class_test.go`); through make itself,
-`TestMakeTestExitIsCISleepsOnEveryLegAndCISlowOnlyNightly`
+`TestMakeTestExitIsCISleepsOnEveryLegAndCISlowOnlyEnforced`
 (functional-tagged, `cmd/nova-ci/make_functional_test.go`).
 **Its allowlist.** `internal/ci/slow-tests_allowlist.txt`, every row naming its
 measurement (`<seconds>s@run<id>` or `@<bench>`), and
@@ -2995,8 +2999,15 @@ must be named by exactly one row's module column, so a module no row names is re
 
 
 The scheduled/on-demand `.github/workflows/tlc.yml` derives its required matrix
-from the case plan and runs only on self-hosted Linux runners, with two-minute
-job timeouts and a 110-second group limit. The repository's `TLC_JAR` variable
+from the case plan and runs only on self-hosted Linux runners. A nightly has no
+time limit (the owner, 2026-10-22): each shard runs `make tlc-nightly`
+(`tlacheck run --nightly`, which tlacheck takes only in a scheduled or
+dispatched GitHub Actions run) with no wall bound, and every job's
+`timeout-minutes: 360` is GitHub's maximum, kept only as a hang guard
+(`TestTLCNightlyHasNoWallBound`). Its records carry `mode=nightly` and budget `-`;
+they are measurements, never committed records: `tlacheck merge` refuses them and
+the records rule refuses a committed one. The committed records stay bounded
+110-second runs from a record machine (`tlacheck run --bench`). The repository's `TLC_JAR` variable
 names the preinstalled jar; Java and Go must already be on PATH. Logs and
 TSV records are uploaded even on failure. This workflow does not accept PR events.
 The ordinary change gate checks the committed records; the nightly repeats the
