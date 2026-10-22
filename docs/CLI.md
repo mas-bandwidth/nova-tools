@@ -3272,7 +3272,8 @@ its allowlist row (`pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>`, where is
 `run<id>` or a bench) names more. A `CI-LOAD load=<n> cpus=<n> per-cpu=<n>:
 measured, not a verdict` line follows (`--load` and `--cpus` give the figures by
 hand). A CI-SLOW line exits 0 (a measurement) unless `--enforce` is given, which
-only the nightly bench legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
+no CI run passes (a nightly has no time limit); `make test SLOWTESTS_ENFORCE=1`
+passes it for a run by hand. A test skipped
 with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name is a `CI-SLEEPS` line
 and exits 1 on every leg. A package `go test` served from its test cache reports a
 package elapsed near zero (`ok ... (cached)`, `"Elapsed":0`), so a cached run can

@@ -326,7 +326,7 @@ func TestSlowTestsManySmallTestsNameThePackageAndItsTopThree(t *testing.T) {
 // cmd/nova-bus at 58.8 s as a package with no row (its darwin time in run
 // 36264290984) -- gives the same exit at load 2 and at load 20: on a pull
 // request or self-hosted leg (enforce false) every CI-SLOW line and the CI-LOAD
-// line are printed and the exit is 0; on the nightly leg (enforce true) the
+// line are printed and the exit is 0; with enforce true (a run by hand) the
 // 1.4 s test is red over its row (0.4 s measured, 1.2 s budget, three times
 // it) and cmd/nova-bus is red at the 2 s default. An unledgered SLEEPS skip is
 // red on both legs at both loads.

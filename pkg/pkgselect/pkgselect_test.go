@@ -774,10 +774,10 @@ func TestUnitMakeArgsByRun(t *testing.T) {
 		nightly bool
 		want    string
 	}{
-		"the default leg keeps Go's test cache and links without DWARF": {"", false, common + " GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w"},
-		"a whole-tree run keeps the cache and brings its budgets":       {"--budget 60", false, common + " GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS=--budget 60"},
-		"the nightly leg measures uncached and enforces":                {"", true, common + " GOTEST_COUNT_FLAG=-count=1 GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_ENFORCE=1"},
-		"a whole-tree run outranks the nightly flag":                    {"--budget 60", true, common + " GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS=--budget 60"},
+		"the default leg keeps Go's test cache and links without DWARF":    {"", false, common + " GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w"},
+		"a whole-tree run keeps the cache and brings its budgets":          {"--budget 60", false, common + " GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS=--budget 60"},
+		"the nightly measures uncached, hang guard only, enforces nothing": {"", true, "make test PKGS=./cmd/a GOTEST_TIMEOUT=355m GOTEST_COUNT_FLAG=-count=1 GOTEST_LDFLAGS=-ldflags=-w"},
+		"a whole-tree run outranks the nightly flag":                       {"--budget 60", true, common + " GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS=--budget 60"},
 	} {
 		assert.Equal(t, tc.want, strings.Join(UnitMakeArgs("./cmd/a", tc.whole, tc.nightly), " "), name)
 	}

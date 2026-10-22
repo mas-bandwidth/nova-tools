@@ -14,6 +14,13 @@ import (
 // internal/ci: TestShardGoTestTimeoutIsUnderTheJobCap.
 const ShardGoTestTimeout = "110s"
 
+// NightlyGoTestTimeout is `go test -timeout` for the nightly run. A nightly has
+// NO TIME LIMIT (the owner, 2026-10-22: "nightly tests don't have a time limit"): its
+// job ceiling is GitHub's hosted maximum of 360 minutes, and this sits under it
+// only so a hang still ends with a Go stack naming the test. It is a hang guard,
+// never a budget. internal/ci: TestNoLegEnforcesATimeBudget.
+const NightlyGoTestTimeout = "355m"
+
 // UnitMakeArgs is the `make test` a unit shard runs, as argv.
 //
 // The default: Go's test cache on (GOTEST_COUNT_FLAG empty), so a shard whose
@@ -24,22 +31,20 @@ const ShardGoTestTimeout = "110s"
 // wholeTreeSlowtests is slowtests' flags for a run of the whole tree (a push or
 // a manual run), which keeps its package budget with the SLEEPS ledger;
 // when it is not empty it replaces the Makefile's default budgets. nightly is the
-// nightly reference leg: -count=1, so every time is a run and none a cached pass,
-// and the budgets ENFORCED (SLOWTESTS_ENFORCE=1). THE VERDICT IS THE SAME ON ANY
-// MACHINE otherwise: the CI-SLOW lines and a CI-LOAD line print and exit 0, and a
-// CI-SLEEPS line (a SLEEPS skip off the ledger) fails the leg (slowtests exits 1). The nightly leg on the
-// Linux shards is the one place a CI-SLOW line fails the run, and this is the only
-// place SLOWTESTS_ENFORCE=1 is spelled. internal/ci's class test of the nightly
-// leg holds it.
+// scheduled run: -count=1, so every time is a run and none a cached pass, and the
+// hang guard NightlyGoTestTimeout in place of the shard timeout. NO RUN ENFORCES A
+// TIME BUDGET: on every run the CI-SLOW lines and a CI-LOAD line print and exit 0,
+// and a CI-SLEEPS line (a SLEEPS skip off the ledger) fails the leg (slowtests
+// exits 1). The nightly's CI-SLOW lines are measurements, never a verdict.
+// internal/ci: TestNoLegEnforcesATimeBudget.
 func UnitMakeArgs(packages, wholeTreeSlowtests string, nightly bool) []string {
-	args := []string{"make", "test", "PKGS=" + packages, "GOTEST_TIMEOUT=" + ShardGoTestTimeout}
 	switch {
 	case wholeTreeSlowtests != "":
-		return append(args, "GOTEST_COUNT_FLAG=", "GOTEST_LDFLAGS=-ldflags=-w", "SLOWTESTS_FLAGS="+wholeTreeSlowtests)
+		return []string{"make", "test", "PKGS=" + packages, "GOTEST_TIMEOUT=" + ShardGoTestTimeout, "GOTEST_COUNT_FLAG=", "GOTEST_LDFLAGS=-ldflags=-w", "SLOWTESTS_FLAGS=" + wholeTreeSlowtests}
 	case nightly:
-		return append(args, "GOTEST_COUNT_FLAG=-count=1", "GOTEST_LDFLAGS=-ldflags=-w", "SLOWTESTS_ENFORCE=1")
+		return []string{"make", "test", "PKGS=" + packages, "GOTEST_TIMEOUT=" + NightlyGoTestTimeout, "GOTEST_COUNT_FLAG=-count=1", "GOTEST_LDFLAGS=-ldflags=-w"}
 	}
-	return append(args, "GOTEST_COUNT_FLAG=", "GOTEST_LDFLAGS=-ldflags=-w")
+	return []string{"make", "test", "PKGS=" + packages, "GOTEST_TIMEOUT=" + ShardGoTestTimeout, "GOTEST_COUNT_FLAG=", "GOTEST_LDFLAGS=-ldflags=-w"}
 }
 
 const (

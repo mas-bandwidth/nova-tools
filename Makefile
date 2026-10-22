@@ -345,9 +345,9 @@ preflight:
 # whatever SLOWTESTS_ENFORCE says.
 # The wall times are MEASUREMENTS: slowtests prints every CI-SLOW line and a
 # CI-LOAD line (the host's load, never read by the verdict) and exits 0 on
-# them, unless SLOWTESTS_ENFORCE=1 passes --enforce, which one caller does: the
-# nightly whole-tree run on the bench legs (ci.yml, the test step's schedule
-# branch). SLOWTESTS_FLAGS is the whole slowtests invocation, so the push run
+# them, unless SLOWTESTS_ENFORCE=1 passes --enforce, which no CI run does (a
+# nightly has no time limit; internal/ci: TestNoLegEnforcesATimeBudget): it is
+# for a run by hand. SLOWTESTS_FLAGS is the whole slowtests invocation, so the push run
 # over the whole tree passes the old 60 s package budget instead (ci.yml).
 SLOWTESTS_FLAGS ?= --package-budget 2 --test-budget 1 --allowlist internal/ci/slow-tests_allowlist.txt --sleeps internal/ci/sleeps-skips_allowlist.txt
 SLOWTESTS_ENFORCE ?= 0

@@ -114,7 +114,7 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 	t.Parallel()
 
 	for name, job := range ciJobs(t) {
-		assert.Equal(t, twoMinuteCap, job.TimeoutMinutes, "ci.yml job %s: timeout-minutes %d, want %d", name, job.TimeoutMinutes, twoMinuteCap)
+		assert.Equal(t, twoMinuteCap, int(job.TimeoutMinutes), "ci.yml job %s: timeout-minutes %d, want %d", name, job.TimeoutMinutes, twoMinuteCap)
 	}
 
 	legs := hostedWorkflowLegs(t)

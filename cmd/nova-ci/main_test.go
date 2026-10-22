@@ -537,7 +537,7 @@ func TestHelpSlowtestsQuotesTheSleepsMarker(t *testing.T) {
 // 0.4 s (budget 1.2 s, three times it), and cmd/nova-bus at 58.8 s with no row
 // in the repository's own internal/ci/slow-tests_allowlist.txt -- exits 0 at
 // load 2 and at load 20 on a pull request leg, printing both CI-SLOW lines and
-// the CI-LOAD line, and exits 1 at both loads with --enforce (the nightly leg).
+// the CI-LOAD line, and exits 1 at both loads with --enforce (a run by hand).
 // A SLEEPS skip missing from --sleeps exits 1 on both legs at both loads.
 func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 	t.Parallel()

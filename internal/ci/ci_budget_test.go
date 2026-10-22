@@ -34,6 +34,12 @@ import (
 //       (Glenn 2026-10-21: "nightly runs are ALL exempt from the 2 minute rule!",
 //       "that's the whole point of a nightly run!"); its jobs still declare a
 //       literal, positive timeout so a hang cannot run for GitHub's six hours.
+//       A NIGHTLY HAS NO TIME LIMIT (Glenn 2026-10-22: "nightly tests don't have
+//       a time limit"), and that holds for the schedule run of a per-change
+//       workflow too: ci.yml's jobs that run on schedule may declare exactly
+//       scheduleTimeoutExpr, which is twoMinuteCap on every run a change
+//       triggers and nightlyJobCap on the schedule. That one spelling is the only
+//       expression a timeout-minutes may be;
 //       A scheduled run executes the DEFAULT BRANCH's copy of the workflow, not
 //       this tree's: the nightly of 2026-09-27 (run 36292578789) ran main's
 //       ci.yml from 2026-09-18, whose test-hosted still said 15 and still had
@@ -51,6 +57,18 @@ var jobKeyRe = regexp.MustCompile(`^  ([a-zA-Z0-9_-]+):$`)
 
 // timeoutRe matches a timeout-minutes line at four spaces.
 var timeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*(\d+)$`)
+
+// nightlyJobCap is a nightly job's timeout-minutes: GitHub's hosted maximum of six
+// hours, a hang guard and never a budget, because a nightly has no time limit
+// (Glenn 2026-10-22).
+const nightlyJobCap = 360
+
+// scheduleTimeoutExpr is the one expression a timeout-minutes may be: twoMinuteCap
+// on every run a change triggers, nightlyJobCap on the nightly schedule.
+const scheduleTimeoutExpr = "${{ github.event_name == 'schedule' && 360 || 2 }}"
+
+// scheduleTimeoutLine is scheduleTimeoutExpr as a job-level line.
+const scheduleTimeoutLine = "    timeout-minutes: " + scheduleTimeoutExpr
 
 // usesRe matches an action reference pinned by its 40-hex commit SHA.
 var usesRe = regexp.MustCompile(`uses:\s*([^/\s]+/[^@\s]+)@([0-9a-fA-F]{40})`)
@@ -92,8 +110,58 @@ func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
 			}
 			assert.LessOrEqual(t, mins, twoMinuteCap, "%s: job %q has timeout-minutes %d, want %d: the cap holds on every workflow a change can trigger; split the work into parallel functional programs instead of raising it (only a schedule-only nightly is exempt)", filepath.Base(file), name, mins, twoMinuteCap)
 		}
-		assert.NotContains(t, src, "timeout-minutes: ${{", "%s: a timeout-minutes is an expression; the cap is the literal %d on every job", filepath.Base(file), twoMinuteCap)
+		for _, line := range strings.Split(src, "\n") {
+			if strings.Contains(line, "timeout-minutes: ${{") {
+				assert.Equal(t, scheduleTimeoutLine, line, "%s: a timeout-minutes is an expression other than the schedule's exemption; the cap is %d on every run a change triggers", filepath.Base(file), twoMinuteCap)
+			}
+		}
 	}
+}
+
+// TestScheduleTimeoutExprIsTheCapOffTheSchedule pins what the one allowed
+// expression evaluates to: the two-minute cap on every event but schedule, and
+// nightlyJobCap on the schedule.
+func TestScheduleTimeoutExprIsTheCapOffTheSchedule(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, fmt.Sprintf("${{ github.event_name == 'schedule' && %d || %d }}", nightlyJobCap, twoMinuteCap), scheduleTimeoutExpr)
+	mins := jobTimeouts("jobs:\n  a:\n" + scheduleTimeoutLine + "\n  b:\n    timeout-minutes: 2\n")
+	assert.Equal(t, map[string]int{"a": twoMinuteCap, "b": twoMinuteCap}, mins, "the schedule expression reads as the per-change cap")
+	assert.Equal(t, map[string]bool{"a": true}, scheduleExemptJobs("jobs:\n  a:\n"+scheduleTimeoutLine+"\n  b:\n    timeout-minutes: 2\n"))
+}
+
+// TestCIScheduleRunsHaveNoTimeLimit: every ci.yml job that runs on the nightly
+// schedule declares scheduleTimeoutExpr, and every job that cannot run on it
+// keeps the literal cap. A nightly has no time limit (Glenn 2026-10-22).
+func TestCIScheduleRunsHaveNoTimeLimit(t *testing.T) {
+	t.Parallel()
+	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	exempt := scheduleExemptJobs(src)
+	jobs := ciJobs(t)
+	for _, name := range jobNames(src) {
+		cond := jobs[name].If
+		// A job skips the schedule when its condition says so, or when it names the
+		// events it runs on and schedule is not one of them. An empty condition, or
+		// the fork guard alone, runs on every event.
+		skipsSchedule := strings.Contains(cond, "github.event_name != 'schedule'") ||
+			(cond != "" && !strings.Contains(cond, "github.event_name == 'schedule'") && !strings.HasPrefix(cond, "github.event_name != 'pull_request' ||"))
+		if skipsSchedule {
+			assert.False(t, exempt[name], "ci.yml job %q cannot run on the schedule but declares the schedule's exemption", name)
+			continue
+		}
+		assert.True(t, exempt[name], "ci.yml job %q runs on the nightly schedule (if: %q) and declares no %s: a nightly has no time limit", name, cond, scheduleTimeoutExpr)
+	}
+	for _, step := range []struct{ job, want string }{
+		{"test", "NIGHTLY: ${{ github.event_name == 'schedule' && '1' || '0' }}"},
+		{"functional", "NIGHTLY_MAKE: ${{ github.event_name == 'schedule' && 'FUNCTIONAL_TIMEOUT=" + pkgselect.NightlyGoTestTimeout + "' || '' }}"},
+		{"functional", `make test-functional PKGS="${{ matrix.entry.packages }}" $NIGHTLY_MAKE`},
+		{"test-hosted", "NIGHTLY_MAKE: ${{ github.event_name == 'schedule' && 'SHORT_TIMEOUT=" + pkgselect.NightlyGoTestTimeout + "' || '' }}"},
+		{"test-hosted", `make test-short PKGS="$HOSTED_PKGS" $NIGHTLY_MAKE`},
+	} {
+		assert.Contains(t, jobBody(src, step.job), step.want, "ci.yml %s: the schedule run keeps a go test timeout under the job cap; want %q", step.job, step.want)
+	}
+	d, err := time.ParseDuration(pkgselect.NightlyGoTestTimeout)
+	require.NoError(t, err)
+	requirePositiveTimeoutUnderCap(t, "the nightly go test -timeout "+pkgselect.NightlyGoTestTimeout, d, time.Duration(nightlyJobCap)*time.Minute)
 }
 
 // The sharded test job's `go test -timeout` must end the run with a Go stack
@@ -136,13 +204,18 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 	jobCap := time.Duration(twoMinuteCap) * time.Minute
 	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
 	require.Contains(t, job, ciRunner+" unit-test", "the test job does not run its shard through `ci unit-test`, which passes make test the go test timeout")
-	// every run the verb makes (the default, the whole tree, the nightly leg)
-	// carries the same timeout
-	for _, args := range [][]string{
-		pkgselect.UnitMakeArgs("./cmd/a", "", false),
-		pkgselect.UnitMakeArgs("./cmd/a", "--budget 60", false),
-		pkgselect.UnitMakeArgs("./cmd/a", "", true),
+	// every run a change triggers (the default, the whole tree) carries a timeout
+	// under the two-minute cap; the nightly carries the hang guard under
+	// nightlyJobCap, because a nightly has no time limit (Glenn 2026-10-22)
+	for _, run := range []struct {
+		args []string
+		cap  time.Duration
+	}{
+		{pkgselect.UnitMakeArgs("./cmd/a", "", false), jobCap},
+		{pkgselect.UnitMakeArgs("./cmd/a", "--budget 60", false), jobCap},
+		{pkgselect.UnitMakeArgs("./cmd/a", "", true), time.Duration(nightlyJobCap) * time.Minute},
 	} {
+		args := run.args
 		found := ""
 		for _, a := range args {
 			if v, ok := strings.CutPrefix(a, "GOTEST_TIMEOUT="); ok {
@@ -154,7 +227,7 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 		if !assert.NoError(t, err, "GOTEST_TIMEOUT %q is not a duration: %v", found, err) {
 			continue
 		}
-		requirePositiveTimeoutUnderCap(t, fmt.Sprintf("go test -timeout %s", found), d, jobCap)
+		requirePositiveTimeoutUnderCap(t, fmt.Sprintf("go test -timeout %s", found), d, run.cap)
 	}
 
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
@@ -528,9 +601,10 @@ func jobNames(src string) []string {
 }
 
 // jobTimeouts returns each job's literal job-level timeout-minutes (a line at
-// four spaces). A step-level timeout sits deeper and is not read, so a job
-// whose only ceiling is on a step has none here and is refused, and an
-// expression is refused by the caller.
+// four spaces), reading scheduleTimeoutExpr as twoMinuteCap: the cap every run a
+// change triggers carries. A step-level timeout sits deeper and is not read, so
+// a job whose only ceiling is on a step has none here and is refused, and any
+// other expression is refused by the caller.
 func jobTimeouts(src string) map[string]int {
 	out := make(map[string]int)
 	cur := ""
@@ -542,12 +616,33 @@ func jobTimeouts(src string) map[string]int {
 		if cur == "" {
 			continue
 		}
+		if line == scheduleTimeoutLine {
+			out[cur] = twoMinuteCap
+			continue
+		}
 		if m := timeoutRe.FindStringSubmatch(line); m != nil {
 			n, err := strconv.Atoi(m[1])
 			if err == nil {
 				out[cur] = n
 			}
 			continue
+		}
+	}
+	return out
+}
+
+// scheduleExemptJobs is the set of jobs whose job-level timeout-minutes is
+// scheduleTimeoutExpr.
+func scheduleExemptJobs(src string) map[string]bool {
+	out := make(map[string]bool)
+	cur := ""
+	for _, line := range strings.Split(src, "\n") {
+		if m := jobKeyRe.FindStringSubmatch(line); m != nil {
+			cur = m[1]
+			continue
+		}
+		if cur != "" && line == scheduleTimeoutLine {
+			out[cur] = true
 		}
 	}
 	return out
@@ -671,9 +766,9 @@ func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
 // GOTEST_COUNT_FLAG= so Go's test cache serves unchanged packages; a
 // -count=1 in CI would make every one of a landing's three runs recompile
 // and re-execute every shard. By hand `make test` keeps -count=1 (the
-// Makefile default). The one exception is the nightly space legs' line
-// (SLOWTESTS_ENFORCE=1, #4413): it runs once a night to MEASURE, and a cached
-// pass is an earlier run's time, not that night's, so it passes -count=1.
+// Makefile default). The one exception is the nightly (NIGHTLY=1, the
+// schedule): it runs once a night to MEASURE, and a cached pass is an earlier
+// run's time, not that night's, so it passes -count=1.
 func TestShardsUseTheGoTestCache(t *testing.T) {
 	t.Parallel()
 	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
@@ -689,11 +784,11 @@ func TestShardsUseTheGoTestCache(t *testing.T) {
 	for name, args := range map[string][]string{
 		"the default leg":  pkgselect.UnitMakeArgs("./cmd/a", "", false),
 		"a whole-tree run": pkgselect.UnitMakeArgs("./cmd/a", "--budget 60", false),
-		"the nightly leg":  pkgselect.UnitMakeArgs("./cmd/a", "", true),
+		"the nightly":      pkgselect.UnitMakeArgs("./cmd/a", "", true),
 	} {
 		count, ok := flag(args, "GOTEST_COUNT_FLAG")
-		nightly := strings.Contains(strings.Join(args, " "), "SLOWTESTS_ENFORCE=1")
-		assert.True(t, ok && ((nightly && count == "-count=1") || (!nightly && count == "")), "%s runs the suite with GOTEST_COUNT_FLAG=%q (present %v): only the nightly leg passes -count=1, every other leg lets Go's test cache serve unchanged packages: %v", name, count, ok, args)
+		nightly := name == "the nightly"
+		assert.True(t, ok && ((nightly && count == "-count=1") || (!nightly && count == "")), "%s runs the suite with GOTEST_COUNT_FLAG=%q (present %v): only the nightly passes -count=1, every other leg lets Go's test cache serve unchanged packages: %v", name, count, ok, args)
 		v, _ := flag(args, "GOTEST_LDFLAGS")
 		assert.Equal(t, "-ldflags=-w", v, "%s links test binaries with GOTEST_LDFLAGS=%q (DWARF, and a dsymutil per binary on darwin): %v", name, v, args)
 	}

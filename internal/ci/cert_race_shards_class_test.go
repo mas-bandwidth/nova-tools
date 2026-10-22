@@ -98,7 +98,7 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 	jobs, matrix := certJobs(t)
 	job, ok := jobs["test"]
 	require.True(t, ok, "certification.yml has no test job")
-	assert.Equal(t, twoMinuteCap, job.TimeoutMinutes, "certification.yml test: timeout-minutes %d, want %d", job.TimeoutMinutes, twoMinuteCap)
+	assert.Equal(t, nightlyJobCap, int(job.TimeoutMinutes), "certification.yml test: timeout-minutes %d, want %d: a nightly has no time limit, and GitHub's maximum is the hang guard", job.TimeoutMinutes, nightlyJobCap)
 	legs := hostedLegs(t, matrix)
 	assert.Len(t, legs, len(certRaceMinShards), "certification.yml test runs OSes %v, want exactly %v", legs, certRaceMinShards)
 	for runner, min := range certRaceMinShards {
