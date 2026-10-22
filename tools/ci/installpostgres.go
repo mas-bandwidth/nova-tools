@@ -36,7 +36,7 @@ binaries under /usr/lib/postgresql/<v>/bin, off PATH, so that directory is
 appended to the file GITHUB_PATH names, for the steps after this one.
 "postgres <path> <version>" is printed. Several runners share one machine, so the
 install takes the lock directory ` + postgresInstallLock + ` (a lock older than 600 s is taken over,
-a waiter polls every 3 s and gives up after 40 polls).
+a waiter polls every 3 s while the holder lives, up to the 600 s stale age).
 
 exit 0  the binaries are on PATH or in a directory now published
 exit 1  the install failed, or the lock never came free

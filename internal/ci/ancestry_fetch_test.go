@@ -36,7 +36,9 @@ func TestAncestryFetchesAreOneVerb(t *testing.T) {
 		assert.Contains(t, verb, want, "tools/ci/sel_ancestry.go: the fetch is not the one %s and %s name", devHistoryFetch, foundationHistoryFetch)
 	}
 
-	for _, file := range []string{"ci.yml", "certification.yml"} {
+	// nightly-slow.yml: every leg's `./...` builds internal/ci, whose laws read the
+	// ancestry; its legs were red without the fetch (run 39842540461).
+	for _, file := range []string{"ci.yml", "certification.yml", "nightly-slow.yml"} {
 		src := readFile(t, filepath.Join(root, ".github", "workflows", file))
 		for _, step := range []struct{ name, want string }{
 			{"fetch dev's ancestry for a main run", ciRunner + " fetch-ancestry dev"},
