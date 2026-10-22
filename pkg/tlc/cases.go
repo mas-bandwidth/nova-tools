@@ -134,6 +134,32 @@ func Select(cases []Case, group string, shards, shard int) ([]Case, error) {
 	return chosen, nil
 }
 
+// Selection is a choice of cases from the plan, as Select takes it, or with
+// Balanced as SelectBalanced takes it over Records (the records the deal was
+// read from, so the suite deals the same shard again). It lives here, beside
+// the choosers, and not in suite.go: which cases a run takes decides no result,
+// so a new way to choose them stales no record (fingerprint.go). The zero value
+// selects every case.
+type Selection struct {
+	Group         string
+	Shards, Shard int
+	Balanced      bool
+	Records       []Record
+}
+
+// Choose is the selection's cases from the plan, in plan order. Shards 0 is
+// one shard.
+func (s Selection) Choose(cases []Case) ([]Case, error) {
+	shards := s.Shards
+	if shards == 0 {
+		shards = 1
+	}
+	if s.Balanced {
+		return SelectBalanced(cases, s.Records, s.Group, shards, s.Shard)
+	}
+	return Select(cases, s.Group, shards, s.Shard)
+}
+
 // UnrecordedSeconds is the time a case with no usable record is dealt at: the
 // whole bounded budget, so it never shares a shard on a guess.
 const UnrecordedSeconds = float64(BoundedCap / time.Second)
