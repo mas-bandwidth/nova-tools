@@ -144,6 +144,40 @@ func TestInstallRedisRetriesAptAsRootWhenTheFirstTryFails(t *testing.T) {
 	}
 	want := []string{
 		"apt-get update -qq",
+		"sudo -n apt-get install -y -qq redis-server",
+	}
+	if got := h.runner.lines(); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("commands %q, want %q", got, want)
+	}
+}
+
+// As root the install tries the lists the machine holds first and updates them
+// only when that fails (the update was 30-40 s of a hosted shard's cap).
+func TestInstallRedisAsRootUpdatesTheListsOnlyWhenTheInstallFails(t *testing.T) {
+	t.Parallel()
+	h := newTestInstallHost(t)
+	h.runner.onPath["apt-get"] = "/usr/bin/apt-get"
+	updated := false
+	h.runner.answer = func(c cmdSpec) (string, int, error) {
+		switch {
+		case c.Name == "apt-get":
+			return "", 100, nil // not root
+		case c.Name == "sudo" && len(c.Args) > 2 && c.Args[2] == "update":
+			updated = true
+		case c.Name == "sudo" && len(c.Args) > 2 && c.Args[2] == "install":
+			if !updated {
+				return "", 100, nil // the held lists lack the package
+			}
+			h.runner.onPath["redis-server"] = "/usr/bin/redis-server"
+		}
+		return "", 0, nil
+	}
+	if code := installRedisServer(h.installHost); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, h.errb)
+	}
+	want := []string{
+		"apt-get update -qq",
+		"sudo -n apt-get install -y -qq redis-server",
 		"sudo -n apt-get update -qq",
 		"sudo -n apt-get install -y -qq redis-server",
 	}
