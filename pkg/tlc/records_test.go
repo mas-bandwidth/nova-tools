@@ -102,6 +102,8 @@ func TestMergeOrdersByThePlanAndRefusesWhatIsWrong(t *testing.T) {
 	stale.InputSHA256 = strings.Repeat("0", 64)
 	fewer := c
 	fewer.InputFiles--
+	nightly := c
+	nightly.Mode, nightly.Budget = NightlyMode, NightlyBudget
 	refused := []struct {
 		name string
 		runs [][]Record
@@ -112,6 +114,7 @@ func TestMergeOrdersByThePlanAndRefusesWhatIsWrong(t *testing.T) {
 		{"a declared case with no record", [][]Record{{a, b}}, "no record for 1 declared cases (MCC.cfg)"},
 		{"a record measured on other inputs", [][]Record{{a, b}, {stale}}, "1 records were measured on other inputs than these: MCC.cfg (recorded 000000000000 over 4 files, now "},
 		{"a record over another count of files", [][]Record{{a, b}, {fewer}}, "MCC.cfg (recorded "},
+		{"a record of a nightly run", [][]Record{{a, b, nightly}}, "record for MCC.cfg is from a nightly run"},
 	}
 	for _, tc := range refused {
 		t.Run(tc.name, func(t *testing.T) {

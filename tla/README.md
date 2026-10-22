@@ -44,7 +44,7 @@ Runners. `tools/tlacheck` (Go, over `pkg/tlc` and `internal/tablemodel`) runs th
 
 | Verb | What it runs |
 |---|---|
-| `run` | the declared cases of `CASES.tsv` (one group, or a shard), each held to the result the plan declares, under a 110 s budget, writing `RUNS.tsv` (`make tlc`) |
+| `run` | the declared cases of `CASES.tsv` (one group, or a shard), each held to the result the plan declares, under a 110 s budget, writing `RUNS.tsv` (`make tlc`); with `--nightly`, the scheduled tlc.yml run only, no wall bound and `mode=nightly` records that are never merged (`make tlc-nightly`) |
 | `groups` | the required groups of the plan, as JSON (`make tlc-groups`); with `--stale`, the groups that hold a case whose record is missing or no longer current |
 | `merge` | the `RUNS.tsv` of the group runs, joined in plan order into the committed `tla/RUNS.tsv`; with `--keep`, the current records of the cases no run measured again stay |
 | `inputs` | the files a case's TLC run reads and the hash of each, with the case's fingerprint |
