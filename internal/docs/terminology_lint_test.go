@@ -68,9 +68,10 @@ func isWordByte(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
-// countWord counts the uses of word in text, case-insensitively, as a whole word.
-func countWord(text, word string) int {
-	text, word = strings.ToLower(text), strings.ToLower(word)
+// countLowerWord counts the uses of word in text as a whole word, both already
+// lowered with strings.ToLower, so the count is case-insensitive and a file read
+// for many words is lowered once.
+func countLowerWord(text, word string) int {
 	n := 0
 	for from := 0; ; {
 		i := strings.Index(text[from:], word)
@@ -98,8 +99,9 @@ func scanText(rel, text string, words []retiredWord) map[string]int {
 		text = strings.Join(lines, "\n")
 	}
 	found := map[string]int{}
+	lower := strings.ToLower(text)
 	for _, w := range words {
-		if n := countWord(text, w.word); n > 0 {
+		if n := countLowerWord(lower, strings.ToLower(w.word)); n > 0 {
 			found[w.word] = n
 		}
 	}

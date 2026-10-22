@@ -172,7 +172,7 @@ func liveRepoPackages(t *testing.T) []string {
 	t.Helper()
 	dep, err := pkgselect.LoadDeprecated(repoRoot(t))
 	require.NoError(t, err)
-	live := dep.Live(strings.Fields(string(repoGoList(t))))
+	live := dep.Live(repoGoList(t))
 	require.NotEmpty(t, live, "the live tree is empty")
 	return live
 }
