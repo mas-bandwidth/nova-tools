@@ -53,12 +53,16 @@ func countDirNoticeFiles(t *testing.T, dir string) []string {
 	return names
 }
 
+// Deliveries past the bound each meet the same state (the bound's resolved
+// notices and one new one), so four times the bound holds the count over
+// many prunes at the bound without a thousand file round trips.
 func TestResolvedNoticesAreKeptToABoundedCount(t *testing.T) {
 	t.Parallel()
 	r := route(t)
 	start := time.Date(2026, 10, 15, 19, 0, 0, 0, time.UTC)
 
-	for i := 1; i <= 1000; i++ {
+	const deliveries = 4 * MaxResolvedNotices
+	for i := 1; i <= deliveries; i++ {
 		at := start.Add(time.Duration(i) * time.Second)
 		id := fmt.Sprintf("notice-%04d", i)
 		writeSavedNoticeAt(t, r.EventsDir, id, fmt.Sprintf("nonce-%04d", i), 0, at)
@@ -71,17 +75,18 @@ func TestResolvedNoticesAreKeptToABoundedCount(t *testing.T) {
 		require.LessOrEqual(t, len(files), MaxResolvedNotices, "resolved notices after %d deliveries must never exceed MaxResolvedNotices=%d", i, MaxResolvedNotices)
 	}
 
-	pendingAt := start.Add(1001 * time.Second)
-	pendingID := "notice-1001"
-	writeSavedNoticeAt(t, r.EventsDir, pendingID, "nonce-1001", 0, pendingAt)
+	pendingAt := start.Add((deliveries + 1) * time.Second)
+	pendingID := fmt.Sprintf("notice-%04d", deliveries+1)
+	writeSavedNoticeAt(t, r.EventsDir, pendingID, fmt.Sprintf("nonce-%04d", deliveries+1), 0, pendingAt)
 	_, err := DeliverAt(r, pendingID, ChallengeNotice, pendingAt)
 	require.NoError(t, err)
 
 	files := countDirNoticeFiles(t, r.EventsDir)
 	require.Len(t, files, MaxResolvedNotices+1, "directory holds at most MaxResolvedNotices resolved notices plus the 1 active pending notice")
-	assert.Contains(t, files, "notice-1001.json", "the active pending notice is retained")
-	assert.Contains(t, files, "notice-1000.json", "the newest resolved notice is retained")
-	assert.Contains(t, files, fmt.Sprintf("notice-%04d.json", 1000-MaxResolvedNotices+1), "the oldest notice within the bound is retained")
+	assert.Contains(t, files, pendingID+".json", "the active pending notice is retained")
+	assert.Contains(t, files, fmt.Sprintf("notice-%04d.json", deliveries), "the newest resolved notice is retained")
+	assert.Contains(t, files, fmt.Sprintf("notice-%04d.json", deliveries-MaxResolvedNotices+1), "the oldest notice within the bound is retained")
+	assert.NotContains(t, files, fmt.Sprintf("notice-%04d.json", deliveries-MaxResolvedNotices), "the newest notice past the bound is pruned")
 	assert.NotContains(t, files, "notice-0001.json", "older resolved notices are pruned")
 }
 

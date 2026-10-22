@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -11,14 +12,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A seat's recipients are one seat key and the declared recovery key, distinct, in its
-// rule and in its file's sops metadata alike, and the file's are its rule's. check, the
-// store's gate and seat inject each judge a rule and a seat file sealed under it; this
-// runs all three over every rule shape crossed with every file shape (eleven by six) and
-// holds them to one verdict: accepted exactly when the rule is clean (two valid age keys,
-// distinct, one the recovery key), the file is clean and the two name the same keys.
-func TestCheckTheGateAndSeatInjectAgreeOnEveryRuleAndFile(t *testing.T) {
-	t.Parallel()
+// recipientPair is one rule shape crossed with one file shape: the rule's
+// recipients, the seat file sealed under it, and the one verdict every judge
+// owes it.
+type recipientPair struct {
+	name         string
+	rule         []string
+	sops, sealed string
+	want         bool
+}
+
+// recipientPairs is every rule shape crossed with every file shape (eleven by
+// six). A pair is accepted exactly when the rule is clean (two valid age keys,
+// distinct, one the recovery key), the file is clean and the two name the same
+// keys.
+func recipientPairs() []recipientPair {
 	seat, rec, other := gateSeatKey, gateRecoveryKey, gateThirdKey
 	shapes := map[string][]string{
 		"seat,recovery":          {seat, rec},
@@ -50,33 +58,44 @@ func TestCheckTheGateAndSeatInjectAgreeOnEveryRuleAndFile(t *testing.T) {
 		return true
 	}
 	fileShapes := []string{"seat,recovery", "recovery,seat", "seat,recovery,recovery", "seat,other", "seat,seat", "notakey,recovery"}
-	for ruleName, rule := range shapes {
+	var pairs []recipientPair
+	for _, ruleName := range slices.Sorted(maps.Keys(shapes)) {
+		rule := shapes[ruleName]
 		for _, fileName := range fileShapes {
 			file := shapes[fileName]
-			t.Run("rule "+ruleName+" file "+fileName, func(t *testing.T) {
-				t.Parallel()
-				want := clean(rule) && clean(file) && sameSet(rule, file)
-				sops := gateSops("  - path_regex: ^rowan\\.yaml$\n    age: " + strings.Join(rule, ",") + "\n")
-				sealed := injectTargetFile(file, injectSealedBody+gateMarkLine)
-
-				// check: the rule (invariant 1) and the file against it (invariant 2)
-				store := storeOf(t, map[string]string{".sops.yaml": sops, "rowan.yaml": sealed})
-				cfg := &SopsConfig{CreationRules: []CreationRule{{PathRegex: `^rowan\.yaml$`, Recipients: rule}}}
-				checkFails := append(CheckInvariant1(store, cfg, rec), CheckInvariant2(store, cfg, []string{"rowan.yaml"})...)
-				assert.Equal(t, want, len(checkFails) == 0, "check: %+v", checkFails)
-
-				// the gate, over a pull request that adds the rule and the file
-				dir := gateStart(t)
-				base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
-				head := gateCommit(t, dir, map[string]string{".sops.yaml": sops, "rowan.yaml": sealed})
-				line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-				assert.Equal(t, want, code == 0, "gate: %s", line)
-
-				// seat inject, on the same store
-				_, injectErr := seatInjectTarget(store, "rowan.yaml", rec)
-				assert.Equal(t, want, injectErr == nil, "seat inject: %v", injectErr)
+			pairs = append(pairs, recipientPair{
+				name:   "rule " + ruleName + " file " + fileName,
+				rule:   rule,
+				sops:   gateSops("  - path_regex: ^rowan\\.yaml$\n    age: " + strings.Join(rule, ",") + "\n"),
+				sealed: injectTargetFile(file, injectSealedBody+gateMarkLine),
+				want:   clean(rule) && clean(file) && sameSet(rule, file),
 			})
 		}
+	}
+	return pairs
+}
+
+// A seat's recipients are one seat key and the declared recovery key, distinct, in its
+// rule and in its file's sops metadata alike, and the file's are its rule's. check, the
+// store's gate and seat inject each judge a rule and a seat file sealed under it; this
+// runs check and seat inject over every pair (recipientPairs) and holds them to its one
+// verdict. The gate, which reads the pair out of a real git store, is held to the same
+// verdicts in the functional tier (TestTheGateAgreesOnEveryRuleAndFile).
+func TestCheckAndSeatInjectAgreeOnEveryRuleAndFile(t *testing.T) {
+	t.Parallel()
+	for _, p := range recipientPairs() {
+		t.Run(p.name, func(t *testing.T) {
+			t.Parallel()
+			// check: the rule (invariant 1) and the file against it (invariant 2)
+			store := storeOf(t, map[string]string{".sops.yaml": p.sops, "rowan.yaml": p.sealed})
+			cfg := &SopsConfig{CreationRules: []CreationRule{{PathRegex: `^rowan\.yaml$`, Recipients: p.rule}}}
+			checkFails := append(CheckInvariant1(store, cfg, gateRecoveryKey), CheckInvariant2(store, cfg, []string{"rowan.yaml"})...)
+			assert.Equal(t, p.want, len(checkFails) == 0, "check: %+v", checkFails)
+
+			// seat inject, on the same store
+			_, injectErr := seatInjectTarget(store, "rowan.yaml", gateRecoveryKey)
+			assert.Equal(t, p.want, injectErr == nil, "seat inject: %v", injectErr)
+		})
 	}
 }
 

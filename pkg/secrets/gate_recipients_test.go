@@ -61,7 +61,7 @@ func gateRemove(t *testing.T, dir string, names ...string) string {
 	}
 	gateGit(t, dir, "add", "-A")
 	gateGit(t, dir, "commit", "-m", "remove")
-	return strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	return gateHead(t, dir)
 }
 
 // THE RULE (Glenn 2026-09-18): a seat is added to the store with NO human approval, so the
@@ -72,7 +72,7 @@ func TestGateRefusesANewRecipientForASeatTheRegistryDoesNotName(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateSops(gateRule("air.yaml", gateNewSeatKey, gateRecoveryKey)),
 		"air.yaml":   gateSealedFor(gateNewSeatKey),
@@ -90,7 +90,7 @@ func TestGateApprovesANewRecipientForASeatTheRegistryNames(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml":     gateSops(gateRule("swarm-air.yaml", gateNewSeatKey, gateRecoveryKey)),
 		"swarm-air.yaml": gateSealedFor(gateNewSeatKey),
@@ -113,7 +113,7 @@ func TestGateApprovesARuleEditThatAddsNoRecipient(t *testing.T) {
 		".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateRecoveryKey)),
 		"rowan.yaml": gateSealedFor(gateSeatKey),
 	})
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateRecoveryKey)) +
 			"  # the store's own note\n",
@@ -131,7 +131,7 @@ func TestGateWithoutAMachinesRegistrySaysTheRuleDidNotRun(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateSops(gateRule("air.yaml", gateNewSeatKey, gateRecoveryKey)),
 		"air.yaml":   gateSealedFor(gateNewSeatKey),
@@ -146,7 +146,7 @@ func TestGateReadsTheNamedCommitsWithoutAWorkingCopySopsFile(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: base})
 	require.Equal(t, 0, code, "RunGate = (%q, %d), want approval for an empty commit diff", line, code)
 	require.Contains(t, line, "GATE APPROVE files=0", "RunGate line = %q, want the empty diff", line)
@@ -156,7 +156,7 @@ func TestGateRefusesAnUnreadableMachinesRegistry(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml":     gateSops(gateRule("swarm-air.yaml", gateNewSeatKey, gateRecoveryKey)),
 		"swarm-air.yaml": gateSealedFor(gateNewSeatKey),
@@ -177,7 +177,7 @@ func TestGateRefusesARemovedSeatFile(t *testing.T) {
 		".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateRecoveryKey)),
 		"rowan.yaml": gateSealedFor(gateSeatKey),
 	})
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateRemove(t, dir, "rowan.yaml")
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
@@ -192,7 +192,7 @@ func TestGateRefusesAMalformedMachinesRegistry(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml":     gateSops(gateRule("swarm-air.yaml", gateNewSeatKey, gateRecoveryKey)),
 		"swarm-air.yaml": gateSealedFor(gateNewSeatKey),
@@ -219,7 +219,7 @@ func TestGateCollectsEveryIndependentSeatFinding(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateSops(
 			gateRule("alpha.yaml", gateSeatKey, gateRecoveryKey),
@@ -268,7 +268,7 @@ func TestGateCollectsIndependentHeadInputProblems(t *testing.T) {
 	gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateSops(gateRule("seat.yaml", gateSeatKey, gateRecoveryKey)),
 	})
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	require.NoError(t, os.Remove(filepath.Join(dir, "recovery.pub")))
 	head := gateCommit(t, dir, map[string]string{".sops.yaml": "creation_rules: [\n"})
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
@@ -283,7 +283,7 @@ func TestGateDoesNotTreatADashAsASeatName(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateSops(gateRule("-.yaml", gateNewSeatKey, gateRecoveryKey)),
 		"-.yaml":     gateSealedFor(gateNewSeatKey),

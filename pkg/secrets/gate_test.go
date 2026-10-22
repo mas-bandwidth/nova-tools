@@ -1,10 +1,13 @@
 package secrets
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,17 +32,44 @@ func gateGit(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
+// gateBase is the base store every gate test starts from, made by git once
+// for the package (in TestMain's directory) and copied into each test's own
+// directory: the same repository, commit for commit, without five git
+// processes per test.
+var gateBase struct {
+	once sync.Once
+	dir  string
+	err  error
+}
+
 // gateStart returns a store directory whose HEAD is the base commit.
 func gateStart(t *testing.T) string {
 	t.Helper()
+	gateBase.once.Do(func() {
+		dir := filepath.Join(filepath.Dir(sharedFakeSops), "gate-base")
+		run := func(args ...string) error {
+			out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("git %v: %v: %s", args, err, out)
+			}
+			return nil
+		}
+		gateBase.err = errors.Join(
+			os.Mkdir(dir, 0o700),
+			run("init", "-b", "main"),
+			run("config", "user.name", "Test"),
+			run("config", "user.email", "test@example.com"),
+			os.WriteFile(filepath.Join(dir, "recovery.pub"), []byte(gateRecoveryKey+"\n"), 0600),
+			os.WriteFile(filepath.Join(dir, "README.md"), []byte("the store\n"), 0600),
+		)
+		if gateBase.err == nil {
+			gateBase.err = errors.Join(run("add", "-A"), run("commit", "-m", "base"))
+		}
+		gateBase.dir = dir
+	})
+	require.NoError(t, gateBase.err, "the base store")
 	dir := t.TempDir()
-	gateGit(t, dir, "init", "-b", "main")
-	gateGit(t, dir, "config", "user.name", "Test")
-	gateGit(t, dir, "config", "user.email", "test@example.com")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "recovery.pub"), []byte(gateRecoveryKey+"\n"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("the store\n"), 0600))
-	gateGit(t, dir, "add", "-A")
-	gateGit(t, dir, "commit", "-m", "base")
+	require.NoError(t, os.CopyFS(dir, os.DirFS(gateBase.dir)))
 	return dir
 }
 
@@ -51,6 +81,23 @@ func gateCommit(t *testing.T, dir string, files map[string]string) string {
 	}
 	gateGit(t, dir, "add", "-A")
 	gateGit(t, dir, "commit", "-m", "change")
+	return gateHead(t, dir)
+}
+
+// gateHead is the sha HEAD names, read from the repository's files (the
+// branch's loose ref, or a detached HEAD's sha) without a git process; a ref
+// git packed is asked of git.
+func gateHead(t *testing.T, dir string) string {
+	t.Helper()
+	head, err := os.ReadFile(filepath.Join(dir, ".git", "HEAD"))
+	require.NoError(t, err)
+	ref, symbolic := strings.CutPrefix(strings.TrimSpace(string(head)), "ref: ")
+	if !symbolic {
+		return ref
+	}
+	if sha, err := os.ReadFile(filepath.Join(dir, ".git", filepath.FromSlash(ref))); err == nil {
+		return strings.TrimSpace(string(sha))
+	}
 	return strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 }
 
@@ -80,7 +127,7 @@ func TestGateApprovesAGoodSeatPR(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey),
 		"rowan.yaml": gateSealedFile(),
@@ -94,7 +141,7 @@ func TestGateRefusesARuleWithThreeRecipients(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey, gateThirdKey),
 		"rowan.yaml": gateSealedFile(),
@@ -108,7 +155,7 @@ func TestGateRefusesAPlaintextValue(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey),
 		"rowan.yaml": gateSealedFile() + "GH_TOKEN: sk-live-notencrypted\n",
@@ -130,7 +177,7 @@ func TestGateVerdictExitsOneFailedAndCouldNotRunExitsTwoRefused(t *testing.T) {
 	t.Run("a rule verdict is GATE FAILED at exit 1", func(t *testing.T) {
 		t.Parallel()
 		dir := gateStart(t)
-		base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+		base := gateHead(t, dir)
 		head := gateCommit(t, dir, map[string]string{
 			".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey, gateThirdKey),
 			"rowan.yaml": gateSealedFile(),
@@ -144,7 +191,7 @@ func TestGateVerdictExitsOneFailedAndCouldNotRunExitsTwoRefused(t *testing.T) {
 	t.Run("a gate that could not run is SECRETS GATE REFUSED at exit 2", func(t *testing.T) {
 		t.Parallel()
 		dir := gateStart(t)
-		base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+		base := gateHead(t, dir)
 		line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: "no-such-branch"})
 		assert.Equal(t, 2, code, "a ref that names no commit is could-not-run and must exit 2 (line=%q, code=%d)", line, code)
 		assert.True(t, strings.HasPrefix(line, "SECRETS GATE REFUSED"), "could-not-run must lead with REFUSED: %q", line)
@@ -156,7 +203,7 @@ func TestGateRefusesAChangeToAnotherFile(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	head := gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey),
 		"rowan.yaml": gateSealedFile(),
@@ -216,7 +263,7 @@ func TestGateRefusesAWidenedUnencryptedRegex(t *testing.T) {
 				".sops.yaml": gateSops(gateRuleWith("rowan.yaml", c.baseRegex)),
 				"rowan.yaml": gateSealedFile(),
 			})
-			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+			base := gateHead(t, dir)
 			head := gateCommit(t, dir, map[string]string{
 				".sops.yaml": gateSops(gateRuleWith("rowan.yaml", c.headRegex)),
 				"rowan.yaml": gateSealedFile() + c.extra,
@@ -256,7 +303,7 @@ func TestGateRefusesASeatFileInASubdirectory(t *testing.T) {
 				".sops.yaml": gateSops(gateRule(c.file, gateSeatKey, gateRecoveryKey)),
 				c.file:       gateSealedFile(),
 			})
-			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+			base := gateHead(t, dir)
 			head := gateCommit(t, dir, map[string]string{
 				c.file: gateSealedFile() + "OTHER: ENC[AES256_GCM,data:q,iv:w,tag:e,type:str]\n",
 			})
@@ -290,7 +337,7 @@ func TestGateRefusesCleartextUnderAnIndentedMapKey(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			dir := gateStart(t)
-			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+			base := gateHead(t, dir)
 			head := gateCommit(t, dir, map[string]string{
 				".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey),
 				"rowan.yaml": gateSealedFile() + c.body,

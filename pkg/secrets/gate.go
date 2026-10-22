@@ -110,14 +110,16 @@ func RunGate(in GateInput) (string, int) {
 	if slices.Contains(changed, ".sops.yaml") {
 		// The recipients the store already had. A key here is not a grant this pull request
 		// makes, so resealing a seat or editing its rule asks the registry nothing.
-		baseKeys, err := gateRecipientsAt(storeDir, base)
+		// The base rule set is read once, for both.
+		baseSops, baseSopsErr := gitShowFile(storeDir, base, ".sops.yaml")
+		baseKeys, err := gateRecipientsIn(baseSops, baseSopsErr, base)
 		baseKeysKnown := err == nil
 		if err != nil {
 			gateFindings = append(gateFindings, gateFinding{file: ".sops.yaml", why: err.Error()})
 			baseKeys = map[string]bool{}
 		}
 		// The rules the store already had, for the unencrypted_regex comparison below.
-		baseCfg := gateConfigAt(storeDir, base)
+		baseCfg := gateConfigIn(baseSops, baseSopsErr)
 		for i := range cfg.CreationRules {
 			rule := cfg.CreationRules[i]
 			ruleNum := i + 1
@@ -299,11 +301,11 @@ func gateFleetSeats(machinesPath string) (map[string]bool, error) {
 	return seats, nil
 }
 
-// gateRecipientsAt returns every age recipient any creation rule names at ref. A store with
-// no .sops.yaml there -- the first seat of all -- has none, which is not an error.
-func gateRecipientsAt(storeDir, ref string) (map[string]bool, error) {
+// gateRecipientsIn returns every age recipient any creation rule names in data, the
+// .sops.yaml at ref as gitShowFile read it (err its error). A store with no .sops.yaml
+// there -- the first seat of all -- has none, which is not an error.
+func gateRecipientsIn(data []byte, err error, ref string) (map[string]bool, error) {
 	keys := map[string]bool{}
-	data, err := gitShowFile(storeDir, ref, ".sops.yaml")
 	if err != nil {
 		return keys, nil
 	}
@@ -319,11 +321,11 @@ func gateRecipientsAt(storeDir, ref string) (map[string]bool, error) {
 	return keys, nil
 }
 
-// gateConfigAt parses the .sops.yaml at ref, or returns nil when there is none or it does
-// not parse: a store with no rule set there is the first seat of all, and an unparseable
-// one is already refused as a rule finding on its own.
-func gateConfigAt(storeDir, ref string) *SopsConfig {
-	data, err := gitShowFile(storeDir, ref, ".sops.yaml")
+// gateConfigIn parses data, the .sops.yaml at a ref as gitShowFile read it (err its
+// error), or returns nil when there is none or it does not parse: a store with no rule set
+// there is the first seat of all, and an unparseable one is already refused as a rule
+// finding on its own.
+func gateConfigIn(data []byte, err error) *SopsConfig {
 	if err != nil {
 		return nil
 	}

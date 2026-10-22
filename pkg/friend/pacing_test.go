@@ -197,6 +197,8 @@ func TestPacerWidthFollowsTheTightestWindow(t *testing.T) {
 
 	p.Observe([]WindowUse{{Window: WindowFiveHour, Used: 0, Status: "allowed", Resets: reset5, At: now}})
 	assert.Equal(t, "5h 20% 7d 50%", p.Use(now), "no utilization keeps the use read for the same reset")
+	p.Observe([]WindowUse{{Window: WindowFiveHour, Used: 0.1, Status: "allowed", Resets: reset5, At: now}})
+	assert.Equal(t, "5h 20% 7d 50%", p.Use(now), "a lower use for the same reset is an earlier turn's report read late: the use kept is the highest said")
 
 	p.Observe([]WindowUse{{Window: WindowFiveHour, Used: 0.8, Resets: reset5, At: now}})
 	n, why = p.Width(8, 0.8, now)
@@ -210,6 +212,8 @@ func TestPacerWidthFollowsTheTightestWindow(t *testing.T) {
 	assert.Equal(t, WindowSevenDay, why)
 	n, _ = p.Width(8, 0.8, reset7)
 	assert.Equal(t, 8, n, "both reset: the row's width")
+	p.Observe([]WindowUse{{Window: WindowFiveHour, Used: 0.05, Status: "allowed", Resets: reset7.Add(5 * time.Hour), At: reset7}})
+	assert.Equal(t, "5h 5%", p.Use(reset7), "a new window's lower use is read as said: only the same reset keeps the highest")
 
 	p.Observe([]WindowUse{{Window: WindowFiveHour, Used: 0.1, Status: "rejected", Resets: reset7.Add(time.Hour), At: reset7}})
 	n, _ = p.Width(8, 0.8, reset7)
