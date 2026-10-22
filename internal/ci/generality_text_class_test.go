@@ -103,14 +103,8 @@ var (
 	reContact = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9._+-])((?:glenn|rowan)@mas-bandwidth\.com)(?:\.?(?:[^A-Za-z0-9.-]|$))`)
 )
 
-// lineMayContainText is the cheap prefilter: a line with none of these substrings has
-// no finding of any shape.
-func lineMayContainText(line string) bool {
-	return lowerMayContainText(strings.ToLower(line))
-}
-
-// lowerMayContainText is lineMayContainText of a line already lowered with
-// strings.ToLower.
+// lowerMayContainText is the cheap prefilter, over a line already lowered with
+// strings.ToLower: a line with none of these substrings has no finding of any shape.
 func lowerMayContainText(lower string) bool {
 	if lowerMayContainGenerality(lower) {
 		return true

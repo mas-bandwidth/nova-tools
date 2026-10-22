@@ -28,9 +28,6 @@ import (
 // verb's help names. nova-card, nova-work and nova-sprint are built in
 // nova-sprint, whose own playbook test holds their lines there.
 
-// toolsPlaybookPath is the page, relative to the repository root.
-const toolsPlaybookPath = "docs/TOOLS-PLAYBOOK.md"
-
 // builtElsewhere is the tools the page names that this repository does not
 // build.
 var builtElsewhere = []string{"nova-card", "nova-work", "nova-sprint"}

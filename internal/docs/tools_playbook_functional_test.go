@@ -25,6 +25,9 @@ import (
 // the merge queue and the nightly. tools_playbook_test.go holds the checker
 // itself to canned help in the unit tier.
 
+// toolsPlaybookPath is the page, relative to the repository root.
+const toolsPlaybookPath = "docs/TOOLS-PLAYBOOK.md"
+
 // TestToolsPlaybookNamesOnlyRealVerbsAndUsageLines builds the tools the page
 // names and holds the page to their help. The witnesses run the same check on
 // lines that must be refused, so a check that passes everything fails here.

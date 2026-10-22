@@ -184,12 +184,8 @@ func fileMayContainGenerality(cleanSrc []byte) bool {
 	return false
 }
 
-func lineMayContainGenerality(line string) bool {
-	return lowerMayContainGenerality(strings.ToLower(line))
-}
-
-// lowerMayContainGenerality is lineMayContainGenerality of a line already
-// lowered with strings.ToLower.
+// lowerMayContainGenerality is the line prefilter, over a line already lowered
+// with strings.ToLower: a line holding no candidate token has no finding.
 func lowerMayContainGenerality(lower string) bool {
 	for _, tok := range candidateTokens {
 		if strings.Contains(lower, tok) {
