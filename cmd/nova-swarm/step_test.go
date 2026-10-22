@@ -24,9 +24,75 @@ func TestStepReadsGrantsTheToolchainFromTheBenchHomeWhenProcessHomeIsTheSlot(t *
 	require.NoError(t, os.MkdirAll(sdk, 0o755))
 	real, err := filepath.EvalSymlinks(sdk)
 	require.NoError(t, err)
-	reads := stepReads(t.TempDir(), filepath.Join(t.TempDir(), "bin"), home)
+	reads := stepReads(t.TempDir(), filepath.Join(t.TempDir(), "bin"), home, "")
 	assert.True(t, hasFlagPair(reads, "--read", real), "the step wall grants the bench sdk: %s", strings.Join(reads, " "))
 	assert.False(t, hasFlagPair(reads, "--read", filepath.Join(slot, "sdk")), "the slot home is not a toolchain root: %s", strings.Join(reads, " "))
+}
+
+// fakeGoroot lays out a Go distribution's shape at dir: bin/go and pkg/tool, nothing run.
+func fakeGoroot(t *testing.T, dir string) string {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "bin"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "pkg", "tool"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bin", "go"), []byte("#!/bin/sh\n"), 0o755))
+	real, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	return real
+}
+
+// TestStepReadsGrantsTheGoToolchainTheStepRunsInsideTheModuleCache is nightly-slow run
+// 39812741141's `go vet` exit 2: the go command switched toolchains (GOTOOLCHAIN), so the
+// go a step runs is golang.org/toolchain@... under the module cache, a root the wall reads
+// and never executes. The wall ran that go (its command's own directory) but not vet in its
+// pkg/tool. The wall grants the step's go its whole toolchain, and only that toolchain:
+// the rest of the module cache stays read-only and never executable.
+func TestStepReadsGrantsTheGoToolchainTheStepRunsInsideTheModuleCache(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mod := filepath.Join(home, "go", "pkg", "mod")
+	goroot := fakeGoroot(t, filepath.Join(mod, "golang.org", "toolchain@v0.0.1-go1.26.6.linux-amd64"))
+	realMod, err := filepath.EvalSymlinks(mod)
+	require.NoError(t, err)
+	reads := stepReads(t.TempDir(), filepath.Join(t.TempDir(), "bin"), home, goroot)
+	assert.True(t, hasFlagPair(reads, "--read", goroot), "the step's go toolchain is granted with execute: %s", strings.Join(reads, " "))
+	assert.True(t, hasFlagPair(reads, "--read-noexec", realMod), "the module cache stays never executable: %s", strings.Join(reads, " "))
+	assert.False(t, hasFlagPair(reads, "--read", realMod), "the module cache is not granted execute: %s", strings.Join(reads, " "))
+}
+
+// TestStepReadsNamesNoGorootAlreadyUnderAToolchainRootOrNotAGoroot: a toolchain under the
+// bench sdk is already granted, and a directory without a Go distribution's shape (bin/go
+// and pkg/tool), a home or a directory holding one, is never granted execute on the strength
+// of a variable.
+func TestStepReadsNamesNoGorootAlreadyUnderAToolchainRootOrNotAGoroot(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	sdkGo := fakeGoroot(t, filepath.Join(home, "sdk", "go1.26.10"))
+	reads := stepReads(t.TempDir(), filepath.Join(t.TempDir(), "bin"), home, sdkGo)
+	assert.False(t, hasFlagPair(reads, "--read", sdkGo), "a toolchain under the sdk is not named twice: %s", strings.Join(reads, " "))
+	notGo := t.TempDir()
+	reads = stepReads(t.TempDir(), filepath.Join(t.TempDir(), "bin"), home, notGo)
+	assert.False(t, hasFlagPair(reads, "--read", notGo), "a directory that is not a GOROOT is not granted: %s", strings.Join(reads, " "))
+	homeGo := fakeGoroot(t, home)
+	reads = stepReads(t.TempDir(), filepath.Join(t.TempDir(), "bin"), home, homeGo)
+	assert.False(t, hasFlagPair(reads, "--read", homeGo), "a home directory is never a root, even shaped as a GOROOT: %s", strings.Join(reads, " "))
+	reads = stepReads(t.TempDir(), filepath.Join(t.TempDir(), "bin"), home, filepath.Dir(homeGo))
+	assert.False(t, hasFlagPair(reads, "--read", filepath.Dir(homeGo)), "a directory holding the home is never a root: %s", strings.Join(reads, " "))
+	reads = stepReads(t.TempDir(), filepath.Join(t.TempDir(), "bin"), home, "relative/goroot")
+	assert.False(t, hasFlagPair(reads, "--read", "relative/goroot"), "a relative GOROOT is not granted: %s", strings.Join(reads, " "))
+}
+
+// TestStepGorootIsTheGorootVariableElseTheGoOnPath: the toolchain a step's go runs is
+// GOROOT when the caller sets it (the go command sets it when it switches toolchains), else
+// the distribution the go on PATH sits in; none when there is no go.
+func TestStepGorootIsTheGorootVariableElseTheGoOnPath(t *testing.T) {
+	t.Parallel()
+	root := fakeGoroot(t, filepath.Join(t.TempDir(), "go"))
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	found := func(string) (string, error) { return filepath.Join(root, "bin", "go"), nil }
+	missing := func(string) (string, error) { return "", os.ErrNotExist }
+	assert.Equal(t, "/the/variable", stepGoroot(env(map[string]string{"GOROOT": "/the/variable"}), found))
+	assert.Equal(t, root, stepGoroot(env(nil), found))
+	assert.Equal(t, "", stepGoroot(env(nil), missing))
 }
 
 // treeSteps is a tree under STEP 2 of lintGoodCard: two model steps (docs/SPEC-SPRINT.md, a

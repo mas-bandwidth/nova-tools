@@ -104,8 +104,8 @@ setup: needs age-keygen and sops on PATH; run these from an empty directory firs
   mkdir -p ./secrets && git -C ./secrets init -q -b main
   sed -n 's/^# public key: //p' ~/.config/nova-secrets/recovery.key > ./secrets/recovery.pub
   nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
-    --age-keygen "$(command -v age-keygen)" \
-    --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
+    --age-keygen "$(command -v age-keygen)" | sed -n 's/^SECRETS RULE   //p' \
+    | sed "s/<recovery key>/$(cat ./secrets/recovery.pub)/" > ./secrets/.sops.yaml
   git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
   git init -q --bare ./secrets.git
   git -C ./secrets remote add origin ../secrets.git
