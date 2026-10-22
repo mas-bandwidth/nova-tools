@@ -109,16 +109,42 @@ func retiredScanned(kind, rel string) bool {
 // (`Name: "<verb>"`), a command not as the start of a longer word. It used to be
 // one regexp per row per file, which cost 58s on a hosted runner and pushed
 // internal/ci past its 75s budget (v1.4.6); a unit test tests logic, so the
-// sweep is now a scan with no regexp in it.
+// sweep is now a scan with no regexp in it. It then was one bytes.Index pass
+// per row over every file, a hundred passes over the tree; the rows are now
+// indexed by their first two bytes, so one pass over a file tries at each
+// offset only the rows that can start there, and finds the same hits.
 type retiredRules struct {
 	byKind map[string][]retiredName
+	// byPair lists, for each first two bytes (src[i]<<8 | src[i+1]), the rows
+	// whose name starts with them, as indexes into rows.
+	byPair *[1 << 16][]int
+	// short is the rows whose name is under two bytes, searched one by one.
+	short []int
+	// rows is every row, kinds in retiredKinds order and rows in table order
+	// within a kind: the order findings lists them in.
+	rows []retiredName
 }
 
-// compileRetired groups rows by kind.
+// retiredKinds is the order findings lists the kinds in.
+var retiredKinds = []string{"ident", "verb", "text"}
+
+// compileRetired groups rows by kind and indexes them by their first two bytes.
 func compileRetired(rows []retiredName) *retiredRules {
-	r := &retiredRules{byKind: map[string][]retiredName{}}
+	r := &retiredRules{byKind: map[string][]retiredName{}, byPair: new([1 << 16][]int)}
 	for _, row := range rows {
 		r.byKind[row.Kind] = append(r.byKind[row.Kind], row)
+	}
+	for _, kind := range retiredKinds {
+		for _, row := range r.byKind[kind] {
+			n := len(r.rows)
+			r.rows = append(r.rows, row)
+			if len(row.Name) < 2 {
+				r.short = append(r.short, n)
+				continue
+			}
+			k := int(row.Name[0])<<8 | int(row.Name[1])
+			r.byPair[k] = append(r.byPair[k], n)
+		}
 	}
 	return r
 }
@@ -151,26 +177,44 @@ func retiredHit(kind string, src []byte, i, j int) bool {
 // findings is every `<rel>:<line>: <kind> <name>` the rules find in src, in
 // row order then file order, as the regexp sweep listed them.
 func (r *retiredRules) findings(rel string, src []byte) []string {
+	scanned := map[string]bool{}
+	some := false
+	for _, kind := range retiredKinds {
+		scanned[kind] = retiredScanned(kind, rel)
+		some = some || scanned[kind]
+	}
+	if !some {
+		return nil
+	}
+	type hit struct{ row, at int }
+	var hits []hit
+	try := func(n, i int) {
+		row := r.rows[n]
+		if scanned[row.Kind] && bytes.HasPrefix(src[i:], []byte(row.Name)) && retiredHit(row.Kind, src, i, i+len(row.Name)) {
+			hits = append(hits, hit{n, i})
+		}
+	}
+	for i := 0; i+1 < len(src); i++ {
+		for _, n := range r.byPair[int(src[i])<<8|int(src[i+1])] {
+			try(n, i)
+		}
+	}
+	for _, n := range r.short {
+		for i := range src {
+			try(n, i)
+		}
+	}
+	sort.Slice(hits, func(a, b int) bool {
+		if hits[a].row != hits[b].row {
+			return hits[a].row < hits[b].row
+		}
+		return hits[a].at < hits[b].at
+	})
 	var out []string
-	for _, kind := range []string{"ident", "verb", "text"} {
-		if !retiredScanned(kind, rel) {
-			continue
-		}
-		for _, row := range r.byKind[kind] {
-			name := []byte(row.Name)
-			for from := 0; ; {
-				k := bytes.Index(src[from:], name)
-				if k < 0 {
-					break
-				}
-				i, j := from+k, from+k+len(name)
-				if retiredHit(kind, src, i, j) {
-					line := 1 + bytes.Count(src[:i], []byte{'\n'})
-					out = append(out, fmt.Sprintf("%s:%d: %s %q is retired; use %s", rel, line, row.Kind, row.Name, row.Replacement))
-				}
-				from = i + 1
-			}
-		}
+	for _, h := range hits {
+		row := r.rows[h.row]
+		line := 1 + bytes.Count(src[:h.at], []byte{'\n'})
+		out = append(out, fmt.Sprintf("%s:%d: %s %q is retired; use %s", rel, line, row.Kind, row.Name, row.Replacement))
 	}
 	return out
 }
