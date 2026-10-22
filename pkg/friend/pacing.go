@@ -137,9 +137,12 @@ type Pacer struct {
 }
 
 // Observe takes a turn's report: each window replaces its last report. A
-// report with no utilization (under the harness's warning threshold) keeps
-// the use last read for the same reset, since use does not fall within a
-// window.
+// report under the use last read for the same reset keeps that use, since
+// use does not fall within a window: a report with no utilization (under the
+// harness's warning threshold), and a report from a turn that ended before
+// another whose report was read first. Lanes end together and their reports
+// arrive in any order, so the window's use is the highest any of them said,
+// whatever the order (docs/SPEC-FRIEND.md, caps, pacing, and pause).
 func (p *Pacer) Observe(uses []WindowUse) {
 	for _, u := range uses {
 		i := slices.IndexFunc(p.windows, func(w WindowUse) bool { return w.Window == u.Window })
@@ -147,7 +150,7 @@ func (p *Pacer) Observe(uses []WindowUse) {
 			p.windows = append(p.windows, u)
 			continue
 		}
-		if u.Used == 0 && u.Status != "rejected" && p.windows[i].Resets.Equal(u.Resets) && p.windows[i].live(u.At) {
+		if u.Used < p.windows[i].Used && u.Status != "rejected" && p.windows[i].Resets.Equal(u.Resets) && p.windows[i].live(u.At) {
 			u.Used = p.windows[i].Used
 		}
 		p.windows[i] = u

@@ -86,7 +86,7 @@ func TestGateJudgesTheCommitsTheRefsName(t *testing.T) {
 	t.Parallel()
 
 	dir := gateEvilStore(t)
-	sha := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	sha := gateHead(t, dir)
 	gateGit(t, dir, "branch", "topic")
 	for _, head := range []string{"HEAD", "topic", sha} {
 		line, code := RunGate(GateInput{StoreDir: dir, Base: "HEAD~1", Head: head})

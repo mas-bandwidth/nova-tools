@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math/rand/v2"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -314,54 +315,79 @@ func TestPongDualRead(t *testing.T) {
 	// A seeded, deterministic mutation pass over a pong of each form: every
 	// mutant is either refused by name or reads a whole pong that passes every
 	// constraint. None reads as no pong, none panics, and each read is counted
-	// once, under its form or as a refusal of no form.
+	// once, under its form or as a refusal of no form. The mutants are drawn
+	// from one seeded stream, form by form, and each form's are read on its
+	// own reader, so the four run side by side.
 	t.Run("a fuzzed malformed pong is refused by name in every case", func(t *testing.T) {
 		t.Parallel()
-		r := NewPongReader()
 		good := tablePong("bob", "abc123", 5, 3, 8, pongAt.UnixMilli())
-		seeds := [][]byte{rawWire(t, good), []byte(pongB64(rawWire(t, good))), rawJSON(t, good), []byte(PongLine("abc123", 5, 3, 8))}
+		seeds := []struct {
+			name string
+			in   []byte
+		}{
+			{"binary", rawWire(t, good)},
+			{"base64", []byte(pongB64(rawWire(t, good)))},
+			{"json", rawJSON(t, good)},
+			{"legacy", []byte(PongLine("abc123", 5, 3, 8))},
+		}
 		known := map[string]bool{
 			schemaread.ReasonMalformed: true, schemaread.ReasonClamped: true, schemaread.ReasonKindMismatch: true,
 			schemaread.ReasonUnknownForm: true, schemaread.ReasonWireDamaged: true, schemaread.ReasonAbsentRequired: true,
 		}
-		rng := rand.New(rand.NewPCG(1000, 1))
 		const perSeed = 5000
-		refused, read, noForm := 0, 0, 0
-		for _, seed := range seeds {
+		rng := rand.New(rand.NewPCG(1000, 1))
+		mutants := make([][][]byte, len(seeds))
+		for i, seed := range seeds {
 			for range perSeed {
-				m := mutatePong(rng, seed)
-				got, form, err := r.Read("bob", pongAt, m)
-				if form == schemaread.FormNone {
-					noForm++
-				}
-				if err != nil {
-					var ref *schemaread.Refusal
-					require.True(t, errors.As(err, &ref), "mutant %q: %v", m, err)
-					require.True(t, known[ref.Reason], "mutant %q is refused by a shared name, not %q", m, ref.Reason)
-					require.Equal(t, Pong{}, got, "mutant %q: a refusal returns no pong", m)
-					refused++
-					continue
-				}
-				read++
-				require.NotEqual(t, Pong{}, got, "mutant %q: a read is a pong, never silence", m)
-				require.NotEmpty(t, got.Nonce)
-				require.NotEmpty(t, got.Friend)
-				require.False(t, got.Sent.IsZero())
-				_, err = r.write(got, schemaread.FormBinary)
-				require.NoError(t, err, "mutant %q: a pong that reads passes every constraint", m)
+				mutants[i] = append(mutants[i], mutatePong(rng, seed.in))
 			}
 		}
+		var mu sync.Mutex
+		refusedAll := 0
+		t.Run("each form", func(t *testing.T) {
+			for i, seed := range seeds {
+				t.Run(seed.name, func(t *testing.T) {
+					t.Parallel()
+					r := NewPongReader()
+					refused, read, noForm := 0, 0, 0
+					for _, m := range mutants[i] {
+						got, form, err := r.Read("bob", pongAt, m)
+						if form == schemaread.FormNone {
+							noForm++
+						}
+						if err != nil {
+							var ref *schemaread.Refusal
+							require.True(t, errors.As(err, &ref), "mutant %q: %v", m, err)
+							require.True(t, known[ref.Reason], "mutant %q is refused by a shared name, not %q", m, ref.Reason)
+							require.Equal(t, Pong{}, got, "mutant %q: a refusal returns no pong", m)
+							refused++
+							continue
+						}
+						read++
+						require.NotEqual(t, Pong{}, got, "mutant %q: a read is a pong, never silence", m)
+						require.NotEmpty(t, got.Nonce)
+						require.NotEmpty(t, got.Friend)
+						require.False(t, got.Sent.IsZero())
+						_, err = r.write(got, schemaread.FormBinary)
+						require.NoError(t, err, "mutant %q: a pong that reads passes every constraint", m)
+					}
+					assert.Equal(t, perSeed, refused+read)
+					c := r.Counts()
+					forms := c.Reads(schemaread.FormBinary) + c.Reads(schemaread.FormBase64) + c.Reads(schemaread.FormJSON) + c.Reads(schemaread.FormLegacy)
+					assert.Equal(t, uint64(perSeed-noForm), forms, "every read with a form is counted once under it")
+					var tallied uint64
+					for reason := range known {
+						tallied += c.Refused(reason)
+					}
+					assert.Equal(t, uint64(refused), tallied, "every refusal is tallied under its name")
+					mu.Lock()
+					refusedAll += refused
+					mu.Unlock()
+				})
+			}
+		})
 		total := len(seeds) * perSeed
-		assert.Equal(t, total, refused+read)
-		assert.Greater(t, refused, total/2, "most mutants are damage, and each is refused")
-		c := r.Counts()
-		forms := c.Reads(schemaread.FormBinary) + c.Reads(schemaread.FormBase64) + c.Reads(schemaread.FormJSON) + c.Reads(schemaread.FormLegacy)
-		assert.Equal(t, uint64(total-noForm), forms, "every read with a form is counted once under it")
-		var tallied uint64
-		for reason := range known {
-			tallied += c.Refused(reason)
-		}
-		assert.Equal(t, uint64(refused), tallied, "every refusal is tallied under its name")
+		assert.Greater(t, refusedAll, total/2, "most mutants are damage, and each is refused")
 	})
 
 	// The delivery check (Conformance.Run) reads its pong as PongReader.Message

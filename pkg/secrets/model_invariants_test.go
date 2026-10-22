@@ -215,14 +215,14 @@ func modelSeal(t *testing.T, f *sealFixture, name, value string) (string, string
 func gateProposal(t *testing.T, dir string, files map[string]string, remove ...string) string {
 	t.Helper()
 	home := strings.TrimSpace(gateGit(t, dir, "rev-parse", "--abbrev-ref", "HEAD"))
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	gateGit(t, dir, "checkout", "-b", "proposal")
 	for _, name := range remove {
 		require.NoError(t, os.Remove(filepath.Join(dir, name)))
 	}
 	proposal := gateCommit(t, dir, files)
 	gateGit(t, dir, "checkout", home)
-	require.Equal(t, base, strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD")), "building the proposal moved HEAD")
+	require.Equal(t, base, gateHead(t, dir), "building the proposal moved HEAD")
 	return proposal
 }
 
@@ -636,7 +636,7 @@ func TestModelSecretsGateRefusesEveryRuleBreak(t *testing.T) {
 			if len(tc.base) > 0 {
 				gateCommit(t, dir, tc.base)
 			}
-			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+			base := gateHead(t, dir)
 			var remove []string
 			if tc.remove != "" {
 				remove = append(remove, tc.remove)
@@ -650,7 +650,7 @@ func TestModelSecretsGateRefusesEveryRuleBreak(t *testing.T) {
 			// merged = {}: the gate judged the proposal and moved nothing, so a broken
 			// check can never reach HEAD. A gate that merged on any verdict -- the
 			// reversed witness -- would leave HEAD on the proposal it refused.
-			assert.Equal(t, base, strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD")),
+			assert.Equal(t, base, gateHead(t, dir),
 				"RunGate moved HEAD to the proposal it judged")
 		})
 	}
@@ -668,7 +668,7 @@ func TestModelSecretsNoHandRoad(t *testing.T) {
 	t.Run("a hand-written plain entry never reaches HEAD", func(t *testing.T) {
 		t.Parallel()
 		dir := gateStart(t)
-		base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+		base := gateHead(t, dir)
 		head := gateCommit(t, dir, map[string]string{
 			".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey),
 			"rowan.yaml": gateSealedFile() + "GH_TOKEN: sk-handwritten\n",
@@ -681,7 +681,7 @@ func TestModelSecretsNoHandRoad(t *testing.T) {
 	t.Run("a hand-sealed entry is one the gate cannot tell", func(t *testing.T) {
 		t.Parallel()
 		dir := gateStart(t)
-		base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+		base := gateHead(t, dir)
 		// Sealed bytes no verb wrote, shaped exactly as a verb's: sops metadata
 		// naming the rule's recipients and every value encrypted.
 		head := gateCommit(t, dir, map[string]string{
@@ -703,7 +703,7 @@ func TestModelSecretsEveryProposalJudged(t *testing.T) {
 	t.Parallel()
 
 	dir := gateStart(t)
-	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	base := gateHead(t, dir)
 	good := gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey),
 		"rowan.yaml": gateSealedFile(),
