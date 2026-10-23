@@ -24,11 +24,12 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (25)
-- [Setup, release and operations](#setup-release-and-operations) (99)
+- [Setup, release and operations](#setup-release-and-operations) (100)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
+- [Workers and providers](#workers-and-providers) (5)
 - [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (2)
 
 ## Lessons from Prime Agent's rewrite
@@ -1137,6 +1138,16 @@ Why it waits: a failed check that no green rerun clears blocks every cut of that
 
 From: the coordinator, 2026-10-20 (v1.7 deadlock list)
 
+### A release cut sets aside stale verdicts
+
+A cut ignores read verdicts given at an older head.
+
+Target: v1.9
+
+From: sprint cards v19-train-cut-sets-aside-stale-verdicts (stream v19), archived to the roadmap at the owner's word, pit stop 2026-10-20
+
+Replaces 1 open sprint card, each mapped to `cut-sets-aside-stale-verdicts`.
+
 ## Docs, models and the repository
 
 Documentation suites, the TLA+ ledger, and where nova-sprint's code lives.
@@ -1932,6 +1943,60 @@ TestDeadCode excludes pkg/ since the split; a reachability walk with library roo
 Target: v1.5
 
 From: seat decision after the repository split
+
+## Workers and providers
+
+The member, its wall and children, and the provider routes and keys it runs on.
+
+### A direct provider declares its model output limit
+
+A provider row's max_output is validated and written into the harness's model limit.
+
+Target: v1.7
+
+From: sprint cards v17-direct-provider-declares-model-output-limit (stream v17), archived to the roadmap at the owner's word, pit stop 2026-10-20
+
+Replaces 1 open sprint card, each mapped to `provider-output-limit`.
+
+### An unfunded provider flips to unfunded by itself
+
+A provider that answers out of funds is set unfunded in the config automatically; only the owner can mark it funded again.
+
+Target: v1.7
+
+From: sprint cards v17-provider-funding-config-refuser (stream v17), archived to the roadmap at the owner's word, pit stop 2026-10-20
+
+Replaces 1 open sprint card, each mapped to `unfunded-provider-flips-itself`.
+
+### A member's own faults spend no attempt
+
+A member with no wall takes nothing, and a child stopped for the whole idle window ends with its own cause; neither counts against the card.
+
+Target: v1.7
+
+From: sprint cards v17-member-without-a-wall-spends-no-attempt, v17-silent-stopped-child-spends-no-attempt (stream v17), archived to the roadmap at the owner's word, pit stop 2026-10-20
+
+Replaces 2 open sprint cards, each mapped to `worker-faults-spend-no-attempt`.
+
+### A provider key is added with one verb
+
+nova-secrets provider-key add seals the key to every route-running seat, units load keys by env name, and routes wait until every seat carries the key.
+
+Target: v1.9
+
+From: sprint cards v19-secrets-provider-key-add-one-verb, v19-secrets-units-load-by-key-env, v19-secrets-routes-wait-for-every-seat (stream v19), archived to the roadmap at the owner's word, pit stop 2026-10-20
+
+Replaces 3 open sprint cards, each mapped to `provider-key-one-verb`.
+
+### Tags live in a config registry and members prove them
+
+nova-config holds the tag registry with probes; a member runs the probes on its beat and picks up a new probe with no rebuild or restart.
+
+Target: v1.9
+
+From: sprint cards v19-tags-config-registry, v19-tags-member-proves-on-its-beat (stream v19), archived to the roadmap at the owner's word, pit stop 2026-10-20
+
+Replaces 2 open sprint cards, each mapped to `tag-registry`.
 
 ## Moved out of the sprint on 2026-10-18: v19, target v1.9
 
