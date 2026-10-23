@@ -29,7 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
-- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (2)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (62)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -1956,3 +1956,603 @@ Why it waits: The owner, 2026-10-18: "Please remove v19 and v111 from this sprin
 Target: v1.9
 
 From: sprint card v19-friend-set-reaches-the-store (stream v19, column waiting, tier pro, base sprint/v19), moved out of the sprint 2026-10-18; card source: the owner, 2026-10-18 (for v1.9): after `nova-config friend set`, the store kept the friends' stale tiers until a manual `nova-config apply --kind friend` was run; the nova-config-apply loop did not pick the change up. A friend-row config change reaches the store within one tick.
+
+### The dashboard counts a friend's cards in progress, not the cards it holds
+
+Each working job sends progress heartbeats: a pushed commit, a gate run, or an explicit progress verb. The dashboard shows a friend's progressing cards and its held cards separately, with the age of each card's last progress. A held card with no progress for N minutes raises a judgment, and after M minutes it is returned automatically, its pushed head recorded as CARRY. N and M are sprint settings. The same progress drives the attempt deadline (progress-aware-deadline): at its deadline an attempt with progress since the last check (a pushed commit, a gate run, or waiting on a shared-box lock such as the Windows box gate lock) is not redealt and its deadline moves on; only an attempt with no progress is redealt. Done when: a held card with no progress raises the judgment at N and is returned at M, tested with time as an argument; at its deadline an attempt with a commit, a gate run or a lock wait since the last check is kept and one with none is redealt, one unit test each with time as an argument; the dashboard shows held and progressing as two numbers; TLA+ for the held, progressing, stalled and returned states.
+
+Why it waits: The dashboard's working count is the cards a friend holds, not the cards being worked. On 2026-10-20 one friend held 16 cards for more than 25 minutes with no progress, and the coordinator reported that friend as busy. The same day attempts with progress were redealt at their deadline mid-work, which made stale finishes, duplicate workers and lost work.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### A friend whose hook misses K challenges is marked down and its working cards return
+
+After K missed hook challenges in a row the friend is marked down, and every card it holds in working is returned to ready with its pushed head recorded as CARRY on the next attempt. A friend that answers again is marked up and takes new cards; it does not get the returned ones back by default. K is a sprint setting. Done when: a friend that misses K challenges is down and holds no working cards, each returned card carries its pushed head, tested with time as an argument; TLA+ for the hook state and the return, with a reversed witness where a down friend still holds a card.
+
+Why it waits: On 2026-10-20 a friend's hook dropped (state live, unhooked) while it held 16 working cards, and nothing returned them; the coordinator moved them by hand.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### A working attempt can be moved to the friend who holds a better head
+
+rework --to <friend> --carry-head <sha> works while the card is working: it withdraws the running attempt (the old worker is told to stop, see redeal-stops-old-worker) and deals the next attempt to the named friend with that head as CARRY. A plain withdraw of a working attempt is the same verb without --to. Done when: rework --to and --carry-head succeed on a working card, the old attempt is stopped and the new attempt's base is the carried head; refused for anyone but the coordinator; TLA+ for the working-to-working move.
+
+Why it waits: On 2026-10-20 the receive card's w1 reached its 2h deadline and was auto-redealt to a fleet member, which restarted from base while a friend held a finished head (3f87852d). No verb could pull the fleet attempt back or point it at that head.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### friend give works on any ready card, whoever held its last attempt
+
+friend give deals any ready card to the named friend, whether its last attempt was on the fleet, on another friend, or never dealt. The friend take-back bookkeeping is not a precondition of a give. Done when: friend give of a ready card whose last attempt was on the fleet succeeds, with a test; the refusal 'was never taken back from friend ... taken from no friend' no longer exists for a ready card.
+
+Why it waits: On 2026-10-20 friend give refused a ready card whose last attempt was on the fleet ('was never taken back from friend ... taken from no friend'). Two critical API cards could not be routed to friends with free slots.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### A finish into a stale generation is carried to the live attempt, never thrown away
+
+A finish whose generation is not the live one records its pushed head and report as CARRY on the live attempt, notifies the live holder that a carried head is there, and tells the old worker to stop. The finish still exits non-zero to the old worker, naming the live generation. Done when: a stale finish leaves its head and report on the live attempt and a notice in the live holder's channel, tested; TLA+ for finish against redeal, with a reversed witness where a stale finish's head is lost.
+
+Why it waits: On 2026-10-20 workers finished into a generation that had already been redealt ('generation 1 is not the live one (2)'). Their finished, pushed heads were thrown away and the coordinator forwarded them by hand: socket-test-binaries 168c9d3f, platform-nits 6a1c6a05, send-failures b5695b37.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### A redeal tells the old holder to stop
+
+When an attempt is redealt, by deadline, rework or return, the sprint pushes a stop notice to the old holder's channel (the friend's hook, or the fleet member's job) naming the card and the live generation. A worker that gets it stops and finishes nothing further. Done when: a redeal produces exactly one stop notice to the old holder, tested; a fleet job that receives it exits; TLA+ for redeal with the notice.
+
+Why it waits: On 2026-10-20, after redeals, old workers kept running for hours on dead attempts, duplicating the new workers and loading the benches.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### A read verdict that arrives after its read card is retired is kept as a finding
+
+A read that finishes after its read card was retired (by rework, brief edit or primary change) is recorded as a finding on the primary card, and a BROKEN finding is carried into the next attempt's brief as a FIX item. It is never dropped. Done when: a late BROKEN verdict appears on the card and in the next attempt's brief, tested; a late OK verdict is recorded and changes nothing.
+
+Why it waits: On 2026-10-20 reads that finished after their read card was retired ('retired ... by rework/brief/primary') lost real BROKEN findings: the keyed-filter conformance pin, a tla-ring CASES row, Windows dual_stack=false making 34 functional FAILs, and the create-status NULL macro.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### A take loop follows the sprint's current epoch, and a loop's refusal is a judgment
+
+take --epoch current takes at whatever the sprint's epoch is now, and the coordinator's take loop uses it. Any loop whose verb is refused raises a judgment naming the loop and the refusal, rather than retrying silently. Done when: after an epoch change, a take loop with --epoch current takes the next card, tested; a refused loop step raises one judgment, tested.
+
+Why it waits: On 2026-10-20 the sprint epoch changed from 21 to 0. The coordinator's take loop kept passing epoch 21, was refused silently, and 12 cards sat untaken on its row.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### finish runs the machine-checkable CHECKLIST.md items and refuses a LAND that fails one
+
+finish --head <sha> runs, before it records a LAND: the pushed remote SHA equals the head; the head merges onto the base tip without a conflict (a fresh base is never required, see gate-once-no-tip-chase); every changed file is in PATHS or listed under PATHS-PROPOSED; the repository's declared fast CI checks (conformance and TLA jobs included) pass at the head; the diff is not empty. A failure refuses the LAND and names the item, so the worker fixes it before a reader is spent. Done when: each item has a refusal test; a LAND that passes them all is unchanged.
+
+Why it waits: On 2026-10-20 friends' ok% was low (one friend at 23%, another at 0 of 12). Reads kept breaking LANDs for machine-checkable reasons: base not merged at finish, gates not run at the finished head, the conformance or TLA CI jobs red, files outside PATHS without PATHS-PROPOSED, a no-op tree.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### The card ATTRIBUTION rule takes the trailer from the friend's model
+
+The ATTRIBUTION rule in a card brief takes the Co-Authored-By trailer from the model of the friend or fleet route that works the card, as nova-config records it, and the by-line from the worker. Readers check the trailer against that, never against a fixed Claude trailer. Done when: a brief dealt to a non-Claude friend names that friend's model's trailer, tested; the read brief checks the trailer the card names.
+
+Why it waits: The rule hardcodes a Claude Co-Authored-By trailer. On 2026-10-20 readers broke correct work by a friend on a Grok model for not carrying it, and a false trailer would violate honesty.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### Code comments cite symbols, not line numbers
+
+A brief rule says code comments cite a file and a symbol, never a line number, and a lint refuses file:line citations in comments in the changed files. Done when: the lint is in the repository's fast checks, refuses a file:line comment and passes a file-and-symbol one, tested; the brief template carries the rule.
+
+Why it waits: Reads broke cards over file:line citations in code comments that went stale at the next merge (config-env-one-name r6, 2026-10-20).
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### A sprint-wide run-time budget, and an OWED section that readers do not fail
+
+A sprint setting caps the run time of any single run a card may ask for. Cards are written within it; a run over the budget goes into the report schema's OWED section, naming the run and why it is owed. The read brief says an OWED run is not a fail. Done when: the setting exists and the brief generator applies it; the report schema has OWED; a read of a report with an OWED run does not break it for that run, tested.
+
+Why it waits: On 2026-10-20 the owner deferred all runs over 2 minutes until features land. Cards still asked for long soaks, and readers called the deferred runs failures.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### A card whose GATE-NEEDS no fleet member covers is offered to friends that cover it
+
+When no fleet member up satisfies a card's GATE-NEEDS, the deal offers the card to friends whose declared platforms (in nova-config) cover it, before raising a judgment. Done when: a darwin or windows GATE-NEEDS card with no fleet member up is dealt to a friend that declares that platform and has room, tested; the judgment is raised only when no friend covers it.
+
+Why it waits: On 2026-10-20 cards with GATE-NEEDS darwin or windows sat ready with 'no member up satisfies GATE-NEEDS' while friends with access to Mac and Windows benches had room.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### nova-sprint stats prints the convergence ratio: primary cards added per primary card landed
+
+nova-sprint stats prints, for primary cards, the convergence ratio as the owner defined it: over the cards landed in the last 1h, 6h and 24h, the new primary cards their work created, per landed card (below one is converging). It also prints primary cards landed per hour. where and the dashboard show both. Done when: the ratio counts only cards created from landed cards' work, computed from the store with time as an argument, tested; landed per hour is computed the same way, tested; stats, where and the dashboard show both.
+
+Why it waits: On 2026-10-20 the owner asked whether the sprint is converging (cards added per primary card landed), and the coordinator computed it by hand.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### A verb adds or removes one need on a sentinel
+
+A verb adds or removes a single need on a sentinel card without restating the whole list, and refuses a need that names no card. Done when: add and remove of one need on a sentinel succeed and leave the other needs unchanged, tested; the edit changes exactly the need it names or refuses.
+
+Why it waits: On 2026-10-20 adding a new blocker to the v1-gate sentinel's needs was refused.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### The worker wall grants /dev/kvm to kvm cards and a short writable directory
+
+pkg/sandbox (wrap_linux.go) grants /dev/kvm read-write to a card with the kvm fact, and cmd/nova-swarm (native.go, nativeSandboxArgv) gives the walled worker a short writable directory for socket paths under the 108-byte limit. Nothing else in the wall changes. Done when: vng inside the wall boots with KVM on a kvm bench, tested functionally; a unit test pins the kvm grant and the short directory in the argv; a card without the kvm fact gets no /dev/kvm.
+
+Why it waits: On 2026-10-20, inside the worker wall, /dev was read-only, so vng fell back to software emulation (17.8 s boots against 1.8 s, 'bare hardware'). The walled worker also could not create a short /tmp/rn-<x> for the 108-byte virtiofs socket path.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, fixed by hand)
+
+### friend give moves a dealt-but-untaken card, and the deal rebalances away from full rows
+
+friend give <friend> <card> accepts a card that is dealt to another friend's row but not yet taken (ready on that row) and moves it directly to the named friend. The deal never deals to a row at or over its width while another eligible friend has a free slot, and it rebalances dealt-but-untaken cards from a row at or over its width to friends with room. Done when: one unit test per rule, each failing before the fix: friend give of a dealt-but-untaken card moves it; the deal sends no card to a row at its width while another eligible friend has room; a dealt-but-untaken card on a full row is rebalanced to a friend with room.
+
+Why it waits: On 2026-10-20 a card dealt to a friend's row but not yet taken counted as working, so friend give to another friend refused it ('is working, not ready or waiting'). The deal also kept handing cards to a friend at 16 of 16, with a ready card waiting on that row, while another friend had 10 free slots. The coordinator moved the card by editing its brief with --replace-in-flight, and the deal then re-dealt it to the friend with room.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('This is a bug. Fix this in v1.9.')
+
+### a brief edit that changes only NOTE, CARRY or ROUTE lines never bounces a finish
+
+A brief edit that changes only NOTE, CARRY, ROUTE, tier or PRIORITY lines, or that only widens PATHS, never invalidates a running attempt's finish; only a change to the task (DONE-WHEN, THE TASK, a PATHS narrowing) does (the owner, 2026-10-20: a note or tier change never bounces; brief-edit-at-review-keeps-reads covers cards in review). When a finish is refused as made under the earlier brief, the sprint records the finished head as CARRY on the next attempt automatically and tells the next holder. --replace-in-flight takes an optional target friend, and moves the card to that friend instead of re-dealing it to the same row. A coordinator note to a working card never edits its brief (coordinator-never-edits-working-briefs): nova-sprint note <card> <text> sends it to the holder by message (the friend's hook or the fleet member's job) and records it on the card, and brief edit of a working card from the coordinator is refused with a pointer to note. Done when: note delivers one message to the holder and records it on the card without changing the brief or the attempt, tested; a coordinator brief edit of a working card is refused naming the note verb, tested; one unit test per rule, each failing before the fix: a NOTE, CARRY or ROUTE edit or a PATHS widening leaves the finish valid; a DONE-WHEN, THE TASK, PATHS-narrowing or tier change still bounces it; a bounced finish's head appears as CARRY on the next attempt with a message to the next holder; --replace-in-flight with a target friend lands the card on that friend's row.
+
+Why it waits: On 2026-10-20 the coordinator appended a one-line NOTE, for routing only, to the briefs of 10 working cards. Each card's next finish was then refused as 'brief replaced: the head of attempt N was made under the earlier brief', though the work was complete and gated; the card bounced back to ready and was re-dealt, so a full attempt was spent to land the same head. It happened to two cards in 10 minutes (one with a 120/120 gate, one with 8 green compiler builds), and the coordinator re-added each finished head by hand as CARRY. --replace-in-flight, used to move cards to another friend, re-dealt them to the same row instead. No verb delivers a note to a working holder, so a brief edit was the only channel.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 (fixed by hand during the rocketnet v1.0 sprint)
+
+### The default read mix is one friend read
+
+A card's reads default to friends=1, fleet=0: one read by a friend, no fleet reads. A card or the sprint can set a different mix, and the dashboard shows the mix in force. Done when: a card with no read mix set is dealt exactly one friend read and no fleet read, tested; an explicit mix on the card or the sprint overrides it, tested.
+
+Why it waits: On 2026-10-20 the coordinator set every card's read mix to one friend read by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### A read says BROKEN only with a defect class
+
+The reader brief and the read verb accept a BROKEN verdict only with one defect class: DONE-WHEN unmet, regression against base, an owner ruling broken, a build break, or a test that cannot fail. The read verb refuses a BROKEN without a class, and anything else a reader finds is recorded as a note on an OK. Done when: the read verb refuses a BROKEN with no class or an unknown class, and accepts each of the five, tested; the reader brief template lists the five; notes on an OK are carried into the card's record, tested.
+
+Why it waits: On 2026-10-20 one card went through 162 reads. The coordinator judged each BROKEN by hand against the five classes and recorded the rest as notes.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### A card ready to accept is accepted by the machine once
+
+When a card reaches ready to accept, the sprint accepts it once without the coordinator. If a refused landing brings the card back to ready to accept, it is not accepted again: a judgment is raised naming the card and the refusal. Done when: a ready-to-accept card is accepted with no coordinator verb, tested; a card returned by a refused landing raises one judgment and is not re-accepted, tested; TLA+ for accept, refused landing and the judgment, with a reversed witness where a card is accepted twice.
+
+Why it waits: On 2026-10-20 cards sat at ready to accept until the coordinator accepted each one by hand
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### A finish gates once at its head and never chases the base tip
+
+A finish never requires a fresh base. finish records the SHA it gated; the lander re-merges onto the current base and its CI tests the tip. A re-merge by the worker is asked for only when the lander's merge conflicts. Done when: a finish whose head is behind the base tip but merges cleanly is accepted and lands with its gated SHA recorded, tested; a conflicting merge sends the card back with a re-merge ask, tested; TLA+ for finish, merge and conflict, with a reversed witness where a finish is refused only for being behind.
+
+Why it waits: On 2026-10-20 finishes were asked for a fresh base after other cards landed, and the coordinator accepted gated heads by hand and let the lander's merge and CI cover the tip.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### GATE-NEEDS for each OS is derived from the paths a card changes
+
+GATE-NEEDS for windows, darwin and each other OS is derived from the paths a card changes, by a per-repository map of OS-specific paths. A card that touches no Windows code does not gate on the Windows box; the lander's CI covers it. An explicit GATE-NEEDS on the card still wins. Done when: a card whose PATHS touch no Windows path gets no windows GATE-NEEDS and one touching a Windows source does, tested for each OS in the map; the brief shows the derived GATE-NEEDS.
+
+Why it waits: On 2026-10-20 the single Windows box queued gates for 30 minutes and more, with cards that touched no Windows code. The coordinator removed their windows GATE-NEEDS by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### The attempt after a failed or broken fleet pass goes to friends
+
+After a failed or broken first pass by the fleet, the next attempt is routed to friends automatically, with no tier trick, and carries the last pushed head as CARRY. Reads still use the card's own tier, so fleet readers can read it. A sprint setting rework-to friends|any chooses this (friends is the default). Done when: a card whose fleet attempt fails or is read broken is dealt next to a friend with the last pushed head as CARRY, tested; its reads are dealt at the card's tier, tested; rework-to any restores the old routing, tested.
+
+Why it waits: On 2026-10-20 the coordinator routed reworks after failed or broken fleet passes to friends by hand, copying the last pushed head into CARRY.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### Before merging, the lander builds every OS and runs the examples, TLA and conformance checks
+
+Before it merges, the lander builds on macOS and Windows as well as Linux and runs the examples, the TLA coverage check and the conformance check on the merged tree. A failure refuses the landing, names the check, and leaves the base untouched. Done when: a merge that breaks the macOS or the Windows build, an example, TLA coverage or conformance is refused before the base moves, one test each; a clean merge lands unchanged.
+
+Why it waits: On 2026-10-20 three reds landed on base and stalled every card behind them: an XDP-only constant broke the macOS and Windows builds, receive-weather counters, and a test crash after a sequence change.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### Harmless PATHS-PROPOSED files are approved automatically
+
+At review, before the lander's E12 check, test files, docs, TLA cfg and record files and CI-comment files listed on a finish's PATHS-PROPOSED line are approved automatically and added to PATHS. SDK and source files on that line still need a decision. Done when: each harmless class on PATHS-PROPOSED is added to PATHS and the landing passes E12, tested; an SDK or source file on PATHS-PROPOSED still raises a decision, tested. An approval, automatic or by hand, widens PATHS for the lander as paths-approval-reaches-the-lander describes.
+
+Why it waits: On 2026-10-20 the lander refused finished cards for test and cfg files outside PATHS that the worker had listed under PATHS-PROPOSED. The coordinator approved each by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### The sprint knows every gate host per OS and spreads gates across them
+
+The sprint holds the gate hosts for each OS (more than one Mac gate host, for example), deals each gate to a free host of the needed OS, and the dashboard shows each OS's queue and each host's load. Done when: two hosts of one OS take gates in parallel and a gate waits only when all are busy, tested with fakes; the dashboard shows the queue per OS.
+
+Why it waits: On 2026-10-20 the coordinator spread gates across hosts by hand and worked out each OS's queue by hand; the sprint knew one gate host per OS.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### Brief lint warns when DONE-WHEN bundles independent problems
+
+Brief lint warns when a card's DONE-WHEN bundles problems that are independent (different files, subsystems or checks with no shared cause) and suggests a split into one card per problem. Done when: a DONE-WHEN with two independent problems gets the warning and a suggested split, and one with a single problem does not, tested.
+
+Why it waits: On 2026-10-20 bundled cards cycled for many rounds. The coordinator split them by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Fully cover the smart defaults in v1.9'; the coordinator ran it by hand during the rocketnet v1.0 sprint)
+
+### Fixed, hard and sentinel: a card's blockers deal at the card's priority
+
+A card's effective priority is the highest of its own priority and the priority of every card that transitively depends on it through hard dependencies (DEPENDS-ON, needs) and through sentinels: priority inheritance. The deal orders ready cards by effective priority, so the low cards a critical card waits on, directly or behind a sentinel, deal as critical ahead of unrelated lower work. Effective priority is recomputed whenever a dependency or a priority changes. The dashboard and the card view show both the set and the effective priority. Done when: a low card that a critical card needs directly deals before an unrelated high card, tested; the same through a sentinel, tested; removing the dependency or lowering the dependent drops the card back to its own priority, tested; TLA+ in priority-proven-in-tla, with a reversed witness where a critical card's blocker deals behind lower work.
+
+Why it waits: Priority only ordered the deal among ready cards, and nothing carried it through dependencies. On 2026-10-20 the critical and blocker API cards rocketnet-driver-renamed-transport and rocketnet-config-packets-per-update-name sat in waiting all day: they needed the sentinels rocketnet-quiet-for-reformat and rocketnet-v1-gate, which needed about 45 low-priority soak, stress and matrix cards to land first, and those cards dealt at low priority.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Is there something broken with your prioritization? ... Fix this in v1.9.')
+
+### Fixed, soft: a LAND-AFTER on a lower-priority unlanded card never stalls the lander
+
+A soft dependency (LAND-AFTER) orders landing, it never blocks it. When a merging card's LAND-AFTER names cards of lower priority that have not landed, the lander lands the higher-priority card without waiting on them, records the skipped order on the card, and lands the rest in priority order. A LAND-AFTER on cards of equal or higher priority is kept. The lander never reports nothing-landable while a merging card's only wait is a lower-priority LAND-AFTER. Done when: a merging critical card with a LAND-AFTER on an unlanded low card lands on the next lander pass, with the skip recorded, tested; a LAND-AFTER on an equal-priority unlanded card still waits, tested; the lander queue lands in effective-priority order, tested; TLA+ in priority-proven-in-tla.
+
+Why it waits: On 2026-10-20 a merging card's LAND-AFTER on lower-priority unlanded cards made the lander report nothing-landable, which stalled the landing queue behind low work.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Hard, soft and sentinel. Card this all for v1.9.')
+
+### Caught, hard, soft and sentinel: a dependency that inverts priority is refused or warned at write time
+
+add, brief (including --needs-from-brief), needs set (--needs and --land-after) and priority check every change against the dependency graph. A change that would make a higher-priority card wait on a lower-priority one, through a hard dependency, a LAND-AFTER, or a sentinel's needs, is warned, naming the higher card, the lower card, the kind and the chain; with --strict it is refused. Lowering a card's priority below a card that waits on it is checked the same way. Adding a need to a sentinel warns when the needed card's priority is lower than that of any card that needs the sentinel. Done when: one test per kind and per verb (add, brief, needs set, priority) that the inverting change warns with the chain and --strict refuses it; a change that inverts nothing is silent, tested.
+
+Why it waits: On 2026-10-20 the inversions that held the critical API cards for a day (hard needs on sentinels, the sentinels' needs on about 45 low cards, and a LAND-AFTER on lower-priority unlanded cards) were each written without a word from any verb.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('we need to make sure that dependencies that break this priority are caught and fixed. Hard, soft and sentinel.')
+
+### Caught, hard, soft and sentinel: a tick judgment flags every priority inversion that exists
+
+Each tick checks the whole sprint for a card waiting, by any dependency kind (hard, LAND-AFTER, or through a sentinel), on an unlanded card of lower priority. A judgment fires within one tick naming the waiting card, the chain down to each lower card, the dependency kind of each link, and the cheapest cut: drop or defer the low cards, or remove the dependency. It fires once per chain and again only when the chain changes, and clears when the inversion is gone, whether by a cut or by inheritance landing the blockers. Done when: one test per kind that the inversion raises the judgment within one tick, naming the chain, the kinds and the cut, with time as an argument; a sprint with no inversion raises none, tested; an unchanged chain raises it once, tested.
+
+Why it waits: On 2026-10-20 two critical API cards waited all day behind about 45 low-priority cards through two sentinels, and nothing alarmed; the owner found it.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Is there something broken with your prioritization? ... Fix this in v1.9.')
+
+### needs set and brief --needs-from-brief can remove a sentinel need
+
+needs set and brief --needs-from-brief can remove a sentinel need from a waiting card, the same as any other need, and the card is re-evaluated for ready at once. Done when: needs set without the sentinel, and brief --needs-from-brief with a brief that omits it, each remove the sentinel need from a waiting card, which then goes ready if nothing else blocks it, tested.
+
+Why it waits: On 2026-10-20 neither needs set nor brief --needs-from-brief could remove the sentinel needs rocketnet-quiet-for-reformat and rocketnet-v1-gate from the critical API cards; the coordinator dropped the sentinels by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Is there something broken with your prioritization? ... Fix this in v1.9.')
+
+### Fix first, then reads: the ladder becomes fix > blocker > critical > reader > high > normal > low
+
+nova-sprint already has reads as a priority level: docs/SPEC-SPRINT.md (nova-sprint), section 'Priority: reads are a card priority (reads-are-a-card-priority-b)', 2026-10-06. Its ladder is blocker > critical > fix > high > reader > normal > low; every read card is reader, or its primary's level when that is higher (sprint.ReadPriority), never set by hand, and the deal goes level by level, reads before work at each level (friendDealByLadder, friendReadsFirst). The owner's 2026-10-20 rulings change the ladder to fix > blocker > critical > reader > high > normal > low: fix is the highest level of all, and reader moves above high, below critical and blocker. Done when: that spec section and the ladder in the code say fix > blocker > critical > reader > high > normal > low; a test shows a ready fix card dealt before blocker work; a test shows a reader read dealt before high work and after critical work; tla/SprintPriority.tla (priority-proven-in-tla) models the whole order.
+
+Why it waits: Fix first: a fix is the card closest to landed. Its work is done and paid for, usually already read, and only a repair stands between it and base. Every minute it waits its head goes stale (re-merge, conflicts, re-deal; on 2026-10-20 rocketnet-example-ack-receipts-debug-assert failed its landing twice on conflict while it waited), its worker's and reader's context goes cold, and any card or red base it blocks holds up everything behind it. Finishing nearly-finished work drains the pipe fastest. Reads next, because reads are the drain: with reader below high, reads queued behind ordinary work and 16 cards sat in review on 2026-10-20 while readers took work. Finished work is worth nothing until it is read and landed, so a read outranks starting new work; when reads queue behind work every new deal adds to review instead of emptying it; a waiting card's head goes stale (re-merges, conflicts, re-deals and bounced finishes, all on 2026-10-20); a late BROKEN verdict arrives after the worker has moved on, so rework pays to rebuild context; the board misleads, working growing while landed stays flat. With fixes and reads first, work in flight stays small, base moves in small steps, and landed per hour tracks finished per hour (Little's law). The spec section carries the full rationale.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('The design was that reads are a priority, and they are above all work, except critical and higher!'; later the same day, 'fix is the highest priority of all')
+
+### One merging card the lander cannot land never stalls the cards behind it
+
+When the lander refuses the card at the head of a stream's merge queue for a fault of that card (its brief has no REPO, BASE or KIND line, its brief does not parse, its head is missing), it sets that card aside with one judgment naming the card and the fault and lands the rest of the queue in priority order. It never reports nothing-landable while any other merging card can land. Done when: a merge queue whose head card has no BASE line lands the card behind it on the same lander pass and raises one judgment for the first, tested; the same for a missing REPO and an unparsable brief, tested; TLA+ in priority-proven-in-tla, with a reversed witness where one bad card blocks the queue. A scope-only E12 refusal is not such a fault: paths-approval-reaches-the-lander re-queues the same head once PATHS is widened.
+
+Why it waits: On 2026-10-20 a router bug dropped the first line of five briefs, removing REPO, BASE and KIND. One of them, loopback-rtt, sat at the head of the merge queue, the lander refused it for having no BASE, and nothing behind it landed until the coordinator pulled it out by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Land some cards dude! Feels like we are treading water here. Land shit!')
+
+### A merging card's brief is repaired in place, without return and without a new attempt
+
+nova-sprint brief on a card in merging that changes only header lines the lander reads (REPO, BASE, KIND, LAND-AFTER, NOTE) updates the brief in place: the card stays in merging at the same head, keeps its reads and its accept, and the lander takes it on its next pass. A change to the task (DONE-WHEN, THE TASK, a PATHS narrowing) still sends it back. Done when: restoring a missing BASE line on a merging card leaves it merging at the same head with its reads, and the next lander pass lands it, tested; a DONE-WHEN change on a merging card still sends it back, tested.
+
+Why it waits: On 2026-10-20 the only way to repair loopback-rtt's brief was to return the card out of merging, fix the brief and finish the same head again, which cost a re-deal and a fresh read.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Land shit!'); the coordinator's repair of loopback-rtt the same day
+
+### The coordinator can land a named card through the lander, never around it
+
+nova-sprint land --card <id> --reason <text> asks the lander that holds the fence to land that card next, ahead of the queue, with the same merge, gate and record steps as any landing. The landing is recorded with the actor and the reason. It never bypasses the fence or the lander's checks. Done when: land --card on an accepted merging card while the server lander holds the fence lands that card on the lander's next pass with the actor and reason recorded, tested; land --card on a card that fails a lander check is refused with that check named, tested.
+
+Why it waits: On 2026-10-20 the server lander held the fence, so the coordinator had no verb to land a ready card by hand while one bad card blocked the queue.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Please land cards.')
+
+### A brief edit on a card in review never re-deals it and never retires its reads
+
+A brief edit on a card in review or ready to accept that does not change the task (NOTE, CARRY, ROUTE, tier, PRIORITY, a PATHS widening) keeps the card in review at the same head and generation: its open reads stay live and any recorded verdicts stand. A PATHS widening at review is how a PATHS-PROPOSED file is approved, with no re-deal. Only a change to the task (DONE-WHEN, THE TASK, a PATHS narrowing) retires the reads and opens a new attempt. Done when: a NOTE, tier, PRIORITY and PATHS-widen edit on a review card each leave it in review with the same generation and its reads live, and a later OK verdict is accepted, tested; a DONE-WHEN edit retires the reads, tested; TLA+ for edit against read, with a reversed witness where an OK read is lost to a note.
+
+Why it waits: On 2026-10-20 brief edits on cards in review re-dealt them as new attempts and retired their in-flight reads, so OK verdicts were refused as 'generation not live' and lost, and socket-test-binaries went to a new worker for a PATHS widening.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('card this for v1.9', of a brief edit bouncing a LAND finish)
+
+### nova-sprint refinish records a finished head again on the live attempt
+
+nova-sprint refinish <card> --head <sha> --report <file> takes the live attempt and records the finish of a head that an earlier attempt already finished and pushed, without a worker and without a hand-made branch ref. It checks the head is pushed and belongs to the card's branches. Done when: refinish of a head finished by a bounced attempt records the finish on the live attempt and the card moves to review, tested; refinish of a head not pushed or not on the card's branches is refused, tested.
+
+Why it waits: On 2026-10-20 each bounced finish made the coordinator re-finish the same head by creating the live attempt's branch through gh api and finishing again by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('card this for v1.9')
+
+### A card can deal N reads in parallel and accept after K agree
+
+The read mix takes a count needed: nova-sprint set --read-mix friends=<n>,fleet=<m> --reads-needed <k> deals n+m reads at once and decides the card when k verdicts are in; the remaining reads are retired and their late verdicts kept as findings (late-read-verdict-kept). Done when: a mix of 3 reads needing 2 deals 3 reads at once and accepts on the second OK, retiring the third, tested; a BROKEN among the first k is handled as today, tested.
+
+Why it waits: On 2026-10-20 the owner asked for three reads in parallel with two needed; nova-sprint could not deal three and decide on the first two, so the coordinator set the mix by hand to two.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('we can send off 3 reads, but we need only 2. One read goes to fleet... All in ||')
+
+### The OWED runs are a list the sprint keeps, never a note in a report
+
+Every run a finish lists as OWED (owner-run-budget) is recorded as an owed-run row on its card: the run, the host kind it needs, and the card. nova-sprint view owed lists every owed run in the sprint, and a sentinel or a stream can be set to take the owed runs as cards when long runs start. An owed run is cleared only by a recorded run. Done when: a LAND finish with an OWED run creates one owed-run row, listed by view owed, tested; clearing it needs a recorded run, tested; turning the owed list into cards makes one card per row, tested.
+
+Why it waits: On 2026-10-20 the two-minute rule made every long soak, load and stress run OWED. The list lived only in reports and the coordinator's notes, deferred long-run cards cycled HOLD and re-deal, and landing-stall alarms fired on cards parked on purpose.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('hold off on longer soaks and tests that take more than 2 minutes until we have all the features and bugs landed. Then we can do long soaks')
+
+### defer and drop take a card from any column into its repository's own roadmap format
+
+nova-sprint defer <card> works from any column (ready, working, review, waiting), writes the card into its repository's roadmap in that repository's own format (the nova-roadmap sexp of that repo), with the whole brief and the latest pushed head, and handles its dependents: each card or sentinel that needs it has the need removed and is told, or the defer is refused naming them unless --with-dependents. drop of a card other cards need does the same with --with-dependents instead of refusing outright. Done when: defer of a working card writes a row with the brief and head into a repo roadmap in that repo's form and stops the worker, tested; defer of a card a sentinel needs removes the need with --with-dependents and refuses without it, naming the sentinel, tested; drop of a needed card behaves the same, tested.
+
+Why it waits: On 2026-10-20 defer refused to write rocketnet's roadmap.sexp format and took only waiting cards, and drop refused the macOS nightly-soak card because the v1 gate needed it. Moving the final-deliverable cards to the roadmap took hand drops and sentinel surgery.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Please review the sprint. Are all cards in it still for v1.0.0?'), moving the final-deliverable cards to the roadmap
+
+### The coordinator can hold one card and return one working card
+
+nova-sprint hold <card> --reason parks one card (any column but landed) so it is not dealt until unhold, without a held sentinel; nova-sprint return <card> --reason takes a working card back to ready, records its pushed head as CARRY and tells the holder to stop (redeal-stops-old-worker). Done when: a held card is never dealt and unhold makes it ready, tested; return of a working card puts it in ready with its head as CARRY and one stop notice to the holder, tested.
+
+Why it waits: On 2026-10-20 deferred long-run cards cycled HOLD and re-deal and could only be parked behind a new held sentinel, because a single card cannot be held; and no coordinator verb could return a working card, so a friend's idle soak card held a slot.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('hold off on longer soaks ... until we have all the features and bugs landed')
+
+### add writes the brief's required boilerplate itself
+
+nova-sprint add fills every line the card lint requires that is not the author's to choose: the RULES paragraph verbatim, the tier on line 1 from --tier, the TEST files in PATHS from the test lines, the ATTRIBUTION block, and dropped-card names rewritten to their live successors. The author writes only the task, DONE-WHEN, PATHS and the choices. Done when: a brief with only the task, DONE-WHEN, PATHS and a tier passes add with the boilerplate written in, tested; a brief naming a dropped card gets its successor or a refusal naming it, tested.
+
+Why it waits: On 2026-10-20 card writing kept failing lint on boilerplate: the RULES paragraph not quoted verbatim, the tier not on line 1, a TEST file missing from PATHS, dropped-card names; the LAN 1000-client soak card's brief failed lint the same way.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('move smoothly and quickly')
+
+### Judgments for the coordinator always reach it, whatever its filters
+
+A judgment the sprint raises for the coordinator is delivered on the coordinator's hook channel past any client-side filter, and every overdue judgment raises one reminder; no filter setting can hide a judgment. The coordinator's take loop takes the epoch from the server on every step (take-loop-epoch-follows-sprint), never a remembered one. Done when: a coordinator hook with a filter that drops every other notice still delivers a judgment, tested; an overdue judgment raises one reminder, tested with time as an argument; a take loop started at an old epoch takes at the server's epoch, tested.
+
+Why it waits: On 2026-10-20 the coordinator's hook filter hid the judgments the sprint raised, 13 went overdue and the server's default parked their cards; and the take loop ran at epoch 21 against a sprint at epoch 0, stranding 12 cards.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Land shit!'); the coordinator, the same day
+
+### One verb scopes the sprint to a milestone
+
+nova-sprint scope --release <tag> [--dry-run] moves every open card not tagged for the release into its repository's roadmap (defer-any-card-into-its-repo-roadmap), removes needs on the moved cards from the cards and sentinels that stay, and prints what moved and what stays. Done when: scope on a sprint with in-scope and out-of-scope cards leaves only in-scope cards, each moved card a roadmap row with its head, and no remaining card needing a moved one, tested; --dry-run changes nothing, tested.
+
+Why it waits: On 2026-10-20 scoping rocketnet to what could land in the next hour took hand drops, hand roadmap rows and sentinel surgery.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('we need to urgently scope down to something we can land in the next hour for rocketnet')
+
+### Durable sprint data lives in nova-config's Postgres; Redis holds only what can be lost
+
+Redis holds only ephemeral sprint state (cards in flight, leases, beats, timers, inbox, caches). Sprint identity, stream definitions, friends' rows and sprint history are nova-config kinds in Postgres, applied into Redis, never written there first, and nova-config's own Postgres address is in its config file, never a Redis key. A registry declares every Redis key family ephemeral or applied, and a lint refuses an undeclared one. Done when: FLUSHALL then nova-config apply then init rebuilds identity, streams and history equal to before, tested on fakes; a durable write with Postgres down is refused, never Redis-only, tested; the lint refuses an undeclared key family, tested; TLA+ store model with a reversed witness where a flush loses durable data.
+
+Why it waits: On 2026-10-20 the sprint store was dropped and nova-config could not find its own Postgres (its DSN was the Redis key fleet:pg_dsn), and the sprint's identity and settings had to be read back out of a backup.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('I dislike this non-ephemeral data being stored in redis. Redis is for ephemeral data. Move this data to nova-config please.'; 'Do it in v1.9')
+
+### Starting a clean sprint store is one command
+
+nova-sprint reset --confirm sprint --approved-by <owner> backs up the store, stops the server, flushes only the sprint's keys, re-applies nova-config, creates epoch 0 from nova-config's sprint row, restarts the server and proves the coordinator's hook. init on a store with no sprint, as nova-config's coordinator, needs no hook (the bootstrap case). Done when: reset on a fake store rebuilds epoch 0 from a fake nova-config row, tested; init on an empty store as the configured coordinator succeeds with no hook and still requires one when a sprint exists, tested; a failing backup refuses the reset, tested; TLA+ hook model with an EmptyStore state and a reversed witness of the init deadlock.
+
+Why it waits: On 2026-10-20 after the store was dropped, init refused 'You must hook in first' while the hook could not prove without a sprint: a deadlock no verb broke, and init's arguments had to be read back from a backup.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('In v1.9, please make this process of starting a clean sprint db not suck.')
+
+### nova-sprint limits shows every limit on dealing and reading, and why a card is not dealt
+
+nova-sprint limits [--card <id>] [--machine <m>] prints every setting that limits who may work or read a card, with its source: machine rows (tla, gates_only, width), sprint settings (go-lanes, dealt-max, fleet and friends tiers, read mix), nova-config sprint and friend rows (max_attempts, width, mode, token caps), brief lines (WHO, BENCH, GATE-NEEDS, tier), stream settings, fleet hold and route state. With --card it names every reason each machine and friend cannot take that card now. The list is then reviewed with the owner, keep, change or remove. Done when: limits prints each source, tested on fakes; limits --card names the blocking rule for a card held off a machine by tla=false, gates_only and WHO, one test each.
+
+Why it waits: On 2026-10-20 the owner did not know which settings restricted dealing: tla=false on every machine blocked TLA-gated cards everywhere, WHO lines kept cards off the Windows bench, and the coordinator wrongly claimed a per-machine tier setting.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Are there any other settings that I don't know about that will restrict how cards get worked on or read?'; 'add all these things to a v1.9 card for future review')
+
+### nova-doctor's checks give true verdicts and fixes that work
+
+providers loads route keys through the seat or reports 'key not loaded', never a provider 401; self knows the play-installed binaries and does not tell anyone to move them; dashboard gives a fix that works end to end; gosdk names the go.mod it judged; and the loops play renders exactly nova-config's loop rows for the host and refuses to retire a unit nova-config declares. Done when: one red-first test on fakes per check (a fake provider endpoint, a fake bin directory, a fake loops table), and a loops-play test that a declared unit is never retired.
+
+Why it waits: On 2026-10-20 three nova-doctor checks gave false or contradictory fixes on the coordinator's machine, and following the dashboard fix ran the loops play, which retired the sprint server and fleet member units that nova-config declares there.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('fix all the dr issues then re-run to verify'; 'fix this now', of the loops play reading loops.tsv)
+
+### nova-run runs a job in a counted slot on a chosen host
+
+nova-run [--host <h>|--os linux|darwin|windows] [--exclusive] [--card <id>] [--max-wait 30m] -- <cmd> runs a job in a slot counted from nova-config's machine row, with kernel-held locks so a dead holder frees its slot, shared and exclusive modes without starvation, a bounded wait that exits 75 naming the holders, and a fresh internal-disk work directory per job. nova-run pick --os linux prints the least-loaded host with a free slot; nova-run status lists holders. It replaces the coordinator's hand-written slot, bench-picking and Windows-lock scripts. Done when: on fakes (fake clock, fake lock backend), slots never exceed the count, exclusive is alone and not starved, a dead holder's slot is reclaimed, max-wait exits 75, pick skips held machines, each tested; TLA+ slots model with reversed witnesses.
+
+Why it waits: On 2026-10-20 workers chose benches by hand through bash scripts with mkdir locks, an orphaned sleep held the macOS bench for over an hour, and the Windows bench's lock was installed by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('in v1.9 please convert this to a real golang tool and verb. nova-cast? nova-run?')
+
+### nova-sprint roadmap import adds a deliverable's cards in one fast step
+
+nova-sprint roadmap import --repo <r> [--release <tag>] reads each roadmap row's notes, creates missing streams, keeps each card's last head, needs and routing lines, and lints and checks the whole batch once. It is the reverse of the one-command export (nova-sprint roadmap, cards-carry-their-roadmap-row). Done when: an import of 50 rows into a fake store runs once through lint and check and creates the cards with heads and needs, tested; running it twice changes nothing, tested; the import of tens of cards takes under a minute.
+
+Why it waits: On 2026-10-20 importing about 48 rocketnet cards from the roadmap took an agent over 20 minutes.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('The import from the roadmap to sprint is also much slower than I would like for just a few cards. Please add a task to v1.9 to make this faster.')
+
+### A lost coordinator hook record never re-deals working cards
+
+When the coordinator's hook record is lost and re-armed, cards working on friends and the fleet stay with their holders at the same generation; nothing is re-dealt and no attempt is spent. Only a friend's own missed challenges return its cards (friend-down-returns-its-cards). Done when: losing and re-arming the coordinator hook leaves every working card at its generation, tested; TLA+ for the hook record against the deal, with a reversed witness where a hook loss re-deals a card.
+
+Why it waits: On 2026-10-20 the coordinator's hook record was lost four times in a night; the fourth time the sprint push went down and six working jobs were re-dealt as new attempts, burning attempts against the bound, and workers had to look up their new job and generation before finishing.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (overnight notes); the owner's rule that finished work is never thrown away ('set this as blocker', 2026-10-20)
+
+### friend stage checks out a card whose BASE is not the default branch
+
+nova-sprint friend stage resolves origin/<BASE> for a BASE that is not the repository's default branch and resumes or cleans its own incomplete stage directory on retry. Done when: staging a card with BASE a non-default branch into a clean clone checks out that base, tested on a fake repository; a retry after a failed stage succeeds, tested.
+
+Why it waits: On 2026-10-20 friend stage refused cards on sprint/rocketnet-proof (exit 128, the clean clone had no local BASE) and refused its own half-made clone on retry; a friend's card went to HOLD because no checkout was staged.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (carry notes, 15:00Z)
+
+### nova-sprint view priority shows, per priority class, what is landed, in flight and blocked
+
+nova-sprint view priority prints one line per priority level, in the ladder of docs/SPEC-SPRINT.md (nova-sprint) section 'Priority: reads are a card priority' as changed by fix-first-then-reads (fix, blocker, critical, reader, high, normal, low) with its landed, in-flight and blocked counts, and under each blocked card the chain of dependencies that blocks it, each link marked hard, soft or sentinel, lowest-priority blocker first. The coordinator sees in one line that critical work is blocked. Done when: the view on a sprint with a blocked critical card prints the critical line with a nonzero blocked count and the chain with its kinds, tested against a fixed sprint; the counts per class sum to the sprint's open and landed cards, tested.
+
+Why it waits: On 2026-10-20 no view showed that the critical API cards were blocked, or by what; the coordinator worked out the chain by hand.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('Is there something broken with your prioritization? ... Fix this in v1.9.')
+
+### TLA+ proves the sprint's prioritization, every class and every dependency kind
+
+tla/SprintPriority.tla models the deal and the lander with every priority level in the ladder of docs/SPEC-SPRINT.md (nova-sprint) section 'Priority: reads are a card priority', as changed by fix-first-then-reads (fix > blocker > critical > reader > high > normal > low) and the rules designed around them, the read and fix rules included, and all three dependency kinds: hard (DEPENDS-ON, needs), soft (LAND-AFTER) and sentinel. A Current config models today's rules; a Fixed config adds priority inheritance (priority-inherits-through-needs), the soft-dependency lander rule (land-after-never-stalls-the-lander) and the alarm (priority-inversion-alarm). Done when: TLC on the Current config gives a counterexample that reproduces the 2026-10-20 sentinel inversion, checked against the code by hand; TLC on the Fixed config passes every invariant (no higher-priority ready or merging card waits on lower work without an alarm, the lander never stalls on a lower-priority LAND-AFTER) and the liveness that a critical card's blockers deal; every priority level and the read and fix rules are modelled, in the order of fix-first-then-reads; the code change that implements the fix cites the model.
+
+Why it waits: On 2026-10-20 prioritization did not work and nothing showed it; the owner wants a proof, not a belief, that it works.
+
+Target: v1.9
+
+From: the owner, 2026-10-20 ('I want TLA+ tests proving that we have working prioritization, including all the rules we designed around low, normal, high, read, critical, blocker, fix.')
+
+### An approved PATHS-PROPOSED file widens PATHS, and the lander checks against the widened set
+
+An approved PATHS-PROPOSED file widens the card's PATHS mechanically, whether approved by the coordinator (nova-sprint paths approve <card> <file>...) or by a standing auto-approval class (harmless-paths-auto-approved). The approval is recorded with its actor and reason, and widening never bounces a finish or retires a read. The finish's diff is checked against PATHS at finish time: unapproved extra files are listed on the finish reply and raised as a judgment then, never first at landing. Readers and the lander's E12 check use one rule set, so no read can pass what the lander refuses. An E12 refusal of an otherwise accepted head re-queues the same head once PATHS is widened, with no new attempt, no twin and no re-read while the head is unchanged, and the 'brief is wrong' bound never counts a scope-only refusal. Done when: a test plays one card through a finish with an extra test file, then the coordinator's approval, then the lander, and it lands with no new attempt; a second test shows a finish with an unapproved file is flagged at finish; tla/SprintPriority.tla (priority-proven-in-tla) or a sibling module models the landing with PATHS approval, with a reversed witness where the E12 refusal loop returns.
+
+Why it waits: On 2026-10-20 the lander's E12 check refused every changed file outside a card's PATHS and NEW, test files included, ignoring the PATHS-PROPOSED approvals workers wrote and the coordinator granted. Readers, following their prompt, judged out-of-PATHS test files always allowed and passed the cards, so the refusal arrived only at landing. After two E12 refusals a card hit the 'brief is wrong' bound, where rework was refused and a brief edit at review re-dealt a new attempt and retired the reads. The only way out was to drop and re-add the card as a twin, recreate its branch at the same head, finish it by hand and read it again. That happened for loopback-rtt, handshake, win-socket-error-paths and others, each a full cycle with no code change.
+
+Target: v1.9
+
+From: the owner, 2026-10-20, on the coordinator's report that four cards had each needed a re-cut twin for E12 ('this sucks. card a fix for this in v1.9')
+
+### A conflict only in a shared append-only ledger never refuses a landing
+
+The lander merges shared append-only ledgers (tla/RUNS.tsv, tla/CASES.tsv, COVERAGE rows and the like) with their own merge driver: a row union, or tlacheck merge --keep. A conflict confined to those ledgers is resolved by that driver and never refuses a head; a conflict in any other file still refuses as today. Done when: a test lands two cards that both add tla/RUNS.tsv rows, one after the other, with no refusal and both rows kept; a conflict in a non-ledger file is still refused, tested.
+
+Why it waits: On 2026-10-20 the lander refused rocketnet-a1-uring-rearm-and-destroy-bounded, already read OK, for 'a conflict in the shared ledgers only (tla/RUNS.tsv)'. A row union would have merged it; instead it cost a full rework attempt.
+
+Target: v1.9
+
+From: the coordinator, 2026-10-20 (rocketnet v1.0 sprint, a landing refused for a ledger-only conflict)
+
+### A card dealt to a friend row that does not take it moves to a row that will
+
+A card dealt to a friend row and not taken within a short take deadline (minutes, configurable per sprint) returns to ready and is re-dealt to whichever eligible row takes fastest; the 6-hour deadline no longer governs a dealt-but-untaken card. The deal weights each row by its recent take latency and its untaken count, not only its width: a row holding any dealt-but-untaken card gets no new deal until it takes. friend give and rebalance move a dealt-but-untaken card, as friend-give-moves-dealt-cards describes. A judgment fires, once per row, when any row holds an untaken card past the take deadline, naming the row and its untaken cards. Done when: a test deals cards to a friend row that never takes them, and each moves to another row within the take deadline; a test shows a row with an untaken card gets no new deal while another eligible row has room; a test shows the judgment fires once when a card passes the take deadline; tests take time as an argument, with no real time.
+
+Why it waits: On 2026-10-20 five cards sat dealt-but-untaken on one friend row while that friend worked three other cards. A dealt-but-untaken card waits in ready under the 6-hour deadline, the deal kept adding to the widest row though that friend was not taking, and friend give refused a dealt-but-untaken card. So rework and merge-only cards, the fastest work there is, waited behind one busy friend while another row had free workers.
+
+Target: v1.9
+
+From: the owner, 2026-10-20, on five cards sitting dealt-but-untaken on one friend row ('We would have waited forever on them, wouldn't we?')
+
+### The machine pushes the coordinator the moment any open card stalls past its bound
+
+The sprint watches every open card's age in its current state and pushes the coordinator the moment a card exceeds the bound for that state. The watched states are ready-untaken, working with no heartbeat or commit, review with no reader dealt, read-ok-not-merging, merging-not-landed and land-refused-not-reworked; each bound is configurable, in minutes. The push names the card, the state, its age and the owner row, with the one verb that fixes it, and fires once per card per stall. nova-sprint where shows a single stalled-cards line at the top. The coordinator's helpers (routers and monitors) report their own liveness, and a helper that stops reporting is a stall too, pushed the same way. dealt-cards-never-wait-on-a-busy-friend covers the ready-untaken case's own remedy. Done when: a test leaves a card in each watched state past its bound, and each produces exactly one push within one tick, then clears when the card moves; a test stops a helper's liveness reports and the stall is pushed once; tests take time as an argument, with no real time.
+
+Why it waits: On 2026-10-20 the coordinator learned card state only from the reports it happened to receive. Nothing told it that five cards sat dealt-but-untaken, so it reported all cards as being worked and the owner had to ask why only four of eight were moving. The same blind spot hid stale reads, re-deals made by brief edits and the fix router lapsing.
+
+Target: v1.9
+
+From: the owner, 2026-10-20, after five cards sat untaken while the coordinator reported them all being worked ('You need to stop this bullshit. Card this up for v1.9')
