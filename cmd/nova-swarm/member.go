@@ -1291,6 +1291,15 @@ var (
 	// task=` and swarm.WallRefusedLine's `WALL REFUSED`). On a read it is the reader's own
 	// environment, never the work's (member.EndEnvironment).
 	nativeWall = regexp.MustCompile(`(?m)^WALL (task=|REFUSED )`)
+	// nativeWallDeath is swarm.WallLine's `WALL task=`: the wall STOPPED the card (it
+	// published nothing after the refusal), never a side write it carried on past.
+	nativeWallDeath = regexp.MustCompile(`(?m)^WALL task=`)
+	// nativeScratchDenial is native's refusal of a run whose shell reported denials that ALL
+	// named scratch outside the job (swarm.ShellDenial.ScratchOnly, swarm.ShellDenialReason's
+	// `scratch_only=true`) and whose child exited 0: a reader that redirected a log to
+	// /tmp/cfg.log and finished its read. On a read whose own RESULT.md carries a verdict the
+	// verdict is kept and the refusal rides on it as an environment note (Result).
+	nativeScratchDenial = regexp.MustCompile(`(?m)^NATIVE REFUSED: .*\bwent unread\b.*\brc=0 wall=\S+ denied_path=(\S+) operation=unverified scratch_only=true\b`)
 )
 
 // Result reads how the child ended: the NATIVE line's rc and harness word, and
@@ -1307,6 +1316,9 @@ func (c *nativeChild) Result() member.Result {
 		var end, endCause, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
 		var wall time.Duration
 		nativeHasSpend := false
+		// scratchDenied is the path of a read's scratch-only shell denial (nativeScratchDenial):
+		// the read keeps its own verdict and notes the refusal, else it is an environment end
+		scratchDenied := ""
 		// noChild: native refused the launch before it opened the harness output log, so
 		// no harness ran and nothing was spent (native.go, the refusals ahead of the child's
 		// start: the pool identity, the harness binary, the slot). Its missing receipt is
@@ -1378,8 +1390,14 @@ func (c *nativeChild) Result() member.Result {
 			}
 			if c.read && nativeWall.Match(b) {
 				// the wall refused a write outside the job: on a read that is the reader's
-				// own environment, not the work's verdict (member.EndEnvironment)
-				end = member.EndEnvironment
+				// own environment, not the work's verdict (member.EndEnvironment) -- unless
+				// every refusal was a scratch write the reader carried on past and it exited
+				// 0, which is decided below once its verdict is read
+				if m := nativeScratchDenial.FindSubmatch(b); m != nil && !nativeWallDeath.Match(b) {
+					scratchDenied = string(m[1])
+				} else {
+					end = member.EndEnvironment
+				}
 			}
 			provider = providerReason(b)
 			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && (end == member.EndBudget || end == member.EndUnverifiable) {
@@ -1437,6 +1455,21 @@ func (c *nativeChild) Result() member.Result {
 			}
 			if report == "" {
 				report = lr
+			}
+		}
+		if scratchDenied != "" {
+			// A READ THAT REACHED ITS OWN VERDICT IS NOT THROWN AWAY FOR A SCRATCH WRITE.
+			// Native refused the run only because the reader's shell was denied a write to
+			// scratch outside its job (/tmp/cfg.log): never a gate's input and never a tool
+			// a gate runs (swarm.ScratchPath), the child exited 0, and the reader's own
+			// RESULT.md carries ok or broken. The verdict is the reader's and is kept; the
+			// refusal is named on it as an environment finding. Anything short of that is
+			// the reader's environment end, as before (member.EndEnvironment).
+			if (verdict == "ok" || verdict == "broken") && report != "" {
+				ran = true
+				report = "environment: the wall refused a scratch write to " + scratchDenied + " outside the job (not a gate input; the verdict is the reader's own); " + report
+			} else {
+				end = member.EndEnvironment
 			}
 		}
 		if report == "" {

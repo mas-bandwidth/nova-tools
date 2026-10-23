@@ -3,6 +3,7 @@ package swarm
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
@@ -242,5 +243,38 @@ func TestShellDenialReaderAnswersAsShellDenied(t *testing.T) {
 			assert.Equal(t, wantOK, ok, "capture %q in chunks of %d: reader said %+v %v, ShellDenied said %+v %v", c, chunk, got, ok, want, wantOK)
 			assert.Equal(t, want, got, "capture %q in chunks of %d: reader said %+v %v, ShellDenied said %+v %v", c, chunk, got, ok, want, wantOK)
 		}
+	}
+}
+
+// ScratchOnly is true only when EVERY denial in the capture named scratch outside the job:
+// one denial of a tool or a gate's input anywhere in it, first or later, makes it false, and
+// the refusal's line carries `scratch_only=true` only when it is true.
+func TestShellDeniedScratchOnlyIsEveryDenial(t *testing.T) {
+	t.Parallel()
+	const tmp = "/usr/bin/bash: line 1: /tmp/cfg.log: Permission denied\n"
+	const tool = "/usr/bin/bash: line 1: /home/nova/sdk/bin/frama-c: Permission denied\n"
+	for _, tc := range []struct {
+		name, capture string
+		scratch       bool
+	}{
+		{"scratch_only", tmp + "bash: /tmp_nope: Permission denied\n", true},
+		{"tool_after_scratch", tmp + tool, false},
+		{"tool_first", tool + tmp, false},
+		{"unterminated_tool_tail", tmp + "bash: /home/nova/.local/bin/nova-sprint: Permission denied", false},
+	} {
+		d, ok := ShellDenied([]byte(tc.capture))
+		require.True(t, ok, tc.name)
+		assert.Equal(t, tc.scratch, d.ScratchOnly, "ShellDenied %s", tc.name)
+
+		r := NewShellDenialReader()
+		_, _ = r.Write([]byte(tc.capture))
+		rd, ok := r.Denied()
+		require.True(t, ok, tc.name)
+		assert.Equal(t, tc.scratch, rd.ScratchOnly, "ShellDenialReader %s", tc.name)
+		assert.Equal(t, tc.scratch, strings.Contains(ShellDenialReason("c", "/j", "landlock", 0, rd), " scratch_only=true "), "reason %s", tc.name)
+	}
+	for p, want := range map[string]bool{"/tmp": true, "/tmp/x/y": true, "/var/tmp/z": true, "/dev/shm/q": true, "/tmp_cfg.log": true,
+		"/tmpx/y": false, "/home/nova/tmp/x": false, "/usr/bin/bash": false, "tmp/x": false} {
+		assert.Equal(t, want, ScratchPath(p), p)
 	}
 }
