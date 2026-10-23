@@ -24,7 +24,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (25)
-- [Setup, release and operations](#setup-release-and-operations) (99)
+- [Setup, release and operations](#setup-release-and-operations) (100)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -1136,6 +1136,14 @@ On 2026-10-20 main's ci run 39346166100 was cancelled (a concurrency clash with 
 Why it waits: a failed check that no green rerun clears blocks every cut of that commit
 
 From: the coordinator, 2026-10-20 (v1.7 deadlock list)
+
+### v1.7: a fresh native Windows member works first time (mirror refresh in member-windows.yml)
+
+On 2026-10-20 captain's first native Windows takes failed four ways, each found one at a time on real cards. (1) PATH case: Windows spells it Path and the env allowlists matched exactly, so native ran with no PATH. Fixed in #6024. (2) Launch argv: the providers table had no windows harness column (unsupported GOOS windows). Fixed in #6031. (3) Stale seat store: the member's C:\nova-swarm\secrets clone lagged the record's keys (MINIMAX_API_KEY absent) when tools were installed outside the play; the play's secrets step must run on every key change. (4) No bench mirror: FindBenchMirror looks in %USERPROFILE%\nova-bench\mirror, which nothing creates or refreshes on Windows. Created by hand for rocketnet. Open work (small): member-windows.yml gains a mirror step (clone --mirror from the WSL seat's mirror, origin set to github, refreshed on each converge) for every repo the windows-gated cards name, and a first-take check (a fake-harness native run with the member's own env) before the task is enabled. Also: the member's gates take C:\rowan-jobs\win.lock like the coordinator's captain jobs; until then the width is 2.
+
+Why it waits: each gap cost a failed card and an hour; a new Windows member (titan) should not find them again
+
+From: the coordinator, 2026-10-20 (captain bring-up)
 
 ## Docs, models and the repository
 
