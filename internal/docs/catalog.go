@@ -151,7 +151,7 @@ var DefaultCatalog = []Entry{
 	E("pkg/units", "the text and install of every unit a running sprint needs: a launchd agent or systemd user unit per kind, written by a verb and loaded through the caller's loader", "go test ./pkg/units", "go test ./pkg/units"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
 	E("internal/up", "nova-up's steps: the registry, the plan and apply of each step over a fake-able machine", "go test ./internal/up", "go test ./internal/up"),
-	E("internal/yield", "CI over work: a copy, a local test run or a sprint card's native launch steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
+	E("internal/yield", "CI over work: a copy, a local test run or a sprint card's native launch steps itself to nice 15 before it execs", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/
 	E("docs/acceptance", "release acceptance records: one measured requirement per file, with the raw numbers", "go test ./internal/ci", "go test ./internal/ci -run TestAcceptanceRecordsAreWellFormed"),
@@ -176,7 +176,7 @@ var DefaultCatalog = []Entry{
 	E("tools/internal", "the one argument-parse/env-read/dispatch frame the tools/ci and tools/ghrelease commands share (runframe); each tool keeps its own verbs, banner and exit codes", "go test ./tools/internal/runframe", "go test ./tools/internal/runframe"),
 	E("tools/newrule", "class rule scaffolding CLI", "go test ./tools/newrule", "go test ./tools/newrule"),
 	E("tools/newverb", "CLI verb scaffolding CLI", "go test ./tools/newverb", "go test ./tools/newverb"),
-	E("tools/notes20261002", "the 2026-10-02 notes written into nova-config: the seed, as a Go program with the arguments and refusals of the script it replaced", "go test ./tools/notes20261002", "go run ./tools/notes20261002 <args>"),
+	E("tools/notes20261002", "writes the seed notes into nova-config, with its arguments and refusals", "go test ./tools/notes20261002", "go run ./tools/notes20261002 <args>"),
 	E("tools/preflight", "the standard check before a card or a pull request: gofmt, go vet and the unit tests through make test-full", "go test ./tools/preflight", "make preflight"),
 	E("tools/roadmap", "ROADMAP.md and FIXES.md generator from docs/roadmap.sexp and docs/fixes.sexp", "go test ./internal/docs", "make roadmap"),
 	E("tools/sandboxcheck", "the darwin profile check of nova-sandbox: fills the profile template for a scratch write set and runs the first second of a job inside the wall, each denial beside a control outside it", "go test ./tools/sandboxcheck", "go run ./tools/sandboxcheck"),
