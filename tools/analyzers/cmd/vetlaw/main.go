@@ -34,7 +34,7 @@ func vet(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		if strings.HasPrefix(a, "-V=") {
-			fmt.Fprint(stdout, "vet version go1.26.6\n")
+			fmt.Fprint(stdout, "vet version go1.26.10\n")
 			return 0
 		}
 	}
