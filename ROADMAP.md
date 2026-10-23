@@ -29,7 +29,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
-- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (2)
+- [Moved out of the sprint on 2026-10-18: v19, target v1.9](#moved-out-of-the-sprint-on-2026-10-18-v19-target-v19) (3)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -1956,3 +1956,11 @@ Why it waits: The owner, 2026-10-18: "Please remove v19 and v111 from this sprin
 Target: v1.9
 
 From: sprint card v19-friend-set-reaches-the-store (stream v19, column waiting, tier pro, base sprint/v19), moved out of the sprint 2026-10-18; card source: the owner, 2026-10-18 (for v1.9): after `nova-config friend set`, the store kept the friends' stale tiers until a manual `nova-config apply --kind friend` was run; the nova-config-apply loop did not pick the change up. A friend-row config change reaches the store within one tick.
+
+### Coordinator can reach a friend whose hook is marked down
+
+The coordinator, and only the coordinator, can deliver to a friend marked down. Either nova-bus send --force queues the message in the friend's inbox for delivery at its next hook arm, or nova-hook can re-challenge the friend and mark them up on a fresh answer. A message from a down friend counts as liveness evidence that triggers that re-challenge at once. Refused for anyone who is not the proven coordinator; logged; TLA+ for the hook state change; red-first test that a send to a down-but-live friend is delivered.
+
+Why it waits: A friend whose hook missed one challenge is marked down and nova-bus send refuses every message to them (SEND FAILED reason=unhooked), even while the friend is live and sending to the coordinator. On 2026-10-20 a joining friend could message the coordinator but could not be briefed, and the owner had to paste the brief by hand. Owner: as coordinator you should be able to fix this yourself; add a --force or whatever you need.
+
+From: owner, 2026-10-20
