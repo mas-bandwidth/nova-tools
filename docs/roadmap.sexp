@@ -1917,4 +1917,10 @@ Done when: the fleet friends' API traffic flows through it; per-card tokens and 
    :text "PRIORITY: critical (the owner 2026-10-24: \"card these as critical for v1.9\"). Hook-in refuses, or warns, when a dealt row runs with role comms, when the harness has no delivery, or when bench access is missing (ssh, sudo -n tc, winlock, vng on the kernel bench, the macOS render bench). It records each fact on the member so the deal routes only the cards whose needs the lane meets; a sandboxed lane is never dealt a GATE-NEEDS bench card."
    :why "On 2026-10-24 friends hooked in without delivery or bench access and were dealt bench cards they could not run, each spending an attempt and its deadline."
    :release "v1.9"
+   :origin "coordinator review 2026-10-24")
+  (item "fleet-builds-take-a-slot" :group "ops" :date "2026-10-24"
+   :title "Make fleet-lane builds take a bench slot through make, cmake and ninja shims"
+   :text "PRIORITY: critical (the owner 2026-10-24: \"card these as critical for v1.9\"). Fleet-lane cards build outside the bench slot: the sandbox cannot reach it, and cmd/nova-swarm native.go injects MAKEFLAGS=-j8. Add make, cmake and ninja shims beside the go shim that take a shared slot, and give the sandbox read access to the lock directory. The -j4 default is fixed separately. Related: bench-slot-lease-model, and benchslot-in-the-fleet in the fleet tools repository."
+   :why "Fleet builds that take no slot overload benches that slot-holding gates and timing runs are measured on."
+   :release "v1.9"
    :origin "coordinator review 2026-10-24")))

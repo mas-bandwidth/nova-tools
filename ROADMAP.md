@@ -24,7 +24,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
 - [Friends](#friends) (26)
-- [Setup, release and operations](#setup-release-and-operations) (99)
+- [Setup, release and operations](#setup-release-and-operations) (100)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -1146,6 +1146,16 @@ On 2026-10-20 main's ci run 39346166100 was cancelled (a concurrency clash with 
 Why it waits: a failed check that no green rerun clears blocks every cut of that commit
 
 From: the coordinator, 2026-10-20 (v1.7 deadlock list)
+
+### Make fleet-lane builds take a bench slot through make, cmake and ninja shims
+
+PRIORITY: critical (the owner 2026-10-24: "card these as critical for v1.9"). Fleet-lane cards build outside the bench slot: the sandbox cannot reach it, and cmd/nova-swarm native.go injects MAKEFLAGS=-j8. Add make, cmake and ninja shims beside the go shim that take a shared slot, and give the sandbox read access to the lock directory. The -j4 default is fixed separately. Related: bench-slot-lease-model, and benchslot-in-the-fleet in the fleet tools repository.
+
+Why it waits: Fleet builds that take no slot overload benches that slot-holding gates and timing runs are measured on.
+
+Target: v1.9
+
+From: coordinator review 2026-10-24
 
 ## Docs, models and the repository
 
