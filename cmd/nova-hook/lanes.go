@@ -18,16 +18,17 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
-// The friend lane client in the supervised hook service (internal/friend; the card
-// the-friend-lane-is-a-client-with-no-local-state). A friend's service (nova-hook hook
-// --role friend under nova-hook.client.<name>) asks the sprint server every LaneEvery
-// (a third of the server's lane lease) what each of the friend's lanes holds, taking a
+// The friend lane client in a friend's hook (internal/friend; the card
+// the-friend-lane-is-a-client-with-no-local-state). A friend's hook (nova-hook hook
+// --role friend, her service under nova-hook.client.<name> or her session's own) asks the
+// sprint server every LaneEvery (45 s, tla/FriendAutoTake.tla) what each of her lanes holds, taking a
 // ready card into each free lane, the fleet's own lane protocol. While the model proves,
 // the asks renew the leases; when it stops, the asks stop, and the server's lease returns her cards
 // (tla/FriendLaneClient.tla). New holds make ONE bus message to her own name, which the
 // hook loop folds into the one pending notice like any other (pkg/harness/notice): "N
 // cards taken; briefs at <paths>; work each in a child agent to width". The model works
-// them and finishes through the server's verbs. Nothing here is a daemon of its own, and
+// them and finishes through the server's verbs. A hook with no harness route sends no bus
+// notice: its stream is the route, one HOOK TAKEN line per card (takenLine). Nothing here is a daemon of its own, and
 // no local file decides: the brief cache is rebuilt from the server's answers.
 
 const (
@@ -38,11 +39,14 @@ const (
 	// its card returned ready (nova-sprint's LaneGoneAfter, in its lane_hold.go). The
 	// client's renewal is paced against it, never against the hook's challenge cadence.
 	ServerLaneLease = 10 * time.Minute
-	// LaneEvery is how often the lane client asks, and so renews: a third of the lease, so a
-	// round late or failed twice still renews inside it (tla/FriendLaneClient.tla RenewTicks <
-	// Bound, LiveHoldNeverExpires; nova-tools#5798 at 23aec479 paced it at the 30m challenge
-	// interval against the 10m lease, and live cards would have been returned mid-work).
-	LaneEvery = ServerLaneLease / 3
+	// LaneEvery is how often the lane client asks, and so takes and renews: 45 s, so a free
+	// lane with a ready card on her row is taken within one interval (tla/FriendAutoTake.tla
+	// TakenWithinInterval; 2026-10-24, a friend sat on 9 ready cards with 3 working when the
+	// rounds ran every third of the lease, and not at all in a session's own hook), and well
+	// inside the lease, so a round late or failed many times still renews inside it
+	// (tla/FriendLaneClient.tla RenewTicks < Bound, LiveHoldNeverExpires; nova-tools#5798 at
+	// 23aec479 paced it at the 30m challenge interval against the 10m lease).
+	LaneEvery = 45 * time.Second
 	// laneAskWait bounds one ask of the sprint server, and laneRoundWait one whole round, so
 	// a hung sprint server never holds the hook loop past its own lease renewal (hook.RenewEvery).
 	laneAskWait   = 5 * time.Second
@@ -69,14 +73,22 @@ func sprintAsk(ctx context.Context, addr string, argv []string) (string, error) 
 	return res[0].Stdout, nil
 }
 
-// laneClient is the friend lane client a hook run carries: a friend's supervised service
-// with lanes, else nil (a session's own hook, --once, a dry run, another role). A
-// coordinator works her own friend row too, as nova-friend's daemon joins her hook. Its width is
+// laneClient is the friend lane client a hook run carries: a friend's hook, her supervised
+// service or her session's own foreground hook (nova-hook hook --as <name> --role friend
+// under the session's Monitor), else nil (--once, a dry run, another role). Before
+// 2026-10-24 only the service carried lanes, so a friend hooked in the foreground (two of
+// them that day) took nothing: the friend daemons that took cards were retired on 10-17 and nothing
+// took their place. A coordinator's service works her own friend row too, as nova-friend's
+// daemon joins her hook; her session's own hook does not (the coordinator deals, she does
+// not take from the foreground). Its width is
 // her canonical nova-config row's, fetched by the loop every friend.ConfigEvery (Apply).
 // A service installed with an explicit --lanes 0 takes nothing: that install said no lanes,
 // and only that value of the retired flag is still read.
 func (w world) laneClient(c *tool.Call, as string, role hook.Role) *friend.Client {
-	if !laneRole(role) || !w.isServiceRun() || c.Bool("once") || c.DryRun() || w.sprint == nil {
+	if !laneRole(role) || c.Bool("once") || c.DryRun() || w.sprint == nil {
+		return nil
+	}
+	if !w.isServiceRun() && role != hook.Friend {
 		return nil
 	}
 	if c.Given("lanes") && c.Int("lanes") == 0 {
@@ -163,9 +175,13 @@ func novaConfigRun(ctx context.Context, argv []string) (string, error) {
 // proven says the record lets the lanes renew: proven, with its evidence standing.
 func proven(st hook.Status) bool { return st.State == hook.StateProven && st.Down == "" }
 
-// lanePass is one round of the lane client: every lane asked when the model proves, and one
-// message to her own name when the round found holds she has not been told of. It answers
-// the lines the loop prints: one STATE line a round that took or failed, nothing otherwise.
+// lanePass is one round of the lane client: every lane asked when the model proves, and the
+// round's new holds told once. It answers the lines the loop prints: one STATE line a round
+// that took or failed, and one HOOK TAKEN line per card newly held (takenLine), nothing
+// otherwise. send is the bus notice to her own name, which a harness route (the notice core)
+// delivers; nil in a hook with no harness route, whose stream is the route: the TAKEN lines wake the
+// session, and nothing else is sent. The hook only takes and tells: the card's work is the
+// model's, in a child agent, and its finish the server's verbs.
 func lanePass(ctx context.Context, lc *friend.Client, ok bool, send func(context.Context, bus.Message) error) []*tool.Out {
 	holds, fresh, errs := lc.Round(ctx, ok)
 	var out []*tool.Out
@@ -175,13 +191,40 @@ func lanePass(ctx context.Context, lc *friend.Client, ok bool, send func(context
 	if len(fresh) == 0 {
 		return out
 	}
+	if send == nil {
+		lc.Told(fresh)
+		for _, h := range fresh {
+			out = append(out, takenLine(lc, h))
+		}
+		return out
+	}
 	subject, body := lc.Notice(fresh, holds)
 	m := bus.Message{From: lc.Name, To: []string{lc.Name}, Subject: subject, Body: body}
 	if err := send(ctx, m); err != nil {
 		return append(out, tool.Done().As("STATE").Fact("state", "lane-notice-unsent").Note("the notice of "+fmt.Sprint(len(fresh))+" held cards was not sent: "+err.Error()+"; it is sent again next round"))
 	}
 	lc.Told(fresh)
+	for _, h := range fresh {
+		out = append(out, takenLine(lc, h))
+	}
 	return append(out, tool.Done().As("STATE").Fact("state", "lanes-taken").Fact("taken", len(fresh)).Fact("held", len(holds)).Note("one notice sent: "+subject))
+}
+
+// takenLine is one card a lane newly holds, as the hook's stream says it: HOOK TAKEN
+// card=<card>@<gen> brief=<path> lane=<n> epoch=<e> as=friend.<name>, with the verb that
+// finishes it. A brief the server sent none of is named by the verb that prints it.
+func takenLine(lc *friend.Client, h friend.Hold) *tool.Out {
+	brief := h.Brief
+	if brief == "" {
+		brief = "nova-sprint card " + h.Card
+	}
+	at := fmt.Sprintf("%s@%d --epoch %d --lane %d", h.Card, h.Gen, h.Epoch, h.Lane)
+	finish := "nova-sprint finish --as " + lc.Row() + " " + at + " (--head <commit> | --failed) --report <text>"
+	if h.Kind == "read" {
+		finish = fmt.Sprintf("nova-sprint read --as %s (--ok | --broken) %s --epoch %d --lane %d", lc.Row(), h.Card, h.Epoch, h.Lane)
+	}
+	return tool.Done().As("TAKEN").Fact("card", fmt.Sprintf("%s@%d", h.Card, h.Gen)).Fact("brief", brief).Fact("lane", h.Lane).Fact("epoch", h.Epoch).Fact("as", lc.Row()).
+		Note("work it in a child agent (the hook does not); finish: " + finish)
 }
 
 // laneSelf says a message on her own stream is the lane client's notice, which the loop

@@ -51,6 +51,11 @@ type scriptedGit struct {
 	contains    string
 	ancestryErr bool
 	commits     string
+
+	// trackedResult is the blob rev-parse answers for <staged>:RESULT.md ("" for none, the
+	// file not tracked there), hashed the blob hash-object answers for the checkout's file
+	trackedResult string
+	hashed        string
 }
 
 func (s *scriptedGit) run(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error) {
@@ -91,7 +96,15 @@ func (s *scriptedGit) run(ctx context.Context, o gitrun.Options, args ...string)
 		}
 		return gitrun.Result{}, nil
 	case "rev-parse":
+		if strings.HasSuffix(args[len(args)-1], ":RESULT.md") {
+			if s.trackedResult == "" {
+				return gitrun.Result{}, errors.New("exit status 1")
+			}
+			return gitrun.Result{Stdout: []byte(s.trackedResult + "\n")}, nil
+		}
 		return gitrun.Result{Stdout: []byte(s.head + "\n")}, nil
+	case "hash-object":
+		return gitrun.Result{Stdout: []byte(s.hashed + "\n")}, nil
 	case "for-each-ref":
 		if slices.Contains(args, "--contains") {
 			if s.contains == "" {
