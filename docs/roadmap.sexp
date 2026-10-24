@@ -1923,10 +1923,4 @@ Done when: the fleet friends' API traffic flows through it; per-card tokens and 
    :text "PRIORITY: critical (the owner 2026-10-24: \"card these as critical for v1.9\"). Fleet-lane cards build outside the bench slot: the sandbox cannot reach it, and cmd/nova-swarm native.go injects MAKEFLAGS=-j8. Add make, cmake and ninja shims beside the go shim that take a shared slot, and give the sandbox read access to the lock directory. The -j4 default is fixed separately. Related: bench-slot-lease-model, and benchslot-in-the-fleet in the fleet tools repository."
    :why "Fleet builds that take no slot overload benches that slot-holding gates and timing runs are measured on."
    :release "v1.9"
-   :origin "coordinator review 2026-10-24")
-  (item "progress-head-from-workers" :group "friends" :date "2026-10-24"
-   :title "Send progress --head from the friend daemon and the fleet member after every push"
-   :text "PRIORITY: critical (the owner 2026-10-24: \"card these as critical for v1.9\"). nova-sprint #600 added progress --head <sha>, so a redeal carries the pushed head into the next attempt's JOB.md as a CARRIED: line. The friend daemon and the fleet member never send it, so redeals still start from BASE. Both send progress --head after every push. The sprint side is nova-sprint's redeal-carries-previous-head."
-   :why "Without the pushed head reported, every redeal throws away the previous attempt's work and starts from BASE."
-   :release "v1.9"
    :origin "coordinator review 2026-10-24")))

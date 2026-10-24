@@ -751,6 +751,9 @@ type post struct {
 	// report is a report verb that ran apart from the pass (reportOne): its exit code,
 	// its output, and what applying it in the pass goroutine needs.
 	report *reportOut
+	// headNote is why the pushed head was not reported (reportPushedHead), said by the
+	// pass; "" when it was taken or there was none to report.
+	headNote string
 }
 
 // reportOut is one report verb's outcome as its goroutine posts it. The goroutine runs
@@ -2045,6 +2048,9 @@ func (m *Member) collect() (acted int) {
 		if po.note != "" {
 			fmt.Fprintf(m.out, "read %s: %s\n", card, po.note)
 		}
+		if po.headNote != "" {
+			fmt.Fprintf(m.out, "NOTE %s: %s\n", card, po.headNote)
+		}
 		switch {
 		case po.cancelledByStop:
 			// the machine's word said STOPPED where the launch read it again, so no child
@@ -2755,6 +2761,29 @@ func (m *Member) stampProgress(now time.Time) (unanswered []byte) {
 	return unanswered
 }
 
+// reportPushedHead says the commit a work card's push put on its branch to the sprint:
+// `progress --as <member> <card>@<gen> --epoch <n> --head <sha>` (nova-sprint
+// FieldProgressHead), so an attempt redealt unfinished (its finish refused, lost or never
+// sent) stages the next attempt from the pushed head, never again from BASE. It runs after
+// every push that put a commit on the branch, before the finish, beside the push. It is best
+// effort: a progress the store refused or did not answer is answered as the line the pass
+// says (post.headNote) and changes nothing of the card's end; "" when the store took it or
+// there was nothing pushed.
+func (m *Member) reportPushedHead(id string, gen int, epoch uint64, pu Push) string {
+	if !typedrec.IsFullSha(pu.Sha) {
+		return ""
+	}
+	args := []string{"progress", "--as", m.cfg.As, id + "@" + strconv.Itoa(gen), "--epoch", strconv.FormatUint(epoch, 10), "--head", pu.Sha}
+	switch code, out := m.run(args...); code {
+	case 0:
+		return ""
+	case 2:
+		return "progress --head " + pu.Sha + " not answered (the finish carries the head): " + oneLine(strings.TrimSpace(string(out)))
+	default:
+		return fmt.Sprintf("progress --head %s refused (exit %d; the finish carries the head): %s", pu.Sha, code, oneLine(strings.TrimSpace(string(out))))
+	}
+}
+
 // endEnded begins the end of every launch whose child has exited and whose claim the queue
 // still holds: the child's result is read and, for a work card, its commit is pushed,
 // pushWidth pushes at a time. Both are long (files read; a fetch and one exchange with the
@@ -2773,7 +2802,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 		}
 		l.busy, l.busyAt = true, m.clock()
 		m.running[id] = l
-		child, p, branch := l.child, l.packet, l.branch
+		child, p, branch, gen, epoch := l.child, l.packet, l.branch, l.gen, l.epoch
 		ends.Add(1)
 		m.longs.Add(1)
 		go func() {
@@ -2801,7 +2830,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 					pu.Refused = "the pusher said nothing"
 				}
 			}
-			m.post(id, post{res: &r, push: &pu, decided: m.attempt(p, r, pu, branch)})
+			m.post(id, post{res: &r, push: &pu, decided: m.attempt(p, r, pu, branch), headNote: m.reportPushedHead(id, gen, epoch, pu)})
 		}()
 	}
 	m.longWork()
@@ -2822,7 +2851,7 @@ func (m *Member) endEndedLocal() {
 		}
 		l.busy, l.busyAt = true, m.clock()
 		m.running[id] = l
-		child, p, branch := l.child, l.packet, l.branch
+		child, p, branch, gen, epoch := l.child, l.packet, l.branch, l.gen, l.epoch
 		ends.Add(1)
 		m.longs.Add(1)
 		go func() {
@@ -2850,7 +2879,7 @@ func (m *Member) endEndedLocal() {
 					pu.Refused = "the pusher said nothing"
 				}
 			}
-			m.post(id, post{res: &r, push: &pu, decided: m.attempt(p, r, pu, branch)})
+			m.post(id, post{res: &r, push: &pu, decided: m.attempt(p, r, pu, branch), headNote: m.reportPushedHead(id, gen, epoch, pu)})
 		}()
 	}
 	m.longWork()
