@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
@@ -158,14 +159,15 @@ func (m *mirrorRun) fetch(ctx context.Context, bare, url string) error {
 // leftover of an earlier re-clone that was cut short is removed first.
 func (m *mirrorRun) reclone(ctx context.Context, bare, url string) error {
 	fresh, old := bare+".reclone", bare+".bad"
+	root := filepath.Dir(bare)
 	for _, p := range []string{fresh, old} {
-		if err := os.RemoveAll(p); err != nil {
+		if err := safepath.RemoveUnder(root, p); err != nil {
 			return fmt.Errorf("a leftover %s could not be removed: %w", p, err)
 		}
 	}
 	discard := func(err error) error {
 		// ignored: the error being returned is the one that matters; a leftover is removed by the next re-clone
-		_ = os.RemoveAll(fresh)
+		_ = safepath.RemoveUnder(root, fresh)
 		return err
 	}
 	if err := m.git(ctx, "", "init", "--bare", "--quiet", "--", fresh); err != nil {
@@ -188,7 +190,7 @@ func (m *mirrorRun) reclone(ctx context.Context, bare, url string) error {
 		_ = os.Rename(old, bare)
 		return discard(err)
 	}
-	if err := os.RemoveAll(old); err != nil {
+	if err := safepath.RemoveUnder(root, old); err != nil {
 		return fmt.Errorf("re-cloned, but the old mirror %s could not be removed: %w", old, err)
 	}
 	return nil
