@@ -82,6 +82,9 @@ type Card struct {
 	Lane        int    `json:"lane,omitempty"`
 	ServerEpoch string `json:"server_epoch,omitempty"`
 	ServerGen   int    `json:"server_gen,omitempty"`
+	// Head is the commit pushed to the card's branch that a progress stamp says
+	// (reportPushedHeads, pushed_head.go): ProgressArgv sends it as --head. Never kept.
+	Head string `json:"-"`
 }
 
 // Epoch is the sprint epoch alone, without the job's generation (docs/FRIENDS.md): the
@@ -156,13 +159,23 @@ const ProgressEvery = 3 * time.Minute
 
 // ProgressArgv is the sprint server's verbs that stamp progress on the cards, one for the
 // cards of each epoch, in the order of the epochs: `progress --as friend.<friend> <card>...
-// --epoch <n>`, her row as the holder, as FinishArgv names it. Only the holder's stamp is
+// --epoch <n>`, her row as the holder, as FinishArgv names it. A card with a Head is its own
+// verb, with --head <sha> (the pushed head, pushed_head.go). Only the holder's stamp is
 // taken: the server refuses one for a card she does not work, and one sent as her bare name
 // (held by friend.<name>, not <name>).
 func ProgressArgv(friend string, cards []Card) [][]string {
 	byEpoch := map[string][]string{}
 	var out [][]string
 	for _, c := range cards {
+		if c.Head != "" {
+			// a pushed head is the card's own stamp, by the ids the server gave (pushed_head.go)
+			argv := []string{"progress", "--as", "friend." + friend, c.ID + "@" + strconv.Itoa(c.Gen()), "--epoch", c.Epoch()}
+			if c.Lane > 0 {
+				argv = append(argv, "--lane", strconv.Itoa(c.Lane))
+			}
+			out = append(out, append(argv, "--head", c.Head))
+			continue
+		}
 		if c.Lane > 0 {
 			// a lane's card: its own stamp, by the ids the server gave and its lane (lane_take.go)
 			out = append(out, []string{"progress", "--as", "friend." + friend, c.ID + "@" + strconv.Itoa(c.Gen()), "--epoch", c.Epoch(), "--lane", strconv.Itoa(c.Lane)})

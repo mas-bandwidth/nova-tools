@@ -82,9 +82,17 @@
      ansible.builtin.systemd_service module call, so the templar no longer stops at the else of a
      parenthesised ternary and every Linux host restarts its unit; the play ends with a recap gate on a
      changed unit that did not restart; and the loops play reads its gathered facts as ansible_facts.")
+   (release "v1.6.14" :status "planned"
+    :text "The next nova-tools point release after v1.6.13: the friend daemon and the fleet member send
+     progress --head after every push of a card's branch, so a redealt attempt carries the pushed head.")
  )
  :items
-  ((fix "the-verb-scaffold-compiles-only-its-generated-tests" :release "v1.2.16" :status "planned"
+  ((fix "progress-head-from-workers" :release "v1.6.14" :status "done"
+    :title "Send progress --head from the friend daemon and the fleet member after every push"
+    :text "nova-sprint #600 added progress --head <sha>, so a redeal carries the pushed head into the next attempt's JOB.md as a CARRIED: line. The friend daemon and the fleet member never sent it, so redeals still started from BASE. The fleet member (pkg/member) sends progress --as <member> <card>@<gen> --epoch <n> --head <sha> after every push that put a commit on the card's branch, before the finish. The friend daemon (pkg/friend, pushed_head.go) reads origin's remote-tracking ref of each working card's branch in its staged checkout every 30 seconds (a push git took writes it; no network is asked) and says each new head once, never the commit the job was staged at. Both are best effort: a report the server refuses or does not answer is logged and never fails the card. Moved from the roadmap's v1.9 to the next point release by the owner, 2026-10-24. Done: PR #6089."
+    :origin "coordinator review 2026-10-24"
+    :kept (:item-group "friends" :item-date "2026-10-24" :item-why "Without the pushed head reported, every redeal throws away the previous attempt's work and starts from BASE."))
+   (fix "the-verb-scaffold-compiles-only-its-generated-tests" :release "v1.2.16" :status "planned"
     :title "The verb scaffold compiles only its generated tests"
     :text "The new-verb integration fixture copies the real CLI's production packages and embedded files,
      then builds, vets, tests the generated probe, runs its Makefile target and checks its printed

@@ -310,6 +310,7 @@ type loop struct {
 	workWG       sync.WaitGroup // every turn, lane open and read the loop started, waited for when Run ends
 	seatHolder   string         // the seat holder as last read; empty while unknown
 	seatRead     time.Time      // when it was read; zero before the first read
+	pushed       pushedHeads    // the pushed heads said to the server (pushed_head.go)
 }
 
 // beatState is the cadence worker's last result. The main loop owns Status and
@@ -424,6 +425,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		l.capWatch(now)
 		l.stampProgress(now)
+		l.reportPushedHeads(now)
 		l.drainResults(now)
 		// a change of mode waits for the other mode's turns to end
 		if mode != l.mode && !l.lanes.running() && len(l.reads.running) == 0 {
