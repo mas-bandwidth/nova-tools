@@ -102,6 +102,99 @@ func TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce(t *testing.T) {
 	assert.Equal(t, hook.BeatLeft, r.beat(t, "srv-a", next)["ada"].Did)
 }
 
+// TestAFirstSilentMissIsALastChance pins the last chance (tla/HookLastChance.tla,
+// NoDownWithoutLastChance and LastChanceMissedUnhooks; 2026-10-24, a friend
+// unhooked three times in a day at one missed challenge): a name that still
+// holds its lease and misses a challenge in silence is not unhooked; that pass
+// sets a fresh challenge at once, a new nonce with a full answer window, and
+// says it is the last chance. An answer to it keeps the name hooked and clears
+// its misses, so a later silent miss is a last chance again; a miss of the last
+// chance unhooks, with two misses in the reason.
+func TestAFirstSilentMissIsALastChance(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.Hook(t, "ada", hook.Comms)
+	r.startHeartbeat(t)
+	next := nonces()
+	ctx := context.Background()
+	beat := func() hook.Beat { return r.beatAfter(t, "srv", next, hook.DownAfter)["ada"] }
+	renew := func(e int64) { require.NoError(t, r.s.Renew(ctx, "ada", hook.Comms, hook.Bus, e, "holder")) }
+
+	r.pass(hook.QuietAfter + time.Minute)
+	first := beat()
+	require.Equal(t, hook.BeatChallenged, first.Did)
+	assert.False(t, first.LastChance, "a challenge after silence is no last chance")
+	r.pass(hook.AnswerBound + time.Minute)
+	renew(first.Epoch)
+	last := beat()
+	assert.Equal(t, hook.BeatChallenged, last.Did, "the first silent miss is not a down")
+	assert.True(t, last.LastChance)
+	assert.Equal(t, 1, last.Misses)
+	assert.NotEqual(t, first.Nonce, last.Nonce, "the last chance is a fresh nonce")
+	assert.NotEqual(t, hook.StateUnhooked, r.state(t, "ada").State)
+	assert.Zero(t, r.events(t))
+
+	r.pass(4 * time.Minute) // inside the last chance's own answer window
+	renew(last.Epoch)
+	_, err := r.s.Answer(ctx, "ada", last.Nonce, "session")
+	require.NoError(t, err)
+	assert.Zero(t, r.state(t, "ada").Misses, "the answer clears the misses")
+
+	r.pass(hook.QuietAfter + time.Minute)
+	again := beat()
+	require.Equal(t, hook.BeatChallenged, again.Did)
+	assert.False(t, again.LastChance)
+	r.pass(hook.AnswerBound + time.Minute)
+	renew(again.Epoch)
+	b := beat()
+	assert.True(t, b.LastChance, "a later silent miss is a last chance again")
+	assert.Equal(t, hook.BeatChallenged, b.Did)
+	r.pass(hook.AnswerBound + time.Minute)
+	renew(b.Epoch)
+	b = beat()
+	assert.Equal(t, hook.BeatUnhooked, b.Did, "a missed last chance unhooks")
+	assert.Equal(t, 2, b.Misses)
+	assert.Equal(t, "no answer in 5m0s (2 challenges missed)", r.state(t, "ada").Reason)
+	assert.Equal(t, 1, r.events(t))
+}
+
+// TestNoLastChanceWithoutALeaseOrForTheCoordinator pins the last chance's two
+// exclusions (tla/HookLastChance.tla, Miss): a name whose lease lapsed cannot
+// hear a challenge, so its first silent miss unhooks it as before; and the
+// coordinator's unhook rule is its own, unchanged: its first silent miss
+// unhooks it though its lease stands.
+func TestNoLastChanceWithoutALeaseOrForTheCoordinator(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		role  hook.Role
+		renew bool
+	}{
+		{"a friend whose lease lapsed", hook.Comms, false},
+		{"the coordinator", hook.Coordinator, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.Hook(t, "ada", tc.role)
+			r.startHeartbeat(t)
+			next := nonces()
+			ctx := context.Background()
+			r.pass(hook.QuietAfter + time.Minute)
+			first := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+			require.Equal(t, hook.BeatChallenged, first.Did)
+			r.pass(hook.AnswerBound + time.Minute)
+			if tc.renew {
+				require.NoError(t, r.s.Renew(ctx, "ada", tc.role, hook.Bus, first.Epoch, "holder"))
+			}
+			b := r.beatAfter(t, "srv", next, hook.DownAfter)["ada"]
+			assert.Equal(t, hook.BeatUnhooked, b.Did)
+			assert.False(t, b.LastChance)
+			assert.Equal(t, 1, b.Misses)
+		})
+	}
+}
+
 // TestOneAnswerResetsTheSilence pins that the silence runs from the last
 // answer (tla/HookBeat.tla, NoDownBeforeDownAfter): under the default
 // down-after, four misses, an answer, four misses is never an unhook, the
@@ -687,6 +780,12 @@ func TestUpIsProvenNeverMerelyArmed(t *testing.T) {
 		require.NoError(t, r.s.Renew(ctx, "ada", hook.Coordinator, hook.Sprint, ada.Epoch, "holder"))
 		p := r.passAll(t, "srv", next)
 		require.True(t, p.Taken)
+		for _, b := range p.Beats { // the coordinator answers its own challenges: only bob moves
+			if b.Name == "ada" && b.Did == hook.BeatChallenged {
+				_, err := r.s.Answer(ctx, "ada", b.Nonce, "session")
+				require.NoError(t, err)
+			}
+		}
 		for _, a := range hook.Audiences {
 			require.NoError(t, r.s.Told(ctx, p, a))
 		}
@@ -716,8 +815,8 @@ func TestUpIsProvenNeverMerelyArmed(t *testing.T) {
 	}
 	require.NotEmpty(t, challenge.Nonce, "the armed name is challenged at once")
 
-	for i := 0; r.state(t, "bob").State != hook.StateUnhooked; i++ { // unanswered past its answer bound and the down-after: unhooked again
-		require.Less(t, i, 10, "the unanswered challenge unhooks bob")
+	for i := 0; r.state(t, "bob").State != hook.StateUnhooked; i++ { // unanswered past its answer bound and the down-after, then its last chance too: unhooked again
+		require.Less(t, i, 16, "the unanswered challenge and its last chance unhook bob")
 		require.NoError(t, r.s.Renew(ctx, "bob", hook.Comms, hook.Bus, e, "service"))
 		p = tell()
 		assert.False(t, p.Changed(hook.ToCoordinator), "pass %d: a lapse from live to unhooked while down is no change", i)

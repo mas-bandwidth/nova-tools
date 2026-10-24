@@ -415,7 +415,9 @@ and prints a fault. Last activity is the latest nonce proof or explicit model bu
 initial boundary. Daemon traffic never counts. Proof renewal starts at proof TTL minus the answer bound and two pass intervals (default ` + (hook.ProofTTL - hook.AnswerBound - 2*hook.BeatEvery).String() + ` after proof).
 Only one challenge stands, delivered to the name's bus stream with subject HOOK CHALLENGE nonce=<n>.
 Its answer is due within ` + hook.AnswerBound.String() + `. Past that deadline, a name whose activity is older than
---down-after (default ` + hook.DownAfter.String() + `) is unhooked. Passes never replace a valid outstanding nonce. An expired unanswered renewal waits for silence or a fresh model proof before retrying.
+--down-after (default ` + hook.DownAfter.String() + `) is unhooked, except at its first such miss when it is not the coordinator and its lease
+stands: that pass sets a fresh challenge at once, its last chance (last_chance=true on the challenge line), and only a miss
+of the last chance unhooks it (two misses in a row). Passes never replace a valid outstanding nonce. An expired unanswered renewal waits for silence or a fresh model proof before retrying.
 Readers also mark a name down after silence exceeds its quiet window plus the answer bound, --down-after and two pass intervals, even if challenge delivery is lost.
 A bus send does not create or extend a proof; only the model answers with nova-hook prove.
 Each real change is told once, coalesced per pass: the coordinator gets one judgment (bus kind judgment) naming

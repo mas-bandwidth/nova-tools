@@ -81,7 +81,7 @@ if st and ARGV[4] ~= '` + armFresh + `' then
 end
 local e = redis.call('HINCRBY', KEYS[1], 'epoch', 1)
 redis.call('HSET', KEYS[1], 'role', ARGV[2], 'state', 'hooked', 'armed', ms, 'by', ARGV[3])
-redis.call('HDEL', KEYS[1], 'unhooked', 'reason', 'misses', 'beat_at', 'recent', 'pending_until', 'pending_missed', 'pending_sent', 'quiet_after', 'bus_sent_at', 'renewal_failed')
+redis.call('HDEL', KEYS[1], 'unhooked', 'reason', 'misses', 'beat_at', 'recent', 'pending_until', 'pending_missed', 'pending_sent', 'quiet_after', 'bus_sent_at', 'renewal_failed', 'last_chance')
 for i = 3, #KEYS do redis.call('DEL', KEYS[i]) end
 redis.call('SADD', KEYS[2], ARGV[1])
 return {e, 0}
@@ -570,6 +570,7 @@ while k <= #KEYS do
   local rec, chal, delivery, name, sum = KEYS[k], KEYS[k + 7], KEYS[k + 8], ARGV[a], ARGV[a + 1]
   local deliveredNonce = ''
   local did, misses, e = 0, 0, 0
+  local lastChance = false
   local role = redis.call('HGET', rec, 'role')
   if redis.call('HGET', rec, 'state') == 'hooked' and bus[role] then
     local last = tonumber(redis.call('HGET', rec, 'beat_at') or '0')
@@ -603,7 +604,19 @@ while k <= #KEYS do
     -- not activity, so the silence window opens only once she has proved after it. A challenge
     -- that lapsed unanswered (renewal_failed) falls back to the silence window, not a new one each pass.
     local unproven = answer < armed and redis.call('HGET', rec, 'renewal_failed') ~= '1'
-    if miss and now - heard > after then
+    -- The last chance (tla/HookLastChance.tla; 2026-10-24): a first silent miss of a
+    -- name that is not the coordinator and still holds its lease is not a down. Its
+    -- challenge is set again at once, a fresh nonce and a fresh window, and only a miss
+    -- of that last-chance challenge (last_chance is its beat_at) unhooks: down after two
+    -- misses in a row, never at the first. A name with no lease cannot hear a challenge,
+    -- so it has no last chance and is unhooked as before; the coordinator's rule is
+    -- unchanged (its own unhook rule above).
+    local silent = miss and now - heard > after
+    local lc = redis.call('HGET', rec, 'last_chance')
+    local final = lc and lc == redis.call('HGET', rec, 'beat_at')
+    lastChance = silent and not final and role ~= 'coordinator'
+      and held(k, bus[role], tonumber(redis.call('HGET', rec, 'epoch')), 1)
+    if silent and not lastChance then
       did = 2
       if dry then
         e = tonumber(redis.call('HGET', rec, 'epoch') or '0') + 1
@@ -611,7 +624,7 @@ while k <= #KEYS do
         e = redis.call('HINCRBY', rec, 'epoch', 1)
         local why = 'no answer in ' .. label .. ' (' .. misses .. ' challenges missed)'
         redis.call('HSET', rec, 'state', 'unhooked', 'unhooked', ms, 'reason', why, 'misses', misses)
-        redis.call('HDEL', rec, 'recent', 'pending_until', 'pending_missed', 'pending_sent', 'renewal_failed')
+        redis.call('HDEL', rec, 'recent', 'pending_until', 'pending_missed', 'pending_sent', 'renewal_failed', 'last_chance')
         for i = k + 1, k + 8 do redis.call('DEL', KEYS[i]) end
         redis.call('XADD', KEYS[1], 'MAXLEN', '~', cap, '*', 'name', name, 'event', 'unhooked', 'reason', why, 'role', role, 'epoch', e, 'at', ms, 'by', by)
       end
@@ -643,7 +656,7 @@ while k <= #KEYS do
           did = 1
           e = tonumber(redis.call('HGET', rec, 'epoch'))
         end
-      elseif pending == 0 and (expired or redis.call('EXISTS', chal) == 0) and (unproven or now - heard > quiet or proofDue or retry) then
+      elseif pending == 0 and (expired or redis.call('EXISTS', chal) == 0) and (unproven or now - heard > quiet or proofDue or retry or lastChance) then
         e = tonumber(redis.call('HGET', rec, 'epoch'))
         local recent = {string.format('%d:%s:%s:%d:%s', e, sum, ms, now + after, bus[role])}
         for x in string.gmatch(redis.call('HGET', rec, 'recent') or '', '%S+') do
@@ -655,6 +668,7 @@ while k <= #KEYS do
         if not dry then
           redis.call('HSET', rec, 'misses', misses, 'beat_at', ms, 'pending_until', string.format('%d', deadline), 'recent', table.concat(recent, ' '))
           redis.call('HDEL', rec, 'pending_missed', 'pending_sent', 'renewal_failed')
+          if lastChance then redis.call('HSET', rec, 'last_chance', ms) end
           redis.call('DEL', chal)
           redis.call('HSET', chal, 'epoch', e, 'sum', sum, 'pushes', bus[role], 'until', string.format('%d', deadline))
           redis.call('PEXPIRE', chal, ttl)
@@ -664,7 +678,7 @@ while k <= #KEYS do
       end
     end
   end
-  table.insert(out, {did, misses, e, deliveredNonce})
+  table.insert(out, {did, misses, e, deliveredNonce, (did == 1 and lastChance) and 1 or 0})
   local st = redis.call('HGET', rec, 'state')
   if did == 2 then st = 'unhooked' end -- what the unhook above wrote, or a dry run would
   -- Up is proven, never merely hooked (tla/HookBeat.tla, NoBackWithoutProof): a
@@ -715,6 +729,9 @@ type Beat struct {
 	Nonce  string // pending payload; the private outbox retains it until delivery
 	Misses int
 	Epoch  int64
+	// LastChance: this challenge is set again at once after a first silent miss
+	// (tla/HookLastChance.tla); a miss of it unhooks the name.
+	LastChance bool
 	// DownAfter is the pass's down-after: the silence that unhooks.
 	DownAfter time.Duration
 }
@@ -968,8 +985,8 @@ func (s Store) pass(ctx context.Context, names []string, every, downAfter time.D
 	}
 	for i, row := range rows {
 		v, ok := row.([]any)
-		if !ok || len(v) != 4 {
-			return Passed{}, fmt.Errorf("the beat script answered %v for %s, not a code, a count and an epoch", row, names[i])
+		if !ok || len(v) != 5 {
+			return Passed{}, fmt.Errorf("the beat script answered %v for %s, not a code, a count, an epoch, a nonce and a last-chance flag", row, names[i])
 		}
 		b := &out.Beats[i]
 		out.Beats[i].Nonce, _ = v[3].(string) // ignored: no delivery payload means no delivery
@@ -977,6 +994,8 @@ func (s Store) pass(ctx context.Context, names []string, every, downAfter time.D
 		misses, _ := v[1].(int64)             // ignored: as above
 		b.Did, b.Misses = int(did), int(misses)
 		b.Epoch, _ = v[2].(int64) // ignored: as above
+		last, _ := v[4].(int64)   // ignored: as above
+		b.LastChance = last == 1
 		if b.Did != BeatChallenged {
 			b.Nonce = ""
 		}

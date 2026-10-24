@@ -156,14 +156,15 @@ func TestAFriendDownIsOneJudgmentToTheCoordinator(t *testing.T) {
 	r.h.Hook(t, "carl", hook.Comms)
 	servers := []string{"ada", "carl"}
 	var out string
-	for range 18 {
+	for range 24 { // the challenge, its miss, its last chance and that one's miss
 		out += r.step(t, servers, "ada", "carl")
 	}
 	assert.NotContains(t, out, "nonce", "the server never prints a nonce")
-	assert.Equal(t, 18, strings.Count(out, "event=skip"), "the second server's pass shares the first's interval, every step")
+	assert.Equal(t, 24, strings.Count(out, "event=skip"), "the second server's pass shares the first's interval, every step")
+	assert.Equal(t, 1, strings.Count(out, "last_chance=true"), "one last chance, said on the server's line")
 	require.Equal(t, hook.StateUnhooked, r.h.State(t, "bob").State)
-	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: no answer in 1m30s (1 challenges missed)"))
-	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob: no answer in 1m30s (1 challenges missed)"))
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: no answer in 1m30s (2 challenges missed)"))
+	assert.Equal(t, 1, r.count(t, "carl", "FRIEND DOWN bob: no answer in 1m30s (2 challenges missed)"))
 	var judgment msg
 	for _, m := range r.stream(t, "ada") {
 		if strings.HasPrefix(m.subject, "FRIEND DOWN") {
@@ -360,7 +361,7 @@ func TestAFailedTellIsToldAgainOnceAtTheNextPass(t *testing.T) {
 	r.h.Hook(t, "carl", hook.Comms)
 	r.step(t, []string{"ada"}, "ada", "carl")
 	r.step(t, []string{"ada"}, "ada", "carl")
-	for range 15 {
+	for range 21 { // through the first miss and the last chance's window
 		r.step(t, []string{"ada"}, "ada", "carl")
 	}
 	r.failTells.Store(true) // the pass that unhooks bob: its tells do not go out
@@ -483,18 +484,22 @@ func TestAFriendAnsweringEveryFourMinutesStaysUp(t *testing.T) {
 
 // TestASilentFriendGoesDownPastFiveMinutesNotBefore pins the default: a
 // friend silent from the moment it hooked in stays hooked through the pass
-// five minutes in (not older than 5m) and is unhooked at the next, with the reason.
+// five minutes in (not older than 5m); its lease held, the next pass is its last
+// chance, a fresh challenge with a full answer window (tla/HookLastChance.tla), and
+// it is unhooked at the first pass past that one, with two misses in the reason.
 func TestASilentFriendGoesDownPastFiveMinutesNotBefore(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.h.Hook(t, "ada", hook.Coordinator)
 	r.h.Hook(t, "bob", hook.Comms)
-	after, _ := r.beats(t, 19, func(int) bool { return false })
-	assert.Len(t, upTo(after), 17, "quiet for 10m, challenge at 11m, full 5m answer window")
-	assert.Equal(t, hook.StateUnhooked, after[17].State, "unhooked at the first pass past five minutes")
+	after, _ := r.beats(t, 25, func(int) bool { return false })
+	assert.Len(t, upTo(after), 23, "quiet for 10m, challenge at 11m, 5m window, last chance at 17m, 5m window")
+	assert.Equal(t, 1, after[17].Misses, "the first miss is a last chance, not a down")
+	assert.Equal(t, hook.StateUnhooked, after[23].State, "unhooked at the first pass past the last chance's window")
 	st := r.h.State(t, "bob")
-	assert.Equal(t, "no answer in 5m0s (1 challenges missed)", st.Reason)
-	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: no answer in 5m0s (1 challenges missed)"))
+	assert.Equal(t, "no answer in 5m0s (2 challenges missed)", st.Reason)
+	assert.Equal(t, 1, r.count(t, "ada", "FRIEND DOWN bob: no answer in 5m0s (2 challenges missed)"))
+	assert.Equal(t, 2, r.count(t, "bob", "HOOK CHALLENGE"), "the challenge and its last chance")
 }
 
 // TestDownAfterIsHonoured pins --down-after: at 3m a silent friend is unhooked
@@ -504,10 +509,10 @@ func TestDownAfterIsHonoured(t *testing.T) {
 	r := newRig(t)
 	r.h.Hook(t, "ada", hook.Coordinator)
 	r.h.Hook(t, "bob", hook.Comms)
-	after, _ := r.beats(t, 19, func(int) bool { return false }, "--down-after", "3m")
-	assert.Len(t, upTo(after), 17, "the answer deadline still applies with a shorter down-after")
-	assert.Equal(t, hook.StateUnhooked, after[17].State)
-	assert.Equal(t, "no answer in 3m0s (1 challenges missed)", r.h.State(t, "bob").Reason)
+	after, _ := r.beats(t, 25, func(int) bool { return false }, "--down-after", "3m")
+	assert.Len(t, upTo(after), 23, "the answer deadline, and the last chance's, still apply with a shorter down-after")
+	assert.Equal(t, hook.StateUnhooked, after[23].State)
+	assert.Equal(t, "no answer in 3m0s (2 challenges missed)", r.h.State(t, "bob").Reason)
 	res := r.cli().Run("serve", "--as", "ada", "--once", "--down-after", "30s")
 	assert.Equal(t, 2, res.Code, res.Stdout+res.Stderr)
 	assert.Contains(t, res.Stdout+res.Stderr, "--down-after 30s is under --every 1m0s")
@@ -555,9 +560,19 @@ func TestServeDryRunPlansAPassAndWritesNothing(t *testing.T) {
 		r.step(t, []string{"ada"}, "ada")
 	}
 
+	missed := r.h.MR.Dump()
+	cli.Do(t, "serve", "--as", "ada", "--dry-run", "--down-after", stepDownAfter).Exit(0).
+		Out("SERVE CHALLENGE name=bob misses=1 last_chance=true").NotOut("SERVE UNHOOK")
+	assert.Equal(t, missed, r.h.MR.Dump(), "the plan of a last chance writes nothing")
+	r.step(t, []string{"ada"}, "ada")
+	assert.Equal(t, 2, r.count(t, "bob", "HOOK CHALLENGE"), "the first miss sets a last chance at once")
+	for range int(hook.AnswerBound / hook.BeatEvery) { // the last chance stands unanswered past the answer bound
+		r.step(t, []string{"ada"}, "ada")
+	}
+
 	before := r.h.MR.Dump()
 	cli.Do(t, "serve", "--as", "ada", "--dry-run", "--down-after", stepDownAfter).Exit(0).
-		Out("SERVE UNHOOK name=bob misses=1", "SERVE TELL audience=coordinator down=bob back=-").NotOut("SERVE CHALLENGE name=bob")
+		Out("SERVE UNHOOK name=bob misses=2", "SERVE TELL audience=coordinator down=bob back=-").NotOut("SERVE CHALLENGE name=bob")
 	assert.Equal(t, before, r.h.MR.Dump(), "the plan of an expired challenge and an unhook writes nothing (its miss, latch and delivery marks included)")
 	require.NotEqual(t, hook.StateUnhooked, r.h.State(t, "bob").State, "the plan unhooks no one")
 	assert.Zero(t, r.count(t, "ada", "FRIEND DOWN bob"), "the plan tells no one")
