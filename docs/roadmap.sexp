@@ -1911,4 +1911,10 @@ Done when: the fleet friends' API traffic flows through it; per-card tokens and 
    :title "v1.7 deadlock: revert-on-red reads the latest attempt of a run, never attempt 1"
    :text "On 2026-10-20 main's ci run 39346166100 was cancelled (a concurrency clash with the dev push) and its rerun went green, but revert-on-red read attempt 1, failed with 'cannot be rerun', filed needs-owner #6027 and left a failed check on the commit that refused the v1.6.10 cut. A deadlock class for the v1.7 list: a stale verdict that no later green clears."
    :why "a failed check that no green rerun clears blocks every cut of that commit"
-   :origin "the coordinator, 2026-10-20 (v1.7 deadlock list)")))
+   :origin "the coordinator, 2026-10-20 (v1.7 deadlock list)")
+  (item "friend-hook-in-preflight" :group "friends" :date "2026-10-24"
+   :title "Preflight a friend's hook-in and record what its lane can reach"
+   :text "PRIORITY: critical (the owner 2026-10-24: \"card these as critical for v1.9\"). Hook-in refuses, or warns, when a dealt row runs with role comms, when the harness has no delivery, or when bench access is missing (ssh, sudo -n tc, winlock, vng on the kernel bench, the macOS render bench). It records each fact on the member so the deal routes only the cards whose needs the lane meets; a sandboxed lane is never dealt a GATE-NEEDS bench card."
+   :why "On 2026-10-24 friends hooked in without delivery or bench access and were dealt bench cards they could not run, each spending an attempt and its deadline."
+   :release "v1.9"
+   :origin "coordinator review 2026-10-24")))

@@ -23,7 +23,7 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (25)
+- [Friends](#friends) (26)
 - [Setup, release and operations](#setup-release-and-operations) (99)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
@@ -336,6 +336,16 @@ From: card from the sprint store (2026-10-10)
 Carried: branch sprint/v17-friend-lane-client-takes-and-renews-in-one-ask.w6.g1.e21 head f71444a88405c74f37ed8b12d91e106fa34f9077 (attempt 6, ready). The friend lane client asks once a round: friend cards, every held lane's renewal and the free-lane takes in one sprintwire request, with failures per lane.
 
 From: sprint card v17-friend-lane-client-takes-and-renews-in-one-ask, moved out of the sprint 2026-10-19 (the owner: not for the rocketnet v1.0.0 release)
+
+### Preflight a friend's hook-in and record what its lane can reach
+
+PRIORITY: critical (the owner 2026-10-24: "card these as critical for v1.9"). Hook-in refuses, or warns, when a dealt row runs with role comms, when the harness has no delivery, or when bench access is missing (ssh, sudo -n tc, winlock, vng on the kernel bench, the macOS render bench). It records each fact on the member so the deal routes only the cards whose needs the lane meets; a sandboxed lane is never dealt a GATE-NEEDS bench card.
+
+Why it waits: On 2026-10-24 friends hooked in without delivery or bench access and were dealt bench cards they could not run, each spending an attempt and its deadline.
+
+Target: v1.9
+
+From: coordinator review 2026-10-24
 
 ## Setup, release and operations
 
