@@ -160,3 +160,16 @@ func TestValidConfigRuns(t *testing.T) {
 		assert.Equal(t, c.code, r.Code, "%s: %s", c.file, r)
 	}
 }
+
+// The go command asks a vettool for -flags and -V=full before any config; the
+// version line names the fleet's Go (rowan-tools group_vars go_version,
+// go1.26.10 since 2026-10-20) and nothing reaches stderr.
+func TestProtocolAnswers(t *testing.T) {
+	t.Parallel()
+	r := vetlaw.Do(t, "-V=full").Exit(0)
+	assert.Equal(t, "vet version go1.26.10\n", r.Stdout, r)
+	assert.Empty(t, r.Stderr, r)
+	r = vetlaw.Do(t, "-flags").Exit(0)
+	assert.Equal(t, "[]\n", r.Stdout, r)
+	assert.Empty(t, r.Stderr, r)
+}
