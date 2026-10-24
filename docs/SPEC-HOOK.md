@@ -47,7 +47,7 @@ All keys live in the bus Redis (`--redis`, else `NOVA_BUS_REDIS`, else the fleet
 
 | key | type | holds |
 |---|---|---|
-| `hook:rec:<name>` | hash | `role`, `state` (`hooked` or `unhooked`), `epoch`, `armed` and `unhooked` (ms of the store's clock), `by`, `misses`, `reason`, `beat_at`, `answered_at`, `bus_sent_at`, `quiet_after`, `pending_until`, `pending_missed`, `recent` (the heartbeat challenges a proof may answer: newest first, each `<epoch>:<sum>:<issued ms>:<deadline ms>:<pushes>`, at most `RecentMax`; an arm or an unhook clears it) |
+| `hook:rec:<name>` | hash | `role`, `state` (`hooked` or `unhooked`), `epoch`, `armed` and `unhooked` (ms of the store's clock), `by`, `misses`, `reason`, `beat_at`, `answered_at`, `bus_sent_at`, `quiet_after`, `pending_until`, `pending_missed`, `last_chance` (the `beat_at` of a challenge set as a last chance), `recent` (the heartbeat challenges a proof may answer: newest first, each `<epoch>:<sum>:<issued ms>:<deadline ms>:<pushes>`, at most `RecentMax`; an arm or an unhook clears it) |
 | `hook:live:<name>:<push>` | string, TTL `LeaseTTL` | the lease: `{"epoch":<n>,"at":<ms>,"by":"<holder>"}` |
 | `hook:proof:<name>:<push>` | string, TTL `ProofTTL` | the proof, the same shape |
 | `hook:chal:<name>` | hash, TTL `AnswerBound` | `epoch`, `sum` (SHA-256 of the nonce, never the nonce), `pushes`, `until` |
@@ -182,7 +182,15 @@ Every line runs as printed:
   byte-for-byte parser does not understand the new body until updated.
 - **Down after an unanswered challenge.** A delivered challenge past `AnswerBound` counts once as a miss.
   When its last activity is also older than `--down-after`, the pass unhooks the name and logs the
-  event once. `pending_until` retains that obligation even if the transient challenge key expires.
+  event once, with one exception, the last chance (`tla/HookLastChance.tla`, 2026-10-24): a name
+  that is not the coordinator and still holds its bus lease is not unhooked at its first silent
+  miss; that pass sets a fresh challenge at once (a new nonce, a full `AnswerBound`), records it in
+  `last_chance` (its `beat_at`), and says `last_chance=true` on the server's challenge line. Only a
+  silent miss of that last chance unhooks it, so a friend goes down after two misses in a row, never
+  at the first, and the reason counts both. A name with no lease cannot hear a challenge and the
+  coordinator keeps its own rule: either is unhooked at its first silent miss. With the last chance
+  the detection times below grow by `AnswerBound` and one pass for a friend or comms name that
+  holds its lease. `pending_until` retains that obligation even if the transient challenge key expires.
   With uninterrupted minute passes and successful challenge delivery, silence is detected after
   the quiet window plus the 5m answer
   bound, rounded to the next pass at each strict boundary: at most 12m for a busy friend, 17m for

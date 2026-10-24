@@ -161,7 +161,13 @@ func (w world) pass(c *tool.Call, s *session, b *bus.Bus, every, downAfter, with
 			fault(c, "challenge delivery "+bt.Name, err)
 			continue
 		}
-		serveLine(c, "challenge", "", "name", bt.Name, "misses", bt.Misses)
+		// a last chance (a first silent miss, set again at once: tla/HookLastChance.tla) says
+		// so on the line, the alarm that a miss of this one unhooks the name
+		kv := []any{"name", bt.Name, "misses", bt.Misses}
+		if bt.LastChance {
+			kv = append(kv, "last_chance", true)
+		}
+		serveLine(c, "challenge", "", kv...)
 	}
 	w.push(c, s, b, p, names)
 	w.tell(c, s, b, p, within)
@@ -201,7 +207,11 @@ func (w world) plan(c *tool.Call, s *session, b *bus.Bus, every, downAfter time.
 	for _, bt := range p.Beats {
 		switch bt.Did {
 		case hook.BeatChallenged:
-			o.Item("challenge", "name", bt.Name, "misses", bt.Misses)
+			if bt.LastChance {
+				o.Item("challenge", "name", bt.Name, "misses", bt.Misses, "last_chance", true)
+			} else {
+				o.Item("challenge", "name", bt.Name, "misses", bt.Misses)
+			}
 		case hook.BeatUnhooked:
 			o.Item("unhook", "name", bt.Name, "misses", bt.Misses)
 		}

@@ -298,6 +298,13 @@ MCHookBeatTwoCoords.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	
 MCHookBeatTwoCoordsTell.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenSelfBack.cfg	MCHookBeat.tla	invariant	NoJudgmentNamesItsRecipientBack	ignore-terminal	hookbeat	required	-
 MCHookBeatBrokenSelfBackTell.cfg	MCHookBeat.tla	invariant	NoJudgmentNamesItsRecipientBack	ignore-terminal	hookbeat	required	-
+MCHookLastChance.cfg	MCHookLastChance.tla	pass	-	ignore-terminal	hooklastchance	required	-
+MCHookLastChanceGone.cfg	MCHookLastChance.tla	pass	-	ignore-terminal	hooklastchance	required	-
+MCHookLastChanceCoord.cfg	MCHookLastChance.tla	pass	-	ignore-terminal	hooklastchance	required	-
+MCHookLastChanceBrokenOneMiss.cfg	MCHookLastChance.tla	invariant	NoDownWithoutLastChance	ignore-terminal	hooklastchance	required	-
+MCHookLastChanceBrokenAlways.cfg	MCHookLastChance.tla	temporal	GoneIsEventuallyDown	ignore-terminal	hooklastchance	required	-
+MCHookLastChanceWitnessSaves.cfg	MCHookLastChance.tla	invariant	WitnessLastChanceSaves	ignore-terminal	hooklastchance	required	-
+MCHookLastChanceWitnessDownAtTwo.cfg	MCHookLastChance.tla	invariant	WitnessDownAtTwo	ignore-terminal	hooklastchance	required	-
 MCTypedFrames.cfg	MCTypedFrames.tla	pass	-	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenRefusedBeforeTransition.cfg	MCTypedFrames.tla	invariant	FrameRefusedBeforeTransition	ignore-terminal	typed-frames	required	-
 MCTypedFramesBrokenDualReadLoss.cfg	MCTypedFrames.tla	invariant	DualReadNoLoss	ignore-terminal	typed-frames	required	-
