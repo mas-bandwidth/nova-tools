@@ -93,8 +93,11 @@ func (l *loop) reportPushedHeads(now time.Time) {
 		job := h.Job
 		live[job] = true
 		c := Card{ID: h.Card, Brief: filepath.Join(d.Dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(d.Dir, "outbox", job), Lane: h.Lane}
-		// the card as the server holds it: its epoch and generation (and its lane, if any)
-		c.ServerEpoch, c.ServerGen = strconv.FormatUint(h.Epoch, 10), max(h.Gen, 1)
+		if h.Lane > 0 {
+			// a lane's card is reported at the epoch and generation the server says it holds,
+			// any other by its job's name, as the outbox finishes it (outbox.go)
+			c.ServerEpoch, c.ServerGen = strconv.FormatUint(h.Epoch, 10), h.Gen
+		}
 		head := jobPushedHead(d.Dir, job, c, h.Branch)
 		if !fullSha.MatchString(head) || head == ph.said[job] || head == StagedSha(d.Dir, job) {
 			continue
