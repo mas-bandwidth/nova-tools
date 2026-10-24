@@ -64,6 +64,9 @@ func emptyEveryObject(t *testing.T, bare string) {
 		}
 		if ext := filepath.Ext(p); ext == ".pack" || ext == ".idx" || filepath.Base(filepath.Dir(p)) != "pack" {
 			n++
+			if err := os.Chmod(p, 0o644); err != nil { // git writes packs and loose objects read-only
+				return err
+			}
 			return os.Truncate(p, 0)
 		}
 		return nil
