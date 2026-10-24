@@ -191,6 +191,11 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla Push)
 	staged, serr := os.ReadFile(filepath.Join(g.slots, launchName(p), cardcontract.StagedName))
 	base := strings.TrimSpace(string(staged))
+	if serr == nil && typedrec.IsFullSha(base) {
+		if stale := g.staleRepoResult(ctx, repo, checkout, base); stale != "" {
+			return member.Push{Refused: stale}
+		}
+	}
 	if refused != "" {
 		// a result whose head names no commit of the checkout (a model that wrote a sha's
 		// first characters right and invented its tail) is the checkout's own head when the
@@ -261,6 +266,38 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 		pu.PR, pu.PRNote = g.openPR(url, ref, p.Branch, r.Title, r.Body)
 	}
 	return pu
+}
+
+// staleRepoResult refuses a result the card never wrote: the RESULT.md the one lookup
+// (swarm.FindCardResult) took is the checkout's own repo/RESULT.md, and that file is tracked
+// and unchanged at the staged commit, so it came from the repository, not from this card.
+// 2026-10-24: rocketnet main carried a card's RESULT.md (3bb8e5f1) naming head 2dc17c32, and
+// every card on that repository that wrote no job-root RESULT.md had its finish take that
+// head and its push refused as a non-descendant (removed in rocketnet #569). "" when the
+// result is the card's own: the job root's RESULT.md or finish record, a repo/RESULT.md the
+// staged commit does not hold, or one the child changed. The blob is hashed in the member's
+// push repository from the file's bytes on stdin, never with the checkout's configuration.
+func (g *gitPusher) staleRepoResult(ctx context.Context, repo, checkout, base string) string {
+	job := filepath.Dir(checkout)
+	found, ok := swarm.FindCardResult(job)
+	own := filepath.Join(checkout, "RESULT.md")
+	if !ok || found != own {
+		return ""
+	}
+	raw, err := os.ReadFile(own)
+	if err != nil {
+		return ""
+	}
+	tres, terr := g.run(ctx, repo, nil, "rev-parse", "--verify", "-q", "--end-of-options", base+":RESULT.md")
+	tracked := strings.TrimSpace(string(tres.Stdout))
+	if terr != nil || tracked == "" {
+		return "" // not tracked at the staged commit: the child wrote it
+	}
+	hres, herr := g.run(ctx, repo, strings.NewReader(string(raw)), "hash-object", "--no-filters", "--stdin")
+	if herr != nil || strings.TrimSpace(string(hres.Stdout)) != tracked {
+		return "" // changed since the staged commit: the child's own result
+	}
+	return "the result's RESULT.md is " + own + ", tracked and unchanged at the staged commit " + base + " (blob " + tracked + "): a stale file from the repository, not this card's result, so its head is not taken; write the card's result at " + swarm.ResultPath(job) + " and finish again, and remove RESULT.md from the repository's branch"
 }
 
 // checkoutTip is the one tip of the checkout's HEAD and branches (fetched under ns) that holds

@@ -166,6 +166,11 @@ MCFriendLaneClientBlindWidth.cfg	MCFriendLaneClient.tla	pass	-	ignore-terminal	f
 MCFriendLaneClientBlindRestartLapses.cfg	MCFriendLaneClient.tla	invariant	LiveHoldNeverExpires	ignore-terminal	friendlaneclient	required	-
 MCFriendLaneClientBrokenLostDrops.cfg	MCFriendLaneClient.tla	invariant	DrainNeverTakes	ignore-terminal	friendlaneclient	required	-
 MCFriendLaneClientBlindRestart.cfg	MCFriendLaneClient.tla	pass	-	ignore-terminal	friendlaneclient	required	-
+MCFriendAutoTake.cfg	MCFriendAutoTake.tla	pass	-	ignore-terminal	friendautotake	required	-
+MCFriendAutoTakeBrokenNoServerWidth.cfg	MCFriendAutoTake.tla	action	TakesWithinWidth	ignore-terminal	friendautotake	required	-
+MCFriendAutoTakeBrokenAnyRow.cfg	MCFriendAutoTake.tla	invariant	NeverOthersCard	ignore-terminal	friendautotake	required	-
+MCFriendAutoTakeBrokenLocalTable.cfg	MCFriendAutoTake.tla	invariant	TakenWithinInterval	ignore-terminal	friendautotake	required	-
+MCFriendAutoTakeBrokenOneShot.cfg	MCFriendAutoTake.tla	invariant	TakenWithinInterval	ignore-terminal	friendautotake	required	-
 MCBus2Receipts.cfg	MCBus2Receipts.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPushDup.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
 MCBus2BrokenBackStamp.cfg	MCBus2Receipts.tla	action	ReceiptNeverMovesBack	ignore-terminal	bus2	required	-
