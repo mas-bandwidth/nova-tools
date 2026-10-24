@@ -1914,7 +1914,7 @@ Done when: the fleet friends' API traffic flows through it; per-card tokens and 
    :origin "the coordinator, 2026-10-20 (v1.7 deadlock list)")
   (item "friend-hook-in-preflight" :group "friends" :date "2026-10-24"
    :title "Preflight a friend's hook-in and record what its lane can reach"
-   :text "PRIORITY: critical (Glenn 2026-10-24: \"card these as critical for v1.9\"). Hook-in refuses, or warns, when a dealt row runs with role comms, when the harness has no delivery, or when bench access is missing (ssh, sudo -n tc, winlock, vng on hulk, mini-m5). It records each fact on the member so the deal routes only the cards whose needs the lane meets; a sandboxed lane is never dealt a GATE-NEEDS bench card."
+   :text "PRIORITY: critical (the owner 2026-10-24: \"card these as critical for v1.9\"). Hook-in refuses, or warns, when a dealt row runs with role comms, when the harness has no delivery, or when bench access is missing (ssh, sudo -n tc, winlock, vng on the kernel bench, the macOS render bench). It records each fact on the member so the deal routes only the cards whose needs the lane meets; a sandboxed lane is never dealt a GATE-NEEDS bench card."
    :why "On 2026-10-24 friends hooked in without delivery or bench access and were dealt bench cards they could not run, each spending an attempt and its deadline."
    :release "v1.9"
    :origin "coordinator review 2026-10-24")))
