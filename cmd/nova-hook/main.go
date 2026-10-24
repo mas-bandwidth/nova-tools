@@ -94,6 +94,7 @@ type world struct {
 	sprint             func(ctx context.Context, addr string, argv []string) (string, error)   // one verb to the sprint server (the lane client's ask)
 	novaConfig         func(ctx context.Context, argv []string) (string, error)                // one canonical nova-config read (the lane client's configuration)
 	home               func() (string, error)                                                  // the user's home, where the lane client caches briefs
+	stdoutUnread       func() string                                                           // why no session can be reading this process's stdout, "" when one may (route.go)
 }
 
 func realWorld() world {
@@ -122,6 +123,7 @@ func realWorld() world {
 		after:              time.After,
 		deliver:            deliver,
 		sprint:             sprintAsk,
+		stdoutUnread:       stdoutUnread,
 		novaConfig:         novaConfigRun,
 		sprintBatch: func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error) {
 			return (sprintwire.Client{Addr: addr}).Do(ctx, verbs...)
@@ -841,6 +843,11 @@ func (w world) hook(c *tool.Call) *tool.Out {
 	once := c.Bool("once")
 	if !once {
 		line(c, armed)
+		if role == hook.Friend && shim == nil {
+			for _, o := range w.routeLines() {
+				line(c, o)
+			}
+		}
 	}
 	challenge := func(epoch int64) *tool.Out {
 		if len(held) == 0 {
@@ -1133,7 +1140,11 @@ func (w world) loop(c *tool.Call, s *session, role hook.Role, held []hook.Push, 
 			// (tla/FriendLaneClient.tla DeadModelReleases)
 			nextLanes = w.now().Add(LaneEvery)
 			lctx, lcancel := context.WithTimeout(ctx, laneRoundWait)
-			for _, o := range lanePass(lctx, lanes, proven(st[0]), sendSelf(s, w)) {
+			send := sendSelf(s, w)
+			if core == nil {
+				send = nil // no harness route: the hook's stream is the route, the TAKEN lines (lanePass)
+			}
+			for _, o := range lanePass(lctx, lanes, proven(st[0]), send) {
 				line(c, o)
 			}
 			lcancel()
