@@ -50,7 +50,7 @@ var (
 	// boundary the rule matched inside ids: a nova-sprint store op id is
 	// <base36 nanos>-<pid>-<hex>, and about one in 1296 has a time part ending "sk", so
 	// "...cfmsk-1929501-cd9a14e6..." read as an sk- key and backup refused a good store
-	// file (nova-sprint#602). A key after a space, quote, '=', ':', '_' or '-' still
+	// file (nova-sprint#602). A key after a blank, quote, '=', ':', '_' or '-' still
 	// starts a token and is still caught; a key glued to letters or digits is left to the
 	// keyed-value and entropy rules below. Go's regexp has no lookbehind, hence the group.
 	reProviderKeys = regexp.MustCompile(`(^|[^A-Za-z0-9])(?:` +
