@@ -50,8 +50,10 @@ var verbExit = map[string]string{
   it means); 1 DISK-GUARD INCOMPLETE, something could not be read or removed (each on its NOTE
   line); 3 DISK-GUARD STOP, free disk under --stop-floor (stop the loops); 2 could not
   run: a bad flag`,
-	"mirror": `exit codes: 0 every repository refreshed (MIRROR OK each); 1 a repository failed (MIRROR FAILED
-  names it and the cause; the others are still refreshed); 2 could not run: a missing flag or a bad name`,
+	"mirror": `exit codes: 0 every repository refreshed (MIRROR OK each; a damaged mirror, one holding an
+  empty object file or failing git fsck --connectivity-only after a failed fetch, is re-cloned first,
+  MIRROR RECLONED naming why); 1 a repository failed (MIRROR FAILED names it and the cause; the others
+  are still refreshed); 2 could not run: a missing flag or a bad name`,
 	"slots release": `exit codes: 0 the leases named are freed; 2 a lease's holder still runs (SLOTS
   KEPT; --force frees it), a missing flag or a store that cannot be read`,
 }

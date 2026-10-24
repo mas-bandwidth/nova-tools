@@ -11,12 +11,20 @@ import (
 // carries, in their fixed order, from a probe of the machine (no real machine is read).
 func TestMachineFactsNameTheOSTheISATheSandboxTheJarAndTheToolchains(t *testing.T) {
 	t.Parallel()
-	linux := machineProbe{goos: "linux", goarch: "amd64", sandbox: func() bool { return true }, kvm: func() bool { return true },
-		exists: func(p string) bool { return p == TLAJar }, onPath: func(n string) bool { return n == "go" || n == "java" }}
+	linux := machineProbe{goos: "linux", goarch: "amd64", home: "/home/b", sandbox: func() bool { return true }, kvm: func() bool { return true },
+		exists: func(p string) bool { return p == TLAJar || p == "/home/b/.local/bin/tlacheck" }, onPath: func(n string) bool { return n == "go" || n == "java" }}
 	assert.Equal(t, []string{"linux", "amd64", "landlock", "kvm", "tla", "go", "java"}, machineFacts(linux))
 	noKVM := linux
 	noKVM.kvm = func() bool { return false }
 	assert.Equal(t, []string{"linux", "amd64", "landlock", "tla", "go", "java"}, machineFacts(noKVM), "no KVM, no kvm fact")
+	onPath := noKVM
+	onPath.exists = func(p string) bool { return p == TLAJar }
+	onPath.onPath = func(n string) bool { return n == "go" || n == "java" || n == TLACheck }
+	assert.Equal(t, []string{"linux", "amd64", "landlock", "tla", "go", "java"}, machineFacts(onPath), "a runner on PATH is a runner")
+	jarOnly := noKVM
+	jarOnly.exists = func(p string) bool { return p == TLAJar }
+	assert.Equal(t, []string{"linux", "amd64", "landlock", "go", "java"}, machineFacts(jarOnly),
+		"the jar without tlacheck is no TLA bench: the 2026-10-24 fleet, whose TLA gates failed on their cards")
 	mac := machineProbe{goos: "darwin", goarch: "arm64", sandbox: func() bool { return true }, kvm: func() bool { return true },
 		exists: func(string) bool { return false }, onPath: func(n string) bool { return n == "go" }}
 	assert.Equal(t, []string{"darwin", "arm64", "go"}, machineFacts(mac), "landlock and kvm are a linux kernel's alone")

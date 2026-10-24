@@ -194,3 +194,105 @@ func TestDiskGuardStopsUnderItsStopFloor(t *testing.T) {
 	assert.Equal(t, 0, g.run(), "a volume over the stop floor ends OK")
 	assert.Contains(t, out.String(), "DISK-GUARD OK")
 }
+
+// emptyObject writes one empty loose object into the bare repository at bare: what a write
+// cut short leaves (2026-10-24, 14-23 of them on two benches' mirrors).
+func emptyObject(t *testing.T, bare string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(bare, "objects", "ab"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bare, "objects", "ab", strings.Repeat("c", 38)), nil, 0o644))
+}
+
+// A mirror holding an empty object file is re-cloned: a new mirror is made beside it, fetched
+// and checked, and only then takes its place; the old one is gone and nothing is left beside.
+func TestMirrorReclonesAMirrorWithAnEmptyObjectFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	bare := filepath.Join(dir, "a.git")
+	emptyObject(t, bare)
+	require.NoError(t, os.WriteFile(filepath.Join(bare, "objects", "ab", "keep"), []byte("x"), 0o644))
+	g := &recordGit{}
+	var out, errb bytes.Buffer
+	require.Equal(t, 0, runMirror([]string{"--dir", dir, "--repos", "a", "--base", "https://example.test/o"}, &out, &errb, g.run, nil), errb.String())
+	assert.Contains(t, out.String(), "MIRROR RECLONED a: 1 empty object file(s)\n")
+	assert.Contains(t, out.String(), "MIRROR OK a\n")
+	fresh := bare + ".reclone"
+	assert.Equal(t, []string{
+		"|init --bare --quiet -- " + fresh,
+		fresh + "|fetch --quiet --no-tags --prune -- https://example.test/o/a.git +refs/heads/*:refs/heads/* +refs/pull/*/head:refs/pull/*/head",
+		fresh + "|fsck --connectivity-only --no-progress",
+	}, g.calls[:3])
+	assert.NoDirExists(t, filepath.Join(bare, "objects"), "the damaged mirror was not replaced")
+	assert.DirExists(t, bare)
+	assert.NoDirExists(t, fresh)
+	assert.NoDirExists(t, bare+".bad")
+	assert.Zero(t, mirrorEmptyObjects(bare))
+}
+
+// A re-clone that fails keeps the old mirror where it was: the bench is no worse than it was,
+// and the pass says the re-clone failed (staging's one fallback to origin covers the cards).
+func TestMirrorKeepsTheOldMirrorWhenTheRecloneFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	bare := filepath.Join(dir, "a.git")
+	emptyObject(t, bare)
+	g := &recordGit{failOn: "fsck"}
+	var out, errb bytes.Buffer
+	assert.Equal(t, 1, runMirror([]string{"--dir", dir, "--repos", "a", "--base", "https://example.test/o"}, &out, &errb, g.run, nil))
+	assert.Contains(t, out.String(), "MIRROR FAILED a: the re-clone after 1 empty object file(s) failed, the old mirror kept: ")
+	assert.Equal(t, 1, mirrorEmptyObjects(bare), "the old mirror is not where it was")
+	assert.NoDirExists(t, bare+".reclone")
+}
+
+// A fetch that fails into a mirror that fails git fsck --connectivity-only re-clones it; a
+// fetch that fails into a sound mirror is the network's failure and re-clones nothing.
+func TestMirrorReclonesWhenTheFetchFailsAndFsckFails(t *testing.T) {
+	t.Parallel()
+	for _, sound := range []bool{false, true} {
+		dir := t.TempDir()
+		bare := filepath.Join(dir, "a.git")
+		require.NoError(t, os.MkdirAll(filepath.Join(bare, "objects"), 0o755))
+		var calls []string
+		git := func(_ context.Context, d string, args ...string) error {
+			calls = append(calls, d+"|"+strings.Join(args, " "))
+			switch {
+			case args[0] == "init":
+				return os.MkdirAll(args[len(args)-1], 0o755)
+			case d == bare && args[0] == "fetch":
+				return errors.New("fatal: bad object")
+			case d == bare && args[0] == "fsck" && !sound:
+				return errors.New("broken link")
+			}
+			return nil
+		}
+		var out, errb bytes.Buffer
+		code := runMirror([]string{"--dir", dir, "--repos", "a", "--base", "https://example.test/o"}, &out, &errb, git, nil)
+		if sound {
+			assert.Equal(t, 1, code)
+			assert.Contains(t, out.String(), "MIRROR FAILED a: fatal: bad object\n")
+			assert.NotContains(t, strings.Join(calls, "\n"), ".reclone")
+			continue
+		}
+		assert.Equal(t, 0, code, out.String())
+		assert.Contains(t, out.String(), "MIRROR RECLONED a: the fetch failed (fatal: bad object) and git fsck --connectivity-only failed (broken link)\n")
+		assert.NoDirExists(t, bare+".reclone")
+	}
+}
+
+// Only object files count: an empty .keep or tmp pack of a fetch in flight is no damage.
+func TestMirrorEmptyObjectsCountsObjectsOnly(t *testing.T) {
+	t.Parallel()
+	bare := t.TempDir()
+	pack := filepath.Join(bare, "objects", "pack")
+	require.NoError(t, os.MkdirAll(pack, 0o755))
+	for _, f := range []string{"pack-1.keep", "tmp_pack_x", "pack-1.promisor"} {
+		require.NoError(t, os.WriteFile(filepath.Join(pack, f), nil, 0o644))
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(bare, "objects", "info"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bare, "objects", "info", "packs"), nil, 0o644))
+	assert.Zero(t, mirrorEmptyObjects(bare))
+	require.NoError(t, os.WriteFile(filepath.Join(pack, "pack-2.idx"), nil, 0o644))
+	emptyObject(t, bare)
+	assert.Equal(t, 2, mirrorEmptyObjects(bare))
+	assert.Zero(t, mirrorEmptyObjects(filepath.Join(bare, "absent")))
+}

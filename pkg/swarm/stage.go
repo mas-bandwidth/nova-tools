@@ -362,6 +362,9 @@ type StageResult struct {
 	// Submodules is why the staged head's submodules are not all checked out
 	// (stageSubmodules); "" when they are, or when the head has none.
 	Submodules string
+	// MirrorFallback is why the clone from the bench mirror failed when the checkout was then
+	// cloned straight from origin (the one fallback; Mirror is "" then); "" when the mirror served.
+	MirrorFallback string
 }
 
 // Rework is what a rework's stage carries: the last pushed head of any earlier attempt and
@@ -379,6 +382,8 @@ type Rework struct {
 // The checkout is at the sha (else the ref, else the clone's default head) on the branch
 // CardStageBranch names, so the card commits on a branch, not a detached HEAD.
 // If base-repo is remote and no bench mirror is found, staging fails without contacting GitHub.
+// A bench mirror that is found but cannot be cloned from (a damaged mirror) is the one case
+// staging clones from origin: once, said in MirrorFallback.
 // Staging runs git clone --shared <mirror> (MirrorCloneArgs) and git fetch/checkout <base-sha> with a hard timeout (default 120s).
 // If the timeout expires, it writes RESULT.md:
 //
@@ -517,13 +522,37 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 
 	cloneCmd := stageCmd(ctx, cloneArgs...)
+	fallback := ""
 	if out, err := stageTimedOutput(cloneCmd, &cloneTime); err != nil {
 		if stageTimedOut(ctx, err) {
 			// ignored: the timeout is returned as ErrStageTimeout on the next line; the result file is a courtesy for the reader of the job directory
 			_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, TimedOut: true, Wall: time.Since(start)}, ErrStageTimeout
 		}
-		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, Wall: time.Since(start)}, fmt.Errorf("git clone failed: %s (%w)", strings.TrimSpace(string(out)), err)
+		if mirror == "" || mirror == baseRepo || !isRemoteRepo(baseRepo) {
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, Wall: time.Since(start)}, fmt.Errorf("git clone failed: %s (%w)", strings.TrimSpace(string(out)), err)
+		}
+		// RULE (docs/SPEC-CARD-CONTRACT.md, staging): a clone from the bench mirror that fails is
+		// tried once more straight from origin, and the stage says so (MirrorFallback, on its
+		// STAGE OK line). A damaged mirror is the bench's fault, never the card's: on 2026-10-24
+		// two benches' mirrors held empty object files and every clone from them failed "object
+		// file ... is empty", refusing ten cards, until the mirror refresh re-cloned them. git
+		// removes the directory a failed clone made, so the target is free for the second.
+		fallback = strings.Join(strings.Fields(string(out)), " ")
+		if fallback == "" {
+			fallback = err.Error()
+		}
+		mirror, shared, cloneSource = "", false, baseRepo
+		direct := stageCmd(ctx, "clone", "-q", "--", baseRepo, opts.TargetDir)
+		if dout, derr := stageTimedOutput(direct, &cloneTime); derr != nil {
+			if stageTimedOut(ctx, derr) {
+				// ignored: the timeout is returned as ErrStageTimeout on the next line; the result file is a courtesy for the reader of the job directory
+				_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
+				return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, TimedOut: true, Wall: time.Since(start), MirrorFallback: fallback}, ErrStageTimeout
+			}
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Wall: time.Since(start), MirrorFallback: fallback},
+				fmt.Errorf("git clone failed from the bench mirror (%s) and from origin %s: %s (%w)", fallback, baseRepo, strings.TrimSpace(string(dout)), derr)
+		}
 	}
 
 	// Update remote origin to baseRepo if cloned from mirror
@@ -670,7 +699,8 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		Checkout: checkoutTime,
 		Carry:    carry,
 
-		Submodules: submodules,
+		Submodules:     submodules,
+		MirrorFallback: fallback,
 	}, nil
 }
 
