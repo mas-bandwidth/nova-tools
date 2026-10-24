@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -12,8 +13,15 @@ import (
 const lsmList = "/sys/kernel/security/lsm"
 
 // TLAJar is where a bench keeps the pinned TLA+ tools (the provisioning standard; the
-// model gate's TLC_JAR), the jar whose presence is the "tla" gate fact.
+// model gate's TLC_JAR), the jar whose presence is half the "tla" gate fact.
 const TLAJar = "/opt/tla/tla2tools.jar"
+
+// TLACheck is the runner a TLA gate runs the records with (fleet/tools.yml, the tla play,
+// built from the nova-tools commit nova_tlacheck_commit pins), the other half of the "tla"
+// fact: on PATH, or at ~/.local/bin/tlacheck where the play installs it. A jar without the
+// runner is no TLA bench: on 2026-10-24 every bench held the jar and none the runner, and
+// every TLA gate dealt to one failed on its card instead of at the member's start.
+const TLACheck = "tlacheck"
 
 // KVMDevice is the device a linux kernel's KVM answers on, the "kvm" gate fact's (a VM tier boots its guests on it).
 const KVMDevice = "/dev/kvm"
@@ -34,11 +42,12 @@ func kvmAnswers(open func(path string) (apiVersion int, err error)) bool {
 // factTools are the toolchains a gate fact names by the program on the bench's PATH.
 var factTools = []string{"go", "dotnet", "java"}
 
-// machineProbe is what the facts are read from: the OS and ISA, whether the kernel runs
-// landlock (lsmList), whether KVM answers (kvmAnswers), whether a file is, and whether a program
-// is on PATH. Tests give their own.
+// machineProbe is what the facts are read from: the OS and ISA, the user's home, whether the
+// kernel runs landlock (lsmList), whether KVM answers (kvmAnswers), whether a file is, and
+// whether a program is on PATH. Tests give their own.
 type machineProbe struct {
 	goos, goarch string
+	home         string
 	sandbox      func() bool
 	kvm          func() bool
 	exists       func(path string) bool
@@ -48,7 +57,7 @@ type machineProbe struct {
 // localProbe reads this machine.
 func localProbe() machineProbe {
 	return machineProbe{
-		goos: runtime.GOOS, goarch: runtime.GOARCH,
+		goos: runtime.GOOS, goarch: runtime.GOARCH, home: probeHome(),
 		sandbox: func() bool {
 			b, err := os.ReadFile(lsmList)
 			return err == nil && strings.Contains(","+strings.TrimSpace(string(b))+",", ",landlock,")
@@ -63,7 +72,7 @@ func localProbe() machineProbe {
 // docs/SPEC-SPRINT.md, the gate-host rule), in a fixed order: the OS ("linux", "darwin"),
 // the ISA ("amd64", "arm64"), "landlock" when a linux kernel has it, "kvm" when a linux kernel's
 // KVM answers the member's user (kvmAnswers), "tla" when the TLA
-// jar is at TLAJar, then each toolchain of factTools on PATH. The member measures them
+// jar is at TLAJar and its runner TLACheck is installed (hasTLACheck), then each toolchain of factTools on PATH. The member measures them
 // itself, at start: the sprint server cannot see another machine.
 func machineFacts(p machineProbe) []string {
 	facts := []string{p.goos, p.goarch}
@@ -73,7 +82,7 @@ func machineFacts(p machineProbe) []string {
 	if p.goos == "linux" && p.kvm != nil && p.kvm() {
 		facts = append(facts, "kvm")
 	}
-	if p.exists(TLAJar) {
+	if p.exists(TLAJar) && p.hasTLACheck() {
 		facts = append(facts, "tla")
 	}
 	for _, t := range factTools {
@@ -82,4 +91,23 @@ func machineFacts(p machineProbe) []string {
 		}
 	}
 	return facts
+}
+
+// probeHome is the user's home, "" when it cannot be read.
+func probeHome() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+// hasTLACheck reports whether the TLA runner is installed: on PATH, or at
+// ~/.local/bin/tlacheck, where the tools play puts it and where a member started by a
+// service manager with a short PATH still finds it.
+func (p machineProbe) hasTLACheck() bool {
+	if p.onPath(TLACheck) {
+		return true
+	}
+	return p.home != "" && p.exists(filepath.Join(p.home, ".local", "bin", TLACheck))
 }

@@ -2306,14 +2306,14 @@ func nativeChildEnvOS(goos string, environ []string, dataHome, jobDir, tmpDir, c
 }
 
 // nativeBuildParallelism is the default build parallelism of a card's child: at most four
-// go programs (builds and test binaries) at once, eight make and CMake jobs. The wall
+// go programs (builds and test binaries) at once, four make and CMake jobs. The wall
 // kills a tree past its process cap (nova-sandbox, sandbox.MachineCaps), and on
 // 2026-10-17 an unbounded `go test ./...` and `cmake --build -j` on 16-thread members
 // reached 287 to 697 processes and were killed, exit 137, about 90 children in a day. A
 // card that wants more names it on its own command line (`go test -p 8`, `make -j16`),
 // which wins over these. GOMAXPROCS is left alone. The go shim keeps -p=4 in a GOFLAGS
 // the card exports itself (goShimScript).
-var nativeBuildParallelism = []string{"GOFLAGS=-p=4", "MAKEFLAGS=-j8", "CMAKE_BUILD_PARALLEL_LEVEL=8"}
+var nativeBuildParallelism = []string{"GOFLAGS=-p=4", "MAKEFLAGS=-j4", "CMAKE_BUILD_PARALLEL_LEVEL=4"}
 
 // nativeCacheDir is the bench-shared Go cache root: <root>/cache, the one directory every
 // slot of a bench shares so a card's data home holds harness state only (card 8963). The
@@ -2938,9 +2938,21 @@ func nativePrompt(cfg nativeRunConfig) string {
 // staging), while preserving the readiness line before the frame is installed.
 func writeStageOK(w io.Writer, bench string, st swarm.StageResult) {
 	// a submodule staging could not check out rides on the line as one more field; the stage itself is OK
-	fmt.Fprintf(w, "STAGE OK bench=%s repo=%s base=%s secs=%.0f clone=%.1f fetch=%.1f checkout=%.1f%s%s\n",
+	// a clone the bench mirror could not serve, made from origin instead, rides on the line the same way
+	fmt.Fprintf(w, "STAGE OK bench=%s repo=%s base=%s secs=%.0f clone=%.1f fetch=%.1f checkout=%.1f%s%s%s%s\n",
 		oneline.Field(bench), oneline.Field(st.BaseRepo), oneline.Field(swarm.Version8(st.BaseSha)), st.Wall.Seconds(), st.Clone.Seconds(), st.Fetch.Seconds(), st.Checkout.Seconds(),
-		oneline.Escape(stageSubmodulesKey(st)), oneline.Field(oneline.Escape(st.Submodules)))
+		oneline.Escape(stageSubmodulesKey(st)), oneline.Field(oneline.Escape(st.Submodules)),
+		oneline.Escape(stageFallbackKey(st)), oneline.Field(oneline.Escape(oneline.Cap(st.MirrorFallback, 200))))
+}
+
+// stageFallbackKey is the STAGE OK line's keys for a checkout cloned from origin because the
+// bench mirror could not serve it (swarm.StageResult.MirrorFallback), the mirror's error the
+// value after them; nothing when the mirror served.
+func stageFallbackKey(st swarm.StageResult) string {
+	if st.MirrorFallback == "" {
+		return ""
+	}
+	return " mirror-fallback=origin mirror-error="
 }
 
 // stageSubmodulesKey is the STAGE OK line's last key, " submodules-incomplete=", when
