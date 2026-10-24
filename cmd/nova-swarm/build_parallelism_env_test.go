@@ -23,8 +23,8 @@ func TestTheChildStartsWithTheBuildParallelism(t *testing.T) {
 			got[name] = append(got[name], val)
 		}
 		assert.Equal(t, []string{"-p=4"}, got["GOFLAGS"], "from %v", environ)
-		assert.Equal(t, []string{"-j8"}, got["MAKEFLAGS"], "from %v", environ)
-		assert.Equal(t, []string{"8"}, got["CMAKE_BUILD_PARALLEL_LEVEL"], "from %v", environ)
+		assert.Equal(t, []string{"-j4"}, got["MAKEFLAGS"], "from %v", environ)
+		assert.Equal(t, []string{"4"}, got["CMAKE_BUILD_PARALLEL_LEVEL"], "from %v", environ)
 		assert.Empty(t, got["GOMAXPROCS"], "GOMAXPROCS is left alone")
 	}
 }

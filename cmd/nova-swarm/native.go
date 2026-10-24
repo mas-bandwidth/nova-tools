@@ -2306,14 +2306,14 @@ func nativeChildEnvOS(goos string, environ []string, dataHome, jobDir, tmpDir, c
 }
 
 // nativeBuildParallelism is the default build parallelism of a card's child: at most four
-// go programs (builds and test binaries) at once, eight make and CMake jobs. The wall
+// go programs (builds and test binaries) at once, four make and CMake jobs. The wall
 // kills a tree past its process cap (nova-sandbox, sandbox.MachineCaps), and on
 // 2026-10-17 an unbounded `go test ./...` and `cmake --build -j` on 16-thread members
 // reached 287 to 697 processes and were killed, exit 137, about 90 children in a day. A
 // card that wants more names it on its own command line (`go test -p 8`, `make -j16`),
 // which wins over these. GOMAXPROCS is left alone. The go shim keeps -p=4 in a GOFLAGS
 // the card exports itself (goShimScript).
-var nativeBuildParallelism = []string{"GOFLAGS=-p=4", "MAKEFLAGS=-j8", "CMAKE_BUILD_PARALLEL_LEVEL=8"}
+var nativeBuildParallelism = []string{"GOFLAGS=-p=4", "MAKEFLAGS=-j4", "CMAKE_BUILD_PARALLEL_LEVEL=4"}
 
 // nativeCacheDir is the bench-shared Go cache root: <root>/cache, the one directory every
 // slot of a bench shares so a card's data home holds harness state only (card 8963). The
