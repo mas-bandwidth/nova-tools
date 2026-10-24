@@ -22,6 +22,16 @@ func TestStageOKReportsTheMeasuredCommandPhases(t *testing.T) {
 	assert.Equal(t, "STAGE OK bench=bench repo=/repo base=01234567 secs=1 clone=0.1 fetch=0.2 checkout=0.3\n", out.String())
 }
 
+// A checkout cloned from origin because the bench mirror could not serve it says so on its
+// STAGE OK line, with the mirror's error as one field.
+func TestStageOKSaysAMirrorFallback(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	writeStageOK(&out, "bench", swarm.StageResult{BaseRepo: "/repo", BaseSha: "0123456789abcdef", Wall: time.Second,
+		MirrorFallback: "fatal: object file x is empty"})
+	assert.Equal(t, "STAGE OK bench=bench repo=/repo base=01234567 secs=1 clone=0.0 fetch=0.0 checkout=0.0 mirror-fallback=origin mirror-error=fatal:\\x20object\\x20file\\x20x\\x20is\\x20empty\n", out.String())
+}
+
 func TestFrameTimingReportsOnlySuccessfulInstallation(t *testing.T) {
 	t.Parallel()
 	for _, success := range []bool{true, false} {
