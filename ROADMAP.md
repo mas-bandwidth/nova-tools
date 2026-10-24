@@ -23,8 +23,8 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (26)
-- [Setup, release and operations](#setup-release-and-operations) (99)
+- [Friends](#friends) (27)
+- [Setup, release and operations](#setup-release-and-operations) (100)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
@@ -342,6 +342,16 @@ From: sprint card v17-friend-lane-client-takes-and-renews-in-one-ask, moved out 
 PRIORITY: critical (the owner 2026-10-24: "card these as critical for v1.9"). Hook-in refuses, or warns, when a dealt row runs with role comms, when the harness has no delivery, or when bench access is missing (ssh, sudo -n tc, winlock, vng on the kernel bench, the macOS render bench). It records each fact on the member so the deal routes only the cards whose needs the lane meets; a sandboxed lane is never dealt a GATE-NEEDS bench card.
 
 Why it waits: On 2026-10-24 friends hooked in without delivery or bench access and were dealt bench cards they could not run, each spending an attempt and its deadline.
+
+Target: v1.9
+
+From: coordinator review 2026-10-24
+
+### Send progress --head from the friend daemon and the fleet member after every push
+
+PRIORITY: critical (the owner 2026-10-24: "card these as critical for v1.9"). nova-sprint #600 added progress --head <sha>, so a redeal carries the pushed head into the next attempt's JOB.md as a CARRIED: line. The friend daemon and the fleet member never send it, so redeals still start from BASE. Both send progress --head after every push. The sprint side is nova-sprint's redeal-carries-previous-head.
+
+Why it waits: Without the pushed head reported, every redeal throws away the previous attempt's work and starts from BASE.
 
 Target: v1.9
 
@@ -1146,6 +1156,16 @@ On 2026-10-20 main's ci run 39346166100 was cancelled (a concurrency clash with 
 Why it waits: a failed check that no green rerun clears blocks every cut of that commit
 
 From: the coordinator, 2026-10-20 (v1.7 deadlock list)
+
+### Make fleet-lane builds take a bench slot through make, cmake and ninja shims
+
+PRIORITY: critical (the owner 2026-10-24: "card these as critical for v1.9"). Fleet-lane cards build outside the bench slot: the sandbox cannot reach it, and cmd/nova-swarm native.go injects MAKEFLAGS=-j8. Add make, cmake and ninja shims beside the go shim that take a shared slot, and give the sandbox read access to the lock directory. The -j4 default is fixed separately. Related: bench-slot-lease-model, and benchslot-in-the-fleet in the fleet tools repository.
+
+Why it waits: Fleet builds that take no slot overload benches that slot-holding gates and timing runs are measured on.
+
+Target: v1.9
+
+From: coordinator review 2026-10-24
 
 ## Docs, models and the repository
 
