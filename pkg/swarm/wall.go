@@ -360,22 +360,57 @@ type ShellDenial struct {
 	Path string
 	Step string
 	Line string
+	// ScratchOnly is true when EVERY denial in the capture named a scratch path outside the
+	// job (ScratchPath: /tmp, /var/tmp, /dev/shm, or a root-level `/tmp...` name) and none
+	// named anything else. Such a path is never a gate's input or a tool a gate runs: it is
+	// a side write the wall refused, the shape of a reader that redirected a log to
+	// /tmp/cfg.log. It decides nothing here; a READ's caller may keep the reader's own
+	// verdict on it and note the refusal (cmd/nova-swarm/member.go, nativeScratchDenial).
+	ScratchOnly bool
+}
+
+// ScratchPath says whether a denied path is shared scratch outside any job: /tmp, /var/tmp
+// or /dev/shm and anything under them, or a root-level name that begins `/tmp` (the
+// `/tmp_cfg.log` a model writes when it glues a name onto /tmp). Nothing a card's gate reads
+// or executes lives there; the job's own tree and the toolchain roots are elsewhere.
+func ScratchPath(p string) bool {
+	if !filepath.IsAbs(p) {
+		return false
+	}
+	c := filepath.Clean(p)
+	for _, root := range []string{"/tmp", "/var/tmp", "/dev/shm"} {
+		if c == root || strings.HasPrefix(c, root+"/") {
+			return true
+		}
+	}
+	return filepath.Dir(c) == "/" && strings.HasPrefix(filepath.Base(c), "tmp")
 }
 
 // ShellDenied reports the FIRST denial a card's shell printed in one capture, and whether it
 // printed any. The first is the one that matters: every later line is downstream of the same
 // closed path.
 func ShellDenied(log []byte) (ShellDenial, bool) {
+	var first ShellDenial
+	denied, other := false, false
 	for _, raw := range strings.Split(string(log), "\n") {
 		line := strings.TrimSpace(stripPaint(raw))
 		if line == "" {
 			continue
 		}
 		if p, ok := deniedPath(line); ok {
-			return ShellDenial{Path: p, Step: WallStep(log), Line: line}, true
+			if !ScratchPath(p) {
+				other = true
+			}
+			if !denied {
+				first, denied = ShellDenial{Path: p, Step: WallStep(log), Line: line}, true
+			}
 		}
 	}
-	return ShellDenial{}, false
+	if !denied {
+		return ShellDenial{}, false
+	}
+	first.ScratchOnly = !other
+	return first, true
 }
 
 // ShellDenialReader is ShellDenied asked of the bytes AS THE PARENT RECEIVES THEM (a friend's
@@ -395,6 +430,7 @@ type ShellDenialReader struct {
 	buf    []byte
 	denial ShellDenial
 	denied bool
+	other  bool // a denial named a path that is not scratch (ScratchPath)
 	step   string
 }
 
@@ -431,10 +467,14 @@ func (r *ShellDenialReader) line(raw string) {
 	if step := WallStep([]byte(line)); step != "" {
 		r.step = step
 	}
-	if r.denied {
+	p, ok := deniedPath(line)
+	if !ok {
 		return
 	}
-	if p, ok := deniedPath(line); ok {
+	if !ScratchPath(p) {
+		r.other = true
+	}
+	if !r.denied {
 		r.denied, r.denial = true, ShellDenial{Path: p, Line: line}
 	}
 }
@@ -448,13 +488,16 @@ func (r *ShellDenialReader) Denied() (ShellDenial, bool) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	denial, denied, step := r.denial, r.denied, r.step
+	denial, denied, other, step := r.denial, r.denied, r.other, r.step
 	if tail := strings.TrimSpace(stripPaint(string(r.buf))); tail != "" {
 		if s := WallStep([]byte(tail)); s != "" {
 			step = s
 		}
-		if !denied {
-			if p, ok := deniedPath(tail); ok {
+		if p, ok := deniedPath(tail); ok {
+			if !ScratchPath(p) {
+				other = true
+			}
+			if !denied {
 				denial, denied = ShellDenial{Path: p, Line: tail}, true
 			}
 		}
@@ -463,6 +506,7 @@ func (r *ShellDenialReader) Denied() (ShellDenial, bool) {
 		return ShellDenial{}, false
 	}
 	denial.Step = step
+	denial.ScratchOnly = !other
 	return denial, true
 }
 
@@ -592,9 +636,15 @@ func DeniedPathRoots(denied string) []string {
 // so and nothing is attributed to a sandbox that was not there.
 func ShellDenialReason(label, jobDir, wall string, rc int, d ShellDenial) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s a denial the card's shell reported went unread, so this run's disposition is refused rather than OK: step=%s rc=%d wall=%s denied_path=%s operation=unverified job=%s line=%q",
+	scratch := ""
+	if d.ScratchOnly {
+		// every denial named scratch outside the job (ScratchPath): a field, so a read's
+		// caller can keep the reader's verdict and note the refusal (nativeScratchDenial)
+		scratch = " scratch_only=true"
+	}
+	fmt.Fprintf(&b, "%s a denial the card's shell reported went unread, so this run's disposition is refused rather than OK: step=%s rc=%d wall=%s denied_path=%s operation=unverified%s job=%s line=%q",
 		oneline.Field(label), oneline.Field(dashOr(d.Step)), rc, oneline.Field(dashOr(wall)),
-		oneline.Field(dashOr(d.Path)), oneline.Field(jobDir), d.Line)
+		oneline.Field(dashOr(d.Path)), scratch, oneline.Field(jobDir), d.Line)
 	b.WriteString(". The shell names a path and a refusal and NOT an operation: a denied exec, a redirection to a path the card may not write, and a cd into a directory it may not read all print these words, and a card can carry on from any of them, so what failed here is not established by this line")
 	b.WriteString(". Remedy: re-run the card's own gate against the commit under ")
 	b.WriteString(oneline.Field(jobDir))
