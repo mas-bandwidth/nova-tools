@@ -478,7 +478,7 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 	// fine, and touching models can be pro now"): writing a new model is heavy or above;
 	// editing the models, .cfg files and ledgers tla/ holds is any tier.
 	if model.Tier != cardhdr.RouteHeavy && model.Tier != cardhdr.RouteFrontier {
-		if m := newModels(news); len(m) > 0 {
+		if m := NewModels(news); len(m) > 0 {
 			add("new-model-is-heavy-or-above", 1, fmt.Sprintf("NEW names %s, a new TLA+ model, and line 1 names tier %s, not heavy or frontier", quoteDepends(m), orElse(model.Tier, "-")))
 		}
 	}
@@ -1113,9 +1113,9 @@ func temporaryBase(ref string) bool {
 // lineTierRE is the tier word of line 1, its value possibly empty.
 var lineTierRE = regexp.MustCompile(`\btier:\s*[A-Za-z0-9_-]*`)
 
-// newModels is the NEW entries that write a new TLA+ module (new-model-is-heavy-or-above):
+// NewModels is the NEW entries that write a new TLA+ module (new-model-is-heavy-or-above):
 // a .tla file, or a glob that names one under tla/.
-func newModels(news []string) []string {
+func NewModels(news []string) []string {
 	var out []string
 	for _, e := range news {
 		if c := cleanEntry(e); strings.HasSuffix(c, ".tla") || hygiene.MatchGlob(c, "tla/Model.tla") {
@@ -1123,6 +1123,14 @@ func newModels(news []string) []string {
 		}
 	}
 	return out
+}
+
+// CardNewModels is the entries of the brief's NEW: line that write a new TLA+ module, the
+// new-model-is-heavy-or-above rule's reading, for add and the verbs that re-tier a card
+// (nova-sprint internal/sprint, ModelTier and briefTier).
+func CardNewModels(raw []byte) []string {
+	h, _ := cardHeaderBlock(raw)
+	return NewModels(headerList(h["NEW"].value))
 }
 
 // heavyLine is line 1 with its tier heavy, the least tier the TLA+ rule takes.
