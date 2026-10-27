@@ -1,5 +1,29 @@
 # nova-tools changelog
 
+## v1.6.27 — 2026-10-27
+
+Cut from 6697d8c0ef0b6ec793f01019ce509e89fdb9daf8. 4 pull requests since v1.6.13.
+
+SHA256SUMS digest: d7ff6999720148b6a6a42f4791cc3dcb78fd7e3a4afa415fc945d871d692d9b7
+
+Adopt this release with `--expect-sums d7ff6999720148b6a6a42f4791cc3dcb78fd7e3a4afa415fc945d871d692d9b7`.
+
+Recovery journeys incomplete, gate waived: v1.6.27 is the unified release: nova-tools and nova-sprint cut together at one version again; it changes neither hook recovery nor spend recording
+
+- TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce: not-run (no --journeys evidence)
+- TestNoServerOrNoAnswerIsNoEvidence: not-run (no --journeys evidence)
+- TestTheGateRefusesEveryoneWhileTheServerIsStale: not-run (no --journeys evidence)
+- TestAStaleAnswerIsDownWithAFreshServer: not-run (no --journeys evidence)
+- TestALostAnswerIsNeverToldTwice: not-run (no --journeys evidence)
+
+Spend gate waived: v1.6.27 is the unified release: nova-tools and nova-sprint cut together at one version again; it changes neither hook recovery nor spend recording (window 2026-10-24T00:00:00Z..2026-10-27T18:40:06Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #6088 roadmap: fleet builds take a bench slot, critical v1.9 (2026-10-24 coordinator review)
+- #6089 friend, member: send progress --head after every push of a card's branch
+- #6091 nova-hook: a first silent miss is a last chance, not a down
+- #6093 bus: a stalled send is tried at most once, not exactly once
+
 ## v1.6.11 — 2026-10-20
 
 Cut from c6e29c46d6190eb4047b5a51355f63152b2d271b. 3 pull requests since v1.6.10.
