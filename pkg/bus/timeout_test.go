@@ -115,14 +115,17 @@ func TestASendIsNotRetriedWhenTheStoreStalls(t *testing.T) {
 	s, c := newStalled(t, "EVAL", "XACK")
 	r := Redis{C: c, Timeout: 20 * time.Millisecond}
 
+	// The timeout is the context's, on the wall clock: on a loaded host it can
+	// pass before the command reaches the wire, so the count is at most one.
+	// Never retried is the property, not that the first send went out.
 	err := r.AddAll(context.Background(), []string{"bus2:bob"}, map[string]string{"k": "v"})
 	var te *TimeoutError
 	require.ErrorAs(t, err, &te)
-	assert.EqualValues(t, 1, s.words["EVAL"].Load())
+	assert.LessOrEqual(t, s.words["EVAL"].Load(), int32(1), "a send is never tried again")
 
 	_, err = r.Ack(context.Background(), "bus2:bob", "g", "1-0")
 	require.ErrorAs(t, err, &te)
-	assert.EqualValues(t, 1, s.words["XACK"].Load())
+	assert.LessOrEqual(t, s.words["XACK"].Load(), int32(1), "an ack is never tried again")
 }
 
 func TestACancelledCallIsNotATimeoutAndIsNotRetried(t *testing.T) {
