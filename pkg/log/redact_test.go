@@ -2,6 +2,8 @@ package log
 
 import (
 	"bytes"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -132,5 +134,76 @@ func TestWriteKeepsTheFixedVocabulary(t *testing.T) {
 	require.NoError(t, l.Write(&b))
 	for _, want := range []string{`"source":"nova-work"`, `"verb":"events"`, `"event":"pr-checks-done"`, `"level":"INFO"`} {
 		assert.True(t, bytes.Contains(b.Bytes(), []byte(want)), "the line lost %s: %s", want, b.String())
+	}
+}
+
+// A provider-key prefix counts only where it starts a token. Without a left boundary
+// the sk- rule matched inside a nova-sprint store op id (<base36 nanos>-<pid>-<hex>)
+// whose time part ended in "sk", about one id in 1296, and backup refused a good
+// store file as secret-shaped (nova-sprint#602). The key is still caught at the start
+// of the string and after every separator a line puts in front of a value.
+func TestRedactCatchesAProviderKeyThatStartsAToken(t *testing.T) {
+	t.Parallel()
+
+	keys := []string{
+		shape("sk", "-live-9aXbQ2mR7tZk4LpW8vNc3JdH"),
+		shape("sk", "-proj-Ab12Cd34Ef56Gh78Ij90Kl"),
+		shape("sk", "_live_9aXbQ2mR7tZk4LpW8vNc3JdH"),
+		shape("ghp", "_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"),
+		shape("glpat", "-Ab12Cd34Ef56Gh78Ij90"),
+		shape("AKIA", "IOSFODNN7EXAMPLE"),
+		shape("npm", "_Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56"),
+	}
+	fronts := []string{"", " ", "\t", "\n", `"`, "'", "=", ":", ": ", "(", "[", "/", ",", "_", "-"}
+	for _, key := range keys {
+		for _, front := range fronts {
+			line := "env" + front + key + " tail"
+			if front == "" {
+				line = key + " tail"
+			}
+			got := Redact(line)
+			assert.NotContains(t, got, key, "front %q: the key survived Redact: %s", front, got)
+			assert.Contains(t, got, Redacted, "front %q: nothing was marked redacted: %s", front, got)
+			assert.True(t, strings.HasSuffix(got, " tail"), "front %q: the rest of the line was eaten: %s", front, got)
+			if front != "" {
+				assert.True(t, strings.HasPrefix(got, "env"+front), "front %q: the separator before the key was eaten: %s", front, got)
+			}
+		}
+	}
+
+	// two keys back to back, one separator apart: the first match must not eat the
+	// separator the second one needs.
+	a, b := shape("sk", "-live-9aXbQ2mR7tZk4LpW8vNc3JdH"), shape("ghp", "_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")
+	got := Redact(a + " " + b)
+	assert.NotContains(t, got, a)
+	assert.NotContains(t, got, b)
+	assert.Equal(t, Redacted+" "+Redacted, got)
+}
+
+// The store op ids and ordinary words that merely contain a prefix are not keys.
+func TestRedactLeavesAPrefixInsideATokenAlone(t *testing.T) {
+	t.Parallel()
+
+	keep := []string{
+		// the id from nova-sprint#602's bench run, its time part ending "sk"
+		"backup: op dg9s0cfmsk-1929501-cd9a14e6b07f2a51 written",
+		"dg9s0cfmsk-1929501-cd9a14e6b07f2a51",
+		// words that end in a prefix, followed by a long tail from the key alphabet
+		"ask-the-friend-for-a-second-read",
+		"metric disk_usage_samples_for_bench",
+		"task_queue_depth_per_member_slot",
+	}
+	// store.NewID shapes, built from fixed numbers (no clock): base36 nanos whose last
+	// two digits are "sk", a pid and eight hex bytes.
+	const sk = 28*36 + 20 // "sk" in base36
+	for i := int64(0); i < 32; i++ {
+		nanos := int64(1761300000000000000) + i*7777777777
+		nanos += (sk - nanos%1296 + 1296) % 1296
+		id := strconv.FormatInt(nanos, 36) + "-" + strconv.FormatInt(1000+i*7919, 10) + "-" + fmt.Sprintf("%016x", uint64(i+1)*0x9e3779b97f4a7c15)
+		require.True(t, strings.Contains(id, "sk-"), "fixture %s does not carry the sk- the bug needs", id)
+		keep = append(keep, id, "op "+id+" applied")
+	}
+	for _, s := range keep {
+		assert.Equal(t, s, Redact(s), "Redact changed a line it should have left alone: %s", s)
 	}
 }
