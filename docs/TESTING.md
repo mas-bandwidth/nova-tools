@@ -48,7 +48,7 @@ parallel; nothing runs serially unless it shares state, and then it says why.
 Every state machine has a TLA+ module beside its code, with reversed
 witnesses: configurations that must fail, proving the checked property can
 break. `tests/tla/check.sh` runs them all in parallel. A `<tool>/tla/`
-directory either has a `CASES.tsv` (config, module, expected, property, deadlock) or holds one module
-whose `*Broken*.cfg` files must end in a violation and whose other `.cfg` files
-must pass. Where code does index arithmetic (rings, compaction, wrapping
+directory either has a `CASES.tsv` (config, module, expected, property,
+deadlock) or holds one module whose `*Broken*.cfg` files must end in a
+violation and whose other `.cfg` files must pass. Where code does index arithmetic (rings, compaction, wrapping
 counters), the model carries the same arithmetic, checked at capacity 3 or 4.
