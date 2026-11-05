@@ -52,7 +52,7 @@ refused rather than handing the command's whole directory to the wall. A command
 remote host could not be honoured, and the macOS profile only accepts `localhost` as a host.
 
 A flag the run form or a verb does not take is refused, never ignored. `-h` or `--help` before `--` prints the usage and
-exits 0; after `--` it belongs to the command.
+exits 0; after `--` it belongs to the command. A bare `nova-sandbox`, with no arguments, prints the usage and exits 0 too.
 
 `--gpu` is refused on Linux. A GPU there is a device directory; grant it the same way as any other, for example
 `--write /dev/dri`.
@@ -360,7 +360,7 @@ nova-sandbox check: check takes no flags or arguments and got --x; run: nova-san
 nova-sandbox: unknown verb x; the verbs are show check probe help (see nova-sandbox help), or flags then -- <cmd>; run: nova-sandbox -h
 ```
 
-The malformed reasons are `bad_flag`, `no_command`, `bad_read`, `bad_write`, `bad_net` and `bad_gpu`. A command
+The malformed reasons are `bad_flag`, `bad_value`, `no_command`, `bad_read`, `bad_write`, `bad_net` and `bad_gpu`. A command
 that is missing or not executable joins that line when it comes with one of them.
 
 Every other refusal is a runtime one: one line each, then 125 (the wall refused), or 126 or 127 (only the command):
@@ -372,6 +372,7 @@ SANDBOX REFUSED reason=<reason>: <text>
 | reason | when |
 |---|---|
 | `bad_flag` | an unknown flag, a flag with no value, an unknown verb, or a flag or argument a verb does not take |
+| `bad_value` | a value flag followed by `--` or another flag (`--read -- true`): the flag swallowed it, so this is the only problem reported |
 | `no_command` | no `--`, or nothing after it |
 | `bad_read`, `bad_write` | a path that is relative, missing, not a directory, unresolvable, or holds a character the generated rules cannot carry (a control character; on macOS also `"` `\` `(` `)`); `bad_read` also for a command outside every grant |
 | `bad_net` | a `--net-allow` that is not loopback `host:port`, or one without `--net-deny` |
@@ -390,7 +391,7 @@ SANDBOX REFUSED reason=<reason>: <text>
 | 125 | the wall refused to start on this host (`SANDBOX REFUSED` on stderr) |
 | 126 | the only problem is a command that is not an executable file (shell convention) |
 | 127 | the only problem is a command on no `PATH` entry or a path that does not exist |
-| 0 / 1 | `check`, `probe` and `show`: yes / no; `help` and every `-h` are 0 |
+| 0 / 1 | `check`, `probe` and `show`: yes / no; `help`, every `-h` and a bare `nova-sandbox` are 0 |
 
 A command may exit 2, 125, 126 or 127 itself. The stderr line tells them apart: the tool's own refusals always start
 `nova-sandbox` or `SANDBOX REFUSED`, and nothing runs after one.
