@@ -129,11 +129,11 @@ jobs:
             [ "$play" = fleet/requirements.yml ] && continue
             ansible-playbook -i fleet/ci/inventory --syntax-check "$play"
           done
-      - name: loops.yml --check against the stub inventory
+      - name: services.yml --check against the stub inventory
         shell: bash
         run: |
           export PATH="$RUNNER_TEMP/ansible/bin:$PATH"
-          ansible-playbook -i fleet/ci/inventory fleet/loops.yml --check --diff </dev/null
+          ansible-playbook -i fleet/ci/inventory fleet/services.yml --check --diff </dev/null
 
   ci-ok:
     if: always()

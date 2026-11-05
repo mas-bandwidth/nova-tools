@@ -1,60 +1,59 @@
 # nova-reserve
 
-nova-reserve: reservations on a machine's shared resources so people and AIs can coordinate. It runs a command holding a
-reservation of one of N slots on this machine, so builds, test runs, benches and CI jobs queue instead of piling onto one
-box and timing each other out. A reservation has N slots (the capacity, set with `--slots`). The slots are OS file locks in one directory (flock on Linux,
-macOS and the BSDs, LockFileEx on Windows): the kernel frees the slot of a holder that ends or dies, however it dies,
-SIGKILL included. There is no daemon, no server and no PID file to clean up.
+nova-reserve: reservations on a machine's shared resources so people and AIs can coordinate. A command, or a hold,
+reserves one of the machine's N slots, so builds, test runs, benches and CI jobs queue instead of piling onto one box
+and timing each other out. The slots are OS file locks in one directory (flock on Linux, macOS and the BSDs,
+LockFileEx on Windows): the kernel frees the slot of a holder that ends or dies, SIGKILL included. There is no daemon,
+no server and no PID file to clean up. The directory (default `/var/tmp/nova-reserve`, `C:\ProgramData\nova-reserve`
+on Windows) must be on a local disk.
+
+A machine has one capacity, N, stored in `<dir>/capacity`. The first caller stores its `--slots` (or the CPU count /
+4); a caller whose `--slots` differs is refused (exit 2) and told to run `nova-reserve set --slots N`, which is refused
+while any slot is held (exit 1).
+
+The full contract (verbs, flags, exit codes, the files in the directory, platforms) is
+[docs/SPEC-RESERVE.md](../docs/SPEC-RESERVE.md).
 
 ## Usage
 
 ```
-nova-reserve [--slots N] [--wait D] [--exclusive] [--dir DIR] -- <cmd> [args...]
-nova-reserve hold [--slots N] [--wait D] [--exclusive] [--dir DIR]
+nova-reserve [run] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR] -- <cmd> [args...]
+nova-reserve hold [--for D] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR]
 nova-reserve status [--dir DIR]
+nova-reserve set --slots N [--dir DIR]
+nova-reserve help [run|hold|status|set]
 ```
 
-**run** (no verb) waits for a free slot to reserve, runs the command with this process's stdin, stdout and stderr, and frees the
-slot when the command exits. It exits with the command's status (128 + the signal when a signal ended it); 2 for a
-usage error; 3 when the slot could not be taken. Before the command starts it prints one line to stderr:
-`nova-reserve: HELD mode=shared slot=2/4 pid=1234`. SIGINT and SIGTERM are passed to the command (to its process group on macOS and the BSDs).
+- **run** finds the command, waits for a slot, runs it, frees the slot, and exits with its status.
+- **hold** holds a slot until SIGTERM, SIGINT or SIGHUP, or `--for D`; it never reads stdin. Without `--for` it also
+  ends when its parent exits. It prints `HELD ...`, then `RELEASED reason=signal|for|parent_exit held_for=...`.
+- **status** prints the capacity, each slot's holder (pid, since, why, cmd), the `gate` and `all` locks, and
+  `free=<n>/<capacity>` (0 during an `--exclusive` run). It takes no lock: it reads the holder files whose pid is alive.
+- **set** stores the capacity.
 
-**hold** takes a slot, prints one line to stdout starting `HELD`, and holds it until its stdin closes, then exits 0.
-A caller that is not a shell starts it as a child, waits for the line, works, and closes the pipe; a caller that dies
-closes the pipe too.
-
-**status** prints one line per slot file: `slot3 free`, or `slot3 held pid=... start=... cmd=...`, and
-`all held ...` while an exclusive holder runs.
-
-| Flag | |
-|---|---|
-| `--slots N` | how many shared holders may run at once (default: CPU count / 4, at least 1) |
-| `--wait D` | the longest wait for a slot, as a Go duration (`90s`, `15m`); default no bound |
-| `--exclusive` | run alone: wait for every holder to end, and keep new ones out while waiting and running |
-| `--dir DIR` | the reservation directory; default `$NOVA_RESERVE_DIR`, else `/tmp/nova-reserve` (`C:\ProgramData\nova-reserve` on Windows) |
-
-Every caller on a machine must use the same directory. Callers may pass different `--slots`: each counts slot1..slotN
-of its own N. An exclusive taker first holds the file `gate`, so no new shared taker passes while it waits; then it
-waits for `all`, which every shared holder holds shared. There is no arrival order beyond that: waiters poll once a
-second, and a steady stream of takers may pass a waiting one.
-
-The command does not inherit the lock, and it dies with nova-reserve so it never runs without its slot: on Linux the
-kernel SIGKILLs it when nova-reserve dies (Pdeathsig); on Windows it runs in a job object that is killed when nova-reserve's
-handle closes. On macOS and the BSDs it runs in its own process group and SIGINT and SIGTERM are passed to the group,
-but there is no kernel tie: a SIGKILL of nova-reserve frees the slot and leaves the command running unslotted.
+Exit: 0 done; 1 refused (no slot within `--wait`, capacity in use); 2 could not run (a bad flag, value or verb, a
+`--slots` that differs from the capacity, a corrupt capacity file, `--wait 0`); 126 not executable; 127 not found,
+before any slot is taken; else the command's status. A flag a verb does not take is a refusal, never ignored.
 
 ## Build and test
 
 ```
 go build -o nova-reserve .
-go test .                       # unit tests, an in-memory lock table and a fake clock
-go test -tags functional .      # real processes on real locks: a SIGKILLed holder frees its slot
+go test .                       # unit tests: an in-memory lock table, a fake clock, a fake command
+go test -tags functional .      # real processes on real locks
 ```
 
+## Models
+
 `tla/SlotCount.tla` is the guarantee: at most N shared holders, an exclusive holder alone. `tla/SlotFiles.tla` is the
-layout on disk (gate, all, slot1..slotN, the scan over them, crashes anywhere) and refines it; it also checks that an
-exclusive taker past the gate keeps new shared takers out, that no command runs without its slot, and that every
-waiter runs once holders finish. The
-`*Broken*.cfg` files are reversed witnesses TLC must fail: a slot taken without its lock, a shared holder that skips
-`all`, an exclusive taker that skips the gate, a crashed holder whose locks are never freed, a crashed holder whose command runs on
-(macOS and the BSDs on SIGKILL), and a count that is not checked.
+lock layout for a fixed N (gate, all, slot1..slotN, the scan over them, crashes anywhere) and refines it.
+`tla/Capacity.tla` is the capacity file beside the slot array, the gate and all: every holder was let in under the one
+stored capacity, never more holders than it, set changes it only when no one holds, and two first takers both get
+slots even while holders never finish (`CapacityTwoFirst.cfg`; liveness in `CapacityLive.cfg` runs on two callers,
+since three take too long under strong fairness). The `*Broken*.cfg` files are
+reversed witnesses TLC must fail: a slot taken without its lock, a shared holder that skips `all`, an exclusive taker
+that skips the gate, a crashed holder whose locks are never freed, a crashed holder whose command runs on (macOS and
+the BSDs on SIGKILL), a count that is not checked, a taker that counts its own `--slots` (the per-caller bug), two
+first takers that both write the capacity, a set that writes while slots are held, a claimer that never sees the
+stored capacity, and a status that probes slots by locking them. `CASES.tsv` lists them;
+`tla/check.sh <jar> reserve/tla` runs them.

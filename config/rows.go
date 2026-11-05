@@ -59,7 +59,7 @@ var kinds = map[string]*kind{
 			{name: "runners", typ: "int"},
 			{name: "note", typ: "text", cut: true, free: true},
 		}},
-	"loop": {name: "loop", table: "loops", check: checkLoop,
+	"service": {name: "service", table: "services", check: checkService,
 		fields: []field{
 			{name: "machine", typ: "ref", required: true},
 			{name: "argv", typ: "argv", required: true},
@@ -220,15 +220,15 @@ func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 	return next, nil
 }
 
-func checkLoop(r Row) error {
+func checkService(r Row) error {
 	periodic, kept := r.F["every"] != "0", r.F["keepalive"] == "true"
 	switch {
 	case periodic && kept:
-		return fmt.Errorf("loop %s has --every %s and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false", r.Name, r.F["every"])
+		return fmt.Errorf("service %s has --every %s and --keepalive true; a service runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false", r.Name, r.F["every"])
 	case !periodic && !kept:
-		return fmt.Errorf("loop %s has neither --every nor --keepalive; want --every <seconds> or --keepalive true", r.Name)
+		return fmt.Errorf("service %s has neither --every nor --keepalive; want --every <seconds> or --keepalive true", r.Name)
 	case r.F["keys"] != "" && r.F["seat"] == "":
-		return fmt.Errorf("loop %s names secrets (--keys %s) and no --seat to open them from", r.Name, r.F["keys"])
+		return fmt.Errorf("service %s names secrets (--keys %s) and no --seat to open them from", r.Name, r.F["keys"])
 	}
 	return nil
 }

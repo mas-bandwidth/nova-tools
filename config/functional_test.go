@@ -91,12 +91,12 @@ func TestFunctionalStore(t *testing.T) {
 		return out
 	}
 	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\n", ok("machine", "add", "m1", "--user", "nova", "--actor", "a1"))
-	ok("loop", "add", "r-m1", "--machine", "m1", "--argv", `["prog","a b"]`, "--keepalive", "true", "--actor", "a1")
-	assert.Equal(t, "CONFIG SET kind=loop name=r-m1 rev=3 changed=enabled\n", ok("loop", "set", "r-m1", "--enabled", "false", "--actor", "a1", "--reason", "why"))
-	assert.Equal(t, `LOOP name=r-m1 machine=m1 argv=["prog","a b"] seat=- keys=- every=0 keepalive=true enabled=false env={} log=-`+"\nCONFIG LIST kind=loop rows=1\n", ok("loop", "list"))
+	ok("service", "add", "r-m1", "--machine", "m1", "--argv", `["prog","a b"]`, "--keepalive", "true", "--actor", "a1")
+	assert.Equal(t, "CONFIG SET kind=service name=r-m1 rev=3 changed=enabled\n", ok("service", "set", "r-m1", "--enabled", "false", "--actor", "a1", "--reason", "why"))
+	assert.Equal(t, `SERVICE name=r-m1 machine=m1 argv=["prog","a b"] seat=- keys=- every=0 keepalive=true enabled=false env={} log=-`+"\nCONFIG LIST kind=service rows=1\n", ok("service", "list"))
 	assert.Equal(t, "MACHINE name=m1 address=- user=nova os=- arch=- cores=- roles=bench runners=0 note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
 	show := ok("machine", "show", "m1")
-	assert.Regexp(t, `created=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ updated=20\d\d-.*Z loops=r-m1\n$`, show)
+	assert.Regexp(t, `created=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ updated=20\d\d-.*Z services=r-m1\n$`, show)
 	ok("machine", "set", "m1", "--cores", "4", "--note", "a note", "--actor", "a1")
 	ok("machine", "set", "m1", "--cores", "default", "--actor", "a1")
 	ok("machine", "set", "m1", "--cores", "16", "--os", "linux", "--arch", "amd64", "--roles", "bench,services", "--actor", "a1")
@@ -118,17 +118,17 @@ func TestFunctionalStore(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"loop", "add", "r-x", "--machine", "nope", "--argv", `["p"]`, "--every", "5", "--actor", "a1"}, "nova-config loop add: no machine nope; the machines are m1\n"},
-		{[]string{"machine", "remove", "m1", "--actor", "a1"}, "nova-config machine remove: machine m1 still runs loops r-m1; remove them first: nova-config loop remove r-m1 --actor <you>\n"},
+		{[]string{"service", "add", "r-x", "--machine", "nope", "--argv", `["p"]`, "--every", "5", "--actor", "a1"}, "nova-config service add: no machine nope; the machines are m1\n"},
+		{[]string{"machine", "remove", "m1", "--actor", "a1"}, "nova-config machine remove: machine m1 still runs services r-m1; remove them first: nova-config service remove r-m1 --actor <you>\n"},
 		{[]string{"machine", "add", "m1", "--user", "u", "--actor", "a1"}, "nova-config machine add: machine m1 exists; use: nova-config machine set\n"},
 	} {
 		code, _, errs := realRun(t, env, refusal.args...)
 		assert.Equal(t, 1, code, "%v: %s", refusal.args, errs)
 		assert.Equal(t, refusal.want, errs)
 	}
-	code, out, errs := realRun(t, env, "history", "loop")
+	code, out, errs := realRun(t, env, "history", "service")
 	require.Equal(t, 0, code, errs)
-	assert.Regexp(t, `^HISTORY at=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ actor=a1 kind=loop name=r-m1 op=set rev=3\n  enabled: true -> false\n  reason: "why"\nHISTORY .* op=add rev=2\n`, out)
+	assert.Regexp(t, `^HISTORY at=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ actor=a1 kind=service name=r-m1 op=set rev=3\n  enabled: true -> false\n  reason: "why"\nHISTORY .* op=add rev=2\n`, out)
 	assert.Contains(t, out, "CONFIG HISTORY rows=2\n")
 	code, out, errs = realRun(t, env, "history", "--since", "1h")
 	require.Equal(t, 0, code, errs)
@@ -136,14 +136,14 @@ func TestFunctionalStore(t *testing.T) {
 
 	code, out, errs = realRun(t, env, "inventory", "--host", "m1")
 	require.Equal(t, 0, code, errs)
-	for _, want := range []string{`"cores": 16`, `"nova_os": "linux"`, `"ansible_connection": "local"`, `"log": "~/.local/state/nova/loops/r-m1.log"`, `"env": {}`} {
+	for _, want := range []string{`"cores": 16`, `"nova_os": "linux"`, `"ansible_connection": "local"`, `"log": "~/.local/state/nova/services/r-m1.log"`, `"env": {}`} {
 		assert.Contains(t, out, want)
 	}
 	code, out, errs = realRun(t, env, "inventory", "--list")
 	require.Equal(t, 0, code, errs)
 	assert.NotContains(t, out, "nova_pg_dsn")
 
-	assert.Equal(t, "CONFIG REMOVE kind=loop name=r-m1 rev=7\n", ok("loop", "remove", "r-m1", "--actor", "a1"))
+	assert.Equal(t, "CONFIG REMOVE kind=service name=r-m1 rev=7\n", ok("service", "remove", "r-m1", "--actor", "a1"))
 }
 
 // TestFunctionalOldColumns models the live store: main's schema, seeded the way
@@ -158,7 +158,8 @@ func TestFunctionalOldColumns(t *testing.T) {
 	for _, q := range []string{
 		`INSERT INTO config.machines (name, "user", seat, slots, width, tla, roles, gates_only) VALUES
 		   ('old-store', 'nova', 'seat1', 8, 2, true, 'bench,coordination,services', 'g'), ('old-plain', 'nova', 'seat2', 4, NULL, false, 'bench', '')`,
-		`INSERT INTO config.loops (name, machine, argv, seat, keepalive) VALUES ('old-loop', 'old-plain', '["prog"]', 'seat2', true)`,
+		`INSERT INTO config.loops (name, machine, argv, seat, keepalive) VALUES ('old-service', 'old-plain', '["prog"]', 'seat2', true)`,
+		`INSERT INTO config.history (kind, name, op, after, actor) VALUES ('loop', 'old-service', 'add', '{"machine":"old-plain"}', 'a0')`,
 		`UPDATE config.fleet SET store = 'old-store', coordinator = 'old-store', redis_port = 6380, pg_dsn = 'postgres://nova@old-store/x', bus = 'b', loops_dir = 'd'`,
 	} {
 		_, err = c.Exec(ctx, q)
@@ -170,7 +171,7 @@ func TestFunctionalOldColumns(t *testing.T) {
 		_, err = c.Exec(ctx, string(schema))
 		require.NoError(t, err, "schema.sql runs on the old store")
 	}
-	for _, args := range [][]string{{"machine", "list"}, {"machine", "show", "old-store"}, {"loop", "list"}, {"history"}, {"inventory"}} {
+	for _, args := range [][]string{{"machine", "list"}, {"machine", "show", "old-store"}, {"service", "list"}, {"history"}, {"inventory"}} {
 		code, out, errs := realRun(t, env, args...)
 		require.Equal(t, 0, code, "%v: %s", args, errs)
 		assert.NotContains(t, out, "seat1", "%v", args)
@@ -198,11 +199,23 @@ func TestFunctionalOldColumns(t *testing.T) {
 	var n int
 	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'machines' AND column_name IN ('address', 'os', 'arch', 'cores')`).Scan(&n))
 	assert.Equal(t, 4, n, "the four new columns exist exactly once")
-	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'loops' AND column_name IN ('env', 'log')`).Scan(&n))
-	assert.Equal(t, 2, n, "the loop columns env and log exist exactly once")
+	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'services' AND column_name IN ('env', 'log')`).Scan(&n))
+	assert.Equal(t, 2, n, "the service columns env and log exist exactly once")
 	code, out, errs = realRun(t, env, "inventory", "--host", "old-plain")
 	require.Equal(t, 0, code, errs)
-	assert.Contains(t, out, `"log": "~/.local/state/nova/loops/old-loop.log"`, "an old loop row gets the default log")
+	assert.Contains(t, out, `"log": "~/.local/state/nova/services/old-service.log"`, "an old service row gets the default log")
+	code, out, errs = realRun(t, env, "history", "service")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "kind=service name=old-service op=add", "a history row written before the rename reads as a service")
+	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.tables WHERE table_schema = 'config' AND table_name = 'loops'`).Scan(&n))
+	assert.Equal(t, 0, n, "the old table was renamed, not copied")
+	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid = 'config.services'::regclass AND conname LIKE 'loops%'`).Scan(&n))
+	assert.Equal(t, 0, n, "no constraint of the renamed table is still named loops_*")
+	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid = 'config.services'::regclass AND conname IN ('services_pkey', 'services_name_pattern', 'services_argv_check', 'services_machine_fkey', 'services_every_check')`).Scan(&n))
+	assert.Equal(t, 5, n, "the old constraints are services_*")
+	_, err = c.Exec(ctx, `INSERT INTO config.services (name, machine, argv, keepalive) VALUES ('bad', 'old-plain', 'x', true)`)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "loops", "a constraint error never says loops")
 	code, out, errs = realRun(t, env, "history")
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, out, "kind=machine name=old-store op=remove")

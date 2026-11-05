@@ -39,9 +39,29 @@ ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS os text NOT NULL DEFAULT ''
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS arch text NOT NULL DEFAULT '';
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS cores integer CHECK (cores >= 0);
 
--- A loop: a command one machine runs, every n seconds or kept alive.
-CREATE TABLE IF NOT EXISTS config.loops (
-    name       text PRIMARY KEY CONSTRAINT loops_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
+-- A store older than the rename has this table as config.loops: rename it (and
+-- its index and name check) once; a fresh store, or one run twice, skips this.
+DO $$
+DECLARE
+    c record;
+BEGIN
+    IF to_regclass('config.loops') IS NOT NULL AND to_regclass('config.services') IS NULL THEN
+        ALTER TABLE config.loops RENAME TO services;
+        ALTER INDEX IF EXISTS config.loops_machine RENAME TO services_machine;
+        -- every constraint the table carried under loops_*: the primary key, the name
+        -- pattern, the argv, keys, every and either-or checks, the machine foreign key
+        -- and the not-null set, so no constraint error says "loops"
+        FOR c IN SELECT conname FROM pg_constraint
+                 WHERE conrelid = 'config.services'::regclass AND conname LIKE 'loops\_%' ORDER BY conname LOOP
+            EXECUTE format('ALTER TABLE config.services RENAME CONSTRAINT %I TO %I', c.conname, 'services_' || substr(c.conname, 7));
+        END LOOP;
+    END IF;
+END $$;
+
+-- A service: a program one machine keeps running; with every n seconds it runs
+-- every n seconds instead of staying up.
+CREATE TABLE IF NOT EXISTS config.services (
+    name       text PRIMARY KEY CONSTRAINT services_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
     machine    text NOT NULL REFERENCES config.machines (name),
     argv       text NOT NULL CHECK (argv LIKE '[%]'),
     seat       text NOT NULL DEFAULT '',
@@ -55,9 +75,9 @@ CREATE TABLE IF NOT EXISTS config.loops (
     log        text NOT NULL DEFAULT '',
     CHECK ((every > 0) <> keepalive)
 );
-ALTER TABLE config.loops ADD COLUMN IF NOT EXISTS env text NOT NULL DEFAULT '{}' CHECK (env LIKE '{%}');
-ALTER TABLE config.loops ADD COLUMN IF NOT EXISTS log text NOT NULL DEFAULT '';
-CREATE INDEX IF NOT EXISTS loops_machine ON config.loops (machine, name);
+ALTER TABLE config.services ADD COLUMN IF NOT EXISTS env text NOT NULL DEFAULT '{}' CHECK (env LIKE '{%}');
+ALTER TABLE config.services ADD COLUMN IF NOT EXISTS log text NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS services_machine ON config.services (machine, name);
 
 -- Older stores: a fleet table (a kind this tool no longer has; it is left as it
 -- is, unread) had store and coordinator pointing at machines, and machines.seat

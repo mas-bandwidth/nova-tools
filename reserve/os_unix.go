@@ -11,7 +11,9 @@ import (
 )
 
 // systemDir is the reservation directory when NOVA_RESERVE_DIR names none.
-const systemDir = "/tmp/nova-reserve"
+// /var/tmp survives a reboot and is shared by every user, so the stored
+// capacity outlives a reboot and every caller on the machine shares one.
+const systemDir = "/var/tmp/nova-reserve"
 
 // osLock is flock(2) on path. The file is opened read-only (flock needs no
 // write access, so every user can lock a file another user made), and opened
@@ -60,4 +62,10 @@ func forward(cmd *exec.Cmd, s os.Signal) {
 		// ignored: a process that has already ended needs no signal
 		_ = syscall.Kill(pid, sig)
 	}
+}
+
+// running says pid is a process: EPERM is another user's live process.
+func running(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }

@@ -80,7 +80,7 @@ one `<seat>.yaml` per seat). Kept: `exec`, `names`, `check`, `seal`, `seat add`,
 
 | was | now |
 |---|---|
-| `cmd/nova-config`, `schemas/config`, `docs/SPEC-CONFIG.md` | `config/`: machine, loop and fleet rows and the inventory, same tables; the friend, sprint, provider, route and tier kinds, `apply`, `migrate`, `status`, `login`, `loop run` and `machine width/self` are dropped (v1.6.29 carries them) |
+| `cmd/nova-config`, `schemas/config`, `docs/SPEC-CONFIG.md` | `config/`: machine and service rows (the loop kind became service; fleet was dropped) and the inventory, same tables; the friend, sprint, provider, route and tier kinds, `apply`, `migrate`, `status`, `login`, `loop run` and `machine width/self` are dropped (v1.6.29 carries them) |
 
 ## Replaced
 

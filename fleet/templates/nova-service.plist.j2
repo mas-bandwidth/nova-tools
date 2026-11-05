@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-{# fleet/loops.yml renders this for one loop record l on a darwin machine:
+{# fleet/services.yml renders this for one service record l on a darwin machine:
    every value is the record's (l) or the host layout's (group_vars/all.yml);
-   the unit's environment is loop_env (HOME, PATH and the record's env) and its
-   log is loop_log. #}
-<!-- {{ loop_dir }}/com.nova.loop.{{ l.name }}.plist: written by fleet/loops.yml from the loop record {{ l.name }} -->
+   the unit's environment is service_env (HOME, PATH and the record's env) and its
+   log is service_log. #}
+<!-- {{ service_dir }}/com.nova.service.{{ l.name }}.plist: written by fleet/services.yml from the service record {{ l.name }} -->
 <plist version="1.0">
 <dict>
 {% if not l.enabled %}
@@ -12,20 +12,20 @@
 <true/>
 {% endif %}
 <key>Label</key>
-<string>com.nova.loop.{{ l.name | e }}</string>
-{% if loop_system %}
+<string>com.nova.service.{{ l.name | e }}</string>
+{% if service_system %}
 <key>UserName</key>
 <string>{{ ansible_user_id | e }}</string>
 {% endif %}
 <key>ProgramArguments</key>
 <array>
-{% for w in loop_exec %}
+{% for w in service_exec %}
 <string>{{ w | e }}</string>
 {% endfor %}
 </array>
 <key>EnvironmentVariables</key>
 <dict>
-{% for k, v in loop_env | dictsort %}
+{% for k, v in service_env | dictsort %}
 <key>{{ k | e }}</key>
 <string>{{ v | string | e }}</string>
 {% endfor %}
@@ -46,8 +46,8 @@
 <key>AbandonProcessGroup</key>
 <true/>
 <key>StandardOutPath</key>
-<string>{{ loop_log | e }}</string>
+<string>{{ service_log | e }}</string>
 <key>StandardErrorPath</key>
-<string>{{ loop_log | e }}</string>
+<string>{{ service_log | e }}</string>
 </dict>
 </plist>

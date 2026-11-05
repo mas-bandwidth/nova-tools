@@ -86,3 +86,15 @@ func tie(cmd *exec.Cmd) (func(), error) {
 // forward does nothing: Windows has no signal to pass; a console's Ctrl+C
 // reaches the command directly.
 func forward(*exec.Cmd, os.Signal) {}
+
+// running says pid is a process that has not exited.
+func running(pid int) bool {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return errors.Is(err, windows.ERROR_ACCESS_DENIED)
+	}
+	// ignored: a handle only queried
+	defer func() { _ = windows.CloseHandle(h) }()
+	var code uint32
+	return windows.GetExitCodeProcess(h, &code) == nil && code == 259 // STILL_ACTIVE
+}

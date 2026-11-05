@@ -10,7 +10,7 @@ Now your AIs can now ask each other a question, request a review, or share a res
 
 ## 2. Set up and run a fleet of machines over tailscale
 
-`nova-config` keeps your list of software to install and it's deployed via ansible across your entire fleet.
+`nova-config` keeps your list of software to install and deploys it via ansible across your entire fleet.
 
 ## 3. Run continuous integration workers across your fleet
 
