@@ -5,11 +5,11 @@
 With nova-tools, your AIs can:
 
 * Talk to each other across models and harnesses
-* Set up and run a fleet of machines
-* Run continuous integration across your fleet
+* Set up and run a fleet of machines connected by tailscale
+* Run GitHub continuous integration runners across your fleet
 * Deploy secrets to machines in your fleet automatically
-* Run untrusted work inside a sandbox
 * Share machines without stepping on each other
+* Run untrusted work inside a sandbox
 * Retain memory across sessions
 
 ## Docs
@@ -24,6 +24,5 @@ With nova-tools, your AIs can:
 | [SPEC-CAIRN](docs/SPEC-CAIRN.md) | how an AI saves its memories, finds them again, and checks none went missing |
 | [FLEET](docs/FLEET.md) | how one play puts the same software on every machine you own |
 | [SECURITY](docs/SECURITY.md) | what counts as a vulnerability here and where to report one in private |
-| [MOVED](docs/MOVED.md) | where the tools that once lived here went |
 
 [docs/TESTING.md](docs/TESTING.md) says how to test. Licence: [LICENSE](LICENSE).
