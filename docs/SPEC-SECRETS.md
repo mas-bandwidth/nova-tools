@@ -9,7 +9,7 @@ do the cryptography, git carries the files.
 
 ```
 <store>/.sops.yaml     creation rules: one per seat, path_regex ^<seat>\.yaml$, age: <seat key>[,<recovery key>]
-<store>/recovery.pub   optional: a recovery public key every new rule also names
+<store>/recovery.pub   required by `seat add`: the recovery public key every rule also names
 <store>/<seat>.yaml    the seat's secrets, sops-encrypted, one NAME: value per line
 <key file>             the seat's private age key, mode 0600, owned by the user
                        (Windows: owned by the user, access list only the user, SYSTEM and Administrators)
@@ -59,7 +59,7 @@ seat's public key and the store's `recovery.pub`. The store must have a valid `r
 uses the first rule that matches a file, so the new rule goes before the first existing rule that would match the
 seat's file (a catch-all), and every existing rule is kept. A file that does not parse is refused and left alone; the
 write is a temporary file and a rename. It writes no seat file and commits nothing, and refuses a seat or a key that
-already has a rule. The seat then makes its own file with `set`.
+already has a rule. Comments in `.sops.yaml` are kept; formatting is normalised (2-space indent, blank lines between rules dropped). The seat then makes its own file with `set`.
 
 ```
 nova-secrets seat add web age1... --store /srv/secrets

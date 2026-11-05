@@ -12,7 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSelfContained holds secrets to the standard library, golang.org/x/sys and gopkg.in/yaml.v3 (Windows key checks), so it can
+// TestSelfContained holds secrets to the standard library, golang.org/x/sys (Windows key checks) and
+// gopkg.in/yaml.v3 (seat add's .sops.yaml rewrite), so it can
 // be lifted out of this repository as it is: it reads the imports of every
 // .go file here; the tests may also import testify.
 func TestSelfContained(t *testing.T) {
