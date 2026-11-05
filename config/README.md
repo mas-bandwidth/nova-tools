@@ -1,6 +1,6 @@
 # nova-config
 
-nova-config keeps a fleet's machines and loops as rows in PostgreSQL, every write with a history row, and prints
+nova-config keeps a fleet's machines and services as rows in PostgreSQL, every write with a history row, and prints
 them as an Ansible dynamic inventory. The tables, verbs and inventory format are in `docs/SPEC-CONFIG.md`;
 `nova-config help` prints the verbs.
 

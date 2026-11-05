@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-const historyHint = "history takes [<kind> [<name>]] --since <duration|RFC3339> --max <n> --pg <dsn>; kinds: machine, loop"
+const historyHint = "history takes [<kind> [<name>]] --since <duration|RFC3339> --max <n> --pg <dsn>; kinds: machine, service"
 
 // historyKinds are the kinds the history table holds; fleet is retired and still reads.
-var historyKinds = []string{"machine", "loop", "fleet"}
+var historyKinds = []string{"machine", "service", "fleet"}
 
 // parseSince is a duration back from now (90m, 24h, 7d) or an RFC 3339 time.
 func parseSince(s string, now time.Time) (time.Time, error) {
@@ -78,6 +78,9 @@ func runHistory(ctx context.Context, args []string, d deps, stdout io.Writer) er
 		entries = entries[:max]
 	}
 	for _, e := range entries {
+		if e.Kind == "loop" { // rows written before the rename
+			e.Kind = "service"
+		}
 		fmt.Fprintf(stdout, "HISTORY at=%s actor=%s kind=%s name=%s op=%s rev=%d\n", value(e.At), value(e.Actor), value(e.Kind), value(e.Name), value(e.Op), e.ID)
 		for _, l := range changeLines(kindNamed(e.Kind), e.Op, e.Before, e.After) {
 			fmt.Fprintln(stdout, l)
