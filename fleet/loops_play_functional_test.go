@@ -17,8 +17,7 @@ import (
 )
 
 // loops_play_functional_test.go renders fleet/loops.yml's Linux unit state
-// through ansible-core's own templar (docs/SPEC-RELEASE.md, "The seat adopts an
-// approved build"). It carries //go:build functional (docs/STANDARD.md section 8;
+// through ansible-core's own templar. It carries //go:build functional (docs/STANDARD.md section 8;
 // unit-rule) so the unit tier does not compile the ansible render. Since
 // 219c33235e the task's state was a folded scalar whose restart check lost a
 // closing paren; ansible-core stops at the `else` ("expected token ')', got

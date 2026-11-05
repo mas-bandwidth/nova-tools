@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check.sh: run TLC over every model case in the repository, in parallel.
 #
-#   tla/check.sh JAR            every tla/ directory (tla/ and */tla/)
+#   tla/check.sh JAR            every tla/ directory that holds a module (tla/ and */tla/)
 #   tla/check.sh JAR DIR...     only these directories
 #
 # A directory with a CASES.tsv runs its rows (config, module, expected,
@@ -67,7 +67,7 @@ export TLC_JAR
 
 dirs=("$@")
 if [ ${#dirs[@]} -eq 0 ]; then
-	for d in tla */tla; do [ -d "$d" ] && dirs+=("$d"); done
+	for d in tla */tla; do compgen -G "$d/*.tla" >/dev/null && dirs+=("$d"); done
 fi
 
 cases=$(mktemp)

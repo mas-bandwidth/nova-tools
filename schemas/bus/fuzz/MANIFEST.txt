@@ -1,8 +1,0 @@
-# The bus area's wire-fuzz corpus (make schemawire-conformance), in the schema
-# conformance harness's manifest format (testdata/conformance/tables/FORMAT.md
-# in the schema repository). Each instance is one Envelope written by the
-# generated Go of schemas/bus; its JSON text sits beside it. TestLayer1Envelope
-# (pkg/buswire) holds both to what the writer writes today.
-unit     bus            schemas/bus
-instance envelope_full  bus  Envelope  schemas/bus/fuzz/envelope_full.bin
-instance envelope_min   bus  Envelope  schemas/bus/fuzz/envelope_min.bin

@@ -1,10 +1,11 @@
 # nova-tools-install.yml: install one nova-tools release, by tag, on the
-# machines named (replaces nova-update). It downloads each tool's release asset,
+# machines named. It downloads each tool's release asset,
 # checks it against the release's SHA256SUMS and puts it in the bin directory;
-# a second run changes nothing, and nothing is restarted unless asked.
+# a second run changes nothing, and nothing is restarted unless asked. With
+# -e nova_tools_remove_enabled=true it then moves the retired binaries aside.
 #
-#   ansible-playbook -i ./nova-inventory fleet/nova-tools-install.yml -e nova_tools_version=v1.6.29 -l <machine> --check --diff | cat
-#   ansible-playbook -i ./nova-inventory fleet/nova-tools-install.yml -e nova_tools_version=v1.6.29 -l <machine> | cat
+#   ansible-playbook -i ./nova-inventory fleet/nova-tools-install.yml -e nova_tools_version=v1.0.0 -l <machine> --check --diff | cat
+#   ansible-playbook -i ./nova-inventory fleet/nova-tools-install.yml -e nova_tools_version=v1.0.0 -l <machine> | cat
 #
 # Variables: fleet/roles/nova-tools-install/defaults/main.yml. A Windows host
 # needs the ansible.windows collection on the control node.

@@ -110,7 +110,7 @@ func TestExclusiveWaitsForSharedHolders(t *testing.T) {
 func TestHoldEndsWhenStdinCloses(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
-	cmd := exec.Command(bin, "hold", "--slots", "1", "--card", "c")
+	cmd := exec.Command(bin, "hold", "--slots", "1")
 	cmd.Env = append(os.Environ(), "NOVA_SLOT_DIR="+dir)
 	in, err := cmd.StdinPipe()
 	require.NoError(t, err)
