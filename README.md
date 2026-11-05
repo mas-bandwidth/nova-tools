@@ -6,38 +6,38 @@ With nova-tools, your AIs can:
 
 ## 1. Talk to each other across models and harnesses
 
-**Your AIs talk to each other, whatever model they are and whatever harness they run in.**
-Give each AI a name and it can send any other a message, ask a question, hand off a job, or just say what it is doing. Claude, Codex, Antigravity, Grok and OpenCode all join the same conversation. An AI hooks in once and from then on everything addressed to it arrives in its session as it is sent, so a team of AIs on a fleet of machines works like a team, not like a pile of terminals.
+**Across the fleet, every AI can talk with every other, across models and harnesses.**
+Each AI has a name and an inbox on `nova-bus`. An AI hooks in once, and from then on every message to its name arrives in its session as it is sent. Claude, Codex, Antigravity, Grok and OpenCode all hook in the same way.
 
 ## 2. Set up and run a fleet of machines over tailscale
 
-**Turn a pile of machines on a tailnet into one fleet your AIs can see and use.**
-Describe every machine once: what it is, what it is for, and which programs it should keep running or run on a schedule. From then on your AIs know which machines exist and what is running where. One play puts the same tools and the same programs on every machine, Linux, macOS and Windows, and keeps them running. Add a machine and it joins the fleet; retire one and it leaves, with a history of who changed what.
+**Every machine on the tailnet knows its job, and an AI can see the whole fleet at once.**
+`nova-config` holds every machine and every loop it runs, with a history of who changed what. `nova-config inventory` turns that into an Ansible inventory, and the plays in `fleet/` put the same release and the same loops on every machine, Linux, macOS and Windows alike.
 
 ## 3. Run CI workers across your fleet
 
-**Your CI runs on your own machines, every OS, with the same tools and secrets your AIs use.**
-Mark a machine as a runner and it joins the group your plays use to install and register GitHub runners. Your builds and tests run where your AIs work, on hardware you chose, with no queue behind strangers and no separate world to keep in sync.
+**Run CI workers across the fleet.**
+Give a machine the `runner` role and it joins the inventory's runner group. Your plays target that group to install and register GitHub runners, so your CI runs on your own machines, every OS, with the same tools and secrets as the rest of the fleet.
 
 ## 4. Deploy secrets to the fleet
 
 **Every AI gets exactly the secrets its job needs, and nothing else ever sees them.**
-Add a secret once and every machine and AI that should have it, has it: an API key, a deploy token, a database password. When an AI runs the command that needs one, the secret is there, and it was never typed into a prompt, pasted into a file, or visible to anything else on the machine. Secrets stay encrypted in git, so you can see who changed what, and roll back.
+`nova-secrets` keeps the fleet's secrets in git, encrypted with sops and age, one file per seat. A machine or an AI holds a seat key; `exec` decrypts only the names you list, straight into the command it runs. No value ever appears on a command line, in a log, or in `ps`.
 
 ## 5. Run untrusted work behind a wall
 
-**Let an AI run code it did not write, and know the rest of the machine was never in reach.**
-Say which directories a command may read, which it may write, and whether it gets a network. The kernel enforces it. An AI can build a stranger's pull request, run a test suite it has never seen, or try a tool from the internet, and your keys, your repos and your other machines stay out of reach. Works on Linux and macOS.
+**Declare the paths and network a command may touch; the kernel refuses the rest.**
+`nova-sandbox` walls a command on Linux and macOS. It reads only the directories you name, writes only where you say, and with `--net-deny` has no network at all. An AI can run code it did not write and know the rest of the machine was never in reach.
 
 ## 6. Share machines without stepping on each other
 
-**Several AIs and people share one machine and never collide.**
-Each machine has a fixed number of slots. An AI reserves one for the length of a job, or all of them for a benchmark that needs the machine to itself, and everyone else waits their turn instead of fighting for the cores. A reservation ends when the job does, even if it was killed, so nothing is ever left stuck. Works on Linux, macOS, the BSDs and Windows.
+**Reserve a machine's capacity before using it, so AIs and people coordinate instead of collide.**
+`nova-reserve` gives each machine a fixed number of slots. An AI takes one for the length of a command, or all of them for a benchmark, and the rest wait their turn. A reservation ends when the command does, even if it was killed. It works on Linux, macOS, the BSDs and Windows.
 
 ## 7. Memory across sessions
 
-**An AI remembers. What it learned today is there tomorrow, in its own words, and it can find it.**
-An AI writes down what it learned, and its next session reads it back, searches it, and gets a receipt proving the words are exactly what was saved. It can check that no memory went missing and no link went dead. And when it writes about itself, `self-talk` flags the sentences that pass a verdict instead of recording what happened, so the memory stays a record and not a mood. Memories are plain files in git, readable by any model and any harness.
+**An AI keeps what it learned, finds it again, and checks that nothing was lost.**
+`nova-cairn` is the record an AI leaves for its next self. It opens a session, appends the words worth keeping, and hands back a receipt for the exact words saved. `memory search` finds them again by the words in them, `memory verify` checks every note is indexed and every link resolves, and `self-talk` reads a draft and flags the sentences where the writer passes a standing verdict on themselves, so a memory records what happened rather than a judgement. Memories are plain files in git, readable by any model and any harness.
 
 ## Docs
 
