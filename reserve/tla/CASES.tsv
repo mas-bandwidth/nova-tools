@@ -7,3 +7,7 @@ SlotFilesBrokenNoAll.cfg	SlotFiles.tla	invariant	ExclusiveAlone	check
 SlotFilesBrokenNoGate.cfg	SlotFiles.tla	invariant	ExclusiveBarsShared	check
 SlotFilesBrokenLeak.cfg	SlotFiles.tla	temporal	EveryWaiterRuns	check
 SlotFilesBrokenOrphan.cfg	SlotFiles.tla	invariant	CommandHasSlot	check
+Capacity.cfg	Capacity.tla	pass	-	check
+CapacityBrokenPerCaller.cfg	Capacity.tla	invariant	AtMostCap	check
+CapacityBrokenRacyFirst.cfg	Capacity.tla	invariant	OneCapacity	check
+CapacityBrokenSetWhileHeld.cfg	Capacity.tla	invariant	OneCapacity	check

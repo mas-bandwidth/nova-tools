@@ -3,12 +3,14 @@
 package main
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -100,33 +102,125 @@ func TestExclusiveWaitsForSharedHolders(t *testing.T) {
 	err := x.Run()
 	var ee *exec.ExitError
 	require.ErrorAs(t, err, &ee)
-	assert.Equal(t, 3, ee.ExitCode(), "no exclusive hold beside a shared one")
+	assert.Equal(t, 1, ee.ExitCode(), "no exclusive hold beside a shared one")
 	require.NoError(t, a.Process.Kill())
 	err = slotCmd(t, bin, dir, "exit7", "--exclusive", "--wait", "20s").Run()
 	require.ErrorAs(t, err, &ee)
 	assert.Equal(t, 7, ee.ExitCode())
 }
 
-func TestHoldEndsWhenStdinCloses(t *testing.T) {
+// TestHoldEndsOnSIGTERMNotStdin: a hold with stdin at /dev/null (an AI's tool
+// call) stays held until SIGTERM, then says why it let go.
+func TestHoldEndsOnSIGTERMNotStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no SIGTERM to send on Windows")
+	}
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
-	cmd := exec.Command(bin, "hold", "--slots", "1")
-	cmd.Env = append(os.Environ(), "NOVA_RESERVE_DIR="+dir)
-	in, err := cmd.StdinPipe()
-	require.NoError(t, err)
+	cmd := exec.Command(bin, "hold", "--slots", "1", "--why", "bench run", "--dir", dir)
+	cmd.Stdin = nil // /dev/null
 	out, err := cmd.StdoutPipe()
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
-	buf := make([]byte, 5)
-	_, err = out.Read(buf)
-	require.NoError(t, err)
-	assert.Equal(t, "HELD ", string(buf))
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	lines := bufio.NewScanner(out)
+	require.True(t, lines.Scan())
+	assert.Equal(t, "CAPACITY SET slots=1", lines.Text())
+	require.True(t, lines.Scan())
+	assert.True(t, strings.HasPrefix(lines.Text(), "HELD mode=shared slot=1/1 pid="), lines.Text())
+	time.Sleep(time.Second) // stdin is at EOF all along; the hold must outlast it
 	status, _ := exec.Command(bin, "status", "--dir", dir).Output()
-	assert.Contains(t, string(status), "slot1 held")
-	require.NoError(t, in.Close())
+	assert.Contains(t, string(status), "slot1 held pid="+strconv.Itoa(cmd.Process.Pid))
+	assert.Contains(t, string(status), `why=bench\srun`)
+	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
+	require.True(t, lines.Scan())
+	assert.True(t, strings.HasPrefix(lines.Text(), "RELEASED reason=signal signal=SIGTERM held_for="), lines.Text())
 	require.NoError(t, cmd.Wait())
 	status, _ = exec.Command(bin, "status", "--dir", dir).Output()
 	assert.Contains(t, string(status), "slot1 free")
+}
+
+func TestHoldEndsAfterFor(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	out, err := exec.Command(bin, "hold", "--for", "300ms", "--dir", dir, "--slots", "2").Output()
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "\nRELEASED reason=for held_for=")
+}
+
+// TestTwoCapacitiesNeverBothRun is the per-caller bug on real locks: a
+// --slots 1 holder, then a --slots 4 caller, which is refused and never runs.
+func TestTwoCapacitiesNeverBothRun(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	startHolder(t, bin, dir, "--slots", "1")
+	x := slotCmd(t, bin, dir, "exit7", "--slots", "4", "--wait", "2s")
+	var stderr strings.Builder
+	x.Stderr = &stderr
+	err := x.Run()
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee)
+	assert.Equal(t, 2, ee.ExitCode())
+	assert.Contains(t, stderr.String(), "nova-reserve: this machine's capacity is 1 (set by pid ")
+	assert.Contains(t, stderr.String(), "; you asked 4; run: nova-reserve set --slots 4 --dir ")
+	assert.Equal(t, 1, strings.Count(stderr.String(), "\n"), "one line, nothing else on stderr")
+}
+
+// TestWaitIsABound: a 100 ms --wait on a held slot returns well inside a poll.
+func TestWaitIsABound(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	startHolder(t, bin, dir, "--slots", "1")
+	x := slotCmd(t, bin, dir, "exit7", "--wait", "100ms")
+	var stderr strings.Builder
+	x.Stderr = &stderr
+	began := time.Now()
+	err := x.Run()
+	took := time.Since(began)
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee)
+	assert.Equal(t, 1, ee.ExitCode())
+	assert.Less(t, took, 700*time.Millisecond)
+	assert.Contains(t, stderr.String(), "nova-reserve: no slot within 100ms: slot1 held by pid ")
+}
+
+func TestMissingCommandNeverHolds(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	cmd := exec.Command(bin, "--dir", filepath.Join(dir, "r"), "--", "no-such-command-anywhere")
+	out, err := cmd.CombinedOutput()
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee)
+	assert.Equal(t, 127, ee.ExitCode())
+	assert.Equal(t, "nova-reserve: no-such-command-anywhere: command not found\n", string(out))
+	assert.NoDirExists(t, filepath.Join(dir, "r"))
+	if runtime.GOOS != "windows" {
+		plain := filepath.Join(dir, "plain")
+		require.NoError(t, os.WriteFile(plain, []byte("x"), 0o644))
+		out, err = exec.Command(bin, "--dir", filepath.Join(dir, "r"), "--", plain).CombinedOutput()
+		require.ErrorAs(t, err, &ee)
+		assert.Equal(t, 126, ee.ExitCode(), "%s", out)
+		assert.NoDirExists(t, filepath.Join(dir, "r"))
+	}
+}
+
+func TestSetRefusedWhileHeld(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	h := startHolder(t, bin, dir, "--slots", "2")
+	out, err := exec.Command(bin, "set", "--slots", "3", "--dir", dir).CombinedOutput()
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee)
+	assert.Equal(t, 1, ee.ExitCode())
+	assert.Contains(t, string(out), "nova-reserve set: capacity in use: slot1 held by pid "+strconv.Itoa(h.Process.Pid))
+	require.NoError(t, h.Process.Kill())
+	_ = h.Wait()
+	require.Eventually(t, func() bool {
+		out, err := exec.Command(bin, "set", "--slots", "3", "--dir", dir).Output()
+		return err == nil && string(out) == "CAPACITY SET slots=3\n"
+	}, patience, 50*time.Millisecond)
+	status, _ := exec.Command(bin, "status", "--dir", dir).Output()
+	assert.Contains(t, string(status), "free=3/3\n")
 }
 
 // TestKilledHolderTakesItsCommandWith SIGKILLs nova-reserve itself: its command
