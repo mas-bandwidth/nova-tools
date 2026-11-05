@@ -267,6 +267,34 @@ func TestFirstTakerSetsCapacity(t *testing.T) {
 	assert.Equal(t, "nova-reserve: HELD mode=shared slot=1/2 pid=42\n", h.err.String(), "the second taker stores nothing")
 }
 
+// TestFirstTakerRetriesTheClaimNotTheGate: a first taker whose claim is busy
+// polls the claim again, never the gate shared, which would hold another first
+// taker's claim out (tla/Capacity.tla found that livelock).
+func TestFirstTakerRetriesTheClaimNotTheGate(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	gate := filepath.Join(h.dir, "gate")
+	release, ok, _ := h.f.lock(gate, false) // another taker, mid-read
+	require.True(t, ok)
+	shared := 0
+	h.w.lock = func(path string, exclusive bool) (func(), bool, error) {
+		if path == gate && !exclusive {
+			shared++
+		}
+		return h.f.lock(path, exclusive)
+	}
+	h.c.onSleep = func(n int) {
+		if n == 2 {
+			release()
+		}
+	}
+	tk, err := acquire(h.w, h.opts(2, false, 0))
+	require.NoError(t, err)
+	assert.Equal(t, 2, shared, "the gate shared once to read, once to take after storing")
+	assert.Equal(t, 2, tk.capSet)
+	assert.Equal(t, []time.Duration{poll, poll}, h.c.slept)
+}
+
 func TestNoSlotsStoresTheDefault(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)

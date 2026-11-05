@@ -9,7 +9,7 @@
 \* process takes once, as one of:
 \*   shared     gate shared; read capFile. Absent: let go of the gate and
 \*              claim (gate exclusive, then all exclusive, both without
-\*              waiting); holding both, write --slots (or Default) if the file
+\*              waiting, polled until taken); holding both, write --slots (or Default) if the file
 \*              is still absent; let go; take again. Present: a --slots that
 \*              differs is refused (exit 2); else scan slot1..slot<capFile>
 \*              and take all shared, as in SlotFiles.tla.
@@ -109,17 +109,19 @@ SClaimOK(p) ==
   /\ gateEx' = p /\ pc' = [pc EXCEPT ![p] = "sclaim2"]
   /\ UNCHANGED <<capFile, slotEx, gateSh, allEx, allSh, scan, mine, adm, want, ask, crashes>>
 
-\* The gate is busy: poll again.
-SClaimBusy(p) ==
-  /\ pc[p] = "sclaim" /\ ~ClaimFree
-  /\ pc' = [pc EXCEPT ![p] = "sgate"]
-  /\ UNCHANGED <<capFile, Locks, scan, mine, adm, want, ask, crashes>>
+\* A busy gate leaves the claimer at sclaim: it polls the claim again, never
+\* the gate shared (taker.claiming). Going back to sgate instead lets two
+\* first takers keep each other's claim out forever; TLC found that loop.
 
-\* all exclusive; if taken, write unless another first taker already did.
+\* all exclusive; if taken, write unless another first taker already did,
+\* then take again; if busy, claim again.
 SClaim2(p) ==
   /\ pc[p] = "sclaim2"
-  /\ capFile' = IF allEx = None /\ allSh = {} /\ capFile = 0 THEN Stored(p) ELSE capFile
-  /\ gateEx' = None /\ pc' = [pc EXCEPT ![p] = "sgate"]
+  /\ IF allEx = None /\ allSh = {} THEN
+        /\ capFile' = IF capFile = 0 THEN Stored(p) ELSE capFile
+        /\ pc' = [pc EXCEPT ![p] = "sgate"]
+     ELSE UNCHANGED capFile /\ pc' = [pc EXCEPT ![p] = "sclaim"]
+  /\ gateEx' = None
   /\ UNCHANGED <<slotEx, gateSh, allEx, allSh, scan, mine, adm, want, ask, crashes>>
 
 \* The layout: slot1..slot<adm[p]> in order, the first free one.
@@ -200,7 +202,7 @@ Crash(p) ==
   /\ UNCHANGED <<capFile, scan, want, ask>>
 
 Next == \E p \in Procs :
-  \/ Start(p) \/ SGate(p) \/ SRead(p) \/ SWrite(p) \/ SClaimOK(p) \/ SClaimBusy(p)
+  \/ Start(p) \/ SGate(p) \/ SRead(p) \/ SWrite(p) \/ SClaimOK(p)
   \/ SClaim2(p) \/ SScan(p) \/ SAll(p) \/ SFinish(p)
   \/ XGate(p) \/ XAll(p) \/ XFinish(p) \/ TGate(p) \/ TAll(p) \/ Crash(p)
 
@@ -208,7 +210,7 @@ Next == \E p \in Procs :
 \* poller tries once a second, and holders come and go.
 Fairness == \A p \in Procs :
   /\ SF_vars(SGate(p)) /\ SF_vars(SClaimOK(p)) /\ SF_vars(XGate(p)) /\ SF_vars(XAll(p))
-  /\ WF_vars(SRead(p)) /\ WF_vars(SWrite(p)) /\ WF_vars(SClaimBusy(p)) /\ WF_vars(SClaim2(p))
+  /\ WF_vars(SRead(p)) /\ WF_vars(SWrite(p)) /\ WF_vars(SClaim2(p))
   /\ WF_vars(SScan(p)) /\ WF_vars(SAll(p)) /\ WF_vars(SFinish(p)) /\ WF_vars(XFinish(p))
   /\ WF_vars(TGate(p)) /\ WF_vars(TAll(p))
 

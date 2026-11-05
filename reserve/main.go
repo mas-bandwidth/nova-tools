@@ -513,6 +513,10 @@ type taker struct {
 	slot   int      // 0 until a shared hold; an exclusive hold names no slot
 	cap    int      // the capacity the shared hold was taken under
 	capSet int      // the capacity this taker stored, if it was the first
+	// claiming: this taker found no capacity and retries storing it without
+	// passing the gate shared again, so two first takers cannot keep each
+	// other's claim out forever (tla/Capacity.tla EveryTakerEnds)
+	claiming bool
 }
 
 func (t *taker) path(name string) string { return filepath.Join(t.o.dir, name) }
@@ -534,22 +538,26 @@ func (t *taker) step() (bool, error) {
 		return ok, err
 	}
 	for range 2 { // a first taker stores the capacity, then takes under it
-		gate, ok, err := t.w.lock(t.path("gate"), false)
-		if !ok || err != nil {
-			return false, err
-		}
-		c, have, err := readCapacity(t.o.dir)
-		if err != nil || have {
-			defer gate()
-			if err != nil {
+		if !t.claiming {
+			gate, ok, err := t.w.lock(t.path("gate"), false)
+			if !ok || err != nil {
 				return false, err
 			}
-			return t.scan(c)
+			c, have, err := readCapacity(t.o.dir)
+			if err != nil || have {
+				defer gate()
+				if err != nil {
+					return false, err
+				}
+				return t.scan(c)
+			}
+			gate()
+			t.claiming = true
 		}
-		gate()
 		if ok, err := t.storeCapacity(); !ok || err != nil {
 			return false, err
 		}
+		t.claiming = false
 	}
 	return false, nil
 }
