@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -34,6 +35,9 @@ const patience = 20 * time.Second
 func build(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "nova-slot")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	return bin
