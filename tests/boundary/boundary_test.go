@@ -313,6 +313,11 @@ func TestBudgets(t *testing.T) {
 		}
 		budgets[m[1]], _ = strconv.Atoi(m[2])
 	}
+	if files, _ := filepath.Glob(filepath.Join(base, "tests", "*.go")); len(files) > 0 {
+		for _, f := range files {
+			t.Errorf("%s: tests/ holds packages, not files: put it in tests/<name>/ with a BUDGET line", filepath.Base(f))
+		}
+	}
 	// Every directory holding Go code needs a line: each top-level directory
 	// except docs/ and tests/, and each package directly under tests/.
 	var dirs []string
