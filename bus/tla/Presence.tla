@@ -154,8 +154,10 @@ Next ==
   \/ Expire \/ Tick
   \/ \E p \in Procs : Start(p) \/ Poll(p) \/ GiveUp(p) \/ Refresh(p) \/ Stick(p) \/ Unstick(p) \/ Exit(p) \/ Crash(p)
 
+\* The waiting hook's next poll is fair as one action: it claims if the key is
+\* absent, gives up if the wait is over, and otherwise waits on.
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(Expire)
-          /\ \A p \in Procs : WF_vars(Refresh(p)) /\ WF_vars(Poll(p)) /\ WF_vars(GiveUp(p))
+          /\ \A p \in Procs : WF_vars(Refresh(p)) /\ WF_vars(Poll(p) \/ GiveUp(p))
 
 \* A name is present only if a hook set the key within the TTL.
 PresentOnlyIfFresh == Present => owner \in Procs /\ sinceSet < TTL
