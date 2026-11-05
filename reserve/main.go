@@ -115,6 +115,7 @@ type options struct {
 	dirSet    bool
 	argv      []string
 	args      []string // the command line as given, for a remedy that reruns it
+	dirFrom   string   // where dir came from, to name it in a refusal
 }
 
 // remedy is a nova-reserve command line that keeps an explicit --dir.
@@ -160,7 +161,10 @@ func defaultDir(env func(string) string) string { return cmp.Or(env("NOVA_RESERV
 
 // parse reads a command line. Every malformed one is one line and exit 2.
 func parse(args []string, env func(string) string) (options, error) {
-	o := options{verb: "run", dir: defaultDir(env), args: args}
+	o := options{verb: "run", dir: defaultDir(env), args: args, dirFrom: "the default directory"}
+	if env("NOVA_RESERVE_DIR") != "" {
+		o.dirFrom = "NOVA_RESERVE_DIR"
+	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
 		case "run", "hold", "status", "set", "help":
@@ -260,7 +264,7 @@ func (o *options) set(name, val string) bool {
 	case "why":
 		o.why = val
 	case "dir":
-		o.dir, o.dirSet = val, true
+		o.dir, o.dirSet, o.dirFrom = val, true, "--dir"
 	}
 	return val != ""
 }
@@ -339,8 +343,8 @@ func do(o options, w world) error {
 	if o.verb == "status" {
 		// status reads; a directory no one ever reserved in is a missing input
 		if fi, err := os.Stat(o.dir); err != nil || !fi.IsDir() {
-			return refuse(2, "--dir %s is not a reservation directory (no reservation was taken there); run: %s",
-				shellQuote(o.dir), helpFor("status"))
+			return refuse(2, "%s %s is not a reservation directory (no reservation was taken there); run: %s",
+				o.dirFrom, shellQuote(o.dir), helpFor("status"))
 		}
 		return status(o, w)
 	}
@@ -354,11 +358,11 @@ func do(o options, w world) error {
 	if err := os.Mkdir(o.dir, 0o777); err != nil && !errors.Is(err, fs.ErrExist) {
 		parent := filepath.Dir(o.dir)
 		if _, perr := os.Stat(parent); errors.Is(perr, fs.ErrNotExist) {
-			return refuse(2, "--dir %s: parent %s does not exist; run: mkdir -p %s && %s", o.dir, parent,
+			return refuse(2, "%s %s: parent %s does not exist; run: mkdir -p %s && %s", o.dirFrom, o.dir, parent,
 				shellQuote(parent), "nova-reserve "+quoteAll(o.args))
 		}
 		if errors.Is(err, fs.ErrPermission) {
-			return refuse(2, "--dir %s: parent %s is not writable by this user; run: ls -ld %s", o.dir, parent, shellQuote(parent))
+			return refuse(2, "%s %s: parent %s is not writable by this user; run: ls -ld %s", o.dirFrom, o.dir, parent, shellQuote(parent))
 		}
 		return err
 	}

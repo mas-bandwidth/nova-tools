@@ -116,14 +116,17 @@ A timed-out take names who holds what, in status's words:
 ## The directory
 
 `<dir>` is `--dir`, else `$NOVA_RESERVE_DIR`, else `/var/tmp/nova-reserve` (`C:\ProgramData\nova-reserve` on
-Windows). Every caller on a machine must use the same one. nova-reserve creates it (not its parents). A missing parent is refused,
-exit 2: `nova-reserve: --dir /nonexistent/x: parent /nonexistent does not exist; run: mkdir -p /nonexistent && nova-reserve ...`
-with the whole command line. A parent this user cannot write gets its own line: `... is not writable by this user;
-run: ls -ld <parent>`. nova-reserve and makes it
+Windows). Every caller on a machine must use the same one. nova-reserve creates it and makes it
 world-writable and sticky, so every user on the machine shares one capacity. `/var/tmp` survives a reboot. A cleaner
 of old temporary files (systemd-tmpfiles, after 30 days by default) may still remove it from a machine that went
 unused that long; the next taker then stores a new capacity. Point a machine somewhere no cleaner touches with
 `NOVA_RESERVE_DIR`. The directory must be on a local disk: flock and LockFileEx over NFS or SMB are not the same locks.
+
+nova-reserve creates the directory, never its parents. A missing parent is refused, exit 2, with the whole command
+line in the remedy:
+`nova-reserve: --dir /nonexistent/x: parent /nonexistent does not exist; run: mkdir -p /nonexistent && nova-reserve ...`.
+The line names where the directory came from: `--dir`, `NOVA_RESERVE_DIR`, or the default directory. A parent this
+user cannot write is refused on its own line: `... is not writable by this user; run: ls -ld <parent>`.
 
 | file | what it is |
 |---|---|

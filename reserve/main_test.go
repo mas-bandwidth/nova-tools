@@ -711,6 +711,17 @@ func TestMissingDirParentIsRefused(t *testing.T) {
 	assert.NoDirExists(t, filepath.Dir(gone))
 }
 
+// TestMissingParentNamesTheEnvironment: a directory from $NOVA_RESERVE_DIR is
+// named as that, not as a --dir the caller never gave.
+func TestMissingParentNamesTheEnvironment(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.dir = filepath.Join(h.dir, "no", "x")
+	assert.Equal(t, 2, run([]string{"hold", "--for", "1m"}, h.w))
+	assert.Equal(t, "nova-reserve hold: NOVA_RESERVE_DIR "+h.dir+": parent "+filepath.Dir(h.dir)+" does not exist; run: mkdir -p "+
+		shellQuote(filepath.Dir(h.dir))+" && nova-reserve hold --for 1m\n", h.err.String())
+}
+
 func TestUnwritableDirParentIsRefused(t *testing.T) {
 	t.Parallel()
 	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
