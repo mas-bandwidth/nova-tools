@@ -89,7 +89,7 @@ login's home. A row whose `keys` is not empty is wrapped in
 `nova-secrets exec --store <store> --as <seat> --key <key_dir>/<seat>.key --sops <sops> --only <keys> --`, so the
 values reach the command and never the unit file. `<seat>` and `<keys>` are the row's; `<store>`, `<key_dir>` and
 `<sops>` are `nova_secrets_store` (`~/nova-bench/secrets`), `nova_secrets_key_dir` (`~/.config/nova-secrets`) and
-`nova_sops` (`/opt/homebrew/bin/sops` on macOS, else `/usr/local/bin/sops`) from `group_vars/all.yml`. A row with no
+`nova_sops` (`/opt/homebrew/bin/sops` on macOS, else `<nova_bin_dir>/sops`) from `group_vars/all.yml`. A row with no
 keys runs its `argv` unchanged. Rows without `every` are kept alive; `enabled` defaults to true.
 `enabled false` writes the unit and does not load it.
 

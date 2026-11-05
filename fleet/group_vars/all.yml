@@ -42,4 +42,4 @@ nova_loop_restart: []
 # --store and --key and takes --sops.
 nova_secrets_store: "{{ nova_home }}/nova-bench/secrets"
 nova_secrets_key_dir: "{{ nova_home }}/.config/nova-secrets"
-nova_sops: "{{ '/opt/homebrew/bin/sops' if (ansible_system | default('')) == 'Darwin' else '/usr/local/bin/sops' }}"
+nova_sops: "{{ '/opt/homebrew/bin/sops' if (ansible_system | default('')) == 'Darwin' else nova_bin_dir ~ '/sops' }}"
