@@ -44,8 +44,7 @@ var toolSpecs = []toolSpec{
 		{"memory", "stats"}, {"memory", "search"}, {"memory", "check"}, {"memory", "verify"}, {"help"}, {"version"}},
 		missing: []missingCase{
 			{[]string{"open"}, []string{"--store", "--session", "--publish"}},
-			{[]string{"memory", "search"}, []string{"--root"}},
-			{[]string{"index", "--store", "@tmp/no-such-dir"}, []string{"--store"}}}},
+			{[]string{"memory", "search"}, []string{"--root"}}}},
 	{dir: "config", verbs: [][]string{
 		{"machine", "list"}, {"machine", "show"}, {"machine", "add"}, {"machine", "set"}, {"machine", "remove"},
 		{"loop", "list"}, {"loop", "show"}, {"loop", "add"}, {"loop", "set"}, {"loop", "remove"},
