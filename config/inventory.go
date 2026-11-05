@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -11,12 +12,11 @@ import (
 	"strings"
 )
 
-// loopLogDir is where the units write each loop's log, as the loop plays expect.
-const loopLogDir = "~/nova-bench/loops"
+// loopLogDir is where a loop's log goes when its row names no log.
+const loopLogDir = "~/.local/state/nova/loops"
 
 type group struct {
-	Hosts []string       `json:"hosts"`
-	Vars  map[string]any `json:"vars,omitempty"`
+	Hosts []string `json:"hosts"`
 }
 
 // inventory is Ansible's dynamic inventory; the field order is the output's.
@@ -25,24 +25,28 @@ type inventory struct {
 		Hostvars map[string]map[string]any `json:"hostvars"`
 	} `json:"_meta"`
 	All      group `json:"all"`
-	Benches  group `json:"benches"`
-	Runners  group `json:"runners"`
+	Bench    group `json:"bench"`
+	Runner   group `json:"runner"`
 	Services group `json:"services"`
 }
 
 type invLoop struct {
-	Name      string   `json:"name"`
-	Argv      []string `json:"argv"`
-	Seat      string   `json:"seat"`
-	Keys      []string `json:"keys"`
-	Every     int      `json:"every"`
-	Keepalive bool     `json:"keepalive"`
-	Enabled   bool     `json:"enabled"`
-	Log       string   `json:"log"`
+	Name      string            `json:"name"`
+	Argv      []string          `json:"argv"`
+	Seat      string            `json:"seat"`
+	Keys      []string          `json:"keys"`
+	Every     int               `json:"every"`
+	Keepalive bool              `json:"keepalive"`
+	Enabled   bool              `json:"enabled"`
+	Env       map[string]string `json:"env"`
+	Log       string            `json:"log"`
 }
 
-func runInventory(ctx context.Context, args []string, d deps, stdout, stderr io.Writer) error {
-	fs, name, _, err := flags("inventory", args, stderr, func(fs *flag.FlagSet) {
+// inventoryHint is what a usage error of inventory names.
+const inventoryHint = "inventory flags: --list, --host <name>, --pg <dsn>"
+
+func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) error {
+	fs, words, err := flags("inventory", inventoryHint, args, func(fs *flag.FlagSet) {
 		fs.Bool("list", false, "print the whole inventory (the default)")
 		fs.String("host", "", "print one machine's variables")
 	})
@@ -50,8 +54,8 @@ func runInventory(ctx context.Context, args []string, d deps, stdout, stderr io.
 		return err
 	}
 	host := str(fs, "host")
-	if name != "" || (host != "" && str(fs, "list") == "true") {
-		return fmt.Errorf("inventory takes --list or --host <name>")
+	if len(words) > 0 || (host != "" && str(fs, "list") == "true") {
+		return usageError{"inventory", "takes --list or --host <name>, not both", inventoryHint}
 	}
 	st, err := open(ctx, fs, d)
 	if err != nil {
@@ -59,22 +63,19 @@ func runInventory(ctx context.Context, args []string, d deps, stdout, stderr io.
 	}
 	defer st.Close()
 	rows := map[string][]Row{}
-	for _, k := range []string{"machine", "fleet", "loop"} {
+	for _, k := range []string{"machine", "loop"} {
 		if rows[k], err = st.List(ctx, kinds[k]); err != nil {
 			return err
 		}
 	}
-	if len(rows["fleet"]) != 1 {
-		return refused("the store has no fleet row; it is made by schema.sql")
-	}
 	local := d.getenv("NOVA_MACHINE")
-	if _, ok := find(rows["machine"], local); local != "" && !ok {
+	if local != "" && !slices.ContainsFunc(rows["machine"], func(r Row) bool { return r.Name == local }) {
 		return refused("NOVA_MACHINE %s names no machine row", local)
 	}
 	if h, err := d.hostname(); local == "" && err == nil {
 		local = strings.ToLower(strings.Split(h, ".")[0])
 	}
-	inv := build(rows["machine"], rows["fleet"][0].F, rows["loop"], local)
+	inv := build(rows["machine"], rows["loop"], local)
 	var out any = inv
 	if host != "" {
 		hv, ok := inv.Meta.Hostvars[host]
@@ -94,13 +95,14 @@ func runInventory(ctx context.Context, args []string, d deps, stdout, stderr io.
 // build is the inventory of the rows: every machine in all, grouped by its
 // roles and its runners, with its row facts and its loops as host variables.
 // A fact the row leaves empty is left out.
-func build(machines []Row, fleet map[string]string, loops []Row, local string) *inventory {
+func build(machines []Row, loops []Row, local string) *inventory {
 	inv := &inventory{}
 	inv.Meta.Hostvars = map[string]map[string]any{}
 	byMachine := map[string][]invLoop{}
 	for _, l := range loops {
-		il := invLoop{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Log: loopLogDir + "/" + l.Name + ".log"}
+		il := invLoop{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Env: map[string]string{}, Log: cmp.Or(l.F["log"], loopLogDir+"/"+l.Name+".log")}
 		_ = json.Unmarshal([]byte(l.F["argv"]), &il.Argv) // ignored: the row's argv was canonical when written
+		_ = json.Unmarshal([]byte(l.F["env"]), &il.Env)   // ignored: likewise
 		if l.F["keys"] != "" {
 			il.Keys = strings.Split(l.F["keys"], ",")
 		}
@@ -136,11 +138,7 @@ func build(machines []Row, fleet map[string]string, loops []Row, local string) *
 			groups["runner"] = append(groups["runner"], m)
 		}
 	}
-	vars := map[string]any{}
-	if fleet["pg_dsn"] != "" {
-		vars["nova_pg_dsn"] = fleet["pg_dsn"]
-	}
-	inv.All = group{Hosts: all, Vars: vars}
-	inv.Benches, inv.Runners, inv.Services = group{Hosts: groups["bench"]}, group{Hosts: groups["runner"]}, group{Hosts: groups["services"]}
+	inv.All = group{Hosts: all}
+	inv.Bench, inv.Runner, inv.Services = group{Hosts: groups["bench"]}, group{Hosts: groups["runner"]}, group{Hosts: groups["services"]}
 	return inv
 }
