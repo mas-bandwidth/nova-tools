@@ -199,7 +199,7 @@
         mode: "0644"
       vars:
         l: "{{ item }}"
-      loop: "{{ loop_records }}"
+      loop: "{{ loop_records | rejectattr('keepalive') | list }}"
       loop_control: { label: "{{ item.name }}" }
       become: "{{ loop_system }}"
       register: loop_timers

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,4 +108,48 @@ func TestLoopsPlayStateExpressionRendersThroughTheTemplar(t *testing.T) {
 				"the templar yielded no %s for %s:\n%s", tc.want, tc.name, out)
 		})
 	}
+}
+
+// timerTask is the task that writes a loop's timer.
+func timerTask(t *testing.T) map[string]any {
+	t.Helper()
+	for _, play := range loopsPlays(t) {
+		for _, task := range flattenTasks(t, tasksOf(t, play)) {
+			if _, ok := task["ansible.builtin.template"].(map[string]any); ok &&
+				asText(task["name"]) == "one timer per record that runs every n seconds (linux)" {
+				return task
+			}
+		}
+	}
+	require.FailNow(t, "no task writes the Linux timers")
+	return nil
+}
+
+// A kept-alive row renders no timer and an `every` row renders exactly one: the
+// timer task's loop, templated by ansible-core over both kinds of row.
+func TestLoopsPlayTimersOnlyForEveryRows(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("ansible-playbook"); err != nil {
+		t.Skip("ansible-core is not installed on this machine")
+	}
+	loop := asText(timerTask(t)["loop"])
+	require.NotEmpty(t, loop)
+	play := []map[string]any{{
+		"hosts": "localhost", "connection": "local", "gather_facts": false,
+		"tasks": []map[string]any{{"ansible.builtin.debug": map[string]any{
+			"msg": "TIMERS={{ (" + strings.Trim(strings.TrimSpace(loop), "{} ") + ") | map(attribute='name') | join(',') }}"}}},
+	}}
+	b, err := yaml.Marshal(play)
+	require.NoError(t, err)
+	playbook := filepath.Join(t.TempDir(), "timers.yml")
+	require.NoError(t, os.WriteFile(playbook, b, 0o644))
+	extra, err := json.Marshal(map[string]any{"loop_records": []any{
+		map[string]any{"name": "kept", "keepalive": true, "every": 0},
+		map[string]any{"name": "periodic", "keepalive": false, "every": 60},
+	}})
+	require.NoError(t, err)
+	out, err := renderState(t, playbook, string(extra))
+	require.NoErrorf(t, err, "ansible refused the timer loop:\n%s", out)
+	assert.Contains(t, out, `TIMERS=periodic"`, out)
+	assert.NotContains(t, out, "kept", out)
 }
