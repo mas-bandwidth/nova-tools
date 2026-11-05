@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -67,3 +68,18 @@ func novaAgentFiles(env Env) []string {
 	}
 	return out
 }
+
+// hostOS is the operating system whose agents the checks enumerate: the real
+// host, or the platform a test injects through Env (an optional GOOS method), so
+// both the launchd and the systemd paths run on either bench.
+func hostOS(env Env) string {
+	if h, ok := env.(interface{ GOOS() string }); ok {
+		if g := h.GOOS(); g != "" {
+			return g
+		}
+	}
+	return runtime.GOOS
+}
+
+// firstLine is s's first non-empty line, one-lined, for evidence.
+func firstLine(s string) string { return oneLine(strings.SplitN(strings.TrimSpace(s), "\n", 2)[0]) }

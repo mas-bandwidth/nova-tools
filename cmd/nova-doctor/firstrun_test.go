@@ -25,20 +25,17 @@ import (
 // documentedHome is the home directory the TESTS.md block was recorded under.
 const documentedHome = "/home/you"
 
-// homeEnv is the real Env with HOME at the sitting's own directory and no
-// NOVA_FRIEND_HOME, so the harness check reads a home with no friend rows and
-// nothing of the machine running the test.
+// homeEnv is the real Env with HOME at the sitting's own directory, so the plists
+// check reads a home with no nova launch agents and nothing of the machine running
+// the test.
 type homeEnv struct {
 	doctor.OSEnv
 	home string
 }
 
 func (e homeEnv) Getenv(k string) string {
-	switch k {
-	case "HOME":
+	if k == "HOME" {
 		return e.home
-	case "NOVA_FRIEND_HOME":
-		return ""
 	}
 	return e.OSEnv.Getenv(k)
 }

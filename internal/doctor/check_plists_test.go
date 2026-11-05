@@ -55,3 +55,13 @@ func TestDoctorPlistsNamesAPlistPlutilRefuses(t *testing.T) {
 	assert.Contains(t, r.Fix, "remove a hand-written stopgap")
 	assert.NotContains(t, r.Fix, "nova-friend", "the friend daemons are retired: no remedy names nova-friend")
 }
+
+// friendEnv is the test Env with the platform the checks enumerate, injected
+// through the same seam the checks read, so both the launchd and the systemd
+// paths run on either bench.
+type friendEnv struct {
+	fakeEnv
+	goos string
+}
+
+func (e friendEnv) GOOS() string { return e.goos }
