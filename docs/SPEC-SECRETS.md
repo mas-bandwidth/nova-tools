@@ -21,8 +21,9 @@ age-keygen -y recovery.key                  # prints the recovery public key
 ```
 
 **1. init** creates the store: `git init` when `S` is in no repository, `.sops.yaml` with `creation_rules: []`,
-`recovery.pub`, a `README.md`, and one commit. `S` may be missing (its parent must exist) or an empty directory.
-It refuses a store that exists.
+`recovery.pub`, and one commit. `S` must be missing (its parent must exist) or empty. A directory with files in it
+is refused, so a project's README is never overwritten. `S` inside another git work tree is refused too: make it a
+repository of its own first. It refuses a store that exists.
 
 ```
 nova-secrets init --store S --recovery <recovery public key>
@@ -57,16 +58,16 @@ The OK line of `exec` goes to stderr, because stdout belongs to the command.
 ## List the names
 
 **names** lists the secret names in a seat file. A sops file keeps its keys in the clear, so no key and no sops are
-needed, and no value is read. It lists the top-level keys and skips the `sops:` block.
+needed, and no value is read. It lists the top-level keys and skips the `sops:` block. A key that is not an
+environment variable name, or whose value is not a single value, is never printed: it is counted as `refused=<n>`.
 
 ```
 nova-secrets names --store S --as web
 DB_PASSWORD
-SECRETS NAMES OK store=S seats=1 names=1
+SECRETS NAMES OK as=web names=1 refused=0
 ```
 
-The names are the payload on stdout, one per line. The OK line goes to stderr. Without `--as`, every seat file is
-listed, one `<seat> NAME` per line.
+The names are the payload on stdout, one per line. The OK line goes to stderr.
 
 ## The model
 
@@ -86,7 +87,7 @@ environment or home directory reaches sops.
 its mode and owner are checked and before sops sees it. `--as` defaults to `$NOVA_SECRETS_SEAT`, else the short
 hostname. `--sops` defaults to `sops` on PATH.
 
-`<verb> -h` and `help <verb>` print one verb's usage and exit 0.
+`<verb> -h` and `help <verb>` print that verb's paragraph of the help and exit 0.
 
 ## The verbs
 
@@ -125,16 +126,20 @@ A runtime refusal is one line on stderr: `SECRETS <VERB> REFUSED: <why>; run: <n
 | refusal | next command |
 | --- | --- |
 | `store S exists` | `seat add` |
-| `seat <s> cannot decrypt <s>.yaml: its key is not among the file's recipients (<n> recipients)` | `nova-secrets seat add <s> <public key> --store S` |
+| `key <pub> is not the key in .sops.yaml for <s> (<rulepub>)` | edit the seat's `age:` in `.sops.yaml`, then `cd S && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y <s>.yaml` |
+| `key <pub> is the key in .sops.yaml for <s> but not among <s>.yaml's recipients` | the same `updatekeys` command |
 | `sops not found at <path>; install sops 3.x` | install sops, or pass `--sops <path>` |
-| `S is not a git repository` | `nova-secrets init --store S --recovery <key>` |
-| `seat <s> has no file in S` | `nova-secrets set NAME --as <s> --store S --key <file>` |
-| `seat <s> has no rule in S/.sops.yaml` | `nova-secrets seat add <s> <public key> --store S` |
-| `store S has no valid recovery.pub` | `nova-secrets init ...` |
+| `S is not a git repository` | `git -C S init && git -C S add -A && git -C S commit -m store` |
+| `no <s>.yaml in S: wrong --as? seats here: a,b` | the right `--as`, or `nova-secrets set NAME --as <s> ...` |
+| `no rule for <s>.yaml in S/.sops.yaml` | `nova-secrets seat add <s> <public key> --store S` |
+| `S/recovery.pub is missing` | `age-keygen -y <recovery.key> > S/recovery.pub`, then commit |
+| `S/.sops.yaml is missing` | create it with the line `creation_rules: []` |
 | `sops -d failed (exit n); its output is withheld; ran: ...` | rerun the printed command |
 
-The recipients are read from the sops metadata of the file. No value is read for a diagnosis. When sops itself fails,
-the line carries the sops command that ran (program, flags, file), never its output.
+The key check compares the public half of `--key` (`age-keygen -y`, which must be on PATH) with the seat's rule and with
+the file's recipients, which sops keeps in the clear. No value is read. When sops itself fails, the line carries the
+command that ran: a scratch `HOME`, and for a decrypt `--output /dev/null`, so pasting it prints no value. Its output
+is never shown.
 
 ## The guarantee
 
