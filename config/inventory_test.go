@@ -21,7 +21,7 @@ func TestInventory(t *testing.T) {
 	for k, v := range inv {
 		groups[k] = string(v)
 	}
-	assert.JSONEq(t, `{"hosts":["bench-a","bench-b"],"vars":{"nova_pg_dsn":"postgres://u@bench-a/x"}}`, groups["all"])
+	assert.JSONEq(t, `{"hosts":["bench-a","bench-b"]}`, groups["all"])
 	assert.JSONEq(t, `{"hosts":["bench-a","bench-b"]}`, groups["bench"])
 	assert.JSONEq(t, `{"hosts":["bench-a"]}`, groups["services"])
 	assert.JSONEq(t, `{"hosts":["bench-b"]}`, groups["runner"])

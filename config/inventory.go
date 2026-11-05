@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -15,8 +16,7 @@ import (
 const loopLogDir = "~/.local/state/nova/loops"
 
 type group struct {
-	Hosts []string       `json:"hosts"`
-	Vars  map[string]any `json:"vars,omitempty"`
+	Hosts []string `json:"hosts"`
 }
 
 // inventory is Ansible's dynamic inventory; the field order is the output's.
@@ -46,7 +46,7 @@ type invLoop struct {
 const inventoryHint = "inventory flags: --list, --host <name>, --pg <dsn>"
 
 func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) error {
-	fs, words, _, err := flags("inventory", inventoryHint, args, func(fs *flag.FlagSet) {
+	fs, words, err := flags("inventory", inventoryHint, args, func(fs *flag.FlagSet) {
 		fs.Bool("list", false, "print the whole inventory (the default)")
 		fs.String("host", "", "print one machine's variables")
 	})
@@ -63,22 +63,19 @@ func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) 
 	}
 	defer st.Close()
 	rows := map[string][]Row{}
-	for _, k := range []string{"machine", "fleet", "loop"} {
+	for _, k := range []string{"machine", "loop"} {
 		if rows[k], err = st.List(ctx, kinds[k]); err != nil {
 			return err
 		}
 	}
-	if len(rows["fleet"]) != 1 {
-		return refused("the store has no fleet row; it is made by schema.sql")
-	}
 	local := d.getenv("NOVA_MACHINE")
-	if _, ok := find(rows["machine"], local); local != "" && !ok {
+	if local != "" && !slices.ContainsFunc(rows["machine"], func(r Row) bool { return r.Name == local }) {
 		return refused("NOVA_MACHINE %s names no machine row", local)
 	}
 	if h, err := d.hostname(); local == "" && err == nil {
 		local = strings.ToLower(strings.Split(h, ".")[0])
 	}
-	inv := build(rows["machine"], rows["fleet"][0].F, rows["loop"], local)
+	inv := build(rows["machine"], rows["loop"], local)
 	var out any = inv
 	if host != "" {
 		hv, ok := inv.Meta.Hostvars[host]
@@ -98,20 +95,14 @@ func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) 
 // build is the inventory of the rows: every machine in all, grouped by its
 // roles and its runners, with its row facts and its loops as host variables.
 // A fact the row leaves empty is left out.
-func build(machines []Row, fleet map[string]string, loops []Row, local string) *inventory {
+func build(machines []Row, loops []Row, local string) *inventory {
 	inv := &inventory{}
 	inv.Meta.Hostvars = map[string]map[string]any{}
 	byMachine := map[string][]invLoop{}
 	for _, l := range loops {
-		il := invLoop{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Env: map[string]string{}, Log: l.F["log"]}
-		if il.Log == "" {
-			il.Log = loopLogDir + "/" + l.Name + ".log"
-		}
+		il := invLoop{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Env: map[string]string{}, Log: cmp.Or(l.F["log"], loopLogDir+"/"+l.Name+".log")}
 		_ = json.Unmarshal([]byte(l.F["argv"]), &il.Argv) // ignored: the row's argv was canonical when written
-		_ = json.Unmarshal([]byte(l.F["env"]), &il.Env)   // ignored: likewise; an empty or old value leaves no variables
-		if il.Env == nil {
-			il.Env = map[string]string{}
-		}
+		_ = json.Unmarshal([]byte(l.F["env"]), &il.Env)   // ignored: likewise
 		if l.F["keys"] != "" {
 			il.Keys = strings.Split(l.F["keys"], ",")
 		}
@@ -147,11 +138,7 @@ func build(machines []Row, fleet map[string]string, loops []Row, local string) *
 			groups["runner"] = append(groups["runner"], m)
 		}
 	}
-	vars := map[string]any{}
-	if fleet["pg_dsn"] != "" {
-		vars["nova_pg_dsn"] = fleet["pg_dsn"]
-	}
-	inv.All = group{Hosts: all, Vars: vars}
+	inv.All = group{Hosts: all}
 	inv.Bench, inv.Runner, inv.Services = group{Hosts: groups["bench"]}, group{Hosts: groups["runner"]}, group{Hosts: groups["services"]}
 	return inv
 }

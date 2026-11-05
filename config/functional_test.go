@@ -100,7 +100,6 @@ func TestFunctionalStore(t *testing.T) {
 	ok("machine", "set", "m1", "--cores", "4", "--note", "a note", "--actor", "a1")
 	ok("machine", "set", "m1", "--cores", "default", "--actor", "a1")
 	ok("machine", "set", "m1", "--cores", "16", "--os", "linux", "--arch", "amd64", "--roles", "bench,services", "--actor", "a1")
-	ok("fleet", "set", "--pg_dsn", "postgres://nova@m1/postgres", "--actor", "a1")
 
 	c, err := pgx.Connect(context.Background(), env["NOVA_PG_DSN"])
 	require.NoError(t, err)
@@ -131,9 +130,9 @@ func TestFunctionalStore(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	assert.Regexp(t, `^HISTORY at=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ actor=a1 kind=loop name=r-m1 op=set rev=3\n  enabled: true -> false\n  reason: "why"\nHISTORY .* op=add rev=2\n`, out)
 	assert.Contains(t, out, "CONFIG HISTORY rows=2\n")
-	code, out, errs = realRun(t, env, "history", "--since", "1h", "--json")
+	code, out, errs = realRun(t, env, "history", "--since", "1h")
 	require.Equal(t, 0, code, errs)
-	assert.Contains(t, out, `"rev":3`)
+	assert.Contains(t, out, "op=set rev=3")
 
 	code, out, errs = realRun(t, env, "inventory", "--host", "m1")
 	require.Equal(t, 0, code, errs)
@@ -142,9 +141,9 @@ func TestFunctionalStore(t *testing.T) {
 	}
 	code, out, errs = realRun(t, env, "inventory", "--list")
 	require.Equal(t, 0, code, errs)
-	assert.Contains(t, out, `"nova_pg_dsn": "postgres://nova@m1/postgres"`)
+	assert.NotContains(t, out, "nova_pg_dsn")
 
-	assert.Equal(t, "CONFIG REMOVE kind=loop name=r-m1 rev=8\n", ok("loop", "remove", "r-m1", "--actor", "a1"))
+	assert.Equal(t, "CONFIG REMOVE kind=loop name=r-m1 rev=7\n", ok("loop", "remove", "r-m1", "--actor", "a1"))
 }
 
 // TestFunctionalOldColumns models the live store: main's schema, seeded the way
@@ -171,7 +170,7 @@ func TestFunctionalOldColumns(t *testing.T) {
 		_, err = c.Exec(ctx, string(schema))
 		require.NoError(t, err, "schema.sql runs on the old store")
 	}
-	for _, args := range [][]string{{"machine", "list"}, {"machine", "show", "old-store"}, {"loop", "list"}, {"fleet", "show"}, {"inventory"}} {
+	for _, args := range [][]string{{"machine", "list"}, {"machine", "show", "old-store"}, {"loop", "list"}, {"history"}, {"inventory"}} {
 		code, out, errs := realRun(t, env, args...)
 		require.Equal(t, 0, code, "%v: %s", args, errs)
 		assert.NotContains(t, out, "seat1", "%v", args)
@@ -204,7 +203,7 @@ func TestFunctionalOldColumns(t *testing.T) {
 	code, out, errs = realRun(t, env, "inventory", "--host", "old-plain")
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, out, `"log": "~/.local/state/nova/loops/old-loop.log"`, "an old loop row gets the default log")
-	code, out, errs = realRun(t, env, "history", "--max", "0")
+	code, out, errs = realRun(t, env, "history")
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, out, "kind=machine name=old-store op=remove")
 	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'machines' AND column_name IN ('seat', 'slots', 'width', 'tla', 'gates_only')`).Scan(&n))

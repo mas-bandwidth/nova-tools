@@ -43,83 +43,75 @@ func (r refusal) Error() string { return r.msg }
 func refused(format string, a ...any) error { return refusal{fmt.Sprintf(format, a...)} }
 
 func run(ctx context.Context, args []string, d deps, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" && len(args) == 1 {
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
 	if args[0] == "help" {
-		if len(args) == 2 && wantsHelp(args[1:]) {
-			args = []string{"help", "help"}
+		args = args[1:]
+		if len(args) == 1 && wantsHelp(args) {
+			args = []string{"help"}
 		}
-		if text, ok := helpText(args[1:]); ok {
+		if text, ok := helpText(args); ok {
 			fmt.Fprint(stdout, text)
 			return 0
 		}
-		return fail(stderr, "help", unknownVerb(strings.Join(args[1:min(3, len(args))], " ")))
+		return fail(stderr, "help", unknownVerb(strings.Join(args[:min(2, len(args))], " ")))
 	}
-	verb, rest := args[0], args[1:]
-	path := []string{verb}
-	k, isKind := kinds[verb]
+	path, rest := args[:1], args[1:]
+	k, isKind := kinds[path[0]]
 	if isKind && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
-		path, rest = append(path, rest[0]), rest[1:]
+		path, rest = args[:2], args[2:]
 	}
+	name := strings.Join(path, " ")
 	if text, ok := helpText(path); ok && wantsHelp(rest) {
 		fmt.Fprint(stdout, text)
 		return 0
 	}
-	name := strings.Join(path, " ")
+	var err error
 	switch {
 	case isKind && len(path) == 1:
-		return fail(stderr, name, usagef(name, "the verbs are "+strings.Join(k.ops(), ", "), "wants a verb"))
-	case isKind && slices.Contains(k.ops(), path[1]):
-		if err := runKind(ctx, k, name, rest, d, stdout); err != nil {
-			return fail(stderr, name, err)
-		}
-		return 0
-	case isKind:
-		return fail(stderr, name, unknownVerb(name))
-	case verb == "schema":
+		err = usagef(name, "the verbs are "+strings.Join(kindOps, ", "), "wants a verb")
+	case isKind && slices.Contains(kindOps, path[1]):
+		err = runKind(ctx, k, name, rest, d, stdout)
+	case path[0] == "schema":
 		if len(rest) > 0 {
-			msg := "takes no arguments"
-			if strings.HasPrefix(rest[0], "-") {
-				msg = "unknown flag " + rest[0]
-			}
-			return fail(stderr, verb, usagef(verb, "", "%s", msg))
+			err = usagef(name, "", "%s", map[bool]string{true: "unknown flag " + rest[0], false: "takes no arguments"}[strings.HasPrefix(rest[0], "-")])
+		} else {
+			fmt.Fprint(stdout, schemaSQL)
 		}
-		fmt.Fprint(stdout, schemaSQL)
-		return 0
-	case verb == "inventory":
-		if err := runInventory(ctx, rest, d, stdout); err != nil {
-			return fail(stderr, verb, err)
-		}
-		return 0
-	case verb == "history":
-		if err := runHistory(ctx, rest, d, stdout); err != nil {
-			return fail(stderr, verb, err)
-		}
-		return 0
+	case path[0] == "inventory":
+		err = runInventory(ctx, rest, d, stdout)
+	case path[0] == "history":
+		err = runHistory(ctx, rest, d, stdout)
+	default:
+		err = unknownVerb(strings.Join(args[:min(2, len(args))], " "))
 	}
-	return fail(stderr, verb, unknownVerb(strings.Join(args[:min(2, len(args))], " ")))
+	return fail(stderr, name, err)
 }
 
+// fail prints an error as its one line and is the exit code: 0 for none, 1 for a
+// refusal, 2 for a usage error or a run that could not happen.
 func fail(stderr io.Writer, verb string, err error) int {
 	var u usageError
-	if errors.As(err, &u) {
+	var r refusal
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &u):
 		fmt.Fprintln(stderr, escape(err.Error()))
 		return 2
 	}
 	fmt.Fprintf(stderr, "nova-config %s: %s\n", verb, escape(err.Error()))
-	var r refusal
 	if errors.As(err, &r) {
 		return 1
 	}
 	return 2
 }
 
-// flags parses a verb's flags around the words before them: the names a verb
-// takes. A flag it does not have is a usage error that names the flag and, as
-// hint, what the verb does take.
-func flags(verb, hint string, args []string, define func(*flag.FlagSet)) (*flag.FlagSet, []string, map[string]bool, error) {
+// flags parses a verb's flags around the words before them. A flag it does not
+// have is a usage error that names the flag and, as hint, what the verb takes.
+func flags(verb, hint string, args []string, define func(*flag.FlagSet)) (*flag.FlagSet, []string, error) {
 	fs := flag.NewFlagSet("nova-config "+verb, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.String("pg", "", "the PostgreSQL dsn, with no password (env NOVA_PG_DSN)")
@@ -129,34 +121,36 @@ func flags(verb, hint string, args []string, define func(*flag.FlagSet)) (*flag.
 		words, args = append(words, args[0]), args[1:]
 	}
 	if err := fs.Parse(args); err != nil {
-		msg := strings.TrimPrefix(err.Error(), "flag provided but not defined: -")
-		if msg != err.Error() {
-			msg = "unknown flag --" + msg
-		} else if m := strings.TrimPrefix(err.Error(), "flag needs an argument: -"); m != err.Error() {
+		msg := err.Error()
+		if m, ok := strings.CutPrefix(msg, "flag provided but not defined: -"); ok {
+			msg = "unknown flag --" + m
+		} else if m, ok := strings.CutPrefix(msg, "flag needs an argument: -"); ok {
 			msg = "--" + m + " wants a value"
 		}
-		return nil, nil, nil, usagef(verb, hint, "%s", oneLine(msg))
+		return nil, nil, usagef(verb, hint, "%s", oneLine(msg))
 	}
-	words = append(words, fs.Args()...)
-	set := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	return fs, words, set, nil
+	return fs, append(words, fs.Args()...), nil
 }
 
-func str(fs *flag.FlagSet, name string) string { return fs.Lookup(name).Value.String() }
+// str is a flag's value, empty when the verb has no such flag.
+func str(fs *flag.FlagSet, name string) string {
+	if f := fs.Lookup(name); f != nil {
+		return f.Value.String()
+	}
+	return ""
+}
 
 // open opens the store the flag or the environment names.
 func open(ctx context.Context, fs *flag.FlagSet, d deps) (Store, error) {
 	verb := strings.TrimPrefix(fs.Name(), "nova-config ")
 	dsn := str(fs, "pg")
-	if dsn == "" {
-		dsn = d.getenv("NOVA_PG_DSN")
-	}
-	if dsn == "" {
+	switch {
+	case dsn == "" && d.getenv("NOVA_PG_DSN") == "":
 		return nil, usagef(verb, "", "no store: set NOVA_PG_DSN or --pg")
-	}
-	if str(fs, "pg") != "" && dsnPassword(dsn) {
+	case dsn != "" && dsnPassword(dsn):
 		return nil, usagef(verb, "", "--pg carries a password; leave it out and name its variable in NOVA_PG_PASSWORD_ENV")
+	case dsn == "":
+		dsn = d.getenv("NOVA_PG_DSN")
 	}
 	pe := d.getenv("NOVA_PG_PASSWORD_ENV")
 	if pe == "" {
@@ -169,53 +163,55 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	op := verb[len(k.name)+1:]
 	write := op == "add" || op == "set" || op == "remove"
 	hint := k.fieldsLine()
-	fs, words, given, err := flags(verb, hint, args, func(fs *flag.FlagSet) {
+	fs, words, err := flags(verb, hint, args, func(fs *flag.FlagSet) {
 		fs.Bool("json", false, "print one JSON object instead of the lines")
 		if !write {
 			return
 		}
-		fs.String("actor", "", "the `name` the write is recorded under (required)")
+		fs.String("actor", "", "the name the write is recorded under (required)")
 		fs.String("reason", "", "why: one line, recorded in the history row")
 		fs.Bool("dry-run", false, "print the change and write nothing")
-		if op != "remove" {
-			for _, f := range k.fields {
-				fs.String(f.name, "", f.typ+" field")
+		for _, f := range k.fields {
+			if op != "remove" {
+				fs.String(f.name, "", f.typ)
 			}
 		}
 	})
 	if err != nil {
 		return err
 	}
+	given := map[string]string{} // the field flags on the line
+	fs.Visit(func(f *flag.Flag) {
+		if slices.ContainsFunc(k.fields, func(x field) bool { return x.name == f.Name }) {
+			given[f.Name] = f.Value.String()
+		}
+	})
 	name := ""
-	switch {
-	case k.one && len(words) > 0, len(words) > 1:
+	if len(words) > 1 {
 		return usagef(verb, hint, "unexpected words %q", words[1:])
-	case len(words) == 1:
+	} else if len(words) == 1 {
 		name = words[0]
-	}
-	if k.one {
-		name = k.name
 	}
 	if (op == "list") != (name == "") {
 		return usagef(verb, hint, "wants %s", map[bool]string{true: "no name", false: "a name"}[op == "list"])
 	}
-	actor, reason := "", ""
+	actor, reason := str(fs, "actor"), str(fs, "reason")
 	if write {
-		actor = str(fs, "actor")
 		var missing []string
-		if op == "add" {
-			missing = k.missing(given)
+		for _, f := range k.fields {
+			if _, ok := given[f.name]; op == "add" && f.required && !ok {
+				missing = append(missing, "--"+f.name)
+			}
 		}
 		if strings.TrimSpace(actor) == "" {
 			missing = append(missing, "--actor")
 		}
-		if len(missing) > 0 {
+		switch {
+		case len(missing) > 0:
 			return usagef(verb, hint, "missing required flag %s", strings.Join(missing, ", "))
-		}
-		if reason = str(fs, "reason"); strings.ContainsAny(reason, "\r\n") {
+		case strings.ContainsAny(reason, "\r\n"):
 			return usagef(verb, hint, "--reason wants one line")
-		}
-		if op == "set" && len(values(fs, k, given)) == 0 {
+		case op == "set" && len(given) == 0:
 			return usagef(verb, hint, "no field given to set")
 		}
 	}
@@ -228,40 +224,52 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	if err != nil {
 		return err
 	}
-	cur, found := find(rows, name)
-	asJSON := fs.Lookup("json").Value.String() == "true"
-	switch op {
-	case "list":
-		return printRows(stdout, k, verb, rows, nil, asJSON)
-	case "show":
-		if !found {
-			return refused("%s %s not found; run: nova-config %s list", k.name, name, k.name)
+	var cur Row
+	found := false
+	for _, r := range rows {
+		if r.Name == name {
+			cur, found = r, true
 		}
-		var loops []string
-		if k.name == "machine" {
-			if loops, err = loopsOn(ctx, st, name); err != nil {
-				return err
-			}
-		}
-		return printRows(stdout, k, verb, []Row{cur}, loops, asJSON)
 	}
-	before, after := cur, Row{}
 	switch {
+	case op == "list":
+		printRows(stdout, k, verb, rows, nil, str(fs, "json") == "true")
+		return nil
 	case op == "add" && found:
 		return refused("%s %s exists; use: nova-config %s set", k.name, name, k.name)
 	case op != "add" && !found:
 		return refused("%s %s not found; run: nova-config %s list", k.name, name, k.name)
-	case op == "add":
-		before = Row{}
-		if after, err = k.newRow(name, values(fs, k, given)); err != nil {
-			return refusal{err.Error()}
+	case op == "show":
+		var loops []string
+		if k.name == "machine" {
+			ls, err := st.List(ctx, kinds["loop"])
+			for _, l := range ls {
+				if l.F["machine"] == name {
+					loops = append(loops, l.Name)
+				}
+			}
+			if err != nil {
+				return err
+			}
 		}
-	case op == "set":
-		if after, err = k.merge(cur, values(fs, k, given)); err != nil {
-			return refusal{err.Error()}
-		}
+		printRows(stdout, k, verb, []Row{cur}, loops, str(fs, "json") == "true")
+		return nil
 	}
-	if fs.Lookup("dry-run").Value.String() == "true" {
+	before, after := cur, Row{}
+	switch op {
+	case "add":
+		before = Row{}
+		after, err = k.newRow(name, given)
+	case "set":
+		after, err = k.merge(cur, given)
+	}
+	var ve valueError
+	if errors.As(err, &ve) {
+		return usagef(verb, hint, "%s", ve.msg)
+	} else if err != nil {
+		return refusal{err.Error()}
+	}
+	if str(fs, "dry-run") == "true" {
 		fmt.Fprintln(stdout, planLines(k, op, name, actor, reason, before.F, after.F))
 		return nil
 	}
@@ -271,40 +279,8 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	}
 	line := fmt.Sprintf("CONFIG %s kind=%s name=%s rev=%d", strings.ToUpper(op), k.name, value(name), rev)
 	if op == "set" {
-		changes := values(fs, k, given)
-		line += " changed=" + value(strings.Join(slices.Sorted(maps.Keys(changes)), ","))
+		line += " changed=" + value(strings.Join(slices.Sorted(maps.Keys(given)), ","))
 	}
 	fmt.Fprintln(stdout, line)
 	return nil
-}
-
-// values is the field flags given on the line.
-func values(fs *flag.FlagSet, k *kind, given map[string]bool) map[string]string {
-	out := map[string]string{}
-	for _, f := range k.fields {
-		if given[f.name] {
-			out[f.name] = str(fs, f.name)
-		}
-	}
-	return out
-}
-
-func find(rows []Row, name string) (Row, bool) {
-	for _, r := range rows {
-		if r.Name == name {
-			return r, true
-		}
-	}
-	return Row{}, false
-}
-
-func loopsOn(ctx context.Context, st Store, machine string) ([]string, error) {
-	rows, err := st.List(ctx, kinds["loop"])
-	var out []string
-	for _, r := range rows {
-		if r.F["machine"] == machine {
-			out = append(out, r.Name)
-		}
-	}
-	return out, err
 }

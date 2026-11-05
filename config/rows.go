@@ -29,8 +29,6 @@ type field struct {
 
 type kind struct {
 	name, table string
-	about       string // what the kind is, for its help
-	one         bool   // the fleet: one row, named after the kind, only show and set
 	fields      []field
 	check       func(Row) error
 }
@@ -50,13 +48,7 @@ var (
 )
 
 var kinds = map[string]*kind{
-	"fleet": {name: "fleet", table: "fleet", one: true, check: checkFleet,
-		about: "the one fleet row: pg_dsn (no password), the store's address; the inventory emits it as nova_pg_dsn",
-		fields: []field{
-			{name: "pg_dsn", typ: "text"},
-		}},
 	"machine": {name: "machine", table: "machines",
-		about: "a machine, named by its tailnet host: user (required), address (what ssh dials, else the name), os, arch,\ncores (default unsets it), roles (bench,runner,services), runners (CI runners on it), note",
 		fields: []field{
 			{name: "address", typ: "text"},
 			{name: "user", typ: "text", required: true},
@@ -68,7 +60,6 @@ var kinds = map[string]*kind{
 			{name: "note", typ: "text", cut: true, free: true},
 		}},
 	"loop": {name: "loop", table: "loops", check: checkLoop,
-		about: "a command a machine runs under launchd or systemd: machine and argv (a JSON array, the program first) are\nrequired; seat; keys (secret NAMES, never values); every (seconds) or keepalive true; enabled; env (a JSON\nobject of NAME to value, names [A-Z_][A-Z0-9_]*); log (a path, default " + loopLogDir + "/<name>.log)",
 		fields: []field{
 			{name: "machine", typ: "ref", required: true},
 			{name: "argv", typ: "argv", required: true},
@@ -82,14 +73,6 @@ var kinds = map[string]*kind{
 		}},
 }
 
-// ops are the verbs of a kind: the fleet has one row, so only show and set.
-func (k *kind) ops() []string {
-	if k.one {
-		return []string{"show", "set"}
-	}
-	return []string{"list", "show", "add", "set", "remove"}
-}
-
 // fieldsLine names a kind's fields on one line, for a usage error and for help.
 func (k *kind) fieldsLine() string {
 	names := []string{"name"}
@@ -97,17 +80,6 @@ func (k *kind) fieldsLine() string {
 		names = append(names, f.name)
 	}
 	return k.name + " fields: " + strings.Join(names, ", ")
-}
-
-// missing is the required fields a add does not give.
-func (k *kind) missing(given map[string]bool) []string {
-	var out []string
-	for _, f := range k.fields {
-		if f.required && !given[f.name] {
-			out = append(out, "--"+f.name)
-		}
-	}
-	return out
 }
 
 func (f field) canonical(raw string) (string, error) {
@@ -154,9 +126,6 @@ func (f field) canonical(raw string) (string, error) {
 	case "ref":
 		if raw != "" && !namePattern.MatchString(raw) {
 			return "", fmt.Errorf("--%s %q: want the name of a machine row", f.name, raw)
-		}
-		if raw == "" && f.required {
-			return "", fmt.Errorf("--%s: want the name of a machine row", f.name)
 		}
 	}
 	if strings.ContainsAny(raw, "\r\n") {
@@ -210,10 +179,15 @@ func (f field) zero() string {
 	return ""
 }
 
+// valueError is a flag value the row refuses to take: a malformed invocation.
+type valueError struct{ msg string }
+
+func (v valueError) Error() string { return v.msg }
+
 // newRow is the row add writes: the given fields, the rest at their zero.
 func (k *kind) newRow(name string, raw map[string]string) (Row, error) {
 	if len(name) > 128 || !namePattern.MatchString(name) {
-		return Row{}, fmt.Errorf("name %q: want lower-case letters, digits and dashes, starting with a letter or digit", name)
+		return Row{}, valueError{fmt.Sprintf("name %q: want lower-case letters, digits and dashes, starting with a letter or digit", name)}
 	}
 	empty := Row{Name: name, F: map[string]string{}}
 	for _, f := range k.fields {
@@ -225,7 +199,7 @@ func (k *kind) newRow(name string, raw map[string]string) (Row, error) {
 // merge is the row a set leaves: cur with the given fields, checked whole.
 func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 	next := Row{Name: cur.Name, F: maps.Clone(cur.F)}
-	var problems []string
+	var problems []string // of the values given
 	for _, f := range k.fields {
 		if v, ok := raw[f.name]; ok {
 			c, err := f.canonical(v)
@@ -235,13 +209,13 @@ func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 			next.F[f.name] = c
 		}
 	}
-	if len(problems) == 0 && k.check != nil {
-		if err := k.check(next); err != nil {
-			problems = append(problems, err.Error())
-		}
-	}
 	if len(problems) > 0 {
-		return Row{}, fmt.Errorf("%s", strings.Join(problems, "; "))
+		return Row{}, valueError{strings.Join(problems, "; ")}
+	}
+	if k.check != nil {
+		if err := k.check(next); err != nil {
+			return Row{}, err
+		}
 	}
 	return next, nil
 }
@@ -255,13 +229,6 @@ func checkLoop(r Row) error {
 		return fmt.Errorf("loop %s has neither --every nor --keepalive; want --every <seconds> or --keepalive true", r.Name)
 	case r.F["keys"] != "" && r.F["seat"] == "":
 		return fmt.Errorf("loop %s names secrets (--keys %s) and no --seat to open them from", r.Name, r.F["keys"])
-	}
-	return nil
-}
-
-func checkFleet(r Row) error {
-	if dsnPassword(r.F["pg_dsn"]) {
-		return fmt.Errorf("--pg_dsn carries a password; leave it out")
 	}
 	return nil
 }

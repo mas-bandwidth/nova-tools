@@ -1,12 +1,15 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"net"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -29,11 +32,10 @@ type Store interface {
 }
 
 // HistoryQuery selects history rows: a kind and a name when not empty, those
-// at or after Since when not zero, at most Limit when above zero.
+// at or after Since when not zero.
 type HistoryQuery struct {
 	Kind, Name string
 	Since      time.Time
-	Limit      int
 }
 
 // HistoryEntry is one history row; Before and After are the row's fields as
@@ -61,18 +63,51 @@ func rootCause(err error) error {
 	}
 }
 
-// storeError is a failure of the store as one line: a store the schema was not
-// applied to says how to apply it; anything else is its cause, never pgx's text.
-func storeError(err error) error {
+// storeError is a failure of the store as one line, never pgx's text: a store the
+// schema was not applied to says how to apply it, a refused login and a denied
+// grant say whose and what, anything else is its SQLSTATE and the server's first
+// sentence. user is the login and op what was being done.
+func storeError(err error, user, op string) error {
 	var pe *pgconn.PgError
-	if errors.As(err, &pe) {
-		switch pe.Code {
-		case "42P01", "42703", "3F000": // undefined table, undefined column, no such schema
-			return errors.New(schemaMissing)
-		}
-		return fmt.Errorf("postgres: %s", oneLine(pe.Error()))
+	switch {
+	case err == nil:
+		return nil
+	case !errors.As(err, &pe):
+		return fmt.Errorf("postgres: %s", oneLine(rootCause(err).Error()))
+	case slices.Contains([]string{"42P01", "42703", "3F000"}, pe.Code): // undefined table, undefined column, no such schema
+		return errors.New(schemaMissing)
+	case strings.HasPrefix(pe.Code, "28"):
+		return fmt.Errorf("postgres refused the login for %s: check NOVA_PG_PASSWORD", user)
+	case pe.Code == "42501":
+		words := strings.Fields(strings.Split(pe.Message, "\n")[0])
+		return fmt.Errorf("%s may not %s %s", user, op, cmp.Or(pe.TableName, words[len(words)-1]))
 	}
-	return fmt.Errorf("postgres: %s", oneLine(rootCause(err).Error()))
+	msg, _, _ := strings.Cut(strings.Split(pe.Message, "\n")[0], ". ")
+	return fmt.Errorf("store error (SQLSTATE %s): %s", pe.Code, strings.TrimSuffix(msg, "."))
+}
+
+// dsnProblem says which part of a postgres:// URL is wrong; it never quotes the URL, which may hold a password.
+func dsnProblem(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
+		return "not a postgres:// URL"
+	}
+	if n, err := strconv.Atoi(u.Port()); u.Port() != "" && (err != nil || n < 1 || n > 65535) {
+		return "port " + u.Port() + " out of range"
+	}
+	return ""
+}
+
+// connectError is the failure to open the store as one line.
+func connectError(cfg *pgx.ConnConfig, err error) error {
+	var pe *pgconn.PgError
+	switch {
+	case errors.As(err, &pe) && pe.Code == "3D000":
+		return fmt.Errorf("database %s does not exist on %s", cfg.Database, cfg.Host)
+	case errors.As(err, &pe):
+		return storeError(err, cfg.User, "connect")
+	}
+	return fmt.Errorf("cannot reach postgres at %s (NOVA_PG_DSN): %s", net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))), oneLine(rootCause(err).Error()))
 }
 
 // diagnose is the refusal of a write the store's constraints turned down (an
@@ -81,7 +116,7 @@ func storeError(err error) error {
 func diagnose(pe *pgconn.PgError, k *kind, op, name string, after Row, machines, loops []string) error {
 	switch {
 	case pe.Code == "23503" && k.name == "loop" && op != "remove":
-		return refused("no machine %s; the machines are %s", after.F["machine"], listOf(machines))
+		return refused("no machine %s; the machines are %s", after.F["machine"], cmp.Or(strings.Join(machines, ","), "(none)"))
 	case pe.Code == "23503" && k.name == "machine" && op == "remove" && len(loops) > 0:
 		return refused("machine %s still runs loops %s; remove them first: nova-config loop remove %s --actor <you>", name, strings.Join(loops, ","), loops[0])
 	case pe.Code == "23505":
@@ -90,28 +125,27 @@ func diagnose(pe *pgconn.PgError, k *kind, op, name string, after Row, machines,
 	return refused("%s %s: %s", k.name, name, oneLine(pe.Message))
 }
 
-func listOf(names []string) string {
-	if len(names) == 0 {
-		return "(none)"
-	}
-	return strings.Join(names, ",")
+type pgStore struct {
+	c    *pgx.Conn
+	user string
 }
 
-type pgStore struct{ c *pgx.Conn }
-
 func openPG(ctx context.Context, dsn, password string) (Store, error) {
+	if p := dsnProblem(dsn); p != "" {
+		return nil, fmt.Errorf("the postgres dsn is wrong: %s", p)
+	}
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("the postgres dsn could not be parsed (%T)", err) // its text may quote a password
+		return nil, errors.New("the postgres dsn could not be parsed") // its text may quote a password
 	}
 	if password != "" {
 		cfg.Password = password
 	}
 	c, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("cannot reach postgres at %s (NOVA_PG_DSN): %s", net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))), oneLine(rootCause(err).Error()))
+		return nil, connectError(cfg, err)
 	}
-	return pgStore{c}, nil
+	return pgStore{c, cfg.User}, nil
 }
 
 func (p pgStore) Close() { _ = p.c.Close(context.Background()) } // ignored: the run is over
@@ -131,68 +165,61 @@ func listSQL(k *kind) string {
 	return "SELECT " + strings.Join(cols, ", ") + " FROM config." + k.table + " ORDER BY name"
 }
 
-func (p pgStore) List(ctx context.Context, k *kind) ([]Row, error) {
-	rows, err := p.c.Query(ctx, listSQL(k))
+// text runs a query whose columns are all text and returns its rows.
+func (p pgStore) text(ctx context.Context, query string, args ...any) ([][]string, error) {
+	rows, err := p.c.Query(ctx, query, args...)
 	if err != nil {
-		return nil, storeError(err)
+		return nil, storeError(err, p.user, "read")
 	}
 	defer rows.Close()
-	var out []Row
+	var out [][]string
 	for rows.Next() {
-		vals := make([]string, len(k.fields)+3)
-		dest := make([]any, len(vals))
-		for i := range vals {
-			dest[i] = &vals[i]
+		vals, err := rows.Values()
+		if err != nil {
+			return nil, storeError(err, p.user, "read")
 		}
-		if err := rows.Scan(dest...); err != nil {
-			return nil, storeError(err)
+		row := make([]string, len(vals))
+		for i, v := range vals {
+			row[i], _ = v.(string) // ignored: every column is cast to text
 		}
-		r := Row{Name: vals[0], F: map[string]string{}, Created: vals[len(vals)-2], Updated: vals[len(vals)-1]}
+		out = append(out, row)
+	}
+	return out, storeError(rows.Err(), p.user, "read")
+}
+
+func (p pgStore) List(ctx context.Context, k *kind) ([]Row, error) {
+	got, err := p.text(ctx, listSQL(k))
+	var out []Row
+	for _, v := range got {
+		n := len(v)
+		r := Row{Name: v[0], F: map[string]string{}, Created: v[n-2], Updated: v[n-1]}
 		for i, f := range k.fields {
-			r.F[f.name] = vals[i+1]
+			r.F[f.name] = v[i+1]
 		}
 		out = append(out, r)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, storeError(err)
-	}
-	return out, nil
+	return out, err
 }
 
 // historySQL reads the history, newest first; $1 and $2 are a kind and a name
-// (” for any), $3 a time or NULL, $4 a limit or NULL.
-const historySQL = `SELECT id, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), actor, kind, name, op, coalesce(before::text, ''), coalesce(after::text, '')
+// (” for any), $3 a time or NULL.
+const historySQL = `SELECT id::text, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), actor, kind, name, op, coalesce(before::text, ''), coalesce(after::text, '')
  FROM config.history
  WHERE ($1::text = '' OR kind = $1::text) AND ($2::text = '' OR name = $2::text) AND ($3::timestamptz IS NULL OR at >= $3::timestamptz)
- ORDER BY at DESC, id DESC LIMIT $4::int`
+ ORDER BY at DESC, id DESC`
 
 func (p pgStore) History(ctx context.Context, q HistoryQuery) ([]HistoryEntry, error) {
-	var since, limit any
+	var since any
 	if !q.Since.IsZero() {
 		since = q.Since
 	}
-	if q.Limit > 0 {
-		limit = q.Limit
-	}
-	rows, err := p.c.Query(ctx, historySQL, q.Kind, q.Name, since, limit)
-	if err != nil {
-		return nil, storeError(err)
-	}
-	defer rows.Close()
+	got, err := p.text(ctx, historySQL, q.Kind, q.Name, since)
 	var out []HistoryEntry
-	for rows.Next() {
-		var e HistoryEntry
-		var before, after string
-		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.Kind, &e.Name, &e.Op, &before, &after); err != nil {
-			return nil, storeError(err)
-		}
-		e.Before, e.After = historySide(before), historySide(after)
-		out = append(out, e)
+	for _, v := range got {
+		id, _ := strconv.ParseInt(v[0], 10, 64) // ignored: the column is a bigint
+		out = append(out, HistoryEntry{id, v[1], v[2], v[3], v[4], v[5], historySide(v[6]), historySide(v[7])})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, storeError(err)
-	}
-	return out, nil
+	return out, err
 }
 
 // historySide is a history column's JSON as fields: nil for none; a value that
@@ -213,19 +240,12 @@ func historySide(text string) map[string]string {
 	return out
 }
 
-// names are the rows' names of a query, best effort: the lists a diagnosis names.
+// names are the first column of a query, best effort: the lists a diagnosis names.
 func (p pgStore) names(ctx context.Context, query string, args ...any) []string {
-	rows, err := p.c.Query(ctx, query, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
+	got, _ := p.text(ctx, query, args...) // ignored: a diagnosis without its list is still a refusal
 	var out []string
-	for rows.Next() {
-		var n string
-		if rows.Scan(&n) == nil {
-			out = append(out, n)
-		}
+	for _, v := range got {
+		out = append(out, v[0])
 	}
 	return out
 }
@@ -267,7 +287,7 @@ func writeSQL(k *kind, op, name string, after Row) (string, []any) {
 func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Row, actor, reason string) (int64, error) {
 	tx, err := p.c.Begin(ctx)
 	if err != nil {
-		return 0, storeError(err)
+		return 0, storeError(err, p.user, op)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // ignored: a no-op after the commit; on failure the failure is returned
 	name := after.Name
@@ -283,7 +303,7 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 			loops := p.names(ctx, "SELECT name FROM config.loops WHERE machine = $1 ORDER BY name", name)
 			return 0, diagnose(pe, k, op, name, after, machines, loops)
 		}
-		return 0, storeError(err)
+		return 0, storeError(err, p.user, op)
 	}
 	b, a := before.F, after.F
 	if reason != "" && a != nil {
@@ -297,10 +317,10 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 	err = tx.QueryRow(ctx, "INSERT INTO config.history (kind, name, op, before, after, actor) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
 		k.name, name, op, jsonb(b), jsonb(a), actor).Scan(&id)
 	if err != nil {
-		return 0, storeError(err)
+		return 0, storeError(err, p.user, op)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, storeError(err)
+		return 0, storeError(err, p.user, op)
 	}
 	return id, nil
 }
