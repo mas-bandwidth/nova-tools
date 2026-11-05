@@ -84,7 +84,7 @@ func TestARealStore(t *testing.T) {
 	assert.Contains(t, string(sealedFile), "ENC[")
 
 	assert.Contains(t, run("", 0, "names", "--store", store, "--as", "ada"), "API_KEY\nGH_TOKEN\n", "no key needed")
-	assert.NotContains(t, run("", 0, "names", "--store", store), "value-")
+	assert.NotContains(t, run("", 0, "names", "--store", store, "--as", "ada"), "value-")
 	got := run("", 0, append(append([]string{"exec"}, seat...), "--only", "GH_TOKEN", "--require=GH_TOKEN", "--",
 		"sh", "-c", `test "$GH_TOKEN" = value-one-xyz && test -z "$API_KEY" && echo delivered`)...)
 	assert.Contains(t, got, "delivered")

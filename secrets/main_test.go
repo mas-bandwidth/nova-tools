@@ -414,7 +414,7 @@ func TestSeatAddNeedsTheRecoveryKey(t *testing.T) {
 	before, _ := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
 	require.NoError(t, os.Remove(filepath.Join(h.store, "recovery.pub")))
 	assert.Equal(t, 2, h.main("seat", "add", "bo", pubB, "--store", h.store))
-	assert.Contains(t, h.stderr.String(), "no valid recovery.pub")
+	assert.Contains(t, h.stderr.String(), "recovery.pub is missing")
 	after, _ := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
 	assert.Equal(t, string(before), string(after))
 }
@@ -671,7 +671,7 @@ func TestOtherRemedies(t *testing.T) {
 	h.seed("bo", map[string]string{"B": "v"})
 	h.seed("cy", map[string]string{"C": "v"})
 	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")...))
-	assert.Contains(t, h.stderr.String(), "no ada.yaml in "+h.store+": wrong --as? seats here: bo,cy; or create it: nova-secrets set NAME --as ada --store "+h.store+" --key "+h.key)
+	assert.Contains(t, h.stderr.String(), "no ada.yaml in "+h.store+": wrong --as? seats here: bo,cy; or create it: nova-secrets set NAME --as ada --store "+h.store+" --key <file>")
 
 	h = newHarness(t)
 	require.NoError(t, os.Remove(filepath.Join(h.store, "recovery.pub")))

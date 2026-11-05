@@ -349,9 +349,6 @@ func (t tool) set(args []string) error {
 	if !envName.MatchString(name) {
 		return bad("NAME %q is not an environment variable name", name)
 	}
-	if _, err := t.toplevel(o.store); err != nil {
-		return refuse("%s is not a git repository; run: git -C %s init && git -C %s add -A && git -C %s commit -m store", o.store, o.store, o.store, o.store)
-	}
 	if f, ok := t.stdin.(*os.File); ok && isTerminal(f) {
 		return refuse("set: stdin is a terminal; pipe the value in, as: <source> | nova-secrets set NAME ...; run: nova-secrets set -h")
 	}
@@ -362,6 +359,9 @@ func (t tool) set(args []string) error {
 	value := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
 	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
 		return refuse("set: empty or multi-line value on stdin; the value must be one non-empty line; run: nova-secrets set -h")
+	}
+	if _, err := t.toplevel(o.store); err != nil {
+		return refuse("%s is not a git repository; run: git -C %s init && git -C %s add -A && git -C %s commit -m store", o.store, o.store, o.store, o.store)
 	}
 	values := map[string]string{} // a seat's first value starts its file
 	if _, err := os.Stat(o.file(o.as)); err == nil {
