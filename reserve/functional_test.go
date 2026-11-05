@@ -17,12 +17,12 @@ import (
 )
 
 // The functional tests run the real binary on real locks. The commands it
-// runs are this test binary again, as a child: NOVA_SLOT_CHILD=sleep writes
-// its pid to NOVA_SLOT_PIDFILE when that is set, and sleeps; =exit7 exits 7.
+// runs are this test binary again, as a child: NOVA_RESERVE_CHILD=sleep writes
+// its pid to NOVA_RESERVE_PIDFILE when that is set, and sleeps; =exit7 exits 7.
 func TestMain(m *testing.M) {
-	switch os.Getenv("NOVA_SLOT_CHILD") {
+	switch os.Getenv("NOVA_RESERVE_CHILD") {
 	case "sleep":
-		if p := os.Getenv("NOVA_SLOT_PIDFILE"); p != "" {
+		if p := os.Getenv("NOVA_RESERVE_PIDFILE"); p != "" {
 			_ = os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())), 0o644)
 		}
 		time.Sleep(30 * time.Second)
@@ -37,7 +37,7 @@ const patience = 20 * time.Second
 
 func build(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "nova-slot")
+	bin := filepath.Join(t.TempDir(), "nova-reserve")
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
@@ -51,7 +51,7 @@ func slotCmd(t *testing.T, bin, dir, child string, args ...string) *exec.Cmd {
 	self, err := os.Executable()
 	require.NoError(t, err)
 	cmd := exec.Command(bin, append(append([]string{"--dir", dir}, args...), "--", self)...)
-	cmd.Env = append(os.Environ(), "NOVA_SLOT_CHILD="+child)
+	cmd.Env = append(os.Environ(), "NOVA_RESERVE_CHILD="+child)
 	return cmd
 }
 
@@ -81,7 +81,7 @@ func TestKilledHolderFreesItsSlot(t *testing.T) {
 		t.Fatal("the waiter ran while the only slot was held")
 	case <-time.After(2 * time.Second):
 	}
-	require.NoError(t, holder.Process.Kill()) // SIGKILL: nothing of nova-slot runs after it
+	require.NoError(t, holder.Process.Kill()) // SIGKILL: nothing of nova-reserve runs after it
 	select {
 	case err := <-done:
 		var ee *exec.ExitError
@@ -111,7 +111,7 @@ func TestHoldEndsWhenStdinCloses(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
 	cmd := exec.Command(bin, "hold", "--slots", "1")
-	cmd.Env = append(os.Environ(), "NOVA_SLOT_DIR="+dir)
+	cmd.Env = append(os.Environ(), "NOVA_RESERVE_DIR="+dir)
 	in, err := cmd.StdinPipe()
 	require.NoError(t, err)
 	out, err := cmd.StdoutPipe()
@@ -129,7 +129,7 @@ func TestHoldEndsWhenStdinCloses(t *testing.T) {
 	assert.Contains(t, string(status), "slot1 free")
 }
 
-// TestKilledHolderTakesItsCommandWith SIGKILLs nova-slot itself: its command
+// TestKilledHolderTakesItsCommandWith SIGKILLs nova-reserve itself: its command
 // must not run on without the slot (Linux: Pdeathsig; Windows: the job), and
 // the slot frees. On macOS and the BSDs the command outlives a SIGKILL, so
 // only the slot is checked there.
@@ -138,7 +138,7 @@ func TestKilledHolderTakesItsCommandWith(t *testing.T) {
 	bin, dir := build(t), t.TempDir()
 	pidfile := filepath.Join(t.TempDir(), "child.pid")
 	holder := slotCmd(t, bin, dir, "sleep", "--slots", "1")
-	holder.Env = append(holder.Env, "NOVA_SLOT_PIDFILE="+pidfile)
+	holder.Env = append(holder.Env, "NOVA_RESERVE_PIDFILE="+pidfile)
 	require.NoError(t, holder.Start())
 	t.Cleanup(func() { _ = holder.Process.Kill(); _ = holder.Wait() })
 	var child int
@@ -147,12 +147,12 @@ func TestKilledHolderTakesItsCommandWith(t *testing.T) {
 		child, _ = strconv.Atoi(string(b))
 		return err == nil && child > 0
 	}, patience, 50*time.Millisecond)
-	require.True(t, alive(child), "the command runs while nova-slot holds its slot")
+	require.True(t, alive(child), "the command runs while nova-reserve holds its slot")
 	require.NoError(t, holder.Process.Kill())
 	_ = holder.Wait()
 	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
 		assert.Eventually(t, func() bool { return !alive(child) }, patience, 50*time.Millisecond,
-			"the command outlived nova-slot")
+			"the command outlived nova-reserve")
 	}
 	assert.Eventually(t, func() bool {
 		out, _ := exec.Command(bin, "status", "--dir", dir).Output()

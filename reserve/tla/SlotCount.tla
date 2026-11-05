@@ -1,5 +1,5 @@
 ------------------------------ MODULE SlotCount ------------------------------
-\* nova-slot's guarantee, with no files: at most N shared holders at once, an
+\* nova-reserve's guarantee, with no files: at most N shared holders at once, an
 \* exclusive holder runs alone, and a holder that ends or dies leaves. The
 \* layout model (SlotFiles.tla) refines this one.
 \*

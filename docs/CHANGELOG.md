@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-Removed everything that is not one of the six pieces (bus, config, sandbox, secrets, slot, fleet): `cmd/` (nova-version), `internal/` (update, nsprint, testverbhelp), all of `pkg/`, `cairn/` and `docs/SPEC-CAIRN.md` (moved to rowan-tools as `cmd/cairn/`), the TLA+ models of the removed code (`tla/check.sh` stays and now runs only directories that hold a module), `schemas/`, `infra/`, `assets/`, `FIXES.md`, the issue templates, and the specs and docs of the removed tools; ROADMAP.md lost its entries about them, SECURITY.md and CLI-STYLE.md lost their paragraphs about them, README.md is rewritten, and docs/MOVED.md says where each piece went. go.mod dropped the modules only the removed code used.
+Renamed `nova-slot` to `nova-reserve` (directory `slot/` to `reserve/`, `NOVA_SLOT_DIR` to `NOVA_RESERVE_DIR`, default directory `/tmp/nova-reserve`): it is about making reservations so people and AIs can coordinate. Behaviour unchanged; `--slots` stays, a reservation has N slots. `nova-slot` was never installed anywhere and joins the retired list.
+
+Removed everything that is not one of the six pieces (bus, config, sandbox, secrets, reserve, fleet): `cmd/` (nova-version), `internal/` (update, nsprint, testverbhelp), all of `pkg/`, `cairn/` and `docs/SPEC-CAIRN.md` (moved to rowan-tools as `cmd/cairn/`), the TLA+ models of the removed code (`tla/check.sh` stays and now runs only directories that hold a module), `schemas/`, `infra/`, `assets/`, `FIXES.md`, the issue templates, and the specs and docs of the removed tools; ROADMAP.md lost its entries about them, SECURITY.md and CLI-STYLE.md lost their paragraphs about them, README.md is rewritten, and docs/MOVED.md says where each piece went. go.mod dropped the modules only the removed code used.
 
 ## v1.6.29 — 2026-11-05
 

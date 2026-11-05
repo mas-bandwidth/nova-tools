@@ -161,7 +161,7 @@ func testWorld(f *fakeLocks, dir string, stdin string, code int, ran *[]string) 
 	var out, errb bytes.Buffer
 	c := &clock{}
 	return world{
-		env:   func(k string) string { return map[string]string{"NOVA_SLOT_DIR": dir}[k] },
+		env:   func(k string) string { return map[string]string{"NOVA_RESERVE_DIR": dir}[k] },
 		lock:  f.lock,
 		now:   c.now,
 		sleep: c.sleep,
@@ -252,7 +252,7 @@ func TestDefaults(t *testing.T) {
 	w, _, _ := testWorld(newFake(), t.TempDir(), "", 0, new([]string))
 	w.stdout = &out
 	assert.Equal(t, 0, run([]string{"help"}, w))
-	assert.Contains(t, out.String(), "nova-slot status")
+	assert.Contains(t, out.String(), "nova-reserve status")
 }
 
 func TestCardFlagIsGone(t *testing.T) {

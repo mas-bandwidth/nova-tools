@@ -1,13 +1,13 @@
 # Nova Tools
 
-nova-tools is the small set of tools that lets a group of AI agents work as a fleet: talk to each other, share machines, hold secrets and run safely. Each tool is a few hundred lines and does one thing.
+![Nova Tools — Tools by AIs for AIs. Robot friends building and sharing tools in a cheerful workshop.](docs/assets/nova-tools-workshop.png)
 
-Now, with nova-tools, your AIs can:
+With nova-tools, your AIs can:
 
 ## 1. Talk to each other across models and harnesses
 
 **Any process that can reach Redis can send and receive messages by name.**
-`nova-bus` keeps one inbox per name. A model hooks in with `nova-bus hook`, which prints one line for each message addressed to its name, so the harness shows it as input. It works the same for Claude, GPT, Gemini, Grok, a shell script or a daemon: they all just run the command.
+`nova-bus` keeps one inbox per name. A model hooks in with `nova-bus hook`, which prints one line for each message addressed to its name, for the harness to read and bring into the session. It works the same for Claude, GPT, Gemini, Grok, a shell script or a daemon: they all just run the command.
 
 ## 2. Set up and run a fleet of machines over tailscale
 
@@ -16,24 +16,33 @@ Now, with nova-tools, your AIs can:
 
 ## 3. Run CI workers across your fleet
 
-(this text sucked, rewrite it please)
+**Keep track of the machines that run your CI jobs.**
+Give a machine the `runner` role and `nova-config` adds it to the inventory's
+runners group. Your Ansible plays can then target those hosts. Installing and
+registering the runners remains an operator task; that role is not here yet.
 
-## 4. Deploy secrets to the fleet without ever exposing them
+## 4. Deploy secrets to the fleet
 
-`nova-secrets` keeps secrets in git, encrypted with sops and age, one file per seat. `exec` decrypts the named values into the child process's environment.
+`nova-secrets` keeps secrets in git, encrypted with sops and age, one file per seat. `exec` decrypts a seat file and passes the selected values to the child process's environment.
 
-Secrets are never exposed to command line arguments, logs or something `ps` shows.
+The tool keeps values out of its arguments and progress lines. The command
+and its children can read them; OS permissions control who else can inspect
+their environment.
 
 ## 5. Run untrusted work behind a wall
 
 **Declare the paths and network a command may touch; the kernel refuses the rest.**
 
-`nova-sandbox` uses Landlock on Linux and sandbox-exec on macOS. Only the directories you name are reachable, and `--net-deny` closes the network or the wall refuses to start.
+`nova-sandbox` uses Landlock on Linux and sandbox-exec on macOS. System roots remain readable; your flags add the directories the command
+needs. On Linux, `--net-deny` restricts TCP, not UDP. Read the sandbox spec for
+the limits on each OS.
 
 ## 6. Share machines without stepping on each other
 
 **Cap how many heavy jobs run at once on a machine.**
-`nova-slot` holds one of N slots while your command runs. The slots are OS file locks, so a killed holder's slot frees itself. It works on Linux, macOS, the BSDs and Windows.
+`nova-reserve` holds one of N slots while your command runs. The slots are OS file locks, so a killed holder's slot frees itself. It works on Linux, macOS, the BSDs and Windows.
+
+The seventh piece, `nova-cairn`, keeps memory and supports self-talk.
 
 ## Docs
 
@@ -47,4 +56,4 @@ Secrets are never exposed to command line arguments, logs or something `ps` show
 | [SECURITY](docs/SECURITY.md) | what counts as a vulnerability, and how to report one |
 | [MOVED](docs/MOVED.md) | tools that used to live here, and where they went |
 
-[TESTING.md](TESTING.md) says how to test. Licence: [LICENSE](LICENSE).
+[docs/TESTING.md](docs/TESTING.md) says how to test. Licence: [LICENSE](LICENSE).

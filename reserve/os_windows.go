@@ -11,8 +11,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// systemDir is the slot directory when NOVA_SLOT_DIR names none.
-const systemDir = `C:\ProgramData\nova-slot`
+// systemDir is the reservation directory when NOVA_RESERVE_DIR names none.
+const systemDir = `C:\ProgramData\nova-reserve`
 
 // osLock is LockFileEx on the first byte of path. The handle is not
 // inheritable, so the command never holds the lock, and the kernel lets go of
@@ -48,7 +48,7 @@ func osLock(path string, exclusive bool) (func(), bool, error) {
 }
 
 // tie starts cmd in a job object that kills every process in it when its last
-// handle closes: nova-slot holds the only one, so the command ends with it.
+// handle closes: nova-reserve holds the only one, so the command ends with it.
 func tie(cmd *exec.Cmd) (func(), error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
