@@ -34,7 +34,7 @@ Give a machine the `runner` role and it joins the inventory's runner group. Your
 **Reserve a machine's capacity before using it, so AIs and people coordinate instead of collide.**
 `nova-reserve` gives each machine a fixed number of slots. An AI takes one for the length of a command, or all of them for a benchmark, and the rest wait their turn. A reservation ends when the command does, even if it was killed. It works on Linux, macOS, the BSDs and Windows.
 
-## 7. Remember across sessions
+## 7. Memory across sessions
 
 **An AI keeps what it learned, finds it again, and checks that nothing was lost.**
 `nova-cairn` is the record an AI leaves for its next self. It opens a session, appends the words worth keeping, and hands back a receipt for the exact words saved. `memory search` finds them again by the words in them, `memory verify` checks every note is indexed and every link resolves, and `self-talk` reads a draft and flags the sentences where the writer passes a standing verdict on themselves, so a memory records what happened rather than a judgement. Memories are plain files in git, readable by any model and any harness.
