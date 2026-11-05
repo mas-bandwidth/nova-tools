@@ -1,0 +1,143 @@
+---
+# One wanted runner, number runner_index.
+- name: this runner's names
+  ansible.builtin.set_fact:
+    github_runner_dir: "{{ github_runner_base_dir }}/{{ github_runner_slug }}-{{ runner_index }}"
+    github_runner_name: "{{ inventory_hostname }}-{{ runner_index }}"
+    github_runner_unit: "github-runner-{{ github_runner_slug }}-{{ runner_index }}"
+    github_runner_label_id: "github-runner.{{ github_runner_slug }}-{{ runner_index }}"
+
+- name: the directory
+  ansible.builtin.file: { path: "{{ github_runner_dir }}", state: directory, mode: "0755" }
+  register: github_runner_made
+
+- name: unpack the runner where config.sh is missing
+  ansible.builtin.unarchive:
+    src: "{{ github_runner_base_dir }}/.cache/actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.tar.gz"
+    dest: "{{ github_runner_dir }}"
+    remote_src: true
+    creates: "{{ github_runner_dir }}/config.sh"
+  register: github_runner_unpacked
+  when: not (ansible_check_mode and github_runner_made is changed)
+
+# the runner's own installer of the system libraries it needs (libicu and the like); once per release on the host
+- name: the runner's system dependencies (Linux)
+  ansible.builtin.shell: |
+    set -eu
+    cd "{{ github_runner_dir }}"
+    ./bin/installdependencies.sh
+    touch "{{ github_runner_base_dir }}/.cache/dependencies-{{ github_runner_version }}"
+  args: { executable: /bin/sh, creates: "{{ github_runner_base_dir }}/.cache/dependencies-{{ github_runner_version }}" }
+  become: true
+  when: >-
+    ansible_facts['system'] == 'Linux' and github_runner_install_dependencies | bool
+    and not (ansible_check_mode and github_runner_unpacked is changed)
+
+- name: register with GitHub (the token reaches the runner in its environment)
+  ansible.builtin.command:
+    argv:
+      - ./config.sh
+      - --unattended
+      - --url
+      - "{{ github_runner_url }}"
+      - --name
+      - "{{ github_runner_name }}"
+      - --labels
+      - "{{ github_runner_label_string }}"
+      - --work
+      - _work
+      - --replace
+    chdir: "{{ github_runner_dir }}"
+    creates: "{{ github_runner_dir }}/.runner"
+  environment: { ACTIONS_RUNNER_INPUT_TOKEN: "{{ github_runner_token | default('') }}" }
+  no_log: true
+  register: github_runner_registration
+  when: runner_index in github_runner_need and not ansible_check_mode
+
+- name: the labels it was registered with
+  ansible.builtin.copy:
+    content: "{{ github_runner_label_string }}\n"
+    dest: "{{ github_runner_dir }}/.labels"
+    mode: "0644"
+    force: false
+  when: github_runner_registration is changed
+
+- name: the labels it holds now
+  ansible.builtin.command: cat "{{ github_runner_dir }}/.labels"
+  register: github_runner_held
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: label drift is reported, not corrected (labels are fixed at registration)
+  ansible.builtin.debug:
+    msg: >-
+      LABEL-DRIFT {{ github_runner_name }}: registered with {{ github_runner_held.stdout | trim }}, wants {{ github_runner_label_string }}.
+      Retire it (-e github_runner_state=absent) and converge again to relabel.
+  when: github_runner_held.rc == 0 and (github_runner_held.stdout | trim) != github_runner_label_string
+
+# ---- Linux: a systemd system unit run as the login, enabled at boot ----
+- name: the unit (Linux)
+  ansible.builtin.template:
+    src: runner.service.j2
+    dest: "/etc/systemd/system/{{ github_runner_unit }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: github_runner_unit_file
+  when: ansible_facts['system'] == 'Linux'
+
+- name: systemd reads the unit (Linux)
+  ansible.builtin.systemd: { daemon_reload: true }
+  become: true
+  when: ansible_facts['system'] == 'Linux' and github_runner_unit_file is changed and not ansible_check_mode
+
+- name: the service is enabled at boot and running (Linux)
+  ansible.builtin.systemd:
+    name: "{{ github_runner_unit }}.service"
+    enabled: true
+    state: "{{ 'restarted' if github_runner_unit_file is changed else 'started' }}"
+  become: true
+  when: ansible_facts['system'] == 'Linux' and not (ansible_check_mode and github_runner_unit_file is changed)
+
+# ---- macOS: a system LaunchDaemon dropped to the login, started at boot with nobody logged in ----
+- name: the daemon file (macOS)
+  ansible.builtin.template:
+    src: runner.plist.j2
+    dest: "/Library/LaunchDaemons/{{ github_runner_label_id }}.plist"
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  register: github_runner_unit_file
+  when: ansible_facts['system'] == 'Darwin'
+
+- name: the log directory (macOS)
+  ansible.builtin.file: { path: "{{ github_runner_dir }}/_diag", state: directory, mode: "0755" }
+  when: ansible_facts['system'] == 'Darwin' and not (ansible_check_mode and github_runner_made is changed)
+
+- name: is the daemon loaded (macOS)
+  ansible.builtin.command: "launchctl print system/{{ github_runner_label_id }}"
+  become: true
+  register: github_runner_loaded
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['system'] == 'Darwin'
+
+- name: load the daemon, or reload it where its file changed (macOS)
+  ansible.builtin.shell: |
+    set -eu
+    l=system/{{ github_runner_label_id }}
+    if launchctl print "$l" >/dev/null 2>&1; then
+      launchctl bootout "$l"
+      for n in $(seq 1 50); do launchctl print "$l" >/dev/null 2>&1 || break; sleep 0.2; done
+    fi
+    launchctl bootstrap system "/Library/LaunchDaemons/{{ github_runner_label_id }}.plist"
+    echo BOOTSTRAPPED
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_boot
+  changed_when: "'BOOTSTRAPPED' in github_runner_boot.stdout"
+  when: ansible_facts['system'] == 'Darwin' and (github_runner_loaded.rc != 0 or github_runner_unit_file is changed)

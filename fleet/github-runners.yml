@@ -1,0 +1,20 @@
+# github-runners.yml: GitHub Actions runners on every machine of the `runner` group, runner_count of them
+# (the machine row's `runners`), registered to one repository or organization, run as a service that
+# starts at boot, labelled with the machine's roles, os and arch. docs/FLEET.md, "github-runners.yml".
+#
+#   ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo --check --diff | cat
+#   ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo -K | cat
+#
+# The registration token is read on the control node with
+# `nova-secrets exec --only GITHUB_RUNNER_TOKEN`; it is not an argument, a variable of the inventory or a file.
+# Variables: fleet/roles/github-runner/defaults/main.yml. Linux and macOS use sudo for the service files (-K);
+# a Windows host needs the ansible.windows collection (fleet/requirements.yml) and an administrator login.
+- name: GitHub Actions runners
+  hosts: runner
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    # no host carries more than its row says; -e runner_count=<n> overrides for a run
+    runner_count: "{{ runners | default(0) | int }}"
+  roles:
+    - github-runner

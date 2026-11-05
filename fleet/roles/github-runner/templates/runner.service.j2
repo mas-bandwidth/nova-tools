@@ -1,0 +1,21 @@
+# {{ github_runner_unit }}: managed by Ansible (fleet/github-runners.yml). Edits are overwritten.
+[Unit]
+Description=GitHub Actions runner {{ github_runner_name }} ({{ github_runner_path }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{ ansible_facts['user_id'] }}
+WorkingDirectory={{ github_runner_dir }}
+{% for k, v in github_runner_env.items() | sort %}
+Environment={{ k }}={{ v }}
+{% endfor %}
+ExecStart={{ github_runner_dir }}/run.sh
+Restart=always
+RestartSec=10
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+---
+# Retire runner number runner_index: remove it from GitHub and uninstall its service (config.cmd remove does
+# both), or, with github_runner_deregister false, only uninstall the service; then delete its directory.
+- name: the retiring runner's directory
+  ansible.builtin.set_fact:
+    github_runner_dir: "{{ github_runner_base_dir }}\\{{ github_runner_slug }}-{{ runner_index }}"
+
+- name: remove it from GitHub and uninstall the service (the token reaches the runner in its environment)
+  ansible.windows.win_shell: .\config.cmd remove
+  args:
+    chdir: "{{ github_runner_dir }}"
+    removes: "{{ github_runner_dir }}\\.runner"
+  environment: { ACTIONS_RUNNER_INPUT_TOKEN: "{{ github_runner_token | default('') }}" }
+  no_log: true
+  when: github_runner_deregister | bool and not ansible_check_mode
+
+- name: uninstall the service only (no removal from GitHub)
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = 'Stop'
+    $s = Get-CimInstance Win32_Service | Where-Object { $_.PathName -like '*{{ github_runner_dir }}\*' }
+    if ($s) { Stop-Service -Name $s.Name -Force; sc.exe delete $s.Name | Out-Null; 'REMOVED' }
+  register: github_runner_unserved
+  changed_when: "'REMOVED' in github_runner_unserved.stdout"
+  when: not (github_runner_deregister | bool) and not ansible_check_mode
+
+- name: delete the directory
+  ansible.windows.win_file: { path: "{{ github_runner_dir }}", state: absent }

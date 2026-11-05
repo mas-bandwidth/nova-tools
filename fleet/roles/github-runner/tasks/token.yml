@@ -1,0 +1,21 @@
+---
+# The registration (or removal) token, read on the control node from the nova-secrets store
+# and held as a no_log fact for this host only. It is never an argument of any command: the
+# store hands it to a child process through the environment, the runner reads it from
+# ACTIONS_RUNNER_INPUT_TOKEN, and it is written nowhere. Not read under --check.
+- name: the token, from the store on the control node
+  ansible.builtin.command:
+    argv: >-
+      {{ [github_runner_secrets_bin, 'exec', '--only', 'GITHUB_RUNNER_TOKEN'] + github_runner_secrets_args
+         + ['--', 'sh', '-c', 'printf %s "$GITHUB_RUNNER_TOKEN"'] }}
+  delegate_to: localhost
+  become: false
+  register: github_runner_token_read
+  no_log: true
+  changed_when: false
+  check_mode: false
+
+- name: the token is held for this host
+  ansible.builtin.set_fact:
+    github_runner_token: "{{ github_runner_token_read.stdout }}"
+  no_log: true
