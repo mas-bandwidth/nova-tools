@@ -44,6 +44,7 @@ type harness struct {
 	sopsMissing bool
 	noAgeKeygen bool
 	failGit     bool
+	keyPub      string // what the fake age-keygen -y prints
 	notRepo     bool   // git rev-parse fails
 	top         string // what git rev-parse --show-toplevel prints; the directory asked about when ""
 }
@@ -55,7 +56,7 @@ const pubRec = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr"
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	dir := t.TempDir()
-	h := &harness{t: t, store: filepath.Join(dir, "store"), key: filepath.Join(dir, "keys", "ada.key")}
+	h := &harness{t: t, keyPub: pubA, store: filepath.Join(dir, "store"), key: filepath.Join(dir, "keys", "ada.key")}
 	require.NoError(t, os.MkdirAll(h.store, 0o700))
 	require.NoError(t, os.MkdirAll(filepath.Dir(h.key), 0o700))
 	require.NoError(t, os.WriteFile(h.key, []byte("not a real key: the fake sops never reads it\n"), 0o600))
@@ -134,7 +135,7 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 	case name == "age-keygen" && args[0] == "-o":
 		return nil, os.WriteFile(args[1], []byte("AGE-SECRET-KEY-FAKE\n"), 0o644)
 	case name == "age-keygen" && args[0] == "-y":
-		return []byte(pubB + "\n"), nil
+		return []byte(h.keyPub + "\n"), nil
 	case name == "git" && args[0] == "rev-parse":
 		if h.notRepo {
 			return nil, exitErr(128)
@@ -207,7 +208,7 @@ func TestExecDeliversOnlyTheNamedValues(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.seed("ada", map[string]string{"GH_TOKEN": "ghp-sealed-one", "API_KEY": "sk-sealed-two", "OTHER": "sealed-three", markKey: "seal v1.6.29"})
-	code := h.main(h.seat("exec", "--only", "API_KEY", "--require=API_KEY", "--", "true", "x")...)
+	code := h.main(h.seat("exec", "--only", "API_KEY", "--", "true", "x")...)
 	require.Equal(t, 0, code, h.stderr.String())
 	assert.Equal(t, []string{"true", "x"}, h.became)
 	env := envMap(h.env)
@@ -227,9 +228,8 @@ func TestExecDeliversOnlyTheNamedValues(t *testing.T) {
 func TestExecRefusalsAre125AndNeverRun(t *testing.T) {
 	t.Parallel()
 	for name, args := range map[string][]string{
-		"unknown name":        {"--only", "API_KEY,NOPE", "--", "true"},
-		"require not present": {"--only", "API_KEY", "--require", "NOPE", "--", "true"},
-		"unknown command":     {"--only", "API_KEY", "--", "no-such-program-here"},
+		"unknown name":    {"--only", "API_KEY,NOPE", "--", "true"},
+		"unknown command": {"--only", "API_KEY", "--", "no-such-program-here"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -363,13 +363,17 @@ func TestSealIsGone(t *testing.T) {
 	assert.Contains(t, h.stderr.String(), `unknown verb "seal"`)
 }
 
-func TestRequireIsOnlyUnderAnotherName(t *testing.T) {
+func TestRequireIsAHiddenAliasOfOnly(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two", "OTHER": "sealed-three"})
+	h.seed("ada", map[string]string{"API_KEY": "sk-1", "OTHER": "sealed-3"})
 	require.Equal(t, 0, h.main(h.seat("exec", "--only", "API_KEY", "--require", "OTHER", "--", "true")...), h.stderr.String())
-	assert.Equal(t, "sealed-three", envMap(h.env)["OTHER"])
-	require.Equal(t, 0, h.main(h.seat("exec", "--require", "API_KEY", "--", "true")...), h.stderr.String())
+	assert.Equal(t, "sealed-3", envMap(h.env)["OTHER"])
+	assert.Equal(t, "sk-1", envMap(h.env)["API_KEY"])
+	require.Equal(t, 0, h.main(h.seat("exec", "--require=API_KEY", "--", "true")...), h.stderr.String())
+	assert.Equal(t, 125, h.main(h.seat("exec", "--require", "NOPE", "--", "true")...))
+	h.main("help")
+	assert.NotContains(t, h.stdout.String(), "--require", "hidden")
 }
 
 const catchAllRules = "creation_rules:\n  - age: " + pubA + "\n"
@@ -398,7 +402,8 @@ func TestSeatAddEditsTheRecipients(t *testing.T) {
 		{"path_regex": `^bo\.yaml$`, "age": pubB + "," + pubRec},
 	}, h.rules())
 	assert.NoFileExists(t, filepath.Join(h.store, "bo.yaml"))
-	assert.Empty(t, h.calls, "no program runs")
+	assert.Equal(t, [][]string{{"add", "--", ".sops.yaml"}, {"commit", "-q", "-m", "seat bo", "--", ".sops.yaml"}}, h.gitCalls(), "it commits only .sops.yaml")
+	assert.Len(t, h.calls, 2, "git add and git commit, no other program")
 
 	assert.Equal(t, 2, h.main(args...), "the rule for bo exists")
 	assert.Contains(t, h.stderr.String(), "already has a rule")
@@ -627,7 +632,8 @@ func TestNamesListsOnlyRealNamesNeverValues(t *testing.T) {
 
 func TestWrongKeyRemedies(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t) // the fake age-keygen -y prints pubB
+	h := newHarness(t)
+	h.keyPub = pubB // the key is pubB
 	h.failDec = true
 	file := func(rec string) { // ada.yaml with recipients rec
 		require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte("A: ENC[x]\nsops:\n    age:\n        - recipient: "+rec+"\n        - recipient: "+pubRec+"\n"), 0o600))
@@ -730,11 +736,84 @@ func TestVerbHelp(t *testing.T) {
 	}
 	h.stdout.Reset()
 	h.main("exec", "-h")
-	assert.Contains(t, h.stdout.String(), "kept for existing units; same as --only")
+	assert.NotContains(t, h.stdout.String(), "--require")
 	h.seed("ada", map[string]string{"X": "v"})
 	h.stdout.Reset()
 	assert.Equal(t, 0, h.main(h.seat("exec", "--only", "X", "--", "true", "-h")...), "-h after -- belongs to the command: %s", h.stderr.String())
 	assert.Equal(t, []string{"true", "-h"}, h.became)
 	assert.Equal(t, 2, h.main("help", "bogus"))
 	assert.Equal(t, 2, h.main("seat"))
+}
+
+func TestFirstSetChecksTheKeyAgainstTheRule(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t) // the rule for ada names pubA
+	h.keyPub = pubB
+	h.stdin = "v-first\n"
+	assert.Equal(t, 2, h.main(h.set("NEW")...))
+	assert.Contains(t, h.stderr.String(), "key "+pubB+" is not the key in .sops.yaml for ada ("+pubA+"): wrong --key/--as, or the key was replaced")
+	assert.NoFileExists(t, filepath.Join(h.store, "ada.yaml"))
+	for _, c := range h.calls {
+		assert.NotEqual(t, "sops", c.name, "nothing is encrypted under the wrong key")
+	}
+	h.keyPub = pubA
+	h.stdin = "v-first\n"
+	require.Equal(t, 0, h.main(h.set("NEW")...), h.stderr.String())
+	assert.Equal(t, map[string]string{"NEW": "v-first"}, h.open("ada"))
+}
+
+func TestSeatAddWritesABlockListAndCommits(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.sopsYAML("creation_rules: []\n")
+	require.Equal(t, 0, h.main("seat", "add", "bo", pubB, "--store", h.store), h.stderr.String())
+	b, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "creation_rules:\n  - path_regex: ^bo\\.yaml$\n    age: "+pubB+","+pubRec+"\n", string(b))
+	assert.Contains(t, h.stdout.String(), "SECRETS SEAT ADD OK seat=bo committed; next:")
+	h.failGit = true
+	assert.Equal(t, 2, h.main("seat", "add", "cy", pub3, "--store", h.store))
+	assert.Contains(t, h.stderr.String(), ".sops.yaml is written: run: git -C "+h.store+" status")
+}
+
+const pub3 = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqc"
+
+func TestSeatListIsReadOnly(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t) // a rule for ada; add a rule for bo with no file, and a file for cy with no rule
+	h.sopsYAML("creation_rules:\n  - path_regex: ^ada\\.yaml$\n    age: " + pubA + "\n  - path_regex: ^bo\\.yaml$\n    age: " + pubB + "\n  - age: " + pubRec + "\n")
+	h.seed("ada", map[string]string{"A": "v"})
+	h.seed("cy", map[string]string{"C": "v"})
+	require.Equal(t, 0, h.main("seat", "list", "--store", h.store), h.stderr.String())
+	assert.Equal(t, "ada file=yes rule=yes\nbo file=no rule=yes\ncy file=yes rule=no\n", h.stdout.String())
+	assert.Equal(t, "SECRETS SEAT LIST OK seats=3\n", h.stderr.String())
+	assert.Empty(t, h.calls)
+	require.NoError(t, os.Remove(filepath.Join(h.store, ".sops.yaml")))
+	assert.Equal(t, 2, h.main("seat", "list", "--store", h.store))
+	assert.Equal(t, 0, h.main("seat", "list", "-h"))
+	assert.Contains(t, h.stdout.String(), "nova-secrets seat list ")
+}
+
+func TestUnknownNameSaysHowToListNames(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("ada", map[string]string{"API_KEY": "v"})
+	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "NOPE", "--", "true")...))
+	assert.Contains(t, h.stderr.String(), "holds no such name; run: nova-secrets names --store "+h.store+" --as ada")
+}
+
+func TestSeatVerbsAndAbsentStore(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	assert.Equal(t, 0, h.main("seat", "-h"))
+	assert.Contains(t, h.stdout.String(), "nova-secrets seat add ")
+	assert.Contains(t, h.stdout.String(), "nova-secrets seat list ")
+	assert.Equal(t, 2, h.main("seat", "list", "--store", h.store, "--as", "ada"))
+	assert.Equal(t, "nova-secrets seat list: unknown flag --as; run: nova-secrets seat list -h\n", h.stderr.String())
+	gone := filepath.Join(t.TempDir(), "gone")
+	for _, args := range [][]string{{"seat", "list", "--store", gone}, {"seat", "add", "bo", pubB, "--store", gone}, {"names", "--store", gone, "--as", "ada"}} {
+		assert.Equal(t, 2, h.main(args...), "%v", args)
+		assert.Contains(t, h.stderr.String(), "store "+gone+" does not exist; run: nova-secrets init --store "+gone+" --recovery <age-public-key>", "%v", args)
+	}
+	assert.Empty(t, h.calls)
 }
