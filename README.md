@@ -12,7 +12,7 @@ Each AI has a name and an inbox on `nova-bus`. An AI hooks in once, and from the
 ## 2. Set up and run a fleet of machines over tailscale
 
 **Every machine on the tailnet knows its job, and an AI can see the whole fleet at once.**
-`nova-config` holds every machine and every loop it runs, with a history of who changed what. `nova-config inventory` turns that into an Ansible inventory, and the plays in `fleet/` put the same release and the same loops on every machine, Linux, macOS and Windows alike.
+`nova-config` holds every machine and what each one runs, with a history of who changed what. `nova-config inventory` turns that into an Ansible inventory, and the plays in `fleet/` put the same software on every machine, Linux, macOS and Windows alike.
 
 ## 3. Run CI workers across your fleet
 
@@ -45,11 +45,11 @@ Give a machine the `runner` role and it joins the inventory's runner group. Your
 |---|---|
 | [SPEC-BUS](docs/SPEC-BUS.md) | how a message reaches an AI by name, what hooking in does, and what happens when a hook dies mid-message |
 | [SPEC-SECRETS](docs/SPEC-SECRETS.md) | how to create a store, give a machine a seat, and hand a command its secrets without ever showing them |
-| [SPEC-CONFIG](docs/SPEC-CONFIG.md) | how to describe machines and the loops they run, and what the inventory hands to Ansible |
+| [SPEC-CONFIG](docs/SPEC-CONFIG.md) | how to describe your machines and what each one runs, and what the inventory hands to Ansible |
 | [SPEC-SANDBOX](docs/SPEC-SANDBOX.md) | what the wall guarantees on Linux and on macOS, and how to prove it on your own machine |
 | [SPEC-RESERVE](docs/SPEC-RESERVE.md) | how a machine's slots are reserved and released, and why a dead holder never keeps one |
 | [SPEC-CAIRN](docs/SPEC-CAIRN.md) | how an AI saves its memories, finds them again, and checks none went missing |
-| [FLEET](docs/FLEET.md) | how one play puts a release and its loops on every machine you own |
+| [FLEET](docs/FLEET.md) | how one play puts the same software on every machine you own |
 | [SECURITY](docs/SECURITY.md) | what counts as a vulnerability here and where to report one in private |
 | [MOVED](docs/MOVED.md) | where the tools that once lived here went |
 
