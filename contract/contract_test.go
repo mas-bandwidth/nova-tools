@@ -41,7 +41,11 @@ var toolSpecs = []toolSpec{
 	{dir: "bus", verbs: [][]string{{"send"}, {"hook"}, {"who"}, {"pending"}},
 		missing: []missingCase{{[]string{"send"}, []string{"--as", "--to", "--addr|NOVA_BUS_REDIS"}}}},
 	{dir: "cairn", verbs: [][]string{{"open"}, {"append"}, {"index"}, {"receipt"}, {"self-talk"},
-		{"memory", "stats"}, {"memory", "search"}, {"memory", "check"}, {"memory", "verify"}}},
+		{"memory", "stats"}, {"memory", "search"}, {"memory", "check"}, {"memory", "verify"}, {"help"}, {"version"}},
+		missing: []missingCase{
+			{[]string{"open"}, []string{"--store", "--session", "--publish"}},
+			{[]string{"memory", "search"}, []string{"--root"}},
+			{[]string{"index", "--store", "@tmp/no-such-dir"}, []string{"--store"}}}},
 	{dir: "config", verbs: [][]string{
 		{"machine", "list"}, {"machine", "show"}, {"machine", "add"}, {"machine", "set"}, {"machine", "remove"},
 		{"loop", "list"}, {"loop", "show"}, {"loop", "add"}, {"loop", "set"}, {"loop", "remove"},
@@ -296,7 +300,11 @@ func checkTool(h *harness, spec toolSpec) {
 }
 
 // firstVerb returns the longest spec verb path that prefixes args, else the first word.
+// A flag-first command line (nova-sandbox --read /x -- cmd) has no verb: nil.
 func firstVerb(args []string, spec toolSpec) []string {
+	if strings.HasPrefix(args[0], "-") {
+		return nil
+	}
 	best := args[:1]
 	for _, v := range spec.verbs {
 		if len(v) <= len(args) && len(v) > len(best) && strings.Join(args[:len(v)], " ") == strings.Join(v, " ") {
@@ -309,10 +317,14 @@ func firstVerb(args []string, spec toolSpec) []string {
 // oneLine checks the CLI-STYLE (f) shape: one line, plus at most one hint line.
 func (h *harness) oneLine(id, verb, form string, r result) {
 	h.t.Helper()
-	re := regexp.MustCompile("^" + regexp.QuoteMeta(h.tool+" "+verb) + `: .*; run: ` + regexp.QuoteMeta(h.tool+" "+verb) + ` -h$`)
+	who := h.tool
+	if verb != "" {
+		who += " " + verb
+	}
+	re := regexp.MustCompile("^" + regexp.QuoteMeta(who) + `: .*; run: ` + regexp.QuoteMeta(who) + ` -h$`)
 	lines := strings.Split(strings.TrimRight(r.stderr, "\n"), "\n")
 	if r.stderr == "" {
-		h.t.Errorf("%s %s %s: expected one stderr line %q; actual empty stderr", id, h.tool, form, "<tool> <verb>: <what is wrong>; run: <tool> <verb> -h")
+		h.t.Errorf("%s %s %s: expected one stderr line %q; actual empty stderr", id, h.tool, form, who+": <what is wrong>; run: "+who+" -h")
 		return
 	}
 	if len(lines) > 2 {
