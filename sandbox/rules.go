@@ -1,13 +1,8 @@
 package main
 
-import (
-	"fmt"
-	"net"
-	"slices"
-	"strconv"
-)
+import "slices"
 
-// The Landlock filesystem access bits of uapi/linux/landlock.h, in ABI order.
+// The Landlock access bits of uapi/linux/landlock.h, in ABI order.
 const (
 	fsExecute         = 1 << 0
 	fsWriteFile       = 1 << 1
@@ -29,6 +24,16 @@ var linuxReadRoots = []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc",
 
 // linuxWriteFiles are the writable exceptions inside /dev.
 var linuxWriteFiles = []string{"/dev/null", "/dev/tty"}
+
+// linuxWriteDirs are writable system directories, skipped if absent. /dev/shm is shared
+// with every process on the host: inside the wall the command can read, overwrite and
+// delete what any same-uid process keeps there, and they can do the same to its files.
+// It stays writable because POSIX shared memory (Python multiprocessing and others)
+// lives there.
+var linuxWriteDirs = []string{"/dev/shm"}
+
+// readMask is what a root and every --read gets; a --write gets every handled right.
+const readMask = fsExecute | fsReadFile | fsReadDir
 
 // handledFS is every filesystem access the ABI defines. An access the ruleset does not
 // handle is an access the kernel does not check, so the whole set is handled and the
@@ -53,46 +58,33 @@ func fileMask(abi int) uint64 {
 	return (fsExecute | fsReadFile | fsWriteFile | fsTruncate | fsIoctlDev) & handledFS(abi)
 }
 
-// netHandled is non-empty only under --net-deny: handling an access and adding no rule
-// for it is how Landlock denies. Net needs ABI 4.
-func netHandled(abi int, netDeny bool) uint64 {
-	if abi < 4 || !netDeny {
-		return 0
-	}
-	return netBindTCP | netConnectTCP
-}
-
-func scoped(abi int) uint64 {
-	if abi < 6 {
-		return 0
-	}
-	return scopeAbstractUnix | scopeSignal
-}
-
-// rule is one Landlock path grant. must says a failure to add it is a refusal; the
-// roots table is skip-if-absent, the caller's paths are not. file rules are masked
-// to fileMask.
+// rule is one Landlock path grant. must says a failure to add it is a refusal: the
+// system roots are skip-if-absent, the caller's paths are not.
 type rule struct {
 	path string
 	mask uint64
 	must bool
-	file bool
 }
 
 // ruleset is the whole wall: what to handle and what to grant back.
 type ruleset struct {
 	fs, net, scope uint64
 	rules          []rule
-	connectPorts   []uint16 // --net-allow ports under --net-deny
+	connectPorts   []uint16
 }
 
-// readMask is what a root and every --read gets, and writeMask what a --write gets.
-const readMask = fsExecute | fsReadFile | fsReadDir
-
-// buildRuleset turns a policy into the ruleset for abi. resolverDir is the directory
-// /etc/resolv.conf resolves to (WSL keeps it outside every static root), or "".
-func buildRuleset(p *policy, abi int, resolverDir string) (*ruleset, error) {
-	rs := &ruleset{fs: handledFS(abi), net: netHandled(abi, p.netDeny), scope: scoped(abi)}
+// buildRuleset turns a wall into the ruleset for abi. resolverDir is the directory
+// /etc/resolv.conf resolves to when it lies outside every static root, or "".
+// Network is handled only under --net-deny: handling an access and adding no rule for
+// it is how Landlock denies.
+func buildRuleset(w *wall, abi int, resolverDir string) *ruleset {
+	rs := &ruleset{fs: handledFS(abi)}
+	if abi >= 4 && w.netDeny {
+		rs.net, rs.connectPorts = netBindTCP|netConnectTCP, w.netPorts
+	}
+	if abi >= 6 {
+		rs.scope = scopeAbstractUnix | scopeSignal
+	}
 	roots := slices.Clone(linuxReadRoots)
 	if resolverDir != "" && !slices.Contains(roots, resolverDir) {
 		roots = append(roots, resolverDir)
@@ -101,42 +93,16 @@ func buildRuleset(p *policy, abi int, resolverDir string) (*ruleset, error) {
 		rs.rules = append(rs.rules, rule{path: r, mask: readMask})
 	}
 	for _, f := range linuxWriteFiles {
-		rs.rules = append(rs.rules, rule{path: f, mask: fileMask(abi), file: true})
+		rs.rules = append(rs.rules, rule{path: f, mask: fileMask(abi)})
 	}
-	for _, r := range p.optRoots {
-		rs.rules = append(rs.rules, rule{path: r, mask: readMask})
+	for _, d := range linuxWriteDirs {
+		rs.rules = append(rs.rules, rule{path: d, mask: rs.fs})
 	}
-	for _, r := range p.reads {
+	for _, r := range w.reads {
 		rs.rules = append(rs.rules, rule{path: r, mask: readMask, must: true})
 	}
-	writes := slices.Clone(p.writes)
-	for _, extra := range []string{p.tmp, p.cwd} {
-		if extra != "" && !slices.Contains(writes, extra) {
-			writes = append(writes, extra)
-		}
+	for _, d := range w.writes {
+		rs.rules = append(rs.rules, rule{path: d, mask: rs.fs, must: true})
 	}
-	for _, w := range writes {
-		rs.rules = append(rs.rules, rule{path: w, mask: rs.fs, must: true})
-	}
-	// Rules are a union, not ordered: a no-exec grant cannot take execute back from a
-	// parent that gives it, so a --read-noexec under an execute root is refused rather
-	// than built into a wall that does not mean what it says.
-	for _, n := range p.readsNoExec {
-		for _, r := range rs.rules {
-			if r.mask&fsExecute != 0 && !r.file && inside(n, r.path) {
-				return nil, fmt.Errorf("--read-noexec %s sits under %s, which the wall grants execute; landlock rules are a union, so name a directory no execute root covers", n, r.path)
-			}
-		}
-		rs.rules = append(rs.rules, rule{path: n, mask: fsReadFile | fsReadDir, must: true})
-	}
-	if rs.net != 0 {
-		for _, hp := range p.netAllow {
-			if _, port, err := net.SplitHostPort(hp); err == nil {
-				if n, err := strconv.ParseUint(port, 10, 16); err == nil {
-					rs.connectPorts = append(rs.connectPorts, uint16(n))
-				}
-			}
-		}
-	}
-	return rs, nil
+	return rs
 }

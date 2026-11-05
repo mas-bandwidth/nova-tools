@@ -45,11 +45,11 @@ type buildError struct{ out string }
 
 func (e *buildError) Error() string { return e.out }
 
-// wall runs nova-sandbox with args and HOME set to home; returns exit code, stdout, stderr.
-func wall(t *testing.T, home string, extraEnv []string, args ...string) (int, string, string) {
+// sandbox runs nova-sandbox with args from dir; returns exit code, stdout, stderr.
+func sandbox(t *testing.T, dir string, args ...string) (int, string, string) {
 	t.Helper()
 	cmd := exec.Command(bin(t), args...)
-	cmd.Env = append([]string{"PATH=/usr/bin:/bin", "HOME=" + home}, extraEnv...)
+	cmd.Env, cmd.Dir = []string{"PATH=/usr/bin:/bin", "HOME=" + dir, "TMPDIR=" + dir}, dir
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -62,119 +62,253 @@ func wall(t *testing.T, home string, extraEnv []string, args ...string) (int, st
 	return code, out.String(), errb.String()
 }
 
-// scratch is a resolved directory with job/ (the write), home/ inside it, and out/ beside it.
-func scratch(t *testing.T) (job, home, out string) {
+// scratch is a resolved directory with job/ (the write) and out/ beside it.
+func scratch(t *testing.T) (job, out string) {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	job, home, out = filepath.Join(root, "job"), filepath.Join(root, "job", "home"), filepath.Join(root, "out")
-	require.NoError(t, os.MkdirAll(home, 0o700))
+	job, out = filepath.Join(root, "job"), filepath.Join(root, "out")
+	require.NoError(t, os.Mkdir(job, 0o700))
 	require.NoError(t, os.Mkdir(out, 0o700))
 	return
 }
 
 func TestCheckAndProbe(t *testing.T) {
 	t.Parallel()
-	code, out, _ := wall(t, os.TempDir(), nil, "check")
+	code, out, _ := sandbox(t, os.TempDir(), "check")
 	require.Equal(t, 0, code, out)
 	assert.Contains(t, out, "CHECK OK backend=")
-	code, out, _ = wall(t, os.TempDir(), nil, "probe")
+	code, out, _ = sandbox(t, os.TempDir(), "probe")
 	require.Equal(t, 0, code, out)
 	assert.Contains(t, out, "PROBE OK")
 	assert.Contains(t, out, "name=write_outside expect=deny got=deny")
+	assert.Contains(t, out, "name=read_named expect=allow got=allow")
+	assert.Contains(t, out, "name=unix_deny expect=deny got=deny")
+	assert.Contains(t, out, "name=unix_allow expect=allow got=allow")
 }
 
 func TestWriteInsideAllowedOutsideRefused(t *testing.T) {
 	t.Parallel()
-	job, home, out := scratch(t)
-	code, _, stderr := wall(t, home, nil, "--write", job, "--", "/bin/sh", "-c", "echo hi > "+filepath.Join(job, "ok"))
+	job, out := scratch(t)
+	code, _, stderr := sandbox(t, job, "--write", job, "--", "/bin/sh", "-c", "echo hi > "+filepath.Join(job, "ok"))
 	require.Equal(t, 0, code, stderr)
 	assert.FileExists(t, filepath.Join(job, "ok"))
 
-	code, _, _ = wall(t, home, nil, "--write", job, "--", "/bin/sh", "-c", "echo hi > "+filepath.Join(out, "bad"))
+	code, _, _ = sandbox(t, job, "--write", job, "--", "/bin/sh", "-c", "echo hi > "+filepath.Join(out, "bad"))
 	assert.NotEqual(t, 0, code)
 	assert.NoFileExists(t, filepath.Join(out, "bad"), "the kernel refused the write")
 }
 
 func TestReadOutsideRefusedUnlessNamed(t *testing.T) {
 	t.Parallel()
-	job, home, out := scratch(t)
+	job, out := scratch(t)
 	secret := filepath.Join(out, "secret")
 	require.NoError(t, os.WriteFile(secret, []byte("s"), 0o600))
-	code, stdout, _ := wall(t, home, nil, "--write", job, "--", "/bin/cat", secret)
+	code, stdout, _ := sandbox(t, job, "--write", job, "--", "/bin/cat", secret)
 	assert.NotEqual(t, 0, code)
 	assert.Empty(t, stdout)
-	code, stdout, stderr := wall(t, home, nil, "--write", job, "--read", out, "--", "/bin/cat", secret)
+	code, stdout, stderr := sandbox(t, job, "--write", job, "--read", out, "--", "/bin/cat", secret)
 	require.Equal(t, 0, code, stderr)
 	assert.Equal(t, "s", stdout)
 	// --read is not --write
-	code, _, _ = wall(t, home, nil, "--write", job, "--read", out, "--", "/bin/sh", "-c", "echo x > "+filepath.Join(out, "w"))
+	code, _, _ = sandbox(t, job, "--write", job, "--read", out, "--", "/bin/sh", "-c", "echo x > "+filepath.Join(out, "w"))
 	assert.NotEqual(t, 0, code)
 }
 
 func TestExitStatusPassesThrough(t *testing.T) {
 	t.Parallel()
-	job, home, _ := scratch(t)
-	code, _, _ := wall(t, home, nil, "--write", job, "--", "/bin/sh", "-c", "exit 7")
+	job, _ := scratch(t)
+	code, _, _ := sandbox(t, job, "--write", job, "--", "/bin/sh", "-c", "exit 7")
 	assert.Equal(t, 7, code)
-	code, _, stderr := wall(t, home, nil, "--write", job, "--", "/bin/sh", "-c", "kill -9 $$")
+	code, _, stderr := sandbox(t, job, "--write", job, "--", "/bin/sh", "-c", "kill -9 $$")
 	assert.Equal(t, -1, code, "killed by a signal, so the shell parent sees it; "+stderr)
 }
 
 func TestRefusalsExit125And127(t *testing.T) {
 	t.Parallel()
-	job, home, _ := scratch(t)
-	code, _, stderr := wall(t, home, nil, "--write", "relative", "--", "/bin/true")
+	job, out := scratch(t)
+	code, _, stderr := sandbox(t, job, "--write", "relative", "--", "/bin/true")
 	assert.Equal(t, 125, code)
 	assert.Contains(t, stderr, "SANDBOX REFUSED reason=bad_write")
-	code, _, stderr = wall(t, "/nowhere", nil, "--write", job, "--", "/bin/true")
+	script := filepath.Join(out, "x.sh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\necho ran\n"), 0o755))
+	code, _, stderr = sandbox(t, job, "--write", job, "--", script)
 	assert.Equal(t, 125, code)
-	assert.Contains(t, stderr, "reason=home_outside")
-	code, _, _ = wall(t, home, nil, "--write", job, "--", "no-such-command-here")
+	assert.Contains(t, stderr, "reason=bad_read", "a command outside every grant is refused before the wall")
+	code, stdout, stderr := sandbox(t, job, "--write", job, "--read", out, "--", script)
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, "ran\n", stdout)
+	code, _, _ = sandbox(t, job, "--write", job, "--", "no-such-command-here")
 	assert.Equal(t, 127, code)
-	assert.NoDirExists(t, filepath.Join(filepath.Dir(job), "x"))
+	nox := filepath.Join(job, "noexec")
+	require.NoError(t, os.WriteFile(nox, []byte("x"), 0o600))
+	code, _, stderr = sandbox(t, job, "--write", job, "--", nox)
+	assert.Equal(t, 126, code, "a file that is not executable is 126: "+stderr)
 }
 
-func TestCwdAndTmp(t *testing.T) {
+func TestEnvironmentAndDirectoryPassThrough(t *testing.T) {
 	t.Parallel()
-	job, home, _ := scratch(t)
-	sub := filepath.Join(job, "sub")
-	require.NoError(t, os.Mkdir(sub, 0o700))
-	code, stdout, stderr := wall(t, home, nil, "--write", job, "--cwd", sub, "--", "/bin/sh", "-c", "pwd; echo $TMPDIR")
+	job, _ := scratch(t)
+	code, stdout, stderr := sandbox(t, job, "--write", job, "--", "/bin/sh", "-c", "pwd; echo $TMPDIR; mktemp")
 	require.Equal(t, 0, code, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	require.Len(t, lines, 2)
-	assert.True(t, strings.HasSuffix(lines[0], "/sub"), lines[0])
-	assert.Equal(t, filepath.Join(job, ".nova-sandbox-tmp"), lines[1])
-	assert.DirExists(t, filepath.Join(job, ".nova-sandbox-tmp"))
+	require.Len(t, lines, 3)
+	assert.Equal(t, []string{job, job}, lines[:2], "the caller's cwd and TMPDIR are the command's")
+	assert.True(t, strings.HasPrefix(lines[2], job+"/"), "a temp file lands in the TMPDIR the caller pointed inside a --write: "+lines[2])
 }
 
-func TestAgentSocketsAreRemovedFromTheEnvironment(t *testing.T) {
+func TestArgv0IsVerbatim(t *testing.T) {
 	t.Parallel()
-	job, home, _ := scratch(t)
-	code, stdout, stderr := wall(t, home, []string{"SSH_AUTH_SOCK=/tmp/agent", "KEEP=1"}, "--write", job, "--", "/usr/bin/env")
+	job, out := scratch(t)
+	// A symlink to /bin/sh invoked by the link's name: `sh -c` with no operand sets $0
+	// to argv[0], so the command sees the name it was invoked as, not the resolved path.
+	// (A shebang script cannot show this: the kernel sets $0 to the script file.)
+	link := filepath.Join(out, "mysh")
+	require.NoError(t, os.Symlink("/bin/sh", link))
+	code, stdout, stderr := sandbox(t, job, "--write", job, "--read", out, "--", link, "-c", "echo $0")
 	require.Equal(t, 0, code, stderr)
-	assert.NotContains(t, stdout, "SSH_AUTH_SOCK")
-	assert.Contains(t, stdout, "KEEP=1")
+	assert.Equal(t, link+"\n", stdout, "argv[0] is the caller's, not the resolved /bin/sh target")
 }
 
-func TestReadNoExecCannotBeExecuted(t *testing.T) {
+func TestSymlinkedScriptSeesItsLinkName(t *testing.T) {
 	t.Parallel()
-	job, home, out := scratch(t)
-	script := filepath.Join(out, "tool.sh")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\necho ran$((1+1))\n"), 0o755))
-	code, stdout, stderr := wall(t, home, nil, "--write", job, "--read", out, "--", script)
+	job, out := scratch(t)
+	// The kernel sets a #! script's $0 to the path it was exec'd by, so the wall must
+	// exec the caller's spelling, not the resolved target.
+	who := filepath.Join(out, "who.sh")
+	require.NoError(t, os.WriteFile(who, []byte("#!/bin/sh\necho $0\n"), 0o755))
+	link := filepath.Join(out, "link.sh")
+	require.NoError(t, os.Symlink(who, link))
+	code, stdout, stderr := sandbox(t, job, "--write", job, "--read", out, "--", link)
 	require.Equal(t, 0, code, stderr)
-	assert.Equal(t, "ran2\n", stdout, "under --read it runs")
-	code, stdout, _ = wall(t, home, nil, "--write", job, "--read-noexec", out, "--", "/bin/sh", "-c", script+"; cat "+script)
-	assert.NotContains(t, stdout, "ran2", "under --read-noexec it is readable and not executable")
-	assert.Contains(t, stdout, "echo ran$((1+1))")
-	_ = code
+	assert.Equal(t, link+"\n", stdout)
+}
+
+// TestUnixFenceCost runs what the fence must still allow (a connected socketpair, as
+// every event loop makes) and what it must refuse (a datagram socket to /dev/log, an
+// agent socket), each skipped where the tool is not installed.
+func TestUnixFenceCost(t *testing.T) {
+	t.Parallel()
+	job, _ := scratch(t)
+	run := func(t *testing.T, tool string, args ...string) (int, string) {
+		t.Helper()
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " is not installed here")
+		}
+		code, stdout, stderr := sandbox(t, job, append([]string{"--write", job, "--"}, append([]string{tool}, args...)...)...)
+		return code, stdout + stderr
+	}
+	t.Run("asyncio", func(t *testing.T) {
+		code, out := run(t, "python3", "-c", "import asyncio\nasync def f(): return 7\nprint(asyncio.run(f()))")
+		require.Equal(t, 0, code, out)
+		assert.Contains(t, out, "7")
+	})
+	t.Run("socketpair types", func(t *testing.T) {
+		code, out := run(t, "python3", "-c", `import socket
+for k in ("SOCK_STREAM", "SOCK_SEQPACKET", "SOCK_DGRAM"):
+    try:
+        socket.socketpair(socket.AF_UNIX, getattr(socket, k)); print(k, "ok")
+    except PermissionError: print(k, "eperm")
+try:
+    socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); print("socket ok")
+except PermissionError: print("socket eperm")`)
+		require.Equal(t, 0, code, out)
+		assert.Contains(t, out, "SOCK_STREAM ok")
+		assert.Contains(t, out, "SOCK_SEQPACKET eperm", "a seqpacket pair can sendto a datagram path")
+		assert.Contains(t, out, "SOCK_DGRAM eperm")
+		assert.Contains(t, out, "socket eperm")
+	})
+	t.Run("logger", func(t *testing.T) {
+		code, out := run(t, "logger", "--socket-errors=on", "-u", "/dev/log", "walled")
+		assert.NotEqual(t, 0, code, out)
+		assert.Contains(t, out, "Operation not permitted")
+	})
+	t.Run("gpg-connect-agent", func(t *testing.T) {
+		code, out := run(t, "gpg-connect-agent", "--no-autostart", "/bye")
+		assert.Contains(t, out, "Operation not permitted", "rc=%d", code)
+	})
+}
+
+func TestUnixSocketIsFencedByDefault(t *testing.T) {
+	t.Parallel()
+	if _, out, _ := sandbox(t, os.TempDir(), "check"); strings.Contains(out, "seccomp UNAVAILABLE") {
+		t.Skip("no seccomp on this kernel")
+	}
+	job, out := scratch(t)
+	sock := filepath.Join(out, "s")
+	l, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	self := bin(t)
+	read := []string{"--read", filepath.Dir(self)}
+	args := func(extra ...string) []string {
+		return append(append(append([]string{}, read...), extra...), "--write", job, "--", self, "dial", sock)
+	}
+	code, _, stderr := sandbox(t, job, args()...)
+	assert.NotEqual(t, 0, code, "AF_UNIX is refused, so the connect cannot be made: "+stderr)
+	code, _, stderr = sandbox(t, job, args("--unix")...)
+	assert.Equal(t, 0, code, "--unix reopens AF_UNIX: "+stderr)
+}
+
+// TestSystemdRunEscapeIsClosed reproduces the reported escape: systemd-run --user hands
+// the command off to a service that runs outside the wall. The hand-off travels over a
+// unix socket, which the default fence refuses, so the command cannot start the service.
+func TestSystemdRunEscapeIsClosed(t *testing.T) {
+	t.Parallel()
+	sr, err := exec.LookPath("systemd-run")
+	if err != nil {
+		t.Skip("no systemd-run on this host")
+	}
+	if out, err := exec.Command(sr, "--user", "--wait", "--pipe", "/bin/true").CombinedOutput(); err != nil {
+		t.Skip("systemd --user is not available here: " + string(out))
+	}
+	job, out := scratch(t)
+	secret := filepath.Join(out, "secret")
+	require.NoError(t, os.WriteFile(secret, []byte("leak"), 0o600))
+	code, stdout, _ := sandbox(t, job, "--read", filepath.Dir(sr), "--write", job, "--net-deny", "--",
+		sr, "--user", "--wait", "--pipe", "/bin/cat", secret)
+	assert.NotEqual(t, 0, code, "the hand-off socket is refused, so the service never runs")
+	assert.NotContains(t, stdout, "leak", "the file outside the wall was not read")
+}
+
+func TestKeepFDsLeavesAnInheritedDescriptorOpen(t *testing.T) {
+	t.Parallel()
+	job, out := scratch(t)
+	f, err := os.Create(filepath.Join(out, "inherited"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	_, err = f.WriteString("data")
+	require.NoError(t, err)
+	// Pass the open descriptor to the child as fd 3 and have it read from /dev/fd/3.
+	run := func(extra ...string) (int, string) {
+		cmd := exec.Command(bin(t), append(append([]string{}, extra...), "--write", job, "--", "/bin/sh", "-c", "cat <&3 2>/dev/null; true")...)
+		cmd.Env, cmd.Dir = []string{"PATH=/usr/bin:/bin", "HOME=" + job}, job
+		rf, _ := os.Open(f.Name())
+		defer rf.Close()
+		cmd.ExtraFiles = []*os.File{rf} // becomes fd 3 in the child
+		var b strings.Builder
+		cmd.Stdout = &b
+		_ = cmd.Run()
+		return 0, b.String()
+	}
+	_, withClose := run()
+	assert.NotContains(t, withClose, "data", "by default the inherited fd 3 is closed before exec")
+	_, withKeep := run("--keep-fds")
+	assert.Contains(t, withKeep, "data", "--keep-fds leaves it open")
 }
 
 func TestNetDenyRefusesAConnect(t *testing.T) {
 	t.Parallel()
-	job, home, _ := scratch(t)
+	job, _ := scratch(t)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = l.Close() })
@@ -191,13 +325,13 @@ func TestNetDenyRefusesAConnect(t *testing.T) {
 	args := func(extra ...string) []string {
 		return append(append(append([]string{}, dial...), extra...), "--", bin(t), "dial", l.Addr().String())
 	}
-	code, _, stderr := wall(t, home, nil, args()...)
+	code, _, stderr := sandbox(t, job, args()...)
 	require.Equal(t, 0, code, "without --net-deny the connect works: "+stderr)
-	code, _, stderr = wall(t, home, nil, args("--net-deny")...)
+	code, _, stderr = sandbox(t, job, args("--net-deny")...)
 	if code == 125 {
 		t.Skip("--net-deny is not enforceable on this machine: " + stderr)
 	}
 	assert.Equal(t, 1, code, "the kernel refused the connect")
-	code, _, stderr = wall(t, home, nil, args("--net-deny", "--net-allow", l.Addr().String())...)
+	code, _, stderr = sandbox(t, job, args("--net-deny", "--net-allow", l.Addr().String())...)
 	assert.Equal(t, 0, code, "--net-allow opens the named loopback port back up: "+stderr)
 }

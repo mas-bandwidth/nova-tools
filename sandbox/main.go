@@ -7,39 +7,47 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 )
 
 const usage = `nova-sandbox: run one command inside a kernel-enforced wall.
 
-  nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] -- <cmd> <args...>
+  nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] -- <cmd> <args...>
   nova-sandbox check
   nova-sandbox probe
 
-  --read <dir>          readable, recursively, and executable. Repeatable.
-  --read-noexec <dir>   readable and not executable: a cache or a data tree. Repeatable.
-  --write <dir>         readable and writable. Repeatable; at least one is required.
-                        The first is the default working and temp directory.
-  --cwd <dir>           the command's working directory; must be inside a --write.
-  --tmp <dir>           TMPDIR for the command; must be inside a --write. Default:
-                        <first --write>/.nova-sandbox-tmp, the one directory this tool makes.
-  --net-deny            the network is closed, or the wall refuses to start. Without it
-                        nothing is promised about the network.
-  --net-allow <h:port>  under --net-deny, open one loopback port back up. Repeatable.
-  --gpu <none|metal>    macOS only: open the named Metal clients and services.
+  --read <dir>          readable and executable, recursively. Repeatable.
+  --write <dir>         readable, writable and executable, recursively. Repeatable.
+  --net-deny            TCP connect and bind are closed, or the wall refuses to start.
+                        Without it nothing is promised about the network.
+  --net-allow <h:port>  under --net-deny, reopen TCP connect to one loopback port. Repeatable.
+  --gpu                 macOS: open the Metal and IOSurface IOKit clients and the
+                        MTLCompiler, CoreMedia videoencoder and videodecoder services.
+  --unix                Linux: leave AF_UNIX sockets open. This opens the same-uid
+                        escape (a command can reach any local socket by path, which
+                        Landlock does not fence); use only when the command needs a
+                        local socket. Without it socket(AF_UNIX) and every unix socketpair
+                        but SOCK_STREAM are refused, so /dev/log, syslog, NSS sockets
+                        (nscd, sssd, systemd-userdb), agents and local daemons fail.
+  --keep-fds            do not close inherited descriptors above stderr before exec.
+                        Without it every fd > 2 is closed, so an inherited open socket
+                        or file cannot be used inside the wall.
 
-Beyond the system roots the command needs to run, only what you name is reachable.
-Every path must be absolute and exist; none is created. HOME must be set to a
-directory inside a --write, because tools derive paths from it and the real HOME is
-denied. Agent socket variables (SSH_AUTH_SOCK and the like) are removed from the
-command's environment.
+Beyond the system roots, only what you name is reachable. Every path must be absolute,
+exist and be a directory; none is created. The command must lie under a system root,
+a --read or a --write; it runs with argv[0] exactly as you give it. The environment and
+working directory pass through unchanged: point TMPDIR and HOME inside a --write, and
+start from a directory the wall grants.
 
 check   says which backend this machine has and whether it works.
-probe   proves the wall: a write outside is refused, a write inside is allowed, a read
-        outside is refused, and a connect under --net-deny is refused.
+probe   proves the wall: a write inside is allowed, a write and a read outside and a
+        unix-socket connect are refused, and a connect under --net-deny is refused. Where
+        the kernel cannot enforce --net-deny, net_deny reports wall_refused.
 
 Exit: the command's own status; 125 the wall refused to start (SANDBOX REFUSED lines on
-stderr say why), 127 the command is on no PATH entry; check and probe: 0 yes, 1 no.
+stderr say why), 126 the command is not executable, 127 it is on no PATH entry; check
+and probe: 0 yes, 1 no.
 `
 
 func main() {
@@ -47,75 +55,94 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer, env []string) int {
-	if len(args) == 0 {
-		fmt.Fprint(stderr, "SANDBOX REFUSED reason=no_command: no arguments; run: nova-sandbox help\n")
-		return 2
+	if len(args) > 0 {
+		switch args[0] {
+		case "help", "-h", "--help":
+			fmt.Fprint(stdout, usage)
+			return 0
+		case "check":
+			return check(stdout)
+		case "probe":
+			return probe(stdout, env)
+		case "dial": // probe's in-wall client: exit 0 if a TCP connect to args[1] succeeds
+			return dial(args[1:])
+		}
 	}
-	switch args[0] {
-	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usage)
-		return 0
-	case "check":
-		return check(stdout)
-	case "probe":
-		return probe(stdout, env)
-	case "dial": // probe's helper: exit 0 if a TCP connect to args[1] succeeds
-		return dial(args[1:])
-	}
-	in, bad := parseArgs(args)
+	s, bad := parseArgs(args)
 	if len(bad) == 0 {
-		in.home, in.homes = homeOf(env), callerHomes()
-		var p *policy
-		if p, bad = build(in); len(bad) == 0 {
-			if r := execWall(p, childEnv(env, p.tmp)); r != nil {
+		var w *wall
+		if w, bad = build(s, runtime.GOOS); len(bad) == 0 {
+			if r := execWall(w, env); r != nil {
 				bad = []refusal{*r}
 			}
 		}
 	}
-	allNotFound := true
+	return report(stderr, bad)
+}
+
+// report prints every refusal and returns the exit status: 125 for any wall refusal,
+// and when the only problems are the command itself, 126 not executable (shell
+// convention) or 127 on no PATH entry.
+func report(stderr io.Writer, bad []refusal) int {
+	other, notExec := false, false
 	for _, r := range bad {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=%s: %s\n", r.reason, strings.ReplaceAll(r.text, "\n", " "))
-		allNotFound = allNotFound && r.reason == "not_found"
+		switch r.reason {
+		case "not_found":
+		case "not_executable":
+			notExec = true
+		default:
+			other = true
+		}
 	}
-	if allNotFound {
+	switch {
+	case other:
+		return 125
+	case notExec:
+		return 126
+	default:
 		return 127
 	}
-	return 125
 }
 
 // parseArgs reads the flags before --, by hand because list flags repeat and the split at
 // -- must be exact: everything after it is the command, verbatim.
-func parseArgs(args []string) (in input, bad []refusal) {
-	var dashes bool
-	for i := 0; i < len(args) && !dashes; i++ {
+func parseArgs(args []string) (s spec, bad []refusal) {
+	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
-			in.argv, dashes = args[i+1:], true
-			break
+			s.argv = args[i+1:]
+			if len(s.argv) == 0 {
+				bad = append(bad, refuse("no_command", "nothing after --"))
+			}
+			return s, bad
 		}
-		if a == "--net-deny" {
-			in.netDeny = true
+		switch a {
+		case "--net-deny":
+			s.netDeny = true
+			continue
+		case "--gpu":
+			s.gpu = true
+			continue
+		case "--unix":
+			s.unix = true
+			continue
+		case "--keep-fds":
+			s.keepFDs = true
 			continue
 		}
-		dst := map[string]*[]string{"--read": &in.reads, "--read-noexec": &in.readsNoExec, "--write": &in.writes, "--net-allow": &in.netAllow}[a]
-		one := map[string]*string{"--cwd": &in.cwd, "--tmp": &in.tmp, "--gpu": &in.gpu}[a]
+		dst := map[string]*[]string{"--read": &s.reads, "--write": &s.writes, "--net-allow": &s.netAllow}[a]
 		switch {
-		case dst == nil && one == nil:
-			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --read-noexec --write --cwd --tmp --net-deny --net-allow --gpu; run: nova-sandbox help", a))
+		case dst == nil:
+			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --write --net-deny --net-allow --gpu --unix --keep-fds; run: nova-sandbox help", a))
 		case i+1 >= len(args):
-			bad = append(bad, refuse("no_command", "%s wants a value", a))
-		case dst != nil:
-			i++
-			*dst = append(*dst, args[i])
+			bad = append(bad, refuse("bad_flag", "%s wants a value", a))
 		default:
 			i++
-			*one = args[i]
+			*dst = append(*dst, args[i])
 		}
 	}
-	if !dashes {
-		bad = append(bad, refuse("no_command", "no --; the command comes after it: nova-sandbox --write <dir> -- <command> <args...>"))
-	}
-	return in, bad
+	return s, append(bad, refuse("no_command", "no --; the command comes after it: nova-sandbox --write <dir> -- <cmd> <args...>"))
 }
 
 // check says which backend is here and whether it works. Exit 0 if it does.
