@@ -53,6 +53,9 @@ func execWall(w *wall, env []string) *refusal {
 		argv = append(argv, "-D", kv)
 	}
 	argv = append(append(argv, "--"), w.argv...)
+	if !w.keepFDs {
+		closeInheritedFDs()
+	}
 	err = syscall.Exec(bin, argv, env)
 	r := refuse("sandbox_failed", "%s could not be started: %v", bin, err)
 	return &r

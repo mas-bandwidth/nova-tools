@@ -21,10 +21,10 @@ func reasons(bad []refusal) []string {
 func TestParseArgs(t *testing.T) {
 	t.Parallel()
 	s, bad := parseArgs([]string{"--read", "/r", "--read", "/r2", "--write", "/w", "--net-deny",
-		"--net-allow", "localhost:1", "--gpu", "--", "ls", "--read", "-l"})
+		"--net-allow", "localhost:1", "--gpu", "--unix", "--keep-fds", "--", "ls", "--read", "-l"})
 	require.Empty(t, bad)
 	assert.Equal(t, spec{reads: []string{"/r", "/r2"}, writes: []string{"/w"}, netAllow: []string{"localhost:1"},
-		netDeny: true, gpu: true, argv: []string{"ls", "--read", "-l"}}, s, "everything after -- is the command, verbatim")
+		netDeny: true, gpu: true, unix: true, keepFDs: true, argv: []string{"ls", "--read", "-l"}}, s, "everything after -- is the command, verbatim")
 
 	for _, c := range []struct {
 		args []string
@@ -136,6 +136,9 @@ func TestExitCodes(t *testing.T) {
 	assert.Equal(t, 125, run(nil, &out, &out, env))
 	assert.Equal(t, 125, run([]string{"--bogus", "--", "ls"}, &out, &out, env))
 	assert.Equal(t, 127, run([]string{"--", "no-such-command-here"}, &out, &out, env))
+	nox := filepath.Join(t.TempDir(), "noexec")
+	require.NoError(t, os.WriteFile(nox, []byte("x"), 0o600))
+	assert.Equal(t, 126, run([]string{"--", nox}, &out, &out, env), "a file that is not executable is 126")
 	out.Reset()
 	assert.Equal(t, 125, run([]string{"--write", "rel", "--", "no-such-command-here"}, &out, &out, env), "a refusal beside not_found is 125")
 	assert.Equal(t, 2, strings.Count(out.String(), "SANDBOX REFUSED "), "every problem is reported at once")

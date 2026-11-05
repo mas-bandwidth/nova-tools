@@ -22,7 +22,8 @@ func refuse(reason, format string, a ...any) refusal {
 // spec is the command line as given.
 type spec struct {
 	reads, writes, netAllow []string
-	netDeny, gpu            bool
+	netDeny, gpu, unix      bool
+	keepFDs                 bool
 	argv                    []string
 }
 
@@ -32,6 +33,7 @@ type wall struct {
 	linkSpellings []string // the caller's spelling where it differs from the resolved path
 	optRoots      []string // darwin: the active developer directory the /usr/bin shims read
 	netDeny, gpu  bool
+	unix, keepFDs bool
 	netPorts      []uint16 // --net-allow, loopback only
 	command       string
 	argv          []string
@@ -41,7 +43,7 @@ type wall struct {
 // nothing.
 func build(s spec, goos string) (*wall, []refusal) {
 	var bad []refusal
-	w := &wall{netDeny: s.netDeny, gpu: s.gpu}
+	w := &wall{netDeny: s.netDeny, gpu: s.gpu, unix: s.unix, keepFDs: s.keepFDs}
 	if s.gpu && goos != "darwin" {
 		bad = append(bad, refuse("bad_gpu", "--gpu is macOS only; on Linux grant the device directory itself, e.g. --write /dev/dri"))
 	}
@@ -87,7 +89,10 @@ func build(s spec, goos string) (*wall, []refusal) {
 		case !underAny(cmd, slices.Concat(systemRoots(goos), w.optRoots, w.reads, w.writes)):
 			bad = append(bad, refuse("bad_read", "%s is under no system root, --read or --write; name its directory with --read", cmd))
 		default:
-			w.command, w.argv = cmd, append([]string{cmd}, s.argv[1:]...)
+			// The resolved path is the exec target; argv is the caller's, argv[0]
+			// included, so a multi-call binary, a venv python or a cc->clang shim
+			// still sees the name it was invoked as.
+			w.command, w.argv = cmd, s.argv
 		}
 	}
 	if len(bad) > 0 {

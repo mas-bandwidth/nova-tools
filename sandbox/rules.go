@@ -25,6 +25,11 @@ var linuxReadRoots = []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc",
 // linuxWriteFiles are the writable exceptions inside /dev.
 var linuxWriteFiles = []string{"/dev/null", "/dev/tty"}
 
+// linuxWriteDirs are writable system directories, skipped if absent. /dev/shm is RAM
+// only and same-uid, no wider than any --write, and Python multiprocessing and other
+// tools die without it.
+var linuxWriteDirs = []string{"/dev/shm"}
+
 // readMask is what a root and every --read gets; a --write gets every handled right.
 const readMask = fsExecute | fsReadFile | fsReadDir
 
@@ -87,6 +92,9 @@ func buildRuleset(w *wall, abi int, resolverDir string) *ruleset {
 	}
 	for _, f := range linuxWriteFiles {
 		rs.rules = append(rs.rules, rule{path: f, mask: fileMask(abi)})
+	}
+	for _, d := range linuxWriteDirs {
+		rs.rules = append(rs.rules, rule{path: d, mask: rs.fs})
 	}
 	for _, r := range w.reads {
 		rs.rules = append(rs.rules, rule{path: r, mask: readMask, must: true})

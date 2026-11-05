@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -86,6 +87,26 @@ func probe(stdout io.Writer, env []string) int {
 	rc = walled([]string{"--read", out}, "/bin/sh", "-c", "cat "+secret)
 	step("read_named", "allow", rc == 0, gotOf(rc == 0))
 
+	// A unix socket outside the grants: Landlock does not path-check a unix connect, so
+	// only the seccomp fence refuses it. The socket's directory is not named, and dial
+	// reaches it by its absolute path the way an escape would.
+	readSelf := []string{"--read", filepath.Dir(self)}
+	sock := filepath.Join(out, "s")
+	if ul, err := net.Listen("unix", sock); err != nil {
+		step("unix_deny", "deny", false, "listen_failed")
+	} else {
+		defer ul.Close()
+		go acceptClose(ul)
+		rc = walled(readSelf, self, "dial", sock)
+		step("unix_deny", "deny", rc != 0, gotOf(rc == 0))
+		// --unix reopens AF_UNIX, which is a Landlock-only knob; the macOS profile denies
+		// a unix socket outside the write set either way.
+		if backendName == "landlock" {
+			rc = walled(append(readSelf, "--unix"), self, "dial", sock)
+			step("unix_allow", "allow", rc == 0, gotOf(rc == 0))
+		}
+	}
+
 	// --net-deny: a listener this process owns must be unreachable from the wall, and
 	// reachable without it.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -93,18 +114,8 @@ func probe(stdout io.Writer, env []string) int {
 		step("net_control", "allow", false, "listen_failed")
 	} else {
 		defer l.Close()
-		go func() {
-			for {
-				c, err := l.Accept()
-				if err != nil {
-					return
-				}
-				c.Close()
-			}
-		}()
+		go acceptClose(l)
 		addr := l.Addr().String()
-		// the in-wall client is this binary, so its directory is read wherever it is installed
-		readSelf := []string{"--read", filepath.Dir(self)}
 		step("net_control", "allow", walled(readSelf, self, "dial", addr) == 0, "allow")
 		switch rc := walled(append(readSelf, "--net-deny"), self, "dial", addr); rc {
 		case 125:
@@ -122,13 +133,30 @@ func probe(stdout io.Writer, env []string) int {
 	return 0
 }
 
-// dial exits 0 when a TCP connect to addr succeeds. It is the probe's client inside the
-// wall: no shell or tool every host has can open a TCP connection.
+// acceptClose accepts and immediately closes connections until the listener closes.
+func acceptClose(l net.Listener) {
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		c.Close()
+	}
+}
+
+// dial exits 0 when a connect to addr succeeds, 1 when it fails. It is the probe's
+// client inside the wall: no shell or tool every host has can open a connection. An
+// absolute path is a unix socket (the same-uid escape the seccomp fence closes);
+// anything else is a TCP address.
 func dial(args []string) int {
 	if len(args) != 1 {
 		return 2
 	}
-	c, err := net.DialTimeout("tcp", args[0], 3*time.Second)
+	network := "tcp"
+	if strings.HasPrefix(args[0], "/") {
+		network = "unix"
+	}
+	c, err := net.DialTimeout(network, args[0], 3*time.Second)
 	if err != nil {
 		return 1
 	}

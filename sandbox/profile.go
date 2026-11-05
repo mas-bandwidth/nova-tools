@@ -13,8 +13,10 @@ import (
 var darwinTemplate string
 
 // darwinRoots are the roots the template grants read as subpaths: a command under one
-// needs no --read, and an optional root under one is not granted twice.
-var darwinRoots = []string{"/usr", "/bin", "/sbin", "/opt", "/System", "/Library", "/private/etc", "/private/var/select", "/dev"}
+// needs no --read, and an optional root under one is not granted twice. /opt is granted
+// only at /opt/homebrew and /opt/local, not whole, because /opt/* is user-writable and
+// a blanket grant would read a directory the caller never named.
+var darwinRoots = []string{"/usr", "/bin", "/sbin", "/opt/homebrew", "/opt/local", "/System", "/Library", "/private/etc", "/private/var/select", "/private/var/db/timezone", "/dev"}
 
 // metalGrants is --gpu: the Metal IOKit clients and XPC services by name, never a
 // blanket iokit-open or mach-lookup.

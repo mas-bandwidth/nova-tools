@@ -62,7 +62,12 @@ func wallCheck() (abi string, netOK bool, note string, err error) {
 	if !ok {
 		return "-", false, "", fmt.Errorf("no landlock in this kernel: below 5.13, not compiled in, or not in the boot-time lsm= list")
 	}
-	return strconv.Itoa(n), n >= 4, "landlock abi " + strconv.Itoa(n) + ": net is TCP bind/connect only (abi 4+); udp is unrestricted", nil
+	sec := "seccomp available: the unix-socket fence is on by default"
+	if !seccompAvailable() {
+		sec = "seccomp UNAVAILABLE: the unix-socket fence cannot be built, so the wall refuses to start unless --unix is given"
+	}
+	note = "landlock abi " + strconv.Itoa(n) + ": net is TCP bind/connect only (abi 4+), udp is unrestricted; signals are confined to the wall only at abi 6+; " + sec
+	return strconv.Itoa(n), n >= 4, note, nil
 }
 
 // execWall applies the wall and execs the command. It returns only on failure.
@@ -75,6 +80,12 @@ func execWall(w *wall, env []string) *refusal {
 	used := min(abi, maxABI)
 	if w.netDeny && used < 4 {
 		return fail("net_unenforceable", "--net-deny needs landlock abi 4 (kernel 6.7) and this kernel reports abi %d", abi)
+	}
+	// The unix-socket escape (Landlock does not path-check a unix connect) is closed by
+	// a seccomp filter. Without seccomp the wall cannot close it, and it refuses rather
+	// than stand weaker than it says, unless --unix opts into leaving the socket open.
+	if !w.unix && !seccompAvailable() {
+		return fail("no_seccomp", "this kernel has no seccomp filter mode, so the same-uid unix-socket escape cannot be closed; pass --unix to run without that fence")
 	}
 	rs := buildRuleset(w, used, resolverDirOf("/etc/resolv.conf"))
 	attr := rulesetAttr{rs.fs, rs.net, rs.scope}
@@ -94,6 +105,9 @@ func execWall(w *wall, env []string) *refusal {
 			return fail("sandbox_failed", "--net-allow port %d could not be added: %v", port, errno)
 		}
 	}
+	if !w.keepFDs {
+		closeInheritedFDs()
+	}
 	// Restriction is per thread and Go moves goroutines between threads: pin this one
 	// to the thread that is restricted, so the exec happens on it. It is never
 	// unlocked; the thread dies with the exec.
@@ -103,6 +117,13 @@ func execWall(w *wall, env []string) *refusal {
 	}
 	if _, _, errno := syscall.Syscall(sysRestrictSelf, fd, 0, 0); errno != 0 {
 		return fail("sandbox_failed", "landlock_restrict_self at abi %d: %v", used, errno)
+	}
+	// seccomp after Landlock and on the same locked thread, so it too is in force at
+	// exec. --unix still blocks io_uring and ptrace; it only leaves AF_UNIX open.
+	if w.unix && !seccompAvailable() {
+		// nothing to install; the caller accepted the weaker wall
+	} else if err := installSeccomp(w.unix); err != nil {
+		return fail("sandbox_failed", "the seccomp filter could not be installed: %v", err)
 	}
 	err := syscall.Exec(w.command, w.argv, env)
 	return fail("sandbox_failed", "%s could not be started inside the wall: %v", w.command, err)

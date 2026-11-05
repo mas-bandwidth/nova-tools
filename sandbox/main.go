@@ -13,7 +13,7 @@ import (
 
 const usage = `nova-sandbox: run one command inside a kernel-enforced wall.
 
-  nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] -- <cmd> <args...>
+  nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] -- <cmd> <args...>
   nova-sandbox check
   nova-sandbox probe
 
@@ -22,19 +22,30 @@ const usage = `nova-sandbox: run one command inside a kernel-enforced wall.
   --net-deny            TCP connect and bind are closed, or the wall refuses to start.
                         Without it nothing is promised about the network.
   --net-allow <h:port>  under --net-deny, reopen TCP connect to one loopback port. Repeatable.
-  --gpu                 macOS: open the Metal device clients and compiler services.
+  --gpu                 macOS: open the Metal and IOSurface IOKit clients and the
+                        MTLCompiler, CoreMedia videoencoder and videodecoder services.
+  --unix                Linux: leave AF_UNIX sockets open. This opens the same-uid
+                        escape (a command can reach any local socket by path, which
+                        Landlock does not fence); use only when the command needs a
+                        local socket. Without it such sockets cannot be created.
+  --keep-fds            do not close inherited descriptors above stderr before exec.
+                        Without it every fd > 2 is closed, so an inherited open socket
+                        or file cannot be used inside the wall.
 
 Beyond the system roots, only what you name is reachable. Every path must be absolute,
 exist and be a directory; none is created. The command must lie under a system root,
-a --read or a --write. The environment and working directory pass through unchanged:
-point TMPDIR and HOME inside a --write, and start from a directory the wall grants.
+a --read or a --write; it runs with argv[0] exactly as you give it. The environment and
+working directory pass through unchanged: point TMPDIR and HOME inside a --write, and
+start from a directory the wall grants.
 
 check   says which backend this machine has and whether it works.
-probe   proves the wall: a write inside is allowed, a write and a read outside are
-        refused, and a connect under --net-deny is refused.
+probe   proves the wall: a write inside is allowed, a write and a read outside and a
+        unix-socket connect are refused, and a connect under --net-deny is refused. Where
+        the kernel cannot enforce --net-deny, net_deny reports wall_refused.
 
 Exit: the command's own status; 125 the wall refused to start (SANDBOX REFUSED lines on
-stderr say why), 127 the command is on no PATH entry; check and probe: 0 yes, 1 no.
+stderr say why), 126 the command is not executable, 127 it is on no PATH entry; check
+and probe: 0 yes, 1 no.
 `
 
 func main() {
@@ -67,17 +78,29 @@ func run(args []string, stdout, stderr io.Writer, env []string) int {
 	return report(stderr, bad)
 }
 
-// report prints every refusal and returns the exit status: 127 when the only problem is
-// a command on no PATH entry, 125 otherwise.
+// report prints every refusal and returns the exit status: 125 for any wall refusal,
+// and when the only problems are the command itself, 126 not executable (shell
+// convention) or 127 on no PATH entry.
 func report(stderr io.Writer, bad []refusal) int {
-	code := 127
+	other, notExec := false, false
 	for _, r := range bad {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=%s: %s\n", r.reason, strings.ReplaceAll(r.text, "\n", " "))
-		if r.reason != "not_found" {
-			code = 125
+		switch r.reason {
+		case "not_found":
+		case "not_executable":
+			notExec = true
+		default:
+			other = true
 		}
 	}
-	return code
+	switch {
+	case other:
+		return 125
+	case notExec:
+		return 126
+	default:
+		return 127
+	}
 }
 
 // parseArgs reads the flags before --, by hand because list flags repeat and the split at
@@ -99,11 +122,17 @@ func parseArgs(args []string) (s spec, bad []refusal) {
 		case "--gpu":
 			s.gpu = true
 			continue
+		case "--unix":
+			s.unix = true
+			continue
+		case "--keep-fds":
+			s.keepFDs = true
+			continue
 		}
 		dst := map[string]*[]string{"--read": &s.reads, "--write": &s.writes, "--net-allow": &s.netAllow}[a]
 		switch {
 		case dst == nil:
-			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --write --net-deny --net-allow --gpu; run: nova-sandbox help", a))
+			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --write --net-deny --net-allow --gpu --unix --keep-fds; run: nova-sandbox help", a))
 		case i+1 >= len(args):
 			bad = append(bad, refuse("bad_flag", "%s wants a value", a))
 		default:

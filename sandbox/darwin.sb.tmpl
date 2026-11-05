@@ -8,7 +8,7 @@
 ;; refused.
 ;;
 ;; A line holding only a marker is replaced:
-;;   @@OPTROOTS@@   read on the active developer directory, when it is outside /Library
+;;   @@OPTROOTS@@   read on the active developer directory, when it is outside the roots
 ;;   @@ANCESTORS@@  stat only (file-read-metadata) on every proper ancestor of every
 ;;                  granted path: without it mkdir and stat by absolute path die at
 ;;                  /private or /Users. Listing stays denied.
@@ -58,10 +58,13 @@
 (allow file-read* (subpath "/usr"))
 (allow file-read* (subpath "/bin"))
 (allow file-read* (subpath "/sbin"))
-(allow file-read* (subpath "/opt"))
+(allow file-read* (subpath "/opt/homebrew"))
+(allow file-read* (subpath "/opt/local"))
 (allow file-read* (subpath "/Library"))
 (allow file-read* (subpath "/private/etc"))
 (allow file-read* (subpath "/private/var/select"))
+;; the zoneinfo database: without it every program runs in UTC.
+(allow file-read* (subpath "/private/var/db/timezone"))
 (allow file-read* (subpath "/dev"))
 @@OPTROOTS@@
 

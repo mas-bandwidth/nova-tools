@@ -41,6 +41,11 @@ func TestRulesetGrants(t *testing.T) {
 	r, _ = find(rs, "/dev/null")
 	assert.Equal(t, fileMask(6), r.mask)
 	assert.Zero(t, r.mask&fsReadDir, "a file rule carries no directory-only right")
+
+	r, ok = find(rs, "/dev/shm")
+	require.True(t, ok)
+	assert.Equal(t, rs.fs, r.mask, "/dev/shm is writable")
+	assert.False(t, r.must, "but skipped if absent")
 }
 
 func TestRulesetOutsideTheSpecIsNotGranted(t *testing.T) {
@@ -50,7 +55,7 @@ func TestRulesetOutsideTheSpecIsNotGranted(t *testing.T) {
 		_, ok := find(rs, d)
 		assert.False(t, ok, d)
 	}
-	assert.Len(t, rs.rules, len(linuxReadRoots)+len(linuxWriteFiles)+3)
+	assert.Len(t, rs.rules, len(linuxReadRoots)+len(linuxWriteFiles)+len(linuxWriteDirs)+3)
 }
 
 func TestRulesetResolverDirectory(t *testing.T) {
