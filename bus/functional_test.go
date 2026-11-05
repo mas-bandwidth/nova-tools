@@ -22,8 +22,9 @@ import (
 
 const wait = 20 * time.Second
 
-// startRedis starts a redis-server on a free local port for this test only.
-func startRedis(t *testing.T) string {
+// startRedis starts a redis-server on a free local port for this test only,
+// with any extra configuration arguments.
+func startRedis(t *testing.T, extra ...string) string {
 	t.Helper()
 	server, err := exec.LookPath("redis-server")
 	if err != nil {
@@ -33,13 +34,17 @@ func startRedis(t *testing.T) string {
 	require.NoError(t, err)
 	port := strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
 	require.NoError(t, l.Close())
-	cmd := exec.Command(server, "--port", port, "--bind", "127.0.0.1", "--save", "", "--appendonly", "no", "--dir", t.TempDir())
+	cmd := exec.Command(server, append([]string{"--port", port, "--bind", "127.0.0.1", "--save", "", "--appendonly", "no", "--dir", t.TempDir()}, extra...)...)
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }) // ignored: the server is ours and disposable
 	addr := "127.0.0.1:" + port
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	t.Cleanup(func() { _ = c.Close() }) // ignored: closing a test client
-	require.Eventually(t, func() bool { return c.Ping(context.Background()).Err() == nil }, wait, 20*time.Millisecond)
+	require.Eventually(t, func() bool {
+		conn, err := net.Dial("tcp", addr)
+		if err == nil {
+			_ = conn.Close() // ignored: a probe
+		}
+		return err == nil
+	}, wait, 20*time.Millisecond)
 	return addr
 }
 
@@ -163,23 +168,23 @@ func TestPresenceWhoAndPending(t *testing.T) {
 		return string(out)
 	}
 
-	assert.Equal(t, "0\n", bus("pending", "--as", "beta"), "no stream yet")
+	assert.Equal(t, "PENDING OK waiting=0\n", bus("pending", "--as", "beta"), "no stream yet")
 	one := strings.Fields(bus("send", "--as", "alpha", "--to", "beta", "one", "1"))[1]
 	two := strings.Fields(bus("send", "--as", "alpha", "--to", "beta", "two", "2"))[1]
-	assert.Equal(t, "2\n", bus("pending", "--as", "beta"), "no group yet: the whole stream waits")
+	assert.Equal(t, "PENDING OK waiting=2\n", bus("pending", "--as", "beta"), "no group yet: the whole stream waits")
 	_, err := c.XGroupCreateMkStream(ctx, "bus:beta", group, "0").Result()
 	require.NoError(t, err)
 	_, err = c.XReadGroup(ctx, &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{"bus:beta", ">"}, Count: 1, Block: -1}).Result()
 	require.NoError(t, err, "one handed, not acked")
-	assert.Equal(t, "2\n"+one+"\tone\n"+two+"\ttwo\n", bus("pending", "--as", "beta", "--list"))
-	assert.Equal(t, "2\n", bus("pending", "--as", "beta"), "pending consumed nothing")
-	assert.Empty(t, bus("who"))
+	assert.Equal(t, "PENDING OK waiting=2\n"+one+"\talpha\tone\n"+two+"\talpha\ttwo\n", bus("pending", "--as", "beta", "--list"))
+	assert.Equal(t, "PENDING OK waiting=2\n", bus("pending", "--as", "beta"), "pending consumed nothing")
+	assert.Equal(t, "WHO OK present=0\n", bus("who"))
 
 	h := startHook(t, bin, addr)
 	h.next(t)
 	h.next(t)
-	require.Eventually(t, func() bool { return bus("pending", "--as", "beta") == "0\n" }, wait, 20*time.Millisecond)
-	assert.Regexp(t, `^beta\t\d+s\n$`, bus("who"))
+	require.Eventually(t, func() bool { return bus("pending", "--as", "beta") == "PENDING OK waiting=0\n" }, wait, 20*time.Millisecond)
+	assert.Regexp(t, `^WHO OK present=1\nbeta\t\d+s\n$`, bus("who"))
 	ttl, err := c.TTL(ctx, "bus:presence:beta").Result()
 	require.NoError(t, err)
 	assert.True(t, ttl > 0 && ttl <= presenceTTL, ttl)
@@ -187,25 +192,25 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	second.Env = append(os.Environ(), "NOVA_BUS_REDIS="+addr)
 	out, err := second.CombinedOutput()
 	assert.Equal(t, 1, second.ProcessState.ExitCode(), string(out))
-	assert.Contains(t, string(out), "HOOK WAIT name=beta ttl=30\n")
-	assert.Contains(t, string(out), "name already hooked: beta", "after 40 s of the first hook refreshing")
-	assert.Regexp(t, `^beta\t\d+s\n$`, bus("who"), "the first hook's presence is untouched")
+	assert.Regexp(t, `^HOOK WAIT name=beta held_since=\S+Z ttl=30s budget=40s\n`, string(out))
+	assert.Contains(t, string(out), "name already hooked: beta after 40s", "after 40 s of the first hook refreshing")
+	assert.Regexp(t, `^WHO OK present=1\nbeta\t\d+s\n$`, bus("who"), "the first hook's presence is untouched")
 	stopped := time.Now()
 	require.NoError(t, h.cmd.Process.Signal(syscall.SIGTERM))
 	require.NoError(t, h.cmd.Wait(), "a clean exit")
 	assert.Less(t, time.Since(stopped), 5*time.Second, "a blocked read does not hold up the exit")
-	assert.Empty(t, bus("who"), "a clean exit deletes presence")
+	assert.Equal(t, "WHO OK present=0\n", bus("who"), "a clean exit deletes presence")
 
 	k := startHook(t, bin, addr)
-	require.Eventually(t, func() bool { return bus("who") != "" }, wait, 20*time.Millisecond)
+	require.Eventually(t, func() bool { return bus("who") != "WHO OK present=0\n" }, wait, 20*time.Millisecond)
 	k.kill()
-	assert.Regexp(t, `^beta\t`, bus("who"), "a crashed hook stays present until the TTL")
+	assert.Regexp(t, `^WHO OK present=1\nbeta\t`, bus("who"), "a crashed hook stays present until the TTL")
 	ttl, err = c.TTL(ctx, "bus:presence:beta").Result()
 	require.NoError(t, err)
 	assert.True(t, ttl > 0 && ttl <= presenceTTL, "and then lapses: %v", ttl)
 
 	require.NoError(t, c.XAdd(ctx, &redis.XAddArgs{Stream: "bus:presence:zeta", Values: []string{"k", "v"}}).Err())
-	assert.Regexp(t, `^beta\t\d+s\nzeta\t\?\n$`, bus("who"), "a key that is not a string is shown, not fatal")
+	assert.Regexp(t, `^WHO OK present=2\nbeta\t\d+s\nzeta\t\?\n$`, bus("who"), "a key that is not a string is shown, not fatal")
 }
 
 // TestHookOnAClosedPipe is hook | true: the reader is gone before the first
@@ -272,4 +277,45 @@ func TestHookTrimsOldAckedHistory(t *testing.T) {
 	h := startHook(t, bin, addr)
 	assert.True(t, strings.HasSuffix(h.next(t), "\thanded\thanded"), "only the unacked entry is printed")
 	require.Eventually(t, func() bool { return c.XLen(ctx, "bus:beta").Val() == 0 }, wait, 20*time.Millisecond, "history trimmed, the pending entry deleted on ack")
+}
+
+// TestNamedACLUser: a server whose default user is off and whose bus user
+// may touch only bus:* keys. With NOVA_BUS_USER every verb works; without it
+// the login is refused.
+func TestNamedACLUser(t *testing.T) {
+	t.Parallel()
+	addr := startRedis(t, "--user", "bus", "on", ">secret", "~bus:*", "+@all", "--user", "default", "off")
+	bin := filepath.Join(t.TempDir(), "nova-bus")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Stderr = os.Stderr
+	require.NoError(t, build.Run())
+	env := append(os.Environ(), "NOVA_BUS_REDIS="+addr, "NOVA_BUS_PASSWORD=secret")
+	bus := func(user string, args ...string) (int, string, string) {
+		cmd := exec.Command(bin, args...)
+		cmd.Env = append(env, "NOVA_BUS_USER="+user)
+		var so, se strings.Builder
+		cmd.Stdout, cmd.Stderr = &so, &se
+		_ = cmd.Run() // the exit code is the result
+		return cmd.ProcessState.ExitCode(), so.String(), se.String()
+	}
+	code, _, errOut := bus("", "send", "--as", "alpha", "--to", "beta", "s", "b")
+	assert.Equal(t, 1, code, "the default user is off")
+	assert.Contains(t, errOut, "SEND FAILED to beta")
+	code, out, errOut := bus("bus", "send", "--as", "alpha", "--to", "beta", "s", "b")
+	require.Equal(t, 0, code, errOut)
+	assert.Regexp(t, `^beta \d+-\d+\n$`, out)
+	_, out, _ = bus("bus", "pending", "--as", "beta")
+	assert.Equal(t, "PENDING OK waiting=1\n", out)
+
+	cmd := exec.Command(bin, "hook", "--as", "beta")
+	cmd.Env = append(env, "NOVA_BUS_USER=bus")
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }) // ignored: may already be gone
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	require.NoError(t, err)
+	assert.True(t, strings.HasSuffix(line, "\talpha\t-\ts\tb\n"), line)
+	_, out, _ = bus("bus", "who")
+	assert.Regexp(t, `^WHO OK present=1\nbeta\t`, out, "presence, claim and scan all work as the bus user")
 }

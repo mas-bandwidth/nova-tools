@@ -18,17 +18,22 @@ nova-bus help [<verb>] | -h | --help | <verb> -h
 ```
 
 - **send** appends one message to the inbox of each recipient, in the order
-  given, and prints `<name> <id>` for each. A body of `-` is read from stdin.
-  `--re <id>` names the message this one answers.
+  given and once per name however often it is listed, and prints
+  `<name> <id>` for each. The subject may not be empty. A body of `-` is read
+  from stdin, less exactly one trailing newline. `--re <id>` names the message
+  this one answers and must be an id as hook prints it, `<ms>-<seq>`.
 - **hook** prints every message still waiting for `<name>`, then blocks and
   prints each new one as it arrives, and holds `<name>`'s presence while it
-  runs. It runs until killed.
-- **who** prints `<name><TAB><uptime>` for each present name, sorted by name;
-  uptime is a Go duration to the second (`1h2m3s`), or `?` when the key does
-  not hold a start time (including a key that is not a string).
-- **pending** prints the number of messages waiting for `<name>` that no hook
-  has acked; with `--list`, then `<id><TAB><subject>` for each, oldest first.
-  It consumes nothing.
+  runs. It runs until killed. Its stdout carries only message lines; on stderr
+  it says `HOOK OK name=<name> waiting=<n>` once it holds the name (once per
+  process, not on each reconnect).
+- **who** prints `WHO OK present=<n>`, then `<name><TAB><uptime>` for each
+  present name, sorted by name; uptime is a Go duration to the second
+  (`1h2m3s`), or `?` when the key does not hold a start time (including a key
+  that is not a string).
+- **pending** prints `PENDING OK waiting=<n>`, the number of messages waiting
+  for `<name>` that no hook has acked; with `--list`, then
+  `<id><TAB><from><TAB><subject>` for each, oldest first. It consumes nothing.
 - **help**, `-h`, `--help` or no arguments print the whole usage to stdout;
   `help <verb>`, `<verb> -h` and `<verb> --help` print that verb's usage.
   Help exits 0 and writes nothing to stderr.
@@ -41,7 +46,7 @@ is the one way a message is marked handled.
 | Code | When |
 |---|---|
 | 0 | done; help; a hook stopped by SIGINT or SIGTERM |
-| 1 | refused or failed: a Redis error, `SEND FAILED`, `name already hooked`, stdout failing |
+| 1 | refused or failed: Redis unreachable or erring, `SEND FAILED`, `name already hooked`, stdout failing |
 | 2 | a malformed invocation |
 
 A malformed invocation is refused in one stderr line,
@@ -50,19 +55,32 @@ stdout and nothing done in Redis. Missing inputs are named all at once
 (`missing --as <name>, --to <name>, <subject> <body>, NOVA_BUS_REDIS
 (host:port)`). Each other case is named on its own: an unknown flag, or a flag
 the verb does not take (`unknown flag --x`); a flag without a value; a bad
-`--list` value; a name containing `:`; `--re -`; an empty name in `--to`
-(`a,,b`); more than a subject and a body; an argument to hook, who or pending
-("takes no arguments"). An unknown verb (`ack` is one) gets
+`--list` value; a name that is not letters, digits, `.`, `_` and `-` (for
+`--as` and every `--to` name); a `--re` that is not `<ms>-<seq>`; an empty
+name in `--to` (`a,,b`); an empty subject; more than a subject and a body; an
+argument to hook, who or pending ("takes no arguments"). An unknown verb (`ack` is one) gets
 `nova-bus: unknown verb "<verb>"; verbs: send, hook, who, pending, help; run:
 nova-bus help`. go-redis's own logging is silenced: every message on stderr is
 nova-bus's.
+
+A runtime failure keeps the one-line shape, `nova-bus <verb>: <what>`, exit 1.
+An unreachable server is said plainly: `cannot reach redis at <host:port>
+(NOVA_BUS_REDIS): connection refused` (or `no such host`, or `timed out`); for
+send it follows `SEND FAILED to <name>:`. A hook that loses Redis logs
+`nova-bus hook: <what>; reconnecting` once, then at most once a minute, while
+it retries every second.
 
 ## Environment
 
 | Variable | |
 |---|---|
 | `NOVA_BUS_REDIS` | the Redis address, `host:port` (required); Redis 6.2 or later |
+| `NOVA_BUS_USER` | the Redis ACL user (optional): with it the client sends `AUTH <user> <password>`; without it, `AUTH <password>` as Redis's `default` user |
 | `NOVA_BUS_PASSWORD` | the Redis password (optional; never printed) |
+
+The user needs the keys `bus:*` and the commands nova-bus sends (streams,
+`GET`/`SET`/`DEL`, `SCAN`, `EVALSHA`/`EVAL`, `MULTI`/`EXEC`); `~bus:* +@all`
+is enough, and the functional test runs a server whose `default` user is off.
 
 Each process keeps one Redis connection and runs its commands in turn. The
 client never retries a command by itself.
@@ -70,7 +88,8 @@ client never retries a command by itself.
 ## Wire format
 
 - The inbox of `<name>` is the stream `bus:<name>`. A message is one entry
-  with the fields `from`, `to` (the comma list as given), `subject`, `body`
+  with the fields `from`, `to` (the recipients, trimmed, each once, joined by
+  commas), `subject`, `body`
   and `re` (empty when none), all strings.
 - Every hook reads with the consumer group `hook` and the consumer `hook`. The
   group is created at id `0` on the first hook, so messages sent before any
@@ -123,22 +142,28 @@ trims everything older (`XTRIM MINID <that id>`) before printing. A new
 past its TTL, may hold an older entry it has been handed and not yet printed.
 Until then pending counts that history too.
 
+An inbox nobody hooks is never trimmed, by design: its messages wait for
+their reader, however long that takes.
+
 ## Presence
 
 Presence means one thing: a hook process is alive for this name.
 
 - **One hook per name.** On start the hook claims the key: one Lua script sets
   it with a 30 s TTL unless it holds another process's value. If it does, the
-  hook prints `HOOK WAIT name=<name> ttl=30` to stderr and tries again every
-  second for at most 40 s (the TTL plus one refresh). A hook restarted by a
+  hook prints `HOOK WAIT name=<name> held_since=<holder's start> ttl=30s
+  budget=40s` to stderr and tries again every second for at most 40 s (the TTL
+  plus one refresh). A hook restarted by a
   supervisor after a crash so waits out the dead hook's key and claims the
   name within about 30 s. If the key is still held after 40 s, another hook is
-  alive and refreshing it: the hook prints `name already hooked: <name>` and
-  exits 1, touching nothing. A signal while waiting exits 0.
+  alive and refreshing it: the hook prints `nova-bus hook: name already
+  hooked: <name> after 40s; run: nova-bus who` and exits 1, touching nothing.
+  A signal while waiting exits 0.
 - It claims again whenever 10 s have passed. Each read waits at most 1 s, so a
   quiet or a busy hook refreshes on time, and a signal is acted on within a
   second. A refresh that finds another value (this hook lapsed and another
-  took the name) ends this hook the same way.
+  took the name) ends this hook with `name taken by another hook while this
+  one lapsed`, exit 1.
 - On a clean exit (SIGINT, SIGTERM, stdout failing) it releases the key: a
   second script deletes it only if it still holds this process's value. A
   release that fails leaves the key to its TTL.
