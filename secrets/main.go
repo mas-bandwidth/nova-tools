@@ -43,7 +43,7 @@ nova-secrets seat list --store <dir>
   List the seats the rules in .sops.yaml name and the seat files present, one "<seat> file=yes|no rule=yes|no" per line.
 
 nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
-  Read one value from stdin (one non-empty line, never a terminal), set NAME in <seat>.yaml and commit that
+  Read one value from stdin (one non-empty line of at most 65536 bytes, never a terminal), set NAME in <seat>.yaml and commit that
   file. Pushing is yours. Example: pass show db | nova-secrets set DB_PASSWORD --store S --key K --as web
 
 nova-secrets names --store <dir> [--as <seat>]
@@ -73,12 +73,16 @@ func helpFor(verb string) (string, bool) {
 	return out, out != ""
 }
 
-// identityEnv is every variable sops reads an age identity from: none reaches sops
-// (it gets --key alone) or the command exec becomes.
-var identityEnv = []string{"SOPS_AGE_KEY", "SOPS_AGE_KEY_FILE", "SOPS_AGE_KEY_CMD", "SOPS_AGE_SSH_PRIVATE_KEY_FILE", "SOPS_KEYSERVICE"}
+// identityEnv is every variable that names an age identity or this tool's own inputs: none
+// reaches sops (it gets --key alone) or the command exec becomes.
+var identityEnv = []string{"NOVA_SECRETS_KEY", "NOVA_SECRETS_STORE", "NOVA_SECRETS_SEAT", "SOPS_AGE_KEY", "SOPS_AGE_KEY_FILE", "SOPS_AGE_KEY_CMD", "SOPS_AGE_SSH_PRIVATE_KEY_FILE", "SOPS_KEYSERVICE"}
 
 // markKey is a clear provenance line older releases wrote into seat files; it is
 // not a secret, so it is never delivered, and a set drops it.
+// maxValue is the longest secret set accepts: a key or a token. A longer one would also
+// overflow the environment exec hands a command.
+const maxValue = 65536
+
 const markKey = "NOVA_SECRETS_WRITTEN_BY"
 
 var (
@@ -354,11 +358,15 @@ func (t tool) set(args []string) error {
 	if f, ok := t.stdin.(*os.File); ok && isTerminal(f) {
 		return refuse("set: stdin is a terminal; pipe the value in, as: <source> | nova-secrets set NAME ...; run: nova-secrets set -h")
 	}
-	raw, err := io.ReadAll(io.LimitReader(t.stdin, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(t.stdin, maxValue+3)) // the value, one more byte to see it is over, and a CRLF
 	if err != nil {
 		return refuse("reading the value from stdin: %v", err)
 	}
 	value := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
+	if len(value) > maxValue {
+		rest, _ := io.Copy(io.Discard, t.stdin) // only to say how big it was
+		return bad("value is %d bytes; a secret is a key or token, at most %d bytes", int64(len(value))+rest, maxValue)
+	}
 	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
 		return refuse("set: empty or multi-line value on stdin; the value must be one non-empty line; run: nova-secrets set -h")
 	}

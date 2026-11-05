@@ -105,11 +105,12 @@ nova-secrets help [verb]
 
 **exec** decrypts `<seat>.yaml` and becomes `cmd` (exec(2); on Windows it runs `cmd` and exits with its status).
 The child's environment is the inherited one with every name the seat holds removed, so a secret not asked for cannot
-arrive another way, and every sops identity variable removed, plus the `--only` names and their values. A name the
+arrive another way, and every sops identity variable and `NOVA_SECRETS_KEY`, `NOVA_SECRETS_STORE` and `NOVA_SECRETS_SEAT` removed (the
+child has no business knowing where the key is), plus the `--only` names and their values. A name the
 seat does not hold is refused, by name, and the command never runs. No core file is written after the decrypt.
 
 **set** creates `<seat>.yaml` under its rule when it is new. The first `set` checks `--key` against the seat's rule
-in `.sops.yaml`, as every later `exec` and `set` does, and encrypts nothing under another key. The value is one non-empty line. An empty stdin, such as
+in `.sops.yaml`, as every later `exec` and `set` does, and encrypts nothing under another key. The value is one non-empty line of at most 65536 bytes; a longer one is refused with its size, never cut. An empty stdin, such as
 `/dev/null`, is refused as an empty value.
 
 **seat add** parses `.sops.yaml` and writes it back with the new rule. sops uses the first rule that matches a file,

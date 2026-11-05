@@ -817,3 +817,35 @@ func TestSeatVerbsAndAbsentStore(t *testing.T) {
 	}
 	assert.Empty(t, h.calls)
 }
+
+func TestSetValueSizeLimit(t *testing.T) {
+	t.Parallel()
+	for n, ok := range map[int]bool{65536: true, 65537: false, 3 << 20: false} {
+		h := newHarness(t)
+		h.stdin = strings.Repeat("v", n) + "\n"
+		code := h.main(h.set("NEW")...)
+		if ok {
+			require.Equal(t, 0, code, "%d: %s", n, h.stderr.String())
+			assert.Len(t, h.open("ada")["NEW"], n)
+			continue
+		}
+		assert.Equal(t, 2, code, "%d", n)
+		assert.Equal(t, fmt.Sprintf("nova-secrets set: value is %d bytes; a secret is a key or token, at most 65536 bytes; run: nova-secrets set -h\n", n), h.stderr.String())
+		assert.NoFileExists(t, filepath.Join(h.store, "ada.yaml"), "nothing is written")
+	}
+	h := newHarness(t) // CRLF after a full-size value is still in range
+	h.stdin = strings.Repeat("v", 65536) + "\r\n"
+	assert.Equal(t, 0, h.main(h.set("NEW")...), h.stderr.String())
+}
+
+func TestExecStripsItsOwnInputsFromTheChild(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("ada", map[string]string{"API_KEY": "v"})
+	h.environ = append(h.environ, "NOVA_SECRETS_SEAT=ada", "NOVA_SECRETS_STORE="+h.store, "NOVA_SECRETS_KEY="+h.key)
+	require.Equal(t, 0, h.main("exec", "--only", "API_KEY", "--", "true"), h.stderr.String())
+	for _, k := range []string{"NOVA_SECRETS_KEY", "NOVA_SECRETS_STORE", "NOVA_SECRETS_SEAT"} {
+		assert.NotContains(t, envMap(h.env), k)
+	}
+	assert.Equal(t, "v", envMap(h.env)["API_KEY"])
+}
