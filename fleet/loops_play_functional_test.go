@@ -17,18 +17,14 @@ import (
 )
 
 // loops_play_functional_test.go renders fleet/loops.yml's Linux unit state
-// through ansible-core's own templar. It carries //go:build functional (docs/STANDARD.md section 8;
-// unit-rule) so the unit tier does not compile the ansible render. Since
-// 219c33235e the task's state was a folded scalar whose restart check lost a
-// closing paren; ansible-core stops at the `else` ("expected token ')', got
-// 'else'"), so no Linux host ever restarted its unit.
+// through ansible-core's own templar. It carries //go:build functional
+// (docs/STANDARD.md section 8) so the unit tier does not compile the ansible
+// render.
 //
 // The render runs the task as the play holds it: its own vars block and its
 // module state argument, copied into a one-task localhost playbook, fed the
-// inputs the play feeds it (loop_units, loop_timers, loop_restart, item). So
-// the whole chain is templated, the selectattr over the unit results included,
-// whichever form the task takes. The four truth-table inputs are held to
-// restarted, restarted, started and stopped.
+// inputs the play feeds it (loop_units, loop_timers, loop_restart, item). The
+// four truth-table inputs are held to restarted, restarted, started and stopped.
 
 // stateRenderPlay is a one-task localhost playbook that prints what the Linux
 // state task would hand systemd: the task's own vars and its state argument.

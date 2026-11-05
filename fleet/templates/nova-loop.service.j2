@@ -1,5 +1,7 @@
 {# fleet/loops.yml renders this for one loop record l on a linux machine:
-   every value is the record's (l) or the host layout's (group_vars/all.yml).
+   every value is the record's (l) or the host layout's (group_vars/all.yml);
+   the unit's environment is loop_env (HOME, PATH and the record's env) and its
+   log is loop_log.
    A word of ExecStart is double-quoted, with systemd's specifiers (%) and
    variables ($) doubled so the record's text reaches the program as written.
    A kept-alive loop is this service, restarted whenever it ends; a loop that
@@ -22,8 +24,9 @@ Type=oneshot
 User={{ ansible_user_id }}
 {% endif %}
 WorkingDirectory={{ nova_home }}
-Environment="HOME={{ nova_home }}"
-Environment="PATH={{ nova_loop_path }}"
+{% for k, v in loop_env | dictsort %}
+Environment="{{ k }}={{ v | string | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') }}"
+{% endfor %}
 ExecStart={% for w in loop_exec %}"{{ w | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') | replace('$', '$$') }}"{{ ' ' if not loop.last else '' }}{% endfor %}
 
 StandardOutput=append:{{ loop_log }}
