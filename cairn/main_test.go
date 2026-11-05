@@ -6,9 +6,11 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +22,14 @@ func do(t *testing.T, stdin string, args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
 	code := run(args, strings.NewReader(stdin), &out, &errb)
 	return code, out.String(), errb.String()
+}
+
+// assertRefusal holds a refusal to one line: nova-cairn <verb>: <why>; run: <next>,
+// where next is a nova-cairn command or a command that looks at the file at fault.
+func assertRefusal(t *testing.T, errs string, args []string) {
+	t.Helper()
+	assert.Regexp(t, `^nova-cairn[a-z -]*: .+; run: (nova-cairn|ls|sed|grep|cat) .+\n$`, errs, "%v", args)
+	assert.Equal(t, 1, strings.Count(errs, "\n"), "one line: %v", args)
 }
 
 // TestSelfContained holds nova-cairn to the standard library, so it can be lifted out whole.
@@ -120,7 +130,7 @@ func TestReopenAndRefusals(t *testing.T) {
 		code, out, errs := do(t, "", c...)
 		assert.Equal(t, 2, code, "%v", c)
 		assert.Empty(t, out, "%v", c)
-		assert.Contains(t, errs, "REFUSED", "%v", c)
+		assertRefusal(t, errs, c)
 	}
 }
 
@@ -201,7 +211,7 @@ func TestSelfTalkFlags(t *testing.T) {
 	} {
 		code, _, errs := do(t, "", c...)
 		assert.Equal(t, 2, code, "%v", c)
-		assert.Contains(t, errs, "REFUSED")
+		assertRefusal(t, errs, c)
 	}
 }
 
@@ -234,11 +244,11 @@ func TestMemory(t *testing.T) {
 	c := "testdata/corpus"
 	code, out, _ := do(t, "", "memory", "stats", "--root", c)
 	assert.Equal(t, 0, code)
-	assert.Regexp(t, `^STATS OK schema=nova-memory/2 files=6 chunks=20 bytes=4866 vocab=380 avg-terms=39.3 build=\S+\nSTATS OK class=\.`, out)
+	assert.Regexp(t, `^STATS OK schema=nova-memory/2 files=6 entries=0 skipped=0 chunks=20 bytes=4866 vocab=380 avg-terms=39.3 build=\S+\nSTATS OK class=\.`, out)
 
 	code, out, _ = do(t, "", "memory", "search", "--root", c, "--channels", "bm25", "--k", "2", "lantern", "brass")
 	assert.Equal(t, 0, code)
-	assert.Contains(t, out, `SEARCH OK hits=2 k=2 channels=bm25 files=6 chunks=20: query="lantern brass"`)
+	assert.Contains(t, out, `SEARCH OK hits=2 k=2 channels=bm25 files=6 entries=0 skipped=0 chunks=20: query="lantern brass"`)
 	assert.Contains(t, out, "SEARCH CAL score=4.05 score-channel=bm25 probe=unrelated-control")
 	assert.Contains(t, out, "SEARCH HIT rank=1 score=3.88 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=testdata/corpus: notes/index-notes.md:8 ")
 	assert.Contains(t, out, "SEARCH HIT rank=2 score=3.29 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured")
@@ -249,7 +259,7 @@ func TestMemory(t *testing.T) {
 	draft := "The lantern glazing needs clean cloths for brass and glass every week.\n\nToo short.\n"
 	code, out, _ = do(t, draft, "memory", "check", "--root", c, "--channels", "bm25", "--k", "1", "-")
 	assert.Equal(t, 0, code, "check never judges")
-	assert.Contains(t, out, "MEMORY OK candidates=1 source=- k=1 channels=bm25 files=6 chunks=20")
+	assert.Contains(t, out, "MEMORY OK candidates=1 source=- k=1 channels=bm25 files=6 entries=0 skipped=0 chunks=20")
 	assert.Contains(t, out, "MEMORY HIT cand=1 rank=1 ")
 	assert.Contains(t, out, "notes/lantern.md:")
 }
@@ -272,7 +282,7 @@ func TestMemoryRefusals(t *testing.T) {
 		code, out, errs := do(t, "", args...)
 		assert.Equal(t, 2, code, "%v", args)
 		assert.Empty(t, out, "%v", args)
-		assert.Contains(t, errs, "REFUSED", "%v", args)
+		assertRefusal(t, errs, args)
 	}
 }
 
@@ -313,4 +323,196 @@ func TestVerifyCoverage(t *testing.T) {
 	assert.Contains(t, errs, "VERIFY FAIL backlink m/index-a.md links gone.md which does not exist (resolved m/gone.md)")
 	assert.NotContains(t, errs, "wikilink", "a wikilink resolves to a frontmatter name, and a backticked one is not a link")
 	assert.Contains(t, errs, "VERIFY FAIL gating=2 shown=2 info=0 coverage=2 frontmatter=0 links=gate")
+}
+
+// TestMemoryFindsStoreEntries: the words an AI appended are found by memory search,
+// stats and check, and a hit names what receipt needs. No real clock: the store is
+// written with a fixed time.
+func TestMemoryFindsStoreEntries(t *testing.T) {
+	t.Parallel()
+	store := filepath.Join(t.TempDir(), "cairn")
+	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	_, _, err := open(store, "s1", "", at, "manual")
+	require.NoError(t, err)
+	_, _, err = appendEntry(store, "s1", "e1", "The brass lantern illuminates the harbor.", "", at, "manual")
+	require.NoError(t, err)
+	_, _, err = appendEntry(store, "s1", "e2", "tide tables", "", at.Add(time.Second), "manual")
+	require.NoError(t, err)
+
+	code, out, _ := do(t, "", "memory", "search", "--root", store, "--channels", "bm25", "--k", "2", "brass", "lantern")
+	require.Equal(t, 0, code)
+	assert.Contains(t, out, "SEARCH OK hits=1 k=2 channels=bm25 files=0 entries=2 skipped=0 chunks=2:")
+	assert.Contains(t, out, "SEARCH HIT rank=1 ")
+	assert.Contains(t, out, " store="+store+" session=s1 entry=e1 stamp=2026-11-05T12:00:00Z: entries/s1/e1.json:1 \"The brass lantern illuminates the harbor.\"")
+
+	// The hit's fields are what receipt takes.
+	code, out, _ = do(t, "", "receipt", "--store", store, "--session", "s1", "--entry", "e1", "--text")
+	require.Equal(t, 0, code)
+	assert.Contains(t, out, `text="The brass lantern illuminates the harbor."`)
+
+	// A short entry is still found; the session record's header is not a note.
+	_, out, _ = do(t, "", "memory", "search", "--root", store, "--channels", "bm25", "--k", "2", "tide")
+	assert.Contains(t, out, "entry=e2 stamp=2026-11-05T12:00:01Z")
+	_, out, _ = do(t, "", "memory", "search", "--root", store, "--channels", "bm25", "--k", "2", "opened", "publish")
+	assert.Contains(t, out, "SEARCH MISS")
+	_, out, _ = do(t, "", "memory", "stats", "--root", store)
+	assert.Contains(t, out, "STATS OK schema=nova-memory/2 files=0 entries=2 skipped=0 chunks=2 ")
+
+	// Notes and a store together, and a draft checked against both.
+	draft := "The lantern glazing and the brass need cloths every week.\n"
+	code, out, _ = do(t, draft, "memory", "check", "--root", "testdata/corpus", "--root", store, "--channels", "bm25", "--k", "9", "-")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "files=6 entries=2 skipped=0 chunks=22")
+	assert.Contains(t, out, "entry=e1 ")
+	assert.Contains(t, out, "notes/lantern.md:")
+
+	// verify reads notes only: a store with no notes has nothing to verify.
+	code, _, errs := do(t, "", "memory", "verify", "--root", store, "--links", "gate")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "no markdown notes found")
+}
+
+// TestMemorySkipsAJSONThatIsNotAnEntry: a .json under some entries/ directory that is
+// not a store entry is left out with one warning and counted, never a refusal.
+func TestMemorySkipsAJSONThatIsNotAnEntry(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	write := func(name, body string) {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(body), 0o644))
+	}
+	write("notes/a.md", "The brass lantern needs a clean cloth.\n")
+	write("web/entries/x/y.json", `{"name":"a package manifest"}`)
+	write("web/entries/x/z.json", `not json`)
+	code, out, errs := do(t, "", "memory", "stats", "--root", root)
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "STATS OK schema=nova-memory/2 files=1 entries=0 skipped=2 chunks=1 ")
+	assert.Equal(t, 1, strings.Count(errs, "\n"), "warned once")
+	assert.Contains(t, errs, "STATS WARN skipped=2 first="+filepath.Join(root, "web", "entries", "x", "y.json")+":")
+
+	code, out, errs = do(t, "", "memory", "search", "--root", root, "--exclude", "web", "--channels", "bm25", "--k", "1", "brass")
+	assert.Equal(t, 0, code)
+	assert.Empty(t, errs, "--exclude leaves them out quietly")
+	assert.Contains(t, out, "files=1 entries=0 skipped=0 chunks=1")
+}
+
+// TestARuntimeFailureNamesTheNextCommand: a file memory cannot read is refused
+// with the command that leaves it out; a missing store or self-talk file with the
+// command that looks at it.
+func TestARuntimeFailureNamesTheNextCommand(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.md"), []byte("The brass lantern needs a clean cloth.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "big.md"), bytes.Repeat([]byte("word "), maxFile/5+1), 0o644))
+	code, out, errs := do(t, "", "memory", "search", "--root", root, "--channels", "bm25", "--k", "1", "brass")
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "big.md is over the")
+	assert.True(t, strings.HasSuffix(errs, "; run: nova-cairn memory search --exclude big.md --root "+root+" --channels bm25 --k 1 brass\n"), errs)
+	code, _, _ = do(t, "", "memory", "search", "--exclude", "big.md", "--root", root, "--channels", "bm25", "--k", "1", "brass")
+	assert.Equal(t, 0, code, "the printed remedy runs")
+
+	missing := filepath.Join(root, "absent")
+	_, _, errs = do(t, "", "index", "--store", missing)
+	assert.True(t, strings.HasSuffix(errs, "; run: ls -ld "+missing+"\n"), errs)
+	_, _, errs = do(t, "", "self-talk", missing)
+	assert.True(t, strings.HasSuffix(errs, "; run: ls -l "+missing+"\n"), errs)
+	bad := filepath.Join(root, "bad.md")
+	require.NoError(t, os.WriteFile(bad, []byte{0xff, '\n'}, 0o644))
+	_, _, errs = do(t, "", "self-talk", bad)
+	assert.True(t, strings.HasSuffix(errs, "; run: nova-cairn self-talk --skip bad.md "+bad+"\n"), errs)
+	assertRefusal(t, errs, nil)
+}
+
+// TestEveryVerbHelpsAndRefusesUnknownFlags: -h, --help and help <verb> exit 0 with
+// the verb's help on stdout; a flag the verb does not take is refused in one line.
+func TestEveryVerbHelpsAndRefusesUnknownFlags(t *testing.T) {
+	t.Parallel()
+	for _, g := range groups {
+		for _, v := range g.verbs {
+			path := strings.Fields(v[0])
+			for _, args := range [][]string{append(slices.Clone(path), "-h"), append(slices.Clone(path), "--help"), append([]string{"help"}, path...)} {
+				code, out, errs := do(t, "", args...)
+				assert.Equal(t, 0, code, "%v", args)
+				assert.Contains(t, out, "nova-cairn "+v[0], "%v", args)
+				assert.Empty(t, errs, "%v", args)
+			}
+			args := append(slices.Clone(path), "--no-such-flag")
+			code, out, errs := do(t, "", args...)
+			assert.Equal(t, 2, code, "%v", args)
+			assert.Empty(t, out, "%v", args)
+			assert.Regexp(t, `^nova-cairn `+v[0]+`: unknown flag --no-such-flag for `+v[0]+`; run: nova-cairn `+v[0]+` -h\n$`, errs)
+		}
+	}
+	for _, ignored := range [][]string{
+		{"index", "--store", "x", "--text", "y"},
+		{"open", "--store", "x", "--session", "s", "--publish", "never", "--max", "3"},
+		{"memory", "stats", "--root", "testdata/corpus", "--k", "3"},
+		{"memory", "search", "--root", "testdata/corpus", "--channels", "bm25", "--k", "3", "--links", "gate", "x"},
+		{"memory", "stats", "--root", "testdata/corpus", "stray"},
+		{"version", "x"},
+	} {
+		code, out, errs := do(t, "", ignored...)
+		assert.Equal(t, 2, code, "%v", ignored)
+		assert.Empty(t, out, "%v", ignored)
+		assertRefusal(t, errs, ignored)
+	}
+	code, _, errs := do(t, "", "no-such-verb")
+	assert.Equal(t, 2, code)
+	assert.Equal(t, "nova-cairn: unknown verb no-such-verb; the verbs are "+verbList+"; run: nova-cairn help\n", errs)
+	code, _, errs = do(t, "", "--max", "x")
+	assert.Equal(t, 2, code)
+	assert.NotContains(t, errs, "flag provided")
+}
+
+// TestHealLogsTheHeadersPolicy: an open that crashed before its log line is healed
+// with the policy its header recorded (as the model's Open does), and a re-open
+// naming another policy is then a conflict.
+func TestHealLogsTheHeadersPolicy(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(store, "sessions"), 0o755))
+	header := "# cairn s1\n\nOpened: 2026-11-05T12:00:00Z\nSource: src\nPublish: never\n"
+	require.NoError(t, os.WriteFile(filepath.Join(store, "sessions", "s1.md"), []byte(header), 0o644))
+	code, _, errs := do(t, "", "open", "--store", store, "--session", "s1", "--publish", "manual")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "OPEN FAILED: session \"s1\" is already open with publish=never source=src")
+	log, err := os.ReadFile(filepath.Join(store, "log.jsonl"))
+	require.NoError(t, err)
+	assert.Contains(t, string(log), `"event":"open","publish":"never","session":"s1","source":"src"`)
+	assert.Equal(t, 1, strings.Count(string(log), "\n"), "healed once")
+	code, out, _ := do(t, "", "open", "--store", store, "--session", "s1", "--publish", "never")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "source=src publish=never reopened=true")
+}
+
+func TestARetryNamingAnotherSourceIsAConflict(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	do(t, "", "open", "--store", store, "--session", "s1", "--source", "a", "--publish", "never")
+	code, _, _ := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "w")
+	require.Equal(t, 0, code)
+	code, out, _ := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "w", "--source", "a")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "duplicate=true")
+	code, _, errs := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "w", "--source", "b")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "APPEND FAILED session=s1 entry=e1: entry \"e1\" already holds these words with source=a; --source b names another")
+}
+
+func TestALateFlagIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"memory", "search", "--root", "testdata/corpus", "--channels", "bm25", "lantern", "--k", "2"},
+		{"self-talk", "-", "--max", "1"},
+	} {
+		code, out, errs := do(t, "", args...)
+		assert.Equal(t, 2, code, "%v", args)
+		assert.Empty(t, out, "%v", args)
+		assert.Contains(t, errs, "late flag --", "%v", args)
+		assertRefusal(t, errs, args)
+	}
+	code, out, _ := do(t, "", "memory", "search", "--root", "testdata/corpus", "--channels", "bm25", "--k", "1", "--", "-lantern")
+	assert.Equal(t, 0, code, "after -- a word may start with -")
+	assert.Contains(t, out, `query="-lantern"`)
 }

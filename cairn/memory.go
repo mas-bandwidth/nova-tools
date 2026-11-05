@@ -2,7 +2,8 @@ package main
 
 import (
 	"cmp"
-	"flag"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,13 +14,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 )
 
-// memory searches your own markdown notes and checks a draft against them.
+// memory searches the notes already written (markdown) and checks a draft against them.
 // The index (BM25 over paragraphs) is rebuilt in memory every run, so there
 // is nothing to go stale and nothing is ever written. Every ordering is total:
 // ties break by chunk id, so the same corpus gives the same bytes.
@@ -27,15 +29,18 @@ import (
 const (
 	schema   = "nova-memory/2" // the token scheme: normalizer + tokenizer + chunking
 	minTerms = 3               // a paragraph of fewer terms is a heading fragment
-	maxFile  = 8 << 20         // a markdown file over this is refused by name
+	maxFile  = 8 << 20         // a file over this is refused by name
 	probe    = "the quarterly marketing budget for the regional office needs revised headcount projections before the fiscal deadline"
 	noteLex  = "lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic"
 )
 
+// chunk is one indexed paragraph: of a note, or of a store entry's words.
 type chunk struct {
 	file, class, root, text, fmName, fmType string
 	line, n                                 int
 	terms                                   map[string]int
+	store                                   string     // an entry's store directory
+	entry                                   *entryFile // nil for a note
 }
 
 type corpus struct {
@@ -43,8 +48,11 @@ type corpus struct {
 	df      map[string]int
 	post    map[string][]int
 	avg     float64
-	files   []string
+	files   []string // the notes indexed
+	entries int      // the store entries indexed
+	skipped []string // .json files under an entries/ directory that are not store entries
 	bytes   int
+	total   int // terms in all chunks
 	byClass map[string]int
 }
 
@@ -156,32 +164,99 @@ func (r *roots) excluded(p string) bool {
 	return false
 }
 
-// walk lists the markdown files under root (slash paths, sorted), skipping .git,
-// anything excluded, and anything that is not a regular file (a symlink is never followed).
-func (r *roots) walk(root string) ([]string, error) {
-	var files []string
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+// load reads the markdown notes under root for verify: their slash paths,
+// sorted, their texts with line endings made \n, and their size in bytes.
+func (r *roots) load(root string) (files []string, texts map[string]string, size int, err error) {
+	if files, _, err = r.walk(root); err == nil && len(files) == 0 {
+		err = fmt.Errorf("no markdown notes found — wrong root, or everything excluded")
+	}
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	texts = map[string]string{}
+	for _, f := range files {
+		raw, err := readFile(root, f)
 		if err != nil {
-			return err
+			return nil, nil, 0, &fileError{root, f, err}
 		}
+		size += len(raw)
+		texts[f] = lf(raw)
+	}
+	return files, texts, size, nil
+}
+
+// walk lists what memory reads under root, as sorted slash paths: the markdown
+// notes, and the entry files of any store in the tree (.../entries/<session>/<id>.json).
+// A store's own sessions/<session>.md is not a note: its words are in the entries.
+// It skips .git, anything excluded, and anything that is not a regular file (a
+// symlink is never followed).
+func (r *roots) walk(root string) (notes, entries []string, err error) {
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
+		if err != nil {
+			if rel == "." {
+				return err
+			}
+			return &fileError{root, rel, err}
+		}
 		switch {
 		case rel != "." && ((d.IsDir() && d.Name() == ".git") || r.excluded(rel)):
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
-		case !d.IsDir() && strings.HasSuffix(rel, ".md") && d.Type().IsRegular():
-			files = append(files, rel)
+		case d.IsDir() || !d.Type().IsRegular():
+		case strings.HasSuffix(rel, ".md"):
+			if !storeRecord(root, rel) {
+				notes = append(notes, rel)
+			}
+		case entryRel(rel) != nil:
+			entries = append(entries, rel)
 		}
 		return nil
 	})
-	slices.Sort(files)
-	if err == nil && len(files) == 0 {
-		err = fmt.Errorf("no markdown files found — wrong root, or everything excluded")
+	slices.Sort(notes)
+	slices.Sort(entries)
+	if err == nil && len(notes)+len(entries) == 0 {
+		err = fmt.Errorf("no markdown notes and no store entries found — wrong root, or everything excluded")
 	}
-	return files, err
+	return notes, entries, err
 }
+
+// entryRel splits a store entry's path, <prefix>entries/<session>/<id>.json,
+// into prefix, session and id; nil when rel is not one.
+func entryRel(rel string) []string {
+	parts := strings.Split(rel, "/")
+	n := len(parts)
+	if n < 3 || parts[n-3] != "entries" {
+		return nil
+	}
+	id, ok := strings.CutSuffix(parts[n-1], ".json")
+	if !ok || !validID(id) || !validID(parts[n-2]) {
+		return nil
+	}
+	return []string{strings.Join(parts[:n-3], "/"), parts[n-2], id}
+}
+
+// storeRecord reports a store's readable record, <prefix>sessions/<session>.md
+// beside an entries/ directory: its words are in the entries, so it is not a note.
+func storeRecord(root, rel string) bool {
+	dir, _ := path.Split(rel)
+	prefix, ok := strings.CutSuffix(dir, "sessions/")
+	if !ok {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(prefix), "entries"))
+	return err == nil && info.IsDir()
+}
+
+// fileError is a file under a root that could not be read; the remedy excludes it.
+type fileError struct {
+	root, rel string
+	err       error
+}
+
+func (e *fileError) Error() string { return e.err.Error() }
 
 func readFile(root, rel string) (string, error) {
 	f, err := os.Open(filepath.Join(root, rel))
@@ -191,60 +266,83 @@ func readFile(root, rel string) (string, error) {
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, maxFile+1))
 	if len(raw) > maxFile {
-		err = fmt.Errorf("%s is over the %d-byte file cap; exclude it with --exclude", rel, maxFile)
+		err = fmt.Errorf("%s is over the %d-byte file cap; exclude it", rel, maxFile)
 	}
 	return string(raw), err
 }
 
+// add indexes the paragraphs of one text that hold at least min terms.
+func (c *corpus) add(ch chunk, text string, min int) {
+	line := 1
+	for _, p := range strings.Split(text, "\n\n") {
+		start := line + len(p) - len(strings.TrimLeft(p, "\n"))
+		line += strings.Count(p, "\n") + 2
+		ts := terms(p)
+		if len(ts) < min {
+			continue
+		}
+		tf := map[string]int{}
+		for _, t := range ts {
+			tf[t]++
+		}
+		id := len(c.chunks)
+		ch.text, ch.line, ch.n, ch.terms = strings.Trim(p, "\n"), start, len(ts), tf
+		c.chunks = append(c.chunks, ch)
+		for t := range tf {
+			c.df[t]++
+			c.post[t] = append(c.post[t], id)
+		}
+		c.byClass[ch.class]++
+		c.total += len(ts)
+	}
+}
+
+// build indexes every root: each note's paragraphs of at least minTerms terms,
+// and every paragraph of each store entry's words, however short.
 func (r *roots) build() (*corpus, error) {
 	c := &corpus{df: map[string]int{}, post: map[string][]int{}, byClass: map[string]int{}}
-	total := 0
 	for _, root := range r.root {
-		files, err := r.walk(root)
-		if err != nil {
-			return nil, fmt.Errorf("building the index over %s: %v", esc(root), err)
-		}
-		c.files = append(c.files, files...)
-		for _, f := range files {
-			raw, err := readFile(root, f)
+		notes, entries, err := r.walk(root)
+		for _, f := range append(slices.Clone(notes), entries...) {
 			if err != nil {
-				return nil, err
+				break
 			}
-			c.bytes += len(raw)
-			text := lf(raw)
-			name, typ, end := frontmatter(text)
-			text = strings.Repeat("\n", strings.Count(text[:end], "\n")) + text[end:] // keep line numbers
-			class := "."
+			var raw string
+			if raw, err = readFile(root, f); err != nil {
+				err = &fileError{root, f, err}
+				break
+			}
+			ch := chunk{file: f, class: ".", root: root}
 			if i := strings.IndexByte(f, '/'); i >= 0 {
-				class = f[:i]
+				ch.class = f[:i]
 			}
-			line := 1
-			for _, p := range strings.Split(text, "\n\n") {
-				start := line + len(p) - len(strings.TrimLeft(p, "\n"))
-				line += strings.Count(p, "\n") + 2
-				ts := terms(p)
-				if len(ts) < minTerms {
+			if e := entryRel(f); e != nil {
+				var ef entryFile
+				if json.Unmarshal([]byte(raw), &ef) != nil || ef.Session != e[1] || ef.ID != e[2] {
+					c.skipped = append(c.skipped, filepath.Join(root, filepath.FromSlash(f))) // some other .json, not a store entry
 					continue
 				}
-				tf := map[string]int{}
-				for _, t := range ts {
-					tf[t]++
-				}
-				id := len(c.chunks)
-				c.chunks = append(c.chunks, chunk{f, class, root, strings.Trim(p, "\n"), name, typ, start, len(ts), tf})
-				for t := range tf {
-					c.df[t]++
-					c.post[t] = append(c.post[t], id)
-				}
-				c.byClass[class]++
-				total += len(ts)
+				c.bytes += len(raw)
+				ch.store, ch.entry = filepath.Join(root, filepath.FromSlash(e[0])), &ef
+				c.entries++
+				c.add(ch, lf(ef.Text), 1)
+				continue
 			}
+			c.bytes += len(raw)
+			c.files = append(c.files, f)
+			text := lf(raw)
+			name, typ, end := frontmatter(text)
+			ch.fmName, ch.fmType = name, typ
+			c.add(ch, strings.Repeat("\n", strings.Count(text[:end], "\n"))+text[end:], minTerms) // keep line numbers
+		}
+		if err != nil {
+			return nil, fmt.Errorf("building the index over %s: %w", root, err)
 		}
 	}
 	if len(c.chunks) == 0 {
-		return nil, fmt.Errorf("the corpus holds no indexable paragraph")
+		return nil, fmt.Errorf("the corpus holds no indexable paragraph (a note's needs at least %d terms); point --root at notes or a store with words in it", minTerms)
 	}
-	c.avg = float64(total) / float64(len(c.chunks))
+	c.avg = float64(c.total) / float64(len(c.chunks))
 	return c, nil
 }
 
@@ -259,8 +357,7 @@ func (c *corpus) query(text string) []hit {
 	scores := map[int]float64{}
 	seen := map[string]bool{}
 	for _, t := range terms(text) {
-		if seen[t] || c.post[t] == nil {
-			seen[t] = true
+		if seen[t] {
 			continue
 		}
 		seen[t] = true
@@ -304,65 +401,85 @@ func (c *corpus) retrieve(text string, k int) []hit {
 	return out
 }
 
-func (c *corpus) hitLine(token, prefix string, n int, h hit) string {
-	ch := c.chunks[h.chunk]
-	or := func(s string) string {
-		if s == "" {
-			return "-"
-		}
-		return field(s)
+// printHits prints one HIT line per receipt, or one MISS line when there is none.
+func (c *corpus) printHits(w io.Writer, head, prefix string, hits []hit) {
+	if len(hits) == 0 {
+		fmt.Fprintf(w, "%s MISS %severy query term is out of vocabulary for this corpus\n", head, prefix)
 	}
-	return fmt.Sprintf("%s HIT %srank=%d score=%.2f score-channel=bm25 fused=%.5f class=%s name=%s type=%s root=%s: %s:%d %q\n",
-		token, prefix, n, h.score, 1/(60+float64(h.rank)), field(ch.class), or(ch.fmName), or(ch.fmType), or(ch.root), esc(ch.file), ch.line, truncate(ch.text, 120))
+	for i, h := range hits {
+		ch := c.chunks[h.chunk]
+		where := ""
+		if e := ch.entry; e != nil { // what receipt needs to fetch the entry
+			where = fmt.Sprintf(" store=%s session=%s entry=%s stamp=%s", dash(ch.store), dash(e.Session), dash(e.ID), dash(e.Stamp))
+		}
+		fmt.Fprintf(w, "%s HIT %srank=%d score=%.2f score-channel=bm25 fused=%.5f class=%s name=%s type=%s root=%s%s: %s:%d %q\n",
+			head, prefix, i+1, h.score, 1/(60+float64(h.rank)), dash(ch.class), dash(ch.fmName), dash(ch.fmType), dash(ch.root), where, esc(ch.file), ch.line, truncate(ch.text, 120))
+	}
 }
 
 func runMemory(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "MEMORY REFUSED: no verb given; the verbs are stats, search, check, verify; run: nova-cairn help")
-		return 2
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		if len(args) == 0 {
+			return refused(stderr, "memory", "no verb given; the verbs are search, check, stats, verify", "nova-cairn help memory")
+		}
+		help(stdout, "memory")
+		return 0
 	}
 	verb := args[0]
-	fs := flag.NewFlagSet("nova-cairn memory "+verb, flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprintln(stderr, "run: nova-cairn help") }
+	if !slices.Contains([]string{"stats", "search", "check", "verify"}, verb) {
+		return refused(stderr, "memory", fmt.Sprintf("unknown verb %q; the verbs are search, check, stats, verify", verb), "nova-cairn help memory")
+	}
+	path := "memory " + verb
+	// Each verb takes only its own flags: any other is refused as unknown.
+	fs := flags()
 	var r roots
 	var coverage, front, exempt multi
-	fs.Var(&r.root, "root", "corpus root directory, repeatable (required)")
-	fs.Var(&r.exclude, "exclude", "path or glob to skip, repeatable")
-	channels := fs.String("channels", "", "retrieval channel: bm25 (required for search and check)")
-	k := fs.Int("k", 0, "receipts per query, positive (required for search and check)")
-	links := fs.String("links", "", "gate|info: whether unresolved wikilinks drive the exit code (verify)")
-	fs.Var(&coverage, "coverage", "A:B glob pair: every file matching A is named in some file matching B (verify)")
-	fs.Var(&front, "frontmatter", "glob whose files must carry a frontmatter name: (verify)")
-	fs.Var(&exempt, "exempt", "basename prefix exempt from --frontmatter (verify)")
-	failMax := fs.Int("fail-max", 20, "finding lines to print per kind before one MORE line; 0 prints all (verify)")
-	flags, pos := split(args[1:])
-	if err := fs.Parse(flags); err != nil {
-		return 2
+	channels, links, k, failMax := new(string), new(string), new(int), new(int)
+	fs.Var(&r.root, "root", "a directory to read, repeatable")
+	fs.Var(&r.exclude, "exclude", "a path or glob to skip, repeatable")
+	switch verb {
+	case "search", "check":
+		fs.StringVar(channels, "channels", "", "bm25")
+		fs.IntVar(k, "k", 0, "a positive number of receipts per query")
+	case "verify":
+		fs.StringVar(links, "links", "", "gate or info")
+		fs.Var(&coverage, "coverage", "an A:B glob pair")
+		fs.Var(&front, "frontmatter", "a glob")
+		fs.Var(&exempt, "exempt", "a basename prefix")
+		fs.IntVar(failMax, "fail-max", 20, "a number of lines per kind: 0 prints all")
 	}
-	refuse := func(why string) int {
-		fmt.Fprintf(stderr, "%s REFUSED: %s; run: nova-cairn help\n", strings.ToUpper(verb), esc(why))
-		return 2
+	if code := parse(fs, path, args[1:], stdout, stderr); code >= 0 {
+		return code
 	}
-	if !slices.Contains([]string{"stats", "search", "check", "verify"}, verb) {
-		return refuse(fmt.Sprintf("unknown verb %q; the verbs are stats, search, check, verify", verb))
+	pos := fs.Args()
+	refuse := func(why string) int { return refused(stderr, path, why, "") }
+	// fail refuses a run the files stopped: the remedy leaves out the file that
+	// could not be read, or lists the roots.
+	fail := func(err error) int {
+		if fe := (*fileError)(nil); errors.As(err, &fe) {
+			return refused(stderr, path, err.Error(), shell(append([]string{"nova-cairn", "memory", verb, "--exclude", fe.rel}, args[1:]...)...))
+		}
+		return refused(stderr, path, err.Error(), shell(append([]string{"ls", "-la"}, r.root...)...))
+	}
+	if (verb == "stats" || verb == "verify") && len(pos) > 0 {
+		return refuse(fmt.Sprintf("%s takes no argument outside a flag, got %q", path, pos[0]))
 	}
 	if len(r.root) == 0 {
-		return refuse("--root is required: there is no environment variable and no discovery from the working directory")
+		return refuse("--root is required: name the directory of notes; there is no environment variable and no discovery from the working directory")
 	}
 	retrieval := verb == "search" || verb == "check"
 	if retrieval && *channels != "bm25" {
-		return refuse("--channels bm25 is required: bm25 is the one channel this build has")
+		return refuse("--channels bm25 is required: bm25 is the one channel this build has; add --channels bm25")
 	}
 	if retrieval && *k <= 0 {
-		return refuse("--k must be positive: k is the budget of receipts, and zero is not unlimited")
+		return refuse("--k must be positive: k is the budget of receipts, and zero is not unlimited; add --k 5, say")
 	}
 	if verb == "verify" {
-		return verify(&r, *links, coverage, front, exempt, *failMax, stdout, stderr)
+		return verify(&r, *links, coverage, front, exempt, *failMax, refuse, fail, stdout, stderr)
 	}
 	for _, root := range r.root {
 		if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
-			return refuse(fmt.Sprintf("--root %s is not a readable directory", esc(root)))
+			return refused(stderr, path, fmt.Sprintf("--root %s is not a readable directory; name a directory of notes", root), shell("ls", "-ld", root))
 		}
 	}
 	// check reads its draft before building: a bad draft is refused first.
@@ -370,22 +487,16 @@ func runMemory(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	source := "-"
 	switch {
 	case verb == "search" && len(pos) == 0:
-		return refuse("no query words given; refusing to guess")
+		return refuse("no query words given; put the words to search for after the flags")
 	case verb == "check" && len(pos) != 1:
 		return refuse("name exactly one candidate file, or - for stdin; refusing to guess")
 	case verb == "check":
-		in := stdin
 		if pos[0] != "-" {
-			f, err := os.Open(pos[0])
-			if err != nil {
-				return refuse(err.Error())
-			}
-			defer f.Close()
-			in, source = f, pos[0]
+			source = pos[0]
 		}
-		raw, err := io.ReadAll(in)
+		raw, err := input(pos[0], stdin)
 		if err != nil {
-			return refuse(fmt.Sprintf("reading %s: %v", esc(source), err))
+			return refused(stderr, path, fmt.Sprintf("reading %s: %v", source, err), shell("ls", "-l", pos[0]))
 		}
 		for _, p := range strings.Split(lf(string(raw)), "\n\n") {
 			if len(terms(p)) >= minTerms {
@@ -393,23 +504,27 @@ func runMemory(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 		}
 		if len(candidates) == 0 {
-			return refuse(fmt.Sprintf("%s holds no candidate paragraph of at least %d terms; nothing to check", esc(source), minTerms))
+			return refuse(fmt.Sprintf("%s holds no candidate paragraph of at least %d terms; nothing to check, so name a draft with prose in it", source, minTerms))
 		}
 	}
 	t0 := time.Now()
 	c, err := r.build()
 	if err != nil {
-		return refuse(err.Error())
+		return fail(err)
+	}
+	head := map[string]string{"stats": "STATS", "search": "SEARCH", "check": "MEMORY"}[verb]
+	if n := len(c.skipped); n > 0 {
+		fmt.Fprintf(stderr, "%s WARN skipped=%d first=%s: a .json under entries/ that is not a store entry (no session and id of its own) is left out; --exclude <glob> leaves such files out quietly\n",
+			head, n, field(c.skipped[0]))
 	}
 	if verb == "stats" {
-		fmt.Fprintf(stdout, "STATS OK schema=%s files=%d chunks=%d bytes=%d vocab=%d avg-terms=%.1f build=%v\n",
-			schema, len(c.files), len(c.chunks), c.bytes, len(c.df), c.avg, time.Since(t0))
+		fmt.Fprintf(stdout, "STATS OK schema=%s files=%d entries=%d skipped=%d chunks=%d bytes=%d vocab=%d avg-terms=%.1f build=%v\n",
+			schema, len(c.files), c.entries, len(c.skipped), len(c.chunks), c.bytes, len(c.df), c.avg, time.Since(t0))
 		for _, cl := range slices.Sorted(maps.Keys(c.byClass)) {
 			fmt.Fprintf(stdout, "STATS OK class=%s chunks=%d\n", field(cl), c.byClass[cl])
 		}
 		return 0
 	}
-	token, prefix := "SEARCH", ""
 	cal := "score=- score-channel=-"
 	if h := c.retrieve(probe, 1); len(h) > 0 {
 		cal = fmt.Sprintf("score=%.2f score-channel=bm25", h[0].score)
@@ -417,30 +532,20 @@ func runMemory(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if verb == "search" {
 		q := strings.Join(pos, " ")
 		hits := c.retrieve(q, *k)
-		fmt.Fprintf(stdout, "SEARCH OK hits=%d k=%d channels=bm25 files=%d chunks=%d: query=%s\n", len(hits), *k, len(c.files), len(c.chunks), quote(q))
+		fmt.Fprintf(stdout, "SEARCH OK hits=%d k=%d channels=bm25 files=%d entries=%d skipped=%d chunks=%d: query=%s\n", len(hits), *k, len(c.files), c.entries, len(c.skipped), len(c.chunks), strconv.Quote(q))
 		fmt.Fprintf(stdout, "SEARCH CAL %s probe=unrelated-control\n", cal)
-		c.printHits(stdout, token, prefix, hits)
+		c.printHits(stdout, "SEARCH", "", hits)
 		fmt.Fprintf(stdout, "SEARCH NOTE %s\n", noteLex)
 		return 0
 	}
-	token = "MEMORY"
-	fmt.Fprintf(stdout, "MEMORY OK candidates=%d source=%s k=%d channels=bm25 files=%d chunks=%d\n", len(candidates), field(source), *k, len(c.files), len(c.chunks))
+	fmt.Fprintf(stdout, "MEMORY OK candidates=%d source=%s k=%d channels=bm25 files=%d entries=%d skipped=%d chunks=%d\n", len(candidates), field(source), *k, len(c.files), c.entries, len(c.skipped), len(c.chunks))
 	fmt.Fprintf(stdout, "MEMORY CAL %s probe=unrelated-control\n", cal)
 	for i, cand := range candidates {
-		fmt.Fprintf(stdout, "MEMORY CAND n=%d: %s\n", i+1, quote(truncate(strings.TrimSpace(cand), 100)))
-		c.printHits(stdout, token, fmt.Sprintf("cand=%d ", i+1), c.retrieve(cand, *k))
+		fmt.Fprintf(stdout, "MEMORY CAND n=%d: %s\n", i+1, strconv.Quote(truncate(strings.TrimSpace(cand), 100)))
+		c.printHits(stdout, "MEMORY", fmt.Sprintf("cand=%d ", i+1), c.retrieve(cand, *k))
 	}
 	fmt.Fprintf(stdout, "MEMORY NOTE %s\n", noteLex)
 	fmt.Fprintln(stdout, "MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours")
 	fmt.Fprintln(stdout, "MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction")
 	return 0
-}
-
-func (c *corpus) printHits(w io.Writer, token, prefix string, hits []hit) {
-	if len(hits) == 0 {
-		fmt.Fprintf(w, "%s MISS %severy query term is out of vocabulary for this corpus\n", token, prefix)
-	}
-	for i, h := range hits {
-		fmt.Fprint(w, c.hitLine(token, prefix, i+1, h))
-	}
 }

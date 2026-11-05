@@ -1,10 +1,9 @@
 package main
 
 import (
-	"flag"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path"
 	"regexp"
 	"slices"
@@ -251,9 +250,8 @@ type finding struct {
 }
 
 const (
-	maxRemedy = "--max <n> raises the ceiling, --max 0 prints every finding"
-	banner    = "rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule"
-	note      = "catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted " +
+	banner = "rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule"
+	note   = "catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted " +
 		"verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file."
 )
 
@@ -288,98 +286,94 @@ func scanText(text string) (fs []finding, claims, datedN int) {
 	return fs, claims, datedN
 }
 
+var errNotUTF8 = errors.New("file is not valid UTF-8")
+
 func runSelfTalk(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == "scan" {
+	if len(args) > 0 && args[0] == "scan" { // the older spelling, self-talk scan
 		args = args[1:]
 	}
-	fs := flag.NewFlagSet("nova-cairn self-talk", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprintln(stderr, "run: nova-cairn help") }
+	fs := flags()
 	var skips, ruleDocs multi
 	fs.Var(&skips, "skip", "basename to skip, repeatable")
 	fs.Var(&ruleDocs, "rule-doc", "basename whose findings print under the rule-document banner, repeatable")
 	maxN := fs.Int("max", 20, "finding lines to print per class before one MORE line; 0 prints all")
-	flags, files := split(args)
-	if err := fs.Parse(flags); err != nil {
-		return 2
+	if code := parse(fs, "self-talk", args, stdout, stderr); code >= 0 {
+		return code
 	}
-	refuse := func(why string) int {
-		fmt.Fprintf(stderr, "nova-cairn self-talk REFUSED: %s; run: nova-cairn help\n", esc(why))
-		return 2
-	}
+	files := fs.Args()
+	refuse := func(why string) int { return refused(stderr, "self-talk", why, "") }
 	for _, n := range append(slices.Clone(skips), ruleDocs...) {
 		if n == "" || strings.ContainsAny(n, `/\`) {
-			return refuse(fmt.Sprintf("--skip and --rule-doc take a basename, not a path: %q", n))
+			return refuse(fmt.Sprintf("--skip and --rule-doc take a basename, not a path: %q; give the file name only", n))
 		}
 	}
 	if len(files) == 0 || *maxN < 0 {
 		return refuse("name the files to scan (- is stdin) and give --max zero or more; refusing to guess")
 	}
+	base := func(f string) string { return path.Base(strings.ReplaceAll(f, `\`, "/")) }
+
 	// Read everything first: a file that cannot be read is not a clean one.
 	texts := make([]string, len(files))
 	var piped []byte
-	bad := false
+	var bad []string
+	next := "" // the remedy for the first file that could not be read
 	for i, f := range files {
-		if slices.Contains(skips, path.Base(strings.ReplaceAll(f, `\`, "/"))) {
+		if slices.Contains(skips, base(f)) {
 			continue
 		}
 		var b []byte
 		var err error
-		if f == "-" {
-			if piped == nil {
-				piped, err = io.ReadAll(stdin)
-			}
+		if f == "-" && piped != nil { // stdin is read once, however many times - is named
 			b = piped
-		} else {
-			b, err = os.ReadFile(f)
+		} else if b, err = input(f, stdin); f == "-" {
+			piped = b
 		}
 		if err == nil && !utf8.Valid(b) {
-			err = fmt.Errorf("file is not valid UTF-8")
+			err = errNotUTF8
 		}
 		if err != nil {
-			bad = true
-			refuse(fmt.Sprintf("cannot read %q: %v", f, err))
+			bad = append(bad, fmt.Sprintf("cannot read %q: %v", f, err))
+			if next == "" && f == "-" {
+				next = "nova-cairn self-talk -h"
+			} else if next == "" && errors.Is(err, errNotUTF8) { // the fix is to leave it out
+				next = shell(append([]string{"nova-cairn", "self-talk", "--skip", base(f)}, args...)...)
+			} else if next == "" {
+				next = shell("ls", "-l", f)
+			}
 			continue
 		}
 		texts[i] = string(b)
 	}
-	if bad {
-		fmt.Fprintln(stderr, "NOTHING was scanned, which is not a green: a file this tool cannot read is not a clean one.")
-		return 2
+	if len(bad) > 0 {
+		return refused(stderr, "self-talk", strings.Join(bad, "; ")+"; NOTHING was scanned, which is not a green: a file this tool cannot read is not a clean one", next)
 	}
-	scanned, claims, datedN, standing, installed, shown := 0, 0, 0, 0, 0, 0
+
+	scanned, claims, datedN := 0, 0, 0
 	totals, printed := map[string]int{}, map[string]int{}
 	named := map[string]bool{}
 	for i, f := range files {
-		base := path.Base(strings.ReplaceAll(f, `\`, "/"))
-		named[base] = true
-		if slices.Contains(skips, base) {
+		named[base(f)] = true
+		if slices.Contains(skips, base(f)) {
 			fmt.Fprintf(stdout, "SELFTALK SKIP %s (--skip)\n", esc(f))
 			continue
 		}
 		scanned++
 		found, c, d := scanText(texts[i])
 		claims, datedN = claims+c, datedN+d
-		if len(found) > 0 && slices.Contains(ruleDocs, base) {
+		if len(found) > 0 && slices.Contains(ruleDocs, base(f)) {
 			fmt.Fprintf(stdout, "SELFTALK RULEDOC %s: %s\n", esc(f), banner)
 		}
 		for _, x := range found {
-			if x.class == "standing" {
-				standing++
-			} else {
-				installed++
-			}
 			totals[x.class]++
 			if *maxN == 0 || printed[x.class] < *maxN {
 				printed[x.class]++
-				shown++
 				fmt.Fprintf(stderr, "SELFTALK FAIL %s:%d: %s match=%q: %s\n", esc(f), x.line, x.shape, x.match, esc(x.text))
 			}
 		}
 	}
 	for _, class := range []string{"standing", "installation"} {
 		if printed[class] < totals[class] {
-			fmt.Fprintf(stderr, "SELFTALK MORE kind=%s shown=%d total=%d %s\n", class, printed[class], totals[class], maxRemedy)
+			more(stderr, "SELFTALK", class, printed[class], totals[class], "--max")
 		}
 	}
 	notes := func() {
@@ -403,13 +397,14 @@ func runSelfTalk(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if datedN > 0 {
 		fmt.Fprintf(stdout, "SELFTALK DATED n=%d files=%d\n", datedN, scanned)
 	}
+	standingN, installed := totals["standing"], totals["installation"]
 	code, status := 0, "OK"
-	if standing+installed > 0 {
+	if standingN+installed > 0 {
 		code, status = 1, "FAIL"
 	}
-	fmt.Fprintf(stdout, "SELFTALK %s files=%d claims=%d standing=%d installations=%d dated=%d", status, scanned, claims, standing, installed, datedN)
+	fmt.Fprintf(stdout, "SELFTALK %s files=%d claims=%d standing=%d installations=%d dated=%d", status, scanned, claims, standingN, installed, datedN)
 	if code == 1 {
-		fmt.Fprintf(stdout, " shown=%d", shown)
+		fmt.Fprintf(stdout, " shown=%d", printed["standing"]+printed["installation"])
 	}
 	fmt.Fprintln(stdout)
 	notes()

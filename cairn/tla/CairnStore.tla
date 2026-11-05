@@ -37,6 +37,10 @@
 \*                              with different prose is a conflict, never an
 \*                              overwrite; persisted=true before success is
 \*                              reported 
+\*   AppendCrash                the entry file is synced and linked, then the
+\*                              crash precedes its ENTRY line and its log record;
+\*                              a retry of the same words is a duplicate that
+\*                              heals the pointer (store.go appendEntry)
 \*   IndexCoverage              bounded read over the store entries; builds the
 \*                              entry index and the coverage counts
 \*                              
@@ -63,6 +67,9 @@
 \*     (DurableBeforeReported fails).
 \*   BrokenReopenOther: a re-open naming another publish policy is accepted and
 \*     changes the session's policy (OneOpenPolicy fails).
+\*   BrokenCrashBeforeFsync: the entry is linked before its file is synced, the
+\*     crash comes between, and the retry reports it persisted
+\*     (DurableBeforeReported fails).
 
 EXTENDS Naturals, FiniteSets
 
@@ -192,6 +199,19 @@ Append(s, e, text) ==
                  /\ logged' = [logged EXCEPT ![s, e] = TRUE]
                  /\ UNCHANGED <<flatFiles, index, indexed, coverage>>
 
+\* AppendCrash: writeNew synced the entry file (and its directory) and linked
+\* it, then the crash came before ensurePointer and the log record. Nothing is
+\* reported. A later Append of the same words takes the duplicate branch.
+AppendCrash(s, e, text) ==
+    /\ sessions[s].open
+    /\ entries[s, e] = None
+    /\ entries' = [entries EXCEPT ![s, e] = text]
+    /\ writtenText' = [writtenText EXCEPT ![s, e] = text]
+    /\ written' = [written EXCEPT ![s, e] = TRUE]
+    /\ fsynced' = [fsynced EXCEPT ![s, e] = (Broken /= "BrokenCrashBeforeFsync")]
+    /\ UNCHANGED <<sessions, flatFiles, log, index, coverage, logged, indexed,
+                   persisted, reported>>
+
 \* IndexCoverage: bounded read over the store entries; builds the entry index
 \* and the coverage counts .
 IndexCoverage ==
@@ -212,6 +232,7 @@ Next ==
     \/ \E s \in Sessions, pub \in Policies, src \in Sources : Open(s, pub, src)
     \/ \E s \in Sessions, pub \in Policies, src \in Sources : OpenCrash(s, pub, src)
     \/ \E s \in Sessions, e \in EntryIDs, text \in Texts : Append(s, e, text)
+    \/ \E s \in Sessions, e \in EntryIDs, text \in Texts : AppendCrash(s, e, text)
     \/ IndexCoverage
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(IndexCoverage)

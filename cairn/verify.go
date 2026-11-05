@@ -82,38 +82,22 @@ func named(hay, stem string) bool {
 	return false
 }
 
-func verify(r *roots, links string, coverage, front, exempt multi, failMax int, stdout, stderr io.Writer) int {
-	refuse := func(why string) int {
-		fmt.Fprintf(stderr, "VERIFY REFUSED: %s; run: nova-cairn help\n", esc(why))
-		return 2
-	}
+func verify(r *roots, links string, coverage, front, exempt multi, failMax int, refuse func(string) int, fail func(error) int, stdout, stderr io.Writer) int {
 	switch {
 	case links != "gate" && links != "info":
 		return refuse(fmt.Sprintf("--links must be gate or info (got %q); refusing to guess", links))
 	case failMax < 0:
 		return refuse("--fail-max must be zero or more; 0 means print them all")
 	case len(r.root) != 1:
-		return refuse(fmt.Sprintf("--root names exactly one tree for verification, but %d were given", len(r.root)))
+		return refuse(fmt.Sprintf("--root names exactly one tree for verification, but %d were given; verify one tree per run", len(r.root)))
 	case len(coverage) == 0 && len(front) == 0 && links == "info":
-		return refuse("no gating check requested (no --coverage, no --frontmatter, --links=info) — a run that cannot fail is not a verification")
+		return refuse("no gating check requested (no --coverage, no --frontmatter, --links=info) — a run that cannot fail is not a verification; add --links gate, --coverage or --frontmatter")
 	case len(exempt) > 0 && len(front) == 0:
-		return refuse("--exempt only applies to --frontmatter, which was not given")
+		return refuse("--exempt only applies to --frontmatter, which was not given; add --frontmatter <glob> or drop --exempt")
 	}
-	root := r.root[0]
-	files, err := r.walk(root)
+	files, texts, _, err := r.load(r.root[0])
 	if err != nil {
-		return refuse(err.Error())
-	}
-	texts := map[string]string{}
-	read := func(f string) (string, error) {
-		t, err := readFile(root, f)
-		texts[f] = lf(t)
-		return t, err
-	}
-	for _, f := range files {
-		if _, err := read(f); err != nil {
-			return refuse(err.Error())
-		}
+		return fail(err)
 	}
 	glob := func(g string) []string {
 		var out []string
@@ -129,11 +113,11 @@ func verify(r *roots, links string, coverage, front, exempt multi, failMax int, 
 	for _, pair := range coverage {
 		ga, gb, ok := strings.Cut(pair, ":")
 		if !ok || ga == "" || gb == "" {
-			return refuse(fmt.Sprintf("--coverage wants A:B, got %q", pair))
+			return refuse(fmt.Sprintf("--coverage wants A:B (notes:indexes, two globs), got %q", pair))
 		}
 		as, bs := glob(ga), glob(gb)
 		if len(as) == 0 || len(bs) == 0 {
-			return refuse(fmt.Sprintf("coverage %s:%s matched %d and %d files — an empty side is a broken check, not a pass", ga, gb, len(as), len(bs)))
+			return refuse(fmt.Sprintf("coverage %s:%s matched %d and %d files — an empty side is a broken check, not a pass; fix the glob", ga, gb, len(as), len(bs)))
 		}
 		var all strings.Builder
 		inB, linked := map[string]bool{}, map[string]bool{}
@@ -167,7 +151,7 @@ func verify(r *roots, links string, coverage, front, exempt multi, failMax int, 
 	for _, g := range front {
 		matched := glob(g)
 		if len(matched) == 0 {
-			return refuse(fmt.Sprintf("frontmatter glob %s matched nothing — a broken check, not a pass", g))
+			return refuse(fmt.Sprintf("frontmatter glob %s matched nothing — a broken check, not a pass; fix the glob", g))
 		}
 		for _, f := range matched {
 			if slices.ContainsFunc(exempt, func(e string) bool { return strings.HasPrefix(path.Base(f), e) }) {
@@ -221,7 +205,7 @@ func verify(r *roots, links string, coverage, front, exempt multi, failMax int, 
 		}
 		for _, k := range order {
 			if failMax > 0 && per[k] > failMax {
-				fmt.Fprintf(w, "VERIFY MORE kind=%s shown=%d total=%d --fail-max <n> raises the ceiling, --fail-max 0 prints every finding\n", k, failMax, per[k])
+				more(w, "VERIFY", k, failMax, per[k], "--fail-max")
 			}
 		}
 		return total, shown
