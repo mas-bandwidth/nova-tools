@@ -62,14 +62,14 @@ func (f *fake) called(prefix string) bool {
 
 const (
 	mod         = "example.com/m"
-	listTree    = "go list ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/..."
-	listDeps    = "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/..."
+	listTree    = "go list ./bus/... ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/..."
+	listDeps    = "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./bus/... ./cmd/... ./hook/... ./internal/... ./pkg/... ./tools/..."
 	diffCmd     = "git diff --name-only base HEAD"
 	catFileCmd  = "git cat-file -e base^{commit}"
 	shallowCmd  = "git rev-parse --is-shallow-repository"
 	fetchCmd    = "git fetch -q origin base"
 	fetchDeep   = "git fetch -q --depth=1 origin base"
-	lsFilesCmd  = "git ls-files -z -- cmd/*.go hook/*.go internal/*.go pkg/*.go tools/*.go"
+	lsFilesCmd  = "git ls-files -z -- bus/*.go cmd/*.go hook/*.go internal/*.go pkg/*.go tools/*.go"
 	cacheErr    = "open /home/u/.cache/go-build/5e/5e1f-d: no such file or directory\n"
 	wholeTreeIs = "./cmd/foo\n./internal/bar\n./internal/ci\n./internal/docs\n"
 )
