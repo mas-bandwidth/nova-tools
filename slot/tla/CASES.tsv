@@ -1,0 +1,9 @@
+config	module	expected	property	deadlock
+SlotCount.cfg	SlotCount.tla	pass	-	check
+SlotCountBrokenNoCount.cfg	SlotCount.tla	invariant	AtMostN	check
+SlotFiles.cfg	SlotFiles.tla	pass	-	check
+SlotFilesBrokenNoLock.cfg	SlotFiles.tla	invariant	DistinctSlots	check
+SlotFilesBrokenNoAll.cfg	SlotFiles.tla	invariant	ExclusiveAlone	check
+SlotFilesBrokenNoGate.cfg	SlotFiles.tla	invariant	ExclusiveBarsShared	check
+SlotFilesBrokenLeak.cfg	SlotFiles.tla	temporal	EveryWaiterRuns	check
+SlotFilesBrokenOrphan.cfg	SlotFiles.tla	invariant	CommandHasSlot	check
