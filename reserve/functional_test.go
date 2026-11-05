@@ -204,7 +204,7 @@ func TestMissingCommandNeverHolds(t *testing.T) {
 	}
 }
 
-func TestSetRefusedWhileHeld(t *testing.T) {
+func TestSetRefusedWhileHeldOnRealLocks(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
 	h := startHolder(t, bin, dir, "--slots", "2")
