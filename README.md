@@ -61,12 +61,12 @@ nova-sandbox --read /srv/agent --write /srv/agent/work --net-deny -- /srv/agent/
 ## Share machines without stepping on each other
 
 **Cap how many heavy jobs run at once on a machine.**
-`nova-reserve` reserves one of N slots while your command runs. The slots are OS file locks, so a killed holder's slot frees itself. It works on Linux, macOS, the BSDs and Windows.
+`nova-slot` holds one of N slots while your command runs. The slots are OS file locks, so a killed holder's slot frees itself. It works on Linux, macOS, the BSDs and Windows.
 
 ```sh
-nova-reserve --slots 2 -- go test ./...      # waits for a free slot, runs, frees it
-nova-reserve --exclusive -- ./benchmark      # runs alone
-nova-reserve status                          # each slot: free, or who holds it
+nova-slot --slots 2 -- go test ./...      # waits for a free slot, runs, frees it
+nova-slot --exclusive -- ./benchmark      # runs alone
+nova-slot status                          # each slot: free, or who holds it
 ```
 
 ## Docs
