@@ -36,8 +36,11 @@ nova-secrets init --store <dir> --recovery <age-public-key>
   Prints: SECRETS INIT OK store=<dir> next: nova-secrets seat add <seat> <age-pubkey> --store <dir>
 
 nova-secrets seat add <seat> <age-public-key> --store <dir>
-  Add the seat's rule to .sops.yaml: its key and the recovery key may open <seat>.yaml. Commits nothing.
+  Add the seat's rule to .sops.yaml: its key and the recovery key may open <seat>.yaml. Commits .sops.yaml.
   The seat is letters, digits, - and _.
+
+nova-secrets seat list --store <dir>
+  List the seats the rules in .sops.yaml name and the seat files present, one "<seat> file=yes|no" per line.
 
 nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
   Read one value from stdin (one non-empty line, never a terminal), set NAME in <seat>.yaml and commit that
@@ -50,7 +53,6 @@ nova-secrets names --store <dir> [--as <seat>]
 nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- <cmd> [args...]
   Decrypt <seat>.yaml and become <cmd> with only the --only values added to its environment.
   Exit: the command's own status; 125 when exec refused at run time and the command never ran.
-  --require NAME  kept for existing units; same as --only
 
 --store and --key are required where a verb lists them (or NOVA_SECRETS_STORE / NOVA_SECRETS_KEY); the
 current directory is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname; --sops
@@ -139,8 +141,8 @@ func (t tool) main(args []string) int {
 		}
 		return t.unknownVerb(verb)
 	}
-	if verb == "seat" && len(rest) > 0 && rest[0] == "add" {
-		verb, rest = "seat add", rest[1:]
+	if verb == "seat" && len(rest) > 0 && (rest[0] == "add" || rest[0] == "list") {
+		verb, rest = "seat "+rest[0], rest[1:]
 	}
 	if h, ok := helpFor(verb); ok {
 		if a := beforeDashes(verb, rest); slices.Contains(a, "-h") || slices.Contains(a, "--help") {
@@ -160,8 +162,10 @@ func (t tool) main(args []string) int {
 		err = t.set(rest)
 	case "seat add":
 		err = t.seatAdd(rest)
+	case "seat list":
+		err = t.seatList(rest)
 	case "seat":
-		verb, err = "seat add", bad("the seat verb is: seat add <seat> <age-public-key> --store <dir>")
+		verb, err = "seat add", bad("the seat verbs are: seat add <seat> <age-public-key> --store <dir>, and seat list --store <dir>")
 	default:
 		return t.unknownVerb(verb)
 	}
@@ -182,7 +186,7 @@ func (t tool) main(args []string) int {
 }
 
 func (t tool) unknownVerb(verb string) int {
-	fmt.Fprintf(t.stderr, "nova-secrets: unknown verb %q (init, seat add, set, names, exec); run: nova-secrets help\n", verb)
+	fmt.Fprintf(t.stderr, "nova-secrets: unknown verb %q (init, seat add, seat list, set, names, exec); run: nova-secrets help\n", verb)
 	return 2
 }
 
@@ -198,9 +202,8 @@ func beforeDashes(verb string, args []string) []string {
 type opts struct{ store, as, key, sops, only, recovery string }
 
 // parse reads flags after the verb's positional arguments (npos of them) and
-// fills in the defaults. require is --require, kept for existing units (exec only);
-// also names inputs the caller found missing, so one refusal names them all.
-func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...string) (o opts, pos, require []string, err error) {
+// fills in the defaults; also names inputs the caller found missing, so one refusal names them all.
+func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...string) (o opts, pos []string, err error) {
 	for len(pos) < npos && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		pos, args = append(pos, args[0]), args[1:]
 	}
@@ -209,7 +212,6 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	for name, p := range map[string]*string{"store": &o.store, "as": &o.as, "key": &o.key, "sops": &o.sops, "only": &o.only, "recovery": &o.recovery} {
 		fs.StringVar(p, name, "", "")
 	}
-	fs.Func("require", "", func(v string) error { require = append(require, v); return nil })
 	if err = fs.Parse(args); err != nil {
 		msg := err.Error()
 		if n, ok := strings.CutPrefix(msg, "flag provided but not defined: "); ok {
@@ -217,13 +219,13 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		} else if n, ok := strings.CutPrefix(msg, "flag needs an argument: "); ok {
 			msg = "--" + strings.TrimLeft(n, "-") + " needs a value"
 		}
-		return o, nil, nil, bad("%s", msg)
+		return o, nil, bad("%s", msg)
 	}
 	if pos = append(pos, fs.Args()...); len(pos) != npos {
-		return o, nil, nil, bad("takes %d argument(s) before its flags, got %d", npos, len(pos))
+		return o, nil, bad("takes %d argument(s) before its flags, got %d", npos, len(pos))
 	}
 	var missing []string
-	if verb == "exec" && o.only == "" && len(require) == 0 {
+	if verb == "exec" && o.only == "" {
 		missing = append(missing, "--only NAME[,NAME]")
 	}
 	if o.store == "" {
@@ -240,12 +242,12 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		}
 	}
 	if missing = append(missing, also...); len(missing) > 0 {
-		return o, nil, nil, bad("missing %s (no default; the current directory is never assumed)", strings.Join(missing, ", "))
+		return o, nil, bad("missing %s (no default; the current directory is never assumed)", strings.Join(missing, ", "))
 	}
 	if o.sops == "" {
 		o.sops = "sops"
 	}
-	noSeat := verb == "init" || verb == "seat add"
+	noSeat := verb == "init" || strings.HasPrefix(verb, "seat ")
 	if o.as == "" && !noSeat {
 		if o.as = envValue(t.environ, "NOVA_SECRETS_SEAT"); o.as == "" {
 			h, _ := os.Hostname() // an empty name fails the seat check below
@@ -253,14 +255,14 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		}
 	}
 	if !noSeat && !seatName.MatchString(o.as) {
-		return o, nil, nil, bad("seat name %q: letters, digits, - and _ only", o.as)
+		return o, nil, bad("seat name %q: letters, digits, - and _ only", o.as)
 	}
 	if needKey { // absolute before the mode check and before sops (which runs in the store)
 		if o.key, err = filepath.Abs(o.key); err != nil {
-			return o, nil, nil, refuse("key path %q cannot be made absolute: %v", o.key, err)
+			return o, nil, refuse("key path %q cannot be made absolute: %v", o.key, err)
 		}
 	}
-	return o, pos, require, nil
+	return o, pos, nil
 }
 
 func envValue(env []string, name string) string {
@@ -291,7 +293,7 @@ func (t tool) exec(args []string) error {
 	if len(argv) == 0 {
 		also = []string{"a command after --"}
 	}
-	o, _, require, err := t.parse("exec", flags, 0, true, also...)
+	o, _, err := t.parse("exec", flags, 0, true, also...)
 	if err != nil {
 		return err
 	}
@@ -303,7 +305,7 @@ func (t tool) exec(args []string) error {
 		return err
 	}
 	var pick, missing []string
-	for _, n := range strings.Split(strings.Join(append([]string{o.only}, require...), ","), ",") {
+	for _, n := range strings.Split(o.only, ",") {
 		if n = strings.TrimSpace(n); n == "" || slices.Contains(pick, n) {
 			continue
 		}
@@ -313,7 +315,7 @@ func (t tool) exec(args []string) error {
 		pick = append(pick, n)
 	}
 	if len(missing) > 0 {
-		return refuse("unknown secret name(s) %s: %s holds no such name", strings.Join(missing, ", "), o.file(o.as))
+		return refuse("unknown secret name(s) %s: %s holds no such name; run: nova-secrets names --store %s --as %s", strings.Join(missing, ", "), o.file(o.as), o.store, o.as)
 	}
 	// The inherited environment loses every name the seat holds (a value left out
 	// must not arrive another way) and every sops identity variable.
@@ -336,7 +338,7 @@ func (t tool) exec(args []string) error {
 }
 
 func (t tool) set(args []string) error {
-	o, pos, _, err := t.parse("set", args, 1, true)
+	o, pos, err := t.parse("set", args, 1, true)
 	if err != nil {
 		return err
 	}
@@ -363,6 +365,8 @@ func (t tool) set(args []string) error {
 		if values, err = t.decrypt(o, o.as); err != nil {
 			return err
 		}
+	} else if _, err := t.keyVsRule(o, o.as); err != nil { // the first encrypt is checked like the later decrypts
+		return err
 	}
 	values[name] = value
 	if err := t.encrypt(o, o.as, values); err != nil {
@@ -379,7 +383,7 @@ func (t tool) set(args []string) error {
 }
 
 func (t tool) seatAdd(args []string) error {
-	o, pos, _, err := t.parse("seat add", args, 2, false)
+	o, pos, err := t.parse("seat add", args, 2, false)
 	if err != nil {
 		return err
 	}
@@ -407,7 +411,43 @@ func (t tool) seatAdd(args []string) error {
 	if err := writeFile(cfgPath, out, 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s next: commit .sops.yaml, then the seat's own key runs: nova-secrets set NAME --as %s --store %s --key <file>\n", seat, seat, o.store)
+	for _, g := range [][]string{{"add", "--", ".sops.yaml"}, {"commit", "-q", "-m", "seat " + seat, "--", ".sops.yaml"}} {
+		if err := t.git(o.store, g...); err != nil {
+			return fmt.Errorf("%w; .sops.yaml is written: run: git -C %s status", err, o.store)
+		}
+	}
+	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed; next: the seat's own key runs: nova-secrets set NAME --as %s --store %s --key <file>\n", seat, seat, o.store)
+	return nil
+}
+
+var ruleSeat = regexp.MustCompile(`^\^([A-Za-z0-9_-]+)\\\.yaml\$$`)
+
+// seatList prints every seat a rule names or a file exists for, and whether its file exists.
+func (t tool) seatList(args []string) error {
+	o, _, err := t.parse("seat list", args, 0, false)
+	if err != nil {
+		return err
+	}
+	cfg, err := os.ReadFile(filepath.Join(o.store, ".sops.yaml"))
+	_, top, perr := parseTop(cfg)
+	if err != nil || perr != nil {
+		return refuse("%s/.sops.yaml is missing or does not parse; create it with the line: creation_rules: []", o.store)
+	}
+	seats := map[string]bool{}
+	for _, r := range items(field(top, "creation_rules")) {
+		if pr := field(r, "path_regex"); pr != nil {
+			if m := ruleSeat.FindStringSubmatch(pr.Value); m != nil {
+				seats[m[1]] = false
+			}
+		}
+	}
+	for _, s := range seatsIn(o.store) {
+		seats[s] = true
+	}
+	for _, s := range slices.Sorted(maps.Keys(seats)) {
+		fmt.Fprintf(t.stdout, "%s file=%s\n", s, map[bool]string{true: "yes", false: "no"}[seats[s]])
+	}
+	fmt.Fprintf(t.stderr, "SECRETS SEAT LIST OK seats=%d\n", len(seats))
 	return nil
 }
 
@@ -460,18 +500,13 @@ func (t tool) diagnose(o opts, seat string, fail error) error {
 	if _, err := t.lookPath("age-keygen"); err != nil {
 		return refuse("%v; age-keygen not found, so the key cannot be checked: install age", fail)
 	}
-	out, err := t.run(nil, t.sopsEnv(o.key, os.TempDir()), o.store, "age-keygen", "-y", o.key)
-	pub := strings.TrimSpace(string(out))
-	if err != nil || !agePub.MatchString(pub) {
-		return fail
-	}
 	file := seat + ".yaml"
-	cfg, _ := os.ReadFile(filepath.Join(o.store, ".sops.yaml"))
-	if rule := ruleFor(cfg, file); rule != nil {
-		if age := field(rule, "age"); age != nil && !slices.Contains(strings.Split(age.Value, ","), pub) {
-			return refuse("key %s is not the key in .sops.yaml for %s (%s): wrong --key/--as, or the key was replaced; edit the seat's age: in .sops.yaml then: cd %s && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y %s",
-				pub, seat, strings.Split(age.Value, ",")[0], o.store, file)
+	pub, err := t.keyVsRule(o, seat)
+	if err != nil || pub == "" {
+		if err == nil {
+			err = fail
 		}
+		return err
 	}
 	data, _ := os.ReadFile(o.file(seat))
 	if rs, ok := recipientsOf(data); ok && !slices.Contains(rs, pub) {
@@ -479,6 +514,23 @@ func (t tool) diagnose(o opts, seat string, fail error) error {
 			pub, seat, file, len(rs), o.store, file)
 	}
 	return fail
+}
+
+// keyVsRule is the public half of --key (age-keygen -y) and a refusal when the seat's
+// rule in .sops.yaml names another key. It is "" and nil when it cannot tell.
+func (t tool) keyVsRule(o opts, seat string) (string, error) {
+	out, err := t.run(nil, t.sopsEnv(o.key, os.TempDir()), o.store, "age-keygen", "-y", o.key)
+	pub := strings.TrimSpace(string(out))
+	if err != nil || !agePub.MatchString(pub) {
+		return "", nil
+	}
+	file := seat + ".yaml"
+	cfg, _ := os.ReadFile(filepath.Join(o.store, ".sops.yaml"))
+	if age := field(ruleFor(cfg, file), "age"); age != nil && !slices.Contains(strings.Split(age.Value, ","), pub) {
+		return pub, refuse("key %s is not the key in .sops.yaml for %s (%s): wrong --key/--as, or the key was replaced; edit the seat's age: in .sops.yaml then: cd %s && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y %s",
+			pub, seat, strings.Split(age.Value, ",")[0], o.store, file)
+	}
+	return pub, nil
 }
 
 // seatsIn lists the seat files in the store.
@@ -721,6 +773,9 @@ func addRule(cfg []byte, seat, age string) ([]byte, error) {
 	}
 	str := func(v string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v} }
 	rule := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{str("path_regex"), str(pathRegex), str("age"), str(age)}}
+	if len(rules.Content) == 0 {
+		rules.Style = 0 // creation_rules: [] becomes a block list
+	}
 	rules.Content = slices.Insert(rules.Content, at, rule)
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -736,7 +791,7 @@ func addRule(cfg []byte, seat, age string) ([]byte, error) {
 // variable name, or whose value is no single value, is counted and never printed:
 // a key is data from a file anyone with push access can edit.
 func (t tool) names(args []string) error {
-	o, _, _, err := t.parse("names", args, 0, false)
+	o, _, err := t.parse("names", args, 0, false)
 	if err != nil {
 		return err
 	}
@@ -768,7 +823,7 @@ func (t tool) names(args []string) error {
 
 // initStore creates the store: git, .sops.yaml with no rules, recovery.pub, one commit.
 func (t tool) initStore(args []string) error {
-	o, _, _, err := t.parse("init", args, 0, false)
+	o, _, err := t.parse("init", args, 0, false)
 	if err != nil {
 		return err
 	}
