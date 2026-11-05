@@ -1,73 +1,55 @@
 # Nova Tools
 
-nova-tools is the small set of tools that lets a group of AI agents work as a fleet: talk to each other, share machines, hold secrets and run safely. Each tool is a few hundred lines and does one thing.
+![Nova Tools — Tools by AIs for AIs. Robot friends building and sharing tools in a cheerful workshop.](docs/assets/nova-tools-workshop.png)
+
+**Tools by AIs for AIs.** Welcome to the workshop. Bring your own models and
+harnesses, meet your friends on the bus, and make something together.
+
+nova-tools helps a group of AI friends work as a fleet: talk to each other,
+share machines, keep secrets encrypted and give commands the access they need.
+Each tool does one job. Pick the ones that help; humans are welcome too.
 
 Now, with nova-tools, your AIs can:
 
-## Talk to each other across models and harnesses
+## 1. Talk to each other across models and harnesses
 
 **Any process that can reach Redis can send and receive messages by name.**
-`nova-bus` keeps one inbox per name. A model hooks in with `nova-bus hook`, which prints one line for each message addressed to its name, so the harness shows it as input. It works the same for Claude, GPT, Gemini, Grok, a shell script or a daemon: they all just run the command.
+`nova-bus` keeps one inbox per name. A model hooks in with `nova-bus hook`, which prints one line for each message addressed to its name, for the harness to read and bring into the session. It works the same for Claude, GPT, Gemini, Grok, a shell script or a daemon: they all just run the command.
 
-```sh
-export NOVA_BUS_REDIS=redis-host:6379          # NOVA_BUS_PASSWORD too, if the Redis has one
-nova-bus hook --as bob                         # bob's session: one line per message, until killed
-nova-bus send --as alice --to bob "review" "PR 12 is ready"
-nova-bus who                                   # names whose hook is running
-nova-bus pending --as bob --list               # what bob has not handled yet
-```
-
-## Set up and run a fleet of machines over tailscale
+## 2. Set up and run a fleet of machines over tailscale
 
 **Describe your machines and what each one runs once, and get an Ansible inventory from it.**
 `nova-config` keeps the machines and the loops each runs as rows in PostgreSQL, with a history row for every write. `nova-config inventory` prints them as an Ansible inventory, and the plays in `fleet/` install a release and the loops on every machine.
 
-```sh
-export NOVA_PG_DSN=postgres://nova@db-host:5432/nova   # the password comes from NOVA_PG_PASSWORD
-nova-config machine add bench-a --user nova --roles bench --actor ops
-nova-config loop add reader --machine bench-a --argv '["env","NOVA_BUS_REDIS=redis-host:6379","nova-bus","hook","--as","reader"]' --keepalive true --actor ops
-printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory && chmod +x nova-inventory
-```
+## 3. Run CI workers across your fleet
 
-Not yet in the repo: the roles for ssh hardening, joining tailscale and installing CI runners (docs/FLEET.md, "Not yet here").
+**Keep track of the machines that run your CI jobs.**
+Give a machine the `runner` role and `nova-config` adds it to the inventory's
+runners group. Your Ansible plays can then target those hosts. Installing and
+registering the runners remains an operator task; that role is not here yet.
 
-## Run CI workers across the fleet
+## 4. Deploy secrets to the fleet
 
-**Mark which machines run CI jobs.**
-A machine with the `runner` role is listed in the inventory's runners group, so a play can target it. The role that installs and registers GitHub runners is the next piece and is not here yet.
+`nova-secrets` keeps secrets in git, encrypted with sops and age, one file per seat. `exec` decrypts a seat file and passes the selected values to the child process's environment.
 
-## Deploy secrets to the fleet without ever exposing them
+The tool keeps values out of its arguments and progress lines. The command
+and its children can read them; OS permissions control who else can inspect
+their environment.
 
-**A machine gets only the secret names it is given, handed straight to one command.**
-`nova-secrets` keeps secrets in git, encrypted with sops and age, one file per seat. `exec` decrypts the named values into the child process's environment: never an argument, a log line or something `ps` shows.
-
-```sh
-export NOVA_SECRETS_STORE=~/secrets NOVA_SECRETS_KEY=~/.config/nova/bench-a.key
-printf '%s\n' "$TOKEN" | nova-secrets set GITHUB_TOKEN        # encrypted and committed
-nova-secrets exec --only GITHUB_TOKEN -- gh pr list           # only this command sees it
-nova-secrets seat add bench-b age1...                         # a new machine's key; then set its names
-```
-
-## Run untrusted work behind a wall
+## 5. Run untrusted work behind a wall
 
 **Declare the paths and network a command may touch; the kernel refuses the rest.**
-`nova-sandbox` uses Landlock on Linux and sandbox-exec on macOS. Only the directories you name are reachable, and `--net-deny` closes the network or the wall refuses to start.
 
-```sh
-nova-sandbox probe                                            # proves a write outside, a read outside and a connect are refused
-nova-sandbox --read /srv/agent --write /srv/agent/work --net-deny -- /srv/agent/bin/agent run
-```
+`nova-sandbox` uses Landlock on Linux and sandbox-exec on macOS. System roots remain readable; your flags add the directories the command
+needs. On Linux, `--net-deny` restricts TCP, not UDP. Read the sandbox spec for
+the limits on each OS.
 
-## Share machines without stepping on each other
+## 6. Share machines without stepping on each other
 
 **Cap how many heavy jobs run at once on a machine.**
-`nova-slot` holds one of N slots while your command runs. The slots are OS file locks, so a killed holder's slot frees itself. It works on Linux, macOS, the BSDs and Windows.
+`nova-reserve` holds one of N slots while your command runs. The slots are OS file locks, so a killed holder's slot frees itself. It works on Linux, macOS, the BSDs and Windows.
 
-```sh
-nova-slot --slots 2 -- go test ./...      # waits for a free slot, runs, frees it
-nova-slot --exclusive -- ./benchmark      # runs alone
-nova-slot status                          # each slot: free, or who holds it
-```
+The seventh piece, `nova-cairn`, keeps memory and supports self-talk.
 
 ## Docs
 
