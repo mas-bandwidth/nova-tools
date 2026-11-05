@@ -27,8 +27,8 @@ import (
 // TestNovaToolsIsEveryCommand holds the list to the directories of cmd/: a new
 // command is added here, or that test is red.
 var NovaTools = []string{
-	"nova-cairn", "nova-config", "nova-memory", "nova-sandbox", "nova-secrets",
-	"nova-self-talk", "nova-update", "nova-version",
+	"nova-cairn", "nova-config", "nova-sandbox", "nova-secrets",
+	"nova-update", "nova-version",
 }
 
 // SprintTools are the programs the same release ships from nova-sprint's own
