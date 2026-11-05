@@ -66,8 +66,7 @@ said rather than something it quoted, or that carries more of a protected record
 grammar requires, is a finding, and it is not excluded by the execution class above: that one
 is about what a tool does, this one about what it says.
 
-**Hostile or malformed input leaving state half-written**, particularly the fuse
-box; and an input a hostile party can arrange so a check cannot run, or cannot finish, where
+**Hostile or malformed input leaving state half-written**, and an input a hostile party can arrange so a check cannot run, or cannot finish, where
 the refusal or the hang suppresses something someone was relying on.
 
 **Anything distributing something that answers to these names** and is not
@@ -80,28 +79,6 @@ it names its permanent misses, its blind spots, its accepted collapses and the
 lists it says are not exhaustive, and each of those is the spec working rather
 than a hole. **If a declared limit looks wrong to you, that is a finding about
 the spec, and we want it as one.**
-
-The exception worth naming out loud, because the easy version of this page would
-turn away the report that matters most: **a systematic false positive in the
-advisory instrument is a finding.** The README carries the case that proves it.
-An early version scored rule documents worst of anything in the repository they
-were written for, because a rule document is a list of absolutes, and acting on
-that output weakened five rules before a cold reader caught them. One was
-floor-level. If you find the next one of those, we want it.
-
-### secrets-never-in-errors-t2-b.w1
-
-A secret handed to a tool never comes back in the tool's own words. A refusal
-that quotes the value it was given (a DSN, a URL with userinfo, a token) carries
-that value to a terminal, a log and a report, so a refusal names the defect and
-the error's type, or a fixed sentence, and never the input. The Postgres DSN
-parse error that printed a password (`pkg/config/pg.go`) is the case, and
-`OpenPG` refuses with the type alone. `TestNoSecretReachesAnError` drives
-secret-shaped strings through every exported `Open*`, `Parse*`, `Dial*` and
-`New*` function that takes a string and refuses one whose error, panic or log
-output holds eight bytes of the secret; the openers that still echo their input
-are listed, each with its reason, in that test's shrink-only allowlist, and the
-list is the work left (docs/SPEC-CI.md, `secrets-never-in-errors`).
 
 ## Reporting
 
