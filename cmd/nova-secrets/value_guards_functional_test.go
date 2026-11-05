@@ -260,7 +260,7 @@ func buildNovaSandbox(t *testing.T) string {
 		if runtime.GOOS == "windows" {
 			sandboxBin += ".exe"
 		}
-		build := exec.Command("go", "build", "-o", sandboxBin, "../nova-sandbox")
+		build := exec.Command("go", "build", "-o", sandboxBin, "../../sandbox")
 		build.Env = goenv.Clean(os.Environ())
 		sandboxOut, sandboxErr = build.CombinedOutput()
 	})
