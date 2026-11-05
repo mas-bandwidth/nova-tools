@@ -9,23 +9,22 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 )
 
 const usage = `nova-bus: messages between named inboxes, kept in Redis.
 
-  nova-bus send [--as <me>] --to <name>[,<name>] [--re <id>] <subject> <body | ->
+  nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
       Append one message to each recipient's inbox; prints "<name> <id>" for each.
-      A body of - is read from stdin. The sender is --as, else $NOVA_BUS_AS.
+      A body of - is read from stdin.
   nova-bus hook --as <name>
       Print every waiting message for <name>, then each new one as it arrives,
       one line each: id<TAB>from<TAB>re<TAB>subject<TAB>body (re is - when none;
       \n, \r, \t and \\ escaped). A message is marked handled only after its line
       is written, so a restarted hook resumes where it stopped; a message whose
       line was written just before a crash may be printed again. Runs until killed.
+      Run one hook per name; two hooks on the same name split its messages.
 
 Environment: NOVA_BUS_REDIS=host:port (required), NOVA_BUS_PASSWORD (optional).
 `
@@ -51,12 +50,10 @@ type Store interface {
 
 type writeError struct{ error }
 
-var now = time.Now
-
+// main has no signal handling: a kill at any point is safe, because a message
+// is acked only after its line is written (tla/Bus.tla).
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	os.Exit(run(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, dialRedis))
+	os.Exit(run(context.Background(), os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, dialRedis))
 }
 
 func run(ctx context.Context, args []string, env func(string) string, stdin io.Reader, stdout, stderr io.Writer, dial func(addr, password string) Store) int {
@@ -67,7 +64,7 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 	fs := flag.NewFlagSet("nova-bus "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
-	as := fs.String("as", env("NOVA_BUS_AS"), "")
+	as := fs.String("as", "", "")
 	to := fs.String("to", "", "")
 	re := fs.String("re", "", "")
 	if args[0] != "send" && args[0] != "hook" {
@@ -80,7 +77,10 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		return fail(stderr, "NOVA_BUS_REDIS is not set: give the Redis address as host:port")
 	}
 	if strings.TrimSpace(*as) == "" {
-		return fail(stderr, "no name: give --as <name> (or set NOVA_BUS_AS)")
+		return fail(stderr, "no name: give --as <name>")
+	}
+	if *re == "-" {
+		return fail(stderr, "--re wants a message id (as hook prints it), not -")
 	}
 	store := dial(env("NOVA_BUS_REDIS"), env("NOVA_BUS_PASSWORD"))
 	if args[0] == "hook" {
@@ -90,7 +90,7 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		return runHook(ctx, store, *as, stdout, stderr)
 	}
 	if fs.NArg() != 2 || *to == "" {
-		return fail(stderr, "usage: nova-bus send --to <name>[,<name>] [--re <id>] <subject> <body | ->")
+		return fail(stderr, "usage: nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->")
 	}
 	body := fs.Arg(1)
 	if body == "-" {
@@ -100,8 +100,7 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		}
 		body = string(b)
 	}
-	msg := map[string]string{"from": *as, "to": *to, "subject": fs.Arg(0), "body": body, "re": *re,
-		"time": now().UTC().Format(time.RFC3339Nano)}
+	msg := map[string]string{"from": *as, "to": *to, "subject": fs.Arg(0), "body": body, "re": *re}
 	names := strings.Split(*to, ",")
 	for i := range names {
 		if names[i] = strings.TrimSpace(names[i]); names[i] == "" {
@@ -121,19 +120,12 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 func runHook(ctx context.Context, store Store, name string, stdout, stderr io.Writer) int {
 	for {
 		err := hook(ctx, store, "bus:"+name, stdout)
-		if ctx.Err() != nil {
-			return 0
-		}
 		var we writeError
 		if errors.As(err, &we) {
 			return fail(stderr, "writing stdout: %v", err)
 		}
 		fmt.Fprintf(stderr, "nova-bus: %v; reconnecting\n", err)
-		select {
-		case <-ctx.Done():
-			return 0
-		case <-time.After(time.Second):
-		}
+		time.Sleep(time.Second)
 	}
 }
 

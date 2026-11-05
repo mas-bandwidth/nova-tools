@@ -52,10 +52,9 @@ These hold for every worker, AI or person. A card is the whole brief one worker 
 
 ### 2. A tool is for an AI
 
-The reader of every banner, refusal and result is an AI meeting the tool cold and deciding whether to depend on it. The question a tool answers is "is this a good tool for an AI to use?" Tools are rated by other AIs, never by their makers, and the ratings drive the fixes. A tool is rated by one note on the bus (nova-bus, messages over git) asking three raters of different sizes to use it cold on a real task and score it; the ratings are kept as tables in the bus repository's design directory, one row per rater and tool.
+The reader of every banner, refusal and result is an AI meeting the tool cold and deciding whether to depend on it. The question a tool answers is "is this a good tool for an AI to use?" Tools are rated by other AIs, never by their makers, and the ratings drive the fixes. A tool is rated by one bus note asking three raters of different sizes to use it cold on a real task and score it; the ratings are kept as tables in the bus repository's design directory.
 
-A rating is read beside the rater's size: a tool a small model finds dense and a frontier model finds clear is a frontier tool and its help says so; a tool every size finds hard is the one to fix. New verbs, flags and success lines are welcome
- where they help an AI; only the sprint views a person reads (`nova-sprint where`, the stored `sprint` view) do not change.
+A rating is read beside the rater's size: a tool a small model finds dense and a frontier model finds clear is a frontier tool and its help says so; a tool every size finds hard is the one to fix. New verbs, flags and success lines are welcome where they help an AI; only the sprint views a person reads (`nova-sprint where`, the stored `sprint` view) do not change.
 
 The properties that make the difference in those ratings, in order:
 
@@ -156,6 +155,7 @@ After a site is fixed, `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` lowers it
 | --- | --- | --- | --- |
 | `.github/` | CI workflows | `go test ./internal/ci` | `make test` |
 | `assets/` | images | none | none |
+| `bus/` | nova-bus | `go test ./bus` | `make test` |
 | [cmd/](cmd/AGENTS.md) | 17 nova command-line tools | `nova-ci local` | `make build` |
 | [docs/](docs/AGENTS.md) | specs, guides, and proposals | `go test ./internal/docs` | `go test ./internal/docs` |
 | `fleet/` | loop units, bench templates | none | none |

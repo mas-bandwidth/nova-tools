@@ -21,6 +21,7 @@
 # two rows of one run are compared only within a class.
 # Measured 2026-10-06; a package with no unit tests (only build-tagged ones)
 # reads 0.0.
+bus	0.2	@local	-
 cmd/nova-bus	0.0	@run37517528825	self-hosted
 cmd/nova-cairn	4.8	@run37518625834	self-hosted
 cmd/nova-check	1.6	@run37518625834	self-hosted

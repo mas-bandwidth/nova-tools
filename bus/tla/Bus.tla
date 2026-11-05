@@ -18,7 +18,7 @@
 \*
 \* Broken = "none" is the design. Reversed witnesses:
 \*   "ackfirst"  the entry is acked when read, then printed: AckedOnlyPrinted
-\*               fails, and a crash between the two loses it (EveryPrinted)
+\*               fails on the first read, in the state between the two
 \*   "newfirst"  a restarted hook reads new entries and never its pending
 \*               ones: an entry handed before a crash is never printed
 EXTENDS Naturals, FiniteSets

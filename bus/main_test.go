@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fake is an in-memory inbox store: per stream, the entries, how many the
@@ -80,11 +82,10 @@ func (f *fake) Ack(_ context.Context, stream, id string) error {
 	return nil
 }
 
-var testEnv = map[string]string{"NOVA_BUS_REDIS": "127.0.0.1:1", "NOVA_BUS_AS": "alpha"}
+var testEnv = map[string]string{"NOVA_BUS_REDIS": "127.0.0.1:1"}
 
 func call(t *testing.T, f *fake, env map[string]string, stdin string, args ...string) (int, string, string) {
 	t.Helper()
-	now = func() time.Time { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
 	var out, errOut bytes.Buffer
 	dial := func(string, string) Store { return f }
 	code := run(context.Background(), args, func(k string) string { return env[k] }, strings.NewReader(stdin), &out, &errOut, dial)
@@ -102,100 +103,107 @@ func runHookOnce(t *testing.T, f *fake, name string) (string, error) {
 	return out.String(), err
 }
 
+func send(t *testing.T, f *fake, subject, body string) {
+	t.Helper()
+	code, _, errOut := call(t, f, testEnv, "", "send", "--as", "alpha", "--to", "beta", subject, body)
+	require.Equal(t, 0, code, errOut)
+}
+
 func TestSendToTwoNames(t *testing.T) {
+	t.Parallel()
 	f := newFake()
-	code, out, errOut := call(t, f, testEnv, "", "send", "--to", "beta,gamma", "--re", "9-0", "hello", "the body")
-	if code != 0 || out != "beta 1-0\ngamma 1-0\n" {
-		t.Fatalf("code %d out %q err %q", code, out, errOut)
-	}
+	code, out, errOut := call(t, f, testEnv, "", "send", "--as", "alpha", "--to", "beta,gamma", "--re", "9-0", "hello", "the body")
+	require.Equal(t, 0, code, errOut)
+	assert.Equal(t, "beta 1-0\ngamma 1-0\n", out)
 	for _, s := range []string{"bus:beta", "bus:gamma"} {
-		got := f.entries[s][0].Fields
-		want := map[string]string{"from": "alpha", "to": "beta,gamma", "subject": "hello", "body": "the body", "re": "9-0", "time": "2026-01-02T03:04:05Z"}
-		if fmt.Sprint(got) != fmt.Sprint(want) {
-			t.Fatalf("%s: %v", s, got)
-		}
+		require.Len(t, f.entries[s], 1, s)
+		assert.Equal(t, map[string]string{"from": "alpha", "to": "beta,gamma", "subject": "hello", "body": "the body", "re": "9-0"}, f.entries[s][0].Fields, s)
 	}
 }
 
-func TestSendBodyFromStdinAndAsFlag(t *testing.T) {
+func TestSendBodyFromStdin(t *testing.T) {
+	t.Parallel()
 	f := newFake()
-	if code, _, e := call(t, f, testEnv, "from stdin\n", "send", "--as", "delta", "--to", "beta", "s", "-"); code != 0 {
-		t.Fatal(e)
-	}
-	if m := f.entries["bus:beta"][0].Fields; m["body"] != "from stdin\n" || m["from"] != "delta" {
-		t.Fatalf("%v", m)
-	}
+	code, _, errOut := call(t, f, testEnv, "from stdin\n", "send", "--as", "delta", "--to", "beta", "s", "-")
+	require.Equal(t, 0, code, errOut)
+	assert.Equal(t, "from stdin\n", f.entries["bus:beta"][0].Fields["body"])
 }
 
 func TestHookPrintsPendingThenNew(t *testing.T) {
+	t.Parallel()
 	f := newFake()
-	f.Add(context.Background(), "bus:beta", map[string]string{"from": "a", "subject": "one", "body": "1"})
-	f.Read(context.Background(), "bus:beta", false) // handed to an earlier hook, never acked
-	f.Add(context.Background(), "bus:beta", map[string]string{"from": "b", "subject": "two", "body": "2", "re": "1-0"})
+	send(t, f, "one", "1")
+	_, err := f.Read(context.Background(), "bus:beta", false) // handed to an earlier hook, never acked
+	require.NoError(t, err)
+	code, _, errOut := call(t, f, testEnv, "", "send", "--as", "b", "--to", "beta", "--re", "1-0", "two", "2")
+	require.Equal(t, 0, code, errOut)
 	out, _ := runHookOnce(t, f, "beta")
-	if out != "1-0\ta\t-\tone\t1\n2-0\tb\t1-0\ttwo\t2\n" {
-		t.Fatalf("%q", out)
-	}
-	if len(f.pending["bus:beta"]) != 0 {
-		t.Fatalf("unacked: %v", f.pending["bus:beta"])
-	}
+	assert.Equal(t, "1-0\talpha\t-\tone\t1\n2-0\tb\t1-0\ttwo\t2\n", out)
+	assert.Empty(t, f.pending["bus:beta"])
 }
 
 func TestRestartResumesWithoutReprintingAcked(t *testing.T) {
+	t.Parallel()
 	f := newFake()
-	call(t, f, testEnv, "", "send", "--to", "beta", "one", "1")
-	call(t, f, testEnv, "", "send", "--to", "beta", "two", "2")
+	send(t, f, "one", "1")
+	send(t, f, "two", "2")
 	first, _ := runHookOnce(t, f, "beta")
-	call(t, f, testEnv, "", "send", "--to", "beta", "three", "3")
+	send(t, f, "three", "3")
 	second, _ := runHookOnce(t, f, "beta")
-	if strings.Count(first, "\n") != 2 || second != "3-0\talpha\t-\tthree\t3\n" {
-		t.Fatalf("first %q second %q", first, second)
-	}
+	assert.Equal(t, 2, strings.Count(first, "\n"), first)
+	assert.Equal(t, "3-0\talpha\t-\tthree\t3\n", second)
 }
 
 func TestCrashBetweenPrintAndAckPrintsAgain(t *testing.T) {
+	t.Parallel()
 	f := newFake()
-	call(t, f, testEnv, "", "send", "--to", "beta", "one", "1")
+	send(t, f, "one", "1")
 	f.failAck = 1
 	first, err := runHookOnce(t, f, "beta")
-	if err == nil || first != "1-0\talpha\t-\tone\t1\n" {
-		t.Fatalf("first %q err %v", first, err)
-	}
+	require.Error(t, err)
+	assert.Equal(t, "1-0\talpha\t-\tone\t1\n", first)
 	second, _ := runHookOnce(t, f, "beta")
-	if second != first {
-		t.Fatalf("at-least-once: second %q", second)
-	}
+	assert.Equal(t, first, second, "at-least-once: the unacked line is printed again")
 }
 
 func TestBodyNewlinesEscaped(t *testing.T) {
+	t.Parallel()
 	got := line(Msg{ID: "1-0", Fields: map[string]string{"from": "a", "subject": "s\tt", "body": "x\ny\r\\z"}})
-	if got != "1-0\ta\t-\ts\\tt\tx\\ny\\r\\\\z\n" {
-		t.Fatalf("%q", got)
-	}
-}
-
-func TestMissingRedisRefused(t *testing.T) {
-	code, _, errOut := call(t, newFake(), map[string]string{"NOVA_BUS_AS": "a"}, "", "hook", "--as", "beta")
-	if code == 0 || !strings.Contains(errOut, "NOVA_BUS_REDIS is not set") {
-		t.Fatalf("code %d err %q", code, errOut)
-	}
+	assert.Equal(t, "1-0\ta\t-\ts\\tt\tx\\ny\\r\\\\z\n", got)
 }
 
 func TestRefusals(t *testing.T) {
-	for _, args := range [][]string{{"send", "--to", "beta", "only-subject"}, {"send", "s", "b"}, {"send", "--to", "a,,b", "s", "b"}, {"hook"}, {"recv"}} {
-		env := testEnv
-		if args[0] == "hook" {
-			env = map[string]string{"NOVA_BUS_REDIS": "x:1"}
-		}
-		if code, _, _ := call(t, newFake(), env, "", args...); code == 0 {
-			t.Errorf("%v accepted", args)
-		}
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		args []string
+		want string
+	}{
+		{"missing NOVA_BUS_REDIS", map[string]string{}, []string{"hook", "--as", "beta"}, "NOVA_BUS_REDIS is not set"},
+		{"send without --as", testEnv, []string{"send", "--to", "beta", "s", "b"}, "give --as <name>"},
+		{"hook without --as", testEnv, []string{"hook"}, "give --as <name>"},
+		{"re of -", testEnv, []string{"send", "--as", "a", "--to", "beta", "--re", "-", "s", "b"}, "--re wants a message id"},
+		{"send without a body", testEnv, []string{"send", "--as", "a", "--to", "beta", "s"}, "usage: nova-bus send"},
+		{"send without --to", testEnv, []string{"send", "--as", "a", "s", "b"}, "usage: nova-bus send"},
+		{"empty name", testEnv, []string{"send", "--as", "a", "--to", "a,,b", "s", "b"}, "empty name"},
+		{"unknown verb", testEnv, []string{"recv"}, "unknown verb"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFake()
+			code, _, errOut := call(t, f, tc.env, "", tc.args...)
+			assert.NotEqual(t, 0, code)
+			assert.Contains(t, errOut, tc.want)
+			assert.Empty(t, f.entries, "a refused send writes nothing")
+		})
 	}
 }
 
 func TestHelp(t *testing.T) {
+	t.Parallel()
 	code, out, _ := call(t, newFake(), nil, "", "help")
-	if code != 0 || !strings.Contains(out, "nova-bus hook --as <name>") {
-		t.Fatalf("%d %q", code, out)
-	}
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "nova-bus hook --as <name>")
+	assert.Contains(t, out, "Run one hook per name; two hooks on the same name split its messages.")
 }

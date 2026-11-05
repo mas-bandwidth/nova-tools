@@ -21,6 +21,7 @@ var DefaultCatalog = []Entry{
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
 	E("tla", "TLA+ models, TLC records", "go test ./pkg/tlc", "make tlc-test"),
 	E("profiles", "the sandbox's darwin profile", "go test ./pkg/sandbox", "make test"),
+	E("bus", "nova-bus", "go test ./bus", "make test"),
 	E("hook", "the hook package", "go test ./hook/...", "make test"),
 	E("testdata", "shared fixtures", "go test ./internal/ci", "make test"),
 	E("schemas", "wire schemas", "make schemawire-check", "go generate"),
