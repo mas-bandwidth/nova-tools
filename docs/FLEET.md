@@ -85,8 +85,12 @@ ansible-playbook -i ./inventory fleet/loops.yml
 ```
 
 The unit runs the row's `argv` as given; a bare program name is the installed tool in `nova_bin_dir`, and `~/` is the
-login's home. A row that names secrets (`keys`) is wrapped in `nova-secrets exec --only <names> --` (with the seat,
-store, key and sops it needs, from `group_vars/all.yml`), so the values reach the command and never the unit file.
+login's home. A row whose `keys` is not empty is wrapped in
+`nova-secrets exec --store <store> --as <seat> --key <key_dir>/<seat>.key --sops <sops> --only <keys> --`, so the
+values reach the command and never the unit file. `<seat>` and `<keys>` are the row's; `<store>`, `<key_dir>` and
+`<sops>` are `nova_secrets_store` (`~/nova-bench/secrets`), `nova_secrets_key_dir` (`~/.config/nova-secrets`) and
+`nova_sops` (`/opt/homebrew/bin/sops` on macOS, else `/usr/local/bin/sops`) from `group_vars/all.yml`. A row with no
+keys runs its `argv` unchanged. Rows without `every` are kept alive; `enabled` defaults to true.
 `enabled false` writes the unit and does not load it.
 
 - Every unit carries a mark. A marked unit no row names, and a marked unit in the other place (user versus system), is
@@ -122,8 +126,8 @@ files above:
 - **ssh setup and hardening role.** Keys, `sshd` settings, per-machine access, applied and checked from the inventory.
 - **tailscale role.** Install and join each machine to the fleet's network, with the host name from the machine row.
 - **Health and self-heal role.** Checking each machine (disk, load, loops alive, tools at the right version) and
-  repairing what can be repaired without a person. The disk guard that used to be a loop here has moved to
-  nova-sprint.
+  repairing what can be repaired without a person. The disk guard that used to be a loop here was retired
+  with the old sprint; a replacement lives with whatever runs the workers.
 - **GitHub CI runner role.** Install, register and update the self-hosted runners that `.github/workflows/ci.yml`
   runs on, from the machine rows (`runners`).
 

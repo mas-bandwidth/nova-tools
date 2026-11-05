@@ -147,7 +147,9 @@
           {{ [((nova_bin_dir ~ '/' ~ item.argv[0]) if '/' not in item.argv[0] else item.argv[0]) | regex_replace('^~/', nova_home ~ '/')]
              + (item.argv[1:] | map('regex_replace', '^~/', nova_home ~ '/') | list) }}
         loop_secrets: >-
-          {{ ([nova_bin_dir ~ '/nova-secrets', 'exec', '--only', item['keys'] | join(','), '--as', item.seat, '--'])
+          {{ ([nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', item.seat,
+               '--key', nova_secrets_key_dir ~ '/' ~ item.seat ~ '.key', '--sops', nova_sops,
+               '--only', item['keys'] | join(','), '--'])
              if item['keys'] | default([]) | length > 0 else [] }}
         loop_exec: "{{ loop_secrets + loop_argv }}"
         loop_log: "{{ item.log | regex_replace('^~/', nova_home ~ '/') }}"

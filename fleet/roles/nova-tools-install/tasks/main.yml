@@ -16,7 +16,9 @@
       - nova_tools_names | reject('match', '^[a-z0-9][a-z0-9-]*$') | list | length == 0
       - nova_tools_remove | reject('match', '^[a-z0-9][a-z0-9-]*$') | list | length == 0
       - nova_tools_remove | intersect(nova_tools_names) | length == 0
-    fail_msg: "nova-tools-install: name the release, -e nova_tools_version=vX.Y.Z"
+    fail_msg: >-
+      nova-tools-install: name the release (-e nova_tools_version=vX.Y.Z), give a non-empty nova_tools_names, and keep
+      nova_tools_names and nova_tools_remove to plain tool names with nothing in both lists (a tool cannot be installed and retired)
 
 - name: the platform
   ansible.builtin.set_fact:
@@ -59,11 +61,17 @@
   loop: "{{ nova_tools_plan }}"
   loop_control: { label: "{{ item.asset }}" }
 
+- name: is there a bin directory already (its mode is then left alone)
+  ansible.builtin.stat:
+    path: "{{ nova_tools_bin_dir }}"
+  register: nova_tools_bin_stat
+  when: not nova_tools_win
+
 - name: the bin directory
   ansible.builtin.file:
     path: "{{ nova_tools_bin_dir }}"
     state: directory
-    mode: "0755"
+    mode: "{{ '0755' if not nova_tools_bin_stat.stat.exists else omit }}"
   register: nova_tools_unix_dir
   when: not nova_tools_win
 

@@ -36,3 +36,10 @@ nova_loop_only: []
 # restarted through the play, never by hand. Empty restarts nothing extra.
 nova_loop_restart: []
 
+# The nova-secrets layout a loop with keys opens its secrets through: the
+# store, the directory of seat keys (<seat>.key) and the sops binary. These are
+# the paths the fleet's units have always passed; nova-secrets exec requires
+# --store and --key and takes --sops.
+nova_secrets_store: "{{ nova_home }}/nova-bench/secrets"
+nova_secrets_key_dir: "{{ nova_home }}/.config/nova-secrets"
+nova_sops: "{{ '/opt/homebrew/bin/sops' if (ansible_system | default('')) == 'Darwin' else '/usr/local/bin/sops' }}"
