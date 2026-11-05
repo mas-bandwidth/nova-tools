@@ -43,7 +43,7 @@ nova-secrets seat list --store <dir>
   List the seats the rules in .sops.yaml name and the seat files present, one "<seat> file=yes|no rule=yes|no" per line.
 
 nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
-  Read one value from stdin (one non-empty line, never a terminal), set NAME in <seat>.yaml and commit that
+  Read one value from stdin (one non-empty line of at most 65536 bytes, never a terminal), set NAME in <seat>.yaml and commit that
   file. Pushing is yours. Example: pass show db | nova-secrets set DB_PASSWORD --store S --key K --as web
 
 nova-secrets names --store <dir> [--as <seat>]
@@ -73,9 +73,11 @@ func helpFor(verb string) (string, bool) {
 	return out, out != ""
 }
 
-// identityEnv is every variable sops reads an age identity from: none reaches sops
-// (it gets --key alone) or the command exec becomes.
-var identityEnv = []string{"SOPS_AGE_KEY", "SOPS_AGE_KEY_FILE", "SOPS_AGE_KEY_CMD", "SOPS_AGE_SSH_PRIVATE_KEY_FILE", "SOPS_KEYSERVICE"}
+// identityEnv names an age identity or this tool's own inputs; none reaches sops or exec's command.
+var identityEnv = []string{"NOVA_SECRETS_KEY", "NOVA_SECRETS_STORE", "NOVA_SECRETS_SEAT", "SOPS_AGE_KEY", "SOPS_AGE_KEY_FILE", "SOPS_AGE_KEY_CMD", "SOPS_AGE_SSH_PRIVATE_KEY_FILE", "SOPS_KEYSERVICE"}
+
+// maxValue is the longest secret set accepts: a key or a token.
+const maxValue = 65536
 
 // markKey is a clear provenance line older releases wrote into seat files; it is
 // not a secret, so it is never delivered, and a set drops it.
@@ -354,11 +356,14 @@ func (t tool) set(args []string) error {
 	if f, ok := t.stdin.(*os.File); ok && isTerminal(f) {
 		return refuse("set: stdin is a terminal; pipe the value in, as: <source> | nova-secrets set NAME ...; run: nova-secrets set -h")
 	}
-	raw, err := io.ReadAll(io.LimitReader(t.stdin, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(t.stdin, maxValue+3)) // the value, one more byte to see it is over, and a CRLF
 	if err != nil {
 		return refuse("reading the value from stdin: %v", err)
 	}
 	value := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
+	if len(value) > maxValue {
+		return bad("value is over %d bytes; a secret is a key or token", maxValue)
+	}
 	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
 		return refuse("set: empty or multi-line value on stdin; the value must be one non-empty line; run: nova-secrets set -h")
 	}
@@ -460,8 +465,7 @@ func (t tool) seatList(args []string) error {
 	return nil
 }
 
-// sopsEnv is sops's whole environment: PATH, the one key file, and a HOME and config
-// directory of its own, so no identity of the caller's (keys.txt included) is read.
+// sopsEnv is sops's whole environment: PATH, the one key file, and a HOME of its own.
 func (t tool) sopsEnv(key, home string) []string {
 	env := []string{"SOPS_AGE_KEY_FILE=" + key, "HOME=" + home, "XDG_CONFIG_HOME=" + home, "APPDATA=" + home}
 	for _, kv := range t.environ {
