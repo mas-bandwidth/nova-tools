@@ -8,3 +8,4 @@ PresenceBrokenNoExpire.cfg	Presence.tla	invariant	PresentOnlyIfFresh	check
 PresenceBrokenNoRefresh.cfg	Presence.tla	invariant	LiveIsPresent	check
 PresenceBrokenNoClaimCheck.cfg	Presence.tla	invariant	StartOnlyWhenFree	check
 PresenceBrokenNoDelCheck.cfg	Presence.tla	invariant	OnlyOwnerDeletes	check
+PresenceBrokenNoWait.cfg	Presence.tla	temporal	WaitClaims	check

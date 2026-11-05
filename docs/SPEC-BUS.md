@@ -113,9 +113,12 @@ Presence means one thing: a hook process is alive for this name.
 
 - **One hook per name.** On start the hook claims the key: one Lua script sets
   it with a 30 s TTL unless it holds another process's value. If it does, the
-  hook prints `name already hooked: <name>` and exits 1, touching nothing. A
-  hook restarted after a crash is refused until the old key lapses (at most
-  30 s).
+  hook prints `HOOK WAIT name=<name> ttl=30` to stderr and tries again every
+  second for at most 40 s (the TTL plus one refresh). A hook restarted by a
+  supervisor after a crash so waits out the dead hook's key and claims the
+  name within about 30 s. If the key is still held after 40 s, another hook is
+  alive and refreshing it: the hook prints `name already hooked: <name>` and
+  exits 1, touching nothing. A signal while waiting exits 0.
 - It claims again whenever 10 s have passed. Each read waits at most 1 s, so a
   quiet or a busy hook refreshes on time, and a signal is acted on within a
   second. A refresh that finds another value (this hook lapsed and another
@@ -135,7 +138,7 @@ Presence means one thing: a hook process is alive for this name.
 - **A hook dies before acking.** The message stays pending and is printed again
   by the next hook on that name.
 - **A hook crashes or its machine is lost.** Its presence lapses within 30 s;
-  until then who lists it, and a new hook on that name is refused.
+  until then who lists it, and a new hook on that name waits for it.
 - **stdout blocks** (the reader stopped reading). The hook cannot refresh, so
   its presence lapses within 30 s while the process lives.
 - **Redis is unreachable.** send, pending and who exit 1. A hook logs
@@ -146,14 +149,16 @@ Presence means one thing: a hook process is alive for this name.
 
 `bus/tla/Presence.tla` models the key with its TTL and hooks that compete for
 one name: start, refresh, a stdout that blocks and unblocks, a clean exit
-whose DEL may fail, a crash, and expiry. It checks: a name is present only if
+whose DEL may fail, a crash, expiry, and a start that waits for the key. It
+checks: a name is present only if
 a hook set the key within the TTL; a running hook not stuck on stdout is
 present with its own token; a hook never starts while another's token is
-present; the key is deleted only by the hook whose token it holds; and a hook
-that exited or crashed is absent within the TTL. A stuck hook is allowed to
+present; the key is deleted only by the hook whose token it holds; a hook
+that exited or crashed is absent within the TTL; a waiting hook whose rival
+crashed sees the name claimed; and every wait ends in a claim or a refusal. A stuck hook is allowed to
 drop out, and `PresenceStuckStrict.cfg` shows that it does. The reversed
-witnesses remove the TTL, the refresh, the claim's check and the release's
-check, one each. `bus/tla/Bus.tla` models delivery. `bus/tla/CASES.tsv` names
+witnesses remove the TTL, the refresh, the claim's check, the release's check
+and the wait, one each. `bus/tla/Bus.tla` models delivery. `bus/tla/CASES.tsv` names
 every case with the outcome TLC must reach; `tla/check.sh JAR bus/tla` runs
 them.
 

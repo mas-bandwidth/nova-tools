@@ -31,7 +31,9 @@ const usage = `nova-bus: messages between named inboxes, kept in Redis.
       is written, so a restarted hook resumes where it stopped; a message whose
       line was written just before a crash may be printed again. While it runs,
       <name> is present (see who). Runs until killed; exits 0 on SIGINT/SIGTERM.
-      One hook per name: a second is refused while the first is present.
+      One hook per name: a hook that finds the name held waits up to 40 s for
+      it to lapse (a restart after a crash), then claims it or, if it is still
+      held, exits 1 "name already hooked".
   nova-bus who
       Print each name whose hook is running and how long it has been up, one
       per line, name<TAB>uptime, sorted by name. A crashed hook drops out
@@ -57,12 +59,15 @@ const group = "hook"
 // within presenceTTL (tla/Presence.tla: TTL, R). A read waits at most
 // readBlock, because a blocked read is not interrupted by a signal: it bounds
 // how long a clean exit takes. An ack or a release outlives the signal by at
-// most cleanupTimeout.
+// most cleanupTimeout. A hook that finds its name held polls every
+// claimPoll for at most presenceTTL+presenceRefresh: a dead hook's key has
+// lapsed by then, a live one's has been refreshed.
 const (
 	presenceTTL     = 30 * time.Second
 	presenceRefresh = 10 * time.Second
 	readBlock       = time.Second
 	cleanupTimeout  = 2 * time.Second
+	claimPoll       = time.Second
 )
 
 // Msg is one inbox entry: its stream id and its fields.
@@ -205,7 +210,7 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 func runHook(ctx context.Context, store Store, name string, clk Clock, stdout, stderr io.Writer) int {
 	value := clk.Now().UTC().Format(time.RFC3339) + "\t" + rand.Text()
 	for {
-		err := hook(ctx, store, name, value, clk, stdout)
+		err := hook(ctx, store, name, value, clk, stdout, stderr)
 		var we writeError
 		if errors.Is(err, errHooked) {
 			return fail(stderr, "name already hooked: %s", name)
@@ -230,15 +235,34 @@ func runHook(ctx context.Context, store Store, name string, clk Clock, stdout, s
 	}
 }
 
-// hook claims name's presence, then prints and acks the pending entries, then
+// hook claims name's presence, waiting for another hook's key to lapse
+// (tla/Presence.tla Start, Poll, GiveUp: WaitClaims, WaitEnds), then prints and acks the pending entries, then
 // the new ones, until an error. Each call starts from the pending list, so a
 // batch handed by a read whose reply was lost is printed after the reconnect.
 // It claims again whenever presenceRefresh has passed, and a read waits no
 // longer than that is due (tla/Presence.tla Start, Refresh: StartOnlyWhenFree,
 // LiveIsPresent). An ack is not cut short by a signal: a printed line is acked.
-func hook(ctx context.Context, store Store, name, value string, clk Clock, out io.Writer) error {
+func hook(ctx context.Context, store Store, name, value string, clk Clock, out, stderr io.Writer) error {
 	stream := "bus:" + name
-	var due time.Time
+	ok, err := store.Claim(ctx, name, value, presenceTTL)
+	if err == nil && !ok {
+		fmt.Fprintf(stderr, "HOOK WAIT name=%s ttl=%d\n", name, int(presenceTTL.Seconds()))
+		for end := clk.Now().Add(presenceTTL + presenceRefresh); err == nil && !ok && clk.Now().Before(end); {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-clk.After(claimPoll):
+			}
+			ok, err = store.Claim(ctx, name, value, presenceTTL)
+		}
+	}
+	if err == nil && !ok {
+		err = errHooked
+	}
+	if err != nil {
+		return err
+	}
+	due := clk.Now().Add(presenceRefresh)
 	refresh := func() error {
 		t := clk.Now()
 		if t.Before(due) {
@@ -249,9 +273,6 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out i
 		if err == nil && !ok {
 			err = errHooked
 		}
-		return err
-	}
-	if err := refresh(); err != nil {
 		return err
 	}
 	if err := store.Group(ctx, stream); err != nil {

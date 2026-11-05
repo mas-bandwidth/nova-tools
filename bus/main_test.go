@@ -196,7 +196,7 @@ func runHookOnce(t *testing.T, f *fake, name string) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.idle = cancel
 	var out bytes.Buffer
-	err := hook(ctx, f, name, testValue, f, &logWriter{&out, f})
+	err := hook(ctx, f, name, testValue, f, &logWriter{&out, f}, io.Discard)
 	cancel()
 	return out.String(), err
 }
@@ -379,7 +379,7 @@ func TestSignalAfterWriteStillAcks(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.onWrite = cancel
 	var out bytes.Buffer
-	err := hook(ctx, f, "beta", testValue, f, &logWriter{&out, f})
+	err := hook(ctx, f, "beta", testValue, f, &logWriter{&out, f}, io.Discard)
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, []string{"print 1-0", "ack 1-0"}, f.log)
 	assert.Empty(t, f.pending["bus:beta"])
@@ -411,17 +411,57 @@ func TestHookRefreshesUnderContinuousTraffic(t *testing.T) {
 	assert.Equal(t, []time.Time{t0, t0.Add(10 * time.Second), t0.Add(20 * time.Second)}, f.claims)
 }
 
-func TestSecondHookOnANameIsRefused(t *testing.T) {
+// A supervised restart after a crash: the dead hook's key is still there, so
+// the new hook waits, polling each second on its clock, and claims it once it
+// has lapsed.
+func TestRestartWaitsForACrashedHooksKey(t *testing.T) {
 	t.Parallel()
 	f := newFake()
-	_, _ = runHookOnce(t, f, "beta") // the first hook, still present
+	_, _ = runHookOnce(t, f, "beta") // the crashed hook: its key holds to t0+30s
 	f.clock = t0.Add(5 * time.Second)
+	send(t, f, "one", "1")
+	ctx, cancel := context.WithCancel(context.Background())
+	f.idle = func() {
+		assert.NotEqual(t, testValue, f.presence["beta"], "the new hook holds the name")
+		cancel()
+	}
+	var out, errOut bytes.Buffer
+	code := runHook(ctx, f, "beta", f, &out, &errOut)
+	assert.Equal(t, 0, code, errOut.String())
+	assert.Equal(t, "HOOK WAIT name=beta ttl=30\n", errOut.String())
+	assert.Len(t, f.afters, 25, "polled each second from 5 s to 30 s")
+	assert.Equal(t, t0.Add(30*time.Second), f.claims[len(f.claims)-1], "claimed as the key lapsed")
+	assert.Equal(t, "1-0\talpha\t-\tone\t1\n", out.String())
+}
+
+// A live duplicate keeps its key: the second hook gives up after 40 s and
+// leaves the first's presence alone.
+func TestSecondHookOnALiveNameIsRefusedAfterWaiting(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	ok, err := f.Claim(context.Background(), "beta", "first\ttoken", time.Hour) // refreshed throughout
+	require.True(t, ok)
+	require.NoError(t, err)
 	var out, errOut bytes.Buffer
 	code := runHook(context.Background(), f, "beta", f, &out, &errOut)
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errOut.String(), "name already hooked: beta")
-	assert.Equal(t, testValue, f.presence["beta"], "the first hook's presence is untouched")
+	assert.Equal(t, "HOOK WAIT name=beta ttl=30\nnova-bus: name already hooked: beta\n", errOut.String())
+	assert.Len(t, f.afters, 40)
+	assert.Equal(t, t0.Add(40*time.Second), f.clock)
+	assert.Equal(t, "first\ttoken", f.presence["beta"])
 	assert.Empty(t, out.String())
+}
+
+func TestWaitingHookStopsOnSignal(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	ok, _ := f.Claim(context.Background(), "beta", "first\ttoken", time.Hour)
+	require.True(t, ok)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, errOut bytes.Buffer
+	assert.Equal(t, 0, runHook(ctx, f, "beta", f, &out, &errOut))
+	assert.Equal(t, "first\ttoken", f.presence["beta"], "the release leaves another hook's key")
 }
 
 func TestReleaseLeavesAnotherHooksPresence(t *testing.T) {

@@ -72,11 +72,16 @@ func (h *hookProc) kill() { _ = h.cmd.Process.Signal(os.Kill); _ = h.cmd.Wait() 
 
 func (h *hookProc) next(t *testing.T) string {
 	t.Helper()
+	return h.nextWithin(t, wait)
+}
+
+func (h *hookProc) nextWithin(t *testing.T, d time.Duration) string {
+	t.Helper()
 	select {
 	case l, ok := <-h.lines:
 		require.True(t, ok, "hook exited")
 		return l
-	case <-time.After(wait):
+	case <-time.After(d):
 		require.FailNow(t, "no line from the hook")
 		return ""
 	}
@@ -117,9 +122,6 @@ func TestAHookKilledAndRestarted(t *testing.T) {
 	assert.True(t, strings.HasSuffix(first.next(t), "\talpha\t-\ttwo\tsecond"))
 	require.Eventually(t, func() bool { return pending() == 0 }, wait, 20*time.Millisecond, "both acked")
 	first.kill() // blocked in XREADGROUP > with nothing pending
-	// A killed hook's presence lapses in 30 s and refuses a new hook until
-	// then (TestPresenceWhoAndPending); this test does not wait for it.
-	require.NoError(t, c.Del(ctx, "bus:presence:beta").Err())
 
 	send("three", "third")
 	handed, err := c.XReadGroup(ctx, &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{"bus:beta", ">"}, Count: 1, Block: -1}).Result()
@@ -127,8 +129,10 @@ func TestAHookKilledAndRestarted(t *testing.T) {
 	require.Len(t, handed[0].Messages, 1)
 	require.Equal(t, int64(1), pending(), "three handed, not acked")
 
+	// The killed hook's key holds for up to 30 s: the restarted hook waits it
+	// out, as a supervised restart does, then claims the name.
 	second := startHook(t, bin, addr)
-	assert.Equal(t, handed[0].Messages[0].ID+"\talpha\t-\tthree\tthird", second.next(t), "the unacked message is printed again first")
+	assert.Equal(t, handed[0].Messages[0].ID+"\talpha\t-\tthree\tthird", second.nextWithin(t, presenceTTL+wait), "the unacked message is printed again first")
 	send("four", "fourth")
 	assert.True(t, strings.HasSuffix(second.next(t), "\tfour\tfourth"), "then the new one; one and two are never printed again")
 	require.Eventually(t, func() bool { return pending() == 0 }, wait, 20*time.Millisecond, "all acked")
@@ -180,7 +184,8 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	second.Env = append(os.Environ(), "NOVA_BUS_REDIS="+addr)
 	out, err := second.CombinedOutput()
 	assert.Equal(t, 1, second.ProcessState.ExitCode(), string(out))
-	assert.Contains(t, string(out), "name already hooked: beta")
+	assert.Contains(t, string(out), "HOOK WAIT name=beta ttl=30\n")
+	assert.Contains(t, string(out), "name already hooked: beta", "after 40 s of the first hook refreshing")
 	assert.Regexp(t, `^beta\t\d+s\n$`, bus("who"), "the first hook's presence is untouched")
 	stopped := time.Now()
 	require.NoError(t, h.cmd.Process.Signal(syscall.SIGTERM))

@@ -31,7 +31,8 @@ reconnects by itself when the connection drops; a plain kill at any moment is sa
 
 While a hook runs it holds the key `bus:presence:<name>` (TTL 30 s, set again every 10 s, value its start time and a
 token of its own) and deletes it, only if it still holds its token, on SIGINT, SIGTERM or a failed stdout. One hook
-per name: a hook that finds another hook's token present refuses to start. **who** prints `<name><TAB><uptime>` for each present name, sorted; a crashed hook
+per name: a hook that finds another hook's token present waits up to 40 s for it to lapse (a restart after a
+crash), then claims the name, or exits 1 if the other hook is still refreshing it. **who** prints `<name><TAB><uptime>` for each present name, sorted; a crashed hook
 drops out within 30 s. **pending** prints how many messages wait for `<name>` unacked, and with `--list` their
 `<id><TAB><subject>`, consuming nothing. There is no ack verb: hook acks after printing, and that is the one way.
 
