@@ -168,7 +168,24 @@ func TestExitCodes(t *testing.T) {
 	errs = oneLine("nova-sandbox", "no-such-verb")
 	assert.Contains(t, errs, "unknown verb no-such-verb")
 	assert.Contains(t, errs, "show check probe help (see nova-sandbox help)")
-	oneLine("nova-sandbox")
+	code, out, errs = exit()
+	assert.Equal(t, 0, code, "a bare nova-sandbox prints the help")
+	assert.Contains(t, out, "nova-sandbox show")
+	assert.Empty(t, errs)
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--write", "/w", "--read", "--", "true"}, `nova-sandbox: bad_value: --read wants an absolute path, got "--"; run: nova-sandbox -h` + "\n"},
+		{[]string{"--write", "--net-deny", "--", "true"}, `nova-sandbox: bad_value: --write wants an absolute path, got "--net-deny"; run: nova-sandbox -h` + "\n"},
+		{[]string{"--net-deny", "--net-allow", "--", "true"}, `nova-sandbox: bad_value: --net-allow wants host:port, got "--"; run: nova-sandbox -h` + "\n"},
+		{[]string{"show", "--read", "--unix"}, `nova-sandbox show: bad_value: --read wants an absolute path, got "--unix"; run: nova-sandbox show -h` + "\n"},
+	} {
+		code, out, errs := exit(c.args...)
+		assert.Equal(t, 2, code, c.args)
+		assert.Empty(t, out, c.args)
+		assert.Equal(t, c.want, errs, "the swallowed value is the only complaint: %v", c.args)
+	}
 	assert.Contains(t, oneLine("nova-sandbox", "--bogus", "--", "ls"), "bad_flag: unknown flag --bogus")
 	errs = oneLine("nova-sandbox", "--write", "rel", "--", "no-such-command-here")
 	assert.Contains(t, errs, "bad_write")
