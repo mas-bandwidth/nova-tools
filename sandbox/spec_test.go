@@ -136,6 +136,7 @@ func TestExitCodes(t *testing.T) {
 	assert.Equal(t, 125, run(nil, &out, &out, env))
 	assert.Equal(t, 125, run([]string{"--bogus", "--", "ls"}, &out, &out, env))
 	assert.Equal(t, 127, run([]string{"--", "no-such-command-here"}, &out, &out, env))
+	assert.Equal(t, 127, run([]string{"--", "./no-such-file-here"}, &out, &out, env), "a path that does not exist is 127, not 126")
 	nox := filepath.Join(t.TempDir(), "noexec")
 	require.NoError(t, os.WriteFile(nox, []byte("x"), 0o600))
 	assert.Equal(t, 126, run([]string{"--", nox}, &out, &out, env), "a file that is not executable is 126")

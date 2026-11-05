@@ -25,9 +25,11 @@ var linuxReadRoots = []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc",
 // linuxWriteFiles are the writable exceptions inside /dev.
 var linuxWriteFiles = []string{"/dev/null", "/dev/tty"}
 
-// linuxWriteDirs are writable system directories, skipped if absent. /dev/shm is RAM
-// only and same-uid, no wider than any --write, and Python multiprocessing and other
-// tools die without it.
+// linuxWriteDirs are writable system directories, skipped if absent. /dev/shm is shared
+// with every process on the host: inside the wall the command can read, overwrite and
+// delete what any same-uid process keeps there, and they can do the same to its files.
+// It stays writable because POSIX shared memory (Python multiprocessing and others)
+// lives there.
 var linuxWriteDirs = []string{"/dev/shm"}
 
 // readMask is what a root and every --read gets; a --write gets every handled right.

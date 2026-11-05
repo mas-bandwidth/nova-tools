@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -70,8 +72,13 @@ func build(s spec, goos string) (*wall, []refusal) {
 				bad = append(bad, *rf)
 				continue
 			}
+			c := filepath.Clean(r)
+			if m := badPath(goos, c); m != "" { // the spelling is a literal in the profile too
+				bad = append(bad, refuse("bad_"+strings.TrimPrefix(flag, "--"), "%s %s %s", flag, c, m))
+				continue
+			}
 			*dst = append(*dst, got)
-			if c := filepath.Clean(r); c != got && !slices.Contains(w.linkSpellings, c) {
+			if c != got && !slices.Contains(w.linkSpellings, c) {
 				w.linkSpellings = append(w.linkSpellings, c)
 			}
 		}
@@ -82,17 +89,23 @@ func build(s spec, goos string) (*wall, []refusal) {
 		w.optRoots = developerDir()
 	}
 	if len(s.argv) > 0 {
-		cmd, rf := resolveCommand(s.argv[0])
+		spelled, target, rf := resolveCommand(s.argv[0])
 		switch {
 		case rf != nil:
 			bad = append(bad, *rf)
-		case !underAny(cmd, slices.Concat(systemRoots(goos), w.optRoots, w.reads, w.writes)):
-			bad = append(bad, refuse("bad_read", "%s is under no system root, --read or --write; name its directory with --read", cmd))
+		case !underAny(target, slices.Concat(systemRoots(goos), w.optRoots, w.reads, w.writes)):
+			bad = append(bad, refuse("bad_read", "%s is under no system root, --read or --write; name its directory with --read", target))
+		case badPath(goos, spelled) != "":
+			bad = append(bad, refuse("bad_read", "the command %s %s", spelled, badPath(goos, spelled)))
 		default:
-			// The resolved path is the exec target; argv is the caller's, argv[0]
-			// included, so a multi-call binary, a venv python or a cc->clang shim
-			// still sees the name it was invoked as.
-			w.command, w.argv = cmd, s.argv
+			// The exec target is the caller's spelling made absolute, symlinks kept, and
+			// argv is the caller's verbatim: a multi-call binary, a venv python, a
+			// cc->clang shim or a #! script reached through a link sees the name it was
+			// invoked as. Only the checks above use the resolved target.
+			w.command, w.argv = spelled, s.argv
+			if spelled != target && !slices.Contains(w.linkSpellings, spelled) {
+				w.linkSpellings = append(w.linkSpellings, spelled) // macOS reads a link it follows
+			}
 		}
 	}
 	if len(bad) > 0 {
@@ -152,25 +165,32 @@ func underAny(p string, roots []string) bool {
 }
 
 // resolveCommand finds the command on PATH and checks it can run, outside the wall:
-// sandbox-exec's own exec failure is an exit 71 that cannot be told from the
-// command's. A name on no PATH entry is reason not_found (exit 127).
-func resolveCommand(name string) (string, *refusal) {
+// sandbox-exec's own exec failure is an exit 71 that cannot be told from the command's.
+// It returns the caller's spelling made absolute (symlinks kept) and the resolved
+// target. A name on no PATH entry or a path that does not exist is not_found (127); an
+// existing file that cannot be executed is not_executable (126).
+func resolveCommand(name string) (spelled, target string, _ *refusal) {
 	found, err := exec.LookPath(name)
 	if strings.Contains(name, "/") {
-		found, err = filepath.Abs(name)
+		found, err = name, nil
 	}
-	if err != nil {
-		r := refuse("not_found", "%s is on no PATH entry", name)
-		return "", &r
+	if err == nil {
+		found, err = filepath.Abs(found)
 	}
-	if fi, err := os.Stat(found); err != nil || fi.IsDir() || fi.Mode().Perm()&0o111 == 0 {
+	fi, serr := os.Stat(found)
+	if err != nil || errors.Is(serr, fs.ErrNotExist) {
+		r := refuse("not_found", "%s is on no PATH entry or does not exist", name)
+		return "", "", &r
+	}
+	if serr != nil || fi.IsDir() || fi.Mode().Perm()&0o111 == 0 {
 		r := refuse("not_executable", "%s is not an executable file", found)
-		return "", &r
+		return "", "", &r
 	}
-	if resolved, err := filepath.EvalSymlinks(found); err == nil {
-		found = resolved
+	target, err = filepath.EvalSymlinks(found)
+	if err != nil {
+		target = found
 	}
-	return found, nil
+	return found, target, nil
 }
 
 // developerDir is the directory the xcode-select link points at, when it is not under

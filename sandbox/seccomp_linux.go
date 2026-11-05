@@ -10,41 +10,46 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Landlock does not path-check a unix-domain connect, so a command inside the wall can
-// still reach any same-uid socket: it reads /proc/net/unix for the paths and the fences
-// on the environment are no help. The only way to close it without a path check is to
-// stop the command creating an AF_UNIX socket at all. This seccomp-bpf filter does that,
-// and also refuses the two syscall families that would let the command act outside the
-// filter's view: io_uring (its submission queue runs operations the kernel does not
-// re-check through seccomp) and ptrace (attaching to another process). The filter is
-// inherited across fork and execve beside the Landlock ruleset.
+// Landlock does not path-check a unix-domain connect, so a command inside the wall could
+// reach any same-uid socket: /proc/net/unix lists the paths. The only fence without a
+// path check is to stop the command making a unix socket that can be pointed at a path.
+// This seccomp-bpf filter refuses socket(AF_UNIX) and every socketpair(AF_UNIX) except
+// SOCK_STREAM. A stream pair is connected to its twin: connect and sendto elsewhere fail
+// with EISCONN, so it is allowed, and event loops (Python asyncio, Go, libuv) need one.
+// A DGRAM pair can reconnect or sendto any datagram path, and a SEQPACKET pair was
+// measured to sendto a datagram path too, so both are refused. It also refuses ptrace and
+// io_uring (whose queue runs operations seccomp does not see) at any argument. The
+// filter is inherited across fork and execve beside the Landlock ruleset.
 
-// seccomp return values (linux/seccomp.h). KILL_THREAD is the widest action every kernel
-// with seccomp-bpf supports; it is used only for a syscall from the wrong architecture.
 const (
-	secRetKillThread = 0x00000000
-	secRetErrnoEPERM = 0x00050000 | uint32(unix.EPERM) // SECCOMP_RET_ERRNO | EPERM
+	// An action the kernel does not know is treated as a kill, so KILL_PROCESS is safe
+	// on kernels older than 4.14 too.
+	secRetKill       = 0x80000000 // SECCOMP_RET_KILL_PROCESS
+	secRetErrnoEPERM = 0x00050000 | uint32(unix.EPERM)
 	secRetAllow      = 0x7fff0000
 	secModeFilter    = 1 // SECCOMP_SET_MODE_FILTER
+	x32Bit           = 0x40000000
 )
 
-// classic-BPF opcodes for the seccomp program.
+// classic-BPF opcodes.
 const (
 	bpfLdWAbs = 0x20 // BPF_LD | BPF_W | BPF_ABS
 	bpfJeqK   = 0x15 // BPF_JMP | BPF_JEQ | BPF_K
+	bpfJgeK   = 0x35 // BPF_JMP | BPF_JGE | BPF_K
 	bpfJmpJA  = 0x05 // BPF_JMP | BPF_JA
+	bpfAndK   = 0x54 // BPF_ALU | BPF_AND | BPF_K
 	bpfRetK   = 0x06 // BPF_RET | BPF_K
 )
 
-// seccomp_data offsets: a load at these absolute byte offsets reads the field.
+// seccomp_data offsets; args are read by their low word (little-endian targets).
 const (
 	offNr   = 0
 	offArch = 4
-	offArg0 = 16 // args[0], low word first on a little-endian target
+	offArg0 = 16
+	offArg1 = 24
 )
 
-// nativeArch is the AUDIT_ARCH of this build, or 0 when the architecture is one this
-// tool has no seccomp program for (the wall then needs --unix).
+// nativeArch is the AUDIT_ARCH of this build, or 0 when there is no program for it.
 func nativeArch() uint32 {
 	switch runtime.GOARCH {
 	case "amd64":
@@ -55,84 +60,86 @@ func nativeArch() uint32 {
 	return 0
 }
 
-// deniedSyscalls are refused with EPERM whatever their arguments: ptrace and the three
-// io_uring entry points. The numbers come from x/sys for this build's architecture, and
-// the filter's architecture guard rejects any syscall that does not match it.
+// deniedSyscalls are refused with EPERM whatever their arguments.
 func deniedSyscalls() []uint32 {
 	return []uint32{unix.SYS_PTRACE, unix.SYS_IO_URING_SETUP, unix.SYS_IO_URING_ENTER, unix.SYS_IO_URING_REGISTER}
 }
 
-// buildFilter assembles the seccomp program. When filterUnix is true, socket(2) and
-// socketpair(2) with domain AF_UNIX are refused; when false (--unix) they pass, and
-// only the denied syscalls above are refused. It returns nil on an unsupported
-// architecture.
+// insn is one instruction with symbolic jump targets; label names its own position.
+// An empty target is the next instruction.
+type insn struct {
+	label  string
+	code   uint16
+	k      uint32
+	jt, jf string
+}
+
+// assemble resolves the labels into the kernel's relative offsets.
+func assemble(src []insn) []unix.SockFilter {
+	at := map[string]int{}
+	for i, in := range src {
+		if in.label != "" {
+			at[in.label] = i
+		}
+	}
+	off := func(i int, label string) uint8 {
+		if label == "" {
+			return 0
+		}
+		return uint8(at[label] - i - 1)
+	}
+	out := make([]unix.SockFilter, len(src))
+	for i, in := range src {
+		out[i] = unix.SockFilter{Code: in.code, K: in.k, Jt: off(i, in.jt), Jf: off(i, in.jf)}
+		if in.code == bpfJmpJA {
+			out[i] = unix.SockFilter{Code: in.code, K: uint32(off(i, in.jt))}
+		}
+	}
+	return out
+}
+
+// buildFilter assembles the program. With filterUnix false (--unix) the AF_UNIX rules
+// are left out and only the guards and the denied syscalls remain. nil on an
+// unsupported architecture.
 func buildFilter(filterUnix bool) []unix.SockFilter {
 	arch := nativeArch()
 	if arch == 0 {
 		return nil
 	}
-	stmt := func(code uint16, k uint32) unix.SockFilter { return unix.SockFilter{Code: code, K: k} }
-	jeq := func(k uint32, jt, jf uint8) unix.SockFilter {
-		return unix.SockFilter{Code: bpfJeqK, Jt: jt, Jf: jf, K: k}
+	p := []insn{
+		{code: bpfLdWAbs, k: offArch},
+		{code: bpfJeqK, k: arch, jf: "kill"},
+		{code: bpfLdWAbs, k: offNr},
+		// x32 syscalls carry bit 30 and pass the x86_64 arch check: refuse them all,
+		// or each would be an unfiltered twin of a refused syscall.
+		{code: bpfJgeK, k: x32Bit, jt: "kill"},
 	}
-
-	denied := deniedSyscalls()
-	nD := len(denied)
-	var p []unix.SockFilter
 	if filterUnix {
-		// Layout (indices): 0 LD arch; 1 JEQ arch; 2 LD nr; 3 socket; 4 socketpair;
-		// 5..5+nD-1 denied; jmpIdx JMP allow; sockLD; sockJEQ; then allow, eperm, kill.
-		jmpIdx := 5 + nD
-		sockLD := jmpIdx + 1
-		sockJEQ := sockLD + 1
-		iAllow := sockJEQ + 1
-		iEperm := iAllow + 1
-		iKill := iEperm + 1
-		off := func(from, to int) uint8 { return uint8(to - (from + 1)) }
 		p = append(p,
-			stmt(bpfLdWAbs, offArch),                    // 0
-			jeq(arch, 0, off(1, iKill)),                 // 1: wrong arch -> kill
-			stmt(bpfLdWAbs, offNr),                      // 2
-			jeq(unix.SYS_SOCKET, off(3, sockLD), 0),     // 3
-			jeq(unix.SYS_SOCKETPAIR, off(4, sockLD), 0), // 4
-		)
-		for i, nr := range denied {
-			p = append(p, jeq(nr, off(5+i, iEperm), 0))
-		}
+			insn{code: bpfJeqK, k: unix.SYS_SOCKET, jt: "socket"},
+			insn{code: bpfJeqK, k: unix.SYS_SOCKETPAIR, jt: "pair"})
+	}
+	for _, nr := range deniedSyscalls() {
+		p = append(p, insn{code: bpfJeqK, k: nr, jt: "eperm"})
+	}
+	p = append(p, insn{code: bpfJmpJA, jt: "allow"})
+	if filterUnix {
 		p = append(p,
-			unix.SockFilter{Code: bpfJmpJA, K: uint32(off(jmpIdx, iAllow))}, // JMP allow
-			stmt(bpfLdWAbs, offArg0), // sockLD: load domain
-			jeq(unix.AF_UNIX, off(sockJEQ, iEperm), off(sockJEQ, iAllow)), // sockJEQ
-			stmt(bpfRetK, secRetAllow),                                    // allow
-			stmt(bpfRetK, secRetErrnoEPERM),                               // eperm
-			stmt(bpfRetK, secRetKillThread),                               // kill
-		)
-		return p
+			insn{label: "socket", code: bpfLdWAbs, k: offArg0},
+			insn{code: bpfJeqK, k: unix.AF_UNIX, jt: "eperm", jf: "allow"},
+			insn{label: "pair", code: bpfLdWAbs, k: offArg0},
+			insn{code: bpfJeqK, k: unix.AF_UNIX, jf: "allow"},
+			insn{code: bpfLdWAbs, k: offArg1},
+			insn{code: bpfAndK, k: 0xf}, // SOCK_TYPE_MASK: drop SOCK_NONBLOCK and SOCK_CLOEXEC
+			insn{code: bpfJeqK, k: unix.SOCK_STREAM, jt: "allow", jf: "eperm"})
 	}
-	// --unix: AF_UNIX stays open; only the denied syscalls and the arch guard remain.
-	iAllow := 3 + nD
-	iEperm := iAllow + 1
-	iKill := iEperm + 1
-	off := func(from, to int) uint8 { return uint8(to - (from + 1)) }
-	p = append(p,
-		stmt(bpfLdWAbs, offArch),    // 0
-		jeq(arch, 0, off(1, iKill)), // 1
-		stmt(bpfLdWAbs, offNr),      // 2
-	)
-	for i, nr := range denied {
-		p = append(p, jeq(nr, off(3+i, iEperm), 0))
-	}
-	p = append(p,
-		stmt(bpfRetK, secRetAllow),      // allow (fall-through)
-		stmt(bpfRetK, secRetErrnoEPERM), // eperm
-		stmt(bpfRetK, secRetKillThread), // kill
-	)
-	return p
+	return assemble(append(p,
+		insn{label: "allow", code: bpfRetK, k: secRetAllow},
+		insn{label: "eperm", code: bpfRetK, k: secRetErrnoEPERM},
+		insn{label: "kill", code: bpfRetK, k: secRetKill}))
 }
 
-// seccompAvailable reports whether this kernel takes a seccomp filter. It calls seccomp
-// with a null program: a kernel that supports filter mode rejects that with EFAULT,
-// while one without the syscall or the mode answers ENOSYS or EINVAL.
+// seccompAvailable: a kernel with filter mode answers a null program with EFAULT.
 func seccompAvailable() bool {
 	if nativeArch() == 0 {
 		return false
@@ -141,18 +148,18 @@ func seccompAvailable() bool {
 	return errno == syscall.EFAULT
 }
 
-// installSeccomp loads the filter onto the calling thread. no_new_privs must already be
-// set (execWall sets it for Landlock). The thread must stay locked through to exec.
+// installSeccomp loads the filter onto the calling thread, which must stay locked
+// through to the exec; no_new_privs must already be set.
 func installSeccomp(filterUnix bool) error {
 	filter := buildFilter(filterUnix)
 	if filter == nil {
 		return syscall.ENOSYS
 	}
 	prog := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}
-	if _, _, errno := syscall.Syscall(unix.SYS_SECCOMP, secModeFilter, 0, uintptr(unsafe.Pointer(&prog))); errno != 0 {
-		runtime.KeepAlive(filter)
+	_, _, errno := syscall.Syscall(unix.SYS_SECCOMP, secModeFilter, 0, uintptr(unsafe.Pointer(&prog)))
+	runtime.KeepAlive(filter)
+	if errno != 0 {
 		return errno
 	}
-	runtime.KeepAlive(filter)
 	return nil
 }

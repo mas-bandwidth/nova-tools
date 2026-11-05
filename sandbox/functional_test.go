@@ -170,6 +170,65 @@ func TestArgv0IsVerbatim(t *testing.T) {
 	assert.Equal(t, link+"\n", stdout, "argv[0] is the caller's, not the resolved /bin/sh target")
 }
 
+func TestSymlinkedScriptSeesItsLinkName(t *testing.T) {
+	t.Parallel()
+	job, out := scratch(t)
+	// The kernel sets a #! script's $0 to the path it was exec'd by, so the wall must
+	// exec the caller's spelling, not the resolved target.
+	who := filepath.Join(out, "who.sh")
+	require.NoError(t, os.WriteFile(who, []byte("#!/bin/sh\necho $0\n"), 0o755))
+	link := filepath.Join(out, "link.sh")
+	require.NoError(t, os.Symlink(who, link))
+	code, stdout, stderr := sandbox(t, job, "--write", job, "--read", out, "--", link)
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, link+"\n", stdout)
+}
+
+// TestUnixFenceCost runs what the fence must still allow (a connected socketpair, as
+// every event loop makes) and what it must refuse (a datagram socket to /dev/log, an
+// agent socket), each skipped where the tool is not installed.
+func TestUnixFenceCost(t *testing.T) {
+	t.Parallel()
+	job, _ := scratch(t)
+	run := func(t *testing.T, tool string, args ...string) (int, string) {
+		t.Helper()
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " is not installed here")
+		}
+		code, stdout, stderr := sandbox(t, job, append([]string{"--write", job, "--"}, append([]string{tool}, args...)...)...)
+		return code, stdout + stderr
+	}
+	t.Run("asyncio", func(t *testing.T) {
+		code, out := run(t, "python3", "-c", "import asyncio\nasync def f(): return 7\nprint(asyncio.run(f()))")
+		require.Equal(t, 0, code, out)
+		assert.Contains(t, out, "7")
+	})
+	t.Run("socketpair types", func(t *testing.T) {
+		code, out := run(t, "python3", "-c", `import socket
+for k in ("SOCK_STREAM", "SOCK_SEQPACKET", "SOCK_DGRAM"):
+    try:
+        socket.socketpair(socket.AF_UNIX, getattr(socket, k)); print(k, "ok")
+    except PermissionError: print(k, "eperm")
+try:
+    socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); print("socket ok")
+except PermissionError: print("socket eperm")`)
+		require.Equal(t, 0, code, out)
+		assert.Contains(t, out, "SOCK_STREAM ok")
+		assert.Contains(t, out, "SOCK_SEQPACKET eperm", "a seqpacket pair can sendto a datagram path")
+		assert.Contains(t, out, "SOCK_DGRAM eperm")
+		assert.Contains(t, out, "socket eperm")
+	})
+	t.Run("logger", func(t *testing.T) {
+		code, out := run(t, "logger", "--socket-errors=on", "-u", "/dev/log", "walled")
+		assert.NotEqual(t, 0, code, out)
+		assert.Contains(t, out, "Operation not permitted")
+	})
+	t.Run("gpg-connect-agent", func(t *testing.T) {
+		code, out := run(t, "gpg-connect-agent", "--no-autostart", "/bye")
+		assert.Contains(t, out, "Operation not permitted", "rc=%d", code)
+	})
+}
+
 func TestUnixSocketIsFencedByDefault(t *testing.T) {
 	t.Parallel()
 	if _, out, _ := sandbox(t, os.TempDir(), "check"); strings.Contains(out, "seccomp UNAVAILABLE") {

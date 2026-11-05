@@ -29,20 +29,23 @@ This spec is normative. If the code and this document disagree, one of them has 
 | `--net-deny` | TCP connect and bind are closed. If the kernel cannot enforce that, the wall refuses to start. |
 | `--net-allow <host:port>` | under `--net-deny`, reopen TCP connect to one loopback port. `host` must be `localhost` or a loopback address. Repeatable. |
 | `--gpu` | macOS only: open the `AGXDeviceUserClient` and `IOSurfaceRootUserClient` IOKit clients and the `MTLCompilerService`, CoreMedia `videoencoder` and `videodecoder` services, by name. |
-| `--unix` | Linux only: leave AF_UNIX sockets open. This opens the same-uid escape below; use only when the command needs a local socket. |
+| `--unix` | Linux only: leave AF_UNIX sockets open. This opens the same-uid escape below; use only when the command needs a local socket (the cost of the fence is listed under `--unix` below). |
 | `--keep-fds` | do not close inherited descriptors above stderr before exec. |
 
 Everything after `--` is the command and its arguments, verbatim; `argv[0]` is exactly what the caller gave, so a
-multi-call binary (`busybox`), a virtualenv `python` or a `cc`→`clang` shim sees the name it was invoked as. Only the
-exec target is resolved to a path. Flags may come in any order before `--`.
+multi-call binary (`busybox`), a virtualenv `python` or a `cc`→`clang` shim sees the name it was invoked as. On Linux
+the file executed is the caller's spelling made absolute with its symlinks kept, so a `#!` script reached through a
+symlink sees the link as `$0`. On macOS `sandbox-exec` looks `argv[0]` up on `PATH` itself, inside the wall. Flags may
+come in any order before `--`.
 
 Every `--read` and `--write` must be an absolute path to an existing directory. Nothing is created. Each is resolved
 through symlinks once, before the wall is built, and the resolved path is what the kernel sees. Neither flag is
 required: a run with no `--write` is a read-only run.
 
-The command is looked up on `PATH` outside the wall and resolved to an absolute, symlink-free file. It must lie under a
-system root (below), a `--read` or a `--write`; otherwise the run is refused rather than handing the command's whole
-directory to the wall. A command at `~/bin/tool` runs only with `--read ~/bin` named by the caller.
+The command is looked up on `PATH` outside the wall and checked there: missing is exit 127, present but not executable
+is 126. Its symlink-free target must lie under a system root (below), a `--read` or a `--write`; otherwise the run is
+refused rather than handing the command's whole directory to the wall. A command at `~/bin/tool` runs only with
+`--read ~/bin` named by the caller.
 
 `--net-allow` is refused without `--net-deny`, and a non-loopback host is refused: Landlock filters by port only, so a
 remote host could not be honoured, and the macOS profile only accepts `localhost` as a host.
@@ -50,11 +53,18 @@ remote host could not be honoured, and the macOS profile only accepts `localhost
 `--gpu` is refused on Linux. A GPU there is a device directory; grant it the same way as any other, for example
 `--write /dev/dri`.
 
-`--unix` is Linux-only (the macOS profile denies a unix socket outside the write set either way). Without it, a command
-cannot create an AF_UNIX socket at all; that is the only way to fence the escape below, because neither the kernel nor
-this tool can path-check a unix `connect`. On a kernel with no seccomp filter mode the fence cannot be built, and the
-wall refuses to start unless `--unix` is given, so it is never silently weaker than it says. `--unix` still leaves
-`ptrace` and `io_uring` refused.
+`--unix` is Linux-only. Without it a seccomp filter refuses `socket(AF_UNIX)` and every `socketpair(AF_UNIX)` except `SOCK_STREAM`; that
+is the only way to fence the escape below, because Landlock does not path-check a unix `connect`. A `SOCK_STREAM` pair
+is allowed: it is connected to itself, `connect` and `sendto` elsewhere fail with `EISCONN`, and every event loop
+(Python `asyncio`, Go, libuv) makes one. A `SOCK_DGRAM` pair can reconnect or `sendto` any datagram path, and a
+`SOCK_SEQPACKET` pair was measured to `sendto` a datagram path as well, so both are refused.
+
+The cost of the fence: nothing that calls `socket(AF_UNIX)` works inside it. That includes `/dev/log` and `syslog(3)`,
+NSS lookups through a socket (nscd, sssd, systemd-userdb; plain `/etc/passwd` and DNS over UDP/TCP still work), D-Bus,
+ssh-agent and gpg-agent, and any local daemon. `--unix` is the opt-out; with seccomp present it still installs the filter
+without the AF_UNIX rules, so `ptrace` and `io_uring` stay refused. On a kernel with no seccomp filter mode the default
+wall refuses to start (`no_seccomp`), so it is never silently weaker than it says; `--unix` is then the only way to run,
+and the wall is Landlock alone: unix sockets, `ptrace` and `io_uring` are all open.
 
 ## What passes through unchanged
 
@@ -76,8 +86,9 @@ A command needs the OS to run. These are granted read and execute without being 
 
 - **Linux:** `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`, `/opt`, `/dev`, `/proc`, `/run/systemd/resolve`, and
   the directory `/etc/resolv.conf` resolves to when it is elsewhere. A root that does not exist is skipped. `/dev/null`
-  and `/dev/tty` are writable, and so is `/dev/shm` (RAM only, same-uid — no wider than a `--write`), which Python
-  multiprocessing and other tools need.
+  and `/dev/tty` are writable, and so is `/dev/shm`, which POSIX shared memory (Python multiprocessing and others)
+  needs. `/dev/shm` is shared with every process on the host: inside the wall the command can read, overwrite and
+  delete what any same-uid process keeps there, and they can do the same to its files.
 - **macOS:** `/System`, `/usr`, `/bin`, `/sbin`, `/opt/homebrew`, `/opt/local`, `/Library`, `/private/etc`,
   `/private/var/select`, `/private/var/db/timezone` (without it every program runs in UTC), `/dev`; the symlinks
   `/etc`, `/tmp`, `/var` and the root directory itself as literals (the link, not its target); the `xcode-select` link
@@ -93,10 +104,6 @@ On both systems, for the command and every process it starts:
 - A file or directory outside the system roots, the `--read`s and the `--write`s cannot be opened, listed, executed,
   created, renamed into, linked or deleted.
 - Outside the `--write`s nothing can be modified, except `/dev/null`, `/dev/tty` and (Linux) `/dev/shm`.
-- No AF_UNIX socket can be created, so a same-uid socket cannot be reached by path — the escape that would otherwise
-  let the command read `/proc/net/unix`, dial any local socket, and have a service outside the wall act for it. On
-  Linux this is a seccomp filter and is lifted by `--unix`; on macOS it is the profile's network rule and holds a unix
-  socket reachable only inside a `--write`.
 - Inherited descriptors above stderr are closed before exec unless `--keep-fds`.
 - The wall cannot be lifted from inside. Landlock and the seccomp filter are inherited across `fork` and `execve` and
   `no_new_privs` stops a setuid binary from escaping them; a `sandbox-exec` profile is inherited the same way.
@@ -106,8 +113,13 @@ On both systems, for the command and every process it starts:
 
 Linux only:
 
+- Unless `--unix`, no unix socket that can be pointed at a path can be created (`socket(AF_UNIX)` and every non-stream pair
+  are refused; see `--unix` for what is allowed and the cost), so a same-uid socket cannot be reached by path: the escape
+  that would otherwise let the command read `/proc/net/unix`, dial any local socket, and have a service outside the
+  wall act for it (`systemd-run --user`). x32 syscall numbers are killed, so they cannot bypass the filter.
 - The seccomp filter also refuses `ptrace` (attaching to another process) and `io_uring` (whose submission queue runs
-  operations the kernel does not re-check through seccomp), at every argument and even under `--unix`.
+  operations the kernel does not re-check through seccomp), at every argument and even under `--unix`, whenever the
+  kernel has seccomp.
 - Signals: Landlock ABI 6 scopes signals and abstract unix sockets to the wall (the command cannot signal a process
   created outside it or connect to an abstract socket). **Below ABI 6 a signal can reach a process outside the wall**,
   and abstract sockets are not fenced (AF_UNIX creation is refused by seccomp, which covers abstract sockets too,
@@ -119,15 +131,19 @@ macOS only:
 
 - The default is deny. Network is IP-only outbound plus the DNS resolver socket. Inbound and bind are denied with or
   without `--net-deny`.
-- Mach service lookup is narrowed to four names (directory services, TLS trust, logging, certificate evaluation);
-  the clipboard and Apple Events are denied. IOKit is closed unless `--gpu` opens the two Metal client classes.
+- Unix sockets: the profile fences unix `connect`, not creation. A unix socket can be created, and connected only to a
+  socket inside a `--write`, or, without `--net-deny`, to the `mDNSResponder` resolver socket.
+- Mach service lookup is narrowed to four global names (directory services, TLS trust, logging, certificate
+  evaluation); the clipboard and Apple Events are denied. IOKit is closed. `--gpu` adds the two Metal IOKit client
+  classes and three XPC service names (`MTLCompilerService`, CoreMedia `videoencoder`, `videodecoder`), so the mach
+  lookups are then those four plus three.
 
 ## What the wall does not guarantee
 
 - **Network without `--net-deny`.** Nothing is promised. On Linux it is open; on macOS outbound IP and DNS are open.
 - **UDP on Linux.** Landlock has no UDP rights at any ABI. `--net-deny` closes TCP only.
 - **Which host a `--net-allow` reaches on Linux.** The rule is a port: a connect to that port on any address passes.
-- **Unix sockets under `--unix` (Linux).** With `--unix` the AF_UNIX fence is off and Landlock does not path-check a
+- **Unix sockets under `--unix`, or without seccomp (Linux).** With `--unix` the AF_UNIX fence is off and Landlock does not path-check a
   unix `connect`, so the same-uid escape is open again. Keeping the socket's directory outside the grants does not
   help, because the connect is not a filesystem open.
 - **Signals below Landlock ABI 6 (Linux).** They can reach processes outside the wall; see above.
@@ -136,6 +152,8 @@ macOS only:
   ptrace policy.
 - **Anything a `--write` can be used for.** A `--write` is full read and write beneath it: a socket the command itself
   creates there, a file it hands to another of its own processes, a FIFO. The wall bounds where, not what.
+- **`/dev/shm` (Linux).** Shared with every process on the host; see the system roots.
+- **`ptrace` and `io_uring` on a kernel without seccomp (Linux).** Only `--unix` runs there, with no filter at all.
 - **Inherited descriptors under `--keep-fds`.** Then an already-open fd outside the grants stays usable.
 - **Resources.** No limit on CPU, memory, processes or disk; no PID, user or mount isolation. Running as root is not
   refused and the wall still applies, but root has many other ways out.
@@ -147,14 +165,14 @@ macOS only:
 `check` says which backend this host has and whether it works. It applies nothing to a command.
 
 ```
-CHECK OK backend=landlock abi=6 net=enforceable note=landlock abi 6: net is TCP bind/connect only (abi 4+), udp is unrestricted; signals are confined to the wall only at abi 6+; seccomp available: the unix-socket fence is on by default
+CHECK OK backend=landlock abi=6 net=enforceable note=landlock abi 6: net is TCP bind/connect only (abi 4+), udp is unrestricted; signals are confined to the wall only at abi 6+; seccomp available: the unix-socket fence is on by default; its cost is that nothing needing socket(AF_UNIX) works (/dev/log and syslog, NSS sockets such as nscd, sssd and systemd-userdb, agents and local daemons); --unix is the opt-out
 CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple; the wall is the profile it applies (/usr/bin/sandbox-exec)
 CHECK FAILED backend=landlock abi=- reason=no landlock in this kernel: below 5.13, not compiled in, or not in the boot-time lsm= list
 ```
 
 `net=unavailable` means `--net-deny` will be refused here (Linux below ABI 4, kernel 6.7). The Linux note also says
-whether seccomp is available: without it the default wall refuses to start (the AF_UNIX fence cannot be built), and
-`--unix` is required. On macOS `check` applies a trivial profile, so it also fails inside a sandbox that forbids
+whether seccomp is available and what the fence costs: without seccomp the default wall refuses to start (the AF_UNIX
+fence cannot be built), and `--unix` is required, with `ptrace` and `io_uring` then unfenced too. On macOS `check` applies a trivial profile, so it also fails inside a sandbox that forbids
 nesting. Exit 0 on `CHECK OK`, 1 on `CHECK FAILED`.
 
 ## probe
@@ -207,7 +225,7 @@ SANDBOX REFUSED reason=<reason>: <text>
 | `bad_read`, `bad_write` | a path that is relative, missing, not a directory, unresolvable, or holds a character the generated rules cannot carry (a control character; on macOS also `"` `\` `(` `)`); `bad_read` also for a command outside every grant |
 | `bad_net` | a `--net-allow` that is not loopback `host:port`, or one without `--net-deny` |
 | `bad_gpu` | `--gpu` on Linux |
-| `not_found` | the command is on no `PATH` entry |
+| `not_found` | the command is on no `PATH` entry, or the path given does not exist |
 | `not_executable` | the command is not an executable file |
 | `no_sandbox` | no backend on this host |
 | `no_seccomp` | Linux with no seccomp filter mode and no `--unix`: the AF_UNIX fence cannot be built |
@@ -219,7 +237,7 @@ SANDBOX REFUSED reason=<reason>: <text>
 | the command's | the wall stood and the command ran; its status is the tool's |
 | 125 | the wall refused to start (`SANDBOX REFUSED` on stderr) |
 | 126 | the only problem is a command that is not an executable file (shell convention) |
-| 127 | the only problem is a command on no `PATH` entry |
+| 127 | the only problem is a command on no `PATH` entry or a path that does not exist |
 | 0 / 1 | `check` and `probe`: yes / no; `help` is 0 |
 
 On macOS a command killed by a signal shows as the shell would see it; a profile that fails to compile is
@@ -253,13 +271,14 @@ nova-sandbox check && nova-sandbox probe
 
 Unit tests use no real time, sockets or network, and run on every OS: flag parsing into the internal spec; the checks
 and refusals of `build` (on scratch directories), for both `linux` and `darwin` path rules; the Landlock ruleset for
-each ABI built from a spec; the macOS profile text built from a spec, including that caller paths enter only as
-parameters; the seccomp program's jump arithmetic and verdicts, interpreted against a synthetic `seccomp_data`
-(Linux); exit codes through `run`, 125/126/127.
+each ABI built from a spec; the macOS profile text built from a spec, including that `--read` and `--write` paths enter
+only as parameters; the seccomp program, interpreted against synthetic `seccomp_data` for every rule, including the
+kill for a wrong architecture and for an x32 syscall number and each socketpair type (Linux); exit codes through `run`, 125/126/127.
 
 Functional tests (build tag `functional`) build the binary, wall real children and probe them. They run on Linux with
 Landlock: `check` and `probe` (including `unix_deny`/`unix_allow`), a write inside and outside, a read outside and
 named, exit status pass-through, the 125/126/127 refusals, environment and working directory pass-through, `argv[0]`
-verbatim through a symlink, the AF_UNIX fence and `--unix`, the `systemd-run --user` escape (skipped where systemd
+verbatim through a symlink and a symlinked `#!` script, the fence's cost (`asyncio`, socketpair types, `logger`,
+`gpg-connect-agent`), the AF_UNIX fence and `--unix`, the `systemd-run --user` escape (skipped where systemd
 `--user` is absent), `--keep-fds`, and `--net-deny` with `--net-allow`. The macOS wall is covered at unit level by the
 generated profile text only.

@@ -62,9 +62,9 @@ func wallCheck() (abi string, netOK bool, note string, err error) {
 	if !ok {
 		return "-", false, "", fmt.Errorf("no landlock in this kernel: below 5.13, not compiled in, or not in the boot-time lsm= list")
 	}
-	sec := "seccomp available: the unix-socket fence is on by default"
+	sec := "seccomp available: the unix-socket fence is on by default; its cost is that nothing needing socket(AF_UNIX) works (/dev/log and syslog, NSS sockets such as nscd, sssd and systemd-userdb, agents and local daemons); --unix is the opt-out"
 	if !seccompAvailable() {
-		sec = "seccomp UNAVAILABLE: the unix-socket fence cannot be built, so the wall refuses to start unless --unix is given"
+		sec = "seccomp UNAVAILABLE: the unix-socket fence cannot be built, so the wall refuses to start unless --unix is given, and then ptrace and io_uring are not refused either"
 	}
 	note = "landlock abi " + strconv.Itoa(n) + ": net is TCP bind/connect only (abi 4+), udp is unrestricted; signals are confined to the wall only at abi 6+; " + sec
 	return strconv.Itoa(n), n >= 4, note, nil
@@ -120,10 +120,13 @@ func execWall(w *wall, env []string) *refusal {
 	}
 	// seccomp after Landlock and on the same locked thread, so it too is in force at
 	// exec. --unix still blocks io_uring and ptrace; it only leaves AF_UNIX open.
-	if w.unix && !seccompAvailable() {
-		// nothing to install; the caller accepted the weaker wall
-	} else if err := installSeccomp(!w.unix); err != nil { // filter AF_UNIX unless --unix
-		return fail("sandbox_failed", "the seccomp filter could not be installed: %v", err)
+	// With seccomp, --unix still installs the filter, minus the AF_UNIX rules, so ptrace
+	// and io_uring stay refused. Without seccomp only --unix gets here, and nothing is
+	// installed: the caller accepted a wall without those fences.
+	if seccompAvailable() {
+		if err := installSeccomp(!w.unix); err != nil {
+			return fail("sandbox_failed", "the seccomp filter could not be installed: %v", err)
+		}
 	}
 	err := syscall.Exec(w.command, w.argv, env)
 	return fail("sandbox_failed", "%s could not be started inside the wall: %v", w.command, err)

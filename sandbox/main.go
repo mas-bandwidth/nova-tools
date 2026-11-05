@@ -27,7 +27,9 @@ const usage = `nova-sandbox: run one command inside a kernel-enforced wall.
   --unix                Linux: leave AF_UNIX sockets open. This opens the same-uid
                         escape (a command can reach any local socket by path, which
                         Landlock does not fence); use only when the command needs a
-                        local socket. Without it such sockets cannot be created.
+                        local socket. Without it socket(AF_UNIX) and every unix socketpair
+                        but SOCK_STREAM are refused, so /dev/log, syslog, NSS sockets
+                        (nscd, sssd, systemd-userdb), agents and local daemons fail.
   --keep-fds            do not close inherited descriptors above stderr before exec.
                         Without it every fd > 2 is closed, so an inherited open socket
                         or file cannot be used inside the wall.
