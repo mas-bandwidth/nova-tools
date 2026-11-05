@@ -646,7 +646,11 @@ func TestVerbHelp(t *testing.T) {
 		}
 		assert.Equal(t, 0, h.main(append([]string{"help"}, strings.Fields(verb)...)...))
 	}
-	assert.Equal(t, 0, h.main("exec", "--only", "X", "--", "true", "-h"), "-h after -- belongs to the command")
+	h.seed("ada", map[string]string{"X": "v"})
+	h.stdout.Reset()
+	args := h.seat("exec", "--only", "X", "--", "true", "-h")
+	assert.Equal(t, 0, h.main(args...), "-h after -- belongs to the command: %s", h.stderr.String())
+	assert.Equal(t, []string{"true", "-h"}, h.became)
 	assert.NotContains(t, h.stdout.String(), "kept for existing")
 	assert.Equal(t, 2, h.main("help", "bogus"))
 	assert.Equal(t, 2, h.main("seat"))
