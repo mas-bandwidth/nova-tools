@@ -4,10 +4,9 @@ A fleet is machines on a tailnet, each a row in nova-config, and the plays
 under `fleet/` put every machine in the state those rows say: the build of the
 tools in its bin directory, the store's function library and ACL, and one
 supervised unit per loop. The plays read nothing but the inventory
-`nova-config inventory` prints (the applied state in Redis) and the defaults in
+`nova-config inventory` prints (the rows in PostgreSQL) and the defaults in
 `fleet/group_vars/all.yml`; every change goes through a Go tool (`nova-update
-release build` and `install`, `nova-config migrate`, `nova-redis fn` and
-`acl`). Every play has a `--check` form that changes nothing and says what a
+release build` and `install`, `nova-redis fn` and `acl`). Every play has a `--check` form that changes nothing and says what a
 run would do.
 
 | play | what it converges | on |
@@ -26,18 +25,15 @@ run it as `</dev/null 2>&1 | cat`, or it may stop with "Non-blocking file
 handles".
 
 ```
-nova-config machine add bench-a --user nova --seat bench-a --slots 2 --width 2 --as ada
-nova-config fleet set --store bench-a --coordinator bench-a --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as ada
-nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
-nova-config loop add reader-bench-a --machine bench-a --argv '["nova-swarm","member","--as","reader-bench-a","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
-nova-config route add flash-a --tier flash --provider deepseek --model deepseek-v4-flash --tokens 200000 --deadline 900 --as ada
-nova-config route add pro-a --tier pro --provider openrouter --model x-ai/grok-4 --tokens 400000 --deadline 1800 --as ada
-nova-config apply --as ada
+nova-config machine add bench-a --user nova --seat bench-a --slots 2 --width 2
+nova-config fleet set --store bench-a --coordinator bench-a --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova
+nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true
+nova-config loop add reader-bench-a --machine bench-a --argv '["nova-swarm","member","--as","reader-bench-a","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true
 printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
 chmod +x nova-inventory
 ```
 
-`NOVA_SPRINT_REDIS_USER` names the user, and `NOVA_SPRINT_REDIS_PASSWORD_ENV` names the
+`NOVA_PG_DSN` names the store (there is no seat login). `NOVA_SPRINT_REDIS_USER` names the Redis user, and `NOVA_SPRINT_REDIS_PASSWORD_ENV` names the
 variable that holds the password, never the password. A store with ACLs needs that login
 in the wrapper's environment, so the wrapper runs under `nova-secrets exec`, for example
 `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_BENCH_PASSWORD
@@ -62,11 +58,11 @@ The member and reader loops name the sprint's server, `--server`: the run loop
 the coordinator starts with `nova-sprint run --listen bench-a:6390`, the one
 writer; a member sends its verbs there and opens no store. The member loop
 names no width and no model. Its width is its fleet row's
-(`nova-config machine` width, set directly with `nova-config machine set <m>
---width <n>` and made the row by `fleet sync`; nothing else, no friend row and
+(the machine row's width, set with `nova-config machine set <m>
+--width <n>`; nothing else, no friend row and
 not the machine's slots, takes part; `nova-sprint fleet
 up <m> --width n` changes it live), read every tick; each card's model, budget
-and deadline are the route the deal drew for it from the routes `apply` writes
+and deadline are the route the deal drew for it from the sprint's routes
 (here one flash and one pro: a pro card runs on `openrouter/x-ai/grok-4`, a
 flash card on `deepseek/deepseek-v4-flash`, on the same machine), or the
 card's own `model:` line. `nova-sprint routes` shows what each route's attempts
@@ -108,7 +104,7 @@ never opens), and the files it wrote are its cursor, so a restart by its
 supervisor pushes nothing twice:
 
 ```
-nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/ai/<coordinator>/working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
+nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/ai/<coordinator>/working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true
 ```
 
 The sprint dashboard ([SPEC-SPRINT-DASHBOARD.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT-DASHBOARD.md)), a page
@@ -122,7 +118,7 @@ an every-network or public address is refused, because the page checks no creden
 machine, never in the repository:
 
 ```
-nova-config loop add sprint-dashboard --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--listen","127.0.0.1:7390,<tailnet-address>:7390","--logo","<home>/sprint-logo.webp"]' --keepalive true --as ada
+nova-config loop add sprint-dashboard --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--listen","127.0.0.1:7390,<tailnet-address>:7390","--logo","<home>/sprint-logo.webp"]' --keepalive true
 ```
 
 It exits 3 when a new build is installed under it, and its unit starts the new one;
@@ -138,9 +134,8 @@ record [acceptance/v1.0.0/public-dashboard-load.md](acceptance/v1.0.0/public-das
 with the raw numbers and the kernel settings it was measured under.
 
 A friend's working directory, how her jobs arrive and are reported, and how
-their clones are removed once done, is docs/FRIENDS.md. The friends are
-nova-config's friend rows: `nova-sprint friend sync --actor ada`
-copies their names into the sprint's friends table, and whether each friend
+their clones are removed once done, is docs/FRIENDS.md. The friends are rows of
+the sprint's friends table, and whether each friend
 is there is the nova-hook record's alone: `nova-hook serve` challenges her once
 a minute and only her model's `nova-hook prove` answers (`where` shows `up` while
 she is hooked in, `down` without it, and `held` while `nova-sprint friend down
@@ -207,16 +202,11 @@ fleet's copy of the same pass.
 
 ## A fixture inventory
 
-`nova-config inventory --fixture <file>` reads the rows from a YAML or JSON
-file instead of the store: machines (with an explicit `roles` list, `os`,
-`arch` and `cores` standing in for the beat, and optional `width` for the
-machine row), the fleet row and loops. Empty `roles` is valid; a missing key
-is not. A file with no `loops` key is a fleet whose
-loops were never applied. `fleet/testdata/inventory-fixture.yml` is two
-machines and their loops; `fleet/testdata/check-fixture.yml` is the machine
-running the play, named `localhost`, with no store deployer, which is what
-`TestFleetPlaysPassSyntaxAndCheckOnTheFixture` runs all three plays against
-with `--check`.
+The plays' functional tests (`internal/ci/fleetplays_functional_test.go`) run
+against fixed inventories, the JSON `nova-config inventory --list` prints:
+`fleet/testdata/check-inventory.json` is the machine running the play, named
+`localhost`, with no store deployer; in `deployer-inventory.json` it is the
+coordinator and store deployer, and in `tla-inventory.json` a `tla` host only.
 
 ## Variables
 
@@ -247,18 +237,6 @@ record has no cores, so a stale hash never overrides a live beat; `os`, `arch`
 and `memory_gb` are only ever in that hash. When neither carries cores,
 `cores` is absent, and so is `slots_share` unless the row sets `width`.
 
-A machine row applied before migration 0042 has no `roles` field (the store the
-previous release leaves for this release's adopt): the inventory derives it as
-0042 does (`bench`; `coordination` on the fleet coordinator; `services` on the
-fleet store; `config.DeriveMachineRoles`, one rule with the migration's SQL,
-held to one table of cases) and prints a NOTE; `nova-config apply --kind
-machine` stores it. Only a row with nothing to derive from (the fleet row was
-never applied) is refused. A present field always wins. The release gate
-`TestReleaseNInventoryOverReleaseNMinus1Store` (certification.yml,
-release-checks) builds this release's inventory from the store the previous
-release leaves (`fleet/testdata/inventory-fixture-n-1.yml`) and asserts every
-host and group of the previous release's own inventory of it
-(`fleet/testdata/inventory-n-1-golden.json`) is present.
 
 | variable | inventory source | plays that read it |
 |---|---|---|
@@ -286,9 +264,8 @@ Migration 0042 backfills each existing config machine with `bench` and adds
 `services` and `coordination` from the current fleet row references. It does
 not infer `runner` or restore assignments from the former external
 `machines.tsv`; those roles must be set explicitly with `nova-config machine
-set <machine> --roles <roles>` and applied. The migration uses only
-`config.machines` and `config.fleet` and changes no live rows until a caller
-runs the normal migration and apply steps.
+set <machine> --roles <roles>`. The migration uses only
+`config.machines` and `config.fleet`.
 
 | variable | default | what it is |
 |---|---|---|
@@ -305,7 +282,7 @@ runs the normal migration and apply steps.
 | `nova_redis_deploy_user`, `nova_redis_deploy_password_key` | `coordinator`, `NOVA_REDIS_COORDINATOR_PASSWORD` | who loads the library, and the secret holding its password in the `store_deployer` seat |
 | `nova_redis_admin_user`, `nova_redis_admin_password_key` | `admin`, `NOVA_REDIS_ADMIN_PASSWORD` | who writes the ACL, and its secret |
 | `nova_redis_user_password_keys` | `coordinator`, `bench` | the secret holding the password of a user `acl apply` creates |
-| `nova_pg_dsn`, `nova_pg_password_key` | the applied fleet row (no inferred DSN), `NOVA_PG_CONFIG_PASSWORD` | the configuration store `tools.yml` migrates; an empty DSN is refused with the set and apply commands |
+| `nova_pg_dsn`, `nova_pg_password_key` | the applied fleet row (no inferred DSN), `NOVA_PG_CONFIG_PASSWORD` | the configuration store `tools.yml` migrates; an empty DSN is refused with the `fleet set` command |
 | `nova_release_out`, `nova_release_gocache` | `~/nova-bench/release-build`, `~/nova-bench/release-gocache` on the machine running the play | where the build is written and its Go cache |
 | `nova_version`, `nova_source` | none: `-e` | the build to install and the checkout it is built from |
 | `nova_sprint_release` | none: `-e` | a directory holding one mas-bandwidth/nova-sprint release (`gh release download <tag> -R mas-bandwidth/nova-sprint -D <dir>`); its nova-sprint, nova-card and nova-work are verified against its `SHA256SUMS_<goos>_<goarch>` and shipped in the same release, never compiled from this tree (`nova-update release build --sprint-release`) |
@@ -318,11 +295,9 @@ runs the normal migration and apply steps.
 | `nova_release_build_args` | `[]` | flags appended to the build after the gate's; `nova-update release cycle` passes `--incremental --gate report --reason <why>` |
 
 An existing schema has neither endpoint before migration 0014 adds their
-columns. Bootstrap once with `nova-config migrate --pg
-postgres://user@localhost:5432/db`, then run `nova-config fleet set --redis_port
-<port> --pg_dsn postgres://user@localhost:5432/db --as <actor>` and
-`nova-config apply --kind fleet --as <actor>`. Both endpoints stay unset after
-migration until declared. Inventory and fleet apply refuse an unset endpoint
+columns. Run `nova-config fleet set --redis_port
+<port> --pg_dsn postgres://user@localhost:5432/db`. Both endpoints stay unset
+until declared. Inventory refuses an unset endpoint
 before any member argv is rewritten; inventory never guesses a Redis port.
 
 Every secret is named, never valued: a task that needs one runs its tool under
@@ -492,11 +467,6 @@ need no `nova-secrets exec` wrapper for `JEV_API_KEY` or a provider key.
   (`templates/nova-loop.timer.j2`, `OnUnitActiveSec` the record's `every`). A
   record with `enabled: false` is written, stopped and disabled.
 
-A unit's command can be wrapped in `nova-config loop run <name> -- <command>`, the
-single-instance lock a bash `nova-loop` wrapper once gave (docs/SPEC-CONFIG.md, "loop run"): a
-second copy exits 3, and `--metrics <dir>` writes the restart count node_exporter reads. The plays
-do not wrap the units in it yet.
-
 Every unit the play writes carries its mark (`written by fleet/loops.yml from
 the loop record <name>`). A marked unit that no record on the machine names,
 and every marked unit in the other place (the system place when the machine's
@@ -616,7 +586,7 @@ reported only when Muse explicitly reports `cache_read_tokens`. Additional
 raw fields in the durable spend/consumer record belong to the separate
 subscription billing and raw receipts follow-up.
 The coordinator adds `frontier-muse` with
-`nova-config route add` and the selected model, deadline, subscription billing and zero marginal price sheet;
+the sprint's route verb and the selected model, deadline, subscription billing and zero marginal price sheet;
 the tools play writes no route or configuration-store value.
 
 Typed subscription receipt adoption uses a paired installation. Upgrade the sprint

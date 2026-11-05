@@ -10,7 +10,7 @@ Small tools that each do one thing. Each one stands alone: adopt one, or several
 |---|---|
 | [nova-bus](bus/README.md) | messages over Redis streams: send, and a hook that prints each message until it is acked |
 | [nova-secrets](secrets/README.md) | encrypted secrets (sops + age) handed to one command at a time |
-| [nova-config](cmd/nova-config/README.md) | machines, loops, the fleet and the ansible inventory |
+| [nova-config](config/README.md) | machines, loops, the fleet and the ansible inventory |
 | [fleet](fleet/) | ansible playbooks and roles that set up, harden and update a machine |
 | [nova-slot](slot/README.md) | run a command holding one of N load slots on this machine; a killed holder's slot frees itself |
 | [nova-sandbox](sandbox/README.md) | run one command inside an OS-enforced wall (macOS sandbox-exec, Linux Landlock) |
