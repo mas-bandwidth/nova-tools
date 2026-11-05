@@ -21,7 +21,7 @@ Mark the machines that build and test your code as `runner` in `nova-config`. Yo
 
 ## 4. Deploy secrets to the fleet
 
-**Give a command the secrets it needs without copying them into its arguments.**
+**Every AI gets the secrets its work needs across the entire fleet.**
 Keep encrypted secrets in git with `nova-secrets`. Each machine or AI has its own key and a name, called a seat. Choose the secrets a command receives when it starts. Their values stay out of the tool's logs and command-line arguments, including the arguments shown by `ps`.
 
 ## 5. Run untrusted work behind a wall
