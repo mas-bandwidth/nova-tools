@@ -38,7 +38,9 @@
 # and its file removed; so is a unit nova_retire_units names. A unit of another
 # tool's of the same shape is left as it is and named in a NOTE; a record of
 # its name takes it over. --check lists each retirement as WOULD-RETIRE with its
-# file and changes nothing.
+# file and changes nothing. A host whose service list is empty retires nothing
+# by itself: with units to retire the play refuses, naming them, unless
+# -e nova_service_retire_all=true.
 #
 # A unit whose file (or timer) changed is restarted, said as RESTART (WOULD-RESTART
 # under --check) with why.
@@ -241,6 +243,20 @@
           {%- endfor -%}
           {%- endif -%}
           {{ out }}
+
+    # A host with no service rows at all would retire every unit this play (or
+    # its earlier name) ever wrote: an empty list is valid, so that takes an
+    # explicit -e nova_service_retire_all=true.
+    - name: an empty service list retires nothing unless asked
+      ansible.builtin.assert:
+        that: service_records | length > 0 or service_retire_unasked | length == 0 or nova_service_retire_all | bool
+        fail_msg: >-
+          {{ inventory_hostname }} has no service rows, and this run would retire {{ service_retire_unasked | length }}
+          unit(s): {{ service_retire_unasked | map(attribute='file') | map('basename') | join(', ') }}. If the empty
+          list is intended, say so: -e nova_service_retire_all=true
+        quiet: true
+      vars:
+        service_retire_unasked: "{{ service_retire | rejectattr('name', 'in', nova_retire_units) | list }}"
 
     - name: the units of other tools, left as they are
       ansible.builtin.debug:
