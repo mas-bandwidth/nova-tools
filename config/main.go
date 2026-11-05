@@ -154,6 +154,8 @@ func open(ctx context.Context, fs *flag.FlagSet, d deps) (Store, error) {
 		return nil, usagef(verb, "", "no store: set NOVA_PG_DSN or --pg")
 	case dsn != "" && dsnPassword(dsn):
 		return nil, usagef(verb, "", "--pg carries a password; leave it out and name its variable in NOVA_PG_PASSWORD_ENV")
+	case dsn == "" && dsnPassword(d.getenv("NOVA_PG_DSN")):
+		return nil, usagef(verb, "", "NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD")
 	case dsn == "":
 		dsn = d.getenv("NOVA_PG_DSN")
 	}
@@ -278,13 +280,23 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		fmt.Fprintln(stdout, planLines(k, op, name, actor, reason, before.F, after.F))
 		return nil
 	}
+	var changed []string // the fields a set really changes
+	for _, n := range slices.Sorted(maps.Keys(given)) {
+		if after.F[n] != cur.F[n] {
+			changed = append(changed, n)
+		}
+	}
+	if op == "set" && len(changed) == 0 { // nothing differs: no write, no history row
+		fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s changed=none rev=unchanged\n", k.name, value(name))
+		return nil
+	}
 	rev, err := st.Write(ctx, k, op, before, after, actor, reason)
 	if err != nil {
 		return err
 	}
 	line := fmt.Sprintf("CONFIG %s kind=%s name=%s rev=%d", strings.ToUpper(op), k.name, value(name), rev)
 	if op == "set" {
-		line += " changed=" + value(strings.Join(slices.Sorted(maps.Keys(given)), ","))
+		line += " changed=" + value(strings.Join(changed, ","))
 	}
 	fmt.Fprintln(stdout, line)
 	return nil
