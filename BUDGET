@@ -1,9 +1,9 @@
 bus  600
-config  950
+cairn  2250
+config  1500
+reserve  1100
+sandbox  1900
+secrets  1000
 fleet  50
-sandbox  1550
-secrets  650
-reserve  500
 boundary  400
-cairn  1950
 contract  50

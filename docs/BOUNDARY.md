@@ -49,9 +49,6 @@ says why, and lower it when code is removed.
 `BUDGET` lines are exactly `name  number`, with no comments or duplicates, and
 include `boundary` itself (400).
 
-`bus` and `sandbox` carry roughly 350 extra lines of headroom for open pull
-requests. Those two budgets come down after the PRs land.
-
 ## Adding a tool
 
 1. Make a new top-level directory with `package main` files.
