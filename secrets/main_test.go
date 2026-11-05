@@ -363,12 +363,17 @@ func TestSealIsGone(t *testing.T) {
 	assert.Contains(t, h.stderr.String(), `unknown verb "seal"`)
 }
 
-func TestRequireIsGone(t *testing.T) {
+func TestRequireIsAHiddenAliasOfOnly(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.seed("ada", map[string]string{"API_KEY": "v"})
-	assert.Equal(t, 2, h.main(h.seat("exec", "--only", "API_KEY", "--require", "API_KEY", "--", "true")...))
-	assert.Equal(t, "nova-secrets exec: unknown flag --require; run: nova-secrets exec -h\n", h.stderr.String())
+	h.seed("ada", map[string]string{"API_KEY": "sk-1", "OTHER": "sealed-3"})
+	require.Equal(t, 0, h.main(h.seat("exec", "--only", "API_KEY", "--require", "OTHER", "--", "true")...), h.stderr.String())
+	assert.Equal(t, "sealed-3", envMap(h.env)["OTHER"])
+	assert.Equal(t, "sk-1", envMap(h.env)["API_KEY"])
+	require.Equal(t, 0, h.main(h.seat("exec", "--require=API_KEY", "--", "true")...), h.stderr.String())
+	assert.Equal(t, 125, h.main(h.seat("exec", "--require", "NOPE", "--", "true")...))
+	h.main("help")
+	assert.NotContains(t, h.stdout.String(), "require", "hidden")
 }
 
 const catchAllRules = "creation_rules:\n  - age: " + pubA + "\n"
@@ -780,7 +785,7 @@ func TestSeatListIsReadOnly(t *testing.T) {
 	h.seed("ada", map[string]string{"A": "v"})
 	h.seed("cy", map[string]string{"C": "v"})
 	require.Equal(t, 0, h.main("seat", "list", "--store", h.store), h.stderr.String())
-	assert.Equal(t, "ada file=yes\nbo file=no\ncy file=yes\n", h.stdout.String())
+	assert.Equal(t, "ada file=yes rule=yes\nbo file=no rule=yes\ncy file=yes rule=no\n", h.stdout.String())
 	assert.Equal(t, "SECRETS SEAT LIST OK seats=3\n", h.stderr.String())
 	assert.Empty(t, h.calls)
 	require.NoError(t, os.Remove(filepath.Join(h.store, ".sops.yaml")))
@@ -795,4 +800,20 @@ func TestUnknownNameSaysHowToListNames(t *testing.T) {
 	h.seed("ada", map[string]string{"API_KEY": "v"})
 	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "NOPE", "--", "true")...))
 	assert.Contains(t, h.stderr.String(), "holds no such name; run: nova-secrets names --store "+h.store+" --as ada")
+}
+
+func TestSeatVerbsAndAbsentStore(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	assert.Equal(t, 0, h.main("seat", "-h"))
+	assert.Contains(t, h.stdout.String(), "nova-secrets seat add ")
+	assert.Contains(t, h.stdout.String(), "nova-secrets seat list ")
+	assert.Equal(t, 2, h.main("seat", "list", "--store", h.store, "--as", "ada"))
+	assert.Equal(t, "nova-secrets seat list: unknown flag --as; run: nova-secrets seat list -h\n", h.stderr.String())
+	gone := filepath.Join(t.TempDir(), "gone")
+	for _, args := range [][]string{{"seat", "list", "--store", gone}, {"seat", "add", "bo", pubB, "--store", gone}, {"names", "--store", gone, "--as", "ada"}} {
+		assert.Equal(t, 2, h.main(args...), "%v", args)
+		assert.Contains(t, h.stderr.String(), "store "+gone+" does not exist; run: nova-secrets init --store "+gone+" --recovery <age-public-key>", "%v", args)
+	}
+	assert.Empty(t, h.calls)
 }

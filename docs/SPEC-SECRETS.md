@@ -82,6 +82,8 @@ The names are the payload on stdout, one per line. The OK line goes to stderr.
 A seat opens only its own file with its own key. The key is a file given by `--key`. No identity from the caller's
 environment or home directory reaches sops.
 
+`--require NAME` is kept so existing units keep working; use `--only`.
+
 `--store` is required for every verb, and `--key` for `set` and `exec`, as flags or as `NOVA_SECRETS_STORE` and
 `NOVA_SECRETS_KEY`. There is no default and the current directory is never assumed. `--key` is made absolute before
 its mode and owner are checked and before sops sees it. `--as` defaults to `$NOVA_SECRETS_SEAT`, else the short
@@ -118,12 +120,12 @@ with a 2-space indent so it reads and diffs; a list that already has rules keeps
 rules are dropped.
 
 **seat list** is read-only. It prints every seat that a rule in `.sops.yaml` names or that has a file in the store,
-one `<seat> file=yes|no` per line, and `SECRETS SEAT LIST OK seats=<n>` on stderr. There is no `seat remove` and no
+one `<seat> file=yes|no rule=yes|no` per line (an orphan file shows `rule=no`), and `SECRETS SEAT LIST OK seats=<n>` on stderr. There is no `seat remove` and no
 `unset`: a seat or a name is removed with git and sops.
 
 ```
 nova-secrets seat list --store S
-web file=yes
+web file=yes rule=yes
 ```
 
 ## Refusals say what to run

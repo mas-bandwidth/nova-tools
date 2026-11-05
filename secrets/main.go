@@ -64,12 +64,13 @@ func helpFor(verb string) (string, bool) {
 	if verb == "" {
 		return usage, true
 	}
+	var out string
 	for _, p := range strings.SplitAfter(usage, "\n\n") {
 		if strings.HasPrefix(p, "nova-secrets "+verb+" ") {
-			return p, true
+			out += p
 		}
 	}
-	return "", false
+	return out, out != ""
 }
 
 // identityEnv is every variable sops reads an age identity from: none reaches sops
@@ -210,6 +211,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	for name, p := range map[string]*string{"store": &o.store, "as": &o.as, "key": &o.key, "sops": &o.sops, "only": &o.only, "recovery": &o.recovery} {
 		fs.StringVar(p, name, "", "")
 	}
+	fs.Func("require", "", func(v string) error { o.only += "," + v; return nil }) // hidden alias of --only, for existing units
 	if err = fs.Parse(args); err != nil {
 		msg := err.Error()
 		if n, ok := strings.CutPrefix(msg, "flag provided but not defined: "); ok {
@@ -242,10 +244,16 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	if missing = append(missing, also...); len(missing) > 0 {
 		return o, nil, bad("missing %s (no default; the current directory is never assumed)", strings.Join(missing, ", "))
 	}
+	if _, err := os.Stat(o.store); err != nil && verb != "init" {
+		return o, nil, refuse("store %s does not exist; run: nova-secrets init --store %s --recovery <age-public-key>", o.store, o.store)
+	}
 	if o.sops == "" {
 		o.sops = "sops"
 	}
 	noSeat := verb == "init" || strings.HasPrefix(verb, "seat ")
+	if noSeat && o.as != "" {
+		return o, nil, bad("unknown flag --as")
+	}
 	if o.as == "" && !noSeat {
 		if o.as = envValue(t.environ, "NOVA_SECRETS_SEAT"); o.as == "" {
 			h, _ := os.Hostname() // an empty name fails the seat check below
@@ -430,19 +438,23 @@ func (t tool) seatList(args []string) error {
 	if err != nil || perr != nil {
 		return refuse("%s/.sops.yaml is missing or does not parse; create it with the line: creation_rules: []", o.store)
 	}
-	seats := map[string]bool{}
+	type seatState struct{ file, rule bool }
+	seats := map[string]seatState{}
 	for _, r := range items(field(top, "creation_rules")) {
 		if pr := field(r, "path_regex"); pr != nil {
 			if m := ruleSeat.FindStringSubmatch(pr.Value); m != nil {
-				seats[m[1]] = false
+				seats[m[1]] = seatState{rule: true}
 			}
 		}
 	}
 	for _, s := range seatsIn(o.store) {
-		seats[s] = true
+		st := seats[s]
+		st.file = true
+		seats[s] = st
 	}
 	for _, s := range slices.Sorted(maps.Keys(seats)) {
-		fmt.Fprintf(t.stdout, "%s file=%s\n", s, map[bool]string{true: "yes", false: "no"}[seats[s]])
+		yn := map[bool]string{true: "yes", false: "no"}
+		fmt.Fprintf(t.stdout, "%s file=%s rule=%s\n", s, yn[seats[s].file], yn[seats[s].rule])
 	}
 	fmt.Fprintf(t.stderr, "SECRETS SEAT LIST OK seats=%d\n", len(seats))
 	return nil

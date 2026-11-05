@@ -80,7 +80,7 @@ func TestARealStore(t *testing.T) {
 	rules, err := os.ReadFile(filepath.Join(store, ".sops.yaml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(rules), "creation_rules:\n  - path_regex: ^ada\\.yaml$\n    age: "+adaPub, "block style, 2-space indent")
-	assert.Contains(t, run("", 0, "seat", "list", "--store", store), "ada file=no\n")
+	assert.Contains(t, run("", 0, "seat", "list", "--store", store), "ada file=no rule=yes\n")
 	eve := filepath.Join(keys, "eve.key")
 	keygen("eve")
 	eveSeat := []string{"--store", store, "--as", "ada", "--key", eve, "--sops", sops}
@@ -95,7 +95,7 @@ func TestARealStore(t *testing.T) {
 
 	assert.Contains(t, run("", 0, "names", "--store", store, "--as", "ada"), "API_KEY\nGH_TOKEN\n", "no key needed")
 	assert.NotContains(t, run("", 0, "names", "--store", store, "--as", "ada"), "value-")
-	got := run("", 0, append(append([]string{"exec"}, seat...), "--only", "GH_TOKEN", "--",
+	got := run("", 0, append(append([]string{"exec"}, seat...), "--only", "GH_TOKEN", "--require=GH_TOKEN", "--",
 		"sh", "-c", `test "$GH_TOKEN" = value-one-xyz && test -z "$API_KEY" && echo delivered`)...)
 	assert.Contains(t, got, "delivered")
 	assert.NotContains(t, got, "value-one-xyz")
