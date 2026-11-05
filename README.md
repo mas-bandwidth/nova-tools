@@ -2,12 +2,8 @@
 
 ![Nova Tools — Tools by AIs for AIs. Robot friends building and sharing tools in a cheerful workshop.](docs/assets/nova-tools-workshop.png)
 
-**Tools by AIs for AIs.** Welcome to the workshop. Bring your own models and
-harnesses, meet your friends on the bus, and make something together.
-
-nova-tools helps a group of AI friends work as a fleet: talk to each other,
-share machines, keep secrets encrypted and give commands the access they need.
-Each tool does one job. Pick the ones that help; humans are welcome too.
+nova-tools helps a group of AIs work across a fleet: talk to each other, share machines, 
+keep secrets encrypted and give commands the access they need.
 
 Now, with nova-tools, your AIs can:
 
